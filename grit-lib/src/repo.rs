@@ -2774,6 +2774,8 @@ pub(crate) struct RepositoryFormat {
     pub(crate) extensions: BTreeSet<String>,
     /// Raw value of `extensions.refstorage`, if present.
     pub(crate) ref_storage: Option<String>,
+    /// Raw value of `extensions.objectformat`, if present.
+    pub(crate) object_format: Option<String>,
 }
 
 /// Parse repository format from repository-local config (no global/system config).
@@ -2787,6 +2789,7 @@ pub(crate) fn read_repository_format_from_git_dir(git_dir: &Path) -> Result<Repo
             repo_version: 0,
             extensions: BTreeSet::new(),
             ref_storage: None,
+            object_format: None,
         });
     };
     let content = crate::repo_caches::read_local_config_file(&config_path)?;
@@ -2794,6 +2797,15 @@ pub(crate) fn read_repository_format_from_git_dir(git_dir: &Path) -> Result<Repo
 }
 
 impl RepositoryFormat {
+    /// Object hash algorithm declared by `extensions.objectformat`, SHA-1 when absent or
+    /// unrecognized (the same fallback as [`crate::odb::hash_algo_for_git_dir`]).
+    pub(crate) fn hash_algo(&self) -> crate::objects::HashAlgo {
+        self.object_format
+            .as_deref()
+            .and_then(crate::objects::HashAlgo::from_name)
+            .unwrap_or(crate::objects::HashAlgo::Sha1)
+    }
+
     /// Build git's `verify_repository_format` warning/error message for unsupported
     /// extension declarations, or `None` if the extensions are all acceptable.
     ///
@@ -2876,6 +2888,7 @@ pub(crate) fn parse_repository_format(
     let mut repo_version = 0u32;
     let mut extensions = BTreeSet::new();
     let mut ref_storage: Option<String> = None;
+    let mut object_format: Option<String> = None;
 
     for raw_line in content.lines() {
         let mut line = raw_line.trim();
@@ -2926,6 +2939,9 @@ pub(crate) fn parse_repository_format(
             if key.eq_ignore_ascii_case("refstorage") {
                 ref_storage = value.map(str::to_owned);
             }
+            if key.eq_ignore_ascii_case("objectformat") {
+                object_format = value.map(str::to_owned);
+            }
             if !key.is_empty() {
                 extensions.insert(key.to_ascii_lowercase());
             }
@@ -2936,6 +2952,7 @@ pub(crate) fn parse_repository_format(
         repo_version,
         extensions,
         ref_storage,
+        object_format,
     })
 }
 

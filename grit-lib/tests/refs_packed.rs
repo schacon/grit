@@ -8,13 +8,16 @@ mod support;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::error::{Error, RefLockError};
 use grit_lib::objects::ObjectId;
+use grit_lib::porcelain::branch::list_branches;
 use grit_lib::refs::{
     delete_ref, list_refs, list_refs_glob, list_refs_physical, pack_remote_tracking_refs_for_clone,
     packed_refs_entry_exists, resolve_ref, resolve_ref_cached, write_ref, write_ref_cached,
     PackedRefs,
 };
+use grit_lib::repo::Repository;
 
 use support::{
     assert_list_refs_match_git, files_repo, git, git_empty_commit_oid, git_for_each_ref,
@@ -476,6 +479,152 @@ fn t1408_packed_refs_garbage_line_rejected_like_git() {
         "PackedRefs::load must reject garbage lines"
     );
     assert_ref_listing_parity(wt, &git_dir, "refs/heads/");
+}
+
+/// Sorted `packed-refs` with two branches and two lightweight tags, written by `git pack-refs`.
+fn sorted_packed_refs_with_branches_and_tags(repo: &TestRepo) -> String {
+    let wt = wt_path(repo);
+    git_empty_commit_oid(wt);
+    git(wt, &["branch", "topic"]);
+    git(wt, &["tag", "t1"]);
+    git(wt, &["tag", "t2"]);
+    git(wt, &["pack-refs", "--all"]);
+    let content = fs::read_to_string(git_dir(repo).join("packed-refs")).unwrap();
+    assert!(content.lines().next().is_some_and(
+        |header| header.starts_with("# pack-refs with:") && header.contains(" sorted")
+    ));
+    content
+}
+
+/// Git binary-searches a sorted `packed-refs` and only parses the records a prefix scan visits,
+/// so a corrupt record among the tags breaks tag listing but not branch listing.
+#[test]
+fn sorted_packed_refs_corrupt_record_only_breaks_listings_that_cover_it() {
+    let repo = files_repo();
+    let wt = wt_path(&repo);
+    let git_dir = git_dir(&repo);
+    let content = sorted_packed_refs_with_branches_and_tags(&repo);
+    let corrupted = content.replacen(
+        "refs/tags/t1\n",
+        "refs/tags/t1\nthis is not a valid packed-refs line\n",
+        1,
+    );
+    assert_ne!(corrupted, content);
+    write_packed_refs(&git_dir, &corrupted);
+
+    let heads = list_refs(&git_dir, "refs/heads/").expect("branches stay listable");
+    assert_eq!(heads.len(), 2);
+    assert!(list_refs(&git_dir, "refs/tags/").is_err());
+    assert!(list_refs(&git_dir, "refs/").is_err());
+    assert!(matches!(
+        PackedRefs::load(&git_dir),
+        Err(Error::PackedRefsUnexpectedLine { .. })
+    ));
+    for prefix in ["refs/heads/", "refs/tags/", "refs/"] {
+        assert_ref_listing_parity(wt, &git_dir, prefix);
+    }
+}
+
+/// Git rejects the whole file when its last record is too short to hold an object id, even
+/// for prefix scans that never reach it.
+#[test]
+fn sorted_packed_refs_short_last_record_breaks_every_listing() {
+    let repo = files_repo();
+    let wt = wt_path(&repo);
+    let git_dir = git_dir(&repo);
+    let mut content = sorted_packed_refs_with_branches_and_tags(&repo);
+    content.push_str("this is not a valid packed-refs line\n");
+    write_packed_refs(&git_dir, &content);
+
+    for prefix in ["refs/heads/", "refs/tags/", "refs/"] {
+        assert!(
+            matches!(
+                list_refs(&git_dir, prefix),
+                Err(Error::PackedRefsUnexpectedLine { .. })
+            ),
+            "{prefix}"
+        );
+        assert_ref_listing_parity(wt, &git_dir, prefix);
+    }
+}
+
+/// The last-record check uses the repository's object id width: in a SHA-256 repository a
+/// 50-byte tail is too short for an id, so git and grit both refuse the file.
+#[test]
+fn sha256_packed_refs_short_last_record_rejected_like_git() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let wt = root.path();
+    git(wt, &["init", "-q", "--object-format=sha256", "-b", "main"]);
+    git_empty_commit_oid(wt);
+    git(wt, &["branch", "topic"]);
+    git(wt, &["pack-refs", "--all"]);
+    let git_dir = wt.join(".git");
+    let mut content = fs::read_to_string(git_dir.join("packed-refs")).unwrap();
+    assert!(list_refs(&git_dir, "refs/heads/").unwrap().len() == 2);
+    content.push_str(&"x".repeat(49));
+    content.push('\n');
+    write_packed_refs(&git_dir, &content);
+
+    for prefix in ["refs/heads/", "refs/tags/", "refs/"] {
+        assert!(
+            matches!(
+                list_refs(&git_dir, prefix),
+                Err(Error::PackedRefsUnexpectedLine { .. })
+            ),
+            "{prefix}"
+        );
+        assert_ref_listing_parity(wt, &git_dir, prefix);
+    }
+    let repo = Repository::open(&git_dir, &RepositoryOptions::empty().with_work_tree(wt))
+        .expect("open sha256 repo");
+    assert!(matches!(
+        list_branches(&repo),
+        Err(Error::PackedRefsUnexpectedLine { .. })
+    ));
+}
+
+/// The same 50-byte tail is long enough for a SHA-1 id, so a SHA-1 repository keeps working
+/// where it sits outside the listed range, as it does for git.
+#[test]
+fn sha1_packed_refs_fifty_byte_last_record_matches_git() {
+    let repo = files_repo();
+    let wt = wt_path(&repo);
+    let git_dir = git_dir(&repo);
+    let mut content = sorted_packed_refs_with_branches_and_tags(&repo);
+    content.push_str(&"x".repeat(49));
+    content.push('\n');
+    write_packed_refs(&git_dir, &content);
+    for prefix in ["refs/heads/", "refs/tags/", "refs/"] {
+        assert_ref_listing_parity(wt, &git_dir, prefix);
+    }
+}
+
+/// A corrupt line between records of the listed range is reported, never skipped. (System git
+/// mis-compares such a line during its binary search and can silently omit the record before
+/// it, so this deliberately does not assert parity.)
+#[test]
+fn corrupt_line_among_branches_fails_branch_listing() {
+    let repo = files_repo();
+    let wt = wt_path(&repo);
+    let git_dir = git_dir(&repo);
+    git_empty_commit_oid(wt);
+    for branch in ["a", "b", "c"] {
+        git(wt, &["branch", branch]);
+    }
+    git(wt, &["tag", "t1"]);
+    git(wt, &["pack-refs", "--all"]);
+    let content = fs::read_to_string(git_dir.join("packed-refs")).unwrap();
+    let corrupted = content.replacen("refs/heads/a\n", "refs/heads/a\ngarbage line\n", 1);
+    assert_ne!(corrupted, content);
+    write_packed_refs(&git_dir, &corrupted);
+
+    assert!(matches!(
+        list_refs(&git_dir, "refs/heads/"),
+        Err(Error::PackedRefsUnexpectedLine { .. })
+    ));
+    let tags = list_refs(&git_dir, "refs/tags/").expect("tags are outside the corrupt range");
+    assert_eq!(tags.len(), 1);
+    assert_ref_listing_parity(wt, &git_dir, "refs/tags/");
 }
 
 #[test]
