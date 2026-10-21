@@ -54,7 +54,7 @@ When the current branch has a configured upstream (`branch.<name>.remote` and `b
 | `--untracked <MODE>` | How untracked paths are listed: `normal` (default) shows untracked files and collapses wholly untracked directories to a single directory entry; `all` lists every untracked file; `no` omits untracked paths. When the flag is omitted, `status.showUntrackedFiles` from config is used (Git-compatible; defaults to `normal`). |
 | `--no-ahead-behind` | Skip ahead/behind rev-list walks; JSON sets `ahead`, `behind`, and upstream counts to `null`. Also skipped when `status.aheadBehind=false` in config. |
 | `-u[<MODE>]` | Short form of `--untracked`: bare `-u` means `all`; `-uno`, `-unormal`, and `-uall` match Git. |
-| `PATH`… | Limit the report to paths matching these pathspecs (after `--`). Uses the same pathspec rules as [`grit add`](add/). |
+| `PATH`… | Limit the report to paths matching these pathspecs (after `--`). Uses the same pathspec rules as [`grit add`](../add/). |
 | `--pathspec-from-file <FILE\|->` | Read pathspecs from a file (`-` for stdin), in addition to any `PATH` arguments. |
 | `--pathspec-file-nul` | `--pathspec-from-file` entries are NUL-separated (requires `--pathspec-from-file`). |
 
