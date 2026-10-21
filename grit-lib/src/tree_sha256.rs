@@ -251,16 +251,21 @@ impl ComputeCtx<'_> {
                 return Err(Error::CorruptObject("invalid tree entry name".into()));
             }
             let path = join_path_bytes(prefix, &name);
-            match mode {
-                0o040000 => {
+            const S_IFMT: u32 = 0o170000;
+            const S_IFDIR: u32 = 0o040000;
+            const S_IFREG: u32 = 0o100000;
+            const S_IFLNK: u32 = 0o120000;
+            const S_IFGITLINK: u32 = 0o160000;
+            match mode & S_IFMT {
+                S_IFDIR => {
                     let mut child_prefix = path;
                     child_prefix.push(b'/');
                     self.walk_tree(oid, &child_prefix)?;
                 }
-                0o100644 | 0o100755 | 0o120000 => {
+                S_IFREG | S_IFLNK => {
                     self.blob_jobs.push(BlobJob { path, oid });
                 }
-                0o160000 => self.handle_gitlink(&path, oid)?,
+                S_IFGITLINK => self.handle_gitlink(&path, oid)?,
                 _ => {}
             }
         }

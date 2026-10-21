@@ -404,6 +404,33 @@ fn glob_exclusion_unit() {
 }
 
 #[test]
+fn unusual_regular_file_mode_is_hashed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = init_repo(tmp.path());
+    let odb = repo.odb();
+    let blob = odb
+        .write_loose_materialize(ObjectKind::Blob, b"payload\n")
+        .unwrap();
+    let tree_body = serialize_tree(&[TreeEntry {
+        mode: 0o100664,
+        name: b"file.txt".to_vec(),
+        oid: blob,
+    }]);
+    let tree = odb
+        .write_loose_materialize(ObjectKind::Tree, &tree_body)
+        .unwrap();
+    let commit_body =
+        format!("tree {tree}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\n");
+    let commit = odb
+        .write_loose_materialize(ObjectKind::Commit, commit_body.as_bytes())
+        .unwrap();
+    let report = tree_sha256(&repo, commit, &TreeSha256Options::default()).unwrap();
+    assert_eq!(report.files, 1);
+    let expected = plain_tree_sha256_from_records(&repo, &[(blob, b"file.txt")]);
+    assert_eq!(report.digest.to_hex(), expected);
+}
+
+#[test]
 fn non_utf8_and_backslash_tree_entry_names() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = init_repo(tmp.path());

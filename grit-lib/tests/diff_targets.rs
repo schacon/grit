@@ -332,6 +332,37 @@ fn resolve_diff_arguments_too_many_revisions() {
 }
 
 #[test]
+fn worktree_vs_head_one_row_per_path_with_stale_cache_tree() {
+    let dir = TempDir::new().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("f.txt"), "base\n").expect("write");
+    commit_all(dir.path(), "base");
+    std::fs::write(dir.path().join("f.txt"), "staged\n").expect("write");
+    git(dir.path(), &["add", "f.txt"]);
+    std::fs::write(dir.path().join("f.txt"), "worktree\n").expect("write");
+
+    let repo = open_repo(dir.path());
+    let mut index = repo.index_handle().load().expect("index");
+    index.invalidate_cache_tree_for_path(b"f.txt");
+    repo.index_handle().write(&mut index).expect("write index");
+
+    let files = grit_files(&repo, DiffTarget::WorktreeVsHead, &[]);
+    let grit_paths: Vec<_> = files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(
+        grit_paths.len(),
+        grit_paths
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        "expected at most one diff row per path, got {grit_paths:?}"
+    );
+
+    let git_out = git(dir.path(), &["diff", "--name-only", "HEAD"]);
+    let git_paths: Vec<_> = git_out.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(grit_paths, git_paths);
+}
+
+#[test]
 fn worktree_vs_head_skips_assume_unchanged_with_staged_sibling() {
     let dir = TempDir::new().expect("tempdir");
     init_repo(dir.path());
