@@ -273,8 +273,8 @@ impl LockFile {
     ///
     /// # Errors
     ///
-    /// Returns [`LockError::Io`] when the handle was already taken (for example by
-    /// [`Self::into_open_file`]).
+    /// Returns [`LockError::Io`] when the handle was already taken (for example after
+    /// the open file handle was moved out for index integration).
     pub fn as_file(&self) -> Result<&File, LockError> {
         self.file.as_ref().ok_or_else(|| LockError::Io {
             path: self.lock_path.clone(),
