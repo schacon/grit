@@ -188,6 +188,7 @@ pub fn plan_rewrite(
             rewritten.push(RewrittenCommit {
                 old: old_oid,
                 new: Some(*existing),
+                change_id: stored_change_id_for_commit(repo, *existing)?,
             });
             continue;
         }
@@ -201,6 +202,7 @@ pub fn plan_rewrite(
             rewritten.push(RewrittenCommit {
                 old: old_oid,
                 new: None,
+                change_id: None,
             });
             continue;
         }
@@ -361,6 +363,10 @@ pub fn plan_rewrite(
         rewritten.push(RewrittenCommit {
             old: old_oid,
             new: new_field,
+            change_id: match new_field {
+                Some(oid) => stored_change_id_for_commit(repo, oid)?,
+                None => None,
+            },
         });
     }
 
@@ -456,11 +462,15 @@ pub fn plan_replay_linear_segment(
 
     let rewritten = commits_to_replay
         .iter()
-        .map(|&old| RewrittenCommit {
-            old,
-            new: Some(mapping.get(&old).copied().unwrap_or(old)),
+        .map(|&old| {
+            let new = mapping.get(&old).copied().unwrap_or(old);
+            Ok(RewrittenCommit {
+                old,
+                new: Some(new),
+                change_id: stored_change_id_for_commit(repo, new)?,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, HistoryError>>()?;
 
     let replay_tip = *replay_order.last().ok_or(HistoryError::Planning {
         message: "empty replay order".into(),
@@ -1197,6 +1207,15 @@ fn signing_err(err: Error) -> HistoryError {
     }
 }
 
+fn stored_change_id_for_commit(
+    repo: &Repository,
+    oid: ObjectId,
+) -> Result<Option<crate::change_id::ChangeId>, HistoryError> {
+    let obj = repo.odb().read(&oid).map_err(library_err)?;
+    let data = parse_commit(&obj.data).map_err(library_err)?;
+    Ok(change_id(&data))
+}
+
 fn plan_ref_updates(
     scoped_refs: &[(String, ObjectId)],
     mapping: &HashMap<ObjectId, ObjectId>,
@@ -1294,11 +1313,13 @@ pub fn plan_fold_range_at_head(
     for &oid in commits {
         mapping.insert(oid, new_oid);
     }
+    let squashed_change_id = stored_change_id_for_commit(repo, new_oid)?;
     let rewritten: Vec<RewrittenCommit> = commits
         .iter()
         .map(|&old| RewrittenCommit {
             old,
             new: Some(new_oid),
+            change_id: squashed_change_id.clone(),
         })
         .collect();
     let scoped_refs = collect_scoped_refs(repo, opts, oldest)?;
