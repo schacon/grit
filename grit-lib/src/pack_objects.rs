@@ -16,8 +16,8 @@ use crate::error::{Error, Result};
 use crate::hash::HashingWriter;
 use crate::objects::{
     empty_object_id_hash_set, oid_hash_map, oid_hash_map_from, oid_hash_set, oid_hash_set_from,
-    parse_commit, parse_tag, parse_tree, HashAlgo, Object, ObjectId, ObjectKind, OidHashMap,
-    OidHashSet,
+    parse_commit, parse_tag, HashAlgo, Object, ObjectId, ObjectKind, OidHashMap, OidHashSet,
+    TreeRefIter,
 };
 use crate::odb::Odb;
 use crate::repo::Repository;
@@ -869,6 +869,8 @@ fn collect_reachable_excluding(
         enqueue(root, &mut queue, &mut visited, &mut ordered);
     }
 
+    let oid_len = odb.hash_algo().len();
+
     while let Some(oid) = queue.pop_front() {
         let obj = match odb.read(&oid) {
             Ok(o) => o,
@@ -889,7 +891,8 @@ fn collect_reachable_excluding(
                 enqueue(commit.tree, &mut queue, &mut visited, &mut ordered);
             }
             ObjectKind::Tree => {
-                for entry in parse_tree(&obj.data)? {
+                for entry in TreeRefIter::with_oid_len(&obj.data, oid_len) {
+                    let entry = entry?;
                     // Skip submodule (gitlink) entries: the commit they name
                     // lives in another object store and is not part of this pack.
                     if entry.mode == 0o160000 {
