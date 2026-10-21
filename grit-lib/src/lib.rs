@@ -254,6 +254,7 @@ pub(crate) mod pack_receive;
 mod pack_reuse_root;
 pub(crate) mod pack_rev;
 pub(crate) mod pack_store;
+pub(crate) mod pack_stream_scan;
 #[path = "pack_write.rs"]
 mod pack_write_root;
 pub(crate) mod pack_zlib;

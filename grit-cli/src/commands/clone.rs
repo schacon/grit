@@ -414,7 +414,8 @@ pub fn run(url: &str, dir: Option<String>, mode: OutputMode) -> Result<CloneOutc
     let dest_preexisted_empty = dest_preexisted_empty(&path);
     let started = Instant::now();
 
-    let mut term_progress = TerminalProgress::new(mode);
+    // A clone always ends with a checkout, so the overall bar can size it.
+    let mut term_progress = TerminalProgress::new(mode).with_overall(true);
     if term_progress.is_drawing() {
         let color = term_progress.uses_color();
         eprintln!(

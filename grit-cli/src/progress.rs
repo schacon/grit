@@ -1,6 +1,7 @@
 //! Terminal progress for fetch, pull and clone: one live line per phase with a
 //! scrolling, colored throughput graph, kept on screen as a summary line when
-//! the phase finishes.
+//! the phase finishes. Clone adds an overall bar under the live line that
+//! estimates how far the whole operation is and how long is left.
 //!
 //! Phase timings are recorded even when nothing is drawn (non-TTY stderr,
 //! `--json`, `--markdown`) so commands can report them in their outcome.
@@ -8,7 +9,9 @@
 use std::io::{self, IsTerminal, Write};
 use std::time::{Duration, Instant};
 
-use grit_lib::progress::{ProgressPhase, ProgressSink, ProgressUnit};
+use grit_lib::progress::{
+    OverallEstimate, OverallEstimator, ProgressPhase, ProgressSink, ProgressUnit, ReceivedObjects,
+};
 use grit_lib::remote::fetch::Progress;
 use grit_lib::remote::sideband_lines::{RemoteLine, SidebandLines};
 use terminal_size::{terminal_size, Width};
@@ -26,6 +29,10 @@ const GRAPH_MIN: usize = 8;
 const BAR_WIDTH: usize = 10;
 /// Width of the phase label column.
 const LABEL_WIDTH: usize = 9;
+/// Widest the overall bar gets.
+const OVERALL_BAR_MAX: usize = 40;
+/// Cells in the sliding block shown while there is no estimate yet.
+const PULSE_WIDTH: usize = 6;
 
 const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const LEVELS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
@@ -68,6 +75,8 @@ struct ActivePhase {
     last_sample_count: u64,
     samples: Vec<f64>,
     peak_rate: f64,
+    /// Objects counted so far while a pack streams in (bytes are `current`).
+    objects: Option<ReceivedObjects>,
 }
 
 impl ActivePhase {
@@ -76,6 +85,7 @@ impl ActivePhase {
             phase,
             unit,
             total,
+            objects: None,
             current: 0,
             started: now,
             last_sample_at: now,
@@ -125,6 +135,10 @@ pub struct TerminalProgress {
     last_draw: Instant,
     frame: usize,
     remote_lines: SidebandLines,
+    /// Present when the overall bar is drawn under the live line.
+    overall: Option<OverallEstimator>,
+    /// Whether the overall bar is on screen and must be cleared at the end.
+    overall_on_screen: bool,
 }
 
 impl TerminalProgress {
@@ -143,7 +157,37 @@ impl TerminalProgress {
             last_draw: Instant::now() - MIN_REDRAW,
             frame: 0,
             remote_lines: SidebandLines::new(),
+            overall: None,
+            overall_on_screen: false,
         }
+    }
+
+    /// Also draw an overall bar with a time-left estimate under the live line.
+    ///
+    /// `checkout` says whether a work-tree checkout follows the transfer. The
+    /// bar needs cursor movement, so it is only drawn on ANSI terminals.
+    #[must_use]
+    pub fn with_overall(mut self, checkout: bool) -> Self {
+        if self.draw && self.color {
+            self.overall = Some(OverallEstimator::new(checkout));
+        }
+        self
+    }
+
+    fn since_start(&self) -> Duration {
+        self.origin.elapsed()
+    }
+
+    /// The overall bar line for this frame, when it is enabled.
+    fn overall_line(&mut self) -> Option<String> {
+        let at = self.since_start();
+        let estimate = self.overall.as_mut()?.estimate(at);
+        Some(render_overall(
+            estimate,
+            self.frame,
+            terminal_width(),
+            self.color,
+        ))
     }
 
     /// Whether live progress is being drawn on stderr.
@@ -177,8 +221,14 @@ impl TerminalProgress {
         }
         self.frame = self.frame.wrapping_add(1);
         let line = render_live(active, now, self.frame, terminal_width(), self.color);
+        let mut out = format!("\r{}{line}", clear_seq(self.color));
+        if let Some(overall) = self.overall_line() {
+            // Draw the bar on the row below, then return to the live line.
+            out.push_str(&format!("\n{overall}\x1b[1A\r"));
+            self.overall_on_screen = true;
+        }
         let mut err = io::stderr();
-        let _ = write!(err, "\r{}{line}", clear_seq(self.color));
+        let _ = write!(err, "{out}");
         let _ = err.flush();
         self.last_draw = now;
     }
@@ -188,14 +238,23 @@ impl TerminalProgress {
             return;
         };
         let record = active.into_record(Instant::now(), self.origin);
+        let at = self.since_start();
+        if let Some(overall) = &mut self.overall {
+            overall.finish(at);
+        }
         // A phase that processed nothing (e.g. an empty local copy step) is noise.
         if record.count == 0 {
             return;
         }
         if self.draw {
             let line = render_done(&record, terminal_width(), self.color);
+            let mut out = format!("\r{}{line}\n", clear_seq(self.color));
+            // Keep the overall bar up through the gap before the next phase.
+            if let Some(overall) = self.overall_line() {
+                out.push_str(&format!("{overall}\r"));
+            }
             let mut err = io::stderr();
-            let _ = writeln!(err, "\r{}{line}", clear_seq(self.color));
+            let _ = write!(err, "{out}");
             let _ = err.flush();
         }
         self.finished.push(record);
@@ -238,6 +297,32 @@ impl Progress for TerminalProgress {
     fn remote_sideband_progress(&self) -> bool {
         self.draw
     }
+
+    fn wants_received_objects(&self) -> bool {
+        self.overall.is_some()
+    }
+
+    fn received_objects(&mut self, counts: ReceivedObjects) {
+        let at = self.since_start();
+        if let Some(overall) = &mut self.overall {
+            overall.received_objects(counts, at);
+        }
+        if let Some(active) = &mut self.active {
+            active.objects = Some(counts);
+        }
+        self.redraw(false);
+    }
+}
+
+impl Drop for TerminalProgress {
+    fn drop(&mut self) {
+        if self.overall_on_screen {
+            // The bar is only an estimate; take it down once the work is over.
+            let mut err = io::stderr();
+            let _ = write!(err, "\r{}", clear_seq(self.color));
+            let _ = err.flush();
+        }
+    }
 }
 
 impl ProgressSink for TerminalProgress {
@@ -247,6 +332,10 @@ impl ProgressSink for TerminalProgress {
 
     fn start_with_unit(&mut self, phase: ProgressPhase, unit: ProgressUnit, total: Option<u64>) {
         self.finish_active();
+        let at = self.since_start();
+        if let Some(overall) = &mut self.overall {
+            overall.start(phase, unit, total, at);
+        }
         self.active = Some(ActivePhase::new(phase, unit, total, Instant::now()));
         self.redraw(true);
     }
@@ -255,6 +344,9 @@ impl ProgressSink for TerminalProgress {
         let Some(active) = self.active.as_mut() else {
             return;
         };
+        if let Some(overall) = &mut self.overall {
+            overall.inc(units);
+        }
         active.current = active.current.saturating_add(units);
         active.sample(Instant::now(), false);
         self.redraw(false);
@@ -264,6 +356,9 @@ impl ProgressSink for TerminalProgress {
         let Some(active) = self.active.as_mut() else {
             return;
         };
+        if let Some(overall) = &mut self.overall {
+            overall.set(current);
+        }
         active.current = current;
         active.sample(Instant::now(), false);
         self.redraw(false);
@@ -281,11 +376,11 @@ fn terminal_width() -> usize {
         .max(20)
 }
 
-/// Return to column 0 and erase the row: an ANSI erase when color is on, else
-/// overwrite with spaces.
+/// Erase from the cursor (at column 0) down: an ANSI erase of this row and
+/// any overall bar below it when color is on, else overwrite with spaces.
 fn clear_seq(color: bool) -> String {
     if color {
-        "\x1b[2K".to_owned()
+        "\x1b[J".to_owned()
     } else {
         format!("{}\r", " ".repeat(terminal_width()))
     }
@@ -562,12 +657,18 @@ fn render_live(
         .copied()
         .unwrap_or_else(|| rate(active.current, elapsed));
 
+    // A pack being received can be counted in objects even though its
+    // length in bytes is unknown up front.
+    let (unit, current, total) = match active.objects {
+        Some(o) if o.total > 0 => (ProgressUnit::Objects, o.received, Some(o.total)),
+        _ => (active.unit, active.current, active.total),
+    };
     let mut stats = vec![column(
-        count_text(active.phase, active.unit, active.current, active.total),
+        count_text(active.phase, unit, current, total),
         COUNT_COL,
     )];
-    if let Some(total) = active.total.filter(|&t| t > 0) {
-        stats.push(completion_bar(active.current, total, palette, color));
+    if let Some(total) = total.filter(|&t| t > 0) {
+        stats.push(completion_bar(current, total, palette, color));
     }
     stats.push(column(
         format_unit_rate(active.unit, current_rate, active.phase),
@@ -618,6 +719,79 @@ fn render_done(record: &PhaseRecord, width: usize, color: bool) -> String {
         width,
         color,
     )
+}
+
+/// `~12s left`, `~1m 05s left`, or `<1s left`.
+fn format_eta(left: Duration) -> String {
+    let secs = left.as_secs_f64().round() as u64;
+    match secs {
+        0 => "<1s left".to_owned(),
+        s if s < 60 => format!("~{s}s left"),
+        s => format!("~{}m {:02}s left", s / 60, s % 60),
+    }
+}
+
+/// Color of the overall bar's filled cells.
+const OVERALL_SHADE: u8 = 75;
+
+/// The overall bar: how much of the whole operation is done and the time
+/// left, or a sliding block while there is nothing to estimate from yet.
+fn render_overall(
+    estimate: Option<OverallEstimate>,
+    frame: usize,
+    width: usize,
+    color: bool,
+) -> String {
+    let label = format!("{:<LABEL_WIDTH$}", "Overall");
+    let (tail, tail_width) = match estimate {
+        Some(e) => {
+            let pct = format!("{:>3}%", (e.fraction * 100.0).floor() as u64);
+            let eta = format_eta(e.remaining);
+            let w = pct.len() + 2 + eta.chars().count();
+            (format!("{pct}  {}", paint(color, DIM, &eta)), w)
+        }
+        None => {
+            let text = "estimating";
+            (paint(color, DIM, text), text.len())
+        }
+    };
+    let fixed = 2 + LABEL_WIDTH + 2 + 2 + tail_width;
+    let bar_width = width.saturating_sub(fixed).min(OVERALL_BAR_MAX);
+    // The bar is `before` empty cells, `on` filled cells, then empty cells.
+    let (before, on) = match estimate {
+        Some(e) => (
+            0,
+            ((e.fraction * bar_width as f64).floor() as usize).min(bar_width),
+        ),
+        None if bar_width > PULSE_WIDTH => {
+            // Bounce a short block back and forth across the bar.
+            let span = bar_width - PULSE_WIDTH;
+            let step = frame % (2 * span);
+            (
+                if step < span { step } else { 2 * span - step },
+                PULSE_WIDTH,
+            )
+        }
+        None => (0, 0),
+    };
+    let after = bar_width - before - on;
+    let filled = "━".repeat(on);
+    let bar = format!(
+        "{}{}{}",
+        paint(color, DIM, &"─".repeat(before)),
+        paint(color, &format!("38;5;{OVERALL_SHADE}"), &filled),
+        paint(color, DIM, &"─".repeat(after)),
+    );
+    let mut line = format!("  {}", paint(color, BOLD, &label));
+    if bar_width > 0 {
+        line.push_str("  ");
+        line.push_str(&bar);
+    }
+    if 2 + LABEL_WIDTH + 2 + bar_width + 2 + tail_width <= width {
+        line.push_str("  ");
+        line.push_str(&tail);
+    }
+    line
 }
 
 /// Format a byte count for display (binary units).
@@ -822,6 +996,82 @@ mod tests {
         assert!(line.contains("50/200"), "{line}");
         assert!(line.contains(" 25%"), "{line}");
         assert!(line.contains("25 objects/s"), "{line}");
+    }
+
+    #[test]
+    fn receiving_line_counts_objects_once_known() {
+        let now = Instant::now();
+        let mut active = ActivePhase::new(
+            ProgressPhase::ReceivingObjects,
+            ProgressUnit::Bytes,
+            None,
+            now - Duration::from_secs(1),
+        );
+        active.current = 3 * 1024 * 1024;
+        let bytes_only = visible(&render_live(&active, now, 0, 120, false));
+        assert!(bytes_only.contains("3.00 MiB"), "{bytes_only}");
+        assert!(!bytes_only.contains('%'), "{bytes_only}");
+
+        active.objects = Some(ReceivedObjects {
+            received: 250,
+            total: 1_000,
+            deltas: 100,
+        });
+        let counted = visible(&render_live(&active, now, 0, 120, false));
+        assert!(counted.contains("250/1,000"), "{counted}");
+        assert!(counted.contains(" 25%"), "{counted}");
+    }
+
+    #[test]
+    fn overall_line_shows_share_and_time_left() {
+        let estimate = OverallEstimate {
+            fraction: 0.475,
+            remaining: Duration::from_secs(12),
+        };
+        let line = visible(&render_overall(Some(estimate), 0, 100, true));
+        assert!(line.trim_start().starts_with("Overall"), "{line}");
+        assert!(line.contains(" 47%"), "{line}");
+        assert!(line.contains("~12s left"), "{line}");
+        let filled = line.chars().filter(|&c| c == '━').count();
+        let empty = line.chars().filter(|&c| c == '─').count();
+        assert_eq!(filled + empty, OVERALL_BAR_MAX);
+        assert_eq!(filled, 19);
+    }
+
+    #[test]
+    fn overall_line_pulses_until_there_is_an_estimate() {
+        let a = visible(&render_overall(None, 0, 100, false));
+        let b = visible(&render_overall(None, 5, 100, false));
+        assert!(a.contains("estimating"), "{a}");
+        assert_eq!(a.chars().filter(|&c| c == '━').count(), PULSE_WIDTH);
+        assert_ne!(a, b, "the block moves between frames");
+    }
+
+    #[test]
+    fn overall_line_fits_narrow_terminals() {
+        let estimate = OverallEstimate {
+            fraction: 0.5,
+            remaining: Duration::from_secs(75),
+        };
+        for width in [20_usize, 40, 60, 80, 200] {
+            for e in [Some(estimate), None] {
+                let line = visible(&render_overall(e, 3, width, true));
+                assert!(line.chars().count() <= width, "width {width}: {line:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn eta_is_coarse() {
+        assert_eq!(format_eta(Duration::from_millis(300)), "<1s left");
+        assert_eq!(format_eta(Duration::from_secs(12)), "~12s left");
+        assert_eq!(format_eta(Duration::from_secs(65)), "~1m 05s left");
+    }
+
+    #[test]
+    fn overall_needs_an_ansi_terminal() {
+        let sink = TerminalProgress::new(OutputMode::Json).with_overall(true);
+        assert!(!sink.wants_received_objects());
     }
 
     #[test]

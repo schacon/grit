@@ -125,6 +125,10 @@ pub mod pack_receive {
     //! Receive-pack side pack ingestion.
     pub use crate::pack_receive::*;
 }
+pub mod pack_stream_scan {
+    //! Count a pack's objects while its bytes are still arriving.
+    pub use crate::pack_stream_scan::*;
+}
 
 #[cfg(feature = "unstable-bench-helpers")]
 #[allow(missing_docs)]

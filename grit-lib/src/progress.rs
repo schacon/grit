@@ -24,6 +24,10 @@
 //! # }
 //! ```
 
+mod estimate;
+
+pub use estimate::{OverallEstimate, OverallEstimator, PhaseRates};
+
 /// A coarse phase of a long-running Git operation.
 ///
 /// New variants may be added over time; match exhaustively only in the CLI or
@@ -66,6 +70,21 @@ pub enum ProgressUnit {
     Bytes,
     /// Work-tree paths.
     Files,
+}
+
+/// How far a pack transfer has got, counted in objects rather than bytes.
+///
+/// Reported through [`crate::fetch::Progress::received_objects`] while a pack
+/// streams in, when the sink asks for it with
+/// [`crate::fetch::Progress::wants_received_objects`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ReceivedObjects {
+    /// Objects fully received so far.
+    pub received: u64,
+    /// Objects in the pack, from its header.
+    pub total: u64,
+    /// How many of the received objects are deltas.
+    pub deltas: u64,
 }
 
 /// A sink for progress updates emitted by a library operation.

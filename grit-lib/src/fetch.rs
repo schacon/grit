@@ -45,6 +45,22 @@ pub trait Progress: ProgressSink {
     fn remote_sideband_progress(&self) -> bool {
         false
     }
+
+    /// When true, a pack being received is also counted in objects and
+    /// reported through [`Progress::received_objects`].
+    ///
+    /// Counting inflates every entry once more on a background thread (the
+    /// receive itself never waits on it), so leave this off unless the counts
+    /// are shown.
+    fn wants_received_objects(&self) -> bool {
+        false
+    }
+
+    /// Objects received so far in the pack being streamed in, reported during
+    /// the [`ReceivingObjects`](crate::progress::ProgressPhase::ReceivingObjects)
+    /// phase when [`Progress::wants_received_objects`] is true. Counts may lag
+    /// the bytes reported through [`ProgressSink::inc`] slightly.
+    fn received_objects(&mut self, _counts: crate::progress::ReceivedObjects) {}
 }
 
 /// A [`Progress`] / [`ProgressSink`] that discards everything.

@@ -8661,6 +8661,46 @@ impl core::marker::Unpin for grit_lib::objects::pack_store::PackStore
 impl core::marker::UnsafeUnpin for grit_lib::objects::pack_store::PackStore
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::pack_store::PackStore
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::pack_store::PackStore
+pub mod grit_lib::objects::pack_stream_scan
+#[non_exhaustive] pub enum grit_lib::objects::pack_stream_scan::PackStreamScanError
+pub grit_lib::objects::pack_stream_scan::PackStreamScanError::BadSignature
+pub grit_lib::objects::pack_stream_scan::PackStreamScanError::HeaderTooLong
+pub grit_lib::objects::pack_stream_scan::PackStreamScanError::Inflate(u64)
+pub grit_lib::objects::pack_stream_scan::PackStreamScanError::InvalidEntryType(u8)
+pub grit_lib::objects::pack_stream_scan::PackStreamScanError::UnsupportedVersion(u32)
+impl core::clone::Clone for grit_lib::objects::pack_stream_scan::PackStreamScanError
+pub fn grit_lib::objects::pack_stream_scan::PackStreamScanError::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::objects::pack_stream_scan::PackStreamScanError
+impl core::cmp::PartialEq for grit_lib::objects::pack_stream_scan::PackStreamScanError
+pub fn grit_lib::objects::pack_stream_scan::PackStreamScanError::eq(&self, &Self) -> bool
+impl core::error::Error for grit_lib::objects::pack_stream_scan::PackStreamScanError
+impl core::fmt::Debug for grit_lib::objects::pack_stream_scan::PackStreamScanError
+pub fn grit_lib::objects::pack_stream_scan::PackStreamScanError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::objects::pack_stream_scan::PackStreamScanError
+pub fn grit_lib::objects::pack_stream_scan::PackStreamScanError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::objects::pack_stream_scan::PackStreamScanError
+impl core::marker::Freeze for grit_lib::objects::pack_stream_scan::PackStreamScanError
+impl core::marker::Send for grit_lib::objects::pack_stream_scan::PackStreamScanError
+impl core::marker::Sync for grit_lib::objects::pack_stream_scan::PackStreamScanError
+impl core::marker::Unpin for grit_lib::objects::pack_stream_scan::PackStreamScanError
+impl core::marker::UnsafeUnpin for grit_lib::objects::pack_stream_scan::PackStreamScanError
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::pack_stream_scan::PackStreamScanError
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::pack_stream_scan::PackStreamScanError
+pub struct grit_lib::objects::pack_stream_scan::PackStreamScanner
+impl grit_lib::objects::pack_stream_scan::PackStreamScanner
+pub fn grit_lib::objects::pack_stream_scan::PackStreamScanner::counts(&self) -> core::option::Option<grit_lib::progress::ReceivedObjects>
+pub fn grit_lib::objects::pack_stream_scan::PackStreamScanner::feed(&mut self, &[u8]) -> core::result::Result<(), grit_lib::objects::pack_stream_scan::PackStreamScanError>
+pub fn grit_lib::objects::pack_stream_scan::PackStreamScanner::is_complete(&self) -> bool
+pub fn grit_lib::objects::pack_stream_scan::PackStreamScanner::new(grit_lib::objects::HashAlgo) -> Self
+impl core::fmt::Debug for grit_lib::objects::pack_stream_scan::PackStreamScanner
+pub fn grit_lib::objects::pack_stream_scan::PackStreamScanner::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::objects::pack_stream_scan::PackStreamScanner
+impl core::marker::Send for grit_lib::objects::pack_stream_scan::PackStreamScanner
+impl core::marker::Sync for grit_lib::objects::pack_stream_scan::PackStreamScanner
+impl core::marker::Unpin for grit_lib::objects::pack_stream_scan::PackStreamScanner
+impl core::marker::UnsafeUnpin for grit_lib::objects::pack_stream_scan::PackStreamScanner
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::pack_stream_scan::PackStreamScanner
+impl !core::panic::unwind_safe::UnwindSafe for grit_lib::objects::pack_stream_scan::PackStreamScanner
 pub mod grit_lib::objects::pack_write
 pub struct grit_lib::objects::pack_write::InstallPackOptions
 pub grit_lib::objects::pack_write::InstallPackOptions::hash_algo: grit_lib::objects::HashAlgo
@@ -11490,6 +11530,88 @@ impl core::marker::Unpin for grit_lib::progress::NullProgress
 impl core::marker::UnsafeUnpin for grit_lib::progress::NullProgress
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::progress::NullProgress
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::progress::NullProgress
+pub struct grit_lib::progress::OverallEstimate
+pub grit_lib::progress::OverallEstimate::fraction: f64
+pub grit_lib::progress::OverallEstimate::remaining: core::time::Duration
+impl core::clone::Clone for grit_lib::progress::OverallEstimate
+pub fn grit_lib::progress::OverallEstimate::clone(&self) -> Self
+impl core::cmp::PartialEq for grit_lib::progress::OverallEstimate
+pub fn grit_lib::progress::OverallEstimate::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::progress::OverallEstimate
+pub fn grit_lib::progress::OverallEstimate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::progress::OverallEstimate
+impl core::marker::StructuralPartialEq for grit_lib::progress::OverallEstimate
+impl core::marker::Freeze for grit_lib::progress::OverallEstimate
+impl core::marker::Send for grit_lib::progress::OverallEstimate
+impl core::marker::Sync for grit_lib::progress::OverallEstimate
+impl core::marker::Unpin for grit_lib::progress::OverallEstimate
+impl core::marker::UnsafeUnpin for grit_lib::progress::OverallEstimate
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::progress::OverallEstimate
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::progress::OverallEstimate
+pub struct grit_lib::progress::OverallEstimator
+impl grit_lib::progress::OverallEstimator
+pub fn grit_lib::progress::OverallEstimator::estimate(&mut self, core::time::Duration) -> core::option::Option<grit_lib::progress::OverallEstimate>
+pub fn grit_lib::progress::OverallEstimator::finish(&mut self, core::time::Duration)
+pub fn grit_lib::progress::OverallEstimator::inc(&mut self, u64)
+pub fn grit_lib::progress::OverallEstimator::new(bool) -> Self
+pub fn grit_lib::progress::OverallEstimator::received_objects(&mut self, grit_lib::progress::ReceivedObjects, core::time::Duration)
+pub fn grit_lib::progress::OverallEstimator::set(&mut self, u64)
+pub fn grit_lib::progress::OverallEstimator::start(&mut self, grit_lib::progress::ProgressPhase, grit_lib::progress::ProgressUnit, core::option::Option<u64>, core::time::Duration)
+pub fn grit_lib::progress::OverallEstimator::with_rates(self, grit_lib::progress::PhaseRates) -> Self
+impl core::clone::Clone for grit_lib::progress::OverallEstimator
+pub fn grit_lib::progress::OverallEstimator::clone(&self) -> Self
+impl core::fmt::Debug for grit_lib::progress::OverallEstimator
+pub fn grit_lib::progress::OverallEstimator::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::progress::OverallEstimator
+impl core::marker::Send for grit_lib::progress::OverallEstimator
+impl core::marker::Sync for grit_lib::progress::OverallEstimator
+impl core::marker::Unpin for grit_lib::progress::OverallEstimator
+impl core::marker::UnsafeUnpin for grit_lib::progress::OverallEstimator
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::progress::OverallEstimator
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::progress::OverallEstimator
+pub struct grit_lib::progress::PhaseRates
+pub grit_lib::progress::PhaseRates::checkout: f64
+pub grit_lib::progress::PhaseRates::indexing: f64
+pub grit_lib::progress::PhaseRates::resolving: f64
+impl core::clone::Clone for grit_lib::progress::PhaseRates
+pub fn grit_lib::progress::PhaseRates::clone(&self) -> Self
+impl core::cmp::PartialEq for grit_lib::progress::PhaseRates
+pub fn grit_lib::progress::PhaseRates::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::progress::PhaseRates
+pub fn grit_lib::progress::PhaseRates::default() -> Self
+impl core::fmt::Debug for grit_lib::progress::PhaseRates
+pub fn grit_lib::progress::PhaseRates::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::progress::PhaseRates
+impl core::marker::StructuralPartialEq for grit_lib::progress::PhaseRates
+impl core::marker::Freeze for grit_lib::progress::PhaseRates
+impl core::marker::Send for grit_lib::progress::PhaseRates
+impl core::marker::Sync for grit_lib::progress::PhaseRates
+impl core::marker::Unpin for grit_lib::progress::PhaseRates
+impl core::marker::UnsafeUnpin for grit_lib::progress::PhaseRates
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::progress::PhaseRates
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::progress::PhaseRates
+pub struct grit_lib::progress::ReceivedObjects
+pub grit_lib::progress::ReceivedObjects::deltas: u64
+pub grit_lib::progress::ReceivedObjects::received: u64
+pub grit_lib::progress::ReceivedObjects::total: u64
+impl core::clone::Clone for grit_lib::progress::ReceivedObjects
+pub fn grit_lib::progress::ReceivedObjects::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::progress::ReceivedObjects
+impl core::cmp::PartialEq for grit_lib::progress::ReceivedObjects
+pub fn grit_lib::progress::ReceivedObjects::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::progress::ReceivedObjects
+pub fn grit_lib::progress::ReceivedObjects::default() -> Self
+impl core::fmt::Debug for grit_lib::progress::ReceivedObjects
+pub fn grit_lib::progress::ReceivedObjects::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::progress::ReceivedObjects
+impl core::marker::StructuralPartialEq for grit_lib::progress::ReceivedObjects
+impl core::marker::Freeze for grit_lib::progress::ReceivedObjects
+impl core::marker::Send for grit_lib::progress::ReceivedObjects
+impl core::marker::Sync for grit_lib::progress::ReceivedObjects
+impl core::marker::Unpin for grit_lib::progress::ReceivedObjects
+impl core::marker::UnsafeUnpin for grit_lib::progress::ReceivedObjects
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::progress::ReceivedObjects
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::progress::ReceivedObjects
 pub trait grit_lib::progress::Cancel
 pub fn grit_lib::progress::Cancel::is_cancelled(&self) -> bool
 impl grit_lib::progress::Cancel for grit_lib::progress::NeverCancel
@@ -13042,7 +13164,9 @@ pub fn grit_lib::remote::fetch::NoProgress::start(&mut self, grit_lib::progress:
 pub fn grit_lib::remote::fetch::NoProgress::start_with_unit(&mut self, grit_lib::progress::ProgressPhase, grit_lib::progress::ProgressUnit, core::option::Option<u64>)
 impl grit_lib::remote::fetch::Progress for grit_lib::remote::fetch::NoProgress
 pub fn grit_lib::remote::fetch::NoProgress::message(&mut self, &[u8])
+pub fn grit_lib::remote::fetch::NoProgress::received_objects(&mut self, grit_lib::progress::ReceivedObjects)
 pub fn grit_lib::remote::fetch::NoProgress::remote_sideband_progress(&self) -> bool
+pub fn grit_lib::remote::fetch::NoProgress::wants_received_objects(&self) -> bool
 impl core::marker::Freeze for grit_lib::remote::fetch::NoProgress
 impl core::marker::Send for grit_lib::remote::fetch::NoProgress
 impl core::marker::Sync for grit_lib::remote::fetch::NoProgress
@@ -13052,10 +13176,14 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::fetch::NoProg
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::fetch::NoProgress
 pub trait grit_lib::remote::fetch::Progress: grit_lib::progress::ProgressSink
 pub fn grit_lib::remote::fetch::Progress::message(&mut self, &[u8])
+pub fn grit_lib::remote::fetch::Progress::received_objects(&mut self, grit_lib::progress::ReceivedObjects)
 pub fn grit_lib::remote::fetch::Progress::remote_sideband_progress(&self) -> bool
+pub fn grit_lib::remote::fetch::Progress::wants_received_objects(&self) -> bool
 impl grit_lib::remote::fetch::Progress for grit_lib::remote::fetch::NoProgress
 pub fn grit_lib::remote::fetch::NoProgress::message(&mut self, &[u8])
+pub fn grit_lib::remote::fetch::NoProgress::received_objects(&mut self, grit_lib::progress::ReceivedObjects)
 pub fn grit_lib::remote::fetch::NoProgress::remote_sideband_progress(&self) -> bool
+pub fn grit_lib::remote::fetch::NoProgress::wants_received_objects(&self) -> bool
 pub fn grit_lib::remote::fetch::fetch_operation_identity(&grit_lib::config::environment::Environment, &std::path::Path) -> grit_lib::error::Result<alloc::string::String>
 pub fn grit_lib::remote::fetch::fetch_remote(&std::path::Path, &mut dyn grit_lib::remote::transport::Connection, &grit_lib::remote::transfer::FetchOptions, &mut dyn grit_lib::remote::fetch::Progress) -> grit_lib::error::Result<grit_lib::remote::transfer::FetchOutcome>
 pub mod grit_lib::remote::fetch_head
