@@ -58,6 +58,19 @@ pub fn structured_json_payload(err: &Error) -> Option<StructuredJsonError> {
     err.downcast_ref::<StructuredCliError>()
         .map(|e| e.payload.clone())
 }
+/// Build a structured error for incompatible `--json` / `--markdown` flag combinations.
+pub fn incompatible_output_flags(human: impl Into<String>, kind: &'static str) -> Error {
+    let human = human.into();
+    Error::new(StructuredCliError {
+        payload: StructuredJsonError {
+            error: human.clone(),
+            kind,
+            conflicts: None,
+        },
+        human,
+    })
+}
+
 /// Exit code for invalid `--author` / `--grep` patterns (documented on `grit log` / `grit revs`).
 pub const INVALID_COMMIT_FILTER_EXIT: i32 = 129;
 
