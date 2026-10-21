@@ -44,6 +44,39 @@ fn sh_redirect_stdin(cmd: &str, input: &Path) -> String {
     format!("{cmd} < {}", shell_quote_path(input))
 }
 
+/// Scenario spec for the 256 MiB blob hash-object benchmark.
+///
+/// Git runs `hash-object -w`; grit runs the library-backed `drive hash-object-stdin` path.
+fn hash_object_256mib_scenario(
+    payload: &Path,
+    bare: &Path,
+    bench_exe: &Path,
+    git: &Path,
+) -> Scenario {
+    let git_hash = shell_command(git, &["hash-object", "-w", "--stdin"]);
+    let grit_hash = shell_command(
+        bench_exe,
+        &[
+            "drive".into(),
+            "hash-object-stdin".into(),
+            "--repo".into(),
+            bare.display().to_string(),
+        ],
+    );
+    Scenario {
+        id: "hash-object-256mib".into(),
+        group: "hash".into(),
+        fixture: payload.display().to_string(),
+        description: "Write one 256 MiB blob from stdin (hash-object -w)".into(),
+        grit_argv: vec![sh_redirect_stdin(&grit_hash, payload)],
+        git_argv: vec![sh_redirect_stdin(&git_hash, payload)],
+        driver: Driver::Lib,
+        prepare_kind: None,
+        grit_via_shell: true,
+        git_via_shell: true,
+    }
+}
+
 fn find_primary_pack(repo: &Path) -> Result<PathBuf> {
     let pack_dir = repo.join("objects/pack");
     let mut packs: Vec<PathBuf> = fs::read_dir(&pack_dir)
@@ -249,34 +282,13 @@ pub fn run_hash_suite(
     smoke: bool,
     timestamp: OffsetDateTime,
 ) -> Result<BenchReport> {
-    let bench_exe = std::env::current_exe().context("current exe")?;
+    let bench_exe = cfg.prepare_bin.clone();
     let payload = ensure_hash_payload()?;
     let bare = ensure_hash_object_bare(git)?;
     prepare_hash_object(git, &bare)?;
 
-    let git_hash = shell_command(git, &["hash-object", "-w", "--stdin"]);
-    let grit_hash = shell_command(
-        &bench_exe,
-        &[
-            "drive".into(),
-            "hash-object-stdin".into(),
-            "--repo".into(),
-            bare.display().to_string(),
-        ],
-    );
     let hash_prepare = prepare_hash_object_command(&bench_exe, git, &bare);
-    let hash_scenario = Scenario {
-        id: "hash-object-256mib".into(),
-        group: "hash".into(),
-        fixture: payload.display().to_string(),
-        description: "Write one 256 MiB blob from stdin (hash-object -w)".into(),
-        grit_argv: vec![sh_redirect_stdin(&grit_hash, &payload)],
-        git_argv: vec![sh_redirect_stdin(&git_hash, &payload)],
-        driver: Driver::Cli,
-        prepare_kind: None,
-        grit_via_shell: true,
-        git_via_shell: true,
-    };
+    let hash_scenario = hash_object_256mib_scenario(&payload, &bare, &bench_exe, git);
     let hash_result = run_hash_scenario(&HashScenarioRun {
         hyperfine,
         bench_exe: &bench_exe,
@@ -383,5 +395,32 @@ impl From<&HashRunConfig> for crate::scenarios::RunConfig {
             prepare_bin: cfg.prepare_bin.clone(),
             isolated_config: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn hash_object_scenario_uses_lib_driver_for_grit_bench_drive() {
+        let payload = Path::new("/tmp/hash-bench-256mib.bin");
+        let bare = Path::new("/tmp/hash-object-bench.git");
+        let bench = Path::new("/usr/bin/grit-bench");
+        let git = Path::new("/usr/bin/git");
+        let scenario = hash_object_256mib_scenario(payload, bare, bench, git);
+        assert_eq!(scenario.driver, Driver::Lib);
+        assert!(scenario.grit_via_shell);
+        let grit_cmd = &scenario.grit_argv[0];
+        assert!(
+            grit_cmd.contains("drive") && grit_cmd.contains("hash-object-stdin"),
+            "grit side must use grit-bench drive, got: {grit_cmd}"
+        );
+        let git_cmd = &scenario.git_argv[0];
+        assert!(
+            git_cmd.contains("hash-object") && git_cmd.contains("--stdin"),
+            "git side must use hash-object --stdin, got: {git_cmd}"
+        );
     }
 }

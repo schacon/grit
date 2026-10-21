@@ -23,7 +23,7 @@
       "group": "hash",
       "fixture": "/tmp/grit-bench-scratch/hash-bench-256mib.bin",
       "description": "Write one 256 MiB blob from stdin (hash-object -w)",
-      "driver": "cli",
+      "driver": "lib",
       "git": {
         "mean_ms": 5905.68791042,
         "median_ms": 5907.123624819999,
