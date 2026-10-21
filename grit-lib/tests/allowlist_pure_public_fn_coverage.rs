@@ -21,6 +21,7 @@ use grit_lib::config::ident::SignatureTimestamp;
 use grit_lib::config::ident::{fsck_commit_idents, timestamp_for_at_ct};
 use grit_lib::config::ident_resolve::{peek_name_with, IdentRole};
 use grit_lib::config::ConfigSet;
+use grit_lib::lockfile::{LockFile, LockWait, SystemLockJitter};
 use grit_lib::diff::{
     detect_copies, format_stat_line, read_submodule_head_for_checkout,
     submodule_commit_subject_line, unified_diff, unified_diff_with_prefix,
@@ -51,6 +52,20 @@ use grit_lib::worktree::attributes::builtin_objectmode_index;
 use grit_lib::worktree::resolve_linked_worktree_add_path;
 use grit_lib::worktree::worktree_cwd::cwd_would_be_removed_with_dir;
 use tempfile::tempdir;
+
+#[test]
+fn lockfile_public_surface() {
+    let dir = tempdir().expect("tempdir");
+    let lock_path = dir.path().join("sample.lock");
+    let wait = LockWait::files_ref_lock(None);
+    let _ = LockWait::parse_files_ref_lock_timeout_ms(None);
+    let _jitter = SystemLockJitter;
+    let mut lock = LockFile::acquire(&lock_path, wait).expect("acquire");
+    let _ = lock.as_file().expect("as_file");
+    let _ = lock.as_file_mut().expect("as_file_mut");
+    lock.rollback();
+    assert!(!lock_path.exists());
+}
 
 fn init_repo(dir: &Path) -> Repository {
     Repository::init(

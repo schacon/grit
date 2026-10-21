@@ -26,13 +26,35 @@ pub enum LockWait {
         /// Total time budget for acquisition attempts.
         budget: Duration,
     },
+    /// Retry until the lock is acquired (Git `core.filesRefLockTimeout = -1`).
+    Indefinitely,
 }
 
 impl LockWait {
-    /// `core.filesRefLockTimeout` (microseconds), default 100 ms when unset.
+    /// `core.filesRefLockTimeout` (milliseconds), default 100 ms when unset.
     #[must_use]
     pub fn files_ref_lock(config: Option<&ConfigSet>) -> Self {
-        Self::from_microseconds_config(config, "core.filesreflocktimeout", 100_000)
+        Self::from_files_ref_lock_timeout_ms(Self::parse_files_ref_lock_timeout_ms(config))
+    }
+
+    /// Parse `core.filesRefLockTimeout` the way Git does (milliseconds).
+    #[must_use]
+    pub fn parse_files_ref_lock_timeout_ms(config: Option<&ConfigSet>) -> i64 {
+        config
+            .and_then(|cfg| cfg.get("core.filesreflocktimeout"))
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .unwrap_or(100)
+    }
+
+    #[must_use]
+    fn from_files_ref_lock_timeout_ms(timeout_ms: i64) -> Self {
+        match timeout_ms {
+            0 => Self::Immediately,
+            ms if ms < 0 => Self::Indefinitely,
+            ms => Self::Backoff {
+                budget: Duration::from_millis(ms as u64),
+            },
+        }
     }
 
     /// `core.packedRefsTimeout` (milliseconds), default 1000 ms when unset.
@@ -59,25 +81,6 @@ impl LockWait {
     pub fn packed_refs_for_git_dir(git_dir: &Path) -> Self {
         let config = ConfigSet::load(&Environment::empty(), Some(git_dir), true).ok();
         Self::packed_refs(config.as_ref())
-    }
-
-    fn from_microseconds_config(
-        config: Option<&ConfigSet>,
-        key: &str,
-        default_micros: u64,
-    ) -> Self {
-        let micros = config
-            .and_then(|cfg| cfg.get(key))
-            .and_then(|v| v.trim().parse::<i64>().ok())
-            .map(|v| v.max(0) as u64)
-            .unwrap_or(default_micros);
-        if micros == 0 {
-            Self::Immediately
-        } else {
-            Self::Backoff {
-                budget: Duration::from_micros(micros),
-            }
-        }
     }
 
     fn from_milliseconds_config(config: Option<&ConfigSet>, key: &str, default_ms: u64) -> Self {
@@ -126,6 +129,28 @@ pub trait LockClock: Send + Sync {
     fn sleep(&self, duration: Duration);
 }
 
+/// Injectable jitter so concurrent processes do not sleep in lockstep.
+pub trait LockJitter: Send + Sync {
+    /// Fraction in `[0.0, 1.0)` scaled into backoff delays.
+    fn fraction(&self, lock_path: &Path, attempt: u32) -> f64;
+}
+
+/// OS random bytes for cross-process jitter (Git-style lock backoff).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemLockJitter;
+
+impl LockJitter for SystemLockJitter {
+    fn fraction(&self, _lock_path: &Path, _attempt: u32) -> f64 {
+        let mut buf = [0u8; 8];
+        if getrandom::getrandom(&mut buf).is_ok() {
+            let n = u64::from_le_bytes(buf);
+            (n % 10_000) as f64 / 10_000.0
+        } else {
+            0.5
+        }
+    }
+}
+
 /// Wall-clock backoff using [`std::thread::sleep`].
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemLockClock;
@@ -151,8 +176,6 @@ pub struct LockFile {
     commit_path: Option<PathBuf>,
     file: Option<File>,
     committed: bool,
-    #[allow(dead_code)]
-    clock: Arc<dyn LockClock>,
 }
 
 impl LockFile {
@@ -167,14 +190,20 @@ impl LockFile {
     /// Returns [`LockError::Held`] when the lock exists and the wait budget is exhausted, or
     /// [`LockError::Io`] for other failures.
     pub fn acquire(target: &Path, wait: LockWait) -> Result<Self, LockError> {
-        Self::acquire_with_clock(target, wait, Arc::new(SystemLockClock))
+        Self::acquire_with_clock(
+            target,
+            wait,
+            Arc::new(SystemLockClock),
+            Arc::new(SystemLockJitter),
+        )
     }
 
-    /// Like [`Self::acquire`], with an injectable clock for unit tests.
+    /// Like [`Self::acquire`], with injectable clock and jitter for unit tests.
     pub fn acquire_with_clock(
         target: &Path,
         wait: LockWait,
         clock: Arc<dyn LockClock>,
+        jitter: Arc<dyn LockJitter>,
     ) -> Result<Self, LockError> {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(|source| LockError::Io {
@@ -184,8 +213,9 @@ impl LockFile {
         }
 
         let deadline = match wait {
-            LockWait::Immediately => clock.now(),
-            LockWait::Backoff { budget } => clock.now() + budget,
+            LockWait::Immediately => Some(clock.now()),
+            LockWait::Backoff { budget } => Some(clock.now() + budget),
+            LockWait::Indefinitely => None,
         };
 
         let mut attempt: u32 = 0;
@@ -197,19 +227,24 @@ impl LockFile {
                         commit_path: None,
                         file: Some(file),
                         committed: false,
-                        clock,
                     });
                 }
                 Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {
-                    if matches!(wait, LockWait::Immediately) || clock.now() >= deadline {
+                    if matches!(wait, LockWait::Immediately)
+                        || deadline.is_some_and(|deadline| clock.now() >= deadline)
+                    {
                         return Err(LockError::Held {
                             path: target.to_path_buf(),
                         });
                     }
-                    let delay = backoff_delay(attempt);
+                    let delay = backoff_delay(target, attempt, jitter.as_ref());
                     attempt = attempt.saturating_add(1);
-                    let remaining = deadline.saturating_duration_since(clock.now());
-                    clock.sleep(delay.min(remaining));
+                    if let Some(deadline) = deadline {
+                        let remaining = deadline.saturating_duration_since(clock.now());
+                        clock.sleep(delay.min(remaining));
+                    } else {
+                        clock.sleep(delay);
+                    }
                 }
                 Err(source) => {
                     return Err(LockError::Io {
@@ -311,6 +346,11 @@ impl LockFile {
 
     /// Release the lock without committing (same as drop).
     pub fn rollback(mut self) {
+        if self.committed {
+            return;
+        }
+        drop(self.file.take());
+        let _ = fs::remove_file(&self.lock_path);
         self.committed = true;
     }
 
@@ -352,18 +392,14 @@ impl Drop for LockFile {
     }
 }
 
-fn backoff_delay(attempt: u32) -> Duration {
-    const INITIAL_MICROS: u64 = 1_000;
-    const CAP_MICROS: u64 = 50_000;
+fn backoff_delay(lock_path: &Path, attempt: u32, jitter: &dyn LockJitter) -> Duration {
+    const INITIAL_MS: u64 = 1;
+    const CAP_MS: u64 = 50;
     let shift = attempt.min(16);
-    let base = (INITIAL_MICROS.saturating_mul(1_u64 << shift)).min(CAP_MICROS);
-    let jitter = pseudo_jitter_us(attempt);
-    Duration::from_micros(base.saturating_add(jitter % (base / 2 + 1)))
-}
-
-fn pseudo_jitter_us(attempt: u32) -> u64 {
-    let x = attempt.wrapping_mul(0x9E37_79B9);
-    (x as u64).wrapping_mul(1_103) % 10_000
+    let base_ms = (INITIAL_MS.saturating_mul(1_u64 << shift)).min(CAP_MS);
+    let span_ms = base_ms / 2 + 1;
+    let jitter_ms = (jitter.fraction(lock_path, attempt) * span_ms as f64) as u64;
+    Duration::from_millis(base_ms.saturating_add(jitter_ms))
 }
 
 /// Map [`LockError::Held`] to a ref-update `AlreadyExists` I/O error (legacy call sites).
@@ -434,6 +470,14 @@ mod tests {
         assert_eq!(fs::read_to_string(&target).unwrap(), "payload\n");
     }
 
+    struct FixedJitter(f64);
+
+    impl LockJitter for FixedJitter {
+        fn fraction(&self, _lock_path: &Path, _attempt: u32) -> f64 {
+            self.0
+        }
+    }
+
     #[test]
     fn held_when_budget_exhausted() {
         let dir = tempfile::tempdir().unwrap();
@@ -447,6 +491,7 @@ mod tests {
                 budget: Duration::from_millis(10),
             },
             clock.clone(),
+            Arc::new(FixedJitter(0.5)),
         ) {
             Err(e) => e,
             Ok(_) => panic!("expected lock held error"),
@@ -455,5 +500,60 @@ mod tests {
         assert!(lock_path.is_file());
         assert_eq!(fs::read_to_string(&lock_path).unwrap(), "foreign");
         assert!(!clock.sleeps().is_empty());
+    }
+
+    #[test]
+    fn rollback_removes_own_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = dir.path().join("resource.lock");
+        let lock_file = LockFile::acquire(&lock, LockWait::Immediately).unwrap();
+        assert!(lock.is_file());
+        lock_file.rollback();
+        assert!(!lock.exists());
+    }
+
+    #[test]
+    fn files_ref_lock_timeout_uses_milliseconds() {
+        let mut cfg = ConfigSet::new();
+        cfg.add_command_override("core.filesreflocktimeout", "100")
+            .expect("set timeout");
+        assert_eq!(LockWait::parse_files_ref_lock_timeout_ms(Some(&cfg)), 100);
+        match LockWait::files_ref_lock(Some(&cfg)) {
+            LockWait::Backoff { budget } => {
+                assert_eq!(budget, Duration::from_millis(100));
+            }
+            other => panic!("expected backoff, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn files_ref_lock_timeout_negative_retries_indefinitely() {
+        let mut cfg = ConfigSet::new();
+        cfg.add_command_override("core.filesreflocktimeout", "-1")
+            .expect("set timeout");
+        assert!(matches!(
+            LockWait::files_ref_lock(Some(&cfg)),
+            LockWait::Indefinitely
+        ));
+    }
+
+    #[test]
+    fn indefinite_wait_succeeds_when_lock_cleared() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_path = dir.path().join("x.lock");
+        fs::write(&lock_path, b"foreign").unwrap();
+        let clock = FakeLockClock::new(Instant::now());
+        let lock_path_thread = lock_path.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(5));
+            let _ = fs::remove_file(&lock_path_thread);
+        });
+        let _guard = LockFile::acquire_with_clock(
+            &lock_path,
+            LockWait::Indefinitely,
+            clock,
+            Arc::new(FixedJitter(0.0)),
+        )
+        .expect("indefinite wait should eventually acquire");
     }
 }
