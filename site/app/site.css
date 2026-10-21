@@ -79,6 +79,19 @@
   .toc li { margin: 0 0 8px; padding-left: 14px; }
   .toc a { text-decoration: none; }
   .toc-level-3 { padding-left: 28px; }
+  .clone { margin-top: 28px; padding: 12px 11px; border: 1px solid var(--line); border-radius: 10px; font: 11px/1.55 var(--mono); color: var(--soft); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+  .clone b { color: var(--ink); font-weight: 700; }
+  .clone-cmd { color: var(--ink); }
+  .clone-prompt { color: var(--accent); }
+  .clone-dim { color: var(--muted); }
+  .clone-remote { margin-bottom: 6px; }
+  .clone-phase { margin-top: 6px; }
+  .clone-pending { opacity: .55; }
+  .clone-line { display: flex; align-items: center; gap: 8px; }
+  .clone-mark { width: 1ch; color: var(--muted); }
+  .clone-amount, .clone-rate { margin-left: auto; color: var(--muted); }
+  .clone-bars { display: flex; align-items: flex-end; gap: 1px; height: 12px; flex: 1; margin-left: calc(1ch + 8px); }
+  .clone-bars span { flex: 1; min-width: 0; }
 
   .footer { padding: 40px 0 64px; }
   .footer .links { display: flex; flex-wrap: wrap; gap: 28px; margin-top: 14px; font-size: 17px; }

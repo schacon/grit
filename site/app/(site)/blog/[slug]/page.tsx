@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Script from "next/script";
+import { CloneProgress } from "@/components/CloneProgress";
 import { Footer, Rail, TopBar } from "@/components/Rail";
 import { BLOG_DESCRIPTION, displayDate, loadPosts, shortSha } from "@/lib/blog";
 import { initHighlighter } from "@/lib/highlight";
@@ -66,6 +67,7 @@ export default async function BlogPost({ params }: { params: Promise<{ slug: str
                     </li>
                   ))}
                 </ol>
+                <CloneProgress slug={post.slug} />
               </aside>
             ) : null}
           </div>
