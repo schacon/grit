@@ -463,6 +463,12 @@ enum Command {
         /// With `--group-by`, omit per-commit lists in `--json` output.
         #[arg(long)]
         count: bool,
+        /// Draw an ASCII commit graph in human output (implies topological order).
+        #[arg(long)]
+        graph: bool,
+        /// Use Unicode box-drawing characters in `--graph` output (human only).
+        #[arg(long = "graph-unicode")]
+        graph_unicode: bool,
     },
     /// List or count commits matching revision ranges.
     Revs {
@@ -1101,6 +1107,8 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             decorate,
             group_by,
             count,
+            graph,
+            graph_unicode,
         } => {
             if count && group_by.is_none() {
                 bail!("`--count` requires `--group-by`");
@@ -1112,6 +1120,8 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                     LogGroupByArg::Author => commands::log::LogGroupBy::Author,
                 }),
                 group_count_only: count,
+                graph,
+                graph_unicode,
             };
             emit(
                 &commands::log::run(rev, cursor, format, display, opts.mode)?,
