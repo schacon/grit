@@ -59,7 +59,7 @@ pub mod midx {
 }
 
 pub mod hash {
-    //! Object hashing and hash algorithm selection.
+    //! Object-id hashing, file checksums, and hash algorithm selection.
     pub use crate::hash::*;
 }
 

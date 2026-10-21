@@ -1686,7 +1686,7 @@ impl Index {
             let mut eoie_payload = Vec::new();
             eoie_payload.extend_from_slice(&(extension_offset as u32).to_be_bytes());
             let headers = eoie_header_bytes.as_deref().unwrap_or(&[]);
-            eoie_payload.extend_from_slice(self.hash_algo.digest(headers).as_bytes());
+            eoie_payload.extend_from_slice(&self.hash_algo.checksum_digest(headers));
             append_index_extension(out, &mut None, INDEX_EXT_EOIE, &eoie_payload);
         }
         Ok(())
@@ -3687,7 +3687,7 @@ fn is_process_running(pid: u64) -> bool {
 
 /// Hash an index body with the given algorithm, returning the raw checksum.
 fn hash_index_body(algo: HashAlgo, body: &[u8]) -> Vec<u8> {
-    algo.digest(body).as_bytes().to_vec()
+    algo.checksum_digest(body)
 }
 
 /// Write index bytes and trailing checksum in one buffered pass, updating the digest while writing.
@@ -3704,12 +3704,12 @@ fn write_index_body_and_trailer(
         out.write_all(&vec![0u8; algo.len()])?;
         return out.flush();
     }
-    let mut hasher = algo.hasher();
+    let mut hasher = algo.checksum_hasher();
     for chunk in body.chunks(256 * 1024) {
         hasher.update(chunk);
         out.write_all(chunk)?;
     }
-    out.write_all(hasher.finalize().as_bytes())?;
+    out.write_all(&hasher.finalize())?;
     out.flush()
 }
 
