@@ -1197,11 +1197,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 exit_code: wants_exit_code,
                 quiet,
             };
-            let run_result = if no_index {
-                commands::diff::run_no_index(run_opts)
-            } else {
-                commands::diff::run(run_opts)
-            };
+            let run_result = commands::diff::run(run_opts);
             match run_result {
                 Ok(outcome) => {
                     if !quiet && !format.patch_text {

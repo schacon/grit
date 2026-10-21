@@ -18,8 +18,10 @@ use super::core::{
     read_worktree_bytes_for_mode, zero_oid, DiffEntry, DiffStatus,
 };
 use super::options::DiffOptions;
+use super::patch_log::{write_patch, PatchTextOptions};
 use super::structured::{structured_file_diff, SideBytes};
 use super::targets::FileDiff;
+use crate::repo::{InitOptions, Repository};
 
 const S_IFMT: u32 = 0o170000;
 const S_IFREG: u32 = 0o100000;
@@ -53,24 +55,81 @@ impl From<NoIndexError> for crate::error::Error {
 ///
 /// Returns [`NoIndexError::PathNotAccessible`] when either top-level path cannot be accessed.
 pub fn diff_paths(a: &Path, b: &Path, opts: &DiffOptions) -> Result<Vec<FileDiff>, NoIndexError> {
+    let temp = tempfile::tempdir().map_err(|e| NoIndexError::PathNotAccessible {
+        path: e.to_string(),
+    })?;
+    let odb = Odb::new(temp.path());
+    let entries = no_index_prepared_entries(a, b, opts, &odb)?;
+    if entries.is_empty() {
+        return Ok(Vec::new());
+    }
+    let diff_options = opts
+        .clone()
+        .cap_word_level_inline_for_changed_files(entries.len());
+    Ok(entries
+        .into_iter()
+        .filter_map(|entry| file_diff_from_entry(&odb, &entry, diff_options.clone()))
+        .collect())
+}
+
+/// Write `git diff --no-index --binary`-style patch bytes for two filesystem paths.
+///
+/// Returns `Ok(true)` when the paths differ.
+///
+/// # Errors
+///
+/// Propagates [`NoIndexError`] and repository/patch I/O failures.
+pub fn write_paths_patch<W: std::io::Write>(
+    a: &Path,
+    b: &Path,
+    opts: &DiffOptions,
+    out: &mut W,
+) -> Result<bool, NoIndexError> {
+    let temp = tempfile::tempdir().map_err(|e| NoIndexError::PathNotAccessible {
+        path: e.to_string(),
+    })?;
+    let repo = Repository::init(temp.path(), &InitOptions::new().with_bare(true)).map_err(|e| {
+        NoIndexError::PathNotAccessible {
+            path: e.to_string(),
+        }
+    })?;
+    let entries = no_index_prepared_entries(a, b, opts, repo.odb())?;
+    if entries.is_empty() {
+        return Ok(false);
+    }
+    let patch_opts = PatchTextOptions::from_repo(&repo, opts.clone()).map_err(|e| {
+        NoIndexError::PathNotAccessible {
+            path: e.to_string(),
+        }
+    })?;
+    write_patch(&repo, &entries, &patch_opts, out).map_err(|e| {
+        NoIndexError::PathNotAccessible {
+            path: e.to_string(),
+        }
+    })?;
+    Ok(true)
+}
+
+fn no_index_prepared_entries(
+    a: &Path,
+    b: &Path,
+    opts: &DiffOptions,
+    odb: &Odb,
+) -> Result<Vec<DiffEntry>, NoIndexError> {
     let (left, right) = fixup_paths(a, b)?;
     let mut entries = Vec::new();
     queue_diff(left.as_deref(), right.as_deref(), false, &mut entries)?;
     if entries.is_empty() {
-        return Ok(Vec::new());
+        return Ok(entries);
     }
 
     let config = ConfigSet::default();
     let thread_policy = ThreadPolicy::default();
     let rename_threshold = opts.renames.threshold_percent().unwrap_or(101);
-    let temp = tempfile::tempdir().map_err(|e| NoIndexError::PathNotAccessible {
-        path: e.to_string(),
-    })?;
-    let odb = Odb::new(temp.path());
-    store_changed_blobs(&odb, &mut entries)?;
-    let entries = if rename_threshold < 100 {
+    store_changed_blobs(odb, &mut entries)?;
+    if rename_threshold < 100 {
         apply_rename_detection_to_diff_entries(
-            &odb,
+            odb,
             entries,
             None,
             rename_threshold,
@@ -79,18 +138,10 @@ pub fn diff_paths(a: &Path, b: &Path, opts: &DiffOptions) -> Result<Vec<FileDiff
         )
         .map_err(|e| NoIndexError::PathNotAccessible {
             path: e.to_string(),
-        })?
+        })
     } else {
-        entries
-    };
-
-    let diff_options = opts
-        .clone()
-        .cap_word_level_inline_for_changed_files(entries.len());
-    Ok(entries
-        .into_iter()
-        .filter_map(|entry| file_diff_from_entry(&odb, &entry, diff_options.clone()))
-        .collect())
+        Ok(entries)
+    }
 }
 
 fn file_diff_from_entry(odb: &Odb, entry: &DiffEntry, opts: DiffOptions) -> Option<FileDiff> {

@@ -62,14 +62,6 @@ use crate::markdown;
 use crate::output::{outln, ChangeStatus, HumanRender, MarkdownRender, RenderContext};
 use crate::ui::{self, PathDisplayOptions};
 
-/// Git `-M` rename similarity threshold from config when CLI did not override renames.
-fn rename_threshold(config: &grit_lib::config::ConfigSet) -> u32 {
-    DiffOptions::from_config(config)
-        .renames
-        .threshold_percent()
-        .unwrap_or(101)
-}
-
 /// Effective rename threshold for tree diffs (`101` disables rename detection).
 fn rename_similarity_threshold(diff_options: &DiffOptions) -> u32 {
     diff_options.renames.threshold_percent().unwrap_or(101)
@@ -409,11 +401,12 @@ fn filtered_worktree_file_changes(
     repo: &grit_lib::repo::Repository,
     against: Option<&str>,
     pathspecs: &[String],
+    diff_options: &DiffOptions,
 ) -> Result<Vec<FileChange>> {
     let raw = if let Some(spec) = against {
-        against_ref_changes(repo, spec)?
+        against_ref_changes(repo, spec, diff_options)?
     } else {
-        worktree_changes(repo)?
+        worktree_changes(repo, diff_options)?
     };
     Ok(filter_file_changes(raw, repo, pathspecs))
 }
@@ -428,9 +421,10 @@ fn uncommitted_changes_for_default_diff(
     against: Option<&str>,
     pathspecs: &[String],
     format: DiffFormatArgs,
+    diff_options: &DiffOptions,
 ) -> Result<Vec<FileChange>> {
     if against.is_some() {
-        return filtered_worktree_file_changes(repo, against, pathspecs);
+        return filtered_worktree_file_changes(repo, against, pathspecs, diff_options);
     }
     if pathspecs.is_empty()
         && (format.detail() == DiffDetail::Patch
@@ -438,10 +432,10 @@ fn uncommitted_changes_for_default_diff(
             || format.human_stat_block()
             || format.human_shortstat_only())
     {
-        return filtered_worktree_file_changes(repo, None, pathspecs);
+        return filtered_worktree_file_changes(repo, None, pathspecs, diff_options);
     }
     Ok(filter_file_changes(
-        unstaged_changes(repo)?,
+        unstaged_changes(repo, diff_options)?,
         repo,
         pathspecs,
     ))
@@ -722,16 +716,56 @@ pub fn run_no_index(opts: DiffRunOptions) -> Result<DiffOutcome> {
     ))
 }
 
+fn run_no_index_patch_text(opts: DiffRunOptions) -> Result<DiffOutcome> {
+    if opts.staged || opts.unstaged || opts.against.is_some() {
+        anyhow::bail!("--no-index cannot be combined with --staged, --unstaged, or --against");
+    }
+    let quiet = opts.quiet;
+    let mut path_args: Vec<String> = opts.commits;
+    path_args.extend(opts.paths);
+    if path_args.len() != 2 {
+        anyhow::bail!(
+            "--no-index requires exactly two paths (use `--` before paths that start with `-`)"
+        );
+    }
+    let mut diff_options = DiffOptions::default();
+    diff_options.context_lines = CONTEXT_LINES;
+    opts.format.apply_context(&mut diff_options);
+    diff_options = opts.line_format.to_options(diff_options)?;
+    diff_options.word_level_inline = opts.word_level_inline;
+    let format = opts.format;
+    let a = std::path::Path::new(&path_args[0]);
+    let b = std::path::Path::new(&path_args[1]);
+    let changed = if quiet {
+        grit_lib::diff::write_paths_patch(a, b, &diff_options, &mut std::io::sink())?
+    } else {
+        grit_lib::diff::write_paths_patch(a, b, &diff_options, &mut std::io::stdout())?
+    };
+    Ok(DiffOutcome {
+        changed,
+        files: Vec::new(),
+        totals: None,
+        format,
+        path_display: None,
+    })
+}
+
 fn emit_patch_text_to_stdout(
     repo: &grit_lib::repo::Repository,
     entries: &[DiffEntry],
     changes: Option<&[FileChange]>,
     diff_options: DiffOptions,
+    quiet: bool,
 ) -> Result<()> {
+    if quiet {
+        return Ok(());
+    }
     let patch_opts = PatchTextOptions::from_repo(repo, diff_options)?;
     let mut stdout = std::io::stdout();
     if let Some(changes) = changes {
-        debug_assert_eq!(entries.len(), changes.len());
+        if entries.len() != changes.len() {
+            anyhow::bail!("internal error: patch-text entry/change count mismatch");
+        }
         let resolved: Vec<PatchResolvedSide> = entries
             .iter()
             .zip(changes.iter())
@@ -754,9 +788,10 @@ fn patch_text_outcome(
     changes: Option<Vec<FileChange>>,
     diff_options: DiffOptions,
     format: DiffFormatArgs,
+    quiet: bool,
 ) -> Result<DiffOutcome> {
     let changed = !entries.is_empty();
-    emit_patch_text_to_stdout(repo, &entries, changes.as_deref(), diff_options)?;
+    emit_patch_text_to_stdout(repo, &entries, changes.as_deref(), diff_options, quiet)?;
     Ok(DiffOutcome {
         changed,
         files: Vec::new(),
@@ -767,6 +802,7 @@ fn patch_text_outcome(
 }
 
 fn run_patch_text(opts: DiffRunOptions) -> Result<DiffOutcome> {
+    let quiet = opts.quiet;
     let repo = context::discover()?;
     let config = repo.config().context("could not load config")?;
     let thread_policy = repo.thread_policy();
@@ -785,18 +821,20 @@ fn run_patch_text(opts: DiffRunOptions) -> Result<DiffOutcome> {
             anyhow::bail!("--staged cannot be combined with revision arguments or --against");
         }
         let pathspecs = resolve_worktree_diff_pathspecs(&repo, &path_args)?;
-        let entries = filter_diff_entries(staged_entries(&repo)?, &repo, &pathspecs);
-        let changes = filter_file_changes(staged_changes(&repo)?, &repo, &pathspecs);
-        return patch_text_outcome(&repo, entries, Some(changes), diff_options, format);
+        let entries = filter_diff_entries(staged_entries(&repo, &diff_options)?, &repo, &pathspecs);
+        let changes = filter_file_changes(staged_changes(&repo, &diff_options)?, &repo, &pathspecs);
+        return patch_text_outcome(&repo, entries, Some(changes), diff_options, format, quiet);
     }
     if opts.unstaged {
         if !commits.is_empty() || opts.against.is_some() {
             anyhow::bail!("--unstaged cannot be combined with revision arguments or --against");
         }
         let pathspecs = resolve_worktree_diff_pathspecs(&repo, &path_args)?;
-        let entries = filter_diff_entries(unstaged_entries(&repo)?, &repo, &pathspecs);
-        let changes = filter_file_changes(unstaged_changes(&repo)?, &repo, &pathspecs);
-        return patch_text_outcome(&repo, entries, Some(changes), diff_options, format);
+        let entries =
+            filter_diff_entries(unstaged_entries(&repo, &diff_options)?, &repo, &pathspecs);
+        let changes =
+            filter_file_changes(unstaged_changes(&repo, &diff_options)?, &repo, &pathspecs);
+        return patch_text_outcome(&repo, entries, Some(changes), diff_options, format, quiet);
     }
     if commits.len() > 2 {
         anyhow::bail!("at most two commits, or one two-dot range such as A..B");
@@ -809,7 +847,13 @@ fn run_patch_text(opts: DiffRunOptions) -> Result<DiffOutcome> {
             let pathspecs = resolve_worktree_diff_pathspecs(&repo, &path_args)?;
             let against_ref = opts.against.as_deref();
             let changes = filter_file_changes(
-                uncommitted_changes_for_default_diff(&repo, against_ref, &pathspecs, format)?,
+                uncommitted_changes_for_default_diff(
+                    &repo,
+                    against_ref,
+                    &pathspecs,
+                    format,
+                    &diff_options,
+                )?,
                 &repo,
                 &pathspecs,
             );
@@ -830,14 +874,14 @@ fn run_patch_text(opts: DiffRunOptions) -> Result<DiffOutcome> {
                     && (format.patch_text || format.detail() == DiffDetail::Patch))
             {
                 filter_diff_entries(
-                    worktree_against_tree_entries(&repo, base_tree.as_ref())?,
+                    worktree_against_tree_entries(&repo, base_tree.as_ref(), &diff_options)?,
                     &repo,
                     &pathspecs,
                 )
             } else {
-                filter_diff_entries(unstaged_entries(&repo)?, &repo, &pathspecs)
+                filter_diff_entries(unstaged_entries(&repo, &diff_options)?, &repo, &pathspecs)
             };
-            patch_text_outcome(&repo, entries, Some(changes), diff_options, format)
+            patch_text_outcome(&repo, entries, Some(changes), diff_options, format, quiet)
         }
         1 => {
             let spec = &commits[0];
@@ -855,7 +899,7 @@ fn run_patch_text(opts: DiffRunOptions) -> Result<DiffOutcome> {
                     &repo,
                     &pathspecs,
                 );
-                patch_text_outcome(&repo, entries, None, diff_options, format)
+                patch_text_outcome(&repo, entries, None, diff_options, format, quiet)
             } else if let Ok(oid) = resolve_diff_commit(&repo, spec) {
                 let pathspecs = resolve_commit_diff_pathspecs(&repo, &path_args)?;
                 let entries = filter_diff_entries(
@@ -863,13 +907,13 @@ fn run_patch_text(opts: DiffRunOptions) -> Result<DiffOutcome> {
                     &repo,
                     &pathspecs,
                 );
-                patch_text_outcome(&repo, entries, None, diff_options, format)
+                patch_text_outcome(&repo, entries, None, diff_options, format, quiet)
             } else if path_args.is_empty() {
-                let changes = single_argument_path_unstaged_diff(&repo, spec)?;
-                let pathspecs = resolve_worktree_diff_pathspecs(&repo, &path_args)?;
-                let entries = filter_diff_entries(unstaged_entries(&repo)?, &repo, &pathspecs);
-                let filtered = filter_file_changes(changes, &repo, &pathspecs);
-                patch_text_outcome(&repo, entries, Some(filtered), diff_options, format)
+                let pathspecs = single_worktree_pathspec(&repo, spec)?;
+                let changes = single_argument_path_unstaged_diff(&repo, spec, &diff_options)?;
+                let entries =
+                    filter_diff_entries(unstaged_entries(&repo, &diff_options)?, &repo, &pathspecs);
+                patch_text_outcome(&repo, entries, Some(changes), diff_options, format, quiet)
             } else {
                 resolve_diff_commit(&repo, spec)?;
                 unreachable!("resolve_diff_commit errors above");
@@ -892,7 +936,7 @@ fn run_patch_text(opts: DiffRunOptions) -> Result<DiffOutcome> {
                         &repo,
                         &pathspecs,
                     );
-                    return patch_text_outcome(&repo, entries, None, diff_options, format);
+                    return patch_text_outcome(&repo, entries, None, diff_options, format, quiet);
                 }
                 match resolve_diff_commit(&repo, &commits[1]) {
                     Ok(_) => anyhow::bail!(
@@ -909,7 +953,7 @@ fn run_patch_text(opts: DiffRunOptions) -> Result<DiffOutcome> {
                 &repo,
                 &pathspecs,
             );
-            patch_text_outcome(&repo, entries, None, diff_options, format)
+            patch_text_outcome(&repo, entries, None, diff_options, format, quiet)
         }
         _ => unreachable!("checked above"),
     }
@@ -917,6 +961,9 @@ fn run_patch_text(opts: DiffRunOptions) -> Result<DiffOutcome> {
 
 pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
     if opts.no_index {
+        if opts.format.patch_text {
+            return run_no_index_patch_text(opts);
+        }
         return run_no_index(opts);
     }
     if opts.format.patch_text {
@@ -942,10 +989,10 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
             anyhow::bail!("--staged cannot be combined with revision arguments or --against");
         }
         let pathspecs = resolve_worktree_diff_pathspecs(&repo, &path_args)?;
-        let entries = filter_diff_entries(staged_entries(&repo)?, &repo, &pathspecs);
+        let entries = filter_diff_entries(staged_entries(&repo, &diff_options)?, &repo, &pathspecs);
         let outcome = match detail {
             DiffDetail::Patch => outcome_from_changes(
-                filter_file_changes(staged_changes(&repo)?, &repo, &pathspecs),
+                filter_file_changes(staged_changes(&repo, &diff_options)?, &repo, &pathspecs),
                 &config,
                 &thread_policy,
                 diff_options,
@@ -955,7 +1002,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
                 outcome_from_entries(&repo, entries, detail, diff_options, format)?
             }
             _ => outcome_from_changes(
-                filter_file_changes(staged_changes(&repo)?, &repo, &pathspecs),
+                filter_file_changes(staged_changes(&repo, &diff_options)?, &repo, &pathspecs),
                 &config,
                 &thread_policy,
                 diff_options,
@@ -969,17 +1016,18 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
             anyhow::bail!("--unstaged cannot be combined with revision arguments or --against");
         }
         let pathspecs = resolve_worktree_diff_pathspecs(&repo, &path_args)?;
-        let entries = filter_diff_entries(unstaged_entries(&repo)?, &repo, &pathspecs);
+        let entries =
+            filter_diff_entries(unstaged_entries(&repo, &diff_options)?, &repo, &pathspecs);
         let outcome = match detail {
             DiffDetail::Patch => outcome_from_changes(
-                filter_file_changes(unstaged_changes(&repo)?, &repo, &pathspecs),
+                filter_file_changes(unstaged_changes(&repo, &diff_options)?, &repo, &pathspecs),
                 &config,
                 &thread_policy,
                 diff_options,
                 format,
             ),
             DiffDetail::Stat => outcome_stat_from_changes(
-                filter_file_changes(unstaged_changes(&repo)?, &repo, &pathspecs),
+                filter_file_changes(unstaged_changes(&repo, &diff_options)?, &repo, &pathspecs),
                 diff_options,
                 format,
             ),
@@ -987,7 +1035,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
                 outcome_from_entries(&repo, entries, detail, diff_options, format)?
             }
             _ => outcome_from_changes(
-                filter_file_changes(unstaged_changes(&repo)?, &repo, &pathspecs),
+                filter_file_changes(unstaged_changes(&repo, &diff_options)?, &repo, &pathspecs),
                 &config,
                 &thread_policy,
                 diff_options,
@@ -1006,8 +1054,13 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
         0 => {
             let pathspecs = resolve_worktree_diff_pathspecs(&repo, &path_args)?;
             let against_ref = opts.against.as_deref();
-            let changes =
-                uncommitted_changes_for_default_diff(&repo, against_ref, &pathspecs, format)?;
+            let changes = uncommitted_changes_for_default_diff(
+                &repo,
+                against_ref,
+                &pathspecs,
+                format,
+                &diff_options,
+            )?;
             let outcome = match detail {
                 DiffDetail::NameOnly | DiffDetail::NameStatus => {
                     outcome_from_change_names(changes, format)
@@ -1054,7 +1107,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
                     tree_diff_outcome(&repo, entries, detail, diff_options, format)?,
                 ));
             } else if path_args.is_empty() {
-                single_argument_path_unstaged_diff(&repo, spec)?
+                single_argument_path_unstaged_diff(&repo, spec, &diff_options)?
             } else {
                 resolve_diff_commit(&repo, spec)?;
                 unreachable!("resolve_diff_commit errors above");
@@ -1611,11 +1664,10 @@ fn filter_file_changes(
         .collect()
 }
 
-/// Unstaged diff for one pathspec argument when revision parsing failed (`git diff <path>`).
-fn single_argument_path_unstaged_diff(
+fn single_worktree_pathspec(
     repo: &grit_lib::repo::Repository,
     pathspec: &str,
-) -> Result<Vec<FileChange>> {
+) -> Result<Vec<String>> {
     let work_tree = repo.work_tree().context("grit diff needs a working tree")?;
     let cwd = std::env::current_dir().context("could not read the current directory")?;
     let prefix = pathdiff(&cwd, work_tree);
@@ -1629,8 +1681,17 @@ fn single_argument_path_unstaged_diff(
     .map_err(|e| anyhow::anyhow!("{e}"))?;
     ensure_pathspec_matches_known_in_repository(repo, pathspec, &resolved)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let specs = vec![resolved];
-    let all = unstaged_changes(repo)?;
+    Ok(vec![resolved])
+}
+
+/// Unstaged diff for one pathspec argument when revision parsing failed (`git diff <path>`).
+fn single_argument_path_unstaged_diff(
+    repo: &grit_lib::repo::Repository,
+    pathspec: &str,
+    diff_options: &DiffOptions,
+) -> Result<Vec<FileChange>> {
+    let specs = single_worktree_pathspec(repo, pathspec)?;
+    let all = unstaged_changes(repo, diff_options)?;
     Ok(all
         .into_iter()
         .filter(|c| repo.paths_match_pathspecs(&c.path, &specs))
@@ -1638,7 +1699,10 @@ fn single_argument_path_unstaged_diff(
 }
 
 /// Unstaged diff entries: index vs working tree (no blob loading).
-fn unstaged_entries(repo: &grit_lib::repo::Repository) -> Result<Vec<DiffEntry>> {
+fn unstaged_entries(
+    repo: &grit_lib::repo::Repository,
+    diff_options: &DiffOptions,
+) -> Result<Vec<DiffEntry>> {
     let work_tree = repo.work_tree().context("grit diff needs a working tree")?;
     let mut index = repo
         .index_handle()
@@ -1669,7 +1733,7 @@ fn unstaged_entries(repo: &grit_lib::repo::Repository) -> Result<Vec<DiffEntry>>
         &mut index,
         work_tree,
         diff_opts,
-        rename_threshold(config_arc.as_ref()),
+        rename_similarity_threshold(diff_options),
     )
     .context("could not diff the index against the working tree")?;
     sort_entries(&mut entries);
@@ -1677,7 +1741,10 @@ fn unstaged_entries(repo: &grit_lib::repo::Repository) -> Result<Vec<DiffEntry>>
 }
 
 /// Unstaged changes: worktree vs index (what changed on disk since `git add`).
-fn unstaged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>> {
+fn unstaged_changes(
+    repo: &grit_lib::repo::Repository,
+    diff_options: &DiffOptions,
+) -> Result<Vec<FileChange>> {
     let work_tree = repo.work_tree().context("grit diff needs a working tree")?;
     let index = repo
         .index_handle()
@@ -1691,7 +1758,7 @@ fn unstaged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>
         index: &index,
         rules: std::sync::Arc::clone(&rules_arc),
     };
-    unstaged_entries(repo)?
+    unstaged_entries(repo, diff_options)?
         .into_iter()
         .map(|e| {
             let (old_bytes, old_bin) = old_side_bytes(repo.odb(), &e)?;
@@ -1847,7 +1914,10 @@ fn tree_diff_outcome(
 }
 
 /// Staged diff entries: index vs `HEAD`'s tree (no blob loading).
-fn staged_entries(repo: &grit_lib::repo::Repository) -> Result<Vec<DiffEntry>> {
+fn staged_entries(
+    repo: &grit_lib::repo::Repository,
+    diff_options: &DiffOptions,
+) -> Result<Vec<DiffEntry>> {
     let head = resolve_head(repo.git_dir()).context("could not resolve HEAD")?;
     let head_tree = match head.oid() {
         Some(oid) => Some(context::commit_tree(repo, oid)?),
@@ -1864,7 +1934,7 @@ fn staged_entries(repo: &grit_lib::repo::Repository) -> Result<Vec<DiffEntry>> {
         &index,
         head_tree.as_ref(),
         false,
-        rename_threshold(config.as_ref()),
+        rename_similarity_threshold(diff_options),
         config.as_ref(),
         &thread_policy,
     )
@@ -1874,8 +1944,11 @@ fn staged_entries(repo: &grit_lib::repo::Repository) -> Result<Vec<DiffEntry>> {
 }
 
 /// Staged changes: index vs HEAD's tree.
-fn staged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>> {
-    staged_entries(repo)?
+fn staged_changes(
+    repo: &grit_lib::repo::Repository,
+    diff_options: &DiffOptions,
+) -> Result<Vec<FileChange>> {
+    staged_entries(repo, diff_options)?
         .into_iter()
         .map(|e| {
             let (old_bytes, old_bin) = old_side_bytes(repo.odb(), &e)?;
@@ -1889,10 +1962,11 @@ fn staged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>> 
 fn against_ref_changes(
     repo: &grit_lib::repo::Repository,
     ref_spec: &str,
+    diff_options: &DiffOptions,
 ) -> Result<Vec<FileChange>> {
     let commit = resolve_diff_commit(repo, ref_spec)?;
     let base_tree = context::commit_tree(repo, &commit)?;
-    worktree_against_tree(repo, Some(&base_tree))
+    worktree_against_tree(repo, Some(&base_tree), diff_options)
 }
 
 /// Resolve a user revision to a commit OID, peeling annotated tags.
@@ -1961,18 +2035,22 @@ fn parse_commit_range(
 }
 
 /// All uncommitted changes: HEAD's tree vs the worktree.
-fn worktree_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>> {
+fn worktree_changes(
+    repo: &grit_lib::repo::Repository,
+    diff_options: &DiffOptions,
+) -> Result<Vec<FileChange>> {
     let head = resolve_head(repo.git_dir()).context("could not resolve HEAD")?;
     let head_tree = match head.oid() {
         Some(oid) => Some(context::commit_tree(repo, oid)?),
         None => None,
     };
-    worktree_against_tree(repo, head_tree.as_ref())
+    worktree_against_tree(repo, head_tree.as_ref(), diff_options)
 }
 
 fn worktree_against_tree_entries(
     repo: &grit_lib::repo::Repository,
     base_tree: Option<&ObjectId>,
+    diff_options: &DiffOptions,
 ) -> Result<Vec<DiffEntry>> {
     let work_tree = repo.work_tree().context("grit diff needs a working tree")?;
     let mut index = repo
@@ -2007,7 +2085,7 @@ fn worktree_against_tree_entries(
                 command_runner: Some(repo.command_runner()),
                 ..DiffIndexToWorktreeOptions::default()
             },
-            rename_threshold(config.as_ref()),
+            rename_similarity_threshold(diff_options),
         )
         .context("could not diff the working tree")?;
         entries
@@ -2029,7 +2107,7 @@ fn worktree_against_tree_entries(
             repo.odb(),
             raw,
             Some(work_tree),
-            rename_threshold(config.as_ref()),
+            rename_similarity_threshold(diff_options),
             config.as_ref(),
             &repo.thread_policy(),
         )
@@ -2042,6 +2120,7 @@ fn worktree_against_tree_entries(
 fn worktree_against_tree(
     repo: &grit_lib::repo::Repository,
     base_tree: Option<&ObjectId>,
+    diff_options: &DiffOptions,
 ) -> Result<Vec<FileChange>> {
     let work_tree = repo.work_tree().context("grit diff needs a working tree")?;
     let index = repo
@@ -2056,7 +2135,7 @@ fn worktree_against_tree(
         index: &index,
         rules: rules_arc,
     };
-    worktree_against_tree_entries(repo, base_tree)?
+    worktree_against_tree_entries(repo, base_tree, diff_options)?
         .into_iter()
         .map(|e| {
             let (old_bytes, old_bin) = old_side_bytes(repo.odb(), &e)?;

@@ -160,3 +160,66 @@ fn diff_patch_text_staged_git_apply_check() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn diff_patch_text_quiet_emits_no_stdout() {
+    let dir = TempDir::new().expect("tempdir");
+    git_in(dir.path(), &["init"]);
+    git_in(dir.path(), &["config", "user.email", "t@example.com"]);
+    git_in(dir.path(), &["config", "user.name", "Test"]);
+    fs::write(dir.path().join("file.txt"), "one\n").expect("write");
+    git_in(dir.path(), &["add", "file.txt"]);
+    git_in(dir.path(), &["commit", "-m", "init"]);
+
+    fs::write(dir.path().join("file.txt"), "two\n").expect("write");
+
+    let grit = env!("CARGO_BIN_EXE_grit");
+    let out = Command::new(grit)
+        .current_dir(dir.path())
+        .args(["diff", "--patch-text", "--quiet"])
+        .output()
+        .expect("spawn grit");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "expected exit 1 when worktree differs: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.stdout.is_empty(),
+        "expected no stdout with --quiet, got {} bytes",
+        out.stdout.len()
+    );
+}
+
+#[test]
+fn diff_patch_text_no_index_emits_patch() {
+    let dir = TempDir::new().expect("tempdir");
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    fs::write(&a, "left\n").expect("write a");
+    fs::write(&b, "right\n").expect("write b");
+
+    let grit = env!("CARGO_BIN_EXE_grit");
+    let out = Command::new(grit)
+        .args([
+            "diff",
+            "--no-index",
+            "--patch-text",
+            a.to_str().expect("utf8"),
+            b.to_str().expect("utf8"),
+        ])
+        .output()
+        .expect("spawn grit");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let patch = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !out.stdout.is_empty() && patch.contains("@@"),
+        "expected patch bytes on stdout, got:\n{patch}"
+    );
+}
