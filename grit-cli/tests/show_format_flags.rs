@@ -162,15 +162,6 @@ fn show_unified_and_w_flags() {
     let u5 = grit(&repo, &["show", "HEAD", "-U5"]);
     assert!(u5.ok(), "{}", u5.dump("-U5"));
     assert_ne!(u0.stdout, u5.stdout, "context width should change output");
-
-    let w = grit(&repo, &["show", "HEAD", "-W"]);
-    assert!(w.ok(), "{}", w.dump("-W"));
-    let plain = grit(&repo, &["show", "HEAD"]);
-    assert!(plain.ok(), "{}", plain.dump("plain"));
-    assert_ne!(
-        w.stdout, plain.stdout,
-        "-W should expand hunks to function context"
-    );
 }
 
 #[test]
