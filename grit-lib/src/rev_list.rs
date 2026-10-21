@@ -24,7 +24,7 @@ use crate::merge_base::{
     commits_reachable_excluding_ancestors_of_cutoffs, ReachableWalkCommitterCutoffs,
 };
 use crate::objects::{
-    oid_hash_map, parse_commit, parse_tag, ObjectId, ObjectKind, OidHashMap, OidHashSet,
+    oid_hash_map, parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind, OidHashMap, OidHashSet,
     TreeRefIter,
 };
 use crate::odb::store::ObjectStore;
