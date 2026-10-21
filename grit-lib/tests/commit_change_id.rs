@@ -522,6 +522,7 @@ fn rewritten_commit_records_change_id_on_reword() {
             empty: EmptyPolicy::Drop,
             committer: ident(),
             preserve_committer: false,
+            sign: false,
         },
     )
     .expect("reword plan");
@@ -578,6 +579,7 @@ fn squash_fold_preserves_oldest_change_id() {
                 empty: EmptyPolicy::Drop,
                 committer: ident(),
                 preserve_committer: false,
+                sign: false,
             },
         },
     )
@@ -628,6 +630,7 @@ fn reword_preserves_derived_change_id_for_headerless_git_commit() {
             empty: EmptyPolicy::Drop,
             committer: ident(),
             preserve_committer: false,
+            sign: false,
         },
     )
     .expect("reword");
