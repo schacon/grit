@@ -532,7 +532,7 @@ enum Command {
         #[arg(long = "quiet")]
         quiet: bool,
         /// One commit (that commit's patch), two commits (tree diff), or a range `A..B` / `A...B`.
-        #[arg(value_name = "COMMIT", allow_hyphen_values = true)]
+        #[arg(value_name = "COMMIT")]
         commits: Vec<String>,
         /// Limit the diff to these paths (after `--`, like `grit log`).
         #[arg(value_name = "PATH", last = true, allow_hyphen_values = true)]
