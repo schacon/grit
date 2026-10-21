@@ -15,7 +15,7 @@ const kilo = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n.toFixed
 
 const PHASES: Phase[] = [
   { name: "Receiving", color: "#2a9fd6", share: 0.6, total: 110, unit: "MiB", rateUnit: "MiB/s", took: "7.7s", amount: (n) => `${n.toFixed(n < 10 ? 1 : 0)} MiB` },
-  { name: "Indexing", color: "#b04cc8", share: 0.14, total: 76660, unit: "objects", rateUnit: "obj/s", took: "557ms", amount: (n) => `${n0(n)} objects` },
+  { name: "Indexing", color: "#b04cc8", share: 0.14, total: 0, unit: "objects", rateUnit: "obj/s", took: "557ms", amount: (n) => `${n0(n)} objects` },
   { name: "Resolving", color: "#c99a06", share: 0.12, total: 56217, unit: "deltas", rateUnit: "deltas/s", took: "247ms", amount: (n) => `${n0(n)} deltas` },
   { name: "Checkout", color: "#3a9a2e", share: 0.14, total: 9858, unit: "files", rateUnit: "files/s", took: "1.5s", amount: (n) => `${n0(n)} files` },
 ];
@@ -56,8 +56,10 @@ export function repoName(slug: string) {
   return name || "grit";
 }
 
-export function CloneProgress({ slug, target = "article.content" }: { slug: string; target?: string }) {
+export function CloneProgress({ slug, words, target = "article.content" }: { slug: string; words: number; target?: string }) {
   const repo = repoName(slug);
+  // The post's words are the objects being cloned.
+  const phases = PHASES.map((p) => (p.name === "Indexing" ? { ...p, total: words } : p));
   const [progress, setProgress] = useState(0);
   // Article fraction per second, smoothed; drives every phase's rate.
   const [speed, setSpeed] = useState(0);
@@ -93,7 +95,7 @@ export function CloneProgress({ slug, target = "article.content" }: { slug: stri
   }, [target]);
 
   let start = 0;
-  const rows = PHASES.map((phase, i) => {
+  const rows = phases.map((phase, i) => {
     const f = Math.min(1, Math.max(0, (progress - start) / phase.share));
     start += phase.share;
     return { phase, f, i };
@@ -108,7 +110,10 @@ export function CloneProgress({ slug, target = "article.content" }: { slug: stri
       <div className="clone-head">
         <b>Cloning</b> {repo.length <= 8 ? <><span className="clone-dim">{repo}.git →</span> <b>{repo}</b></> : <b>{repo}</b>}
       </div>
-      <div className="clone-dim clone-remote">remote: 76,660 objects, done.</div>
+      <div className="clone-dim clone-remote">
+        {/* No thousands separators, like git's own counts: it has to fit the sidebar. */}
+        remote: {progress >= 1 ? `${words} objects, done.` : `${Math.round(progress * words)}/${words} objects, ${Math.floor(progress * 100)}%`}
+      </div>
       {rows.map(({ phase, f, i }) => {
         const done = f >= 1;
         const active = f > 0 && !done;

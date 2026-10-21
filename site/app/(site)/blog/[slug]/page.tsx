@@ -7,6 +7,7 @@ import { TocSpy } from "@/components/TocSpy";
 import { BLOG_DESCRIPTION, displayDate, loadPosts, shortSha } from "@/lib/blog";
 import { initHighlighter } from "@/lib/highlight";
 import { parseDoc, renderHtml } from "@/lib/markdown";
+import { countWords } from "@/lib/text";
 
 export const dynamicParams = false;
 
@@ -68,7 +69,7 @@ export default async function BlogPost({ params }: { params: Promise<{ slug: str
                     </li>
                   ))}
                 </ol>
-                <CloneProgress slug={post.slug} />
+                <CloneProgress slug={post.slug} words={countWords(post.body)} />
                 <TocSpy />
               </aside>
             ) : null}

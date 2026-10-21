@@ -76,3 +76,14 @@ export function composeMarkdownTwin(
 export function isExternal(url: string): boolean {
   return /^(https?:|mailto:|tel:)/i.test(url);
 }
+
+/** The words of a post's prose: Markdown without code, HTML, link targets and markup. */
+export function countWords(markdown: string) {
+  const text = markdown
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`]*`/g, " x ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\]\([^)]*\)/g, "]")
+    .replace(/[#>*_|[\]-]+/g, " ");
+  return text.match(/[\p{L}\p{N}][\p{L}\p{N}'’.,]*/gu)?.length ?? 0;
+}
