@@ -101,7 +101,6 @@ pub fn render_stat(
 }
 
 /// Like [`render_stat`], optionally prefixing output with a blank line (for `grit show`).
-#[allow(dead_code)]
 pub fn render_stat_with_leading_blank(
     w: &mut dyn Write,
     stat: &DiffStat,
@@ -248,6 +247,10 @@ pub fn render_name_status(
         let path = path_opts
             .map(|o| o.format_path_for_human(&file.path))
             .unwrap_or_else(|| file.path.clone());
+        if let Some(ref letters) = file.combined_status {
+            outln!(w, "{letters}\t{path}");
+            continue;
+        }
         let line = match file.status {
             ChangeStatus::Renamed | ChangeStatus::Copied => {
                 let letter = if file.status == ChangeStatus::Renamed {
