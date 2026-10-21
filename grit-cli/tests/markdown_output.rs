@@ -141,6 +141,79 @@ fn log_markdown_continuation_emits_full_opaque_cursor() {
     );
 }
 
+fn diff_fence_body(stdout: &str) -> &str {
+    stdout
+        .split("```diff")
+        .nth(1)
+        .and_then(|rest| rest.split("```").next())
+        .expect("diff fence body")
+}
+
+#[test]
+fn diff_markdown_emits_no_newline_at_eof_markers() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("f.txt"), "a\nb").unwrap();
+    Command::new(GRIT)
+        .args(["commit", "-m", "base"])
+        .current_dir(dir.path())
+        .status()
+        .unwrap();
+    std::fs::write(dir.path().join("f.txt"), "a\nb\nc").unwrap();
+    let out = Command::new(GRIT)
+        .args(["diff", "--markdown"])
+        .current_dir(dir.path())
+        .output()
+        .expect("diff");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let patch = diff_fence_body(&stdout);
+    assert!(
+        patch.contains("-b\n"),
+        "deleted last line without newline should appear:\n{patch}"
+    );
+    assert!(
+        patch.contains("+c\n"),
+        "appended line should appear:\n{patch}"
+    );
+    assert_eq!(
+        patch.matches("\\ No newline at end of file").count(),
+        2,
+        "markdown patch should mark both no-nl sides like git:\n{patch}"
+    );
+}
+
+#[test]
+fn show_markdown_emits_no_newline_at_eof_markers() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("f.txt"), "a\nb").unwrap();
+    Command::new(GRIT)
+        .args(["commit", "-m", "base"])
+        .current_dir(dir.path())
+        .status()
+        .unwrap();
+    std::fs::write(dir.path().join("f.txt"), "a\nb\nc").unwrap();
+    Command::new(GRIT)
+        .args(["commit", "-m", "append"])
+        .current_dir(dir.path())
+        .status()
+        .unwrap();
+    let out = Command::new(GRIT)
+        .args(["show", "--markdown", "HEAD"])
+        .current_dir(dir.path())
+        .output()
+        .expect("show");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let patch = diff_fence_body(&stdout);
+    assert_eq!(
+        patch.matches("\\ No newline at end of file").count(),
+        2,
+        "show markdown patch should include eof markers:\n{patch}"
+    );
+}
+
 #[test]
 fn diff_markdown_uses_fenced_diff_blocks() {
     let dir = tempfile::tempdir().expect("tempdir");

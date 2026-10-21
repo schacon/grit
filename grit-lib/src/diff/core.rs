@@ -43,21 +43,14 @@ use crate::userdiff::FuncnameMatcher;
 use crate::worktree_rules::WorktreeRules;
 
 use super::unified_emit::{
-    emit_unified_body_from_edits, line_diff_token, line_ending_only_edits, EditSpan, LineEnding,
-    LineSide, SourceLine, UnifiedEmitOptions,
+    emit_unified_body_from_edits, line_diff_token, line_ending_only_edits, EditSpan, LineSide,
+    SourceLine, UnifiedEmitOptions,
 };
 
 fn line_compare_key(line: &SourceLine, ws: super::WhitespaceMode) -> String {
     if ws.normalizes_line_compare() {
-        let body = ws.normalize_line_for_compare(&line.body).into_owned();
-        match line.ending {
-            LineEnding::Missing => body,
-            LineEnding::Lf | LineEnding::CrLf => {
-                let mut s = body;
-                s.push('\n');
-                s
-            }
-        }
+        // Git -w/-b compare normalized bodies only; EOF newline is whitespace.
+        ws.normalize_line_for_compare(&line.body).into_owned()
     } else {
         line_diff_token(line)
     }
