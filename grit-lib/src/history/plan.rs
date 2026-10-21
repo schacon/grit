@@ -1124,7 +1124,7 @@ fn write_new_commit(
 fn write_rewritten_commit(
     repo: &Repository,
     opts: &RewriteOptions,
-    change_ids: &ChangeIdWriteContext,
+    _change_ids: &ChangeIdWriteContext,
     template: &CommitData,
     template_oid: ObjectId,
     tree: ObjectId,
