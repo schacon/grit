@@ -301,6 +301,8 @@ fn list_and_delete_on_reftable_backend() {
             target: tip,
             message: None,
             tagger: None,
+            sign: None,
+            signing_key: None,
         },
     )
     .unwrap();

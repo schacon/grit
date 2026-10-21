@@ -26,6 +26,7 @@ use crate::error::{Error, Result};
 use crate::objects::{parse_commit, parse_tag, serialize_tag, ObjectId, ObjectKind, TagData};
 use crate::refs;
 use crate::repo::Repository;
+use crate::signing::{should_sign_tag, sign_serialized_tag, GpgConfig};
 
 const TAGS_PREFIX: &str = "refs/tags/";
 
@@ -49,6 +50,10 @@ pub struct CreateTagRequest {
     pub message: Option<String>,
     /// Tagger identity line (`Name <email> <epoch> <tz>`); required for annotated tags.
     pub tagger: Option<String>,
+    /// When `Some(true)` or `Some(false)`, force signing on or off. When `None`, honor `tag.gpgSign`.
+    pub sign: Option<bool>,
+    /// Override `user.signingkey` for this tag (same resolution as commit signing).
+    pub signing_key: Option<String>,
 }
 
 /// Result of [`create_tag`].
@@ -62,6 +67,8 @@ pub struct CreateTagOutcome {
     pub kind: TagKind,
     /// Commit oid when the tag ultimately references a commit.
     pub peeled: Option<ObjectId>,
+    /// Whether the tag object was signed (always false for lightweight tags).
+    pub signed: bool,
 }
 
 /// Create a lightweight or annotated tag ref.
@@ -80,7 +87,10 @@ pub fn create_tag(repo: &Repository, req: &CreateTagRequest) -> Result<CreateTag
     let target_kind = repo.odb().read_info(&req.target)?.kind;
     let peeled = repo.odb().peel_to_commit(req.target).ok().flatten();
 
-    let wants_annotated = req.message.is_some();
+    let config = repo.config()?;
+    let sign = should_sign_tag(config.as_ref(), req.sign)?;
+    let wants_annotated = req.message.is_some() || sign;
+    let mut signed = false;
     let (ref_oid, kind) = if wants_annotated {
         let tagger = req
             .tagger
@@ -99,7 +109,15 @@ pub fn create_tag(repo: &Repository, req: &CreateTagRequest) -> Result<CreateTag
             extra_headers: Vec::new(),
             message,
         };
-        let bytes = serialize_tag(&tag);
+        let unsigned = serialize_tag(&tag);
+        let bytes = if sign {
+            let gpg =
+                GpgConfig::from_config(config.as_ref())?.with_command_runner(repo.command_runner());
+            signed = true;
+            sign_serialized_tag(&gpg, &unsigned, tagger, req.signing_key.as_deref())?
+        } else {
+            unsigned
+        };
         let tag_oid = repo.odb().write(ObjectKind::Tag, &bytes)?;
         (tag_oid, TagKind::Annotated)
     } else {
@@ -113,6 +131,7 @@ pub fn create_tag(repo: &Repository, req: &CreateTagRequest) -> Result<CreateTag
         oid: ref_oid,
         kind,
         peeled,
+        signed,
     })
 }
 
@@ -479,6 +498,8 @@ mod tests {
                 target,
                 message: message.map(str::to_owned),
                 tagger: Some("T <t@example.com> 1700000000 +0000".into()),
+                sign: None,
+                signing_key: None,
             },
         )
         .expect("create tag")
