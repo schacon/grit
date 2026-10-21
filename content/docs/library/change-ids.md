@@ -32,7 +32,7 @@ Derivation takes object-id bytes `4..20`, reverses their order, bit-reverses eac
 | `grit.changeIds` | `true` | When false, [`id_for_new_commit`](rustdoc:grit_lib::change_id::ChangeIdPolicy::id_for_new_commit) returns `None` |
 | `grit.testing.changeId` | unset | `content-hash` derives ids from the hash of the serialized commit without change-id headers; any other non-empty value is used verbatim as the id |
 
-Embedders inject randomness with [`ChangeIdGenerator`](rustdoc:grit_lib::change_id::ChangeIdGenerator) on [`RepositoryOptions::with_change_id_generator`](rustdoc:grit_lib::environment::RepositoryOptions::with_change_id_generator); [`Repository::change_id_generator`](rustdoc:grit_lib::repo::Repository::change_id_generator) exposes the active generator.
+Embedders inject randomness with [`ChangeIdGenerator`](rustdoc:grit_lib::change_id::ChangeIdGenerator) on [`RepositoryOptions::with_change_id_generator`](rustdoc:grit_lib::config::environment::RepositoryOptions::with_change_id_generator); [`Repository::change_id_generator`](rustdoc:grit_lib::repo::Repository::change_id_generator) exposes the active generator.
 
 ## Git compatibility
 

@@ -49,6 +49,11 @@ function isRevisionSelectionRefresh(rel: string): boolean {
   return rel.endsWith("revision-selection.json");
 }
 
+/** The hash suite re-runs other suites' scenarios (e.g. `fsck-medium`) for context; their own baselines win. */
+function isHashSuiteBaseline(rel: string): boolean {
+  return rel.endsWith("hash-before.json") || rel.endsWith("hash-after.json");
+}
+
 function isDashboardBaseline(rel: string): boolean {
   return rel.startsWith("grit-utils/baselines/dashboard/");
 }
@@ -105,6 +110,14 @@ function loadBundle(baselines: string[]): Bundle {
           return;
         }
         if (isRevisionSelectionRefresh(prev.rel)) {
+          return;
+        }
+        if (isHashSuiteBaseline(rel) && !isHashSuiteBaseline(prev.rel)) {
+          return;
+        }
+        if (isHashSuiteBaseline(prev.rel) && !isHashSuiteBaseline(rel)) {
+          scenarios[prev.index] = row;
+          seen.set(id, { index: prev.index, rel });
           return;
         }
         if (isDashboardBaseline(rel) && isDashboardBaseline(prev.rel)) {
