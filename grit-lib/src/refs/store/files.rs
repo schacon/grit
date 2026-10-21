@@ -181,15 +181,6 @@ impl FilesRefStore {
         file.lookup_oid(&path, storage_name)
     }
 
-    /// Ensure the indexed file view is loaded before a CAS-only prepare batch.
-    fn refresh_packed_cache_merge_names(&self, names: &HashSet<String>) -> Result<()> {
-        if names.is_empty() {
-            return Ok(());
-        }
-        let _ = names;
-        self.refresh_packed_cache_if_stale()
-    }
-
     fn batch_may_create_ref(&self, updates: &[RefUpdate]) -> Result<bool> {
         for update in updates {
             if update.flags.log_only {
@@ -254,10 +245,8 @@ impl FilesRefStore {
             self.insert_symref_peel_chain(&mut refs, "HEAD")?;
         }
 
-        Ok(RefBatchState {
-            refs,
-            reflogs: self.load_reflog_map()?,
-        })
+        let reflogs = self.load_reflogs_for_updates(&refs, updates)?;
+        Ok(RefBatchState { refs, reflogs })
     }
 
     fn read_raw_at_route(&self, route: &RefStorageRoute) -> Result<Option<RawRef>> {
@@ -367,6 +356,36 @@ impl FilesRefStore {
             }
         }
         Ok(map)
+    }
+
+    /// Reflogs a batch can append to: each update that carries a reflog, and the ref its
+    /// symbolic chain (as recorded in `refs`) ends at. Updates without a reflog touch none,
+    /// so plain deletes and CAS updates skip reading `logs/` entirely.
+    fn load_reflogs_for_updates(
+        &self,
+        refs: &BTreeMap<String, RawRef>,
+        updates: &[RefUpdate],
+    ) -> Result<BTreeMap<String, Vec<ReflogEntry>>> {
+        let mut names = BTreeSet::new();
+        for update in updates.iter().filter(|u| u.reflog.is_some()) {
+            let mut name = update.name.as_str();
+            names.insert(name.to_owned());
+            for _ in 0..crate::refs::SYMREF_MAXDEPTH {
+                let Some(RawRef::Symbolic(next)) = refs.get(name) else {
+                    break;
+                };
+                name = next;
+                names.insert(name.to_owned());
+            }
+        }
+        let mut out = BTreeMap::new();
+        for name in names {
+            let entries = read_reflog_at_path(&self.reflog_path(&name))?;
+            if !entries.is_empty() {
+                out.insert(name, entries);
+            }
+        }
+        Ok(out)
     }
 
     fn load_reflog_map(&self) -> Result<BTreeMap<String, Vec<ReflogEntry>>> {
@@ -651,6 +670,7 @@ impl FilesRefStore {
         packed_lock_held: bool,
         persisted_refs: &mut HashSet<String>,
         writes_ref: bool,
+        carried: &mut Option<(String, PathBuf)>,
     ) -> Result<()> {
         let mut targets: Vec<String> = running
             .refs
@@ -679,6 +699,10 @@ impl FilesRefStore {
         let verify_name = (!matches!(update.expected, Expected::Any)).then_some(&update.name);
         for name in targets.iter().chain(verify_name) {
             if held.contains_key(name) {
+                continue;
+            }
+            if let Some((_, lock)) = carried.take_if(|(carried_name, _)| carried_name == name) {
+                held.insert(name.clone(), lock);
                 continue;
             }
             let (_, _, lock_path) = self.ref_lock_paths(name);
@@ -723,6 +747,7 @@ impl FilesRefStore {
         after: &RefBatchState,
         packed_lock_held: bool,
         updates: &[RefUpdate],
+        carried: &mut Option<(String, PathBuf)>,
     ) -> Result<()> {
         let batch_extras: BTreeSet<String> = updates.iter().map(|u| u.name.clone()).collect();
 
@@ -769,6 +794,7 @@ impl FilesRefStore {
                 packed_lock_held,
                 &mut persisted_refs,
                 writes_ref,
+                carried,
             )?;
 
             running = next;
@@ -838,15 +864,6 @@ impl RefStore for FilesRefStore {
     ) -> StoreResult<Box<dyn PreparedRefTransaction + Send + '_>> {
         RefTransaction::validate_no_duplicates(txn.updates())?;
         let updates = txn.into_updates();
-
-        if !updates.is_empty()
-            && updates
-                .iter()
-                .all(|u| matches!(u.expected, Expected::Oid(_)))
-        {
-            let names: HashSet<String> = updates.iter().map(|u| u.name.clone()).collect();
-            let _ = self.refresh_packed_cache_merge_names(&names);
-        }
 
         for update in &updates {
             validate_storable_refname(&update.name)?;
@@ -1084,19 +1101,34 @@ impl PreparedRefTransaction for FilesPrepared<'_> {
             return Ok(());
         };
 
-        self.store.invalidate_packed_cache_after_write();
-
         let packed_lock_held = batch.packed_lock.is_some();
 
-        for lock in batch.ref_locks.values() {
+        // The first update is written before any other ref, so it keeps the lock it took in
+        // `prepare` instead of releasing and re-creating it. The rest are released here and
+        // re-taken one update at a time, so other writers can touch later refs mid-batch.
+        let mut ref_locks = batch.ref_locks;
+        let mut carried = batch
+            .updates
+            .iter()
+            .find(|u| !u.flags.log_only)
+            .and_then(|u| ref_locks.remove_entry(&u.name));
+        for lock in ref_locks.values() {
             let _ = fs::remove_file(lock);
         }
-        if let Err(err) = self.store.persist_state_diff(
+        // The packed cache revalidates against the file's size and mtime on every read, so
+        // rechecks under the ref locks see concurrent rewrites without a forced re-parse.
+        let persisted = self.store.persist_state_diff(
             &batch.before_commit,
             &batch.after_commit,
             packed_lock_held,
             &batch.updates,
-        ) {
+            &mut carried,
+        );
+        if let Some((_, lock)) = carried {
+            let _ = fs::remove_file(lock);
+        }
+        self.store.invalidate_packed_cache_after_write();
+        if let Err(err) = persisted {
             if let Some(p) = &batch.packed_lock {
                 let _ = fs::remove_file(p);
             }
