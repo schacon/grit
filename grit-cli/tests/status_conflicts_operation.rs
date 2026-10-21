@@ -222,3 +222,68 @@ fn status_json_resolved_merge_next_steps_run_in_order() -> TestResult {
     );
     Ok(())
 }
+
+fn init_merge_conflict_repo(repo: &Path) {
+    system_git_ok(repo, &["init", "-q", "-b", "main"]);
+    system_git_ok(repo, &["config", "user.name", "T"]);
+    system_git_ok(repo, &["config", "user.email", "t@e.com"]);
+    fs::write(repo.join("f"), "base\n").expect("f");
+    system_git_ok(repo, &["add", "f"]);
+    system_git_ok(repo, &["commit", "-qm", "base"]);
+    fs::write(repo.join("tick`name.txt"), "base\n").expect("tick path");
+    system_git_ok(repo, &["add", "tick`name.txt"]);
+    system_git_ok(repo, &["commit", "-qm", "tick"]);
+    system_git_ok(repo, &["checkout", "-qb", "side"]);
+    fs::write(repo.join("f"), "side\n").expect("f side");
+    fs::write(repo.join("tick`name.txt"), "side\n").expect("tick side");
+    system_git_ok(repo, &["commit", "-qam", "side"]);
+    system_git_ok(repo, &["checkout", "-q", "main"]);
+    fs::write(repo.join("f"), "main\n").expect("f main");
+    fs::write(repo.join("tick`name.txt"), "main\n").expect("tick main");
+    system_git_ok(repo, &["commit", "-qam", "main"]);
+    let merge = Command::new("git")
+        .args(["merge", "side"])
+        .current_dir(repo)
+        .env("GIT_CONFIG_GLOBAL", null_device())
+        .env("GIT_CONFIG_SYSTEM", null_device())
+        .output()
+        .expect("merge");
+    assert_ne!(merge.status.code(), Some(0), "expected merge conflict");
+}
+
+#[test]
+fn status_human_and_markdown_conflict_sections() -> TestResult {
+    let tmp = tempfile::TempDir::new()?;
+    let repo = tmp.path();
+    init_merge_conflict_repo(repo);
+
+    let (_, human, _) = run_grit(repo, &["status"]);
+    assert!(
+        human.contains("Conflicts\n  both modified (2)\n"),
+        "human output should group unmerged paths by kind:\n{human}"
+    );
+    assert!(
+        human.contains("    tick`name.txt\n\n→"),
+        "human conflicts section should end with a blank line before hints:\n{human}"
+    );
+
+    let (_, md, _) = run_grit(repo, &["status", "--markdown"]);
+    assert!(
+        md.contains("## Conflicts\n"),
+        "markdown conflicts use ## like other status sections:\n{md}"
+    );
+    assert!(
+        !md.contains("### Conflicts"),
+        "markdown must not use h3 for conflicts:\n{md}"
+    );
+    assert!(
+        md.contains("  - ``tick`name.txt``"),
+        "markdown paths must use format_inline_code (extra backticks around backtick paths):\n{md}"
+    );
+    assert!(
+        md.contains("  - ``tick`name.txt``\n\n→"),
+        "markdown conflicts section should end with a blank line before hints:\n{md}"
+    );
+
+    Ok(())
+}
