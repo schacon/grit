@@ -91,6 +91,12 @@ pub(crate) struct PreparedSwitch {
     wholesale_safety_precomputed: bool,
 }
 
+impl PreparedSwitch {
+    pub(crate) fn preserve_worktree_paths(&self) -> &HashSet<String> {
+        &self.preserve_worktree_paths
+    }
+}
+
 /// Resolve `-c <branch> [<start-point>]`.
 pub fn resolve_create_branch(
     repo: &Repository,
@@ -721,6 +727,14 @@ pub(crate) fn checkout_tree_transition_allow_local_with_preserved(
     let prepared =
         prepare_tree_transition_allow_local(repo, from_tree, to_tree, force_preserve_worktree)
             .map_err(tree_transition_prepare_to_error)?;
+    checkout_prepared_tree_transition(repo, prepared)
+}
+
+/// Run the checkout half of a prepared allow-local transition (for merge integration).
+pub(crate) fn checkout_prepared_tree_transition_for_merge(
+    repo: &Repository,
+    prepared: PreparedSwitch,
+) -> Result<()> {
     checkout_prepared_tree_transition(repo, prepared)
 }
 

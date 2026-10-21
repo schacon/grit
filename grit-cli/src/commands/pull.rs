@@ -4,9 +4,7 @@
 use anyhow::{bail, Context, Result};
 use grit_lib::config::ConfigSet;
 use grit_lib::porcelain::checkout::checkout_between_trees;
-use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::porcelain::worktree_guard::prepare_tree_checkout;
-use grit_lib::progress::NullProgress;
 use grit_lib::refs;
 use grit_lib::state::{resolve_head, HeadState};
 
@@ -19,12 +17,6 @@ use grit_lib::remote::{DefaultHttpClientFactory, Remote, DEFAULT_REMOTE};
 
 pub fn run(mode: OutputMode) -> Result<MergeOutcome> {
     let repo = context::discover()?;
-
-    let model = status(&repo, &StatusOptions::default(), &mut NullProgress)
-        .context("could not compute status")?;
-    if !model.staged.is_empty() || !model.unstaged.is_empty() {
-        bail!("you have uncommitted changes — commit them before pulling");
-    }
 
     let (refname, short_name, head_oid) = match resolve_head(repo.git_dir())? {
         HeadState::Branch {

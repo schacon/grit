@@ -26,7 +26,7 @@
 //!   building block the three transforms above (and most of the CLI merge code)
 //!   are written against.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -51,10 +51,10 @@ use crate::porcelain::index_from_tree::{
     index_from_tree_with_worktree_stats, refresh_stage0_index_stats_from_worktree,
 };
 use crate::porcelain::switch::{
-    checkout_tree_transition_allow_local, verify_tree_transition_allow_local,
-    TreeTransitionVerifyError,
+    checkout_prepared_tree_transition_for_merge, prepare_tree_transition_allow_local,
+    verify_tree_transition_allow_local, TreeTransitionPrepareError, TreeTransitionVerifyError,
 };
-use crate::porcelain::tree_merge_checkout::apply_clean_tree_merge_to_worktree;
+use crate::porcelain::tree_merge_checkout::finalize_clean_tree_merge_index;
 use crate::porcelain::worktree_guard::prepare_tree_checkout;
 use crate::refs;
 use crate::repo::Repository;
@@ -350,7 +350,9 @@ pub fn integrate_branch(
     )?;
 
     merge_checkout_tree_transition(repo, Some(&into_tree), &merged.result_tree)?;
-    apply_clean_tree_merge_to_worktree(repo, &into_tree, &merged)?;
+    let mut snapshot = crate::porcelain::worktree_guard::load_worktree_snapshot(repo)?;
+    finalize_clean_tree_merge_index(repo, &mut snapshot.index, &merged)?;
+    repo.write_index(&mut snapshot.index)?;
 
     let commit = CommitData {
         tree: merged.result_tree,
@@ -410,11 +412,10 @@ fn merge_overwrite_error_message(paths: &[String]) -> Error {
     }
 }
 
-fn map_tree_transition_error_for_merge(err: Error) -> Error {
-    if err.to_string() == "you have uncommitted changes — commit them before switching" {
-        Error::Message("you have uncommitted changes — commit them before merging".into())
-    } else {
-        err
+fn map_tree_transition_prepare_error_for_merge(err: TreeTransitionPrepareError) -> Error {
+    match err {
+        TreeTransitionPrepareError::OverwritePaths(paths) => merge_overwrite_error_message(&paths),
+        TreeTransitionPrepareError::Failed(err) => err,
     }
 }
 
@@ -438,9 +439,10 @@ fn merge_checkout_tree_transition(
     from_tree: Option<&ObjectId>,
     to_tree: &ObjectId,
 ) -> Result<()> {
-    ensure_merge_tree_transition_allowed(repo, from_tree, to_tree)?;
-    checkout_tree_transition_allow_local(repo, from_tree, to_tree)
-        .map_err(map_tree_transition_error_for_merge)
+    prepare_tree_checkout(repo, from_tree, to_tree)?;
+    let prepared = prepare_tree_transition_allow_local(repo, from_tree, to_tree, &HashSet::new())
+        .map_err(map_tree_transition_prepare_error_for_merge)?;
+    checkout_prepared_tree_transition_for_merge(repo, prepared)
 }
 
 fn commit_tree(repo: &Repository, commit_oid: &ObjectId) -> Result<ObjectId> {
@@ -523,6 +525,11 @@ fn apply_conflict_merge_worktree(
     let work_tree = repo
         .work_tree()
         .ok_or_else(|| Error::PathError("cannot update a bare repository's working tree".into()))?;
+    let materialized = materialized_merge_result_tree(repo.odb(), merged)?;
+    let prepared =
+        prepare_tree_transition_allow_local(repo, Some(head_tree), &materialized, &HashSet::new())
+            .map_err(map_tree_transition_prepare_error_for_merge)?;
+    let preserve_worktree_paths = prepared.preserve_worktree_paths().clone();
     let conflict_paths = conflict_path_set(merged);
     let mut index = repo.load_index()?;
     apply_tree_merge_output_to_index(&mut index, merged);
@@ -541,7 +548,7 @@ fn apply_conflict_merge_worktree(
                 .as_deref()
                 .or(change.old_path.as_deref())
                 .unwrap_or("");
-            !conflict_paths.contains(path.as_bytes())
+            !conflict_paths.contains(path.as_bytes()) && !preserve_worktree_paths.contains(path)
         })
         .collect();
     checkout::checkout_tree_changes(repo, &filtered)?;
