@@ -181,6 +181,10 @@ harness = false
 required-features = ["unstable-bench-helpers"]
 
 [[bench]]
+name = "change_id_resolve"
+harness = false
+
+[[bench]]
 name = "pack_bitmap"
 harness = false
 

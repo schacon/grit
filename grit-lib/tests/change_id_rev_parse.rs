@@ -350,6 +350,71 @@ fn ambiguous_when_derived_prefix_collides_with_stored_prefix() {
 }
 
 #[test]
+fn stored_change_id_resolves_after_stale_negative_probe_marker() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    git(
+        dir.path(),
+        &[
+            "commit",
+            "--allow-empty",
+            "-m",
+            "root",
+            "--author",
+            "T <t@example.com>",
+        ],
+    );
+    git(
+        dir.path(),
+        &[
+            "commit",
+            "--allow-empty",
+            "-m",
+            "second",
+            "--author",
+            "T <t@example.com>",
+        ],
+    );
+    git(dir.path(), &["gc", "--prune=now"]);
+    let repo = open_repo(dir.path());
+    let packed_tip = resolve_revision(&repo, "HEAD").expect("head");
+    let derived = ChangeId::derived_from_commit_id(&packed_tip);
+    let _ = find_commits_by_change_id_prefix(&repo, derived.short(8)).expect("prime probe");
+
+    let objects_dir = repo.git_dir().join("objects");
+    let marker_path = objects_dir.join("info/grit-change-id-probe");
+    let marker_text = std::fs::read_to_string(&marker_path).expect("fingerprinted absent marker");
+    let stale_fp = marker_text
+        .strip_prefix("absent ")
+        .and_then(|line| line.split_whitespace().next())
+        .and_then(|hex| u64::from_str_radix(hex, 16).ok())
+        .map(|fp| fp.wrapping_sub(1))
+        .expect("stale fingerprint");
+    std::fs::write(&marker_path, format!("absent {stale_fp:016x}\n")).expect("stale absent marker");
+
+    let stored_id = ChangeId::parse_reverse_hex("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz").expect("id");
+    let with_header =
+        write_commit_with_id(&repo, Some(packed_tip), "stored after probe", &stored_id);
+    git(
+        dir.path(),
+        &["update-ref", "refs/heads/main", &with_header.to_hex()],
+    );
+
+    let same = find_commits_by_change_id_prefix(&repo, "zzzz").expect("same handle");
+    assert!(
+        same.iter().any(|m| m.oid == with_header),
+        "same Repository must resolve stored change id after stale absent marker"
+    );
+
+    let reopened = open_repo(dir.path());
+    let again = find_commits_by_change_id_prefix(&reopened, "zzzz").expect("reopened handle");
+    assert!(
+        again.iter().any(|m| m.oid == with_header),
+        "reopened Repository must resolve stored change id after stale absent marker"
+    );
+}
+
+#[test]
 fn short_or_non_reverse_hex_specs_unaffected() {
     let dir = tempfile::tempdir().expect("tempdir");
     git(dir.path(), &["init", "-q", "-b", "main"]);
