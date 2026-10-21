@@ -12608,6 +12608,76 @@ impl core::marker::Unpin for grit_lib::refs::branch_tracking::Standing
 impl core::marker::UnsafeUnpin for grit_lib::refs::branch_tracking::Standing
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::branch_tracking::Standing
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::branch_tracking::Standing
+pub enum grit_lib::refs::branch_tracking::StandingHeader
+pub grit_lib::refs::branch_tracking::StandingHeader::Compared(grit_lib::refs::branch_tracking::Standing)
+pub grit_lib::refs::branch_tracking::StandingHeader::ComparedNoCounts
+pub grit_lib::refs::branch_tracking::StandingHeader::Detached
+pub grit_lib::refs::branch_tracking::StandingHeader::Invalid
+pub grit_lib::refs::branch_tracking::StandingHeader::NoTarget
+pub grit_lib::refs::branch_tracking::StandingHeader::Unborn
+impl core::clone::Clone for grit_lib::refs::branch_tracking::StandingHeader
+pub fn grit_lib::refs::branch_tracking::StandingHeader::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::refs::branch_tracking::StandingHeader
+impl core::cmp::PartialEq for grit_lib::refs::branch_tracking::StandingHeader
+pub fn grit_lib::refs::branch_tracking::StandingHeader::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::refs::branch_tracking::StandingHeader
+pub fn grit_lib::refs::branch_tracking::StandingHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::refs::branch_tracking::StandingHeader
+impl core::marker::StructuralPartialEq for grit_lib::refs::branch_tracking::StandingHeader
+impl core::marker::Freeze for grit_lib::refs::branch_tracking::StandingHeader
+impl core::marker::Send for grit_lib::refs::branch_tracking::StandingHeader
+impl core::marker::Sync for grit_lib::refs::branch_tracking::StandingHeader
+impl core::marker::Unpin for grit_lib::refs::branch_tracking::StandingHeader
+impl core::marker::UnsafeUnpin for grit_lib::refs::branch_tracking::StandingHeader
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::branch_tracking::StandingHeader
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::branch_tracking::StandingHeader
+pub enum grit_lib::refs::branch_tracking::StatusHeader
+pub grit_lib::refs::branch_tracking::StatusHeader::Branch(grit_lib::refs::branch_tracking::StandingHeader)
+pub grit_lib::refs::branch_tracking::StatusHeader::MergeInProgress
+pub grit_lib::refs::branch_tracking::StatusHeader::OtherInProgress
+impl grit_lib::refs::branch_tracking::StatusHeader
+pub fn grit_lib::refs::branch_tracking::StatusHeader::primary_comparison_name<'a>(&'a grit_lib::refs::branch_tracking::BranchStanding) -> core::option::Option<&'a str>
+pub fn grit_lib::refs::branch_tracking::StatusHeader::pull_integration_ref<'a>(&'a grit_lib::refs::branch_tracking::BranchStanding) -> core::option::Option<&'a str>
+pub fn grit_lib::refs::branch_tracking::StatusHeader::resolve(&grit_lib::refs::branch_tracking::BranchStanding, bool, &[grit_lib::state::InProgressOperation]) -> Self
+pub fn grit_lib::refs::branch_tracking::StatusHeader::upstream_line<'a>(&'a grit_lib::refs::branch_tracking::BranchStanding) -> core::option::Option<&'a grit_lib::refs::branch_tracking::TrackedComparison>
+impl core::clone::Clone for grit_lib::refs::branch_tracking::StatusHeader
+pub fn grit_lib::refs::branch_tracking::StatusHeader::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::refs::branch_tracking::StatusHeader
+impl core::cmp::PartialEq for grit_lib::refs::branch_tracking::StatusHeader
+pub fn grit_lib::refs::branch_tracking::StatusHeader::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::refs::branch_tracking::StatusHeader
+pub fn grit_lib::refs::branch_tracking::StatusHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::refs::branch_tracking::StatusHeader
+impl core::marker::StructuralPartialEq for grit_lib::refs::branch_tracking::StatusHeader
+impl core::marker::Freeze for grit_lib::refs::branch_tracking::StatusHeader
+impl core::marker::Send for grit_lib::refs::branch_tracking::StatusHeader
+impl core::marker::Sync for grit_lib::refs::branch_tracking::StatusHeader
+impl core::marker::Unpin for grit_lib::refs::branch_tracking::StatusHeader
+impl core::marker::UnsafeUnpin for grit_lib::refs::branch_tracking::StatusHeader
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::branch_tracking::StatusHeader
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::branch_tracking::StatusHeader
+pub struct grit_lib::refs::branch_tracking::BranchStanding
+pub grit_lib::refs::branch_tracking::BranchStanding::branch: core::option::Option<alloc::string::String>
+pub grit_lib::refs::branch_tracking::BranchStanding::header: grit_lib::refs::branch_tracking::StandingHeader
+pub grit_lib::refs::branch_tracking::BranchStanding::target: core::option::Option<grit_lib::refs::branch_tracking::TrackedComparison>
+pub grit_lib::refs::branch_tracking::BranchStanding::upstream: core::option::Option<grit_lib::refs::branch_tracking::TrackedComparison>
+impl grit_lib::refs::branch_tracking::BranchStanding
+pub fn grit_lib::refs::branch_tracking::BranchStanding::compute(&grit_lib::repo::Repository, &grit_lib::state::HeadState, grit_lib::refs::branch_tracking::StandingOptions) -> grit_lib::error::Result<Self>
+impl core::clone::Clone for grit_lib::refs::branch_tracking::BranchStanding
+pub fn grit_lib::refs::branch_tracking::BranchStanding::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::refs::branch_tracking::BranchStanding
+impl core::cmp::PartialEq for grit_lib::refs::branch_tracking::BranchStanding
+pub fn grit_lib::refs::branch_tracking::BranchStanding::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::refs::branch_tracking::BranchStanding
+pub fn grit_lib::refs::branch_tracking::BranchStanding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::refs::branch_tracking::BranchStanding
+impl core::marker::Freeze for grit_lib::refs::branch_tracking::BranchStanding
+impl core::marker::Send for grit_lib::refs::branch_tracking::BranchStanding
+impl core::marker::Sync for grit_lib::refs::branch_tracking::BranchStanding
+impl core::marker::Unpin for grit_lib::refs::branch_tracking::BranchStanding
+impl core::marker::UnsafeUnpin for grit_lib::refs::branch_tracking::BranchStanding
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::branch_tracking::BranchStanding
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::branch_tracking::BranchStanding
 pub struct grit_lib::refs::branch_tracking::ComparisonBase
 pub grit_lib::refs::branch_tracking::ComparisonBase::full_ref: alloc::string::String
 pub grit_lib::refs::branch_tracking::ComparisonBase::name: alloc::string::String
@@ -12628,6 +12698,25 @@ impl core::marker::Unpin for grit_lib::refs::branch_tracking::ComparisonBase
 impl core::marker::UnsafeUnpin for grit_lib::refs::branch_tracking::ComparisonBase
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::branch_tracking::ComparisonBase
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::branch_tracking::ComparisonBase
+pub struct grit_lib::refs::branch_tracking::StandingOptions
+pub grit_lib::refs::branch_tracking::StandingOptions::counts: bool
+pub grit_lib::refs::branch_tracking::StandingOptions::newest_ahead_limit: usize
+impl core::clone::Clone for grit_lib::refs::branch_tracking::StandingOptions
+pub fn grit_lib::refs::branch_tracking::StandingOptions::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::refs::branch_tracking::StandingOptions
+impl core::cmp::PartialEq for grit_lib::refs::branch_tracking::StandingOptions
+pub fn grit_lib::refs::branch_tracking::StandingOptions::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::refs::branch_tracking::StandingOptions
+pub fn grit_lib::refs::branch_tracking::StandingOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::refs::branch_tracking::StandingOptions
+impl core::marker::StructuralPartialEq for grit_lib::refs::branch_tracking::StandingOptions
+impl core::marker::Freeze for grit_lib::refs::branch_tracking::StandingOptions
+impl core::marker::Send for grit_lib::refs::branch_tracking::StandingOptions
+impl core::marker::Sync for grit_lib::refs::branch_tracking::StandingOptions
+impl core::marker::Unpin for grit_lib::refs::branch_tracking::StandingOptions
+impl core::marker::UnsafeUnpin for grit_lib::refs::branch_tracking::StandingOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::branch_tracking::StandingOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::branch_tracking::StandingOptions
 pub struct grit_lib::refs::branch_tracking::TipComparison
 pub grit_lib::refs::branch_tracking::TipComparison::ahead: usize
 pub grit_lib::refs::branch_tracking::TipComparison::behind: usize
@@ -12650,9 +12739,32 @@ impl core::marker::Unpin for grit_lib::refs::branch_tracking::TipComparison
 impl core::marker::UnsafeUnpin for grit_lib::refs::branch_tracking::TipComparison
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::branch_tracking::TipComparison
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::branch_tracking::TipComparison
+pub struct grit_lib::refs::branch_tracking::TrackedComparison
+pub grit_lib::refs::branch_tracking::TrackedComparison::ahead: core::option::Option<usize>
+pub grit_lib::refs::branch_tracking::TrackedComparison::behind: core::option::Option<usize>
+pub grit_lib::refs::branch_tracking::TrackedComparison::full_ref: alloc::string::String
+pub grit_lib::refs::branch_tracking::TrackedComparison::name: alloc::string::String
+pub grit_lib::refs::branch_tracking::TrackedComparison::newest_ahead: alloc::vec::Vec<grit_lib::objects::ObjectId>
+pub grit_lib::refs::branch_tracking::TrackedComparison::oid: grit_lib::objects::ObjectId
+impl core::clone::Clone for grit_lib::refs::branch_tracking::TrackedComparison
+pub fn grit_lib::refs::branch_tracking::TrackedComparison::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::refs::branch_tracking::TrackedComparison
+impl core::cmp::PartialEq for grit_lib::refs::branch_tracking::TrackedComparison
+pub fn grit_lib::refs::branch_tracking::TrackedComparison::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::refs::branch_tracking::TrackedComparison
+pub fn grit_lib::refs::branch_tracking::TrackedComparison::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::refs::branch_tracking::TrackedComparison
+impl core::marker::Freeze for grit_lib::refs::branch_tracking::TrackedComparison
+impl core::marker::Send for grit_lib::refs::branch_tracking::TrackedComparison
+impl core::marker::Sync for grit_lib::refs::branch_tracking::TrackedComparison
+impl core::marker::Unpin for grit_lib::refs::branch_tracking::TrackedComparison
+impl core::marker::UnsafeUnpin for grit_lib::refs::branch_tracking::TrackedComparison
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::branch_tracking::TrackedComparison
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::branch_tracking::TrackedComparison
 pub const grit_lib::refs::branch_tracking::DEFAULT_TARGET_CANDIDATES: [&str; 4]
 pub fn grit_lib::refs::branch_tracking::apply_push_remote_tracking_updates(&std::path::Path, &str, &[grit_lib::remote::push_report::PushRefResult]) -> grit_lib::error::Result<()>
 pub fn grit_lib::refs::branch_tracking::comparison_base(&grit_lib::repo::Repository, &str) -> grit_lib::error::Result<core::option::Option<grit_lib::refs::branch_tracking::ComparisonBase>>
+pub fn grit_lib::refs::branch_tracking::status_ahead_behind_enabled(&grit_lib::config::ConfigSet) -> bool
 pub fn grit_lib::refs::branch_tracking::target_branch(&grit_lib::repo::Repository) -> grit_lib::error::Result<core::option::Option<grit_lib::refs::branch_tracking::ComparisonBase>>
 pub fn grit_lib::refs::branch_tracking::upstream_branch(&grit_lib::repo::Repository, &str) -> core::option::Option<grit_lib::refs::branch_tracking::ComparisonBase>
 pub fn grit_lib::refs::branch_tracking::upstream_tracking_full_ref(&grit_lib::repo::Repository, &str) -> core::option::Option<alloc::string::String>
@@ -18764,7 +18876,6 @@ pub fn grit_lib::state::resolve_head(&std::path::Path) -> grit_lib::error::Resul
 pub fn grit_lib::state::resolve_head_for_repository(&grit_lib::repo::Repository) -> grit_lib::error::Result<grit_lib::state::HeadState>
 pub fn grit_lib::state::split_commit_in_progress(&std::path::Path, &grit_lib::state::HeadState) -> bool
 pub fn grit_lib::state::status_operation(&grit_lib::state::WtStatusState, bool) -> core::option::Option<grit_lib::state::Operation>
-pub fn grit_lib::state::upstream_tracking(&std::path::Path, &str) -> grit_lib::error::Result<core::option::Option<(usize, usize)>>
 pub fn grit_lib::state::wt_status_get_state(&std::path::Path, &grit_lib::state::HeadState, bool) -> grit_lib::error::Result<grit_lib::state::WtStatusState>
 pub mod grit_lib::worktree
 pub mod grit_lib::worktree::attributes

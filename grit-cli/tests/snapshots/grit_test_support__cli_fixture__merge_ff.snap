@@ -1,5 +1,6 @@
 ---
 source: grit-test-support/src/cli_fixture.rs
+assertion_line: 384
 expression: payload
 ---
 {
@@ -10,12 +11,12 @@ expression: payload
   },
   "json": {
     "exit": 0,
-    "stdout": "{\"result\":\"fast_forward\",\"branch\":\"main\",\"oid\":\"0678d0320dac162a518bfd0ee738896acdcc0f6b\"}\n",
+    "stdout": "{\"result\":\"fast_forward\",\"branch\":\"main\",\"oid\":\"0678d0320dac162a518bfd0ee738896acdcc0f6b\",\"change_id\":\"xpwskqqvntzxwyvprokvsuqultwlpsql\"}\n",
     "stderr": ""
   },
   "markdown": {
     "exit": 0,
-    "stdout": "## Merge\n\n- Fast-forwarded **`main`** → `0678d03`\n",
+    "stdout": "## Merge\n\n- Fast-forwarded **`main`** → `0678d03`\n- change id `xpwskqq`\n",
     "stderr": ""
   }
 }

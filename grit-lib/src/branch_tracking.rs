@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use crate::config::ConfigSet;
+use crate::config::{parse_git_config_maybe_bool, ConfigSet};
 use crate::environment::Environment;
 use crate::error::Result;
 use crate::merge_base::ahead_behind_of_target_commits;
@@ -14,6 +14,7 @@ use crate::refs::store::{Expected, RawRef, RefUpdate, RefUpdateFlags};
 use crate::refspec::{parse_fetch_refspec, RefspecItem};
 use crate::repo::Repository;
 use crate::rev_parse::abbreviate_ref_name;
+use crate::state::{HeadState, InProgressOperation};
 use crate::transfer::{match_positive, ref_excluded};
 
 /// The `remote.<name>.fetch` refspecs of one remote, split by polarity.
@@ -260,6 +261,339 @@ pub fn comparison_base(repo: &Repository, branch_short: &str) -> Result<Option<C
     }
 }
 
+/// Options for [`BranchStanding::compute`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StandingOptions {
+    /// Maximum number of newest ahead commits to retain on each [`TrackedComparison`].
+    pub newest_ahead_limit: usize,
+    /// When `false`, only tip oids are compared; [`TrackedComparison::ahead`] and
+    /// [`TrackedComparison::behind`] stay `None` and no rev-list walk runs.
+    pub counts: bool,
+}
+
+/// Symmetric comparison of the current branch tip against one tracked ref (target or upstream).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrackedComparison {
+    /// Short display name (`origin/main`, `main`, …).
+    pub name: String,
+    /// Full ref the comparison resolved through.
+    pub full_ref: String,
+    /// Tip oid of the tracked ref at comparison time.
+    pub oid: ObjectId,
+    /// Commits on the branch not reachable from the tracked tip; `None` when counts were skipped.
+    pub ahead: Option<usize>,
+    /// Commits on the tracked tip not reachable from the branch; `None` when counts were skipped.
+    pub behind: Option<usize>,
+    /// Newest commits among the ahead set (newest first), up to the requested limit.
+    pub newest_ahead: Vec<ObjectId>,
+}
+
+/// How the status header summarizes branch vs target/upstream (before merge/rebase overrides).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StandingHeader {
+    /// On a branch that has no commits yet.
+    Unborn,
+    /// HEAD is detached.
+    Detached,
+    /// HEAD could not be resolved.
+    Invalid,
+    /// On a branch with no target or upstream to compare against.
+    NoTarget,
+    /// Symmetric ahead/behind counts vs the primary comparison ref.
+    Compared(Standing),
+    /// Primary comparison ref resolves but ahead/behind counts were skipped.
+    ComparedNoCounts,
+}
+
+/// Target and upstream standing for the current HEAD (status header / JSON).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BranchStanding {
+    /// Current branch short name, or `None` when HEAD is detached or invalid.
+    pub branch: Option<String>,
+    /// Repository target branch comparison, when a target resolves.
+    pub target: Option<TrackedComparison>,
+    /// Configured upstream comparison, when it resolves and differs from [`Self::target`].
+    pub upstream: Option<TrackedComparison>,
+    /// Header classification for the primary comparison (target, else upstream).
+    pub header: StandingHeader,
+}
+
+/// Status header after branch standing and in-progress operation overrides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusHeader {
+    /// Normal branch vs target/upstream summary.
+    Branch(StandingHeader),
+    /// A merge is in progress (`MERGE_HEAD` exists).
+    MergeInProgress,
+    /// Another in-progress operation (rebase, cherry-pick, …).
+    OtherInProgress,
+}
+
+impl StatusHeader {
+    /// Choose the header line, preferring merge/rebase overrides over branch standing.
+    #[must_use]
+    pub fn resolve(
+        standing: &BranchStanding,
+        merge_in_progress: bool,
+        operations: &[InProgressOperation],
+    ) -> Self {
+        if merge_in_progress || operations.contains(&InProgressOperation::Merge) {
+            return Self::MergeInProgress;
+        }
+        if !operations.is_empty() {
+            return Self::OtherInProgress;
+        }
+        Self::Branch(standing.header)
+    }
+
+    /// Short ref name for the primary header comparison (target, else upstream).
+    #[must_use]
+    pub fn primary_comparison_name(standing: &BranchStanding) -> Option<&str> {
+        standing
+            .target
+            .as_ref()
+            .map(|t| t.name.as_str())
+            .or_else(|| standing.upstream.as_ref().map(|u| u.name.as_str()))
+    }
+
+    /// Configured upstream comparison when it differs from target, or the sole comparison ref.
+    #[must_use]
+    pub fn upstream_line(standing: &BranchStanding) -> Option<&TrackedComparison> {
+        standing.upstream.as_ref()
+    }
+
+    /// Ref name for a `grit pull` hint: upstream when configured, otherwise target.
+    #[must_use]
+    pub fn pull_integration_ref(standing: &BranchStanding) -> Option<&str> {
+        if let Some(up) = &standing.upstream {
+            if up.ahead == Some(0) && up.behind.is_some_and(|b| b > 0) {
+                return Some(up.name.as_str());
+            }
+            return None;
+        }
+        standing.target.as_ref().and_then(|t| {
+            if t.ahead == Some(0) && t.behind.is_some_and(|b| b > 0) {
+                Some(t.name.as_str())
+            } else {
+                None
+            }
+        })
+    }
+}
+
+impl BranchStanding {
+    /// Resolve target and upstream for `head` and compare the branch tip against each.
+    ///
+    /// When target and upstream resolve to the same ref, the symmetric walk runs once.
+    /// With [`StandingOptions::counts`] set to `false`, only tip oids are compared and
+    /// ahead/behind counts are omitted.
+    ///
+    /// # Errors
+    ///
+    /// Propagates configuration load errors and object read failures from the commit walk.
+    pub fn compute(repo: &Repository, head: &HeadState, opts: StandingOptions) -> Result<Self> {
+        match head {
+            HeadState::Invalid => Ok(Self {
+                branch: None,
+                target: None,
+                upstream: None,
+                header: StandingHeader::Invalid,
+            }),
+            HeadState::Detached { .. } => Ok(Self {
+                branch: None,
+                target: None,
+                upstream: None,
+                header: StandingHeader::Detached,
+            }),
+            HeadState::Branch {
+                short_name,
+                oid: None,
+                ..
+            } => Ok(Self {
+                branch: Some(short_name.clone()),
+                target: None,
+                upstream: None,
+                header: StandingHeader::Unborn,
+            }),
+            HeadState::Branch {
+                short_name, oid, ..
+            } => {
+                let target_base = target_branch(repo)?;
+                let upstream_base = upstream_branch(repo, short_name);
+                let tip = *oid;
+                let (target, upstream) =
+                    comparisons_for_branch(repo, tip, target_base, upstream_base, opts)?;
+                let header = primary_standing_header(tip, target.as_ref(), upstream.as_ref(), opts);
+                Ok(Self {
+                    branch: Some(short_name.clone()),
+                    target,
+                    upstream,
+                    header,
+                })
+            }
+        }
+    }
+}
+
+fn primary_standing_header(
+    tip: Option<ObjectId>,
+    target: Option<&TrackedComparison>,
+    upstream: Option<&TrackedComparison>,
+    opts: StandingOptions,
+) -> StandingHeader {
+    let Some(tracked) = target.or(upstream) else {
+        return StandingHeader::NoTarget;
+    };
+    standing_header_for_tracked(tip, tracked, opts)
+}
+
+fn standing_header_for_tracked(
+    tip: Option<ObjectId>,
+    tracked: &TrackedComparison,
+    opts: StandingOptions,
+) -> StandingHeader {
+    if !opts.counts {
+        return if tip == Some(tracked.oid) {
+            StandingHeader::Compared(Standing::Even)
+        } else {
+            StandingHeader::ComparedNoCounts
+        };
+    }
+    StandingHeader::Compared(Standing::from_counts(
+        tracked.ahead.unwrap_or(0),
+        tracked.behind.unwrap_or(0),
+    ))
+}
+
+fn comparisons_for_branch(
+    repo: &Repository,
+    tip: Option<ObjectId>,
+    target_base: Option<ComparisonBase>,
+    upstream_base: Option<ComparisonBase>,
+    opts: StandingOptions,
+) -> Result<(Option<TrackedComparison>, Option<TrackedComparison>)> {
+    let Some(head_oid) = tip else {
+        let target = target_base
+            .map(|base| tracked_comparison(repo, tip, base, opts))
+            .transpose()?;
+        let upstream = upstream_base
+            .filter(|base| target.as_ref().is_none_or(|t| t.full_ref != base.full_ref))
+            .map(|base| tracked_comparison(repo, tip, base, opts))
+            .transpose()?;
+        return Ok((target, upstream));
+    };
+
+    let same_upstream_as_target = matches!(
+        (target_base.as_ref(), upstream_base.as_ref()),
+        (Some(t), Some(u)) if t.full_ref == u.full_ref
+    );
+
+    if same_upstream_as_target {
+        let target = target_base
+            .map(|base| tracked_comparison(repo, tip, base, opts))
+            .transpose()?;
+        return Ok((target, None));
+    }
+
+    if opts.counts {
+        if let (Some(t_base), Some(u_base)) = (&target_base, &upstream_base) {
+            let (target, upstream) = dual_tracked_comparisons(
+                repo,
+                head_oid,
+                t_base.clone(),
+                u_base.clone(),
+                opts.newest_ahead_limit,
+            )?;
+            return Ok((Some(target), Some(upstream)));
+        }
+    }
+
+    let target = target_base
+        .map(|base| tracked_comparison(repo, tip, base, opts))
+        .transpose()?;
+    let upstream = upstream_base
+        .filter(|base| target.as_ref().is_none_or(|t| t.full_ref != base.full_ref))
+        .map(|base| tracked_comparison(repo, tip, base, opts))
+        .transpose()?;
+    Ok((target, upstream))
+}
+
+fn dual_tracked_comparisons(
+    repo: &Repository,
+    head: ObjectId,
+    target_base: ComparisonBase,
+    upstream_base: ComparisonBase,
+    retain_newest_ahead: usize,
+) -> Result<(TrackedComparison, TrackedComparison)> {
+    let target_cmp = TipComparison::compute(repo, head, target_base.oid, retain_newest_ahead)?;
+    let upstream_cmp = TipComparison::compute(repo, head, upstream_base.oid, 0)?;
+    Ok((
+        TrackedComparison {
+            name: target_base.name,
+            full_ref: target_base.full_ref,
+            oid: target_base.oid,
+            ahead: Some(target_cmp.ahead),
+            behind: Some(target_cmp.behind),
+            newest_ahead: target_cmp.newest_ahead,
+        },
+        TrackedComparison {
+            name: upstream_base.name,
+            full_ref: upstream_base.full_ref,
+            oid: upstream_base.oid,
+            ahead: Some(upstream_cmp.ahead),
+            behind: Some(upstream_cmp.behind),
+            newest_ahead: Vec::new(),
+        },
+    ))
+}
+
+fn tracked_comparison(
+    repo: &Repository,
+    tip: Option<ObjectId>,
+    base: ComparisonBase,
+    opts: StandingOptions,
+) -> Result<TrackedComparison> {
+    let ComparisonBase {
+        name,
+        full_ref,
+        oid: base_oid,
+        source: _,
+    } = base;
+    let (ahead, behind, newest_ahead) = match tip {
+        None => (None, None, Vec::new()),
+        Some(_head_oid) if !opts.counts => (None, None, Vec::new()),
+        Some(head_oid) => {
+            let comparison =
+                TipComparison::compute(repo, head_oid, base_oid, opts.newest_ahead_limit)?;
+            (
+                Some(comparison.ahead),
+                Some(comparison.behind),
+                comparison.newest_ahead,
+            )
+        }
+    };
+    Ok(TrackedComparison {
+        name,
+        full_ref,
+        oid: base_oid,
+        ahead,
+        behind,
+        newest_ahead,
+    })
+}
+
+/// Whether status should compute ahead/behind counts (`status.aheadBehind`, default true).
+#[must_use]
+pub fn status_ahead_behind_enabled(config: &ConfigSet) -> bool {
+    let raw = config
+        .get("status.aheadBehind")
+        .or_else(|| config.get("status.aheadbehind"));
+    match raw {
+        None => true,
+        Some(value) => parse_git_config_maybe_bool(&value).unwrap_or(true),
+    }
+}
+
 /// How a branch tip relates to its base, from symmetric ahead/behind counts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Standing {
@@ -347,6 +681,228 @@ mod tests {
         assert_eq!(Standing::from_counts(3, 0), Standing::Ahead);
         assert_eq!(Standing::from_counts(0, 2), Standing::Behind);
         assert_eq!(Standing::from_counts(1, 1), Standing::Diverged);
+    }
+
+    use crate::config::environment::RepositoryOptions;
+    use crate::objects::ObjectId;
+    use crate::repo::Repository;
+    use std::path::Path;
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "T")
+            .env("GIT_AUTHOR_EMAIL", "t@e.com")
+            .env("GIT_COMMITTER_NAME", "T")
+            .env("GIT_COMMITTER_EMAIL", "t@e.com")
+            .status()
+            .expect("git");
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    fn open(dir: &Path) -> Repository {
+        Repository::discover(Some(dir), &RepositoryOptions::empty()).expect("open")
+    }
+
+    fn head_state(repo: &Repository) -> HeadState {
+        crate::state::resolve_head(repo.git_dir()).expect("head")
+    }
+
+    fn commit(dir: &Path, file: &str, msg: &str) {
+        std::fs::write(dir.join(file), msg.as_bytes()).expect("write");
+        git(dir, &["add", file]);
+        git(dir, &["commit", "-qm", msg]);
+    }
+
+    #[test]
+    fn standing_target_and_upstream_distinct() {
+        let tmp = TempDir::new().expect("tempdir");
+        let origin = tmp.path().join("origin");
+        std::fs::create_dir_all(&origin).expect("mkdir");
+        git(&origin, &["init", "-q", "-b", "main"]);
+        commit(&origin, "a", "m1");
+        git(&origin, &["checkout", "-qb", "topic"]);
+        commit(&origin, "b", "topic");
+        git(
+            tmp.path(),
+            &["clone", "-q", "-b", "main", "origin", "clone"],
+        );
+        let clone = tmp.path().join("clone");
+        git(&clone, &["checkout", "-q", "topic"]);
+        git(&clone, &["branch", "-q", "develop", "main"]);
+        git(
+            &clone,
+            &[
+                "branch",
+                "--set-upstream-to",
+                "refs/remotes/origin/topic",
+                "topic",
+            ],
+        );
+        git(&clone, &["config", "target.branch", "develop"]);
+
+        let repo = open(&clone);
+        let standing = BranchStanding::compute(
+            &repo,
+            &head_state(&repo),
+            StandingOptions {
+                newest_ahead_limit: 10,
+                counts: true,
+            },
+        )
+        .expect("standing");
+        assert_eq!(standing.branch.as_deref(), Some("topic"));
+        let target = standing.target.as_ref().expect("target");
+        let upstream = standing.upstream.as_ref().expect("upstream");
+        assert_eq!(target.name, "develop");
+        assert_eq!(upstream.name, "origin/topic");
+        assert_ne!(target.full_ref, upstream.full_ref);
+    }
+
+    #[test]
+    fn standing_upstream_equals_target_computed_once() {
+        let tmp = TempDir::new().expect("tempdir");
+        git(tmp.path(), &["init", "-q", "-b", "main"]);
+        commit(tmp.path(), "f", "c1");
+        git(
+            tmp.path(),
+            &["branch", "--set-upstream-to", "refs/heads/main", "main"],
+        );
+
+        let repo = open(tmp.path());
+        let standing = BranchStanding::compute(
+            &repo,
+            &head_state(&repo),
+            StandingOptions {
+                newest_ahead_limit: 10,
+                counts: true,
+            },
+        )
+        .expect("standing");
+        assert!(standing.upstream.is_none());
+        let target = standing.target.as_ref().expect("target");
+        assert_eq!(target.name, "main");
+        assert_eq!(target.ahead, Some(0));
+        assert_eq!(target.behind, Some(0));
+    }
+
+    #[test]
+    fn standing_no_counts_skips_walk() {
+        let tmp = TempDir::new().expect("tempdir");
+        git(tmp.path(), &["init", "-q", "-b", "main"]);
+        commit(tmp.path(), "f", "c1");
+        git(tmp.path(), &["branch", "topic"]);
+        git(tmp.path(), &["checkout", "-q", "topic"]);
+        commit(tmp.path(), "f", "c2");
+
+        let repo = open(tmp.path());
+        let standing = BranchStanding::compute(
+            &repo,
+            &head_state(&repo),
+            StandingOptions {
+                newest_ahead_limit: 10,
+                counts: false,
+            },
+        )
+        .expect("standing");
+        let target = standing.target.as_ref().expect("target");
+        assert_eq!(target.ahead, None);
+        assert_eq!(target.behind, None);
+        assert!(target.newest_ahead.is_empty());
+    }
+
+    #[test]
+    fn standing_unborn_and_detached() {
+        let tmp = TempDir::new().expect("tempdir");
+        git(tmp.path(), &["init", "-q", "-b", "empty"]);
+        let repo = open(tmp.path());
+        let unborn = BranchStanding::compute(
+            &repo,
+            &head_state(&repo),
+            StandingOptions {
+                newest_ahead_limit: 10,
+                counts: true,
+            },
+        )
+        .expect("standing");
+        assert_eq!(unborn.branch.as_deref(), Some("empty"));
+        assert!(unborn.target.is_none());
+
+        commit(tmp.path(), "f", "c1");
+        let oid = Command::new("git")
+            .current_dir(tmp.path())
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("rev-parse");
+        let hex = String::from_utf8_lossy(&oid.stdout);
+        let hex = hex.trim();
+        git(tmp.path(), &["checkout", "--detach", hex]);
+        let repo = open(tmp.path());
+        let detached = BranchStanding::compute(
+            &repo,
+            &head_state(&repo),
+            StandingOptions {
+                newest_ahead_limit: 10,
+                counts: true,
+            },
+        )
+        .expect("standing");
+        assert!(detached.branch.is_none());
+        assert!(detached.target.is_none());
+        assert!(detached.upstream.is_none());
+    }
+
+    #[test]
+    fn standing_upstream_counts_match_git() {
+        let tmp = TempDir::new().expect("tempdir");
+        let origin = tmp.path().join("origin");
+        std::fs::create_dir_all(&origin).expect("mkdir");
+        git(&origin, &["init", "-q", "-b", "main"]);
+        commit(&origin, "a", "m1");
+        commit(&origin, "a", "m2");
+        git(tmp.path(), &["clone", "-q", "origin", "clone"]);
+        let clone = tmp.path().join("clone");
+        git(&clone, &["config", "user.name", "T"]);
+        git(&clone, &["config", "user.email", "t@e.com"]);
+        commit(&clone, "b", "local");
+        commit(&origin, "a", "remote");
+        git(&clone, &["fetch", "-q"]);
+
+        let git_out = Command::new("git")
+            .current_dir(&clone)
+            .args(["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .expect("git rev-list");
+        assert!(git_out.status.success());
+        let text = String::from_utf8_lossy(&git_out.stdout);
+        let mut parts = text.split_whitespace();
+        let git_ahead: usize = parts.next().unwrap().parse().unwrap();
+        let git_behind: usize = parts.next().unwrap().parse().unwrap();
+
+        let repo = open(&clone);
+        let standing = BranchStanding::compute(
+            &repo,
+            &head_state(&repo),
+            StandingOptions {
+                newest_ahead_limit: 10,
+                counts: true,
+            },
+        )
+        .expect("standing");
+        let upstream = standing
+            .upstream
+            .as_ref()
+            .or(standing.target.as_ref())
+            .expect("upstream or target");
+        assert_eq!(upstream.ahead, Some(git_ahead));
+        assert_eq!(upstream.behind, Some(git_behind));
     }
 
     #[test]
