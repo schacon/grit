@@ -46,6 +46,18 @@ fn log_decorate_snapshot() {
 }
 
 #[test]
+fn log_graph_rejects_json() {
+    let fixture = CliFixture::new();
+    fixture.run_ok(&["init"]);
+    fixture.write_repo_file("a.txt", "x\n");
+    fixture.run_ok(&["commit", "-m", "only"]);
+    let out = fixture.run(&["log", "--graph", "--json"]);
+    assert!(!out.ok());
+    assert_eq!(out.status, Some(1));
+    assert!(out.stdout.contains("incompatible_flags"));
+    assert!(out.stdout.contains("--graph"));
+}
+
 #[test]
 fn log_graph_linear() {
     snapshot_fresh(
@@ -70,19 +82,25 @@ fn log_graph_merge() {
         &["log", "--graph", "--oneline", "-n", "10"],
         |f| {
             f.run_ok(&["init"]);
-            f.write_repo_file("f", "a\n");
-            f.run_ok(&["commit", "-m", "root"]);
-            f.run_ok(&["branch", "topic"]);
-            f.write_repo_file("t", "t\n");
-            f.run_ok(&["commit", "-m", "topic"]);
-            f.run_ok(&["checkout", "main"]);
-            f.write_repo_file("m", "m\n");
-            f.run_ok(&["commit", "-m", "mainline"]);
-            git(f.path(), &["merge", "--no-ff", "-m", "merge", "topic"]);
+            let root = f.path();
+            git(root, &["checkout", "-B", "main"]);
+            std::fs::write(root.join("f"), "a\n").expect("write");
+            git(root, &["add", "f"]);
+            git(root, &["commit", "-m", "root"]);
+            git(root, &["checkout", "-b", "topic"]);
+            std::fs::write(root.join("t"), "t\n").expect("write");
+            git(root, &["add", "t"]);
+            git(root, &["commit", "-m", "topic"]);
+            git(root, &["checkout", "main"]);
+            std::fs::write(root.join("m"), "m\n").expect("write");
+            git(root, &["add", "m"]);
+            git(root, &["commit", "-m", "mainline"]);
+            git(root, &["merge", "--no-ff", "-m", "merge", "topic"]);
         },
     );
 }
 
+#[test]
 fn log_group_by_author_count_json() {
     let fixture = CliFixture::new();
     fixture.run_ok(&["init"]);
