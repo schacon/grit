@@ -895,6 +895,7 @@ dependencies = [
  "flate2",
  "getrandom 0.2.17",
  "grit-test-support",
+ "hashbrown 0.15.5",
  "hex",
  "icu_normalizer",
  "imara-diff",

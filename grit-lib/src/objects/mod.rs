@@ -18,11 +18,16 @@
 
 mod commit_ref;
 mod core;
+mod extra_headers;
 pub mod handle;
 mod oid_hashtable;
 
 pub use commit_ref::CommitRef;
 pub use core::*;
+pub use extra_headers::{
+    extra_header_values, insert_header_before_signature, iter_extra_headers, next_header_block,
+    remove_header_lines, set_extra_header, ExtraHeaderIter,
+};
 pub use handle::Objects;
 pub use oid_hashtable::{
     empty_object_id_hash_set, empty_oid_byte_filter_map, empty_oid_set, oid_hash_map,
