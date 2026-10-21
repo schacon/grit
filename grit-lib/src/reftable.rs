@@ -25,15 +25,15 @@
 //! footer
 //! ```
 
+use crate::config::ConfigSet;
+use crate::error::{Error, Result};
+use crate::objects::ObjectId;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
-use crate::config::ConfigSet;
-use crate::error::{Error, Result};
-use crate::objects::ObjectId;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -2938,9 +2938,10 @@ impl ReftableStack {
                 "\n"
             };
         fs::write(guard.path()?, &content).map_err(Error::Io)?;
-        let lock = guard.lock.take().ok_or_else(|| {
-            Error::Message("tables.list lock was released".into())
-        })?;
+        let lock = guard
+            .lock
+            .take()
+            .ok_or_else(|| Error::Message("tables.list lock was released".into()))?;
         lock.commit_to(&tables_list).map_err(|err| match err {
             crate::lockfile::LockError::Io { source, .. } => Error::Io(source),
             crate::lockfile::LockError::Held { .. } => {

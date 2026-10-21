@@ -21,11 +21,11 @@ use grit_lib::config::ident::SignatureTimestamp;
 use grit_lib::config::ident::{fsck_commit_idents, timestamp_for_at_ct};
 use grit_lib::config::ident_resolve::{peek_name_with, IdentRole};
 use grit_lib::config::ConfigSet;
-use grit_lib::lockfile::{LockFile, LockWait, SystemLockJitter};
 use grit_lib::diff::{
     detect_copies, format_stat_line, read_submodule_head_for_checkout,
     submodule_commit_subject_line, unified_diff, unified_diff_with_prefix,
 };
+use grit_lib::lockfile::{LockFile, LockWait, SystemLockJitter};
 use grit_lib::objects::hash::try_par_hash_with_force;
 use grit_lib::objects::pack_receive::copy_reader_to_writer;
 use grit_lib::objects::promisor_remote::parse_advertisement;

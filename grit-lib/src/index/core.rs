@@ -1507,9 +1507,11 @@ impl Index {
             .into_open_file()
             .map_err(|err| match err {
                 LockError::Io { source, .. } => Error::Io(source),
-                LockError::Held { path } => Error::Io(crate::lockfile::lock_held_as_ref_present(
-                    LockError::Held { path },
-                )),
+                LockError::Held { path } => {
+                    Error::Io(crate::lockfile::lock_held_as_ref_present(LockError::Held {
+                        path,
+                    }))
+                }
             })?;
 
         let mut wrote_pid_file = false;
@@ -3588,9 +3590,11 @@ impl IndexLock {
             .into_open_file()
             .map_err(|err| match err {
                 LockError::Io { source, .. } => Error::Io(source),
-                LockError::Held { path } => Error::Io(crate::lockfile::lock_held_as_ref_present(
-                    LockError::Held { path },
-                )),
+                LockError::Held { path } => {
+                    Error::Io(crate::lockfile::lock_held_as_ref_present(LockError::Held {
+                        path,
+                    }))
+                }
             })?;
 
         let mut wrote_pid = false;
