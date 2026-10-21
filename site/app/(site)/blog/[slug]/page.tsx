@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import Script from "next/script";
 import { CloneProgress } from "@/components/CloneProgress";
 import { Footer, Rail, TopBar } from "@/components/Rail";
+import { TocSpy } from "@/components/TocSpy";
 import { BLOG_DESCRIPTION, displayDate, loadPosts, shortSha } from "@/lib/blog";
 import { initHighlighter } from "@/lib/highlight";
 import { parseDoc, renderHtml } from "@/lib/markdown";
@@ -68,6 +69,7 @@ export default async function BlogPost({ params }: { params: Promise<{ slug: str
                   ))}
                 </ol>
                 <CloneProgress slug={post.slug} />
+                <TocSpy />
               </aside>
             ) : null}
           </div>
