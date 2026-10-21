@@ -127,7 +127,6 @@ impl ZlibInflateScratch {
     /// # Errors
     ///
     /// Returns [`Error::Zlib`] for invalid or truncated zlib data.
-    #[cfg(test)]
     pub fn inflate_prefix(&mut self, bytes: &[u8], max_out: usize) -> Result<(Vec<u8>, usize)> {
         if max_out == 0 {
             return self.inflate_prefix_zero(bytes);
@@ -143,7 +142,6 @@ impl ZlibInflateScratch {
         Ok((out, consumed))
     }
 
-    #[cfg(test)]
     fn inflate_prefix_zero(&mut self, bytes: &[u8]) -> Result<(Vec<u8>, usize)> {
         self.reset();
         let mut sink = [0u8; 1];
