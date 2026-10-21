@@ -164,6 +164,43 @@ jobs:
             grit-*.tar.gz
             grit-*.zip
 
+  # Publish grit-lib, grit-protocol and grit-cli to crates.io once the release is up, so
+  # `cargo install grit-cli` and library users get the same version as the binaries. Uses
+  # crates.io trusted publishing (OIDC): each crate lists this repo and `release.yml` as a
+  # trusted publisher, so there is no long-lived registry token. Versions already on
+  # crates.io are skipped, so re-running the job after a partial publish is safe.
+  publish-crates:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.99.0
+
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish crates
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # Dependency order: each crate needs the one before it on the index.
+          for crate in grit-lib grit-protocol grit-cli; do
+            if curl -sfo /dev/null -A "grit-release (github.com/gitbutlerapp/grit)" \
+                "https://crates.io/api/v1/crates/$crate/$version"; then
+              echo "$crate $version is already on crates.io"
+              continue
+            fi
+            cargo publish --locked -p "$crate"
+          done
+
   # Manual (workflow_dispatch) runs refresh a rolling `nightly` prerelease.
   # Release assets are public, so `install-nightly` downloads them with plain
   # curl — no GitHub CLI or token needed (unlike workflow-run artifacts, which

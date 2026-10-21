@@ -5,6 +5,8 @@ edition.workspace = true
 license = "MIT"
 description = "Benchmarking and utility tools for grit"
 repository = "https://github.com/gitbutlerapp/grit"
+# Internal tooling: depends on grit-lib by path only.
+publish = false
 
 [lints]
 workspace = true
