@@ -2534,7 +2534,7 @@ fn apply_delta_chain_forward_into(
     pending: &[PendingDeltaFrame],
     result_pack_id: u32,
     result_offset: u64,
-    cache_delta_intermediates: bool,
+    populate_delta_lru: bool,
     state: &mut DeltaChainState,
 ) -> Result<()> {
     if pending.is_empty() {
@@ -2542,56 +2542,87 @@ fn apply_delta_chain_forward_into(
         return Ok(());
     }
 
-    let caching = cache_delta_intermediates && pack_cache::delta_base_caching_enabled();
+    let caching = populate_delta_lru && pack_cache::delta_base_caching_enabled();
+    let mut cache_inserts: Vec<(u32, u64, Arc<[u8]>)> =
+        Vec::with_capacity(if caching { pending.len() + 1 } else { 0 });
     if caching {
-        let mut cache_inserts: Vec<(u32, u64, Arc<[u8]>)> = Vec::with_capacity(pending.len() + 1);
         if let Some((pid, off)) = whole_base {
-            cache_inserts.push((pid, off, Arc::from(base_data)));
+            cache_inserts.push((pid, off, Arc::from(base_data.to_vec())));
         }
-        let scratch = &mut state.apply_scratch;
-        let mut rolling: Option<Arc<[u8]>> = None;
-        for frame in pending.iter().rev() {
-            let base: &[u8] = match &rolling {
-                Some(arc) => arc.as_ref(),
-                None => base_data,
-            };
-            apply_delta_into(scratch, base, &frame.delta)?;
-            let arc: Arc<[u8]> = Arc::from(std::mem::take(scratch).into_boxed_slice());
-            if frame.pack_id != result_pack_id || frame.offset != result_offset {
-                cache_inserts.push((frame.pack_id, frame.offset, Arc::clone(&arc)));
-            }
-            rolling = Some(arc);
-        }
-        pack_cache::put_delta_bases(kind, &cache_inserts);
-        if let Some(arc) = rolling {
-            copy_payload_preserve_capacity(out, arc.as_ref());
-        } else {
-            out.clear();
-        }
-        return Ok(());
     }
 
     let chain_a = &mut state.chain_a;
     let chain_b = &mut state.chain_b;
-    let first = pending
-        .last()
+    let mut rev: Vec<&PendingDeltaFrame> = pending.iter().rev().collect();
+    let last = rev
+        .pop()
         .ok_or_else(|| Error::CorruptObject("empty delta chain".to_owned()))?;
+    if rev.is_empty() {
+        apply_delta_into(out, base_data, &last.delta)?;
+        if caching && (last.pack_id != result_pack_id || last.offset != result_offset) {
+            cache_inserts.push((
+                last.pack_id,
+                last.offset,
+                Arc::from(out.as_slice()),
+            ));
+        }
+        if caching {
+            pack_cache::put_delta_bases(kind, &cache_inserts);
+        }
+        return Ok(());
+    }
+
+    let first = rev
+        .first()
+        .copied()
+        .expect("rev non-empty when last was popped and len>1");
     apply_delta_into(chain_a, base_data, &first.delta)?;
+    if caching && (first.pack_id != result_pack_id || first.offset != result_offset) {
+        cache_inserts.push((
+            first.pack_id,
+            first.offset,
+            Arc::from(chain_a.as_slice()),
+        ));
+    }
     let mut src_is_a = true;
-    for frame in pending.iter().rev().take(pending.len().saturating_sub(1)) {
+    for frame in rev.iter().skip(1) {
         if src_is_a {
             apply_delta_into(chain_b, chain_a.as_slice(), &frame.delta)?;
+            if caching && (frame.pack_id != result_pack_id || frame.offset != result_offset) {
+                cache_inserts.push((
+                    frame.pack_id,
+                    frame.offset,
+                    Arc::from(chain_b.as_slice()),
+                ));
+            }
         } else {
             apply_delta_into(chain_a, chain_b.as_slice(), &frame.delta)?;
+            if caching && (frame.pack_id != result_pack_id || frame.offset != result_offset) {
+                cache_inserts.push((
+                    frame.pack_id,
+                    frame.offset,
+                    Arc::from(chain_a.as_slice()),
+                ));
+            }
         }
         src_is_a = !src_is_a;
     }
-    let final_payload = if src_is_a {
+    let penultimate_base = if src_is_a {
         chain_a.as_slice()
     } else {
         chain_b.as_slice()
     };
-    copy_payload_preserve_capacity(out, final_payload);
+    apply_delta_into(out, penultimate_base, &last.delta)?;
+    if caching && (last.pack_id != result_pack_id || last.offset != result_offset) {
+        cache_inserts.push((
+            last.pack_id,
+            last.offset,
+            Arc::from(out.as_slice()),
+        ));
+    }
+    if caching {
+        pack_cache::put_delta_bases(kind, &cache_inserts);
+    }
     Ok(())
 }
 
@@ -2603,7 +2634,7 @@ fn finish_pack_read_with_pending(
     whole_base: Option<(u32, u64)>,
     result_pack_id: u32,
     result_offset: u64,
-    cache_delta_intermediates: bool,
+    populate_delta_lru: bool,
     state: &mut DeltaChainState,
 ) -> Result<ObjectKind> {
     let pending = std::mem::take(&mut state.pending);
@@ -2615,7 +2646,7 @@ fn finish_pack_read_with_pending(
         &pending,
         result_pack_id,
         result_offset,
-        cache_delta_intermediates,
+        populate_delta_lru,
         state,
     )?;
     Ok(kind)
@@ -2726,7 +2757,7 @@ fn resolve_pack_object_at_into(
     start_offset: u64,
     objects_dir: Option<&Path>,
     state: &mut DeltaChainState,
-    cache_delta_intermediates: bool,
+    populate_delta_lru: bool,
     out: &mut Vec<u8>,
 ) -> Result<ObjectKind> {
     resolve_pack_object_at_with_bytes_into(
@@ -2735,7 +2766,7 @@ fn resolve_pack_object_at_into(
         objects_dir,
         state,
         None,
-        cache_delta_intermediates,
+        populate_delta_lru,
         out,
     )
 }
@@ -2754,7 +2785,7 @@ fn resolve_pack_object_at_with_bytes(
         objects_dir,
         state,
         pack_bytes_override,
-        pack_cache::delta_base_caching_enabled(),
+        true,
         &mut out,
     )?;
     Ok((kind, out))
@@ -2766,7 +2797,7 @@ fn resolve_pack_object_at_with_bytes_into(
     objects_dir: Option<&Path>,
     state: &mut DeltaChainState,
     pack_bytes_override: Option<&[u8]>,
-    cache_delta_intermediates: bool,
+    populate_delta_lru: bool,
     out: &mut Vec<u8>,
 ) -> Result<ObjectKind> {
     let pack_path = start_idx.get().pack_path.clone();
@@ -2779,7 +2810,7 @@ fn resolve_pack_object_at_with_bytes_into(
             objects_dir,
             state,
             pack_bytes_override,
-            cache_delta_intermediates,
+            populate_delta_lru,
             out,
         ) {
             Ok(kind) => return Ok(kind),
@@ -2804,7 +2835,7 @@ fn resolve_pack_object_at_body(
     objects_dir: Option<&Path>,
     state: &mut DeltaChainState,
     pack_bytes_override: Option<&[u8]>,
-    cache_delta_intermediates: bool,
+    populate_delta_lru: bool,
     out: &mut Vec<u8>,
 ) -> Result<ObjectKind> {
     let result_offset = start_offset;
@@ -2861,7 +2892,7 @@ fn resolve_pack_object_at_body(
                         None,
                         result_pack_id,
                         result_offset,
-                        cache_delta_intermediates,
+                        populate_delta_lru,
                         state,
                     );
                 }
@@ -2886,7 +2917,7 @@ fn resolve_pack_object_at_body(
                                 None,
                                 result_pack_id,
                                 result_offset,
-                                cache_delta_intermediates,
+                                populate_delta_lru,
                                 state,
                             );
                         }
@@ -2912,7 +2943,7 @@ fn resolve_pack_object_at_body(
                             None,
                             result_pack_id,
                             result_offset,
-                            cache_delta_intermediates,
+                            populate_delta_lru,
                             state,
                         );
                     }
@@ -2926,7 +2957,7 @@ fn resolve_pack_object_at_body(
                     Some((pack_id, cur_offset)),
                     result_pack_id,
                     result_offset,
-                    cache_delta_intermediates,
+                    populate_delta_lru,
                     state,
                 );
             }
@@ -2956,7 +2987,7 @@ fn resolve_pack_object_at_body(
                         None,
                         result_pack_id,
                         result_offset,
-                        cache_delta_intermediates,
+                        populate_delta_lru,
                         state,
                     );
                 }
@@ -2998,7 +3029,7 @@ fn resolve_pack_object_at_body(
                                 None,
                                 result_pack_id,
                                 result_offset,
-                                cache_delta_intermediates,
+                                populate_delta_lru,
                                 state,
                             );
                         }
@@ -3025,7 +3056,7 @@ fn resolve_pack_object_at_body(
                                     None,
                                     result_pack_id,
                                     result_offset,
-                                    cache_delta_intermediates,
+                                    populate_delta_lru,
                                     state,
                                 );
                             }
@@ -3521,8 +3552,7 @@ fn read_object_from_pack_at_depth(idx: &PackIndex, oid: &ObjectId, depth: usize)
 
 fn read_object_at_depth(idx: &PackIndex, offset: u64, depth: usize) -> Result<Object> {
     let mut data = Vec::new();
-    let cache = pack_cache::delta_base_caching_enabled();
-    let kind = read_object_at_depth_into(idx, offset, depth, cache, &mut data)?;
+    let kind = read_object_at_depth_into(idx, offset, depth, true, &mut data)?;
     Ok(Object::new(kind, data))
 }
 
@@ -3530,7 +3560,7 @@ fn read_object_at_depth_into(
     idx: &PackIndex,
     offset: u64,
     depth: usize,
-    cache_delta_intermediates: bool,
+    populate_delta_lru: bool,
     out: &mut Vec<u8>,
 ) -> Result<ObjectKind> {
     if depth == 0 {
@@ -3568,7 +3598,7 @@ fn read_object_at_depth_into(
                 offset,
                 objects_dir,
                 state,
-                cache_delta_intermediates,
+                populate_delta_lru,
                 out,
             )
         });
