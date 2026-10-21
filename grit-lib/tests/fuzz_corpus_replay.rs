@@ -5,6 +5,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use grit_lib::index::Index;
+
 fn corpus_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/corpus")
 }
@@ -36,6 +38,13 @@ macro_rules! replay_targets {
             }
         )*
     };
+}
+
+#[test]
+fn index_parse_rejects_twenty_zero_byte_file_without_panic() {
+    let zeros = [0u8; 20];
+    grit_lib::fuzz::index_parse(&zeros);
+    assert!(Index::parse(&zeros).is_err());
 }
 
 replay_targets! {

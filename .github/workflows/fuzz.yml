@@ -32,12 +32,35 @@ jobs:
         run: cargo +nightly fuzz build
 
       - name: Fuzz each target (10 minutes)
+        id: fuzz_run
         working-directory: grit-lib/fuzz
         run: |
-          set -e
+          set +e
+          failed=0
           for target in $(cargo +nightly fuzz list); do
             echo "=== fuzz run $target (600s max) ==="
             cargo +nightly fuzz run "$target" -- \
               -max_total_time=600 \
-              "corpus/$target" || true
+              -artifact_prefix="artifacts/$target/" \
+              "corpus/$target"
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              echo "target $target exited $status"
+              failed=1
+            fi
           done
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload fuzz crash artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ github.run_id }}
+          path: grit-lib/fuzz/artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Report fuzz failures
+        if: steps.fuzz_run.outputs.failed != '0'
+        run: echo "::warning::One or more fuzz targets reported crashes; see uploaded artifacts."
