@@ -6630,6 +6630,12 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
             // skip-worktree paths (they are outside the sparse cone). Matches t7012 stash flow.
             continue;
         }
+        if index_entries
+            .get(path.as_bytes())
+            .is_some_and(|ie| ie.assume_unchanged())
+        {
+            continue;
+        }
 
         let tree_entry = tree_map.get(path.as_str());
 
