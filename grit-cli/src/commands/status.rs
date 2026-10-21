@@ -184,20 +184,6 @@ fn is_grit_subcommand(name: &str) -> bool {
     )
 }
 
-/// Which header line `grit status` shows (drives only the human rendering; the
-/// JSON fields below carry the same information in a flat, stable form).
-#[derive(Clone, Copy)]
-enum HeaderKind {
-    /// On a branch with a base: even with, ahead of, behind or diverged from it.
-    Compared(Standing),
-    NoTarget,
-    Unborn,
-    Detached,
-    Invalid,
-    MergeInProgress,
-    OtherInProgress,
-}
-
 /// One unmerged path in `--json` output.
 #[derive(Serialize, JsonSchema)]
 pub struct ConflictJson {
