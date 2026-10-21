@@ -195,26 +195,6 @@ impl RevSelectArgs {
         })
     }
 
-    /// Whether the caller supplied revision, date, ref-set, or walk-shape filters.
-    ///
-    /// Used to reject combining explicit selection with a log continuation cursor.
-    pub fn has_explicit_log_selection(&self, before_is_deprecated_cursor: bool) -> bool {
-        !self.revs.is_empty()
-            || self.since.is_some()
-            || self.after.is_some()
-            || self.until.is_some()
-            || (self.before.is_some() && !before_is_deprecated_cursor)
-            || self.first_parent
-            || self.merges
-            || self.no_merges
-            || self.reverse
-            || self.skip != 0
-            || self.all
-            || self.branches.is_some()
-            || self.tags.is_some()
-            || self.remotes.is_some()
-    }
-
     /// Revision tokens passed to the library walk (after applying command defaults).
     pub fn rev_tokens<'a>(&'a self, default_revs: &'a [&'a str]) -> Vec<&'a str> {
         if self.revs.is_empty() {
@@ -222,6 +202,37 @@ impl RevSelectArgs {
         } else {
             self.revs.iter().map(String::as_str).collect()
         }
+    }
+
+    fn build_commit_filter(
+        &self,
+        repo: &Repository,
+    ) -> std::result::Result<Option<Arc<CommitFilter>>, CommitFilterError> {
+        if !self.has_commit_filter_flags() {
+            return Ok(None);
+        }
+        let mut builder = CommitFilterBuilder::new()
+            .ignore_case(self.regexp_ignore_case)
+            .all_match(self.all_match)
+            .invert_grep(self.invert_grep)
+            .fixed_strings(self.fixed_strings);
+        for pat in &self.author {
+            builder = builder.author(pat.as_str());
+        }
+        for pat in &self.committer {
+            builder = builder.committer(pat.as_str());
+        }
+        for pat in &self.grep {
+            builder = builder.grep(pat.as_str());
+        }
+        if log_mailmap_enabled(repo, self.no_mailmap) {
+            if let Ok(table) = load_mailmap_table(repo) {
+                if !table.is_empty() {
+                    builder = builder.mailmap(table);
+                }
+            }
+        }
+        builder.build().map(|f| Some(Arc::new(f)))
     }
 
     /// Flags and revision tokens to echo in `grit log` continuation hints (excludes paging and walk-mode flags).
@@ -253,6 +264,20 @@ impl RevSelectArgs {
             }
         }
         parts.join(" ")
+    }
+}
+
+/// Whether author/committer mailmap applies for log-style commands (`log.mailmap`, `--no-mailmap`).
+pub(crate) fn log_mailmap_enabled(repo: &Repository, no_mailmap: bool) -> bool {
+    if no_mailmap {
+        return false;
+    }
+    let Ok(config) = repo.config() else {
+        return true;
+    };
+    match config.get("log.mailmap") {
+        None => true,
+        Some(v) => parse_bool(&v).unwrap_or(true),
     }
 }
 
@@ -297,4 +322,3 @@ fn ref_selections(args: &RevSelectArgs) -> Vec<RefSelection> {
     }
     out
 }
-|||||||

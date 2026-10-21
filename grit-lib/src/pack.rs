@@ -335,7 +335,7 @@ pub(crate) mod pack_cache {
         objects_dir: &Path,
         idx: &PackIndex,
         oid: &crate::objects::ObjectId,
-    ) -> Option<u64> {
+    ) -> Result<Option<u64>> {
         if !crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
             return idx.find_offset(oid);
         }
@@ -366,7 +366,7 @@ pub(crate) mod pack_cache {
         let Some(idx) = idx else {
             return Ok(None);
         };
-        let Some(offset) = find_offset_in_pack_read_context(objects_dir, &idx, oid) else {
+        let Some(offset) = find_offset_in_pack_read_context(objects_dir, &idx, oid)? else {
             return Ok(None);
         };
         match super::read_object_from_pack_at_offset(&idx, offset) {
@@ -3760,7 +3760,7 @@ pub(crate) fn try_read_object_from_packs_with_options(
     let indexes = pack_indexes_for_lookup(objects_dir, opts)?;
     let mut last_err: Option<Error> = None;
     for idx in &indexes {
-        let Some(offset) = pack_cache::find_offset_in_pack_read_context(objects_dir, idx, oid)
+        let Some(offset) = pack_cache::find_offset_in_pack_read_context(objects_dir, idx, oid)?
         else {
             continue;
         };

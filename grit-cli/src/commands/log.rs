@@ -62,7 +62,36 @@ pub struct LogOutcome {
     commit_rows: Vec<CommitSummary>,
     #[serde(skip)]
     #[schemars(skip)]
+    author_group_rows: Vec<(usize, String, String)>,
+    #[serde(skip)]
+    #[schemars(skip)]
+    display: LogDisplayOptions,
+    #[serde(skip)]
+    #[schemars(skip)]
+    head_branch: Option<String>,
+    #[serde(skip)]
+    #[schemars(skip)]
+    oneline_lines: Vec<String>,
+    #[serde(skip)]
+    #[schemars(skip)]
     continuation_args: Option<String>,
+}
+
+fn format_log_cursor_command(rev_args: Option<&str>, cursor: &str) -> String {
+    match rev_args.filter(|s| !s.is_empty()) {
+        Some(revs) => format!("grit log {revs} --cursor={cursor}"),
+        None => format!("grit log --cursor={cursor}"),
+    }
+}
+
+/// Author aggregate in `--json` output when `--group-by author` is set.
+#[derive(Serialize, JsonSchema)]
+pub struct LogAuthorGroupJson {
+    pub name: String,
+    pub email: String,
+    pub count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commits: Option<Vec<CommitJson>>,
 }
 
 impl HumanRender for LogOutcome {
@@ -111,13 +140,6 @@ impl HumanRender for LogOutcome {
             );
         }
         Ok(())
-    }
-}
-
-fn format_log_cursor_command(rev_args: Option<&str>, cursor: &str) -> String {
-    match rev_args.filter(|s| !s.is_empty()) {
-        Some(revs) => format!("grit log {revs} --cursor={cursor}"),
-        None => format!("grit log --cursor={cursor}"),
     }
 }
 
@@ -208,16 +230,25 @@ pub fn run(
         );
     }
     let continuation = cursor.or(deprecated_cursor);
+    if display.group_by.is_some() && continuation.is_some() {
+        bail!("`grit log` cannot combine `--cursor` with `--group-by`");
+    }
     if let Some(token) = continuation.as_deref() {
         if !rev.paths.is_empty() {
             bail!(
                 "`grit log` cannot combine `--cursor` with path filters; drop the cursor or the paths"
             );
         }
-        if rev.reverse || rev.first_parent || rev.merges || rev.no_merges || rev.skip > 0 {
+        if rev.reverse
+            || rev.first_parent
+            || rev.merges
+            || rev.no_merges
+            || rev.skip > 0
+            || rev.has_commit_filter_flags()
+        {
             bail!(
                 "`grit log` cannot combine `--cursor` with `--reverse`, `--first-parent`, \
-                 `--merges`, `--no-merges`, or `--skip`"
+                 `--merges`, `--no-merges`, `--skip`, or commit filters (`--author`, `--grep`, …)"
             );
         }
         let resume = LogWalkCursor::decode(token).context("invalid log continuation cursor")?;
@@ -232,26 +263,79 @@ pub fn run(
         let page_size = rev.max_count.unwrap_or(PAGE);
         let page = LogWalkCursor::step(&repo, &expected, Some(&resume), page_size)
             .context("could not list commits")?;
+        let truncated = page.next.is_some();
         let next = page.next.map(|c| c.encode()).transpose()?;
-        return build_outcome(&repo, &page.commits, stat, next, Some(continuation_args));
+        return build_commit_outcome(
+            &repo,
+            &page.commits,
+            stat,
+            next,
+            truncated,
+            display,
+            output_mode,
+            Some(continuation_args),
+        );
     }
 
     let token_refs = rev.rev_tokens(&["HEAD"]);
     let page_size = rev.max_count.unwrap_or(PAGE);
 
-    let use_rev_walk = !rev.paths.is_empty()
+    let use_rev_walk = display.group_by.is_some()
+        || !rev.paths.is_empty()
         || rev.max_count.is_some()
+        || opts.commit_filter.as_ref().is_some_and(|f| f.is_active())
         || LogWalkQuery::from_rev_walk(&repo, &token_refs, &opts)?.is_none();
 
     if use_rev_walk {
         if rev.max_count == Some(0) {
-            return build_outcome(&repo, &[], stat, None, None);
+            return empty_outcome(display);
+        }
+        let mut fetch_opts = opts.clone();
+        fetch_opts.limit = fetch_limit_plus_one(rev.max_count);
+        if display.group_by == Some(LogGroupBy::Author) {
+            let use_mailmap = rev_select::log_mailmap_enabled(&repo, rev.no_mailmap);
+            let mailmap = mailmap_for_grouping(&repo, use_mailmap)?;
+            if display.group_count_only {
+                let oids = if rev.max_count.is_none() {
+                    rev_list_commits_for_author_group(&repo, &token_refs, &fetch_opts)
+                        .context("could not list commits")?
+                } else {
+                    repo.rev_walk()
+                        .commits(&token_refs, &fetch_opts)
+                        .context("could not list commits")?
+                };
+                let (oids, truncated) = truncate_oid_list(oids, rev.max_count);
+                let grouped = group_commits_by_author(
+                    &repo,
+                    &oids,
+                    mailmap.as_ref(),
+                    GroupByAuthorOptions { count_only: true },
+                )
+                .context("could not group commits by author")?;
+                return build_author_group_outcome_from_groups(&repo, grouped, truncated, display);
+            }
+            let oids = repo
+                .rev_walk()
+                .commits(&token_refs, &fetch_opts)
+                .context("could not list commits")?;
+            let (oids, truncated) = truncate_oid_list(oids, rev.max_count);
+            return build_author_group_outcome(&repo, &oids, truncated, display, use_mailmap);
         }
         let oids = repo
             .rev_walk()
             .commits(&token_refs, &fetch_opts)
             .context("could not list commits")?;
-        return build_outcome(&repo, &oids, stat, None, None);
+        let (oids, truncated) = truncate_oid_list(oids, rev.max_count);
+        return build_commit_outcome(
+            &repo,
+            &oids,
+            stat,
+            None,
+            truncated,
+            display,
+            output_mode,
+            None,
+        );
     }
 
     let query = LogWalkQuery::from_rev_walk(&repo, &token_refs, &opts)?
@@ -259,9 +343,47 @@ pub fn run(
 
     let page =
         LogWalkCursor::step(&repo, &query, None, page_size).context("could not list commits")?;
+    let truncated = page.next.is_some();
     let next = page.next.map(|c| c.encode()).transpose()?;
     let continuation = next.is_some().then_some(continuation_args);
-    build_outcome(&repo, &page.commits, stat, next, continuation)
+    build_commit_outcome(
+        &repo,
+        &page.commits,
+        stat,
+        next,
+        truncated,
+        display,
+        output_mode,
+        continuation,
+    )
+}
+
+fn resolve_current_branch(repo: &grit_lib::repo::Repository) -> Result<Option<String>> {
+    Ok(
+        match resolve_head(repo.git_dir()).context("could not resolve HEAD")? {
+            HeadState::Branch { short_name, .. } => Some(short_name),
+            _ => None,
+        },
+    )
+}
+
+fn empty_outcome(display: LogDisplayOptions) -> Result<LogOutcome> {
+    Ok(LogOutcome {
+        commits: Vec::new(),
+        groups: if display.group_by.is_some() {
+            Some(Vec::new())
+        } else {
+            None
+        },
+        next: None,
+        truncated: false,
+        commit_rows: Vec::new(),
+        author_group_rows: Vec::new(),
+        display,
+        head_branch: None,
+        oneline_lines: Vec::new(),
+        continuation_args: None,
+    })
 }
 
 fn build_author_group_outcome(
@@ -326,14 +448,19 @@ fn build_author_group_outcome_from_groups(
         display,
         head_branch: None,
         oneline_lines: Vec::new(),
+        continuation_args: None,
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_commit_outcome(
     repo: &grit_lib::repo::Repository,
     oids: &[ObjectId],
     stat: bool,
     next: Option<String>,
+    truncated: bool,
+    display: LogDisplayOptions,
+    output_mode: OutputMode,
     continuation_args: Option<String>,
 ) -> Result<LogOutcome> {
     let env = repo.environment();
@@ -389,6 +516,10 @@ fn build_commit_outcome(
         next,
         truncated,
         commit_rows,
+        author_group_rows: Vec::new(),
+        display,
+        head_branch,
+        oneline_lines,
         continuation_args,
     })
 }

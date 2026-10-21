@@ -759,23 +759,6 @@ pub fn walk_commits_reachable_excluding_ancestors_of_cutoffs(
     limit: ReachableWalkLimit,
     cutoffs: ReachableWalkCommitterCutoffs,
 ) -> Result<(usize, Vec<ObjectId>)> {
-    walk_commits_reachable_excluding_ancestors_of_cutoffs(
-        repo,
-        tips,
-        hide,
-        limit,
-        ReachableWalkCommitterCutoffs::default(),
-    )
-}
-
-/// Like [`walk_commits_reachable_excluding_ancestors_of`] with committer-date cutoffs on bounded walks.
-pub fn walk_commits_reachable_excluding_ancestors_of_cutoffs(
-    repo: &Repository,
-    tips: &[ObjectId],
-    hide: &[ObjectId],
-    limit: ReachableWalkLimit,
-    cutoffs: ReachableWalkCommitterCutoffs,
-) -> Result<(usize, Vec<ObjectId>)> {
     if tips.is_empty() {
         return Ok((0, Vec::new()));
     }
@@ -1123,23 +1106,6 @@ pub fn commits_reachable_excluding_ancestors_of(
     tips: &[ObjectId],
     hide: &[ObjectId],
     limit: Option<usize>,
-) -> Result<Vec<ObjectId>> {
-    commits_reachable_excluding_ancestors_of_cutoffs(
-        repo,
-        tips,
-        hide,
-        limit,
-        ReachableWalkCommitterCutoffs::default(),
-    )
-}
-
-/// Like [`commits_reachable_excluding_ancestors_of`] with committer-date cutoffs on bounded walks.
-pub fn commits_reachable_excluding_ancestors_of_cutoffs(
-    repo: &Repository,
-    tips: &[ObjectId],
-    hide: &[ObjectId],
-    limit: Option<usize>,
-    cutoffs: ReachableWalkCommitterCutoffs,
 ) -> Result<Vec<ObjectId>> {
     commits_reachable_excluding_ancestors_of_cutoffs(
         repo,
