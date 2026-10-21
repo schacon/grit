@@ -1416,7 +1416,7 @@ pub fn fetch_remote(
                 return Ok(FetchOutcome {
                     updates: Vec::new(),
                     default_branch: None,
-                    new_shallow: shallow_update.shallow,
+                    new_shallow: crate::shallow::dedupe_shallow_list(shallow_update.shallow),
                     new_unshallow: shallow_update.unshallow,
                     transfer: crate::transfer::TransferStats::default(),
                 });
@@ -1656,7 +1656,7 @@ pub fn fetch_remote(
     Ok(FetchOutcome {
         updates,
         default_branch,
-        new_shallow: shallow_update.shallow,
+        new_shallow: crate::shallow::dedupe_shallow_list(shallow_update.shallow),
         new_unshallow: shallow_update.unshallow,
         transfer,
     })
@@ -2387,7 +2387,7 @@ mod fetch_advertised_ref_tests {
         std::fs::write(git_dir.join("refs/tags/loose"), format!("{}\n", a.to_hex()))
             .expect("loose tag");
         std::fs::write(
-            git_dir.join("packed-refs"),
+            crate::refs::store::paths::packed_refs_path(&git_dir),
             format!(
                 "# pack-refs with: peeled fully-peeled sorted \n{} refs/tags/moved\n{} refs/tags/packed\n",
                 a.to_hex(),

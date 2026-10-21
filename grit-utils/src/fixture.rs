@@ -54,15 +54,10 @@ pub fn remove_dir_robust(dir: &Path) {
     }
 }
 
-/// Create a committed repo with `file_count` text files spread across subdirectories.
-pub fn create_repo(git: &Path, file_count: usize) -> Result<PathBuf> {
-    let dir = scratch_dir();
-    remove_dir_robust(&dir);
-    fs::create_dir_all(&dir).context("create scratch dir")?;
-
+fn populate_repo_with_files(git: &Path, dir: &Path, file_count: usize) -> Result<()> {
     let out = Command::new(git)
         .args(["init", "-q"])
-        .current_dir(&dir)
+        .current_dir(dir)
         .output()
         .context("git init")?;
     if !out.status.success() {
@@ -86,13 +81,28 @@ pub fn create_repo(git: &Path, file_count: usize) -> Result<PathBuf> {
         }
     }
 
-    run_git(git, &dir, &["add", "-A"])?;
-    run_git(git, &dir, &["commit", "-q", "-m", "initial"])?;
+    run_git(git, dir, &["add", "-A"])?;
+    run_git(git, dir, &["commit", "-q", "-m", "initial"])?;
+    Ok(())
+}
+
+/// Create a committed repo with `file_count` text files spread across subdirectories.
+pub fn create_repo(git: &Path, file_count: usize) -> Result<PathBuf> {
+    let dir = scratch_dir();
+    remove_dir_robust(&dir);
+    fs::create_dir_all(&dir).context("create scratch dir")?;
+    populate_repo_with_files(git, &dir, file_count)?;
     Ok(dir)
 }
 
 /// Append `commit_count` empty commits on top of an existing repo (for log benchmarks).
 pub fn extend_with_empty_commits(dir: &Path, git: &Path, commit_count: usize) -> Result<()> {
+    static EMPTY_COMMIT_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
+        std::sync::OnceLock::new();
+    let _guard = EMPTY_COMMIT_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     for i in 0..commit_count {
         run_git(
             git,
@@ -109,7 +119,12 @@ pub fn create_repo_with_history(
     file_count: usize,
     commit_count: usize,
 ) -> Result<PathBuf> {
-    let dir = create_repo(git, file_count)?;
+    // Isolated from `scratch_dir()` / `GRIT_BENCH_SCRATCH` so parallel workspace tests
+    // do not clobber the repo while empty commits are appended.
+    let dir = tempfile::tempdir()
+        .context("history fixture tempdir")?
+        .keep();
+    populate_repo_with_files(git, &dir, file_count)?;
     if commit_count > 1 {
         extend_with_empty_commits(&dir, git, commit_count - 1)?;
     }
@@ -558,9 +573,20 @@ pub fn create_blame_deep_history_repo(git: &Path, commit_count: usize) -> Result
 }
 
 fn run_git(git: &Path, dir: &Path, args: &[&str]) -> Result<()> {
-    let out = Command::new(git).args(args).current_dir(dir).output()?;
+    let out = Command::new(git)
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", "Bench")
+        .env("GIT_AUTHOR_EMAIL", "b@example.com")
+        .env("GIT_COMMITTER_NAME", "Bench")
+        .env("GIT_COMMITTER_EMAIL", "b@example.com")
+        .output()?;
     if !out.status.success() {
-        bail!("git {} failed", args.join(" "));
+        bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     Ok(())
 }
@@ -652,7 +678,7 @@ mod tests {
             .parse::<usize>()
             .unwrap();
         assert_eq!(n, 100);
-        remove_dir_robust(&scratch_dir());
+        remove_dir_robust(&repo);
     }
 
     fn create_min_repo(git: &Path, dir: &Path) -> Result<()> {
