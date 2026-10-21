@@ -29,7 +29,7 @@ use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::fsck::reachability_roots;
 use crate::gc::prune_loose_unreachable;
-use crate::objects::ObjectId;
+use crate::objects::{oid_hash_map, ObjectId};
 use crate::odb::store::{ObjectStore, WritableObjectStore};
 use crate::repo::Repository;
 
@@ -196,13 +196,13 @@ impl Odb {
         let commits = collect_reachable_commit_oids(git_dir, self)?;
         let mut sorted: Vec<ObjectId> = commits.into_iter().collect();
         sorted.sort();
-        let mut infos = std::collections::HashMap::new();
+        let mut infos = oid_hash_map();
         for oid in &sorted {
             infos.insert(*oid, load_commit_graph_commit_info(self, *oid)?);
         }
         let chain = CommitGraphChain::try_load(objects_dir).ok().flatten();
-        let mut existing_filters = std::collections::HashMap::new();
-        let mut upgraded_filters = std::collections::HashMap::new();
+        let mut existing_filters = oid_hash_map();
+        let mut upgraded_filters = oid_hash_map();
         if let Some(ref chain) = chain {
             for oid in &sorted {
                 if let Some(bytes) = chain.existing_filter_bytes(oid, &bloom) {
@@ -212,17 +212,27 @@ impl Odb {
                 }
             }
         }
+        use std::collections::HashMap;
+        let infos_map: HashMap<_, _> = infos.iter().map(|(k, v)| (*k, v.clone())).collect();
+        let existing_map: HashMap<_, _> = existing_filters
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        let upgraded_map: HashMap<_, _> = upgraded_filters
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
         let (bytes, _) = build_commit_graph_bytes(
             &sorted,
-            &infos,
+            &infos_map,
             self,
             true,
             &bloom,
             None,
             &[],
             None,
-            &existing_filters,
-            &upgraded_filters,
+            &existing_map,
+            &upgraded_map,
             write_generation,
         )?;
         crate::commit_graph_write::atomic_replace_commit_graph(objects_dir, &bytes)?;

@@ -25,7 +25,7 @@
 
 mod roots;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
@@ -37,8 +37,10 @@ use crate::fsck_standalone::{fsck_object, FsckError, FsckObjectOptions};
 use crate::gitmodules::{DotFsckIssue, DotFsckTracker};
 use crate::index::MODE_GITLINK;
 use crate::midx::verify_midx;
-use crate::objects::HashAlgo;
-use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind, TreeEntry};
+use crate::objects::{
+    oid_hash_map, oid_hash_set, oid_hash_set_from, parse_commit, parse_tag,
+    parse_tree, HashAlgo, ObjectId, ObjectKind, OidHashMap, OidHashSet, TreeEntry,
+};
 use crate::odb::Odb;
 use crate::pack::{prepare_pack_for_object_fsck, PackFsckTrailerIssue};
 use crate::pack_fsck_verify::{verify_pack_objects_offset_order, PackFsckObjectOutcome};
@@ -406,8 +408,8 @@ pub fn fsck(
 
     let mut issues = Vec::new();
     let mut objects_checked = 0usize;
-    let mut store_validated: HashSet<ObjectId> = HashSet::new();
-    let mut store_links: HashMap<ObjectId, ValidatedObjectLinks> = HashMap::new();
+    let mut store_validated: OidHashSet = oid_hash_set();
+    let mut store_links: OidHashMap<ValidatedObjectLinks> = oid_hash_map();
 
     if !options.connectivity_only {
         let (loose_count, loose_validated, loose_links) =
@@ -430,9 +432,10 @@ pub fn fsck(
         }
     }
 
-    let mut reachable = HashSet::new();
+    let mut reachable = oid_hash_set();
     if options.check_connectivity {
-        let index_roots = index_object_roots(repo)?;
+        let index_roots_set = index_object_roots(repo)?;
+        let index_roots = oid_hash_set_from(&index_roots_set);
         let roots = reachability_roots(repo)?;
         let (walked, connectivity_issues) = walk_connectivity(
             repo,
@@ -454,7 +457,7 @@ pub fn fsck(
 
     let mut dangling = Vec::new();
     if options.check_dangling {
-        let mut all_objects: HashSet<ObjectId> = HashSet::new();
+        let mut all_objects: OidHashSet = oid_hash_set();
         odb.for_each_object(&mut |oid| {
             all_objects.insert(*oid);
             ControlFlow::Continue(())
@@ -572,8 +575,8 @@ fn validated_links_for(
 }
 
 fn record_validated_object(
-    validated: &mut HashSet<ObjectId>,
-    links: &mut HashMap<ObjectId, ValidatedObjectLinks>,
+    validated: &mut OidHashSet,
+    links: &mut OidHashMap<ValidatedObjectLinks>,
     oid: ObjectId,
     kind: ObjectKind,
     data: &[u8],
@@ -615,7 +618,7 @@ fn commit_link_targets(data: &[u8], algo: HashAlgo) -> Option<(ObjectId, Vec<Obj
 }
 
 fn dedupe_issues(issues: &mut Vec<FsckIssue>) {
-    let mut corrupt_or_bad = HashSet::new();
+    let mut corrupt_or_bad = oid_hash_set();
     for issue in issues.iter() {
         match issue {
             FsckIssue::CorruptLoose { oid, .. } | FsckIssue::HashMismatch { oid, .. } => {
@@ -627,7 +630,7 @@ fn dedupe_issues(issues: &mut Vec<FsckIssue>) {
             _ => {}
         }
     }
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::<String>::new();
     issues.retain(|issue| {
         if let FsckIssue::MissingObject { oid, .. } = issue {
             if corrupt_or_bad.contains(oid) {
@@ -666,11 +669,7 @@ fn verify_loose_objects(
     issues: &mut Vec<FsckIssue>,
     progress: &mut dyn ProgressSink,
     cancel: &dyn Cancel,
-) -> Result<(
-    usize,
-    HashSet<ObjectId>,
-    HashMap<ObjectId, ValidatedObjectLinks>,
-)> {
+) -> Result<(usize, OidHashSet, OidHashMap<ValidatedObjectLinks>)> {
     let odb = repo.odb();
     let algo = odb.hash_algo();
     let loose = odb.enumerate_local_loose_objects()?;
@@ -723,8 +722,8 @@ fn verify_loose_objects(
     };
 
     let mut checked = 0usize;
-    let mut validated = HashSet::new();
-    let mut links = HashMap::new();
+    let mut validated = oid_hash_set();
+    let mut links = oid_hash_map();
     for (item, outcome) in loose.iter().zip(results) {
         checked += 1;
         if checked.is_multiple_of(128) {
@@ -885,20 +884,16 @@ fn verify_pack_objects(
     issues: &mut Vec<FsckIssue>,
     progress: &mut dyn ProgressSink,
     cancel: &dyn Cancel,
-) -> Result<(
-    usize,
-    HashSet<ObjectId>,
-    HashMap<ObjectId, ValidatedObjectLinks>,
-)> {
+) -> Result<(usize, OidHashSet, OidHashMap<ValidatedObjectLinks>)> {
     let odb = repo.odb();
     let algo = odb.hash_algo();
     let fsck_opts = FsckObjectOptions::new(algo);
     let Some(objects_dir) = odb.files_objects_dir() else {
-        return Ok((0, HashSet::new(), HashMap::new()));
+        return Ok((0, oid_hash_set(), oid_hash_map()));
     };
     let pack_dir = objects_dir.join("pack");
     if !pack_dir.is_dir() {
-        return Ok((0, HashSet::new(), HashMap::new()));
+        return Ok((0, oid_hash_set(), oid_hash_map()));
     }
     let packs: Vec<PathBuf> = fs::read_dir(&pack_dir)
         .map_err(Error::Io)?
@@ -909,8 +904,8 @@ fn verify_pack_objects(
     progress.start(ProgressPhase::IndexingObjects, Some(packs.len() as u64));
     let par_opts: ParallelOptions = repo.thread_policy().resolve(ParallelOp::IndexPack, config);
     let mut checked = 0usize;
-    let mut validated = HashSet::new();
-    let mut links = HashMap::new();
+    let mut validated = oid_hash_set();
+    let mut links = oid_hash_map();
     let mut dot = DotFsckTracker::default();
     for (i, idx_path) in packs.iter().enumerate() {
         if cancel.is_cancelled() {
@@ -1024,20 +1019,20 @@ fn verify_midx_and_commit_graph(repo: &Repository, issues: &mut Vec<FsckIssue>) 
 fn walk_connectivity(
     repo: &Repository,
     roots: &[ObjectId],
-    index_roots: &HashSet<ObjectId>,
-    store_validated: &HashSet<ObjectId>,
-    store_links: &HashMap<ObjectId, ValidatedObjectLinks>,
+    index_roots: &OidHashSet,
+    store_validated: &OidHashSet,
+    store_links: &OidHashMap<ValidatedObjectLinks>,
     config: &ConfigSet,
     strict: bool,
     progress: &mut dyn ProgressSink,
     cancel: &dyn Cancel,
-) -> Result<(HashSet<ObjectId>, Vec<FsckIssue>)> {
+) -> Result<(OidHashSet, Vec<FsckIssue>)> {
     let odb = repo.odb();
     let algo = odb.hash_algo();
     let fsck_opts = FsckObjectOptions::new(algo);
     let mut issues = Vec::new();
     let mut dot = DotFsckTracker::default();
-    let mut seen: HashSet<ObjectId> = HashSet::new();
+    let mut seen: OidHashSet = oid_hash_set();
     let mut queue: VecDeque<(ObjectId, ObjectId, WalkRootKind)> = VecDeque::new();
     for &root in roots {
         if seen.insert(root) {
@@ -1199,7 +1194,7 @@ fn walk_connectivity(
 
 fn enqueue(
     queue: &mut VecDeque<(ObjectId, ObjectId, WalkRootKind)>,
-    seen: &mut HashSet<ObjectId>,
+    seen: &mut OidHashSet,
     oid: ObjectId,
     parent: ObjectId,
 ) {
@@ -1226,7 +1221,7 @@ enum ChildKindProbe {
 
 fn child_exists_with_kind(
     odb: &Odb,
-    store_links: &HashMap<ObjectId, ValidatedObjectLinks>,
+    store_links: &OidHashMap<ValidatedObjectLinks>,
     target: ObjectId,
     expected: ObjectKind,
 ) -> ChildKindProbe {
@@ -1247,12 +1242,12 @@ fn child_exists_with_kind(
 #[allow(clippy::too_many_arguments)]
 fn walk_tree_entries(
     odb: &Odb,
-    store_links: &HashMap<ObjectId, ValidatedObjectLinks>,
+    store_links: &OidHashMap<ValidatedObjectLinks>,
     config: &ConfigSet,
     strict: bool,
     issues: &mut Vec<FsckIssue>,
     queue: &mut VecDeque<(ObjectId, ObjectId, WalkRootKind)>,
-    seen: &mut HashSet<ObjectId>,
+    seen: &mut OidHashSet,
     tree_oid: ObjectId,
     entries: &[TreeEntry],
 ) {
@@ -1296,12 +1291,12 @@ fn walk_tree_entries(
 #[allow(clippy::too_many_arguments)]
 fn walk_from_validated_links(
     odb: &Odb,
-    store_links: &HashMap<ObjectId, ValidatedObjectLinks>,
+    store_links: &OidHashMap<ValidatedObjectLinks>,
     config: &ConfigSet,
     strict: bool,
     issues: &mut Vec<FsckIssue>,
     queue: &mut VecDeque<(ObjectId, ObjectId, WalkRootKind)>,
-    seen: &mut HashSet<ObjectId>,
+    seen: &mut OidHashSet,
     oid: ObjectId,
     _parent: ObjectId,
     _root_kind: WalkRootKind,
@@ -1376,12 +1371,12 @@ fn walk_from_validated_links(
 #[allow(clippy::too_many_arguments)]
 fn follow_typed_link(
     odb: &Odb,
-    store_links: &HashMap<ObjectId, ValidatedObjectLinks>,
+    store_links: &OidHashMap<ValidatedObjectLinks>,
     config: &ConfigSet,
     strict: bool,
     issues: &mut Vec<FsckIssue>,
     queue: &mut VecDeque<(ObjectId, ObjectId, WalkRootKind)>,
-    seen: &mut HashSet<ObjectId>,
+    seen: &mut OidHashSet,
     target: ObjectId,
     parent: ObjectId,
     expected: ObjectKind,
@@ -1420,8 +1415,8 @@ fn kind_for_tree_mode(mode: u32) -> Option<ObjectKind> {
     }
 }
 
-fn issue_oids(issues: &[FsckIssue]) -> HashSet<ObjectId> {
-    let mut oids = HashSet::new();
+fn issue_oids(issues: &[FsckIssue]) -> OidHashSet {
+    let mut oids = oid_hash_set();
     for issue in issues {
         if let Some(oid) = match issue {
             FsckIssue::CorruptLoose { oid, .. }

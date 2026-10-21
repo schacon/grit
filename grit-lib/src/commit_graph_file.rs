@@ -1809,6 +1809,19 @@ mod tests {
     use crate::repo::{init_repository, Repository};
     use crate::write_tree::write_tree_from_index;
 
+    use crate::commit_graph_write::CommitGraphCommitInfo;
+    use crate::objects::OidHashMap;
+
+    fn infos_std(
+        infos: &OidHashMap<CommitGraphCommitInfo>,
+    ) -> HashMap<ObjectId, CommitGraphCommitInfo> {
+        infos.iter().map(|(k, v)| (*k, v.clone())).collect()
+    }
+
+    fn empty_byte_filters() -> HashMap<ObjectId, Vec<u8>> {
+        HashMap::new()
+    }
+
     fn one_commit_repo() -> (tempfile::TempDir, Repository, ObjectId) {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = init_repository(
@@ -1869,20 +1882,20 @@ mod tests {
     fn try_parse_rejects_bad_signature_and_truncated_toc() {
         let (_dir, repo, commit) = one_commit_repo();
         let info = load_commit_graph_commit_info(&repo.odb(), commit).expect("info");
-        let mut infos = HashMap::new();
+        let mut infos = crate::objects::oid_hash_map();
         infos.insert(commit, info);
         let bloom = BloomFilterSettings::default();
         let (mut bytes, _) = build_commit_graph_bytes(
             &[commit],
-            &infos,
+            &infos_std(&infos),
             &repo.odb(),
             false,
             &bloom,
             None,
             &[],
             None,
-            &HashMap::new(),
-            &HashMap::new(),
+            &empty_byte_filters(),
+            &empty_byte_filters(),
             true,
         )
         .expect("write");
@@ -1898,15 +1911,15 @@ mod tests {
         assert!(matches!(err, crate::error::Error::CorruptObject(_)));
         let (mut good, _) = build_commit_graph_bytes(
             &[commit],
-            &infos,
+            &infos_std(&infos),
             &repo.odb(),
             false,
             &bloom,
             None,
             &[],
             None,
-            &HashMap::new(),
-            &HashMap::new(),
+            &empty_byte_filters(),
+            &empty_byte_filters(),
             true,
         )
         .expect("write");
@@ -1917,15 +1930,15 @@ mod tests {
         assert!(matches!(err, crate::error::Error::CorruptObject(_)));
         let (mut checksum_bad, _) = build_commit_graph_bytes(
             &[commit],
-            &infos,
+            &infos_std(&infos),
             &repo.odb(),
             false,
             &bloom,
             None,
             &[],
             None,
-            &HashMap::new(),
-            &HashMap::new(),
+            &empty_byte_filters(),
+            &empty_byte_filters(),
             true,
         )
         .expect("write");
@@ -1962,20 +1975,20 @@ mod tests {
         let objects = repo.odb().objects_dir();
         let sorted = vec![_commit];
         let info = load_commit_graph_commit_info(&repo.odb(), _commit).expect("info");
-        let mut infos = HashMap::new();
+        let mut infos = crate::objects::oid_hash_map();
         infos.insert(_commit, info);
         let bloom = BloomFilterSettings::default();
         let (bytes, _) = build_commit_graph_bytes(
             &sorted,
-            &infos,
+            &infos_std(&infos),
             &repo.odb(),
             false,
             &bloom,
             None,
             &[],
             None,
-            &HashMap::new(),
-            &HashMap::new(),
+            &empty_byte_filters(),
+            &empty_byte_filters(),
             true,
         )
         .expect("write");
@@ -1990,20 +2003,20 @@ mod tests {
     fn try_parse_rejects_oidf_toc_offset_out_of_range() {
         let (_dir, repo, commit) = one_commit_repo();
         let info = load_commit_graph_commit_info(&repo.odb(), commit).expect("info");
-        let mut infos = HashMap::new();
+        let mut infos = crate::objects::oid_hash_map();
         infos.insert(commit, info);
         let bloom = BloomFilterSettings::default();
         let (mut bytes, _) = build_commit_graph_bytes(
             &[commit],
-            &infos,
+            &infos_std(&infos),
             &repo.odb(),
             false,
             &bloom,
             None,
             &[],
             None,
-            &HashMap::new(),
-            &HashMap::new(),
+            &empty_byte_filters(),
+            &empty_byte_filters(),
             true,
         )
         .expect("write");
@@ -2027,20 +2040,20 @@ mod tests {
     fn generation_overflow_without_gdo2_fails_parse() {
         let (_dir, repo, commit) = one_commit_repo();
         let info = load_commit_graph_commit_info(&repo.odb(), commit).expect("info");
-        let mut infos = HashMap::new();
+        let mut infos = crate::objects::oid_hash_map();
         infos.insert(commit, info);
         let bloom = BloomFilterSettings::default();
         let (mut bytes, _) = build_commit_graph_bytes(
             &[commit],
-            &infos,
+            &infos_std(&infos),
             &repo.odb(),
             false,
             &bloom,
             None,
             &[],
             None,
-            &HashMap::new(),
-            &HashMap::new(),
+            &empty_byte_filters(),
+            &empty_byte_filters(),
             true,
         )
         .expect("write");
@@ -2064,20 +2077,20 @@ mod tests {
     fn bloom_precheck_not_in_graph_for_missing_oid() {
         let (_dir, repo, commit) = one_commit_repo();
         let info = load_commit_graph_commit_info(&repo.odb(), commit).expect("info");
-        let mut infos = HashMap::new();
+        let mut infos = crate::objects::oid_hash_map();
         infos.insert(commit, info);
         let bloom = BloomFilterSettings::default();
         let (bytes, _) = build_commit_graph_bytes(
             &[commit],
-            &infos,
+            &infos_std(&infos),
             &repo.odb(),
             true,
             &bloom,
             None,
             &[],
             None,
-            &HashMap::new(),
-            &HashMap::new(),
+            &empty_byte_filters(),
+            &empty_byte_filters(),
             true,
         )
         .expect("write");
@@ -2095,20 +2108,20 @@ mod tests {
         let (_dir, repo, commit) = one_commit_repo();
         let mut sorted = vec![commit];
         let info = load_commit_graph_commit_info(&repo.odb(), commit).expect("info");
-        let mut infos = HashMap::new();
+        let mut infos = crate::objects::oid_hash_map();
         infos.insert(commit, info);
         let bloom = BloomFilterSettings::default();
         let (bytes, _) = build_commit_graph_bytes(
             &sorted,
-            &infos,
+            &infos_std(&infos),
             &repo.odb(),
             true,
             &bloom,
             None,
             &[],
             None,
-            &HashMap::new(),
-            &HashMap::new(),
+            &empty_byte_filters(),
+            &empty_byte_filters(),
             true,
         )
         .expect("write");

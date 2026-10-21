@@ -5,7 +5,10 @@ use std::io::Write;
 
 use crate::bloom::{BloomBuildOutcome, BloomFilterSettings};
 use crate::commit_graph_file::CommitGraphChain;
-use crate::objects::{parse_commit, HashAlgo, ObjectId, ObjectKind};
+use crate::objects::{
+    oid_hash_map_from, oid_hash_set, parse_commit, HashAlgo, ObjectId, ObjectKind, OidHashMap,
+    OidHashSet,
+};
 use crate::odb::Odb;
 
 const SIGNATURE: &[u8; 4] = b"CGPH";
@@ -75,8 +78,8 @@ pub fn load_commit_graph_commit_info(
 
 fn compute_topo_generations(
     sorted_oids: &[ObjectId],
-    infos: &HashMap<ObjectId, CommitGraphCommitInfo>,
-    oid_to_idx: &HashMap<ObjectId, u32>,
+    infos: &OidHashMap<CommitGraphCommitInfo>,
+    oid_to_idx: &OidHashMap<u32>,
 ) -> Vec<u32> {
     let n = sorted_oids.len();
     let mut gen = vec![0u32; n];
@@ -137,8 +140,8 @@ fn compute_topo_generations(
 
 fn compute_corrected_generations(
     sorted_oids: &[ObjectId],
-    infos: &HashMap<ObjectId, CommitGraphCommitInfo>,
-    oid_to_idx: &HashMap<ObjectId, u32>,
+    infos: &OidHashMap<CommitGraphCommitInfo>,
+    oid_to_idx: &OidHashMap<u32>,
     topo_gen: &[u32],
 ) -> Vec<u64> {
     let n = sorted_oids.len();
@@ -209,7 +212,7 @@ fn compute_corrected_generations(
 
 fn resolve_parent_edge(
     parent: ObjectId,
-    oid_to_idx: &HashMap<ObjectId, u32>,
+    oid_to_idx: &OidHashMap<u32>,
     base_count: u32,
     chain: Option<&CommitGraphChain>,
 ) -> u32 {
@@ -253,11 +256,17 @@ pub fn build_commit_graph_bytes(
     upgraded_filters: &HashMap<ObjectId, Vec<u8>>,
     write_generation_data: bool,
 ) -> crate::error::Result<(Vec<u8>, BloomWriteStats)> {
+    let infos = oid_hash_map_from(infos);
+    let existing_filters = oid_hash_map_from(existing_filters);
+    let upgraded_filters = oid_hash_map_from(upgraded_filters);
+    let infos = &infos;
+    let existing_filters = &existing_filters;
+    let upgraded_filters = &upgraded_filters;
     let base_count: u32 = base_chain.map(CommitGraphChain::total_commits).unwrap_or(0);
     let algo = odb.hash_algo();
     let hash_len = algo.len();
 
-    let oid_to_idx: HashMap<ObjectId, u32> = sorted_oids
+    let oid_to_idx: OidHashMap<u32> = sorted_oids
         .iter()
         .enumerate()
         .map(|(i, o)| (*o, i as u32))
@@ -465,8 +474,8 @@ pub fn build_commit_graph_bytes(
 fn walk_reachable_commits_from_tip_stack(
     odb: &Odb,
     mut stack: Vec<ObjectId>,
-) -> crate::error::Result<HashSet<ObjectId>> {
-    let mut commits: HashSet<ObjectId> = HashSet::new();
+) -> crate::error::Result<OidHashSet> {
+    let mut commits: OidHashSet = oid_hash_set();
     while let Some(oid) = stack.pop() {
         if commits.contains(&oid) {
             continue;
@@ -519,7 +528,9 @@ pub fn collect_reachable_commit_oids_for_repository(
     for (_, oid) in refs::list_refs_for_repository(repo, "refs/")? {
         stack.push(oid);
     }
-    walk_reachable_commits_from_tip_stack(odb, stack)
+    Ok(walk_reachable_commits_from_tip_stack(odb, stack)?
+        .into_iter()
+        .collect())
 }
 
 /// Collect reachable commit OIDs from on-disk ref tips under `git_dir`.
@@ -591,7 +602,9 @@ pub fn collect_reachable_commit_oids(
         }
     }
 
-    walk_reachable_commits_from_tip_stack(odb, stack)
+    Ok(walk_reachable_commits_from_tip_stack(odb, stack)?
+        .into_iter()
+        .collect())
 }
 
 /// Clear the read-only attribute when present so replace/remove can succeed.
@@ -794,7 +807,7 @@ pub fn count_referenced_commit_tips(
     // Peel each ref tip to the commit it ultimately references (an annotated tag points at a
     // commit) and collect distinct commit OIDs. Non-commit tips (e.g. tags pointing at trees)
     // are ignored, exactly like Git's OBJ_COMMIT check.
-    let mut commits: HashSet<ObjectId> = HashSet::new();
+    let mut commits: OidHashSet = oid_hash_set();
     for tip in tips {
         if let Ok(Some(commit_oid)) = odb.peel_to_commit(tip) {
             commits.insert(commit_oid);
@@ -848,7 +861,17 @@ mod tests {
 
     use crate::bloom::BloomFilterSettings;
     use crate::index::{Index, IndexEntry, MODE_REGULAR};
-    use crate::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
+    use crate::objects::{oid_hash_map, serialize_commit, CommitData, ObjectId, ObjectKind};
+
+    fn commit_infos_std(
+        infos: &crate::objects::OidHashMap<super::CommitGraphCommitInfo>,
+    ) -> HashMap<ObjectId, super::CommitGraphCommitInfo> {
+        infos.iter().map(|(k, v)| (*k, v.clone())).collect()
+    }
+
+    fn empty_filter_map() -> HashMap<ObjectId, Vec<u8>> {
+        HashMap::new()
+    }
     use crate::repo::{init_repository, Repository};
     use crate::write_tree::write_tree_from_index;
 
@@ -901,7 +924,7 @@ mod tests {
         let merge = empty_commit(&repo, vec![p1, p2, p3], "T <t@example.com> 4 +0000");
         let mut sorted = vec![p1, p2, p3, merge];
         sorted.sort();
-        let mut infos = HashMap::new();
+        let mut infos = oid_hash_map();
         for oid in &sorted {
             infos.insert(
                 *oid,
@@ -909,17 +932,18 @@ mod tests {
             );
         }
         let bloom = BloomFilterSettings::default();
+        let empty = empty_filter_map();
         let (bytes, _) = super::build_commit_graph_bytes(
             &sorted,
-            &infos,
+            &commit_infos_std(&infos),
             &repo.odb(),
             false,
             &bloom,
             None,
             &[],
             None,
-            &HashMap::new(),
-            &HashMap::new(),
+            &empty,
+            &empty,
             true,
         )
         .expect("write");
@@ -961,7 +985,7 @@ mod tests {
         });
         let tree = write_tree_from_index(&repo.odb(), &index, "").expect("tree");
         let mut sorted = Vec::new();
-        let mut infos = HashMap::new();
+        let mut infos = oid_hash_map();
         for t in [1i64, 2, 3] {
             let raw = serialize_commit(&CommitData {
                 tree,
@@ -983,17 +1007,18 @@ mod tests {
             sorted.push(c);
         }
         let bloom = BloomFilterSettings::default();
+        let empty = empty_filter_map();
         let (_, stats) = super::build_commit_graph_bytes(
             &sorted,
-            &infos,
+            &commit_infos_std(&infos),
             &repo.odb(),
             true,
             &bloom,
             None,
             &[],
             Some(1),
-            &HashMap::new(),
-            &HashMap::new(),
+            &empty,
+            &empty,
             true,
         )
         .expect("write");

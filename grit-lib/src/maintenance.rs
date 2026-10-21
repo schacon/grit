@@ -38,7 +38,9 @@ use crate::midx::{
     clear_pack_midx_state, write_multi_pack_index_with_options, MidxBitmapWriteOutcome,
     WriteMultiPackIndexOptions, WriteMultiPackIndexResult,
 };
-use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use crate::objects::{
+    oid_hash_map, oid_hash_set_from, parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind,
+};
 use crate::odb::Odb;
 use crate::odb::UnreachablePackRetention;
 use crate::pack_bitmap::{PackBitmapWriteOptions, PackBitmapWriter};
@@ -525,13 +527,13 @@ pub fn write_commit_graph(
     sorted.sort();
     let commit_count = sorted.len();
 
-    let mut infos = HashMap::new();
+    let mut infos = oid_hash_map();
     for oid in &sorted {
         infos.insert(*oid, load_commit_graph_commit_info(odb, *oid)?);
     }
 
-    let mut existing_filters = HashMap::new();
-    let mut upgraded_filters = HashMap::new();
+    let mut existing_filters = oid_hash_map();
+    let mut upgraded_filters = oid_hash_map();
     if opts.changed_paths {
         if let Some(ref chain) = chain {
             for oid in &sorted {
@@ -544,17 +546,26 @@ pub fn write_commit_graph(
         }
     }
 
+    let infos_map: HashMap<_, _> = infos.iter().map(|(k, v)| (*k, v.clone())).collect();
+    let existing_map: HashMap<_, _> = existing_filters
+        .iter()
+        .map(|(k, v)| (*k, v.clone()))
+        .collect();
+    let upgraded_map: HashMap<_, _> = upgraded_filters
+        .iter()
+        .map(|(k, v)| (*k, v.clone()))
+        .collect();
     let (bytes, bloom_stats) = build_commit_graph_bytes(
         &sorted,
-        &infos,
+        &infos_map,
         odb,
         opts.changed_paths,
         &bloom,
         None,
         &[],
         None,
-        &existing_filters,
-        &upgraded_filters,
+        &existing_map,
+        &upgraded_map,
         write_generation,
     )?;
 
@@ -808,7 +819,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         } else {
             UnreachablePackRetention::DropAll
         };
-        let reachable = reachability_closure_for_roots(odb, &roots)?;
+        let reachable = oid_hash_set_from(&reachability_closure_for_roots(odb, &roots)?);
         let _ = odb.loosen_unreachable_from_superseded_packs(
             &pack_dir,
             &ingested.pack_path,
