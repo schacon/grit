@@ -10,6 +10,7 @@ order: 3
 ```text
 grit diff [--staged] [--unstaged] [--against <ref>] [<commit> [<commit>]] [-- <path>…]
 grit diff [--staged] [--unstaged] [--against <ref>] [<base>..<tip>] [-- <path>…]
+grit diff --no-index <path> <path>
 ```
 
 ## Description
@@ -28,6 +29,7 @@ Each file starts with its path (UTF-8 names print literally; C-quoted only when 
 
 | Option | Description |
 | --- | --- |
+| `-p`, `--patch` | Full patch (the default). Mutually exclusive with the other format flags below. |
 | `--stat` | Per-file change counts with `+`/`-` bars and a summary line (like `git diff --stat`). Mutually exclusive with the other format flags below. |
 | `--numstat` | Machine-readable `insertions<TAB>deletions<TAB>path` lines (`-<TAB>-` for binary). |
 | `--shortstat` | Only the summary line (`N files changed, …`). |
@@ -41,6 +43,9 @@ Each file starts with its path (UTF-8 names print literally; C-quoted only when 
 | `--staged`, `-S` | Staged changes only (index vs `HEAD`). Cannot be combined with `--unstaged`, commit arguments, or `--against`. Optional path limits after `--` are allowed. |
 | `--unstaged` | Unstaged changes only (worktree vs index). Cannot be combined with `--staged`, commit arguments, or `--against`. Optional path limits after `--` are allowed. |
 | `--against <ref>` | Compare the worktree to `<ref>`’s tree instead of `HEAD`. No commit arguments. Optional path limits after `--` are allowed. |
+| `--no-index` | Compare two filesystem paths without a repository: two files, two directories (recursive), or a file and a directory (compared with `directory/<file name>`, as Git does). Takes exactly two paths and cannot be combined with `--staged`, `--unstaged`, `--against` or commits. Exits 1 when they differ, as with `--exit-code`. |
+| `--exit-code` | Exit with status 1 when there are changes and 0 when there are none; errors exit 2. |
+| `--quiet` | Print nothing and exit as with `--exit-code`. |
 | `<commit>` | One commit (that commit’s patch), two commits (tree diff), or a range `A..B` / `A...B`. Omit for uncommitted changes. |
 | `<path>…` | After `--`, limit the diff to these paths (all forms above, including `--staged`). |
 
@@ -106,6 +111,12 @@ $ grit diff v0.1 --json --filter '.files[].path'
 ]
 ```
 
+Compare two files or directories that aren't in a repository:
+
+```console
+$ grit diff --no-index ./old ./new
+```
+
 ## JSON output
 
 Schema: [v1](/schemas/diff/v1.json)
@@ -117,6 +128,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `changed` | boolean | Whether any selected change exists (matches `--exit-code` / `--quiet`). |
 | `files` | array | Changed files (see nested fields below). |
 | `totals` | object | Present for `--stat`, `--numstat`, and `--shortstat`: `files_changed`, `insertions`, `deletions`. |
+| `changed` | boolean | Whether any change was selected; the same answer `--exit-code` gives as an exit status. |
 
 Each `files[]` entry includes `path`, `status`, `binary`, optional `old_path` (renames), optional `similarity` (0–100 on renames/copies), optional `combined_status` (per-parent combined letters such as `MM` or `DD` on merge `--cc` / `--name-status` output; omitted on ordinary two-tree diffs), optional `stat` (`{ "insertions", "deletions" }` when line counts were computed; omitted when `binary` is true), optional `old_mode` / `new_mode`, optional `old_encoding_lossy` / `new_encoding_lossy`, and `hunks` only for the default patch format.
 

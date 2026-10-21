@@ -190,7 +190,7 @@ impl DiffOptions {
 
     /// Similarity percent for rename detection, or `None` when [`RenameDetection::Off`].
     #[must_use]
-    pub fn rename_similarity_threshold(self) -> Option<u32> {
+    pub fn rename_similarity_threshold(&self) -> Option<u32> {
         match self.renames {
             RenameDetection::Off => None,
             RenameDetection::Similarity(p) => Some(u32::from(p)),
@@ -199,7 +199,7 @@ impl DiffOptions {
 
     /// u32 threshold for [`super::apply_rename_detection_to_diff_entries`] and related APIs.
     #[must_use]
-    pub fn rename_threshold_u32(self) -> u32 {
+    pub fn rename_threshold_u32(&self) -> u32 {
         self.rename_similarity_threshold()
             .unwrap_or(RENAME_DETECTION_DISABLED)
     }

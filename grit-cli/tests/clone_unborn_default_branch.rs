@@ -40,7 +40,15 @@ fn clone_unborn_remote_head_with_main_branch_does_not_claim_empty() -> TestResul
     let remote = base.path().join("remote.git");
     git_in(
         base.path(),
-        &["init", "-q", "--bare", remote.to_str().unwrap()],
+        // Pin the remote's HEAD to `master` so it stays unborn when `main` is
+        // pushed, whatever `git init` defaults to on this machine.
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "--initial-branch=master",
+            remote.to_str().unwrap(),
+        ],
     )?;
 
     let src = base.path().join("src");

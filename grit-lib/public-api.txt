@@ -3815,8 +3815,8 @@ pub grit_lib::diff::DiffOptions::word_level_inline: bool
 impl grit_lib::diff::DiffOptions
 pub fn grit_lib::diff::DiffOptions::cap_word_level_inline_for_changed_files(self, usize) -> Self
 pub fn grit_lib::diff::DiffOptions::from_config(&grit_lib::config::ConfigSet) -> Self
-pub fn grit_lib::diff::DiffOptions::rename_similarity_threshold(self) -> core::option::Option<u32>
-pub fn grit_lib::diff::DiffOptions::rename_threshold_u32(self) -> u32
+pub fn grit_lib::diff::DiffOptions::rename_similarity_threshold(&self) -> core::option::Option<u32>
+pub fn grit_lib::diff::DiffOptions::rename_threshold_u32(&self) -> u32
 pub fn grit_lib::diff::DiffOptions::resolve_indent_heuristic(&grit_lib::config::ConfigSet, bool, bool) -> bool
 pub fn grit_lib::diff::DiffOptions::with_algorithm(self, grit_lib::diff::DiffAlgorithm) -> Self
 pub fn grit_lib::diff::DiffOptions::with_context_lines(self, usize) -> Self

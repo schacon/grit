@@ -31,6 +31,7 @@ Use `--stat` (or other diff format flags below) instead of the default patch. Li
 | --- | --- |
 | `<object>…` | Commits, branches, tags, or `rev:path` specs. Defaults to `HEAD`. |
 | `--diff-merges` | `combined` (default) or `first-parent` for merge commits. |
+| `-p`, `--patch` | Full patch (the default). |
 | `--stat` | Summary with change bars per file instead of a full patch. |
 | `--numstat` | Machine-readable `insertions<TAB>deletions<TAB>path` lines. |
 | `--shortstat` | Only the summary line (`N files changed, …`). |
@@ -179,7 +180,11 @@ Pass [`--markdown`](../global-options/) for headings, commit metadata, message b
 
 ## second
 
-(diff fenced code block per changed file follows)
+~~~diff
+@@ -1,1 +1,2 @@
+ line
++added
+~~~
 ```
 
 ## See also

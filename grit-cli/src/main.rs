@@ -522,6 +522,10 @@ enum Command {
         /// Compare the worktree to this ref's tree instead of HEAD (no commit arguments).
         #[arg(long = "against", value_name = "REF")]
         against: Option<String>,
+        /// Compare two filesystem paths outside any repository (Git `--no-index`);
+        /// exits 1 when they differ.
+        #[arg(long = "no-index")]
+        no_index: bool,
         /// Exit with 1 when there are changes (errors exit 2).
         #[arg(long = "exit-code")]
         exit_code: bool,
@@ -1159,14 +1163,16 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             staged,
             unstaged,
             against,
+            no_index,
             exit_code,
             quiet,
             commits,
             paths,
             format,
         } => {
-            let wants_exit_code = exit_code || quiet;
+            let wants_exit_code = exit_code || quiet || no_index;
             match commands::diff::run(commands::diff::DiffRunOptions {
+                no_index,
                 staged,
                 unstaged,
                 against,
@@ -2197,40 +2203,39 @@ The keys are `initialized`, `path`, `bare`, and `branch`.
     }
 
     fn schema_top_level_field_names(schema: &serde_json::Value) -> HashSet<String> {
+        schema_field_names_in(schema, schema)
+    }
+
+    /// Top-level properties of `node`, following `#/definitions/` refs into `root`.
+    fn schema_field_names_in(
+        node: &serde_json::Value,
+        root: &serde_json::Value,
+    ) -> HashSet<String> {
+        let definition = |value: &serde_json::Value| {
+            value
+                .get("$ref")
+                .and_then(|r| r.as_str())
+                .and_then(|r| r.strip_prefix("#/definitions/"))
+                .and_then(|name| root.get("definitions").and_then(|d| d.get(name)))
+        };
+        if let Some(def) = definition(node) {
+            return schema_field_names_in(def, root);
+        }
         let mut keys = HashSet::new();
-        if let Some(props) = schema.get("properties").and_then(|v| v.as_object()) {
+        if let Some(props) = node.get("properties").and_then(|v| v.as_object()) {
             keys.extend(props.keys().cloned());
             return keys;
         }
         for branch_key in ["anyOf", "oneOf"] {
-            if let Some(items) = schema.get(branch_key).and_then(|v| v.as_array()) {
+            if let Some(items) = node.get(branch_key).and_then(|v| v.as_array()) {
                 for item in items {
-                    if let Some(ref_name) = item
-                        .get("$ref")
-                        .and_then(|r| r.as_str())
-                        .and_then(|r| r.strip_prefix("#/definitions/"))
-                    {
-                        if let Some(def) = schema.get("definitions").and_then(|d| d.get(ref_name)) {
-                            keys.extend(schema_top_level_field_names(def));
-                            continue;
-                        }
-                    }
-                    keys.extend(schema_top_level_field_names(item));
+                    keys.extend(schema_field_names_in(item, root));
                 }
                 return keys;
             }
         }
-        if let Some(items) = schema.get("items") {
-            if let Some(ref_name) = items
-                .get("$ref")
-                .and_then(|r| r.as_str())
-                .and_then(|r| r.strip_prefix("#/definitions/"))
-            {
-                if let Some(def) = schema.get("definitions").and_then(|d| d.get(ref_name)) {
-                    return schema_top_level_field_names(def);
-                }
-            }
-            keys.extend(schema_top_level_field_names(items));
+        if let Some(items) = node.get("items") {
+            keys.extend(schema_field_names_in(items, root));
         }
         keys
     }
