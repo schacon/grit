@@ -497,7 +497,6 @@ fn fetch_rejected_non_fast_forward_exit_one_json() -> TestResult {
     assert_ne!(forceme, remote_main);
     Ok(())
 }
-
 #[test]
 fn fetch_depth_flags_are_mutually_exclusive() -> TestResult {
     let tmp = tempfile::tempdir()?;
@@ -514,5 +513,48 @@ fn fetch_depth_flags_are_mutually_exclusive() -> TestResult {
             stderr(&out)
         );
     }
+    Ok(())
+}
+
+#[test]
+fn fetch_flags_after_remote_are_not_parsed_as_refspecs() -> TestResult {
+    let base = tempfile::tempdir()?;
+    let (origin, seed) = seed_remote(base.path())?;
+    let client = git_clone(base.path(), &origin, "client");
+
+    fs::write(seed.join("README.md"), "flag-order\n")?;
+    git(&seed, &["add", "README.md"])?;
+    git(
+        &seed,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-m",
+            "two",
+        ],
+    )?;
+    git(
+        base.path(),
+        &["-C", seed.to_str().unwrap(), "push", "origin", "main"],
+    )?;
+
+    let before = git_out(&client, &["rev-parse", "refs/remotes/origin/main"]);
+    let json = grit_json(&client, &["fetch", "origin", "--dry-run"]);
+    assert_eq!(json["dry_run"], true);
+    assert_eq!(json["updated"], 0, "dry-run must not count writes");
+    assert!(json["updates"].as_array().is_some_and(|a| !a.is_empty()));
+
+    let after = git_out(&client, &["rev-parse", "refs/remotes/origin/main"]);
+    assert_eq!(before, after, "dry-run must not move tracking refs");
+
+    let out = grit(&client, &["fetch", "origin", "--no-tags"]);
+    assert!(
+        out.status.success(),
+        "flags after remote must not be refspecs: {}",
+        stderr(&out)
+    );
     Ok(())
 }

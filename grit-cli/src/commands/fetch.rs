@@ -347,8 +347,7 @@ fn run_all(args: &FetchArgs, mode: OutputMode) -> Result<FetchAllOutcome> {
     for (name, result) in raw {
         match result {
             Ok(outcome) => {
-                let (updates, updated, _rejected) =
-                    map_updates(&outcome.updates, args.dry_run);
+                let (updates, updated, _rejected) = map_updates(&outcome.updates, args.dry_run);
                 total_updated += updated;
                 remotes.push(FetchAllRemoteOutcome {
                     remote: name,
@@ -528,6 +527,26 @@ mod map_remote_error_tests {
         let payload = structured_json_payload(&err).expect("structured payload");
         assert_eq!(payload.kind, "hash_collision");
         assert_eq!(payload.oid.as_deref(), Some(oid.to_hex().as_str()));
+    }
+
+    #[test]
+    fn map_updates_dry_run_leaves_updated_at_zero() {
+        use grit_lib::objects::ObjectId;
+        use grit_lib::remote::transfer::{RefUpdate, UpdateMode};
+
+        let oid = ObjectId::from_hex("a8e620a111111111111111111111111111111111").expect("oid");
+        let raw = vec![RefUpdate {
+            remote_ref: "refs/heads/main".into(),
+            local_ref: Some("refs/remotes/origin/main".into()),
+            old_oid: None,
+            new_oid: Some(oid),
+            mode: UpdateMode::New,
+            note: None,
+        }];
+        let (_, updated, _) = super::map_updates(&raw, true);
+        assert_eq!(updated, 0);
+        let (_, updated, _) = super::map_updates(&raw, false);
+        assert_eq!(updated, 1);
     }
 
     #[test]
