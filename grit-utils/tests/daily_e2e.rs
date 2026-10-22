@@ -72,6 +72,8 @@ const ALL_HEADLINE_IDS: [&str; 20] = [
     "blame/file@git-git",
     "switch/branch@synth-10k",
     "branch/list@many-refs",
+    "branch/list-json@many-refs",
+    "branch/merged@many-refs",
     "merge/clean@synth-10k",
     "pick/one@synth-10k",
     "stash/push-pop@synth-10k",

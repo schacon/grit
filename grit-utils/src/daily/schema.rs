@@ -272,6 +272,8 @@ mod tests {
             ("blame/file@git-git", "blame"),
             ("switch/branch@synth-10k", "switch"),
             ("branch/list@many-refs", "branch"),
+            ("branch/list-json@many-refs", "branch"),
+            ("branch/merged@many-refs", "branch"),
             ("merge/clean@synth-10k", "merge"),
             ("pick/one@synth-10k", "pick"),
             ("stash/push-pop@synth-10k", "stash"),

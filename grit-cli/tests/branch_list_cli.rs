@@ -116,6 +116,14 @@ fn init_repo(dir: &Path) {
     git(dir, &["commit", "-m", "one"]);
 }
 
+fn setup_with_origin(dir: &Path) {
+    init_repo(dir);
+    let bare = dir.parent().unwrap().join("origin.git");
+    git(dir, &["init", "--bare", bare.to_str().unwrap()]);
+    git(dir, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    git(dir, &["push", "-u", "origin", "main"]);
+}
+
 fn setup_rich_fixture(dir: &Path) {
     init_repo(dir);
     let bare = dir.parent().unwrap().join("remote.git");
@@ -168,8 +176,42 @@ fn list_patterns_and_namespaces() -> TestResult {
         &["branch", "--list", "feat*"],
         &["branch", "--list", "feat*"],
     )?;
+    Ok(())
+}
+
+#[test]
+fn list_remote_and_all_match_git_when_origin_exists() -> TestResult {
+    let scratch = Scratch::new("remote-ns")?;
+    let repo = scratch.child("repo");
+    setup_with_origin(&repo);
     assert_same_order(&repo, &["branch", "-r"], &["branch", "-r"])?;
     assert_same_order(&repo, &["branch", "-a"], &["branch", "-a"])?;
+    Ok(())
+}
+
+#[test]
+fn local_origin_main_and_remote_tracking_do_not_share_current() -> TestResult {
+    let scratch = Scratch::new("collision")?;
+    let repo = scratch.child("repo");
+    setup_with_origin(&repo);
+    git(&repo, &["branch", "origin/main"]);
+    git(&repo, &["checkout", "origin/main"]);
+    let listed = grit_json(&repo, &["branch", "-a"]);
+    let local = listed["branches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["full_ref"] == "refs/heads/origin/main")
+        .expect("local origin/main");
+    let remote = listed["branches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["full_ref"] == "refs/remotes/origin/main")
+        .expect("remote origin/main");
+    assert_eq!(local["current"], true);
+    assert_eq!(remote["current"], false);
+    assert!(remote.get("worktree").is_none());
     Ok(())
 }
 
@@ -248,6 +290,14 @@ fn json_fields_on_rich_fixture() -> TestResult {
     assert!(tracked["subject"].is_string());
     assert!(tracked["date"].is_string());
     assert!(tracked["upstream"].is_object());
+    assert_eq!(tracked["upstream"]["ref"], "origin/tracked");
+    let main = listed["branches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["name"] == "main")
+        .expect("main");
+    assert_eq!(main["upstream"]["ref"], "origin/main");
     let gone = listed["branches"]
         .as_array()
         .unwrap()
@@ -255,6 +305,7 @@ fn json_fields_on_rich_fixture() -> TestResult {
         .find(|b| b["name"] == "gone-upstream")
         .expect("gone branch");
     assert_eq!(gone["upstream"]["gone"], Value::Bool(true));
+    assert_eq!(gone["upstream"]["ref"], "origin/no-such-remote-branch");
     let wt = listed["branches"]
         .as_array()
         .unwrap()
