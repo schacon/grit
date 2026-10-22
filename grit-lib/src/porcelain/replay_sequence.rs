@@ -537,6 +537,7 @@ fn run_sequence(
                         dropped,
                     });
                 }
+                write_sequencer_abort_safety(repo.git_dir(), head)?;
             }
             StepResult::AppliedNoCommit => {
                 todo.remove(0);
@@ -549,6 +550,7 @@ fn run_sequence(
                         dropped,
                     });
                 }
+                write_sequencer_abort_safety(repo.git_dir(), head)?;
             }
             StepResult::DroppedEmpty => {
                 todo.remove(0);
