@@ -95,7 +95,8 @@ Pass `--json` for stable, scripting-friendly output:
 | `change_id` | string or null | Stored `change-id` on `oid` when present (merge commit or fast-forward tip). |
 | `upstream` | string or null | For `set_upstream`, the remote-tracking branch that was adopted. |
 | `conflicts` | array or null | When `result` is `conflicts`, each item has `path`, `kind` (`content`, `add_add`, or `modify_delete`), and optional `summary` text. |
-| `next_steps` | array or null | Suggested `grit` command lines when `result` is `conflicts` (for example `grit diff`, `grit merge --abort`). |
+| `next_steps` | array or null | Ordered follow-up commands when `result` is `conflicts` (for example `grit diff`, `grit add .`). |
+| `alternatives` | array or null | Mutually exclusive options such as `grit merge --abort` (not part of the ordered sequence). |
 
 Example:
 
@@ -118,11 +119,8 @@ When the merge stops on conflicts (exit code 1), stdout is still a single JSON o
       "kind": "content"
     }
   ],
-  "next_steps": [
-    "grit diff",
-    "grit add .",
-    "grit merge --abort"
-  ]
+  "next_steps": ["grit diff", "grit add ."],
+  "alternatives": ["grit merge --abort"]
 }
 ```
 

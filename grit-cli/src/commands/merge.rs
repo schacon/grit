@@ -11,7 +11,7 @@ use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 use anyhow::{bail, Context, Result};
 use grit_lib::change_id::ChangeId;
 use grit_lib::objects::ObjectId;
-use grit_lib::operation::Conflict;
+use grit_lib::operation::{Conflict, ConflictKind};
 use grit_lib::porcelain::merge::{
     abort_branch_merge, integrate_branch, IntegrateBranchOutcome, MergeConflictDetail,
 };
@@ -31,6 +31,7 @@ pub enum MergeResult {
     Merged,
     Conflicts,
     Aborted,
+    #[allow(dead_code)]
     SetUpstream,
 }
 
@@ -64,6 +65,45 @@ pub struct MergeOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub alternatives: Option<Vec<String>>,
+}
+
+/// One conflicted path in `--json` output (pull v1 `conflict_details` and merge v2 items).
+#[derive(Clone, Serialize, JsonSchema)]
+pub struct MergeConflictJson {
+    pub path: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+}
+
+pub(crate) fn merge_conflict_json(
+    detail: &MergeConflictDetail,
+    merge_label: &str,
+) -> MergeConflictJson {
+    let (kind, summary) = match detail.kind {
+        ConflictKind::Content => ("content".to_owned(), None),
+        ConflictKind::AddAdd => ("add_add".to_owned(), None),
+        ConflictKind::ModifyDelete { deleted_in_current } => {
+            let summary = if deleted_in_current {
+                Some(format!(
+                    "{} deleted on the current branch and modified in {merge_label}; {merge_label}'s version is in the work tree",
+                    detail.path
+                ))
+            } else {
+                Some(format!(
+                    "{} modified on the current branch and deleted in {merge_label}; the current branch's version is in the work tree",
+                    detail.path
+                ))
+            };
+            ("modify_delete".to_owned(), summary)
+        }
+    };
+    MergeConflictJson {
+        path: detail.path.clone(),
+        kind,
+        summary,
+    }
 }
 
 impl MergeOutcome {
@@ -140,7 +180,8 @@ impl MergeOutcome {
         }
     }
 
-    /// `grit pull` on an unborn branch adopting the upstream as the first commit.
+    /// Reserved for historical merge JSON (`set_upstream` moved to `grit pull`).
+    #[allow(dead_code)]
     pub fn set_upstream(
         branch: &str,
         upstream: &str,

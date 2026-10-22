@@ -510,8 +510,12 @@ pub fn print_merge_outcome(w: &mut dyn Write, outcome: &MergeOutcome) -> anyhow:
             if let Some(details) = &outcome.conflicts {
                 crate::operation_output::render_conflicts_markdown(details, w)?;
             }
-            if let Some(steps) = &outcome.next_steps {
-                crate::operation_output::render_next_steps_markdown(steps, w)?;
+            if outcome.next_steps.is_some() || outcome.alternatives.is_some() {
+                crate::operation_output::render_operation_guidance_markdown(
+                    outcome.next_steps.as_deref().unwrap_or(&[]),
+                    outcome.alternatives.as_deref(),
+                    w,
+                )?;
             } else {
                 outln!(w);
                 outln!(

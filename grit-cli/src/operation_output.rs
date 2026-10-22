@@ -22,7 +22,12 @@ pub struct ConflictJson {
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct OperationConflictBlock {
     pub conflicts: Vec<ConflictJson>,
+    /// Ordered follow-ups (resolve → stage → continue/commit).
     pub next_steps: Vec<String>,
+    /// Mutually exclusive options (abort, skip) — not part of the ordered sequence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub alternatives: Option<Vec<String>>,
 }
 
 impl OperationConflictBlock {
@@ -40,14 +45,18 @@ impl OperationConflictBlock {
         map_conflict: impl Fn(&Conflict) -> ConflictJson,
     ) -> Self {
         let has_unmerged = !conflicts.is_empty();
-        let mut next_steps =
+        let next_steps =
             grit_lib::operation::next_step_grit_commands(&operation_next_steps(kind, has_unmerged));
-        next_steps.extend(grit_lib::operation::next_step_grit_commands(
-            &operation_alternatives(kind),
-        ));
+        let alternatives =
+            grit_lib::operation::next_step_grit_commands(&operation_alternatives(kind));
         Self {
             conflicts: conflicts.iter().map(map_conflict).collect(),
             next_steps,
+            alternatives: if alternatives.is_empty() {
+                None
+            } else {
+                Some(alternatives)
+            },
         }
     }
 }
@@ -107,18 +116,32 @@ pub fn render_conflicts_markdown(conflicts: &[ConflictJson], w: &mut dyn Write) 
     Ok(())
 }
 
-/// Markdown footer listing suggested next steps.
-pub fn render_next_steps_markdown(next_steps: &[String], w: &mut dyn Write) -> Result<()> {
-    if next_steps.is_empty() {
+/// Markdown footer listing ordered next steps and optional alternatives.
+pub fn render_operation_guidance_markdown(
+    next_steps: &[String],
+    alternatives: Option<&[String]>,
+    w: &mut dyn Write,
+) -> Result<()> {
+    if next_steps.is_empty() && alternatives.is_none_or(|a| a.is_empty()) {
         return Ok(());
     }
     outln!(w);
-    let joined = next_steps
-        .iter()
-        .map(|s| format!("`{s}`"))
-        .collect::<Vec<_>>()
-        .join(", then ");
-    outln!(w, "→ {joined}");
+    if !next_steps.is_empty() {
+        let joined = next_steps
+            .iter()
+            .map(|s| format!("`{s}`"))
+            .collect::<Vec<_>>()
+            .join(", then ");
+        outln!(w, "→ {joined}");
+    }
+    if let Some(alt) = alternatives.filter(|a| !a.is_empty()) {
+        let joined = alt
+            .iter()
+            .map(|s| format!("`{s}`"))
+            .collect::<Vec<_>>()
+            .join(" or ");
+        outln!(w, "→ or {joined}");
+    }
     Ok(())
 }
 

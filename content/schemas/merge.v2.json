@@ -39,6 +39,16 @@
   },
   "description": "Result of `grit merge` (and the merge half of `grit pull`).",
   "properties": {
+    "alternatives": {
+      "description": "Abort/skip options when `result` is `conflicts` (not part of the ordered sequence).",
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "branch": {
       "description": "The merge source label (for `set_upstream`, the branch being set).",
       "type": "string"

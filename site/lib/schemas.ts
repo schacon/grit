@@ -14,6 +14,11 @@ export function schemaPublicUrl(command: string): string {
   return `${SITE_URL}/schemas/${command}/v1.json`;
 }
 
+/** Public URL for a committed schema file (v1 or v2). */
+export function schemaPublicUrlFor(schema: SchemaFile): string {
+  return `${SITE_URL}/schemas/${schema.command}/v${schema.version}.json`;
+}
+
 /** Site-relative href for a schema (for Markdown in docs pages). */
 export function schemaHref(command: string): string {
   return `/schemas/${command}/v1.json`;
