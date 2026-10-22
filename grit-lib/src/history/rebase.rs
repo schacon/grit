@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::diff::diff_trees;
 use crate::merge_base::{is_ancestor, merge_bases_first_vs_rest};
 use crate::objects::{parse_commit, ObjectId};
-use crate::patch_ids::{compute_patch_id, compute_patch_id_for_paths, PatchIdMode};
+use crate::patch_ids::{compute_patch_id, PatchIdMode};
 use crate::repo::Repository;
 use crate::revwalk::rev_list::{rev_list, OrderingMode, RevListOptions};
 
@@ -99,7 +99,14 @@ pub fn plan_rebase(
 ) -> Result<RebasePlan, HistoryError> {
     let fork = rebase_fork(repo, request.upstream, request.branch_tip)?;
     let effective_onto = request.onto.unwrap_or(request.upstream);
-    if is_rebase_up_to_date(repo, fork, effective_onto, request.branch_tip)? {
+    if is_rebase_up_to_date(
+        repo,
+        fork,
+        effective_onto,
+        request.upstream,
+        request.onto,
+        request.branch_tip,
+    )? {
         return Ok(RebasePlan::UpToDate);
     }
     match rebase_onto_impl(repo, fork, effective_onto, &[request.branch_tip], opts) {
@@ -154,13 +161,27 @@ fn is_rebase_up_to_date(
     repo: &Repository,
     fork: ObjectId,
     effective_onto: ObjectId,
+    upstream: ObjectId,
+    onto: Option<ObjectId>,
     branch_tip: ObjectId,
 ) -> Result<bool, HistoryError> {
     if branch_tip == effective_onto {
         return Ok(true);
     }
     let range = commits_in_rebase_range(repo, fork, &[branch_tip])?;
-    Ok(range.is_empty())
+    if range.is_empty() {
+        return Ok(true);
+    }
+    // `git rebase <upstream>` (no `--onto`) leaves a linear branch unchanged when it already
+    // extends upstream: merge-base(upstream, tip) == upstream and every commit in the range
+    // is already on top of that base.
+    if onto.is_none()
+        && fork == upstream
+        && is_ancestor(repo, upstream, branch_tip).map_err(library_err)?
+    {
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn rebase_onto_impl(
@@ -427,21 +448,13 @@ fn patch_ids_in_fork_to_onto(
     let mut by_patch: HashMap<ObjectId, ObjectId> = HashMap::new();
     let mut commits = walk.commits;
     commits.reverse();
-    let path_list: Vec<String> = range_paths.iter().cloned().collect();
     for oid in commits {
-        if !commit_touches_any_path(repo, oid, range_paths)? {
+        if !range_paths.is_empty() && !commit_touches_any_path(repo, oid, range_paths)? {
             continue;
         }
-        if let Ok(Some(pid)) = compute_patch_id_recorded(
-            algo,
-            repo.odb(),
-            &oid,
-            if path_list.is_empty() {
-                None
-            } else {
-                Some(path_list.as_slice())
-            },
-        ) {
+        if let Ok(Some(pid)) =
+            compute_patch_id_recorded(algo, repo.odb(), &oid, PatchIdMode::Stable)
+        {
             by_patch.insert(pid, oid);
         }
     }
@@ -452,16 +465,11 @@ fn compute_patch_id_recorded(
     algo: crate::objects::HashAlgo,
     odb: &crate::odb::Odb,
     commit_oid: &ObjectId,
-    paths: Option<&[String]>,
+    mode: PatchIdMode,
 ) -> Result<Option<ObjectId>, crate::error::Error> {
     #[cfg(any(test, feature = "unstable-bench-helpers"))]
     PATCH_ID_COMPUTE_CALLS.fetch_add(1, Ordering::Relaxed);
-    match paths {
-        Some(paths) if !paths.is_empty() => {
-            compute_patch_id_for_paths(algo, odb, commit_oid, paths, PatchIdMode::Stable)
-        }
-        _ => compute_patch_id(algo, odb, commit_oid, PatchIdMode::Stable),
-    }
+    compute_patch_id(algo, odb, commit_oid, mode)
 }
 
 /// Map each commit in `range` to an existing commit in `fork..onto` with the same patch-id.
@@ -474,20 +482,10 @@ fn applied_by_patch(
     let range_paths = collect_range_touched_paths(repo, range)?;
     let by_patch = patch_ids_in_fork_to_onto(repo, fork, onto, &range_paths)?;
     let algo = repo.odb().hash_algo();
-    let path_list: Vec<String> = range_paths.iter().cloned().collect();
     let mut out = HashMap::new();
     for &commit in range {
-        let Some(pid) = compute_patch_id_recorded(
-            algo,
-            repo.odb(),
-            &commit,
-            if path_list.is_empty() {
-                None
-            } else {
-                Some(path_list.as_slice())
-            },
-        )
-        .map_err(library_err)?
+        let Some(pid) = compute_patch_id_recorded(algo, repo.odb(), &commit, PatchIdMode::Stable)
+            .map_err(library_err)?
         else {
             continue;
         };
@@ -613,6 +611,110 @@ mod tests {
         assert!(
             calls <= 4,
             "expected patch-id work proportional to fork..onto overlap, got {calls} calls"
+        );
+    }
+
+    #[test]
+    fn plan_rebase_up_to_date_when_linear_child_of_upstream() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = Repository::init(
+            dir.path(),
+            &crate::repo::InitOptions::new()
+                .with_initial_branch("main".to_owned())
+                .with_ref_storage(crate::RefStorageFormat::Files),
+        )
+        .expect("init");
+        let id = ident(1);
+        let tree_a = blob_tree(&repo, "f.txt", b"a\n").expect("tree");
+        let upstream = write_commit(&repo, tree_a, &[], "first", &id).expect("first");
+        let tree_b = blob_tree(&repo, "f.txt", b"b\n").expect("tree b");
+        let tip = write_commit(&repo, tree_b, &[upstream], "second", &id).expect("second");
+        let opts = RebaseOntoOptions::new(RewriteOptions {
+            scope: RefScope::Head,
+            empty: crate::revwalk::history::EmptyPolicy::Drop,
+            committer: id.clone(),
+            preserve_committer: false,
+            sign: false,
+        });
+        let request = RebaseRequest {
+            upstream,
+            onto: None,
+            branch_tip: tip,
+        };
+        let plan = plan_rebase(&repo, &request, &opts).expect("plan");
+        assert_eq!(plan, RebasePlan::UpToDate);
+    }
+
+    #[test]
+    fn patch_id_reuse_requires_full_patch_match() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = Repository::init(
+            dir.path(),
+            &crate::repo::InitOptions::new()
+                .with_initial_branch("main".to_owned())
+                .with_ref_storage(crate::RefStorageFormat::Files),
+        )
+        .expect("init");
+        let id = ident(1);
+        let root_tree = blob_tree(&repo, "root.txt", b"r\n").expect("root tree");
+        let root = write_commit(&repo, root_tree, &[], "root", &id).expect("root");
+        let fork = root;
+        let topic_tree = {
+            let t1 = blob_tree(&repo, "a.txt", b"topic\n").expect("a");
+            let mut index = Index::new();
+            index.hash_algo = repo.odb().hash_algo();
+            index.add_or_replace(IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: MODE_REGULAR,
+                uid: 0,
+                gid: 0,
+                size: 5,
+                oid: t1,
+                flags: 5,
+                flags_extended: None,
+                path: b"a.txt".to_vec(),
+                base_index_pos: 0,
+            });
+            write_tree_from_index(repo.odb(), &index, "").expect("topic tree")
+        };
+        let topic = write_commit(&repo, topic_tree, &[fork], "topic", &id).expect("topic");
+        let onto_tree = {
+            let a = blob_tree(&repo, "a.txt", b"topic\n").expect("a");
+            let b = blob_tree(&repo, "b.txt", b"extra\n").expect("b");
+            let mut index = Index::new();
+            index.hash_algo = repo.odb().hash_algo();
+            for (path, oid, size) in [(b"a.txt", a, 6usize), (b"b.txt", b, 6usize)] {
+                index.add_or_replace(IndexEntry {
+                    ctime_sec: 0,
+                    ctime_nsec: 0,
+                    mtime_sec: 0,
+                    mtime_nsec: 0,
+                    dev: 0,
+                    ino: 0,
+                    mode: MODE_REGULAR,
+                    uid: 0,
+                    gid: 0,
+                    size: size as u32,
+                    oid,
+                    flags: path.len().min(0xfff) as u16,
+                    flags_extended: None,
+                    path: path.to_vec(),
+                    base_index_pos: 0,
+                });
+            }
+            write_tree_from_index(repo.odb(), &index, "").expect("onto tree")
+        };
+        let onto = write_commit(&repo, onto_tree, &[fork], "onto", &id).expect("onto");
+        let range = vec![topic];
+        let map = applied_by_patch(&repo, fork, onto, &range).expect("map");
+        assert!(
+            map.is_empty(),
+            "partial path overlap must not reuse a commit with extra changes"
         );
     }
 

@@ -548,7 +548,17 @@ fn assert_plan_rebase_matches_git_rebase_onto() {
 
 #[test]
 fn plan_rebase_matches_git_rebase_linear() {
-    assert_plan_rebase_matches_git_rebase_onto();
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let (upstream, _onto, tip) = init_rebase_fixture(wt);
+    let grit = open_grit(wt);
+    let opts = rebase_opts(RefScope::Head, EmptyPolicy::Drop, true);
+    let before = git_rev_parse(wt, "HEAD");
+    let plan = plan_rebase(&grit, &rebase_request(upstream, None, tip), &opts).expect("plan");
+    assert_eq!(plan, RebasePlan::UpToDate);
+    assert_eq!(before, tip);
+    git(wt, &["rebase", &upstream.to_hex()]);
+    assert_eq!(git_rev_parse(wt, "HEAD"), tip);
 }
 
 #[test]
@@ -560,12 +570,49 @@ fn plan_rebase_onto_matches_git_rebase_onto() {
 fn plan_rebase_up_to_date_is_noop() {
     let repo = HistoryRepo::init();
     let wt = repo.worktree();
-    let (upstream, _onto, _tip) = init_rebase_fixture(wt);
-    git(wt, &["reset", "--hard", &upstream.to_hex()]);
+    commit_file(wt, "f.txt", "1\n", "first");
+    let upstream = git_rev_parse(wt, "HEAD");
+    commit_file(wt, "f.txt", "2\n", "second");
+    let tip = git_rev_parse(wt, "HEAD");
     let grit = open_grit(wt);
     let opts = rebase_opts(RefScope::Head, EmptyPolicy::Drop, true);
-    let plan = plan_rebase(&grit, &rebase_request(upstream, None, upstream), &opts).expect("plan");
+    let plan = plan_rebase(&grit, &rebase_request(upstream, None, tip), &opts).expect("plan");
     assert_eq!(plan, RebasePlan::UpToDate);
+    assert_eq!(
+        resolve_ref(grit.git_dir(), "refs/heads/main").expect("main"),
+        tip
+    );
+}
+
+#[test]
+fn plan_rebase_does_not_skip_when_onto_patch_differs() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "root.txt", "r\n", "root");
+    let fork = git_rev_parse(wt, "HEAD");
+    commit_file(wt, "a.txt", "topic\n", "topic");
+    let tip = git_rev_parse(wt, "HEAD");
+    git(wt, &["checkout", "-b", "onto-side", &fork.to_hex()]);
+    commit_file(wt, "a.txt", "topic\n", "same a");
+    commit_file(wt, "b.txt", "extra\n", "extra b");
+    let onto = git_rev_parse(wt, "HEAD");
+    git(wt, &["checkout", "main"]);
+    let grit = open_grit(wt);
+    let opts = rebase_opts(RefScope::Head, EmptyPolicy::Drop, true);
+    let plan =
+        match plan_rebase(&grit, &rebase_request(fork, Some(onto), tip), &opts).expect("plan") {
+            RebasePlan::Plan(p) => p,
+            other => panic!("expected plan, got {other:?}"),
+        };
+    let topic_row = plan
+        .commits
+        .iter()
+        .find(|r| r.old == tip)
+        .expect("topic row");
+    assert!(
+        topic_row.new.is_some_and(|n| n != onto),
+        "topic commit must not reuse onto when onto carries an extra path change"
+    );
 }
 
 #[test]
