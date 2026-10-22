@@ -1453,6 +1453,77 @@ fn hunk_from_structured(h: grit_lib::diff::structured::StructuredHunk) -> Hunk {
     }
 }
 
+fn diff_entry_display_path(e: &DiffEntry) -> &str {
+    e.new_path
+        .as_deref()
+        .or(e.old_path.as_deref())
+        .unwrap_or("")
+}
+
+fn diff_entry_matches_primary(e: &DiffEntry, primary: &std::collections::HashSet<&str>) -> bool {
+    let path = diff_entry_display_path(e);
+    if primary.contains(path) {
+        return true;
+    }
+    if let Some(old_path) = e.old_path.as_deref() {
+        if old_path != path && primary.contains(old_path) {
+            return true;
+        }
+    }
+    false
+}
+
+fn filter_entries_to_primary_paths(
+    entries: Vec<DiffEntry>,
+    primary: &std::collections::HashSet<&str>,
+) -> Vec<DiffEntry> {
+    entries
+        .into_iter()
+        .filter(|e| diff_entry_matches_primary(e, primary))
+        .collect()
+}
+
+fn unstaged_file_changes_for_entries(
+    repo: &grit_lib::repo::Repository,
+    entries: Vec<DiffEntry>,
+) -> Result<Vec<FileChange>> {
+    let work_tree = repo.work_tree().context("grit diff needs a working tree")?;
+    let index = repo
+        .index_handle()
+        .load()
+        .context("could not load the index")?;
+    let rules_arc = std::sync::Arc::new(std::sync::Mutex::new(
+        WorktreeRules::from_repository(repo, &index).context("could not load worktree rules")?,
+    ));
+    let side = WorktreeDiffSide {
+        work_tree,
+        index: &index,
+        rules: std::sync::Arc::clone(&rules_arc),
+    };
+    entries
+        .into_iter()
+        .map(|e| {
+            let (old_bytes, old_bin) = old_side_bytes(repo.odb(), &e)?;
+            let (new_bytes, new_bin) = new_side_bytes(repo.odb(), &e, Some(&side))?;
+            Ok(file_change(e, old_bytes, new_bytes, old_bin || new_bin))
+        })
+        .collect()
+}
+
+fn staged_file_changes_for_entries(
+    repo: &grit_lib::repo::Repository,
+    entries: Vec<DiffEntry>,
+) -> Result<Vec<FileChange>> {
+    entries
+        .into_iter()
+        .map(|e| {
+            let (old_bytes, old_bin) = old_side_bytes(repo.odb(), &e)?;
+            let (new_bytes, new_bin) = new_side_bytes(repo.odb(), &e, None)?;
+            Ok(file_change(e, old_bytes, new_bytes, old_bin || new_bin))
+        })
+        .collect()
+}
+
 fn peer_unstaged_changes_for_hunk_ids<'a>(
     repo: &grit_lib::repo::Repository,
     diff_options: &DiffOptions,
@@ -1465,13 +1536,12 @@ fn peer_unstaged_changes_for_hunk_ids<'a>(
     if primary.is_empty() {
         return Vec::new();
     }
-    let Ok(raw) = unstaged_changes(repo, diff_options) else {
+    let Ok(entries) = unstaged_entries(repo, diff_options) else {
         return Vec::new();
     };
-    filter_file_changes(raw, repo, pathspecs)
-        .into_iter()
-        .filter(|fc| primary.contains(fc.path.as_str()))
-        .collect()
+    let entries = filter_diff_entries(entries, repo, pathspecs);
+    let entries = filter_entries_to_primary_paths(entries, &primary);
+    unstaged_file_changes_for_entries(repo, entries).unwrap_or_default()
 }
 
 fn peer_staged_changes_for_hunk_ids<'a>(
@@ -1486,13 +1556,12 @@ fn peer_staged_changes_for_hunk_ids<'a>(
     if primary.is_empty() {
         return Vec::new();
     }
-    let Ok(raw) = staged_changes(repo, diff_options) else {
+    let Ok(entries) = staged_entries(repo, diff_options) else {
         return Vec::new();
     };
-    filter_file_changes(raw, repo, pathspecs)
-        .into_iter()
-        .filter(|fc| primary.contains(fc.path.as_str()))
-        .collect()
+    let entries = filter_diff_entries(entries, repo, pathspecs);
+    let entries = filter_entries_to_primary_paths(entries, &primary);
+    staged_file_changes_for_entries(repo, entries).unwrap_or_default()
 }
 
 fn outcome_from_changes(
@@ -1844,7 +1913,7 @@ fn unstaged_changes(
     repo: &grit_lib::repo::Repository,
     diff_options: &DiffOptions,
 ) -> Result<Vec<FileChange>> {
-    unstaged_changes_from_entries(repo, unstaged_entries(repo, diff_options)?)
+    unstaged_file_changes_for_entries(repo, unstaged_entries(repo, diff_options)?)
 }
 
 /// File changes, with both sides' contents, for entries from [`unstaged_entries`].
@@ -2073,14 +2142,7 @@ fn staged_changes_from_entries(
     repo: &grit_lib::repo::Repository,
     entries: Vec<DiffEntry>,
 ) -> Result<Vec<FileChange>> {
-    entries
-        .into_iter()
-        .map(|e| {
-            let (old_bytes, old_bin) = old_side_bytes(repo.odb(), &e)?;
-            let (new_bytes, new_bin) = new_side_bytes(repo.odb(), &e, None)?;
-            Ok(file_change(e, old_bytes, new_bytes, old_bin || new_bin))
-        })
-        .collect()
+    staged_file_changes_for_entries(repo, entries)
 }
 
 /// Worktree (and index) vs the tree at `ref_spec`.
