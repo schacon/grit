@@ -18,8 +18,8 @@ use crate::network_fixture::{
 use crate::network_http::GritHttpServer;
 use crate::network_suite::{
     configure_remote, ensure_network_client_repo, network_http_root, prepare_network_clone,
-    prepare_network_fetch_incr, prepare_network_fetch_noop, prepare_network_pull_rebase,
-    prepare_network_push,
+    prepare_network_fetch_incr, prepare_network_fetch_noop, prepare_network_force_with_lease,
+    prepare_network_pull_rebase, prepare_network_push,
 };
 use crate::network_verify::{verify_client_fetch_tip, verify_clone_against_bare};
 use crate::shell::shell_quote;
@@ -611,6 +611,52 @@ pub fn verify_push_refspec(ctx: &DailyHeadlineContext, cwd: &Path) -> Result<()>
     let grit_oid = ref_oid(&ctx.git, &remote.bare, "refs/heads/bench")?;
     if git_oid != grit_oid {
         bail!("push refspec: git {git_oid} != grit {grit_oid}");
+    }
+    Ok(())
+}
+
+pub fn verify_push_force_with_lease(ctx: &DailyHeadlineContext, cwd: &Path) -> Result<()> {
+    let remote = remote_state(ctx)?;
+    configure_client_remote(&ctx.git, cwd, remote)?;
+    prepare_network_force_with_lease(&ctx.git, &remote.bare)?;
+    run_git(
+        &ctx.git,
+        cwd,
+        &[
+            "push",
+            "--force-with-lease",
+            "-q",
+            "origin",
+            remote.meta.default_branch.as_str(),
+        ],
+    )?;
+    let bare_after_git = ref_oid(
+        &ctx.git,
+        &remote.bare,
+        &format!("refs/heads/{}", remote.meta.default_branch),
+    )?;
+    let client_after_git = ref_oid(
+        &ctx.git,
+        cwd,
+        &format!("refs/heads/{}", remote.meta.default_branch),
+    )?;
+    if bare_after_git != client_after_git {
+        bail!("git push --force-with-lease: bare {bare_after_git} != client {client_after_git}");
+    }
+    prepare_network_force_with_lease(&ctx.git, &remote.bare)?;
+    run_grit(&ctx.grit, cwd, &["push", "--force-with-lease"])?;
+    let bare_after_grit = ref_oid(
+        &ctx.git,
+        &remote.bare,
+        &format!("refs/heads/{}", remote.meta.default_branch),
+    )?;
+    let client_after_grit = ref_oid(
+        &ctx.git,
+        cwd,
+        &format!("refs/heads/{}", remote.meta.default_branch),
+    )?;
+    if bare_after_grit != client_after_grit {
+        bail!("grit push --force-with-lease: bare {bare_after_grit} != client {client_after_grit}");
     }
     Ok(())
 }

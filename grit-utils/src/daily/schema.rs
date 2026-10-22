@@ -279,6 +279,7 @@ mod tests {
             ("pull/fast-forward@git-git", "pull"),
             ("pull/rebase@synth-10k", "pull"),
             ("push/incremental@git-git", "push"),
+            ("push/force-with-lease@git-git", "push"),
             ("clone/local@synth-10k", "clone"),
         ];
         assert_eq!(HEADLINE_SCENARIOS.len(), 19);
