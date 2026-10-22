@@ -28,7 +28,47 @@ use similar::{capture_diff_slices, Algorithm, DiffTag};
 
 use super::absorb::{remaining_index_blob_for_path, staged_absorb_paths, AbsorbPlan};
 use super::error::HistoryError;
+use super::last::{write_history_last, HistoryLastRecord};
 use super::types::{AppliedRewrite, ApplyOptions, PlannedRefUpdate, RewritePlan};
+
+fn maybe_record_history_last(
+    repo: &Repository,
+    opts: &ApplyOptions,
+    plan: &RewritePlan,
+) -> Result<(), HistoryError> {
+    let Some(operation) = opts.record_operation.as_deref() else {
+        return Ok(());
+    };
+    let record = HistoryLastRecord::from_applied_plan(operation, plan);
+    write_history_last(repo, &record)
+}
+
+fn complete_applied_rewrite(
+    repo: &Repository,
+    plan: &RewritePlan,
+    opts: &ApplyOptions,
+    needs_worktree: bool,
+    index_snapshot: Option<&[u8]>,
+    worktree_snapshot: Option<&HashMap<String, WorktreePathSnapshot>>,
+) -> Result<AppliedRewrite, HistoryError> {
+    let head = resolve_head_commit(repo)?;
+    if let Err(record_err) = maybe_record_history_last(repo, opts, plan) {
+        if opts.record_operation.is_some() {
+            if !plan.ref_updates.is_empty() {
+                let _ = rollback_ref_updates(repo, &plan.ref_updates, opts);
+            }
+            if needs_worktree {
+                let _ =
+                    restore_worktree_after_failed_apply(repo, index_snapshot, worktree_snapshot);
+            }
+        }
+        return Err(record_err);
+    }
+    Ok(AppliedRewrite {
+        ref_updates: plan.ref_updates.clone(),
+        head,
+    })
+}
 
 fn split_blob_lines(data: &[u8]) -> Vec<Vec<u8>> {
     if data.is_empty() {
@@ -250,11 +290,14 @@ fn apply_absorb_refs_and_worktree(
         }
     }
 
-    let head = resolve_head_commit(repo)?;
-    Ok(AppliedRewrite {
-        ref_updates: plan.ref_updates.clone(),
-        head,
-    })
+    complete_applied_rewrite(
+        repo,
+        plan,
+        opts,
+        needs_worktree,
+        index_snapshot_owned.as_deref(),
+        worktree_snapshot.as_ref(),
+    )
 }
 
 fn apply_absorb_worktree_after_refs(
@@ -711,12 +754,16 @@ fn apply_fixup_refs_and_worktree(
         }
     }
 
-    let head = resolve_head_commit(repo)?;
-    Ok(AppliedRewrite {
-        ref_updates: plan.ref_updates.clone(),
-        head,
-    })
+    complete_applied_rewrite(
+        repo,
+        plan,
+        opts,
+        needs_worktree,
+        index_snapshot_owned.as_deref(),
+        worktree_snapshot.as_ref(),
+    )
 }
+
 fn apply_fixup_worktree_after_refs(
     repo: &Repository,
     from_tree: Option<&ObjectId>,
@@ -979,11 +1026,14 @@ pub fn apply_rewrite(
         }
     }
 
-    let head = resolve_head_commit(repo)?;
-    Ok(AppliedRewrite {
-        ref_updates: plan.ref_updates.clone(),
-        head,
-    })
+    complete_applied_rewrite(
+        repo,
+        plan,
+        opts,
+        needs_worktree,
+        index_snapshot.as_deref(),
+        worktree_snapshot.as_ref(),
+    )
 }
 
 fn verify_live_head_matches_plan(
@@ -1165,8 +1215,10 @@ fn reflog_for_update(
     refname: &str,
     opts: &ApplyOptions,
 ) -> Option<ReflogUpdate> {
-    let config = config?;
-    if should_autocreate_reflog_with_config(config, git_dir, refname) {
+    let force = opts.record_operation.is_some();
+    let autocreate =
+        config.is_some_and(|cfg| should_autocreate_reflog_with_config(cfg, git_dir, refname));
+    if force || autocreate {
         Some(ReflogUpdate {
             identity: opts.identity.clone(),
             message: opts.reflog_message.clone(),
@@ -1678,6 +1730,7 @@ mod inject_and_apply_tests {
             &ApplyOptions {
                 identity: "T <t@t>".into(),
                 reflog_message: "rewrite".into(),
+                record_operation: None,
             },
         )
         .expect_err("inject");
@@ -1806,6 +1859,7 @@ mod inject_and_apply_tests {
             &ApplyOptions {
                 identity: "T <t@t>".into(),
                 reflog_message: "rewrite".into(),
+                record_operation: None,
             },
         )
         .expect_err("inject checkout failure");
@@ -2073,6 +2127,7 @@ mod inject_and_apply_tests {
             &ApplyOptions {
                 identity: "T <t@t>".into(),
                 reflog_message: "fixup".into(),
+                record_operation: None,
             },
             &staged_paths,
         )
@@ -2323,6 +2378,7 @@ mod inject_and_apply_tests {
             &ApplyOptions {
                 identity: "T <t@t>".into(),
                 reflog_message: "rewrite".into(),
+                record_operation: None,
             },
         )
         .expect_err("inject checkout failure");
@@ -2459,6 +2515,7 @@ mod inject_and_apply_tests {
             &ApplyOptions {
                 identity: "T <t@t>".into(),
                 reflog_message: "rewrite".into(),
+                record_operation: None,
             },
         )
         .expect_err("inject checkout failure");
@@ -2581,6 +2638,7 @@ mod inject_and_apply_tests {
             &ApplyOptions {
                 identity: "T <t@t>".into(),
                 reflog_message: "rewrite".into(),
+                record_operation: None,
             },
         )
         .expect_err("inject checkout failure");
@@ -2814,6 +2872,7 @@ mod inject_and_apply_tests {
             &ApplyOptions {
                 identity: "T <t@t>".into(),
                 reflog_message: "rewrite".into(),
+                record_operation: None,
             },
         )
         .expect_err("inject checkout failure");
@@ -2951,6 +3010,7 @@ mod inject_and_apply_tests {
             &ApplyOptions {
                 identity: "T <t@t>".into(),
                 reflog_message: "rewrite".into(),
+                record_operation: None,
             },
         )
         .expect_err("checkout must fail");
