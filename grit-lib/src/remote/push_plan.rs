@@ -1,4 +1,4 @@
-//! Resolve remotes and refspecs for [`crate::remote::transfer::push`].
+//! Resolve remotes and refspecs for [`Remote::push`](crate::remote::Remote::push).
 //!
 //! [`resolve_push`] turns a [`PushRequest`] (CLI flags and positional refspecs)
 //! into a [`ResolvedPush`] of concrete [`PushRefSpec`] entries, matching Git's
