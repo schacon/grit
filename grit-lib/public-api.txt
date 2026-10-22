@@ -1391,9 +1391,30 @@ pub fn grit_lib::commit::trailers::finalize_cherry_pick_message(&str, bool, bool
 pub fn grit_lib::commit::trailers::format_signoff_line(&str, &str) -> alloc::string::String
 pub fn grit_lib::commit::trailers::format_trailers(&str, &grit_lib::commit::trailers::TrailerOpts) -> alloc::string::String
 pub fn grit_lib::commit::trailers::message_ends_with_trailer(&str, &grit_lib::config::ConfigSet) -> bool
+pub struct grit_lib::commit::TrailerArgParseError
+impl core::clone::Clone for grit_lib::commit::TrailerArgParseError
+pub fn grit_lib::commit::TrailerArgParseError::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::commit::TrailerArgParseError
+impl core::cmp::PartialEq for grit_lib::commit::TrailerArgParseError
+pub fn grit_lib::commit::TrailerArgParseError::eq(&self, &Self) -> bool
+impl core::error::Error for grit_lib::commit::TrailerArgParseError
+impl core::fmt::Debug for grit_lib::commit::TrailerArgParseError
+pub fn grit_lib::commit::TrailerArgParseError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::commit::TrailerArgParseError
+pub fn grit_lib::commit::TrailerArgParseError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::commit::TrailerArgParseError
+impl core::marker::Freeze for grit_lib::commit::TrailerArgParseError
+impl core::marker::Send for grit_lib::commit::TrailerArgParseError
+impl core::marker::Sync for grit_lib::commit::TrailerArgParseError
+impl core::marker::Unpin for grit_lib::commit::TrailerArgParseError
+impl core::marker::UnsafeUnpin for grit_lib::commit::TrailerArgParseError
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::commit::TrailerArgParseError
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::commit::TrailerArgParseError
 pub fn grit_lib::commit::assemble_identity(&str, &str, core::option::Option<&str>, time::offset_date_time::OffsetDateTime) -> alloc::string::String
 pub fn grit_lib::commit::format_git_timestamp(time::offset_date_time::OffsetDateTime) -> alloc::string::String
+pub fn grit_lib::commit::normalize_commit_date_override(&str) -> core::result::Result<alloc::string::String, grit_lib::config::git_date::parse::DateParseError>
 pub fn grit_lib::commit::parse_date_to_git_timestamp(&str) -> core::option::Option<alloc::string::String>
+pub fn grit_lib::commit::parse_trailer_command_line_arg(&str) -> core::result::Result<(alloc::string::String, alloc::string::String), grit_lib::commit::TrailerArgParseError>
 pub mod grit_lib::config
 pub mod grit_lib::config::dotfile
 pub fn grit_lib::config::dotfile::dotfile_matches(&str, &str) -> bool
@@ -1806,113 +1827,112 @@ impl<'repo> !core::panic::unwind_safe::UnwindSafe for grit_lib::config::handle::
 pub mod grit_lib::config::ident
 pub enum grit_lib::config::ident::AuthorArgError
 pub grit_lib::config::ident::AuthorArgError::EmptyEmail
-pub grit_lib::config::ident::AuthorArgError::InvalidCharacter
 pub grit_lib::config::ident::AuthorArgError::InvalidFormat
 pub grit_lib::config::ident::AuthorArgError::TrailingText
-impl core::clone::Clone for grit_lib::config::ident::AuthorArgError
-pub fn grit_lib::config::ident::AuthorArgError::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::config::ident::AuthorArgError
-impl core::cmp::PartialEq for grit_lib::config::ident::AuthorArgError
-pub fn grit_lib::config::ident::AuthorArgError::eq(&self, &Self) -> bool
-impl core::error::Error for grit_lib::config::ident::AuthorArgError
-impl core::fmt::Debug for grit_lib::config::ident::AuthorArgError
-pub fn grit_lib::config::ident::AuthorArgError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::fmt::Display for grit_lib::config::ident::AuthorArgError
-pub fn grit_lib::config::ident::AuthorArgError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for grit_lib::config::ident::AuthorArgError
-impl core::marker::Freeze for grit_lib::config::ident::AuthorArgError
-impl core::marker::Send for grit_lib::config::ident::AuthorArgError
-impl core::marker::Sync for grit_lib::config::ident::AuthorArgError
-impl core::marker::Unpin for grit_lib::config::ident::AuthorArgError
-impl core::marker::UnsafeUnpin for grit_lib::config::ident::AuthorArgError
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::ident::AuthorArgError
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::config::ident::AuthorArgError
+impl core::clone::Clone for grit_lib::ident::AuthorArgError
+pub fn grit_lib::ident::AuthorArgError::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::ident::AuthorArgError
+impl core::cmp::PartialEq for grit_lib::ident::AuthorArgError
+pub fn grit_lib::ident::AuthorArgError::eq(&self, &Self) -> bool
+impl core::error::Error for grit_lib::ident::AuthorArgError
+impl core::fmt::Debug for grit_lib::ident::AuthorArgError
+pub fn grit_lib::ident::AuthorArgError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::ident::AuthorArgError
+pub fn grit_lib::ident::AuthorArgError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::ident::AuthorArgError
+impl core::marker::Freeze for grit_lib::ident::AuthorArgError
+impl core::marker::Send for grit_lib::ident::AuthorArgError
+impl core::marker::Sync for grit_lib::ident::AuthorArgError
+impl core::marker::Unpin for grit_lib::ident::AuthorArgError
+impl core::marker::UnsafeUnpin for grit_lib::ident::AuthorArgError
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::ident::AuthorArgError
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::ident::AuthorArgError
 pub enum grit_lib::config::ident::SignatureTail
 pub grit_lib::config::ident::SignatureTail::NonNumeric
 pub grit_lib::config::ident::SignatureTail::Overflow
-pub grit_lib::config::ident::SignatureTail::Valid(grit_lib::config::ident::ParsedSignatureTimes)
-impl core::clone::Clone for grit_lib::config::ident::SignatureTail
-pub fn grit_lib::config::ident::SignatureTail::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::config::ident::SignatureTail
-impl core::cmp::PartialEq for grit_lib::config::ident::SignatureTail
-pub fn grit_lib::config::ident::SignatureTail::eq(&self, &Self) -> bool
-impl core::fmt::Debug for grit_lib::config::ident::SignatureTail
-pub fn grit_lib::config::ident::SignatureTail::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for grit_lib::config::ident::SignatureTail
-impl core::marker::Freeze for grit_lib::config::ident::SignatureTail
-impl core::marker::Send for grit_lib::config::ident::SignatureTail
-impl core::marker::Sync for grit_lib::config::ident::SignatureTail
-impl core::marker::Unpin for grit_lib::config::ident::SignatureTail
-impl core::marker::UnsafeUnpin for grit_lib::config::ident::SignatureTail
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::ident::SignatureTail
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::config::ident::SignatureTail
+pub grit_lib::config::ident::SignatureTail::Valid(grit_lib::ident::ParsedSignatureTimes)
+impl core::clone::Clone for grit_lib::ident::SignatureTail
+pub fn grit_lib::ident::SignatureTail::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::ident::SignatureTail
+impl core::cmp::PartialEq for grit_lib::ident::SignatureTail
+pub fn grit_lib::ident::SignatureTail::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::ident::SignatureTail
+pub fn grit_lib::ident::SignatureTail::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::ident::SignatureTail
+impl core::marker::Freeze for grit_lib::ident::SignatureTail
+impl core::marker::Send for grit_lib::ident::SignatureTail
+impl core::marker::Sync for grit_lib::ident::SignatureTail
+impl core::marker::Unpin for grit_lib::ident::SignatureTail
+impl core::marker::UnsafeUnpin for grit_lib::ident::SignatureTail
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::ident::SignatureTail
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::ident::SignatureTail
 pub enum grit_lib::config::ident::SignatureTimestamp
 pub grit_lib::config::ident::SignatureTimestamp::Sentinel
 pub grit_lib::config::ident::SignatureTimestamp::Valid(i64)
-impl core::clone::Clone for grit_lib::config::ident::SignatureTimestamp
-pub fn grit_lib::config::ident::SignatureTimestamp::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::config::ident::SignatureTimestamp
-impl core::cmp::PartialEq for grit_lib::config::ident::SignatureTimestamp
-pub fn grit_lib::config::ident::SignatureTimestamp::eq(&self, &Self) -> bool
-impl core::fmt::Debug for grit_lib::config::ident::SignatureTimestamp
-pub fn grit_lib::config::ident::SignatureTimestamp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for grit_lib::config::ident::SignatureTimestamp
-impl core::marker::StructuralPartialEq for grit_lib::config::ident::SignatureTimestamp
-impl core::marker::Freeze for grit_lib::config::ident::SignatureTimestamp
-impl core::marker::Send for grit_lib::config::ident::SignatureTimestamp
-impl core::marker::Sync for grit_lib::config::ident::SignatureTimestamp
-impl core::marker::Unpin for grit_lib::config::ident::SignatureTimestamp
-impl core::marker::UnsafeUnpin for grit_lib::config::ident::SignatureTimestamp
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::ident::SignatureTimestamp
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::config::ident::SignatureTimestamp
+impl core::clone::Clone for grit_lib::ident::SignatureTimestamp
+pub fn grit_lib::ident::SignatureTimestamp::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::ident::SignatureTimestamp
+impl core::cmp::PartialEq for grit_lib::ident::SignatureTimestamp
+pub fn grit_lib::ident::SignatureTimestamp::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::ident::SignatureTimestamp
+pub fn grit_lib::ident::SignatureTimestamp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::ident::SignatureTimestamp
+impl core::marker::StructuralPartialEq for grit_lib::ident::SignatureTimestamp
+impl core::marker::Freeze for grit_lib::ident::SignatureTimestamp
+impl core::marker::Send for grit_lib::ident::SignatureTimestamp
+impl core::marker::Sync for grit_lib::ident::SignatureTimestamp
+impl core::marker::Unpin for grit_lib::ident::SignatureTimestamp
+impl core::marker::UnsafeUnpin for grit_lib::ident::SignatureTimestamp
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::ident::SignatureTimestamp
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::ident::SignatureTimestamp
 pub struct grit_lib::config::ident::AuthorContact
 pub grit_lib::config::ident::AuthorContact::email: alloc::string::String
 pub grit_lib::config::ident::AuthorContact::name: alloc::string::String
-impl core::clone::Clone for grit_lib::config::ident::AuthorContact
-pub fn grit_lib::config::ident::AuthorContact::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::config::ident::AuthorContact
-impl core::cmp::PartialEq for grit_lib::config::ident::AuthorContact
-pub fn grit_lib::config::ident::AuthorContact::eq(&self, &Self) -> bool
-impl core::fmt::Debug for grit_lib::config::ident::AuthorContact
-pub fn grit_lib::config::ident::AuthorContact::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for grit_lib::config::ident::AuthorContact
-impl core::marker::Freeze for grit_lib::config::ident::AuthorContact
-impl core::marker::Send for grit_lib::config::ident::AuthorContact
-impl core::marker::Sync for grit_lib::config::ident::AuthorContact
-impl core::marker::Unpin for grit_lib::config::ident::AuthorContact
-impl core::marker::UnsafeUnpin for grit_lib::config::ident::AuthorContact
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::ident::AuthorContact
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::config::ident::AuthorContact
+impl core::clone::Clone for grit_lib::ident::AuthorContact
+pub fn grit_lib::ident::AuthorContact::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::ident::AuthorContact
+impl core::cmp::PartialEq for grit_lib::ident::AuthorContact
+pub fn grit_lib::ident::AuthorContact::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::ident::AuthorContact
+pub fn grit_lib::ident::AuthorContact::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::ident::AuthorContact
+impl core::marker::Freeze for grit_lib::ident::AuthorContact
+impl core::marker::Send for grit_lib::ident::AuthorContact
+impl core::marker::Sync for grit_lib::ident::AuthorContact
+impl core::marker::Unpin for grit_lib::ident::AuthorContact
+impl core::marker::UnsafeUnpin for grit_lib::ident::AuthorContact
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::ident::AuthorContact
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::ident::AuthorContact
 pub struct grit_lib::config::ident::ParsedSignatureTimes
 pub grit_lib::config::ident::ParsedSignatureTimes::tz_hhmm_range: core::ops::range::Range<usize>
 pub grit_lib::config::ident::ParsedSignatureTimes::tz_offset_secs: i64
 pub grit_lib::config::ident::ParsedSignatureTimes::unix_seconds: i64
-impl core::clone::Clone for grit_lib::config::ident::ParsedSignatureTimes
-pub fn grit_lib::config::ident::ParsedSignatureTimes::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::config::ident::ParsedSignatureTimes
-impl core::cmp::PartialEq for grit_lib::config::ident::ParsedSignatureTimes
-pub fn grit_lib::config::ident::ParsedSignatureTimes::eq(&self, &Self) -> bool
-impl core::fmt::Debug for grit_lib::config::ident::ParsedSignatureTimes
-pub fn grit_lib::config::ident::ParsedSignatureTimes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for grit_lib::config::ident::ParsedSignatureTimes
-impl core::marker::Freeze for grit_lib::config::ident::ParsedSignatureTimes
-impl core::marker::Send for grit_lib::config::ident::ParsedSignatureTimes
-impl core::marker::Sync for grit_lib::config::ident::ParsedSignatureTimes
-impl core::marker::Unpin for grit_lib::config::ident::ParsedSignatureTimes
-impl core::marker::UnsafeUnpin for grit_lib::config::ident::ParsedSignatureTimes
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::ident::ParsedSignatureTimes
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::config::ident::ParsedSignatureTimes
-pub fn grit_lib::config::ident::author_identity_line(&grit_lib::config::ident::AuthorContact, core::option::Option<&str>, time::offset_date_time::OffsetDateTime) -> alloc::string::String
+impl core::clone::Clone for grit_lib::ident::ParsedSignatureTimes
+pub fn grit_lib::ident::ParsedSignatureTimes::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::ident::ParsedSignatureTimes
+impl core::cmp::PartialEq for grit_lib::ident::ParsedSignatureTimes
+pub fn grit_lib::ident::ParsedSignatureTimes::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::ident::ParsedSignatureTimes
+pub fn grit_lib::ident::ParsedSignatureTimes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::ident::ParsedSignatureTimes
+impl core::marker::Freeze for grit_lib::ident::ParsedSignatureTimes
+impl core::marker::Send for grit_lib::ident::ParsedSignatureTimes
+impl core::marker::Sync for grit_lib::ident::ParsedSignatureTimes
+impl core::marker::Unpin for grit_lib::ident::ParsedSignatureTimes
+impl core::marker::UnsafeUnpin for grit_lib::ident::ParsedSignatureTimes
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::ident::ParsedSignatureTimes
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::ident::ParsedSignatureTimes
+pub fn grit_lib::config::ident::author_identity_line(&grit_lib::ident::AuthorContact, core::option::Option<&str>, time::offset_date_time::OffsetDateTime) -> alloc::string::String
 pub fn grit_lib::config::ident::committer_timestamp_for_until_filter(&str) -> i64
 pub fn grit_lib::config::ident::committer_timestamp_for_until_filter_bytes(&[u8]) -> i64
 pub fn grit_lib::config::ident::committer_unix_seconds_for_ordering(&str) -> i64
 pub fn grit_lib::config::ident::committer_unix_seconds_for_ordering_bytes(&[u8]) -> i64
 pub fn grit_lib::config::ident::fsck_commit_idents(&[u8], grit_lib::objects::HashAlgo) -> core::result::Result<(), alloc::string::String>
-pub fn grit_lib::config::ident::parse_author_arg(&str) -> core::result::Result<grit_lib::config::ident::AuthorContact, grit_lib::config::ident::AuthorArgError>
-pub fn grit_lib::config::ident::parse_signature_tail(&str) -> core::option::Option<grit_lib::config::ident::SignatureTail>
-pub fn grit_lib::config::ident::parse_signature_times(&str) -> core::option::Option<grit_lib::config::ident::ParsedSignatureTimes>
-pub fn grit_lib::config::ident::signature_timestamp_for_pretty(&str) -> grit_lib::config::ident::SignatureTimestamp
-pub fn grit_lib::config::ident::timestamp_for_at_ct(grit_lib::config::ident::SignatureTimestamp) -> core::option::Option<i64>
+pub fn grit_lib::config::ident::parse_author_arg(&str) -> core::result::Result<grit_lib::ident::AuthorContact, grit_lib::ident::AuthorArgError>
+pub fn grit_lib::config::ident::parse_signature_tail(&str) -> core::option::Option<grit_lib::ident::SignatureTail>
+pub fn grit_lib::config::ident::parse_signature_times(&str) -> core::option::Option<grit_lib::ident::ParsedSignatureTimes>
+pub fn grit_lib::config::ident::signature_timestamp_for_pretty(&str) -> grit_lib::ident::SignatureTimestamp
+pub fn grit_lib::config::ident::timestamp_for_at_ct(grit_lib::ident::SignatureTimestamp) -> core::option::Option<i64>
 pub mod grit_lib::config::ident_config
 pub fn grit_lib::config::ident_config::current_uid() -> u32
 pub fn grit_lib::config::ident_config::ident_default_name(&grit_lib::config::ConfigSet, &impl grit_lib::config::ident_resolve::IdentityEnv) -> alloc::string::String
@@ -5101,6 +5121,115 @@ pub fn grit_lib::fsmonitor::fsmonitor_enabled(&grit_lib::config::ConfigSet) -> b
 pub fn grit_lib::fsmonitor::git_style_windows_pipe_name_from_absolute_ipc(&str) -> alloc::string::String
 pub fn grit_lib::fsmonitor::refresh_index(&mut grit_lib::index::Index, &std::path::Path, &std::path::Path, &grit_lib::config::ConfigSet, core::option::Option<&dyn grit_lib::command_runner::CommandRunner>, &grit_lib::worktree::fsmonitor::FsmonitorRefreshOptions) -> grit_lib::error::Result<grit_lib::worktree::fsmonitor::FsmonitorRefreshResult>
 pub fn grit_lib::fsmonitor::v1_hook_token(grit_lib::worktree::fsmonitor::FsmonitorQueryBoundary) -> alloc::string::String
+pub mod grit_lib::ident
+pub enum grit_lib::ident::AuthorArgError
+pub grit_lib::ident::AuthorArgError::EmptyEmail
+pub grit_lib::ident::AuthorArgError::InvalidFormat
+pub grit_lib::ident::AuthorArgError::TrailingText
+impl core::clone::Clone for grit_lib::ident::AuthorArgError
+pub fn grit_lib::ident::AuthorArgError::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::ident::AuthorArgError
+impl core::cmp::PartialEq for grit_lib::ident::AuthorArgError
+pub fn grit_lib::ident::AuthorArgError::eq(&self, &Self) -> bool
+impl core::error::Error for grit_lib::ident::AuthorArgError
+impl core::fmt::Debug for grit_lib::ident::AuthorArgError
+pub fn grit_lib::ident::AuthorArgError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::ident::AuthorArgError
+pub fn grit_lib::ident::AuthorArgError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::ident::AuthorArgError
+impl core::marker::Freeze for grit_lib::ident::AuthorArgError
+impl core::marker::Send for grit_lib::ident::AuthorArgError
+impl core::marker::Sync for grit_lib::ident::AuthorArgError
+impl core::marker::Unpin for grit_lib::ident::AuthorArgError
+impl core::marker::UnsafeUnpin for grit_lib::ident::AuthorArgError
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::ident::AuthorArgError
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::ident::AuthorArgError
+pub enum grit_lib::ident::SignatureTail
+pub grit_lib::ident::SignatureTail::NonNumeric
+pub grit_lib::ident::SignatureTail::Overflow
+pub grit_lib::ident::SignatureTail::Valid(grit_lib::ident::ParsedSignatureTimes)
+impl core::clone::Clone for grit_lib::ident::SignatureTail
+pub fn grit_lib::ident::SignatureTail::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::ident::SignatureTail
+impl core::cmp::PartialEq for grit_lib::ident::SignatureTail
+pub fn grit_lib::ident::SignatureTail::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::ident::SignatureTail
+pub fn grit_lib::ident::SignatureTail::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::ident::SignatureTail
+impl core::marker::Freeze for grit_lib::ident::SignatureTail
+impl core::marker::Send for grit_lib::ident::SignatureTail
+impl core::marker::Sync for grit_lib::ident::SignatureTail
+impl core::marker::Unpin for grit_lib::ident::SignatureTail
+impl core::marker::UnsafeUnpin for grit_lib::ident::SignatureTail
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::ident::SignatureTail
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::ident::SignatureTail
+pub enum grit_lib::ident::SignatureTimestamp
+pub grit_lib::ident::SignatureTimestamp::Sentinel
+pub grit_lib::ident::SignatureTimestamp::Valid(i64)
+impl core::clone::Clone for grit_lib::ident::SignatureTimestamp
+pub fn grit_lib::ident::SignatureTimestamp::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::ident::SignatureTimestamp
+impl core::cmp::PartialEq for grit_lib::ident::SignatureTimestamp
+pub fn grit_lib::ident::SignatureTimestamp::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::ident::SignatureTimestamp
+pub fn grit_lib::ident::SignatureTimestamp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::ident::SignatureTimestamp
+impl core::marker::StructuralPartialEq for grit_lib::ident::SignatureTimestamp
+impl core::marker::Freeze for grit_lib::ident::SignatureTimestamp
+impl core::marker::Send for grit_lib::ident::SignatureTimestamp
+impl core::marker::Sync for grit_lib::ident::SignatureTimestamp
+impl core::marker::Unpin for grit_lib::ident::SignatureTimestamp
+impl core::marker::UnsafeUnpin for grit_lib::ident::SignatureTimestamp
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::ident::SignatureTimestamp
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::ident::SignatureTimestamp
+pub struct grit_lib::ident::AuthorContact
+pub grit_lib::ident::AuthorContact::email: alloc::string::String
+pub grit_lib::ident::AuthorContact::name: alloc::string::String
+impl core::clone::Clone for grit_lib::ident::AuthorContact
+pub fn grit_lib::ident::AuthorContact::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::ident::AuthorContact
+impl core::cmp::PartialEq for grit_lib::ident::AuthorContact
+pub fn grit_lib::ident::AuthorContact::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::ident::AuthorContact
+pub fn grit_lib::ident::AuthorContact::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::ident::AuthorContact
+impl core::marker::Freeze for grit_lib::ident::AuthorContact
+impl core::marker::Send for grit_lib::ident::AuthorContact
+impl core::marker::Sync for grit_lib::ident::AuthorContact
+impl core::marker::Unpin for grit_lib::ident::AuthorContact
+impl core::marker::UnsafeUnpin for grit_lib::ident::AuthorContact
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::ident::AuthorContact
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::ident::AuthorContact
+pub struct grit_lib::ident::ParsedSignatureTimes
+pub grit_lib::ident::ParsedSignatureTimes::tz_hhmm_range: core::ops::range::Range<usize>
+pub grit_lib::ident::ParsedSignatureTimes::tz_offset_secs: i64
+pub grit_lib::ident::ParsedSignatureTimes::unix_seconds: i64
+impl core::clone::Clone for grit_lib::ident::ParsedSignatureTimes
+pub fn grit_lib::ident::ParsedSignatureTimes::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::ident::ParsedSignatureTimes
+impl core::cmp::PartialEq for grit_lib::ident::ParsedSignatureTimes
+pub fn grit_lib::ident::ParsedSignatureTimes::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::ident::ParsedSignatureTimes
+pub fn grit_lib::ident::ParsedSignatureTimes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::ident::ParsedSignatureTimes
+impl core::marker::Freeze for grit_lib::ident::ParsedSignatureTimes
+impl core::marker::Send for grit_lib::ident::ParsedSignatureTimes
+impl core::marker::Sync for grit_lib::ident::ParsedSignatureTimes
+impl core::marker::Unpin for grit_lib::ident::ParsedSignatureTimes
+impl core::marker::UnsafeUnpin for grit_lib::ident::ParsedSignatureTimes
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::ident::ParsedSignatureTimes
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::ident::ParsedSignatureTimes
+pub fn grit_lib::ident::author_identity_line(&grit_lib::ident::AuthorContact, core::option::Option<&str>, time::offset_date_time::OffsetDateTime) -> alloc::string::String
+pub fn grit_lib::ident::committer_timestamp_for_until_filter(&str) -> i64
+pub fn grit_lib::ident::committer_timestamp_for_until_filter_bytes(&[u8]) -> i64
+pub fn grit_lib::ident::committer_unix_seconds_for_ordering(&str) -> i64
+pub fn grit_lib::ident::committer_unix_seconds_for_ordering_bytes(&[u8]) -> i64
+pub fn grit_lib::ident::fsck_commit_idents(&[u8], grit_lib::objects::HashAlgo) -> core::result::Result<(), alloc::string::String>
+pub fn grit_lib::ident::parse_author_arg(&str) -> core::result::Result<grit_lib::ident::AuthorContact, grit_lib::ident::AuthorArgError>
+pub fn grit_lib::ident::parse_signature_tail(&str) -> core::option::Option<grit_lib::ident::SignatureTail>
+pub fn grit_lib::ident::parse_signature_times(&str) -> core::option::Option<grit_lib::ident::ParsedSignatureTimes>
+pub fn grit_lib::ident::signature_timestamp_for_pretty(&str) -> grit_lib::ident::SignatureTimestamp
+pub fn grit_lib::ident::timestamp_for_at_ct(grit_lib::ident::SignatureTimestamp) -> core::option::Option<i64>
 pub mod grit_lib::index
 pub mod grit_lib::index::handle
 pub struct grit_lib::index::handle::IndexHandle<'repo>
@@ -21647,6 +21776,28 @@ pub fn grit_lib::worktree::resolve_linked_worktree_add_path(&std::path::Path, &s
 pub fn grit_lib::worktree::sanitize_worktree_id_component(&str) -> alloc::string::String
 pub fn grit_lib::worktree::worktree_admin_dir(&grit_lib::repo::Repository) -> std::path::PathBuf
 pub fn grit_lib::worktree::worktree_path_basename(&std::path::Path) -> alloc::string::String
+pub enum grit_lib::HookName
+pub grit_lib::HookName::CommitMsg
+pub grit_lib::HookName::PostCommit
+pub grit_lib::HookName::PreCommit
+impl grit_lib::command_runner::hooks::HookName
+pub const fn grit_lib::command_runner::hooks::HookName::as_str(self) -> &'static str
+impl core::clone::Clone for grit_lib::command_runner::hooks::HookName
+pub fn grit_lib::command_runner::hooks::HookName::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::command_runner::hooks::HookName
+impl core::cmp::PartialEq for grit_lib::command_runner::hooks::HookName
+pub fn grit_lib::command_runner::hooks::HookName::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::command_runner::hooks::HookName
+pub fn grit_lib::command_runner::hooks::HookName::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::command_runner::hooks::HookName
+impl core::marker::StructuralPartialEq for grit_lib::command_runner::hooks::HookName
+impl core::marker::Freeze for grit_lib::command_runner::hooks::HookName
+impl core::marker::Send for grit_lib::command_runner::hooks::HookName
+impl core::marker::Sync for grit_lib::command_runner::hooks::HookName
+impl core::marker::Unpin for grit_lib::command_runner::hooks::HookName
+impl core::marker::UnsafeUnpin for grit_lib::command_runner::hooks::HookName
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::command_runner::hooks::HookName
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::command_runner::hooks::HookName
 #[non_exhaustive] pub enum grit_lib::RefStorageFormat
 pub grit_lib::RefStorageFormat::Files
 pub grit_lib::RefStorageFormat::Reftable
