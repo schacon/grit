@@ -213,7 +213,7 @@ pub const HEADLINE_SCENARIOS: [HeadlineScenario; 19] = [
 ];
 
 /// Remote matrix scenarios (non-headline) for the daily census.
-pub const REMOTE_MATRIX_SCENARIOS: [ScenarioSpec; 6] = [
+pub const REMOTE_MATRIX_SCENARIOS: [ScenarioSpec; 8] = [
     ScenarioSpec {
         id: "fetch/noop@git-git",
         area: Area::Remotes,
@@ -255,5 +255,19 @@ pub const REMOTE_MATRIX_SCENARIOS: [ScenarioSpec; 6] = [
         headline: false,
         name: None,
         description: "Explicit refspec push HEAD:refs/heads/bench vs git push",
+    },
+    ScenarioSpec {
+        id: "fetch/one-branch@git-git",
+        area: Area::Remotes,
+        headline: false,
+        name: None,
+        description: "Fetch one branch refspec vs git fetch origin main",
+    },
+    ScenarioSpec {
+        id: "fetch/dry-run@git-git",
+        area: Area::Remotes,
+        headline: false,
+        name: None,
+        description: "Fetch dry-run reports updates without writing refs or objects",
     },
 ];

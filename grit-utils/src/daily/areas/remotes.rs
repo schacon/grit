@@ -7,8 +7,9 @@ use super::super::remote_fixture::{
     setup_git_git_grit_http_fetch_remote, setup_git_git_grit_http_push_remote,
     setup_many_refs_file_remote, setup_synth10k_file_remote, setup_synth10k_grit_http_remote,
     setup_synth10k_pull_rebase_remote, verify_clone_http, verify_clone_local,
-    verify_fetch_incremental, verify_fetch_incremental_http, verify_fetch_noop,
-    verify_ls_remote_all, verify_pull_fast_forward, verify_pull_rebase, verify_push_incremental,
+    verify_fetch_dry_run, verify_fetch_incremental, verify_fetch_incremental_http,
+    verify_fetch_noop, verify_fetch_one_branch, verify_ls_remote_all,
+    verify_pull_fast_forward, verify_pull_rebase, verify_push_incremental,
     verify_push_incremental_http, verify_push_refspec,
 };
 use super::super::runner::BenchArgv;
@@ -61,6 +62,14 @@ fn correctness_fetch_noop(ctx: &DailyHeadlineContext) -> anyhow::Result<()> {
     verify_fetch_noop(ctx, &ctx.repo)
 }
 
+fn correctness_fetch_one_branch(ctx: &DailyHeadlineContext) -> anyhow::Result<()> {
+    verify_fetch_one_branch(ctx, &ctx.repo)
+}
+
+fn correctness_fetch_dry_run(ctx: &DailyHeadlineContext) -> anyhow::Result<()> {
+    verify_fetch_dry_run(ctx, &ctx.repo)
+}
+
 fn correctness_ls_remote(ctx: &DailyHeadlineContext) -> anyhow::Result<()> {
     verify_ls_remote_all(ctx, &ctx.repo)
 }
@@ -83,6 +92,22 @@ fn fetch_incr_git(ctx: &DailyHeadlineContext) -> BenchArgv {
 
 fn fetch_incr_grit(ctx: &DailyHeadlineContext) -> BenchArgv {
     sh_devnull(&ctx.grit, &["fetch", "origin"])
+}
+
+fn fetch_one_branch_git(ctx: &DailyHeadlineContext) -> BenchArgv {
+    sh_devnull(&ctx.git, &["fetch", "-q", "origin", "main"])
+}
+
+fn fetch_one_branch_grit(ctx: &DailyHeadlineContext) -> BenchArgv {
+    sh_devnull(&ctx.grit, &["fetch", "origin", "main"])
+}
+
+fn fetch_dry_run_git(ctx: &DailyHeadlineContext) -> BenchArgv {
+    sh_devnull(&ctx.git, &["fetch", "--dry-run", "-q", "origin", "main"])
+}
+
+fn fetch_dry_run_grit(ctx: &DailyHeadlineContext) -> BenchArgv {
+    sh_devnull(&ctx.grit, &["fetch", "--dry-run", "origin", "main"])
 }
 
 fn pull_ff_git(ctx: &DailyHeadlineContext) -> BenchArgv {
@@ -290,6 +315,24 @@ fn matrix_plans() -> Vec<DailyHeadlinePlan> {
             build_git: push_refspec_git,
             build_grit: push_refspec_grit,
             correctness: Some(correctness_push_refspec),
+        },
+        DailyHeadlinePlan {
+            spec: matrix_spec("fetch/one-branch@git-git"),
+            pending: false,
+            setup: setup_git_git_file_remote,
+            prepare: prepare_network_fetch_incr,
+            build_git: fetch_one_branch_git,
+            build_grit: fetch_one_branch_grit,
+            correctness: Some(correctness_fetch_one_branch),
+        },
+        DailyHeadlinePlan {
+            spec: matrix_spec("fetch/dry-run@git-git"),
+            pending: false,
+            setup: setup_git_git_file_remote,
+            prepare: prepare_network_fetch_incr,
+            build_git: fetch_dry_run_git,
+            build_grit: fetch_dry_run_grit,
+            correctness: Some(correctness_fetch_dry_run),
         },
     ]
 }
