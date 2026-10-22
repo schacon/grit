@@ -96,7 +96,11 @@ pub fn apply_hunks_to_blob(
     let mut working = WorkingBlob::decode(original);
     for (hunk_index, hunk) in hunks.iter().enumerate() {
         let edit = line_edit_from_hunk(hunk, opts.reverse);
-        let insert_only = hunk.old_count == 0;
+        let insert_only = if opts.reverse {
+            hunk.new_count == 0
+        } else {
+            hunk.old_count == 0
+        };
         let hint = scan_hint_for_hunk(hunk, &edit, opts.reverse);
         let Some(at) = locate_and_apply(&mut working, &edit, hint, hunk, hunk_index, insert_only)?
         else {
