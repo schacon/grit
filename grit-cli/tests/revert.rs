@@ -488,6 +488,42 @@ fn revert_range_skewed_committer_dates_matches_git() -> TestResult {
 }
 
 #[test]
+fn revert_dry_run_leaves_no_sequencer_state() -> TestResult {
+    let scratch = Scratch::new("dry-run")?;
+    let repo = scratch.path();
+    init_repo(repo)?;
+    let target = commit_file(repo, "a.txt", "v1\n", "initial")?;
+
+    let out = gs(repo, ["revert", "--dry-run", &target])?;
+    assert_eq!(out.status, Some(0), "{}", out.dump());
+    assert!(!repo.join(".git/REVERT_HEAD").exists());
+    assert!(!repo.join(".git/sequencer").exists());
+    Ok(())
+}
+
+#[test]
+fn revert_multiple_commits_follows_argument_order() -> TestResult {
+    let scratch = Scratch::new("order")?;
+    let repo = scratch.path();
+    init_repo(repo)?;
+    let c1 = commit_file(repo, "a.txt", "1\n", "first")?;
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let c2 = commit_file(repo, "b.txt", "2\n", "second")?;
+
+    let out = gs(repo, ["--json", "revert", "--dry-run", &c1, &c2])?;
+    assert_eq!(out.status, Some(0), "{}", out.dump());
+    let v: Value = serde_json::from_str(out.stdout.trim())?;
+    let sources: Vec<String> = v["commits"]
+        .as_array()
+        .expect("commits")
+        .iter()
+        .map(|c| c["source"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(sources, vec![c1, c2]);
+    Ok(())
+}
+
+#[test]
 fn revert_json_schema() -> TestResult {
     let scratch = Scratch::new("schema")?;
     let repo = scratch.path();

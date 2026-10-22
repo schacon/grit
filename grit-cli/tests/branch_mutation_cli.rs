@@ -144,6 +144,35 @@ fn delete_safe_and_force_delete_match_git() {
 }
 
 #[test]
+fn conflicting_mutations_are_rejected_with_usage_exit() {
+    let root = init_repo();
+    git(&root, &["branch", "topic"]);
+    for args in [
+        &["branch", "-d", "topic", "-u", "origin/main", "--json"][..],
+        &["branch", "-m", "topic", "renamed", "-d", "topic", "--json"][..],
+    ] {
+        let out = grit(&root, args);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "args {args:?}: {:?}",
+            out.stderr
+        );
+        let err: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+        assert_eq!(err["kind"], "usage");
+    }
+}
+
+#[test]
+fn delete_without_name_is_usage_exit_two() {
+    let root = init_repo();
+    let out = grit(&root, &["branch", "--delete", "--json"]);
+    assert_eq!(out.status.code(), Some(2));
+    let err: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(err["kind"], "usage");
+}
+
+#[test]
 fn delete_rejects_force_flag() {
     let root = init_repo();
     git(&root, &["branch", "ghost"]);

@@ -517,6 +517,20 @@ fn fetch_depth_flags_are_mutually_exclusive() -> TestResult {
 }
 
 #[test]
+fn fetch_depth_zero_is_rejected() -> TestResult {
+    let tmp = tempfile::tempdir()?;
+    let (_origin, client) = seed_remote(tmp.path())?;
+    let out = grit(&client, &["fetch", "--depth", "0"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("positive") || stderr(&out).contains("--depth"),
+        "stderr={}",
+        stderr(&out)
+    );
+    Ok(())
+}
+
+#[test]
 fn fetch_flags_after_remote_are_not_parsed_as_refspecs() -> TestResult {
     let base = tempfile::tempdir()?;
     let (origin, seed) = seed_remote(base.path())?;

@@ -312,6 +312,11 @@ pub fn run(opts: BranchRunOptions) -> Result<BranchOutcome> {
     {
         return Err(branch_usage("unexpected start commit with this operation"));
     }
+    if branch_mutation_count(&opts) > 1 {
+        return Err(branch_usage(
+            "cannot combine branch delete, rename, upstream, and create in one invocation",
+        ));
+    }
 
     let repo = context::discover()?;
 
@@ -332,14 +337,39 @@ pub fn run(opts: BranchRunOptions) -> Result<BranchOutcome> {
     if opts.delete || opts.force_delete {
         let name = opts
             .name
-            .ok_or_else(|| anyhow::anyhow!("branch name required with `--delete`"))?;
+            .ok_or_else(|| branch_usage("branch name required with `--delete`"))?;
         return remove(&repo, &name, opts.force_delete, opts.dry_run);
     }
     match (&opts.name, &opts.start) {
         (None, None) => list(&repo),
         (Some(name), start) => create(&repo, name, start.as_deref(), &opts),
-        (None, Some(_)) => bail!("branch name required before the start commit"),
+        (None, Some(_)) => Err(branch_usage("branch name required before the start commit")),
     }
+}
+
+/// Count mutually exclusive branch mutations requested in one invocation.
+fn branch_mutation_count(opts: &BranchRunOptions) -> u32 {
+    let mut n = 0u32;
+    if opts.delete || opts.force_delete {
+        n += 1;
+    }
+    if opts.rename.is_some() || opts.force_rename.is_some() {
+        n += 1;
+    }
+    if opts.unset_upstream || opts.set_upstream_to.is_some() {
+        n += 1;
+    }
+    let creates = opts.name.is_some()
+        && !opts.delete
+        && !opts.force_delete
+        && opts.rename.is_none()
+        && opts.force_rename.is_none()
+        && !opts.unset_upstream
+        && opts.set_upstream_to.is_none();
+    if creates {
+        n += 1;
+    }
+    n
 }
 
 fn branch_for_upstream(repo: &Repository, opts: &BranchRunOptions) -> Result<String> {

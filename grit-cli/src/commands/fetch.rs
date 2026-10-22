@@ -251,7 +251,19 @@ fn run_one(args: &FetchArgs, mode: OutputMode) -> Result<FetchOutcome> {
         TerminalProgress::new(mode)
     };
     let mut progress = progress;
+    if matches!(args.depth, Some(0)) {
+        return Err(anyhow::anyhow!("--depth requires a positive integer"));
+    }
+    if matches!(args.deepen, Some(0)) {
+        return Err(anyhow::anyhow!("--deepen requires a positive integer"));
+    }
     let fetch_depth = args.fetch_depth();
+    if args.depth.is_some() && fetch_depth.is_none() {
+        return Err(anyhow::anyhow!("--depth requires a positive integer"));
+    }
+    if args.deepen.is_some() && fetch_depth.is_none() {
+        return Err(anyhow::anyhow!("--deepen requires a positive integer"));
+    }
     let result = match fetch_once(
         &repo,
         &config,
