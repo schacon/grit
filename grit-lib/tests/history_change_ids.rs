@@ -436,6 +436,7 @@ fn history_change_ids_survive_every_rewrite() {
         &RebaseOntoOptions {
             rewrite: rewrite_opts(8),
             skip_applied: true,
+            flatten_leaf_merges: false,
         },
     )
     .expect("rebase");

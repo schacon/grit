@@ -795,12 +795,25 @@ pub fn prepare_network_pull_rebase(git: &Path, bare: &Path) -> Result<()> {
         )?;
     }
     for i in 0..3 {
+        let path = meta
+            .client_repo
+            .join(format!("bench-pull-rebase-local-{i}.txt"));
+        std::fs::write(&path, format!("local bench {i}\n"))?;
+        run_git_cmd(
+            git,
+            Some(&meta.client_repo),
+            &[
+                "add",
+                path.file_name()
+                    .and_then(|n| n.to_str())
+                    .context("local path")?,
+            ],
+        )?;
         run_git_cmd(
             git,
             Some(&meta.client_repo),
             &[
                 "commit",
-                "--allow-empty",
                 "-q",
                 "-m",
                 &format!("bench-pull-rebase-local-{i}"),

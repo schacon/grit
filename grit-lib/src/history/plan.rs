@@ -106,6 +106,19 @@ pub fn plan_rewrite(
     edits: &HistoryEdits,
     opts: &RewriteOptions,
 ) -> Result<RewritePlan, HistoryError> {
+    plan_rewrite_with_order(repo, edits, opts, None, false)
+}
+
+/// Like [`plan_rewrite`], but when `replay_order` is set, replays commits in that exact
+/// topological order (used by [`super::rebase::rebase_onto`](crate::history::rebase::rebase_onto)
+/// so merge side branches are included).
+pub(crate) fn plan_rewrite_with_order(
+    repo: &Repository,
+    edits: &HistoryEdits,
+    opts: &RewriteOptions,
+    replay_order: Option<&[ObjectId]>,
+    flatten_leaf_merges: bool,
+) -> Result<RewritePlan, HistoryError> {
     if edits.is_empty() {
         return Ok(RewritePlan {
             commits: Vec::new(),
@@ -120,37 +133,48 @@ pub fn plan_rewrite(
     let scoped_refs = collect_scoped_refs(repo, opts, oldest)?;
     ensure_branches_not_checked_out_elsewhere(repo, &scoped_refs)?;
 
-    let parents_of_oldest = commit_parents(repo, oldest)?;
-    let tips: Vec<String> = scoped_refs
-        .iter()
-        .map(|(_, oid)| oid.to_hex())
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-
-    let negative: Vec<String> = parents_of_oldest.iter().map(ObjectId::to_hex).collect();
-
-    let walk_opts = RevListOptions {
-        ancestry_path: true,
-        ancestry_path_bottoms: vec![oldest],
-        ordering: OrderingMode::Topo,
-        reverse: true,
-        use_commit_graph: true,
-        full_history: true,
-        ..RevListOptions::default()
-    };
-
-    let walk = rev_list(repo, &tips, &negative, &walk_opts).map_err(library_err)?;
-    let mut commits_to_replay: Vec<ObjectId> = walk.commits;
-    if !commits_to_replay.contains(&oldest) {
-        commits_to_replay.insert(0, oldest);
-    }
-
-    for &edited in edits.keys() {
-        if !commits_to_replay.contains(&edited) {
-            return Err(HistoryError::NotInHistory { commit: edited });
+    let commits_to_replay = if let Some(order) = replay_order {
+        let order = order.to_vec();
+        for &edited in edits.keys() {
+            if !order.contains(&edited) {
+                return Err(HistoryError::NotInHistory { commit: edited });
+            }
         }
-    }
+        order
+    } else {
+        let parents_of_oldest = commit_parents(repo, oldest)?;
+        let tips: Vec<String> = scoped_refs
+            .iter()
+            .map(|(_, oid)| oid.to_hex())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let negative: Vec<String> = parents_of_oldest.iter().map(ObjectId::to_hex).collect();
+
+        let walk_opts = RevListOptions {
+            ancestry_path: true,
+            ancestry_path_bottoms: vec![oldest],
+            ordering: OrderingMode::Topo,
+            reverse: true,
+            use_commit_graph: true,
+            full_history: true,
+            ..RevListOptions::default()
+        };
+
+        let walk = rev_list(repo, &tips, &negative, &walk_opts).map_err(library_err)?;
+        let mut commits_to_replay: Vec<ObjectId> = walk.commits;
+        if !commits_to_replay.contains(&oldest) {
+            commits_to_replay.insert(0, oldest);
+        }
+
+        for &edited in edits.keys() {
+            if !commits_to_replay.contains(&edited) {
+                return Err(HistoryError::NotInHistory { commit: edited });
+            }
+        }
+        commits_to_replay
+    };
 
     if matches!(opts.scope, RefScope::Head) {
         let head_oid = head_oid(repo)?;
@@ -161,10 +185,13 @@ pub fn plan_rewrite(
         }
     }
 
-    for (name, tip) in &scoped_refs {
-        if is_ancestor(repo, oldest, *tip).map_err(library_err)? && !commits_to_replay.contains(tip)
-        {
-            return Err(HistoryError::DivergentBranch { name: name.clone() });
+    if replay_order.is_none() {
+        for (name, tip) in &scoped_refs {
+            if is_ancestor(repo, oldest, *tip).map_err(library_err)?
+                && !commits_to_replay.contains(tip)
+            {
+                return Err(HistoryError::DivergentBranch { name: name.clone() });
+            }
         }
     }
 
@@ -197,7 +224,14 @@ pub fn plan_rewrite(
             if old.parents.is_empty() {
                 return Err(HistoryError::RootCommit { commit: old_oid });
             }
-            let parent = mapped_first_parent(&mapping, &old, old_oid)?;
+            let parent = if flatten_leaf_merges && old.parents.len() > 1 {
+                mapping
+                    .get(&old.parents[1])
+                    .copied()
+                    .unwrap_or(old.parents[1])
+            } else {
+                mapped_first_parent(&mapping, &old, old_oid)?
+            };
             mapping.insert(old_oid, parent);
             rewritten.push(RewrittenCommit {
                 old: old_oid,
@@ -654,7 +688,7 @@ fn head_oid(repo: &Repository) -> Result<ObjectId, HistoryError> {
     })
 }
 
-fn collect_scoped_refs(
+pub(crate) fn collect_scoped_refs(
     repo: &Repository,
     opts: &RewriteOptions,
     oldest: ObjectId,
@@ -726,7 +760,10 @@ fn ensure_branches_not_checked_out_elsewhere(
     Ok(())
 }
 
-fn commit_parents(repo: &Repository, oid: ObjectId) -> Result<Vec<ObjectId>, HistoryError> {
+pub(crate) fn commit_parents(
+    repo: &Repository,
+    oid: ObjectId,
+) -> Result<Vec<ObjectId>, HistoryError> {
     Ok(load_commit(repo, oid)?.parents)
 }
 

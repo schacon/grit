@@ -155,7 +155,7 @@ pub enum PullError {
 /// Resolve pull integration mode from config with optional CLI override.
 ///
 /// Precedence matches Git: explicit `--ff-only` / `--no-rebase` / `--rebase`, then
-/// `branch.<name>.rebase`, then `pull.rebase`, then `pull.ff` (`only` / `false` / default true).
+/// `pull.ff=only`, then `branch.<name>.rebase` / `pull.rebase`, then remaining `pull.ff`.
 ///
 /// # Errors
 ///
@@ -191,12 +191,6 @@ fn resolve_pull_integration(
             allow_fast_forward: true,
         });
     }
-    if pull_rebase_enabled(config, branch)? {
-        return Ok(PullIntegration {
-            mode: PullMode::Rebase,
-            allow_fast_forward: true,
-        });
-    }
     if let Some(raw) = config.get("pull.ff") {
         let value = raw.trim();
         if value.eq_ignore_ascii_case("only") {
@@ -205,6 +199,15 @@ fn resolve_pull_integration(
                 allow_fast_forward: true,
             });
         }
+    }
+    if pull_rebase_enabled(config, branch)? {
+        return Ok(PullIntegration {
+            mode: PullMode::Rebase,
+            allow_fast_forward: true,
+        });
+    }
+    if let Some(raw) = config.get("pull.ff") {
+        let value = raw.trim();
         if parse_git_config_maybe_bool(value) == Some(false) {
             return Ok(PullIntegration {
                 mode: PullMode::Merge,
@@ -461,13 +464,14 @@ fn rebase_fetched_upstream(
     )
     .map_err(|e| PullError::Repository(Error::Message(e.to_string())))?;
 
-    let rebase_opts = RebaseOntoOptions::new(RewriteOptions {
+    let mut rebase_opts = RebaseOntoOptions::new(RewriteOptions {
         scope: RefScope::Head,
         empty: EmptyPolicy::Drop,
         committer,
         preserve_committer: false,
         sign: true,
     });
+    rebase_opts.flatten_leaf_merges = true;
 
     let plan = match rebase_onto(repo, fork, upstream_oid, &[head_oid], &rebase_opts) {
         Ok(plan) => plan,
@@ -515,7 +519,25 @@ fn rebase_fetched_upstream(
         });
     }
 
-    // Nothing to replay (already up to date with upstream after skipping applied patches).
+    // Skipped every local patch or nothing to rewrite: match `git pull --rebase` by
+    // fast-forwarding when the branch is simply behind the upstream tip.
+    if is_ancestor(repo, head_oid, upstream_oid).map_err(PullError::Repository)?
+        && head_oid != upstream_oid
+    {
+        let integrate = integrate_branch_with_options(
+            repo,
+            refname,
+            head_oid,
+            upstream_oid,
+            label,
+            IntegrateBranchOptions {
+                allow_fast_forward: true,
+            },
+        )
+        .map_err(PullError::Repository)?;
+        return Ok(map_integrate_outcome(integrate, label));
+    }
+
     let integrate = integrate_branch_with_options(
         repo,
         refname,
@@ -703,6 +725,15 @@ mod tests {
     #[test]
     fn resolve_pull_mode_ff_only_from_config() {
         let config = cfg(&[("pull.ff", "only")]);
+        assert_eq!(
+            resolve_pull_mode(&config, Some("main"), None).expect("mode"),
+            PullMode::FfOnly
+        );
+    }
+
+    #[test]
+    fn resolve_pull_mode_ff_only_beats_rebase_config() {
+        let config = cfg(&[("pull.ff", "only"), ("pull.rebase", "true")]);
         assert_eq!(
             resolve_pull_mode(&config, Some("main"), None).expect("mode"),
             PullMode::FfOnly

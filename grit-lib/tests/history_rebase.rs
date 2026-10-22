@@ -39,6 +39,7 @@ fn rebase_opts(scope: RefScope, empty: EmptyPolicy, skip: bool) -> RebaseOntoOpt
             sign: true,
         },
         skip_applied: skip,
+        flatten_leaf_merges: false,
     }
 }
 

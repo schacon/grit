@@ -1,7 +1,5 @@
 //! `porcelain::pull` rebase integration against system `git pull --rebase`.
 
-use std::fs;
-use std::path::{Path, PathBuf};
 use grit_lib::change_id::{change_id, resolved_change_id, ChangeIdPolicy};
 use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::objects::{parse_commit, ObjectId};
@@ -10,6 +8,8 @@ use grit_lib::remote::fetch::NoProgress;
 use grit_lib::remote::transfer::{FetchOptions, TagMode};
 use grit_lib::repo::Repository;
 use grit_test_support::{git, git_fsck, unique_tmp, write_file};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 fn commit(dir: &Path, file: &str, content: &str, message: &str) {
     write_file(dir, file, content);
@@ -120,6 +120,22 @@ fn log_messages(dir: &Path) -> Vec<String> {
         .collect()
 }
 
+fn log_full_messages(dir: &Path) -> Vec<String> {
+    git(dir, &["log", "--format=%B", "--reverse", "HEAD"])
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn log_authors(dir: &Path) -> Vec<String> {
+    git(dir, &["log", "--format=%an <%ae>", "--reverse", "HEAD"])
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
 fn assert_repo_matches_git(grit_dir: &Path, git_dir: &Path) {
     assert_eq!(
         tree_oid(grit_dir, "HEAD"),
@@ -130,6 +146,16 @@ fn assert_repo_matches_git(grit_dir: &Path, git_dir: &Path) {
         log_messages(grit_dir),
         log_messages(git_dir),
         "commit subjects must match `git pull --rebase`"
+    );
+    assert_eq!(
+        log_full_messages(grit_dir),
+        log_full_messages(git_dir),
+        "commit messages must match `git pull --rebase`"
+    );
+    assert_eq!(
+        log_authors(grit_dir),
+        log_authors(git_dir),
+        "commit authors must match `git pull --rebase`"
     );
     assert_fsck(grit_dir);
     assert_fsck(git_dir);
@@ -253,14 +279,24 @@ fn pull_rebase_drops_patch_already_upstream() {
 fn pull_rebase_merges_config_replays_merge_commit() {
     let (grit_dir, git_dir) = setup_tracked_pair("merges");
     let origin = grit_dir.parent().unwrap().join("origin");
+    commit(&grit_dir, "main.txt", "m\n", "main line");
+    commit(&git_dir, "main.txt", "m\n", "main line");
     git(&grit_dir, &["checkout", "-q", "-b", "side"]);
     git(&git_dir, &["checkout", "-q", "-b", "side"]);
-    commit(&grit_dir, "side.txt", "s\n", "side");
-    commit(&git_dir, "side.txt", "s\n", "side");
+    commit(&grit_dir, "side.txt", "s\n", "side branch");
+    commit(&git_dir, "side.txt", "s\n", "side branch");
     git(&grit_dir, &["checkout", "-q", "main"]);
     git(&git_dir, &["checkout", "-q", "main"]);
-    git(&grit_dir, &["merge", "-q", "--no-edit", "side"]);
-    git(&git_dir, &["merge", "-q", "--no-edit", "side"]);
+    git(&grit_dir, &["merge", "-q", "--no-ff", "--no-edit", "side"]);
+    git(&git_dir, &["merge", "-q", "--no-ff", "--no-edit", "side"]);
+    assert_eq!(
+        git(&grit_dir, &["rev-list", "--parents", "-n", "1", "HEAD"])
+            .split_whitespace()
+            .count()
+            .saturating_sub(1),
+        2,
+        "fixture must start with a merge commit"
+    );
     commit(&origin, "up.txt", "u\n", "upstream");
     git(&grit_dir, &["fetch", "-q"]);
     git(&git_dir, &["fetch", "-q"]);
@@ -283,6 +319,16 @@ fn pull_rebase_merges_config_replays_merge_commit() {
         grit_parents, git_parents,
         "merge parent count must match git pull --rebase with pull.rebase=merges"
     );
+    if git_parents == 2 {
+        let upstream_tip = rev(&grit_dir, "origin/main").to_hex();
+        let grit_second = git(&grit_dir, &["rev-parse", "HEAD^2"]).trim().to_string();
+        let git_second = git(&git_dir, &["rev-parse", "HEAD^2"]).trim().to_string();
+        git(
+            &grit_dir,
+            &["merge-base", "--is-ancestor", &upstream_tip, &grit_second],
+        );
+        assert_eq!(grit_second, git_second, "second parent must match git");
+    }
 }
 
 #[test]

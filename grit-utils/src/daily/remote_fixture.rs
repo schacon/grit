@@ -109,6 +109,10 @@ pub fn run_grit(grit: &Path, cwd: &Path, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+fn tree_oid(git: &Path, repo: &Path, rev_expr: &str) -> Result<String> {
+    ref_oid(git, repo, rev_expr)
+}
+
 fn ref_oid(git: &Path, repo: &Path, refname: &str) -> Result<String> {
     let mut cmd = Command::new(git);
     cmd.args(["rev-parse", refname]).current_dir(repo);
@@ -118,6 +122,22 @@ fn ref_oid(git: &Path, repo: &Path, refname: &str) -> Result<String> {
         bail!("rev-parse {refname} failed");
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn is_ancestor(git: &Path, repo: &Path, ancestor: &str, descendant: &str) -> Result<bool> {
+    let mut cmd = Command::new(git);
+    cmd.args(["merge-base", "--is-ancestor", ancestor, descendant])
+        .current_dir(repo);
+    git_env(&mut cmd);
+    let out = cmd.output().context("git merge-base --is-ancestor")?;
+    match out.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => bail!(
+            "git merge-base --is-ancestor failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ),
+    }
 }
 
 fn copy_cached_bare(
@@ -432,6 +452,7 @@ pub fn verify_pull_rebase(ctx: &DailyHeadlineContext, cwd: &Path) -> Result<()> 
     let remote = remote_state(ctx)?;
     configure_client_remote(&ctx.git, cwd, remote)?;
     prepare_network_pull_rebase(&ctx.git, &remote.bare)?;
+    let starting_head = ref_oid(&ctx.git, cwd, "HEAD")?;
     run_git(
         &ctx.git,
         cwd,
@@ -444,22 +465,26 @@ pub fn verify_pull_rebase(ctx: &DailyHeadlineContext, cwd: &Path) -> Result<()> 
         ],
     )?;
     let git_head = ref_oid(&ctx.git, cwd, "HEAD")?;
-    prepare_network_pull_rebase(&ctx.git, &remote.bare)?;
+    let fork = remote.meta.fetch_base_oid.clone();
+    if !is_ancestor(&ctx.git, cwd, &fork, &git_head)? {
+        bail!("git pull --rebase HEAD {git_head} is not descended from fork {fork}");
+    }
+    if git_head == fork {
+        bail!("git pull --rebase should replay local commits on top of upstream");
+    }
+    run_git(&ctx.git, cwd, &["reset", "--hard", &starting_head])?;
     run_grit(&ctx.grit, cwd, &["pull", "--rebase"])?;
     let grit_head = ref_oid(&ctx.git, cwd, "HEAD")?;
-    let bare_tip = ref_oid(
-        &ctx.git,
-        &remote.bare,
-        &format!("refs/heads/{}", remote.meta.default_branch),
-    )?;
-    if git_head != bare_tip {
-        bail!("git pull --rebase HEAD {git_head} != bare {bare_tip}");
+    if !is_ancestor(&ctx.git, cwd, &fork, &grit_head)? {
+        bail!("grit pull --rebase HEAD {grit_head} is not descended from fork {fork}");
     }
-    if grit_head != bare_tip {
-        bail!("grit pull --rebase HEAD {grit_head} != bare {bare_tip}");
+    if grit_head == fork {
+        bail!("grit pull --rebase should replay local commits on top of upstream");
     }
-    if grit_head != git_head {
-        bail!("pull rebase tip mismatch git {git_head} vs grit {grit_head}");
+    let git_tree = tree_oid(&ctx.git, cwd, &format!("{git_head}^{{tree}}"))?;
+    let grit_tree = tree_oid(&ctx.git, cwd, &format!("{grit_head}^{{tree}}"))?;
+    if git_tree != grit_tree {
+        bail!("pull rebase tree mismatch git {git_tree} vs grit {grit_tree} (git HEAD {git_head}, grit HEAD {grit_head})");
     }
     Ok(())
 }

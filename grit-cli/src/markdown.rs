@@ -632,10 +632,17 @@ pub fn print_pull_outcome(
                     outln!(w, "- `{path}`");
                 }
             }
-            outln!(
-                w,
-                "→ fix conflicts, then `grit commit \"message\"`, or `grit merge --abort`"
-            );
+            if outcome.oid.is_some() {
+                outln!(
+                    w,
+                    "→ rebase stopped with conflicts; the branch, index, and worktree are unchanged"
+                );
+            } else {
+                outln!(
+                    w,
+                    "→ fix conflicts, then `grit commit \"message\"`, or `grit merge --abort`"
+                );
+            }
         }
         PullResult::SetUpstream => {
             let short = outcome.oid.as_deref().map(short_hex).unwrap_or("");

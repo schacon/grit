@@ -100,6 +100,7 @@ Each commit gets a stable **`change-id`** header (on by default) that survives `
 | List or add remotes | `grit remote`, `grit remote add <name> <url>` |
 | Download without changing your branch | `grit fetch [<remote>]` |
 | Fetch and merge the remote copy of this branch | `grit pull` |
+| Fetch and replay local commits on top of upstream | `grit pull --rebase` (or `pull.rebase` in config) |
 | Publish this branch to `origin` under the same name | `grit push` |
 | Publish all local tags | `grit push --tags` |
 

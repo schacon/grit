@@ -1,6 +1,6 @@
 //! Stateless rebase onto a new base (`upstream..tip` replayed onto `onto`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::merge_base::is_ancestor;
 use crate::objects::ObjectId;
@@ -9,8 +9,8 @@ use crate::repo::Repository;
 use crate::revwalk::rev_list::{rev_list, OrderingMode, RevListOptions};
 
 use super::error::HistoryError;
-use super::plan::plan_rewrite;
-use super::types::{CommitEdit, HistoryEdits, RewriteOptions, RewritePlan};
+use super::plan::{collect_scoped_refs, commit_parents, plan_rewrite_with_order};
+use super::types::{CommitEdit, HistoryEdits, RefScope, RewriteOptions, RewritePlan};
 
 /// Options for [`rebase_onto`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +19,9 @@ pub struct RebaseOntoOptions {
     pub rewrite: RewriteOptions,
     /// When `true` (default), omit commits whose stable patch-id already appears in `onto`'s history.
     pub skip_applied: bool,
+    /// When `true`, drop merge commits that are branch tips in the replay range and move refs to
+    /// the replayed second parent (matches `git pull --rebase=merges` on linearizable merges).
+    pub flatten_leaf_merges: bool,
 }
 
 impl RebaseOntoOptions {
@@ -28,6 +31,7 @@ impl RebaseOntoOptions {
         Self {
             rewrite,
             skip_applied: true,
+            flatten_leaf_merges: false,
         }
     }
 }
@@ -76,25 +80,100 @@ pub fn rebase_onto(
         });
     }
 
-    let oldest = range[0];
     let skip_map = if opts.skip_applied {
         applied_by_patch(repo, onto, &range)?
     } else {
         HashMap::new()
     };
 
+    let range_set: HashSet<ObjectId> = range.iter().copied().collect();
     let mut edits = HistoryEdits::new();
     for &commit in &range {
         if let Some(&existing) = skip_map.get(&commit) {
             edits.insert(commit, CommitEdit::Reuse(existing));
             continue;
         }
-        if commit == oldest {
+        let parents = commit_parents(repo, commit)?;
+        let is_local_root = parents
+            .iter()
+            .all(|parent| *parent == upstream || !range_set.contains(parent));
+        if is_local_root {
             edits.insert(commit, CommitEdit::Reparent { parent: onto });
+        }
+        if opts.flatten_leaf_merges && is_leaf_merge_in_range(repo, commit, &range_set)? {
+            edits.insert(commit, CommitEdit::Drop);
         }
     }
 
-    plan_rewrite(repo, &edits, &opts.rewrite)
+    let replay_order =
+        extend_rebase_replay_order(repo, upstream, &range, &opts.rewrite, &skip_map)?;
+    plan_rewrite_with_order(
+        repo,
+        &edits,
+        &opts.rewrite,
+        Some(&replay_order),
+        opts.flatten_leaf_merges,
+    )
+}
+
+/// Include sibling branch tips (same parent in the rebase range) when updating all descendant refs.
+fn extend_rebase_replay_order(
+    repo: &Repository,
+    upstream: ObjectId,
+    range: &[ObjectId],
+    opts: &RewriteOptions,
+    skip_map: &HashMap<ObjectId, ObjectId>,
+) -> Result<Vec<ObjectId>, HistoryError> {
+    if range.is_empty() {
+        return Ok(Vec::new());
+    }
+    if matches!(opts.scope, RefScope::Head) {
+        return Ok(range.to_vec());
+    }
+    let mut order = range.to_vec();
+    let mut in_order: HashSet<ObjectId> = order.iter().copied().collect();
+    let oldest = range[0];
+    let scoped = collect_scoped_refs(repo, opts, oldest)?;
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (_, tip) in &scoped {
+            if in_order.contains(tip) || skip_map.contains_key(tip) {
+                continue;
+            }
+            let parents = commit_parents(repo, *tip)?;
+            if parents
+                .iter()
+                .all(|parent| *parent == upstream || in_order.contains(parent))
+            {
+                order.push(*tip);
+                in_order.insert(*tip);
+                changed = true;
+            }
+        }
+    }
+    Ok(order)
+}
+
+fn is_leaf_merge_in_range(
+    repo: &Repository,
+    oid: ObjectId,
+    range_set: &HashSet<ObjectId>,
+) -> Result<bool, HistoryError> {
+    let parents = commit_parents(repo, oid)?;
+    if parents.len() <= 1 {
+        return Ok(false);
+    }
+    for &other in range_set {
+        if other == oid {
+            continue;
+        }
+        let parents = commit_parents(repo, other)?;
+        if parents.contains(&oid) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn commits_in_rebase_range(
