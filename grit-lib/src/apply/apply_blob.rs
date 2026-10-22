@@ -132,7 +132,11 @@ fn scan_hint_for_hunk(hunk: &Hunk, edit: &LineEdit, reverse: bool) -> ScanHint {
     ScanHint {
         start_row,
         only_at_front,
-        only_at_back: edit.stable_suffix == 0,
+        // Pin to EOF only when the hunk had leading context but no trailing context
+        // (a change that ends at the file end). Zero-context hunks (`-U0`) must not
+        // take this pin unless we add an explicit unidiff-zero mode; otherwise a line
+        // that also appears at EOF is matched at the wrong row.
+        only_at_back: edit.stable_suffix == 0 && edit.stable_prefix > 0,
     }
 }
 

@@ -83,24 +83,41 @@ fn format_hunk_range(start: usize, count: usize) -> String {
 }
 
 fn git_apply_bytes(original: &[u8], hunks: &[Hunk]) -> Result<Vec<u8>, String> {
-    git_apply_bytes_with_reverse(original, hunks, false)
+    git_apply_bytes_with_flags(original, hunks, false, false)
 }
 
-fn git_apply_bytes_with_reverse(
+fn git_apply_bytes_with_unidiff_zero(original: &[u8], hunks: &[Hunk]) -> Result<Vec<u8>, String> {
+    git_apply_bytes_with_flags(original, hunks, false, true)
+}
+
+fn git_apply_bytes_with_flags(
     original: &[u8],
     hunks: &[Hunk],
     reverse: bool,
+    unidiff_zero: bool,
 ) -> Result<Vec<u8>, String> {
     let patch = patch_text_from_hunks(hunks);
+    git_apply_patch_bytes(original, &patch, reverse, unidiff_zero)
+}
+
+fn git_apply_patch_bytes(
+    original: &[u8],
+    patch: &str,
+    reverse: bool,
+    unidiff_zero: bool,
+) -> Result<Vec<u8>, String> {
     let dir = tempdir()?;
     let file = dir.path().join("f");
     std::fs::write(&file, original).map_err(|e| format!("write file: {e}"))?;
     let patch_path = dir.path().join("p.patch");
-    std::fs::write(&patch_path, &patch).map_err(|e| format!("write patch: {e}"))?;
+    std::fs::write(&patch_path, patch).map_err(|e| format!("write patch: {e}"))?;
     let mut cmd = Command::new("git");
     cmd.current_dir(dir.path()).arg("apply");
     if reverse {
         cmd.arg("-R");
+    }
+    if unidiff_zero {
+        cmd.arg("--unidiff-zero");
     }
     let status = cmd
         .arg(patch_path.to_str().ok_or("patch path utf8")?)
@@ -108,11 +125,20 @@ fn git_apply_bytes_with_reverse(
         .map_err(|e| format!("git apply: {e}"))?;
     if !status.success() {
         return Err(format!(
-            "git apply{} failed: {patch}",
-            if reverse { " -R" } else { "" }
+            "git apply{}{} failed: {patch}",
+            if reverse { " -R" } else { "" },
+            if unidiff_zero { " --unidiff-zero" } else { "" }
         ));
     }
     std::fs::read(&file).map_err(|e| format!("read result: {e}"))
+}
+
+fn git_apply_bytes_with_reverse(
+    original: &[u8],
+    hunks: &[Hunk],
+    reverse: bool,
+) -> Result<Vec<u8>, String> {
+    git_apply_bytes_with_flags(original, hunks, reverse, false)
 }
 
 fn grit_apply_bytes(original: &[u8], hunks: &[Hunk]) -> Result<Vec<u8>, String> {
@@ -494,6 +520,27 @@ fn apply_no_context_first_line_change_impl() -> TestResult {
     let git_out = git_apply_bytes(old, &hunks)?;
     assert_eq!(grit_out, git_out);
     assert_eq!(grit_out, new);
+    Ok(())
+}
+
+#[test]
+fn apply_unidiff_zero_duplicate_line_at_header_not_eof() {
+    run_test(apply_unidiff_zero_duplicate_line_at_header_not_eof_impl());
+}
+
+fn apply_unidiff_zero_duplicate_line_at_header_not_eof_impl() -> TestResult {
+    let old = b"a\n}\nb\n}\n";
+    let expected = b"a\n]\nb\n}\n";
+    let patch = "--- a/f\n+++ b/f\n@@ -2 +2 @@\n-}\n+]\n";
+    let hunks = parse_patch(patch, 1, "p", false, None)
+        .map_err(|e| format!("parse: {e}"))?
+        .pop()
+        .ok_or("file")?
+        .hunks;
+    let grit_out = grit_apply_bytes(old, &hunks)?;
+    let git_out = git_apply_bytes_with_unidiff_zero(old, &hunks)?;
+    assert_eq!(grit_out, git_out, "must match git apply --unidiff-zero");
+    assert_eq!(grit_out, expected);
     Ok(())
 }
 
