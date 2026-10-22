@@ -974,18 +974,16 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
                 outcome_from_entries(&repo, entries, detail, diff_options, format)?
             }
             _ => {
-                let unstaged_peer = filter_file_changes(
-                    unstaged_changes_from_entries_with_index(
-                        &repo,
-                        unstaged_entries_in_index(&repo, &mut index, &diff_options)?,
-                        &index,
-                    )?,
+                let staged = staged_changes_from_entries(&repo, entries)?;
+                let peer = peer_unstaged_changes_for_hunk_ids(
                     &repo,
+                    &diff_options,
                     &pathspecs,
+                    staged.iter().map(|fc| fc.path.as_str()),
                 );
                 outcome_from_changes(
-                    staged_changes_from_entries(&repo, entries)?,
-                    unstaged_peer,
+                    staged,
+                    peer,
                     &config,
                     &thread_policy,
                     diff_options,
@@ -1020,21 +1018,17 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
                 outcome_from_entries(&repo, entries, detail, diff_options, format)?
             }
             _ => {
-                let staged_peer = filter_file_changes(
-                    staged_changes_from_entries(
-                        &repo,
-                        filter_diff_entries(
-                            staged_entries_in_index(&repo, &index, &diff_options)?,
-                            &repo,
-                            &pathspecs,
-                        ),
-                    )?,
+                let unstaged =
+                    unstaged_changes_from_entries_with_index(&repo, entries, &index)?;
+                let peer = peer_staged_changes_for_hunk_ids(
                     &repo,
+                    &diff_options,
                     &pathspecs,
+                    unstaged.iter().map(|fc| fc.path.as_str()),
                 );
                 outcome_from_changes(
-                    unstaged_changes_from_entries_with_index(&repo, entries, &index)?,
-                    staged_peer,
+                    unstaged,
+                    peer,
                     &config,
                     &thread_policy,
                     diff_options,
@@ -1459,6 +1453,48 @@ fn hunk_from_structured(h: grit_lib::diff::structured::StructuredHunk) -> Hunk {
     }
 }
 
+fn peer_unstaged_changes_for_hunk_ids<'a>(
+    repo: &grit_lib::repo::Repository,
+    diff_options: &DiffOptions,
+    pathspecs: &[String],
+    primary_paths: impl IntoIterator<Item = &'a str>,
+) -> Vec<FileChange> {
+    use std::collections::HashSet;
+
+    let primary: HashSet<&str> = primary_paths.into_iter().collect();
+    if primary.is_empty() {
+        return Vec::new();
+    }
+    let Ok(raw) = unstaged_changes(repo, diff_options) else {
+        return Vec::new();
+    };
+    filter_file_changes(raw, repo, pathspecs)
+        .into_iter()
+        .filter(|fc| primary.contains(fc.path.as_str()))
+        .collect()
+}
+
+fn peer_staged_changes_for_hunk_ids<'a>(
+    repo: &grit_lib::repo::Repository,
+    diff_options: &DiffOptions,
+    pathspecs: &[String],
+    primary_paths: impl IntoIterator<Item = &'a str>,
+) -> Vec<FileChange> {
+    use std::collections::HashSet;
+
+    let primary: HashSet<&str> = primary_paths.into_iter().collect();
+    if primary.is_empty() {
+        return Vec::new();
+    }
+    let Ok(raw) = staged_changes(repo, diff_options) else {
+        return Vec::new();
+    };
+    filter_file_changes(raw, repo, pathspecs)
+        .into_iter()
+        .filter(|fc| primary.contains(fc.path.as_str()))
+        .collect()
+}
+
 fn outcome_from_changes(
     changes: Vec<FileChange>,
     peer_changes: Vec<FileChange>,
@@ -1468,13 +1504,15 @@ fn outcome_from_changes(
     format: DiffFormatArgs,
     side: DiffSide,
 ) -> DiffOutcome {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     let diff_options = diff_options.cap_word_level_inline_for_changed_files(changes.len());
+    let primary_paths: HashSet<&str> = changes.iter().map(|fc| fc.path.as_str()).collect();
     let peer_hunks_by_path: HashMap<String, Vec<grit_lib::diff::structured::StructuredHunk>> =
         if matches!(side, DiffSide::Unstaged | DiffSide::Staged) {
             peer_changes
                 .into_iter()
+                .filter(|fc| primary_paths.contains(fc.path.as_str()))
                 .map(|fc| {
                     let structured = structured_for_file_change(&fc, diff_options.clone());
                     (fc.path, structured.hunks)

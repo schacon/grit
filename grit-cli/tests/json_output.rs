@@ -1569,6 +1569,51 @@ fn diff_staged_only() -> TestResult {
 }
 
 #[test]
+fn diff_staged_via_git_dir_does_not_require_unstaged_worktree_scan() -> TestResult {
+    let scratch = Scratch::new("diffstagedgitdir")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    write_file(&repo.join("staged.txt"), "a\n");
+    write_file(&repo.join("unstaged.txt"), "b\n");
+    gs_ok(&repo, &["commit", "init"]);
+    write_file(&repo.join("staged.txt"), "A\n");
+    write_file(&repo.join("unstaged.txt"), "B\n");
+    gs_ok(&repo, &["add", "staged.txt"]);
+
+    let git_dir = repo.join(".git");
+    for args in [
+        &["--json", "diff", "--staged"][..],
+        &["--json", "diff", "--staged", "--stat"][..],
+    ] {
+        let out = Command::new(GS)
+            .args(args)
+            .current_dir(scratch.path())
+            .env("GIT_DIR", &git_dir)
+            .env("GIT_WORK_TREE", &repo)
+            .env("GIT_AUTHOR_NAME", "Test User")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test User")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .env("GIT_CONFIG_GLOBAL", null_device())
+            .env("GIT_CONFIG_SYSTEM", null_device())
+            .output()
+            .expect("spawn grit");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "args {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let v: Value = serde_json::from_str(&String::from_utf8_lossy(&out.stdout))?;
+        let files = v["files"].as_array().expect("files array");
+        assert_eq!(files.len(), 1, "args {args:?}: {v}");
+        assert_eq!(files[0]["path"], "staged.txt");
+    }
+    Ok(())
+}
+
+#[test]
 fn diff_commit_range_detects_rename() -> TestResult {
     let scratch = Scratch::new("diffrename")?;
     let repo = scratch.child("repo");
