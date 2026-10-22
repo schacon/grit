@@ -186,13 +186,13 @@ impl MergeOutcome {
         branch: &str,
         upstream: &str,
         oid: ObjectId,
-        change_id: Option<String>,
+        change_id: Option<ChangeId>,
     ) -> Self {
         Self {
             result: MergeResult::SetUpstream,
             branch: branch.to_owned(),
             oid: Some(oid.to_hex()),
-            change_id,
+            change_id: change_id.as_ref().map(|id| id.as_str().to_owned()),
             upstream: Some(upstream.to_owned()),
             conflicts: None,
             next_steps: None,
@@ -263,30 +263,8 @@ pub fn run(branch: Option<&str>, abort: bool) -> Result<MergeOutcome> {
     };
 
     let other_oid = resolve_branch(&repo, branch)?;
-    integrate(&repo, &refname, head_oid, other_oid, branch)
-}
-
-/// Integrate `other` into the branch `into_ref` (currently at `into_oid`):
-/// up-to-date, fast-forward, or three-way merge. Shared with `grit pull`.
-pub fn integrate(
-    repo: &Repository,
-    into_ref: &str,
-    into_oid: ObjectId,
-    other_oid: ObjectId,
-    label: &str,
-) -> Result<MergeOutcome> {
-    match integrate_branch(repo, into_ref, into_oid, other_oid, label)? {
-        IntegrateBranchOutcome::UpToDate => Ok(MergeOutcome::up_to_date(label)),
-        IntegrateBranchOutcome::FastForward { oid, change_id } => {
-            Ok(MergeOutcome::fast_forward(label, oid, change_id))
-        }
-        IntegrateBranchOutcome::Merged { oid, change_id } => {
-            Ok(MergeOutcome::merged(label, oid, change_id))
-        }
-        IntegrateBranchOutcome::Conflicts { details, .. } => {
-            Ok(MergeOutcome::conflicts(label, details))
-        }
-    }
+    let outcome = integrate_branch(&repo, &refname, head_oid, other_oid, branch)?;
+    Ok(MergeOutcome::from_integrate(branch, outcome))
 }
 
 /// Resolve a branch name to a commit, trying local then remote-tracking refs.
