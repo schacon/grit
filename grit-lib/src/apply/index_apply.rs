@@ -4,7 +4,7 @@ use super::blob_apply::{apply_patch_to_blob, BlobApplyOptions};
 use super::FilePatch;
 use crate::error::{ApplyError, Error};
 use crate::index::{Index, IndexEntry, MODE_REGULAR};
-use crate::objects::{HashAlgo, ObjectId, ObjectKind};
+use crate::objects::{ObjectId, ObjectKind};
 use crate::repo::Repository;
 use std::collections::BTreeMap;
 
@@ -120,12 +120,12 @@ pub fn apply_patch_to_index_and_write(
     opts: &IndexApplyOptions,
 ) -> std::result::Result<IndexApplyOutcome, ApplyError> {
     let handle = repo.index_handle();
+    let mut lock = handle.begin_update().map_err(|e| library_err_path("", e))?;
     let mut index = handle.load().map_err(|e| library_err_path("", e))?;
     let outcome = apply_patch_to_index(repo, &mut index, patches, opts)?;
     if opts.dry_run {
         return Ok(outcome);
     }
-    let mut lock = handle.begin_update().map_err(|e| library_err_path("", e))?;
     handle
         .commit_update(&mut lock, &mut index, false)
         .map_err(|e| library_err_path("", e))?;
@@ -155,6 +155,8 @@ fn plan_one_file_patch(
         })?;
 
     if patch.is_deleted {
+        let base_blob = read_preimage_blob(repo, index, patch, &target)?;
+        apply_patch_to_blob(&base_blob, patch, &BlobApplyOptions::default())?;
         if index.get(target.as_bytes(), 0).is_none() {
             return Err(ApplyError::NotInIndex {
                 path: target.clone(),
@@ -165,10 +167,20 @@ fn plan_one_file_patch(
         return Ok(vec![PlannedChange::Remove { path: target }]);
     }
 
-    let base_blob = read_preimage_blob(repo, index, patch)?;
+    if patch.is_new
+        && index.get(target.as_bytes(), 0).is_some()
+        && fn_table.get(&target).copied() != Some(FnState::Deleted)
+    {
+        return Err(ApplyError::Failed {
+            path: target.clone(),
+            message: "path already exists in index".to_string(),
+        });
+    }
+
+    let base_blob = read_preimage_blob(repo, index, patch, &target)?;
     let new_blob = apply_patch_to_blob(&base_blob, patch, &BlobApplyOptions::default())?;
     let mode = resolve_mode(index, patch, &target)?;
-    let oid = hash_blob(&new_blob)?;
+    let oid = hash_blob(repo, &new_blob)?;
 
     let mut out = Vec::new();
     if patch.is_rename {
@@ -219,6 +231,7 @@ fn read_preimage_blob(
     repo: &Repository,
     index: &Index,
     patch: &FilePatch,
+    target: &str,
 ) -> std::result::Result<Vec<u8>, ApplyError> {
     if patch.is_new {
         return Ok(Vec::new());
@@ -226,10 +239,7 @@ fn read_preimage_blob(
     let path = patch
         .source_path()
         .or_else(|| patch.effective_path())
-        .ok_or_else(|| ApplyError::Failed {
-            path: String::new(),
-            message: "patch has no source path".to_string(),
-        })?;
+        .unwrap_or(target);
     if path == "/dev/null" {
         return Ok(Vec::new());
     }
@@ -252,7 +262,21 @@ fn resolve_mode(
     patch: &FilePatch,
     target: &str,
 ) -> std::result::Result<u32, ApplyError> {
-    if let Some(mode) = patch.new_mode.as_deref().or(patch.old_mode.as_deref()) {
+    if let Some(mode) = patch.new_mode.as_deref() {
+        return parse_mode(mode);
+    }
+    if patch.is_rename || patch.is_copy {
+        if let Some(src) = patch
+            .source_path()
+            .filter(|p| *p != "/dev/null")
+            .or_else(|| patch.old_path.as_deref().filter(|p| *p != "/dev/null"))
+        {
+            if let Some(entry) = index.get(src.as_bytes(), 0) {
+                return Ok(entry.mode);
+            }
+        }
+    }
+    if let Some(mode) = patch.old_mode.as_deref() {
         return parse_mode(mode);
     }
     if let Some(entry) = index.get(target.as_bytes(), 0) {
@@ -269,8 +293,9 @@ fn parse_mode(mode: &str) -> std::result::Result<u32, ApplyError> {
     })
 }
 
-fn hash_blob(data: &[u8]) -> std::result::Result<ObjectId, ApplyError> {
-    HashAlgo::Sha1
+fn hash_blob(repo: &Repository, data: &[u8]) -> std::result::Result<ObjectId, ApplyError> {
+    repo.odb()
+        .hash_algo()
         .hash_object(ObjectKind::Blob, data)
         .map_err(|e| ApplyError::Failed {
             path: String::new(),

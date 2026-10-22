@@ -84,6 +84,26 @@ impl core::marker::Unpin for grit_lib::apply::BinaryPatchSection
 impl core::marker::UnsafeUnpin for grit_lib::apply::BinaryPatchSection
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::apply::BinaryPatchSection
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::apply::BinaryPatchSection
+pub struct grit_lib::apply::BlobApplyOptions
+pub grit_lib::apply::BlobApplyOptions::allow_binary_marker_only: bool
+impl core::clone::Clone for grit_lib::apply::BlobApplyOptions
+pub fn grit_lib::apply::BlobApplyOptions::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::apply::BlobApplyOptions
+impl core::cmp::PartialEq for grit_lib::apply::BlobApplyOptions
+pub fn grit_lib::apply::BlobApplyOptions::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::apply::BlobApplyOptions
+pub fn grit_lib::apply::BlobApplyOptions::default() -> Self
+impl core::fmt::Debug for grit_lib::apply::BlobApplyOptions
+pub fn grit_lib::apply::BlobApplyOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::apply::BlobApplyOptions
+impl core::marker::StructuralPartialEq for grit_lib::apply::BlobApplyOptions
+impl core::marker::Freeze for grit_lib::apply::BlobApplyOptions
+impl core::marker::Send for grit_lib::apply::BlobApplyOptions
+impl core::marker::Sync for grit_lib::apply::BlobApplyOptions
+impl core::marker::Unpin for grit_lib::apply::BlobApplyOptions
+impl core::marker::UnsafeUnpin for grit_lib::apply::BlobApplyOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::apply::BlobApplyOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::apply::BlobApplyOptions
 pub struct grit_lib::apply::FilePatch
 pub grit_lib::apply::FilePatch::binary_patch: core::option::Option<grit_lib::apply::BinaryPatchPayload>
 pub grit_lib::apply::FilePatch::diff_new_path: core::option::Option<alloc::string::String>
@@ -143,7 +163,52 @@ impl core::marker::Unpin for grit_lib::apply::Hunk
 impl core::marker::UnsafeUnpin for grit_lib::apply::Hunk
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::apply::Hunk
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::apply::Hunk
+pub struct grit_lib::apply::IndexApplyOptions
+pub grit_lib::apply::IndexApplyOptions::dry_run: bool
+impl core::clone::Clone for grit_lib::apply::IndexApplyOptions
+pub fn grit_lib::apply::IndexApplyOptions::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::apply::IndexApplyOptions
+impl core::cmp::PartialEq for grit_lib::apply::IndexApplyOptions
+pub fn grit_lib::apply::IndexApplyOptions::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::apply::IndexApplyOptions
+pub fn grit_lib::apply::IndexApplyOptions::default() -> Self
+impl core::fmt::Debug for grit_lib::apply::IndexApplyOptions
+pub fn grit_lib::apply::IndexApplyOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::apply::IndexApplyOptions
+impl core::marker::StructuralPartialEq for grit_lib::apply::IndexApplyOptions
+impl core::marker::Freeze for grit_lib::apply::IndexApplyOptions
+impl core::marker::Send for grit_lib::apply::IndexApplyOptions
+impl core::marker::Sync for grit_lib::apply::IndexApplyOptions
+impl core::marker::Unpin for grit_lib::apply::IndexApplyOptions
+impl core::marker::UnsafeUnpin for grit_lib::apply::IndexApplyOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::apply::IndexApplyOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::apply::IndexApplyOptions
+pub struct grit_lib::apply::IndexApplyOutcome
+pub grit_lib::apply::IndexApplyOutcome::added: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::apply::IndexApplyOutcome::dry_run: bool
+pub grit_lib::apply::IndexApplyOutcome::modified: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::apply::IndexApplyOutcome::removed: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for grit_lib::apply::IndexApplyOutcome
+pub fn grit_lib::apply::IndexApplyOutcome::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::apply::IndexApplyOutcome
+impl core::cmp::PartialEq for grit_lib::apply::IndexApplyOutcome
+pub fn grit_lib::apply::IndexApplyOutcome::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::apply::IndexApplyOutcome
+pub fn grit_lib::apply::IndexApplyOutcome::default() -> Self
+impl core::fmt::Debug for grit_lib::apply::IndexApplyOutcome
+pub fn grit_lib::apply::IndexApplyOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::apply::IndexApplyOutcome
+impl core::marker::Freeze for grit_lib::apply::IndexApplyOutcome
+impl core::marker::Send for grit_lib::apply::IndexApplyOutcome
+impl core::marker::Sync for grit_lib::apply::IndexApplyOutcome
+impl core::marker::Unpin for grit_lib::apply::IndexApplyOutcome
+impl core::marker::UnsafeUnpin for grit_lib::apply::IndexApplyOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::apply::IndexApplyOutcome
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::apply::IndexApplyOutcome
 pub fn grit_lib::apply::apply_hunks_to_blob(&[u8], &[grit_lib::apply::Hunk], &grit_lib::apply::ApplyOptions) -> core::result::Result<alloc::vec::Vec<u8>, grit_lib::error::ApplyError>
+pub fn grit_lib::apply::apply_patch_to_blob(&[u8], &grit_lib::apply::FilePatch, &grit_lib::apply::BlobApplyOptions) -> core::result::Result<alloc::vec::Vec<u8>, grit_lib::error::ApplyError>
+pub fn grit_lib::apply::apply_patch_to_index(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &[grit_lib::apply::FilePatch], &grit_lib::apply::IndexApplyOptions) -> core::result::Result<grit_lib::apply::IndexApplyOutcome, grit_lib::error::ApplyError>
+pub fn grit_lib::apply::apply_patch_to_index_and_write(&grit_lib::repo::Repository, &[grit_lib::apply::FilePatch], &grit_lib::apply::IndexApplyOptions) -> core::result::Result<grit_lib::apply::IndexApplyOutcome, grit_lib::error::ApplyError>
 pub fn grit_lib::apply::inflate_binary_payload(&[u8]) -> grit_lib::error::Result<alloc::vec::Vec<u8>>
 pub fn grit_lib::apply::materialize_binary_patch_forward(&grit_lib::apply::BinaryPatchPayload, &[u8]) -> grit_lib::error::Result<alloc::vec::Vec<u8>>
 pub fn grit_lib::apply::materialize_binary_patch_reverse(&grit_lib::apply::BinaryPatchPayload, &[u8]) -> grit_lib::error::Result<alloc::vec::Vec<u8>>
@@ -4574,15 +4639,25 @@ pub fn grit_lib::diff::write_unified_diff_with_prefix_and_funcname_and_algorithm
 pub fn grit_lib::diff::zero_oid() -> grit_lib::objects::ObjectId
 pub mod grit_lib::error
 #[non_exhaustive] pub enum grit_lib::error::ApplyError
+pub grit_lib::error::ApplyError::BinaryDataMissing
+pub grit_lib::error::ApplyError::BinaryDataMissing::path: alloc::string::String
 pub grit_lib::error::ApplyError::ContextMismatch
 pub grit_lib::error::ApplyError::ContextMismatch::expected_line: usize
 pub grit_lib::error::ApplyError::ContextMismatch::hunk_index: usize
 pub grit_lib::error::ApplyError::CorruptPatch
 pub grit_lib::error::ApplyError::CorruptPatch::input: alloc::string::String
 pub grit_lib::error::ApplyError::CorruptPatch::line: usize
+pub grit_lib::error::ApplyError::Failed
+pub grit_lib::error::ApplyError::Failed::message: alloc::string::String
+pub grit_lib::error::ApplyError::Failed::path: alloc::string::String
 pub grit_lib::error::ApplyError::HunksOverlap
 pub grit_lib::error::ApplyError::HunksOverlap::hunk_index: usize
+pub grit_lib::error::ApplyError::NotInIndex
+pub grit_lib::error::ApplyError::NotInIndex::path: alloc::string::String
 pub grit_lib::error::ApplyError::Other(alloc::string::String)
+pub grit_lib::error::ApplyError::PatchFailed
+pub grit_lib::error::ApplyError::PatchFailed::line: usize
+pub grit_lib::error::ApplyError::PatchFailed::path: alloc::string::String
 pub grit_lib::error::ApplyError::UnexpectedEof
 pub grit_lib::error::ApplyError::UnexpectedEof::hunk_index: usize
 impl core::clone::Clone for grit_lib::error::ApplyError

@@ -218,6 +218,97 @@ fn index_apply_keeps_worktree_dirty_in_status() {
 }
 
 #[test]
+fn index_apply_no_newline_preimage() {
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("f.txt"), b"old").unwrap();
+    git(dir.path(), &["add", "f.txt"]);
+    git(dir.path(), &["commit", "-qm", "init"]);
+    std::fs::write(dir.path().join("f.txt"), b"new\n").unwrap();
+    let patch = String::from_utf8_lossy(
+        &Command::new("git")
+            .current_dir(dir.path())
+            .args(["diff"])
+            .output()
+            .expect("diff")
+            .stdout,
+    )
+    .to_string();
+    assert!(patch.contains("No newline"), "{patch}");
+    let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::default()).unwrap();
+    let patches = parse(&patch);
+    apply_patch_to_index_and_write(&repo, &patches, &IndexApplyOptions::default()).unwrap();
+    let entry = repo.index_handle().load().unwrap();
+    let e = entry.get(b"f.txt", 0).expect("indexed");
+    assert_eq!(repo.odb().read(&e.oid).unwrap().data, b"new\n");
+}
+
+#[test]
+fn index_apply_deletion_rejects_stale_preimage() {
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("f.txt"), b"actual\n").unwrap();
+    git(dir.path(), &["add", "f.txt"]);
+    git(dir.path(), &["commit", "-qm", "init"]);
+    let patch = parse(
+        "diff --git a/f.txt b/f.txt\n\
+         deleted file mode 100644\n\
+         --- a/f.txt\n\
+         +++ /dev/null\n\
+         @@ -1 +0,0 @@\n\
+         -expected\n",
+    );
+    let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::default()).unwrap();
+    let mut index = repo.index_handle().load().unwrap();
+    let before = index.get(b"f.txt", 0).is_some();
+    assert!(before);
+    let err = apply_patch_to_index(&repo, &mut index, &patch, &IndexApplyOptions::default())
+        .expect_err("must reject");
+    assert!(matches!(
+        err,
+        grit_lib::error::ApplyError::PatchFailed { .. }
+    ));
+    assert!(index.get(b"f.txt", 0).is_some());
+}
+
+#[test]
+fn index_apply_sha256_write_tree_roundtrip() {
+    if !grit_test_support::objects::git_supports_sha256() {
+        return;
+    }
+    let dir = TempDir::new().expect("tempdir");
+    Command::new("git")
+        .current_dir(dir.path())
+        .args(["init", "-q", "-b", "main", "--object-format=sha256"])
+        .status()
+        .expect("init sha256");
+    std::fs::write(dir.path().join("f.txt"), b"one\n").unwrap();
+    git(dir.path(), &["add", "f.txt"]);
+    git(dir.path(), &["commit", "-qm", "init"]);
+    std::fs::write(dir.path().join("f.txt"), b"two\n").unwrap();
+    let patch = String::from_utf8_lossy(
+        &Command::new("git")
+            .current_dir(dir.path())
+            .args(["diff"])
+            .output()
+            .expect("diff")
+            .stdout,
+    )
+    .to_string();
+    let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::default()).unwrap();
+    assert_eq!(repo.odb().hash_algo(), grit_lib::objects::HashAlgo::Sha256);
+    apply_patch_to_index_and_write(&repo, &parse(&patch), &IndexApplyOptions::default()).unwrap();
+    let grit_oid = grit_tree(&repo, &repo.index_handle().load().unwrap());
+    git(dir.path(), &["reset", "--hard", "HEAD"]);
+    std::fs::write(dir.path().join("patch.diff"), &patch).unwrap();
+    git(dir.path(), &["apply", "--cached", "patch.diff"]);
+    let git_oid = git_tree(dir.path());
+    assert_eq!(grit_oid, git_oid);
+    git(dir.path(), &["write-tree"]);
+    git(dir.path(), &["fsck", "--strict"]);
+}
+
+#[test]
 fn index_apply_git_diff_roundtrip_write_tree() {
     let dir = TempDir::new().expect("tempdir");
     git(dir.path(), &["init", "-q", "-b", "main"]);

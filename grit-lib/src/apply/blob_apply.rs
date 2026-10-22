@@ -20,6 +20,14 @@ pub fn apply_patch_to_blob(
     opts: &BlobApplyOptions,
 ) -> std::result::Result<Vec<u8>, ApplyError> {
     if patch.is_deleted {
+        let path = patch.effective_path().unwrap_or("<unknown>").to_string();
+        let result = apply_hunks_to_blob(base, &patch.hunks, &path)?;
+        if !result.is_empty() {
+            return Err(ApplyError::Failed {
+                path,
+                message: "deletion patch did not remove all index content".to_string(),
+            });
+        }
         return Ok(Vec::new());
     }
     if let Some(payload) = patch.binary_patch.as_ref() {
@@ -76,7 +84,7 @@ fn apply_one_hunk(
     hunk: &Hunk,
     path: &str,
 ) -> std::result::Result<(), ApplyError> {
-    let (old_side, new_side, ends_without_newline) = hunk_old_new(hunk);
+    let (old_side, new_side) = hunk_old_new(hunk);
     if old_side.is_empty() {
         let insert_at = if hunk.old_start == 0 {
             0
@@ -84,9 +92,6 @@ fn apply_one_hunk(
             hunk.old_start.saturating_sub(1).min(lines.len())
         };
         lines.splice(insert_at..insert_at, new_side);
-        if ends_without_newline {
-            trim_trailing_newline_on_last_line(lines);
-        }
         return Ok(());
     }
 
@@ -98,49 +103,38 @@ fn apply_one_hunk(
             }
         })?;
     lines.splice(pos..pos.saturating_add(old_side.len()), new_side);
-    if ends_without_newline {
-        trim_trailing_newline_on_last_line(lines);
-    }
     Ok(())
 }
 
-fn hunk_old_new(hunk: &Hunk) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, bool) {
+fn hunk_old_new(hunk: &Hunk) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
     let mut old_side = Vec::new();
     let mut new_side = Vec::new();
-    let mut ends_without_newline = false;
-    for line in &hunk.lines {
+    let body = &hunk.lines;
+    for (idx, line) in body.iter().enumerate() {
+        if matches!(line, HunkLine::NoNewline) {
+            continue;
+        }
+        let with_newline = !matches!(body.get(idx + 1), Some(HunkLine::NoNewline));
         match line {
-            HunkLine::Context(s) => {
-                let bytes = line_bytes(s, true);
+            HunkLine::Context(text) => {
+                let bytes = hunk_line_bytes(text, with_newline);
                 old_side.push(bytes.clone());
                 new_side.push(bytes);
             }
-            HunkLine::Remove(s) => old_side.push(line_bytes(s, true)),
-            HunkLine::Add(s) => new_side.push(line_bytes(s, true)),
-            HunkLine::NoNewline => ends_without_newline = true,
+            HunkLine::Remove(text) => old_side.push(hunk_line_bytes(text, with_newline)),
+            HunkLine::Add(text) => new_side.push(hunk_line_bytes(text, with_newline)),
+            HunkLine::NoNewline => {}
         }
     }
-    (old_side, new_side, ends_without_newline)
+    (old_side, new_side)
 }
 
-fn line_bytes(text: &str, with_newline: bool) -> Vec<u8> {
-    if with_newline {
-        let mut v = text.as_bytes().to_vec();
-        if v.last() != Some(&b'\n') {
-            v.push(b'\n');
-        }
-        v
-    } else {
-        text.as_bytes().to_vec()
+fn hunk_line_bytes(text: &str, with_newline: bool) -> Vec<u8> {
+    let mut v = text.as_bytes().to_vec();
+    if with_newline && v.last() != Some(&b'\n') {
+        v.push(b'\n');
     }
-}
-
-fn trim_trailing_newline_on_last_line(lines: &mut [Vec<u8>]) {
-    if let Some(last) = lines.last_mut() {
-        if last.last() == Some(&b'\n') {
-            last.pop();
-        }
-    }
+    v
 }
 
 fn find_hunk_match(lines: &[Vec<u8>], old_side: &[Vec<u8>], hint: usize) -> Option<usize> {
@@ -203,5 +197,22 @@ diff --git a/a.txt b/a.txt
         let got = apply_patch_to_blob(b"one\n", &patches[0], &BlobApplyOptions::default())
             .expect("apply");
         assert_eq!(got, b"two\n");
+    }
+
+    #[test]
+    fn blob_apply_no_newline_preimage() {
+        let patch_text = "\
+diff --git a/f.txt b/f.txt
+--- a/f.txt
++++ b/f.txt
+@@ -1 +1 @@
+-old
+\\ No newline at end of file
++new
+";
+        let patches = parse_patch(patch_text, 1, "p", false, None).expect("parse");
+        let got =
+            apply_patch_to_blob(b"old", &patches[0], &BlobApplyOptions::default()).expect("apply");
+        assert_eq!(got, b"new\n");
     }
 }
