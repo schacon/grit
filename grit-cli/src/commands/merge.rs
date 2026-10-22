@@ -6,17 +6,20 @@
 
 use crate::context;
 use crate::markdown;
+use crate::message_input::{read_message_input, MessageInputArgs};
 use crate::operation_output::{render_conflicts_human, ConflictJson, OperationConflictBlock};
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 use anyhow::{bail, Context, Result};
 use grit_lib::change_id::ChangeId;
 use grit_lib::config::ident_resolve::IdentRole;
+use grit_lib::error::Error;
 use grit_lib::objects::ObjectId;
 use grit_lib::operation::{Conflict, ConflictKind};
 use grit_lib::porcelain::merge::{
-    abort_branch_merge, continue_merge, integrate_branch, predict_merge, ContinueMergeError,
-    ContinueOptions, IntegrateBranchOutcome, MergeConflictDetail, MergeConflictKind,
-    MergePrediction, MergePredictionOptions,
+    abort_branch_merge, continue_merge, integrate_branch, integrate_branch_with, predict_merge,
+    ContinueMergeError, ContinueOptions, FastForwardPolicy, IntegrateBranchOutcome,
+    MergeCommitMode, MergeConflictDetail, MergeConflictKind, MergeOptions, MergePrediction,
+    MergePredictionOptions,
 };
 use grit_lib::progress::NullProgress;
 use grit_lib::refs;
@@ -25,6 +28,16 @@ use grit_lib::state::{read_merge_msg, resolve_head, HeadState};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
+
+/// CLI flags for `grit merge` beyond the branch name and `--abort`.
+#[derive(Debug, Clone, Default)]
+pub struct MergeRunOptions {
+    pub ff_only: bool,
+    pub no_ff: bool,
+    pub no_commit: bool,
+    pub squash: bool,
+    pub message: MessageInputArgs,
+}
 
 /// Merge / pull integration result (`--json` contract).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
@@ -37,6 +50,9 @@ pub enum MergeResult {
     Merged,
     Conflicts,
     Aborted,
+    Squashed,
+    Stopped,
+    RefusedNotFf,
     #[allow(dead_code)]
     SetUpstream,
 }
@@ -239,6 +255,54 @@ impl MergeOutcome {
         }
     }
 
+    fn squashed(label: &str) -> Self {
+        Self {
+            result: MergeResult::Squashed,
+            branch: label.to_owned(),
+            oid: None,
+            change_id: None,
+            upstream: None,
+            conflicts: None,
+            next_steps: Some(vec![
+                "grit commit".into(),
+                "Review SQUASH_MSG or pass -m / --message-file".into(),
+            ]),
+            alternatives: None,
+            check: false,
+        }
+    }
+
+    fn stopped(label: &str) -> Self {
+        Self {
+            result: MergeResult::Stopped,
+            branch: label.to_owned(),
+            oid: None,
+            change_id: None,
+            upstream: None,
+            conflicts: None,
+            next_steps: Some(vec![
+                "grit commit".into(),
+                "grit merge --abort".into(),
+            ]),
+            alternatives: None,
+            check: false,
+        }
+    }
+
+    fn refused_not_ff(label: &str) -> Self {
+        Self {
+            result: MergeResult::RefusedNotFf,
+            branch: label.to_owned(),
+            oid: None,
+            change_id: None,
+            upstream: None,
+            conflicts: None,
+            next_steps: None,
+            alternatives: None,
+            check: false,
+        }
+    }
+
     fn aborted() -> Self {
         Self {
             result: MergeResult::Aborted,
@@ -290,6 +354,27 @@ impl HumanRender for MergeOutcome {
                 "Merged {} into the current branch ({short})",
                 self.branch
             ),
+            MergeResult::Squashed => {
+                outln!(
+                    w,
+                    "Squash merge applied from {} — run `grit commit` to record the squashed commit",
+                    self.branch
+                );
+            }
+            MergeResult::Stopped => {
+                outln!(
+                    w,
+                    "Merge from {} applied — run `grit commit` to finish, or `grit merge --abort` to cancel",
+                    self.branch
+                );
+            }
+            MergeResult::RefusedNotFf => {
+                outln!(
+                    w,
+                    "Cannot fast-forward {} — histories have diverged (use merge without --ff-only)",
+                    self.branch
+                );
+            }
             MergeResult::Conflicts if self.check => {
                 if let Some(details) = &self.conflicts {
                     crate::operation_output::render_merge_check_conflicts_human(
@@ -332,8 +417,8 @@ pub fn run(
     branch: Option<&str>,
     abort: bool,
     continue_merge_flag: bool,
-    message: Option<&str>,
     check: bool,
+    options: MergeRunOptions,
 ) -> Result<MergeOutcome> {
     let repo = context::discover()?;
 
@@ -346,7 +431,11 @@ pub fn run(
         if branch.is_some() {
             bail!("cannot merge a branch while finishing a merge with --continue");
         }
-        return run_continue(&repo, message);
+        let continue_message = read_message_input(&options.message)?;
+        return run_continue(
+            &repo,
+            continue_message.as_deref(),
+        );
     }
 
     let branch = branch.context("branch name required unless using --abort or --continue")?;
@@ -366,7 +455,30 @@ pub fn run(
     if check {
         return check_merge(&repo, head_oid, other_oid, branch);
     }
-    integrate(&repo, &refname, head_oid, other_oid, branch)
+    let merge_options = build_merge_options(&options)?;
+    integrate_with_options(&repo, &refname, head_oid, other_oid, branch, &merge_options)
+}
+
+fn build_merge_options(run: &MergeRunOptions) -> Result<MergeOptions> {
+    let fast_forward = if run.ff_only {
+        FastForwardPolicy::Only
+    } else if run.no_ff {
+        FastForwardPolicy::Never
+    } else {
+        FastForwardPolicy::Allow
+    };
+    let commit = if run.squash {
+        MergeCommitMode::Squash
+    } else if run.no_commit {
+        MergeCommitMode::NoCommit
+    } else {
+        MergeCommitMode::Commit
+    };
+    Ok(MergeOptions {
+        fast_forward,
+        commit,
+        message: read_message_input(&run.message)?,
+    })
 }
 
 fn merge_continue_label(git_dir: &std::path::Path) -> String {
@@ -451,7 +563,8 @@ fn stored_change_id(repo: &Repository, oid: ObjectId) -> Result<Option<ChangeId>
 }
 
 /// Integrate `other` into the branch `into_ref` (currently at `into_oid`):
-/// up-to-date, fast-forward, or three-way merge. Shared with `grit pull`.
+/// up-to-date, fast-forward, or three-way merge. Retained for callers that merge via this helper.
+#[allow(dead_code)]
 pub fn integrate(
     repo: &Repository,
     into_ref: &str,
@@ -459,16 +572,44 @@ pub fn integrate(
     other_oid: ObjectId,
     label: &str,
 ) -> Result<MergeOutcome> {
-    match integrate_branch(repo, into_ref, into_oid, other_oid, label)? {
-        IntegrateBranchOutcome::UpToDate => Ok(MergeOutcome::up_to_date(label)),
+    integrate_with_options(
+        repo,
+        into_ref,
+        into_oid,
+        other_oid,
+        label,
+        &MergeOptions::default(),
+    )
+}
+
+fn integrate_with_options(
+    repo: &Repository,
+    into_ref: &str,
+    into_oid: ObjectId,
+    other_oid: ObjectId,
+    label: &str,
+    options: &MergeOptions,
+) -> Result<MergeOutcome> {
+    match integrate_branch_with(repo, into_ref, into_oid, other_oid, label, options) {
+        Ok(outcome) => Ok(map_integrate_outcome(outcome, label)),
+        Err(Error::NotFastForward) => Ok(MergeOutcome::refused_not_ff(label)),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn map_integrate_outcome(outcome: IntegrateBranchOutcome, label: &str) -> MergeOutcome {
+    match outcome {
+        IntegrateBranchOutcome::UpToDate => MergeOutcome::up_to_date(label),
         IntegrateBranchOutcome::FastForward { oid, change_id } => {
-            Ok(MergeOutcome::fast_forward(label, oid, change_id))
+            MergeOutcome::fast_forward(label, oid, change_id)
         }
         IntegrateBranchOutcome::Merged { oid, change_id } => {
-            Ok(MergeOutcome::merged(label, oid, change_id))
+            MergeOutcome::merged(label, oid, change_id)
         }
+        IntegrateBranchOutcome::Squashed => MergeOutcome::squashed(label),
+        IntegrateBranchOutcome::Stopped => MergeOutcome::stopped(label),
         IntegrateBranchOutcome::Conflicts { details, .. } => {
-            Ok(MergeOutcome::conflicts(label, details))
+            MergeOutcome::conflicts(label, details)
         }
     }
 }
@@ -504,6 +645,9 @@ mod tests {
                 "fast_forward",
             ),
             (MergeOutcome::merged("topic", oid, None), "merged"),
+            (MergeOutcome::squashed("topic"), "squashed"),
+            (MergeOutcome::stopped("topic"), "stopped"),
+            (MergeOutcome::refused_not_ff("topic"), "refused_not_ff"),
             (
                 MergeOutcome::conflicts(
                     "topic",

@@ -569,6 +569,27 @@ pub fn print_merge_outcome(w: &mut dyn Write, outcome: &MergeOutcome) -> anyhow:
                 outln!(w, "- change id `{short}`", short = short_change_id(id));
             }
         }
+        MergeResult::Squashed => {
+            outln!(
+                w,
+                "- Squash merge from **`{}`** applied to the index (see `SQUASH_MSG`)",
+                outcome.branch
+            );
+        }
+        MergeResult::Stopped => {
+            outln!(
+                w,
+                "- Merge from **`{}`** applied; finish with `grit commit` or `grit merge --abort`",
+                outcome.branch
+            );
+        }
+        MergeResult::RefusedNotFf => {
+            outln!(
+                w,
+                "- **`--ff-only`**: cannot fast-forward **`{}`** (histories diverged)",
+                outcome.branch
+            );
+        }
         MergeResult::Conflicts if outcome.check => {
             if let Some(details) = &outcome.conflicts {
                 crate::operation_output::render_merge_check_conflicts_markdown(
@@ -607,6 +628,12 @@ pub fn print_merge_outcome(w: &mut dyn Write, outcome: &MergeOutcome) -> anyhow:
                 "- Set **`{}`** to `{upstream}` · `{short}`",
                 outcome.branch
             );
+        }
+    }
+    if let Some(steps) = &outcome.next_steps {
+        outln!(w);
+        for step in steps {
+            outln!(w, "- `{step}`");
         }
     }
     Ok(())

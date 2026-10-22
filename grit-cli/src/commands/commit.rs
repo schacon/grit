@@ -6,8 +6,10 @@ use grit_lib::config::ident::{author_identity_line, parse_author_arg};
 use grit_lib::config::ident_resolve::IdentRole;
 use grit_lib::error::Error;
 use grit_lib::objects::parse_commit;
+use grit_lib::porcelain::add::stage_for_commit;
 use grit_lib::porcelain::commit::{
-    commit_with_scope, default_commit_scope, CommitRequest, CommitScope, HookPolicy,
+    commit_with_scope, default_commit_scope, pending_commit_message, CommitRequest, CommitScope,
+    HookPolicy,
 };
 use grit_lib::progress::NullProgress;
 use grit_lib::revwalk::rev_parse::resolve_revision_as_commit;
@@ -155,8 +157,19 @@ pub fn run(
         None
     };
 
-    let message =
-        resolve_commit_message(message, message_file, amend, reuse_message_from.is_some())?;
+    let message = resolve_commit_message(
+        &repo,
+        message,
+        message_file,
+        amend,
+        reuse_message_from.is_some(),
+    )?;
+    if message.is_none() && !amend && !reuse_message_from.is_some() {
+        if matches!(scope, CommitScope::AutoStage) {
+            stage_for_commit(&repo, &mut NullProgress).map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+        bail!("provide a commit message, e.g. grit commit \"what changed\"");
+    }
     let message_text = message.as_deref().unwrap_or("");
 
     let config = repo.config().context("could not load config")?;
@@ -278,35 +291,49 @@ pub fn run(
     })
 }
 
+/// Resolve the commit message from CLI input, pending merge/squash state, or amend reuse.
 fn resolve_commit_message(
+    repo: &grit_lib::repo::Repository,
     message: Option<String>,
     message_file: Option<String>,
     amend: bool,
     reuse_message: bool,
 ) -> Result<Option<String>> {
+    if amend || reuse_message {
+        return match (message, message_file) {
+            (Some(m), None) => Ok(m.filter(|m| !m.trim().is_empty())),
+            (None, Some(path)) => {
+                let contents = read_message_file(&path)?;
+                Ok(if contents.trim().is_empty() {
+                    None
+                } else {
+                    Some(contents)
+                })
+            }
+            (None, None) => Ok(None),
+            (Some(_), Some(_)) => {
+                unreachable!("clap rejects message and message-file together")
+            }
+        };
+    }
+
     match (message, message_file) {
         (Some(m), None) => {
-            if m.trim().is_empty() && !amend && !reuse_message {
+            if m.trim().is_empty() {
                 bail!("empty commit message");
             }
-            Ok(if m.trim().is_empty() { None } else { Some(m) })
+            Ok(Some(m))
         }
         (None, Some(path)) => {
             let contents = read_message_file(&path)?;
             if contents.trim().is_empty() {
-                if amend || reuse_message {
-                    Ok(None)
-                } else {
-                    bail!("empty commit message");
-                }
-            } else {
-                Ok(Some(contents))
+                bail!("empty commit message");
             }
+            Ok(Some(contents))
         }
-        (None, None) if amend || reuse_message => Ok(None),
-        (None, None) => {
-            bail!("provide a commit message, e.g. grit commit \"what changed\"");
-        }
+        (None, None) => Ok(pending_commit_message(repo)
+            .context("could not read pending commit message")?
+            .filter(|m| !m.trim().is_empty())),
         (Some(_), Some(_)) => unreachable!("clap rejects message and message-file together"),
     }
 }
