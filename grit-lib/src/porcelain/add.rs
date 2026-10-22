@@ -1321,7 +1321,7 @@ fn empty_blob_oid_for_repo(repo: &Repository, persist: bool) -> Result<crate::ob
             .write(ObjectKind::Blob, b"")
             .map_err(|e| Error::Message(format!("could not store empty blob: {e}")))
     } else {
-        Ok(algo.hash_object(ObjectKind::Blob, b""))
+        algo.hash_object(ObjectKind::Blob, b"")
     }
 }
 
@@ -2650,6 +2650,7 @@ mod tests {
             repo.odb()
                 .hash_algo()
                 .hash_object(crate::objects::ObjectKind::Blob, b"")
+                .unwrap()
         );
 
         let fsck = Command::new("git")
@@ -2774,7 +2775,11 @@ mod tests {
         let index = repo.load_index().unwrap();
         let ie = index.get(b"new.txt", 0).expect("ita row");
         assert!(ie.intent_to_add());
-        let expected_empty = repo.odb().hash_algo().hash_object(ObjectKind::Blob, b"");
+        let expected_empty = repo
+            .odb()
+            .hash_algo()
+            .hash_object(ObjectKind::Blob, b"")
+            .unwrap();
         assert_eq!(ie.oid, expected_empty);
 
         let fsck = Command::new("git")
