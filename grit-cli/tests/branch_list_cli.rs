@@ -315,3 +315,55 @@ fn json_fields_on_rich_fixture() -> TestResult {
     assert!(wt["worktree"].as_str().is_some());
     Ok(())
 }
+
+#[test]
+fn upstream_honors_custom_fetch_refspec() -> TestResult {
+    let scratch = Scratch::new("fetch-map")?;
+    let repo = scratch.child("repo");
+    init_repo(&repo);
+    git(
+        &repo,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/custom/*",
+        ],
+    );
+    git(&repo, &["config", "branch.main.remote", "origin"]);
+    git(&repo, &["config", "branch.main.merge", "refs/heads/main"]);
+    let oid = git(&repo, &["rev-parse", "HEAD"]).trim().to_owned();
+    git(&repo, &["update-ref", &format!("refs/custom/main"), &oid]);
+    let git_line = git(&repo, &["branch", "-vv"])
+        .lines()
+        .find(|l| l.contains('*'))
+        .expect("current branch line")
+        .to_owned();
+    assert!(
+        git_line.contains("[custom/main"),
+        "git should show custom/main upstream: {git_line}"
+    );
+    assert!(
+        !git_line.contains("[gone]"),
+        "upstream should resolve: {git_line}"
+    );
+    let human = run(&repo, GRIT, &["branch"]);
+    let grit_line = human
+        .lines()
+        .find(|l| l.starts_with('*'))
+        .expect("current branch line");
+    assert!(
+        grit_line.contains("[custom/main"),
+        "grit human: {grit_line}"
+    );
+    assert!(!grit_line.contains("[gone]"), "grit human: {grit_line}");
+    let listed = grit_json(&repo, &["branch"]);
+    let main = listed["branches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["name"] == "main")
+        .expect("main");
+    assert_eq!(main["upstream"]["ref"], "custom/main");
+    assert_eq!(main["upstream"]["gone"], Value::Bool(false));
+    Ok(())
+}
