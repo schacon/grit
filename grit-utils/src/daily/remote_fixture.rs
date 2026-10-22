@@ -17,9 +17,10 @@ use crate::network_fixture::{
 };
 use crate::network_http::GritHttpServer;
 use crate::network_suite::{
-    configure_remote, ensure_network_client_repo, network_http_root, prepare_network_clone,
-    prepare_network_fetch_incr, prepare_network_fetch_noop, prepare_network_force_with_lease,
-    prepare_network_pull_rebase, prepare_network_push,
+    assert_push_target_lacks_client_tip, configure_remote, ensure_network_client_repo,
+    git_object_exists, network_http_root, prepare_network_clone, prepare_network_fetch_incr,
+    prepare_network_fetch_noop, prepare_network_force_with_lease, prepare_network_pull_rebase,
+    prepare_network_push,
 };
 use crate::network_verify::{verify_client_fetch_tip, verify_clone_against_bare};
 use crate::shell::shell_quote;
@@ -704,6 +705,102 @@ pub fn verify_push_force_with_lease(ctx: &DailyHeadlineContext, cwd: &Path) -> R
     Ok(())
 }
 
+fn repo_has_object(git: &Path, repo: &Path, oid: &str) -> Result<()> {
+    if git_object_exists(git, repo, oid) {
+        return Ok(());
+    }
+    bail!("{} missing object {oid}", repo.display());
+}
+
+fn push_target_bare(ctx: &DailyHeadlineContext) -> Result<PathBuf> {
+    let remote = remote_state(ctx)?;
+    if remote.remote_url.starts_with("http://") {
+        Ok(network_http_root(&remote.bare).join(REPO_NAME))
+    } else {
+        Ok(remote.bare.clone())
+    }
+}
+
+pub fn post_verify_fetch_incremental(ctx: &DailyHeadlineContext, _is_git: bool) -> Result<()> {
+    let remote = remote_state(ctx)?;
+    verify_client_fetch_tip(
+        &ctx.git,
+        &remote.bare,
+        &ctx.repo,
+        &remote.meta.default_branch,
+    )?;
+    let bare_tip = ref_oid(
+        &ctx.git,
+        &remote.bare,
+        &format!("refs/heads/{}", remote.meta.default_branch),
+    )?;
+    repo_has_object(&ctx.git, &ctx.repo, &bare_tip)?;
+    Ok(())
+}
+
+pub fn post_verify_pull_fast_forward(ctx: &DailyHeadlineContext, _is_git: bool) -> Result<()> {
+    let remote = remote_state(ctx)?;
+    let bare_tip = ref_oid(
+        &ctx.git,
+        &remote.bare,
+        &format!("refs/heads/{}", remote.meta.default_branch),
+    )?;
+    let head = ref_oid(&ctx.git, &ctx.repo, "HEAD")?;
+    if head != bare_tip {
+        bail!("post pull: HEAD {head} != bare {bare_tip}");
+    }
+    Ok(())
+}
+
+pub fn post_verify_push_incremental(ctx: &DailyHeadlineContext, _is_git: bool) -> Result<()> {
+    let remote = remote_state(ctx)?;
+    let target = push_target_bare(ctx)?;
+    let branch_ref = format!("refs/heads/{}", remote.meta.default_branch);
+    let remote_tip = ref_oid(&ctx.git, &target, &branch_ref)?;
+    let client_tip = ref_oid(&ctx.git, &ctx.repo, &branch_ref)?;
+    if remote_tip != client_tip {
+        bail!(
+            "post push: remote {} tip {remote_tip} != client {client_tip}",
+            target.display()
+        );
+    }
+    if remote_tip == remote.meta.fetch_base_oid {
+        bail!("post push: remote still at fetch base (no transfer)");
+    }
+    repo_has_object(&ctx.git, &target, &client_tip)?;
+    Ok(())
+}
+
+/// Before a timed push iteration (after prepare), the push target must not already hold the client tip.
+pub fn pre_verify_push_incremental(ctx: &DailyHeadlineContext) -> Result<()> {
+    let target = push_target_bare(ctx)?;
+    assert_push_target_lacks_client_tip(&ctx.git, &target, &ctx.repo)
+}
+
+/// Pre-timed verification (after prepare, before the timed command).
+pub fn pre_timed_for(id: &str) -> Option<fn(&DailyHeadlineContext) -> Result<()>> {
+    match id {
+        "push/incremental@git-git" | "push/incremental-http@git-git" => {
+            Some(pre_verify_push_incremental)
+        }
+        _ => None,
+    }
+}
+
+/// Post-timed verification for remote scenarios (keyed by daily scenario id).
+pub fn post_timed_for(id: &str) -> Option<fn(&DailyHeadlineContext, bool) -> Result<()>> {
+    match id {
+        "fetch/incremental@git-git" | "fetch/incremental-http@git-git" | "fetch/noop@git-git" => {
+            Some(post_verify_fetch_incremental)
+        }
+        "pull/fast-forward@git-git" => Some(post_verify_pull_fast_forward),
+        "push/incremental@git-git" | "push/incremental-http@git-git" => {
+            Some(post_verify_push_incremental)
+        }
+        _ => None,
+    }
+}
+
 pub fn verify_push_incremental(ctx: &DailyHeadlineContext, cwd: &Path) -> Result<()> {
     let remote = remote_state(ctx)?;
     configure_client_remote(&ctx.git, cwd, remote)?;
@@ -815,11 +912,6 @@ pub fn verify_push_incremental_http(ctx: &DailyHeadlineContext, cwd: &Path) -> R
     if http_tip_after_grit != client_tip_grit {
         bail!(
             "http push after grit: served remote {http_tip_after_grit} != client {client_tip_grit}"
-        );
-    }
-    if http_tip_after_git != http_tip_after_grit {
-        bail!(
-            "http push parity: git remote tip {http_tip_after_git} != grit remote tip {http_tip_after_grit}"
         );
     }
     Ok(())

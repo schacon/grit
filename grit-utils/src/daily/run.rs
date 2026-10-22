@@ -12,10 +12,10 @@ use super::coverage::all_registry_scenarios;
 use super::helpers::{pin_daily_scratch_root, prepare_bench_argv};
 use super::plan::{DailyHeadlinePlan, DailyPrepare, DailySetup};
 use super::registry::{Area, ScenarioSpec};
-use super::remote_fixture::refresh_grit_http_server;
+use super::remote_fixture::{post_timed_for, pre_timed_for, refresh_grit_http_server};
 use super::runner::{
     run_ab_bench, run_prepare, run_timed_via_helper, timing_stats_from_samples, AbBenchRequest,
-    BenchArgv, RunLimits, RunPolicy,
+    BenchArgv, PostTimedCheck, PreTimedCheck, RunLimits, RunPolicy,
 };
 use super::schema::{
     DailyBenchReport, DailyScenarioResult, DailyToolRun, DailyToolVersions, SCHEMA_TAG,
@@ -249,6 +249,14 @@ pub fn run_daily(opts: DailyRunOptions, timestamp: OffsetDateTime) -> Result<Dai
         let grit_cmd = (plan.build_grit)(&headline_ctx);
         let prepare_spec = (plan.prepare)(&headline_ctx);
         let prepare = prepare_argv(&opts.measure_helper, &opts.git, &prepare_spec);
+        let post_timed = post_timed_for(plan.spec.id).map(|verify| PostTimedCheck {
+            ctx: &headline_ctx,
+            verify,
+        });
+        let pre_timed = pre_timed_for(plan.spec.id).map(|verify| PreTimedCheck {
+            ctx: &headline_ctx,
+            verify,
+        });
 
         let outcome = run_ab_bench(&AbBenchRequest {
             cwd: &repo,
@@ -259,6 +267,8 @@ pub fn run_daily(opts: DailyRunOptions, timestamp: OffsetDateTime) -> Result<Dai
             limits: &limits,
             measure_helper: &opts.measure_helper,
             correctness: None,
+            post_timed,
+            pre_timed,
         })
         .with_context(|| format!("benchmark {}", plan.spec.id))?;
 

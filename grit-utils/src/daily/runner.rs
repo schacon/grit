@@ -12,6 +12,8 @@ use crate::capped_run::{
 };
 use crate::schema::TimingStats;
 
+use super::plan::DailyHeadlineContext;
+
 /// One benchmark invocation (program + arguments, no shell).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BenchArgv {
@@ -88,6 +90,30 @@ pub struct AbBenchOutcome {
     pub grit: ToolSeries,
 }
 
+/// Post-timed ref/object check for one daily scenario (see [`super::remote_fixture::post_timed_for`]).
+pub struct PostTimedCheck<'a> {
+    pub ctx: &'a DailyHeadlineContext,
+    pub verify: fn(&DailyHeadlineContext, bool) -> Result<()>,
+}
+
+impl PostTimedCheck<'_> {
+    fn run(&self, is_git: bool) -> Result<()> {
+        (self.verify)(self.ctx, is_git)
+    }
+}
+
+/// Pre-timed check (runs after prepare, before each timed command).
+pub struct PreTimedCheck<'a> {
+    pub ctx: &'a DailyHeadlineContext,
+    pub verify: fn(&DailyHeadlineContext) -> Result<()>,
+}
+
+impl PreTimedCheck<'_> {
+    fn run(&self) -> Result<()> {
+        (self.verify)(self.ctx)
+    }
+}
+
 /// Inputs for [`run_ab_bench`].
 #[allow(clippy::type_complexity)]
 pub struct AbBenchRequest<'a> {
@@ -99,6 +125,8 @@ pub struct AbBenchRequest<'a> {
     pub limits: &'a RunLimits,
     pub measure_helper: &'a Path,
     pub correctness: Option<&'a (dyn Fn(&Path) -> Result<()> + 'a)>,
+    pub post_timed: Option<PostTimedCheck<'a>>,
+    pub pre_timed: Option<PreTimedCheck<'a>>,
 }
 
 /// Compute how many timed runs each tool should execute under `policy`.
@@ -210,17 +238,39 @@ pub fn run_ab_bench(request: &AbBenchRequest<'_>) -> Result<AbBenchOutcome> {
         limits,
         measure_helper,
         correctness,
+        post_timed,
+        pre_timed,
     } = request;
 
     if let Some(check) = correctness {
         check(cwd).context("correctness hook before timing")?;
     }
 
+    let post_run = |is_git: bool| -> Result<()> {
+        if let Some(hook) = post_timed {
+            hook.run(is_git).context("post-timed verification")?;
+        }
+        Ok(())
+    };
+
+    let pre_run = || -> Result<()> {
+        if let Some(hook) = pre_timed {
+            hook.run().context("pre-timed verification")?;
+        }
+        Ok(())
+    };
+
     for _ in 0..policy.warmups_per_tool {
         run_prepare(cwd, *prepare)?;
-        run_timed_via_helper(cwd, git, limits, measure_helper)?;
+        pre_run()?;
+        let sample = run_timed_via_helper(cwd, git, limits, measure_helper)?;
+        ensure_sample_success("git", &sample)?;
+        post_run(true)?;
         run_prepare(cwd, *prepare)?;
-        run_timed_via_helper(cwd, grit, limits, measure_helper)?;
+        pre_run()?;
+        let sample = run_timed_via_helper(cwd, grit, limits, measure_helper)?;
+        ensure_sample_success("grit", &sample)?;
+        post_run(false)?;
     }
 
     let mut git_samples = Vec::new();
@@ -239,18 +289,23 @@ pub fn run_ab_bench(request: &AbBenchRequest<'_>) -> Result<AbBenchOutcome> {
         scenario_start.elapsed(),
     ) {
         run_prepare(cwd, *prepare)?;
+        pre_run()?;
         if next_git {
             let sample = run_timed_via_helper(cwd, git, limits, measure_helper)?;
+            ensure_sample_success("git", &sample)?;
             if sample_succeeded(&sample) {
                 total_timed_ms += sample.wall_ms;
             }
+            post_run(true)?;
             git_samples.push(sample);
             git_count += 1;
         } else {
             let sample = run_timed_via_helper(cwd, grit, limits, measure_helper)?;
+            ensure_sample_success("grit", &sample)?;
             if sample_succeeded(&sample) {
                 total_timed_ms += sample.wall_ms;
             }
+            post_run(false)?;
             grit_samples.push(sample);
             grit_count += 1;
         }
@@ -270,6 +325,13 @@ pub fn run_ab_bench(request: &AbBenchRequest<'_>) -> Result<AbBenchOutcome> {
             samples: grit_samples,
         },
     })
+}
+
+fn ensure_sample_success(tool: &str, sample: &TimedRunSample) -> Result<()> {
+    if sample_succeeded(sample) {
+        return Ok(());
+    }
+    anyhow::bail!("{tool} timed run failed: {:?}", sample.termination);
 }
 
 fn ensure_timed_series_success(tool: &str, samples: &[TimedRunSample]) -> Result<()> {

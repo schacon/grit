@@ -655,9 +655,51 @@ pub fn configure_remote(git: &Path, client: &Path, url: &str, default_branch: &s
 
 const BENCH_COMMIT_EPOCH_SECS: i64 = 1_000_000_000;
 
-fn bench_commit_date(index: u32) -> String {
-    let secs = BENCH_COMMIT_EPOCH_SECS + i64::from(index);
+fn bench_commit_date(prepare_seq: u64, commit_index: u32) -> String {
+    let secs = BENCH_COMMIT_EPOCH_SECS
+        + i64::try_from(prepare_seq).unwrap_or(i64::MAX) * 10_000
+        + i64::from(commit_index);
     format!("{secs} +0000")
+}
+
+fn push_prepare_seq_path(bare: &Path) -> PathBuf {
+    bare.join(".grit-bench-push-prepare-seq")
+}
+
+fn bump_push_prepare_seq(bare: &Path) -> Result<u64> {
+    let path = push_prepare_seq_path(bare);
+    let prev = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    let next = prev.saturating_add(1);
+    std::fs::write(&path, next.to_string()).with_context(|| format!("write {}", path.display()))?;
+    Ok(next)
+}
+
+/// Whether `repo` can resolve `oid` as a git object (`git cat-file -e`).
+#[must_use]
+pub fn git_object_exists(git: &Path, repo: &Path, oid: &str) -> bool {
+    let mut cmd = Command::new(git);
+    cmd.args(["cat-file", "-e", oid]).current_dir(repo);
+    apply_isolated_git_config(&mut cmd);
+    cmd.output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// Push benchmarks must start with the client tip absent from the target ODB (ref-only updates are invalid).
+pub fn assert_push_target_lacks_client_tip(
+    git: &Path,
+    target_bare: &Path,
+    client: &Path,
+) -> Result<()> {
+    let tip = run_git_output(git, Some(client), &["rev-parse", "HEAD"])?;
+    if git_object_exists(git, target_bare, &tip) {
+        anyhow::bail!(
+            "push prepare precondition failed: target {} already has client tip {tip}",
+            target_bare.display()
+        );
+    }
+    Ok(())
 }
 
 fn apply_isolated_git_config(cmd: &mut Command) {
@@ -694,9 +736,10 @@ fn run_git_cmd_with_bench_commit_dates(
     git: &Path,
     cwd: Option<&Path>,
     args: &[&str],
+    prepare_seq: u64,
     commit_index: u32,
 ) -> Result<()> {
-    let date = bench_commit_date(commit_index);
+    let date = bench_commit_date(prepare_seq, commit_index);
     let mut cmd = Command::new(git);
     cmd.args(args);
     if let Some(d) = cwd {
@@ -727,6 +770,17 @@ pub fn prepare_network_clone(bare: &Path) -> Result<()> {
     Ok(())
 }
 
+fn reset_client_branch_and_tracking(git: &Path, meta: &NetworkBenchMeta, oid: &str) -> Result<()> {
+    run_git_cmd(git, Some(&meta.client_repo), &["reset", "--hard", oid])?;
+    let tracking = format!("refs/remotes/origin/{}", meta.default_branch);
+    run_git_cmd(
+        git,
+        Some(&meta.client_repo),
+        &["update-ref", tracking.as_str(), oid],
+    )?;
+    Ok(())
+}
+
 /// Reset server ahead of client, then add incremental commits on the bare remote.
 pub fn prepare_network_fetch_incr(git: &Path, bare: &Path) -> Result<()> {
     let meta = load_meta(bare)?;
@@ -737,11 +791,7 @@ pub fn prepare_network_fetch_incr(git: &Path, bare: &Path) -> Result<()> {
         Some(bare),
         &["update-ref", &branch_ref, &meta.fetch_base_oid],
     )?;
-    run_git_cmd(
-        git,
-        Some(&meta.client_repo),
-        &["reset", "--hard", &meta.fetch_base_oid],
-    )?;
+    reset_client_branch_and_tracking(git, &meta, &meta.fetch_base_oid)?;
     for i in 0..meta.incremental_fetch_commits {
         append_empty_commit_on_bare(
             git,
@@ -791,6 +841,7 @@ pub fn prepare_network_force_with_lease(git: &Path, bare: &Path) -> Result<()> {
         Some(&meta.client_repo),
         &["commit", "--allow-empty", "-q", "-m", "bench-fwl-base"],
         0,
+        0,
     )?;
     run_git_cmd(
         git,
@@ -802,6 +853,7 @@ pub fn prepare_network_force_with_lease(git: &Path, bare: &Path) -> Result<()> {
         git,
         Some(&meta.client_repo),
         &["commit", "--amend", "--allow-empty", "-q", "--no-edit"],
+        0,
         1,
     )?;
     refresh_http_mirror(git, bare)
@@ -869,11 +921,8 @@ pub fn prepare_network_push(git: &Path, bare: &Path) -> Result<()> {
         Some(bare),
         &["update-ref", &branch_ref, &meta.fetch_base_oid],
     )?;
-    run_git_cmd(
-        git,
-        Some(&meta.client_repo),
-        &["reset", "--hard", &meta.fetch_base_oid],
-    )?;
+    reset_client_branch_and_tracking(git, &meta, &meta.fetch_base_oid)?;
+    let prepare_seq = bump_push_prepare_seq(bare)?;
     for i in 0..meta.push_commits {
         run_git_cmd_with_bench_commit_dates(
             git,
@@ -883,11 +932,13 @@ pub fn prepare_network_push(git: &Path, bare: &Path) -> Result<()> {
                 "--allow-empty",
                 "-q",
                 "-m",
-                &format!("bench-push-{i}"),
+                &format!("bench-push-{prepare_seq}-{i}"),
             ],
+            prepare_seq,
             u32::try_from(i).context("push commit index")?,
         )?;
     }
+    assert_push_target_lacks_client_tip(git, bare, &meta.client_repo)?;
     refresh_http_mirror(git, bare)
 }
 
