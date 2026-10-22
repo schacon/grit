@@ -20,7 +20,7 @@ use crate::error::Result;
 use similar::{Algorithm, DiffOp, DiffTag};
 
 /// How conflict regions should be resolved.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum MergeFavor {
     /// Leave conflict markers in the output (default).
     #[default]
