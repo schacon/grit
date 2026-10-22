@@ -1361,3 +1361,94 @@ fn gc_replaces_readonly_commit_graph_like_git_on_windows() {
         .expect("grit gc must replace read-only commit-graph");
     git_fsck(dir.path(), true);
 }
+
+fn missing_oid() -> ObjectId {
+    ObjectId::from_hex(&"1".repeat(40)).expect("oid")
+}
+
+#[test]
+fn prune_rejects_missing_root_with_empty_loose_store() {
+    let dir = TempDir::new().expect("tempdir");
+    let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+    std::fs::write(
+        repo.git_dir().join("refs/heads/main"),
+        format!("{}\n", missing_oid().to_hex()),
+    )
+    .expect("write ref");
+    assert!(repo
+        .odb()
+        .enumerate_local_loose_objects()
+        .expect("loose")
+        .is_empty());
+
+    let err = prune_loose_objects(
+        &repo,
+        &PruneOptions::with_older_than(Some(std::time::SystemTime::now())),
+    )
+    .expect_err("prune must not accept a missing root");
+    assert!(matches!(err, Error::ObjectNotFound(_)), "{err:?}");
+
+    let err = grit_lib::refs::gc::prune_loose_unreachable(repo.odb(), &[missing_oid()], None)
+        .expect_err("missing root");
+    assert!(matches!(err, Error::ObjectNotFound(_)), "{err:?}");
+
+    gc(&repo, &GcOptions::with_reflog_policy(1_700_000_000, false))
+        .expect_err("full gc must not accept a missing root");
+}
+
+#[test]
+fn prune_rejects_missing_reachable_blob() {
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-b", "main"]);
+    std::fs::write(dir.path().join("f.txt"), b"blob that goes missing\n").expect("write");
+    git(dir.path(), &["add", "f.txt"]);
+    git(dir.path(), &["commit", "-m", "c"]);
+    let repo =
+        Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open repo");
+    let blob = grit_lib::objects::hash::hash_object(
+        grit_lib::objects::HashAlgo::Sha1,
+        ObjectKind::Blob,
+        b"blob that goes missing\n",
+    )
+    .expect("blob id");
+    let hex = blob.to_hex();
+    std::fs::remove_file(repo.odb().objects_dir().join(&hex[..2]).join(&hex[2..]))
+        .expect("drop blob");
+
+    let roots = grit_lib::refs::gc::collect_referenced_object_roots(repo.git_dir()).expect("roots");
+    let err = grit_lib::refs::gc::prune_loose_unreachable(repo.odb(), &roots, None)
+        .expect_err("missing blob");
+    assert!(
+        matches!(err, Error::ObjectNotFound(ref hex) if *hex == blob.to_hex()),
+        "{err:?}"
+    );
+}
+
+/// Old trees may record directories with non-canonical modes such as `40755`; prune must
+/// still walk them (Git classifies entries by their file type bits).
+#[test]
+fn prune_walks_trees_with_non_canonical_directory_modes() {
+    let dir = TempDir::new().expect("tempdir");
+    let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+    let odb = repo.odb();
+    let blob = odb.write(ObjectKind::Blob, b"kept\n").expect("blob");
+    let mut sub = b"100644 kept.txt\0".to_vec();
+    sub.extend_from_slice(blob.as_bytes());
+    let sub = odb.write(ObjectKind::Tree, &sub).expect("subtree");
+    let mut root = b"40755 dir\0".to_vec();
+    root.extend_from_slice(sub.as_bytes());
+    let root = odb.write(ObjectKind::Tree, &root).expect("root tree");
+    let commit = format!(
+        "tree {root}\nauthor A <a@example.com> 1 +0000\ncommitter A <a@example.com> 1 +0000\n\nm\n"
+    );
+    let commit = odb
+        .write(ObjectKind::Commit, commit.as_bytes())
+        .expect("commit");
+
+    let stats = grit_lib::refs::gc::prune_loose_unreachable(odb, &[commit], None).expect("prune");
+    assert_eq!(stats.pruned, 0, "{stats:?}");
+    assert!(
+        odb.exists(&blob),
+        "blob under a 40755 directory must survive prune"
+    );
+}

@@ -31,7 +31,10 @@ use crate::diff::bloom::BloomFilterSettings;
 use crate::environment::Environment;
 use crate::error::{ConfigError, Error, Result};
 use crate::fsck as repo_fsck;
-use crate::gc::{prune_loose_unreachable, reachability_closure_for_roots, PruneStats};
+use crate::gc::{
+    prune_loose_unreachable, prune_loose_unreachable_after_repack, reachability_closure_for_roots,
+    PruneStats,
+};
 use crate::git_date::approx::approxidate_careful_at;
 use crate::index_pack::{install_pack_bytes, IngestPackOptions};
 use crate::midx::{
@@ -819,11 +822,14 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         } else {
             UnreachablePackRetention::DropAll
         };
-        let reachable = oid_hash_set_from(&reachability_closure_for_roots(odb, &roots)?);
         let _ = odb.loosen_unreachable_from_superseded_packs(
             &pack_dir,
             &ingested.pack_path,
-            &reachable,
+            || {
+                Ok(oid_hash_set_from(&reachability_closure_for_roots(
+                    odb, &roots,
+                )?))
+            },
             retention,
         )?;
 
@@ -849,7 +855,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
     if !opts.keep_unreachable {
         let keep_newer_than = opts.prune_older_than.map(offset_to_system_time);
         let prune_start = Instant::now();
-        unreachable_loose = prune_loose_unreachable(odb, &roots, keep_newer_than)?;
+        unreachable_loose = prune_loose_unreachable_after_repack(odb, &roots, keep_newer_than)?;
         unreachable_prune_ms = prune_start.elapsed().as_millis() as u64;
         unreachable_prune_ran = true;
     }

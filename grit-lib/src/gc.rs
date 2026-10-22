@@ -20,7 +20,7 @@ use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 use std::time::SystemTime;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::refs::store::{Expected, RawRef, RefUpdate, RefUpdateFlags};
@@ -66,12 +66,41 @@ pub fn prune_loose_unreachable(
     keep_newer_than: Option<SystemTime>,
 ) -> Result<PruneStats> {
     odb.require_files_primary("gc")?;
-    // 1. Full reachability closure from the roots.
+    let loose = odb.enumerate_local_loose_objects()?;
+    prune_unreachable_from(odb, loose, reachable_roots, keep_newer_than)
+}
+
+/// [`prune_loose_unreachable`] right after a repack built from the same `reachable_roots`.
+///
+/// Building that pack already read every reachable object, so when no loose objects
+/// remain there is nothing to delete and the reachability walk is skipped.
+///
+/// # Errors
+///
+/// Same as [`prune_loose_unreachable`] whenever loose objects remain.
+pub(crate) fn prune_loose_unreachable_after_repack(
+    odb: &Odb,
+    reachable_roots: &[ObjectId],
+    keep_newer_than: Option<SystemTime>,
+) -> Result<PruneStats> {
+    odb.require_files_primary("gc")?;
+    let loose = odb.enumerate_local_loose_objects()?;
+    if loose.is_empty() {
+        return Ok(PruneStats::default());
+    }
+    prune_unreachable_from(odb, loose, reachable_roots, keep_newer_than)
+}
+
+fn prune_unreachable_from(
+    odb: &Odb,
+    loose: Vec<(ObjectId, std::path::PathBuf)>,
+    reachable_roots: &[ObjectId],
+    keep_newer_than: Option<SystemTime>,
+) -> Result<PruneStats> {
+    let mut stats = PruneStats::default();
     let reachable = reachable_closure(odb, reachable_roots)?;
 
-    // 2. Enumerate loose objects and delete the unreachable, sufficiently-old ones.
-    let mut stats = PruneStats::default();
-    for (oid, path) in odb.enumerate_local_loose_objects()? {
+    for (oid, path) in loose {
         if reachable.contains(&oid) {
             stats.kept += 1;
             continue;
@@ -137,9 +166,21 @@ pub(crate) fn reachability_closure_for_roots(
 /// Compute the full object closure reachable from `roots` (commits → parents and
 /// tree, trees → entries, tags → target). Mirrors the reachability walk used by
 /// the transfer pack builder, but specialized for prune (no exclusion set).
+///
+/// Blobs named by trees are checked for existence but not read: they link to nothing.
+///
+/// # Errors
+///
+/// [`Error::ObjectNotFound`] when a reachable object is missing, and read or parse
+/// errors for the objects that are walked.
+/// File type bits of a tree entry mode, and the value that marks a directory.
+const S_IFMT: u32 = 0o170000;
+const S_IFDIR: u32 = 0o040000;
+
 fn reachable_closure(odb: &Odb, roots: &[ObjectId]) -> Result<HashSet<ObjectId>> {
     let mut seen: HashSet<ObjectId> = HashSet::new();
     let mut queue: VecDeque<ObjectId> = VecDeque::new();
+    let mut blobs: Vec<ObjectId> = Vec::new();
 
     for &root in roots {
         if seen.insert(root) {
@@ -167,8 +208,15 @@ fn reachable_closure(odb: &Odb, roots: &[ObjectId]) -> Result<HashSet<ObjectId>>
                     if entry.mode == 0o160000 {
                         continue;
                     }
-                    if seen.insert(entry.oid) {
+                    if !seen.insert(entry.oid) {
+                        continue;
+                    }
+                    // Classify by file type bits, as Git does, so non-canonical directory
+                    // modes from old trees still count as trees.
+                    if entry.mode & S_IFMT == S_IFDIR {
                         queue.push_back(entry.oid);
+                    } else {
+                        blobs.push(entry.oid);
                     }
                 }
             }
@@ -182,7 +230,25 @@ fn reachable_closure(odb: &Odb, roots: &[ObjectId]) -> Result<HashSet<ObjectId>>
         }
     }
 
+    require_objects_exist(odb, &blobs)?;
     Ok(seen)
+}
+
+/// Fail with [`Error::ObjectNotFound`] for the first of `oids` that does not exist.
+///
+/// Local pack indexes are loaded once and searched directly: going through
+/// [`Odb::exists`] or [`Odb::read_info`] per object revalidates the pack directory
+/// or probes for a loose file each time, which dominates prune on large trees.
+fn require_objects_exist(odb: &Odb, oids: &[ObjectId]) -> Result<()> {
+    let indexes =
+        crate::pack::read_local_pack_indexes_cached(odb.objects_dir()).unwrap_or_default();
+    for oid in oids {
+        let packed = indexes.iter().any(|idx| idx.find_position(oid).is_some());
+        if !packed && !odb.exists(oid) {
+            return Err(Error::ObjectNotFound(oid.to_hex()));
+        }
+    }
+    Ok(())
 }
 
 /// Enumerate the loose objects physically present in `odb`'s objects directory,
@@ -652,5 +718,61 @@ mod update_refs_tests {
         assert!(crate::refs::resolve_ref(&git_dir, "refs/heads/conflict/child").is_err());
 
         refs::set_test_inject_ref_store_batch_pause_after_apply(0, &git_dir, None);
+    }
+}
+
+#[cfg(test)]
+mod prune_walk_tests {
+    use super::*;
+    use crate::maintenance::{repack, RepackOptions};
+    use crate::repo::init_repository;
+    use tempfile::TempDir;
+
+    #[test]
+    fn prune_checks_packed_blobs_without_per_object_lookups() {
+        let tmp = TempDir::new().expect("tempdir");
+        let repo = init_repository(
+            tmp.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let odb = repo.odb();
+        let mut tree = Vec::new();
+        for i in 0..50 {
+            let blob = odb
+                .write(ObjectKind::Blob, format!("blob {i}\n").as_bytes())
+                .expect("blob");
+            tree.extend_from_slice(format!("100644 f{i:02}\0").as_bytes());
+            tree.extend_from_slice(blob.as_bytes());
+        }
+        let tree = odb.write(ObjectKind::Tree, &tree).expect("tree");
+        let commit = format!(
+            "tree {tree}\nauthor A <a@example.com> 1 +0000\ncommitter A <a@example.com> 1 +0000\n\nm\n"
+        );
+        let commit = odb
+            .write(ObjectKind::Commit, commit.as_bytes())
+            .expect("commit");
+        std::fs::write(
+            repo.git_dir().join("refs/heads/main"),
+            format!("{}\n", commit.to_hex()),
+        )
+        .expect("ref");
+        repack(&repo, &RepackOptions::default()).expect("repack");
+        assert!(odb
+            .enumerate_local_loose_objects()
+            .expect("loose")
+            .is_empty());
+
+        odb.reset_exists_probe();
+        let stats = prune_loose_unreachable(odb, &[commit], None).expect("prune");
+        assert_eq!(stats, PruneStats::default());
+        assert_eq!(
+            odb.exists_probe_count(),
+            0,
+            "packed blobs must be checked against the pack indexes, not one lookup each"
+        );
     }
 }
