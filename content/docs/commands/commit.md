@@ -22,7 +22,7 @@ grit commit --amend [-m <message>]
 
 ## Description
 
-By default, `grit commit` **auto-stages** every change in the working tree (modified, deleted and untracked files) and records a new commit on the current branch. That matches `commit.autoStage=true` (the default). Set `commit.autoStage=false` in config to make the default commit only what is already staged (same as passing `--staged`).
+By default, `grit commit` **auto-stages** every change in the working tree (modified, deleted and untracked files) and records a new commit on the current branch.
 
 Use **`--staged`** to commit the index as-is without auto-staging (Git’s `git commit` without `-a`). Use **`-a` / `--all`** to force auto-staging even when `commit.autoStage=false`.
 
@@ -41,7 +41,9 @@ $ grit config --global user.name "Your Name"
 $ grit config --global user.email "you@example.com"
 ```
 
-To set the recorded time, use the `GIT_AUTHOR_DATE` and `GIT_COMMITTER_DATE` environment variables. On amend, the author line is taken from the commit being replaced, not from a fresh author identity.
+To set the recorded time, use the `GIT_AUTHOR_DATE` and `GIT_COMMITTER_DATE` environment variables, or pass `--date` for the author timestamp on this commit (Git date formats, RFC 3339, `@epoch`, and the same loose strings Git accepts). On amend, the author line is taken from the commit being replaced unless you pass `--author` or `--reset-author`.
+
+Repeat `--trailer key=value` (or `key: value`) to append trailers the same way `git interpret-trailers` would. `-s` / `--signoff` adds a `Signed-off-by` line for the committer. `--reset-author` sets the author to the committer with a fresh author date (also when amending). `-C` / `--reuse-message <commit>` reuses that commit's message and author; it is a copy and gets a new change id. `-S` / `--gpg-sign` and `--no-gpg-sign` override `commit.gpgsign` for one commit.
 
 When `commit.gpgsign` is true (or `commit.gpgSign`), `grit commit` signs the new commit object the same way Git does: OpenPGP and X.509 via your configured `gpg`/`gpgsm` program, or SSH via `ssh-keygen -Y sign` when `gpg.format` is `ssh`. Signing uses `user.signingkey` and the same `gpg.*` settings Git reads. [`grit merge`](../merge/) and [`grit pick`](../pick/) honor the same policy when they create commits.
 
@@ -70,15 +72,8 @@ Every commit `grit commit` creates gets a `change-id` header (reverse-hex by def
 | `-a`, `--all` | Stage every change first, then commit. Conflicts with `--staged` and path arguments. |
 | `--staged` | Commit only what is already in the index (no auto-stage). Conflicts with `-a` and path arguments. |
 | `--pathspec-from-file`, `--pathspec-file-nul` | Same as on [`grit add`](../add/): read pathspecs from a file; combine with trailing `PATH` arguments. |
-| `<path>…` | After `--`, limit the commit to these paths (partial commit). |
 | `--amend` | Replace the tip commit on the current branch. |
 | `--allow-empty` | Record a commit even when staged content matches the parent tree (empty tree change). |
-
-### Config
-
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `commit.autoStage` | `true` | When true, `grit commit` with no scope flags auto-stages the whole worktree before committing. When false, the default is `--staged`. |
 
 ## Examples
 

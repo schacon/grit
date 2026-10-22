@@ -709,10 +709,41 @@ enum Command {
     /// Stage every change and record a new commit.
     Commit {
         /// Commit message (you can also pass it with -m).
+        #[arg(conflicts_with = "message_file")]
         message: Option<String>,
         /// Commit message.
-        #[arg(short = 'm', long = "message", conflicts_with = "message")]
+        #[arg(short = 'm', long = "message", conflicts_with_all = ["message", "message_file"])]
         message_flag: Option<String>,
+        /// Read the commit message from a file (`-` for stdin).
+        #[arg(short = 'F', long = "message-file", conflicts_with_all = ["message", "message_flag"])]
+        message_file: Option<String>,
+        /// Author for this commit (`Name <email>`); committer is unchanged.
+        #[arg(long = "author")]
+        author_override: Option<String>,
+        /// Override the author date (Git date formats, RFC 3339, `@epoch`, …).
+        #[arg(long = "date")]
+        author_date: Option<String>,
+        /// Append a commit trailer (`key=value` or `key: value`); repeat for multiple trailers.
+        #[arg(long = "trailer", value_name = "KEY=VALUE")]
+        trailers: Vec<String>,
+        /// Append a `Signed-off-by` trailer for the committer.
+        #[arg(short = 's', long = "signoff")]
+        signoff: bool,
+        /// Set the author to the committer with a fresh author date.
+        #[arg(long = "reset-author")]
+        reset_author: bool,
+        /// Reuse the log message and author from a commit (`-C` / `--reuse-message`).
+        #[arg(short = 'C', long = "reuse-message", value_name = "COMMIT")]
+        reuse_message: Option<String>,
+        /// Sign the commit with the configured signing key.
+        #[arg(short = 'S', long = "gpg-sign")]
+        gpg_sign: bool,
+        /// Do not sign this commit, even when `commit.gpgsign` is enabled.
+        #[arg(long = "no-gpg-sign", conflicts_with = "gpg_sign")]
+        no_gpg_sign: bool,
+        /// Skip the `pre-commit` and `commit-msg` hooks.
+        #[arg(long = "no-verify")]
+        no_verify: bool,
         /// Stage every change first, then commit. This is the default when `commit.autoStage` is true.
         #[arg(
             short = 'a',
@@ -1444,6 +1475,16 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
         Command::Commit {
             message,
             message_flag,
+            message_file,
+            author_override,
+            author_date,
+            trailers,
+            signoff,
+            reset_author,
+            reuse_message,
+            gpg_sign,
+            no_gpg_sign,
+            no_verify,
             all,
             staged,
             amend,
@@ -1453,6 +1494,16 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
         } => emit(
             &commands::commit::run(
                 message.or(message_flag),
+                message_file,
+                author_override,
+                author_date,
+                trailers,
+                signoff,
+                reset_author,
+                reuse_message,
+                gpg_sign,
+                no_gpg_sign,
+                no_verify,
                 dry_run,
                 amend,
                 allow_empty,

@@ -67,6 +67,7 @@ impl<'repo> References<'repo> {
     ///     amend: false,
     ///     assume_worktree_synced: false,
     ///     skip_pre_commit_tree_match: false,
+    ///     ..Default::default()
     /// };
     /// let _ = create_commit(&repo, &req, &mut NullProgress)?;
     /// let main = RefName::try_from("refs/heads/main").expect("valid ref");
@@ -182,6 +183,7 @@ impl<'repo> References<'repo> {
     ///     amend: false,
     ///     assume_worktree_synced: false,
     ///     skip_pre_commit_tree_match: false,
+    ///     ..Default::default()
     /// };
     /// let commit = create_commit(&repo, &req, &mut NullProgress)?.oid;
     /// let name = RefName::try_from("refs/heads/handle-demo").expect("valid ref");

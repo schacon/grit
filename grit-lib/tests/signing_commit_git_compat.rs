@@ -92,7 +92,7 @@ fn create_commit_ssh_signs_when_gpgsign_true() {
             assume_worktree_synced: false,
             skip_pre_commit_tree_match: false,
             staged_change_count: None,
-            dry_run: false,
+            ..Default::default()
         },
         &mut NullProgress,
     )
@@ -181,7 +181,7 @@ fn amend_unsigned_drops_signed_tip_signature() {
             assume_worktree_synced: false,
             skip_pre_commit_tree_match: false,
             staged_change_count: None,
-            dry_run: false,
+            ..Default::default()
         },
         &mut NullProgress,
     )
@@ -202,7 +202,7 @@ fn amend_unsigned_drops_signed_tip_signature() {
             assume_worktree_synced: false,
             skip_pre_commit_tree_match: false,
             staged_change_count: None,
-            dry_run: false,
+            ..Default::default()
         },
         &mut NullProgress,
     )
@@ -277,7 +277,7 @@ fn amend_resigns_with_single_fresh_signature() {
             assume_worktree_synced: false,
             skip_pre_commit_tree_match: false,
             staged_change_count: None,
-            dry_run: false,
+            ..Default::default()
         },
         &mut NullProgress,
     )
@@ -297,7 +297,7 @@ fn amend_resigns_with_single_fresh_signature() {
             assume_worktree_synced: false,
             skip_pre_commit_tree_match: false,
             staged_change_count: None,
-            dry_run: false,
+            ..Default::default()
         },
         &mut NullProgress,
     )

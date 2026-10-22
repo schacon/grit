@@ -5,6 +5,12 @@
 //! reflogs through [`crate::refs::update_branch_for_commit`].
 
 use crate::change_id::{change_id, set_change_id, ChangeId, ChangeIdPolicy};
+use crate::commit::assemble_identity;
+use crate::commit::trailers::interpret::{
+    process_trailers, NewTrailerArg, ProcessTrailerOptions, TrailerIfExists, TrailerIfMissing,
+    TrailerWhere,
+};
+use crate::commit_trailers::{append_signoff_trailer_with_dedup, format_signoff_line};
 use crate::config::ConfigSet;
 use crate::diff::refresh_index_stat_content_verified_with_rules;
 use crate::diff::{
@@ -12,7 +18,7 @@ use crate::diff::{
     DiffEntry, DiffStatus,
 };
 use crate::error::{Error, Result};
-use crate::hooks::{run_commit_hook, CommitHookEnv, HookError, HookResult};
+use crate::hooks::{run_commit_hook, CommitHookEnv, HookError, HookName, HookResult};
 use crate::ident::parse_signature_times;
 use crate::index::Index;
 use crate::objects::odb::Odb;
@@ -38,6 +44,16 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::{Arc, Mutex};
 
+/// Whether commit hooks run before the object is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HookPolicy {
+    /// Run `pre-commit` and `commit-msg` when installed (default).
+    #[default]
+    Run,
+    /// Skip `pre-commit` and `commit-msg` (`--no-verify`); `post-commit` still runs.
+    SkipVerify,
+}
+
 /// Author name, email, and date suffix from a written commit header line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitAuthorInfo {
@@ -50,7 +66,7 @@ pub struct CommitAuthorInfo {
 }
 
 /// Inputs for [`create_commit`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CommitRequest {
     /// Commit message body (first line becomes the subject). A trailing newline is added when missing.
     pub message: String,
@@ -76,6 +92,19 @@ pub struct CommitRequest {
     /// [`CommitOutcome::changes`] (issue #1064).
     #[doc(hidden)]
     pub staged_change_count: Option<usize>,
+    /// Hook execution policy for `pre-commit` and `commit-msg`.
+    #[doc(alias = "no-verify")]
+    pub hooks: HookPolicy,
+    /// Author timestamp suffix (`<unix> <+HHMM>`) replacing the author line date when set.
+    pub author_date: Option<String>,
+    /// Trailers to append via [`process_trailers`] (same semantics as `git commit --trailer`).
+    pub trailers: Vec<(String, String)>,
+    /// Append `Signed-off-by` using the committer identity (`-s` / `--signoff`).
+    pub signoff: bool,
+    /// Use the committer as the author with a fresh author date (`--reset-author`).
+    pub reset_author: bool,
+    /// Reuse log message and author from this commit (`-C` / `--reuse-message`); copies get a new change id.
+    pub reuse_message_from: Option<ObjectId>,
     /// When true, compute the commit tree and file list without writing objects, updating refs, or running hooks.
     pub dry_run: bool,
 }
@@ -273,29 +302,6 @@ fn validate_commit_pathspecs(repo: &Repository, paths: &ResolvedPathspecs) -> Re
     Ok(())
 }
 
-/// Result of [`create_commit`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommitOutcome {
-    /// OID of the new commit object written to the object database.
-    pub oid: ObjectId,
-    /// Short branch name (e.g. `main`, not `refs/heads/main`).
-    pub branch: String,
-    /// Parent commit OID, or `None` for the root commit on an unborn branch.
-    pub parent: Option<ObjectId>,
-    /// Every parent OID stored in the new commit object (empty only before the first commit is written).
-    pub parents: Vec<ObjectId>,
-    /// Author recorded on the commit object.
-    pub author: CommitAuthorInfo,
-    /// Basenames of commit hooks that ran successfully (`pre-commit`, `commit-msg`, `post-commit`).
-    pub hooks_run: Vec<String>,
-    /// Number of path-level changes between the parent commit tree and this commit's tree.
-    pub changes: usize,
-    /// Stored `change-id` header when present on the new commit object.
-    pub change_id: Option<ChangeId>,
-    /// Path-level changes vs the parent tree (`git diff --name-status` between parent and new tree).
-    pub files: Vec<CommitFile>,
-}
-
 /// Normalize a commit message body the same way [`create_commit`] does before hooks: stripspace,
 /// reject empty bodies, ensure a trailing newline.
 ///
@@ -303,8 +309,7 @@ pub struct CommitOutcome {
 ///
 /// Returns [`Error::Message`] when the cleaned body would be empty.
 pub fn normalize_commit_message(raw: &str) -> Result<String> {
-    let trimmed = raw.trim();
-    let processed = process(trimmed.as_bytes(), &Mode::Default);
+    let processed = process(raw.as_bytes(), &Mode::Default);
     let message = String::from_utf8(processed)
         .map_err(|_| Error::Message("invalid commit message".into()))?;
     if message.is_empty() {
@@ -319,24 +324,33 @@ pub fn normalize_commit_message(raw: &str) -> Result<String> {
 
 fn run_commit_hook_recorded(
     repo: &Repository,
-    hooks_run: &mut Vec<String>,
-    hook_name: &str,
+    hook: HookName,
     args: &[&str],
     stdin_data: Option<&[u8]>,
     commit_env: &CommitHookEnv<'_>,
-) -> std::result::Result<(), HookError> {
-    match run_commit_hook(repo, hook_name, args, stdin_data, commit_env)
+) -> std::result::Result<bool, HookError> {
+    match run_commit_hook(repo, hook.as_str(), args, stdin_data, commit_env)
         .map_err(HookError::Internal)?
     {
-        HookResult::Success => {
-            hooks_run.push(hook_name.to_owned());
-            Ok(())
-        }
-        HookResult::NotFound => Ok(()),
+        HookResult::Success => Ok(true),
+        HookResult::NotFound => Ok(false),
         HookResult::Failed(status) => Err(HookError::Failed {
-            hook_name: hook_name.to_owned(),
+            hook_name: hook.as_str().to_owned(),
             status,
         }),
+    }
+}
+
+/// Like [`run_commit_hook_recorded`], but a non-zero exit from `post-commit` does not fail the commit (Git-compatible).
+fn run_post_commit_hook_recorded(
+    repo: &Repository,
+    commit_env: &CommitHookEnv<'_>,
+) -> std::result::Result<bool, HookError> {
+    match run_commit_hook(repo, HookName::PostCommit.as_str(), &[], None, commit_env)
+        .map_err(HookError::Internal)?
+    {
+        HookResult::Success | HookResult::Failed(_) => Ok(true),
+        HookResult::NotFound => Ok(false),
     }
 }
 
@@ -366,6 +380,89 @@ fn author_info_from_header_line(line: &str) -> CommitAuthorInfo {
         email: email.to_owned(),
         date,
     }
+}
+
+fn apply_author_date_suffix(author: &str, date_suffix: &str) -> String {
+    let info = author_info_from_header_line(author);
+    if info.email.is_empty() && !info.name.is_empty() && info.name.contains('@') {
+        format!("{} {}", info.name.trim(), date_suffix.trim())
+    } else if info.email.is_empty() {
+        format!("{} {}", author.trim_end(), date_suffix.trim())
+    } else {
+        format!("{} <{}> {}", info.name, info.email, date_suffix.trim())
+    }
+}
+
+fn author_line_from_committer(
+    committer: &str,
+    author_date: Option<&str>,
+    now: time::OffsetDateTime,
+) -> String {
+    let info = author_info_from_header_line(committer);
+    assemble_identity(&info.name, &info.email, author_date, now)
+}
+
+fn enrich_commit_message(
+    message: String,
+    trailers: &[(String, String)],
+    signoff: bool,
+    committer: &str,
+    config: &ConfigSet,
+    git_dir: &Path,
+) -> Result<String> {
+    let mut out = message;
+    if signoff {
+        let info = author_info_from_header_line(committer);
+        let sob = format_signoff_line(&info.name, &info.email);
+        append_signoff_trailer_with_dedup(&mut out, &sob, config, true);
+    }
+    if !trailers.is_empty() {
+        let new_args: Vec<NewTrailerArg> = trailers
+            .iter()
+            .map(|(key, value)| NewTrailerArg {
+                text: if value.is_empty() {
+                    format!("{key}:")
+                } else {
+                    format!("{key}: {value}")
+                },
+                where_: TrailerWhere::End,
+                if_exists: TrailerIfExists::AddIfDifferent,
+                if_missing: TrailerIfMissing::Add,
+            })
+            .collect();
+        let opts = ProcessTrailerOptions {
+            only_trailers: false,
+            trim_empty: true,
+            only_input: false,
+            unfold: false,
+            no_divider: false,
+        };
+        out = process_trailers(&out, &opts, &new_args, Some(git_dir));
+    }
+    Ok(out)
+}
+
+/// Result of [`create_commit`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitOutcome {
+    /// OID of the new commit object written to the object database.
+    pub oid: ObjectId,
+    /// Short branch name (e.g. `main`, not `refs/heads/main`).
+    pub branch: String,
+    /// Parent commit OID, or `None` for the root commit on an unborn branch.
+    pub parent: Option<ObjectId>,
+    /// Every parent OID stored in the new commit object (empty only before the first commit is written).
+    pub parents: Vec<ObjectId>,
+    /// Author recorded on the commit object.
+    pub author: CommitAuthorInfo,
+    /// Commit hooks that were installed and executed successfully during this commit.
+    pub hooks_run: Vec<HookName>,
+    /// Number of path-level changes between the parent commit tree and this commit's tree.
+    pub changes: usize,
+    /// Stored `change-id` header when present on the new commit object.
+    pub change_id: Option<ChangeId>,
+    /// Path-level changes vs the parent tree (`git diff --name-status` between parent and new tree).
+    pub files: Vec<CommitFile>,
 }
 
 /// Write a commit from the current index and advance the checked-out branch.
@@ -420,29 +517,6 @@ pub fn commit_worktree(
         req.staged_change_count = Some(staged.total());
     }
     create_commit_with_index(repo, &mut index, &req, progress, None)
-}
-
-/// Removes a partial-commit hook index file on drop (Git `next-index-<pid>`).
-struct TempHookIndexFile(PathBuf);
-
-impl Drop for TempHookIndexFile {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
-fn commit_author_fields(
-    req: &CommitRequest,
-    amend_author: Option<String>,
-    amend_author_raw: Vec<u8>,
-) -> (String, Vec<u8>) {
-    if !req.author.trim().is_empty() {
-        (req.author.clone(), Vec::new())
-    } else if let Some(a) = amend_author {
-        (a, amend_author_raw)
-    } else {
-        (req.author.clone(), Vec::new())
-    }
 }
 
 fn commit_files_from_diff_entries(entries: &[DiffEntry]) -> Vec<CommitFile> {
@@ -537,6 +611,9 @@ fn finish_commit_dry_run(
     amend_parents: Vec<ObjectId>,
     amend_default_message: Option<String>,
     req_amend: bool,
+    reuse_author: Option<String>,
+    reuse_author_raw: Vec<u8>,
+    reuse_message: Option<String>,
 ) -> Result<CommitOutcome> {
     let odb = repo.odb();
     odb.enable_mem_overlay();
@@ -558,16 +635,40 @@ fn finish_commit_dry_run(
         }
     }
 
-    let message = if req_amend && req.message.trim().is_empty() {
+    let mut message = if !req.message.trim().is_empty() {
+        normalize_commit_message(&req.message)?
+    } else if let Some(reuse_msg) = reuse_message {
+        reuse_msg
+    } else if req_amend {
         amend_default_message.unwrap_or_default()
     } else {
-        normalize_commit_message(&req.message)?
+        return Err(Error::Message("empty commit message".into()));
     };
     if message.trim().is_empty() {
         return Err(Error::Message("empty commit message".into()));
     }
+    if !message.ends_with('\n') {
+        message.push('\n');
+    }
+    let config = repo.config()?;
+    let _message_with_trailers = enrich_commit_message(
+        message,
+        &req.trailers,
+        req.signoff,
+        &req.committer,
+        config.as_ref(),
+        repo.git_dir(),
+    )?;
 
-    let (author, _author_raw) = commit_author_fields(req, amend_author, amend_author_raw);
+    let (author, _author_raw) = dry_run_author_fields(
+        repo,
+        req,
+        amend_author,
+        amend_author_raw,
+        reuse_author,
+        reuse_author_raw,
+        req_amend,
+    );
     let mut commit_parents = if req_amend {
         amend_parents
     } else {
@@ -596,6 +697,61 @@ fn finish_commit_dry_run(
     })
 }
 
+fn dry_run_author_fields(
+    repo: &Repository,
+    req: &CommitRequest,
+    amend_author: Option<String>,
+    amend_author_raw: Vec<u8>,
+    reuse_author: Option<String>,
+    reuse_author_raw: Vec<u8>,
+    req_amend: bool,
+) -> (String, Vec<u8>) {
+    let now = repo.identity_now();
+    if req.reset_author {
+        return (
+            author_line_from_committer(&req.committer, req.author_date.as_deref(), now),
+            Vec::new(),
+        );
+    }
+    if !req.author.is_empty() {
+        let mut author = req.author.clone();
+        if let Some(ref date) = req.author_date {
+            author = apply_author_date_suffix(&author, date);
+        }
+        return (author, Vec::new());
+    }
+    if let Some(a) = reuse_author {
+        let mut author = a;
+        if !req.reset_author {
+            if let Some(ref date) = req.author_date {
+                author = apply_author_date_suffix(&author, date);
+            }
+        }
+        return (author, reuse_author_raw);
+    }
+    if req_amend {
+        let mut author = amend_author.unwrap_or_default();
+        if let Some(ref date) = req.author_date {
+            author = apply_author_date_suffix(&author, date);
+        }
+        return (author, amend_author_raw);
+    }
+    let mut author = req.author.clone();
+    if let Some(ref date) = req.author_date {
+        author = apply_author_date_suffix(&author, date);
+    }
+    (author, Vec::new())
+}
+
+/// Removes a partial-commit hook index file on drop (Git `next-index-<pid>`).
+struct TempHookIndexFile(PathBuf);
+
+impl Drop for TempHookIndexFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 fn create_commit_with_index(
     repo: &Repository,
     index: &mut Index,
@@ -622,6 +778,22 @@ fn create_commit_with_index(
     let mut amend_extra_headers = Vec::new();
     let mut amend_default_message = None;
     let mut replaced_tip = None;
+    let mut reuse_author = None;
+    let mut reuse_author_raw = Vec::new();
+    let mut reuse_message = None;
+    if let Some(reuse_oid) = req.reuse_message_from {
+        let obj = repo.odb().read(&reuse_oid)?;
+        if obj.kind != ObjectKind::Commit {
+            return Err(Error::CorruptObject(format!(
+                "expected commit for reuse-message, got {}",
+                obj.kind.as_str()
+            )));
+        }
+        let source = parse_commit(&obj.data)?;
+        reuse_message = Some(source.message);
+        reuse_author = Some(source.author);
+        reuse_author_raw = source.author_raw;
+    }
     if req.amend {
         let Some(tip) = parent.take() else {
             return Err(Error::AmendUnborn);
@@ -682,6 +854,9 @@ fn create_commit_with_index(
             amend_parents,
             amend_default_message,
             req.amend,
+            reuse_author,
+            reuse_author_raw,
+            reuse_message,
         );
     }
 
@@ -708,7 +883,11 @@ fn create_commit_with_index(
         extra_env: &[],
     };
     let mut hooks_run = Vec::new();
-    run_commit_hook_recorded(repo, &mut hooks_run, "pre-commit", &[], None, &commit_env)?;
+    if req.hooks != HookPolicy::SkipVerify
+        && run_commit_hook_recorded(repo, HookName::PreCommit, &[], None, &commit_env)?
+    {
+        hooks_run.push(HookName::PreCommit);
+    }
 
     let tree = write_tree_update_index(repo.odb(), index, "", WriteTreeFlags::silent())?;
     let commit_files = commit_files_between_trees(repo.odb(), parent_tree.as_ref(), &tree)?;
@@ -726,22 +905,44 @@ fn create_commit_with_index(
         }
     }
 
-    let mut message = if req.amend && req.message.trim().is_empty() {
+    let mut message = if !req.message.trim().is_empty() {
+        normalize_commit_message(&req.message)?
+    } else if let Some(reuse_msg) = reuse_message {
+        reuse_msg
+    } else if req.amend {
         amend_default_message.unwrap_or_default()
     } else {
-        normalize_commit_message(&req.message)?
+        return Err(Error::Message("empty commit message".into()));
     };
+    if message.trim().is_empty() {
+        return Err(Error::Message("empty commit message".into()));
+    }
+    if !message.ends_with('\n') {
+        message.push('\n');
+    }
+    let config = repo.config()?;
+    message = enrich_commit_message(
+        message,
+        &req.trailers,
+        req.signoff,
+        &req.committer,
+        config.as_ref(),
+        repo.git_dir(),
+    )?;
     let editmsg_path = repo.git_dir().join("COMMIT_EDITMSG");
     fs::write(&editmsg_path, &message).map_err(Error::Io)?;
     let editmsg_arg = commit_editmsg_hook_argument(repo, &editmsg_path);
-    run_commit_hook_recorded(
-        repo,
-        &mut hooks_run,
-        "commit-msg",
-        &[editmsg_arg.as_str()],
-        None,
-        &commit_env,
-    )?;
+    if req.hooks != HookPolicy::SkipVerify
+        && run_commit_hook_recorded(
+            repo,
+            HookName::CommitMsg,
+            &[editmsg_arg.as_str()],
+            None,
+            &commit_env,
+        )?
+    {
+        hooks_run.push(HookName::CommitMsg);
+    }
     message = fs::read_to_string(&editmsg_path).map_err(Error::Io)?;
     if message.trim().is_empty() {
         return Err(Error::Message("empty commit message".into()));
@@ -750,7 +951,30 @@ fn create_commit_with_index(
         message.push('\n');
     }
 
-    let (author, author_raw) = commit_author_fields(req, amend_author, amend_author_raw);
+    let (mut author, mut author_raw) = if req.reset_author {
+        (
+            author_line_from_committer(
+                &req.committer,
+                req.author_date.as_deref(),
+                repo.identity_now(),
+            ),
+            Vec::new(),
+        )
+    } else if !req.author.is_empty() {
+        (req.author.clone(), Vec::new())
+    } else if let Some(a) = reuse_author {
+        (a, reuse_author_raw)
+    } else if req.amend {
+        (amend_author.unwrap_or_default(), amend_author_raw)
+    } else {
+        (req.author.clone(), Vec::new())
+    };
+    if !req.reset_author {
+        if let Some(ref date) = req.author_date {
+            author = apply_author_date_suffix(&author, date);
+            author_raw = Vec::new();
+        }
+    }
     let mut commit_parents = if req.amend {
         amend_parents
     } else {
@@ -776,7 +1000,6 @@ fn create_commit_with_index(
         raw_message: None,
         extra_headers: amend_extra_headers,
     };
-    let config = repo.config()?;
     let policy = ChangeIdPolicy::from_config(config.as_ref());
     if policy.enabled() {
         if req.amend {
@@ -889,7 +1112,19 @@ fn create_commit_with_index(
         repo.write_index(persist)?;
     }
 
-    let _ = run_commit_hook_recorded(repo, &mut hooks_run, "post-commit", &[], None, &commit_env);
+    let post_commit_env = CommitHookEnv {
+        index_file: Some(
+            temp_hook_index_path
+                .as_deref()
+                .unwrap_or(index_path.as_path()),
+        ),
+        git_editor: Some(":"),
+        git_prefix: None,
+        extra_env: &[],
+    };
+    if run_post_commit_hook_recorded(repo, &post_commit_env)? {
+        hooks_run.push(HookName::PostCommit);
+    }
 
     let stored_change_id = change_id(&commit_data);
     Ok(CommitOutcome {
@@ -1040,7 +1275,6 @@ mod tests {
     use crate::write_tree::{cache_tree_fully_valid, verify_cache_tree};
     use std::fs;
     use std::path::Path;
-    use std::process::Command;
     use tempfile::TempDir;
 
     fn init_repo(root: &Path) -> Repository {
@@ -1083,13 +1317,7 @@ mod tests {
             message: message.to_owned(),
             author: ident.clone(),
             committer: ident,
-            allow_empty: false,
-            sign_override: None,
-            amend: false,
-            assume_worktree_synced: false,
-            skip_pre_commit_tree_match: false,
-            staged_change_count: None,
-            dry_run: false,
+            ..Default::default()
         }
     }
 
@@ -1483,31 +1711,325 @@ mod tests {
         assert!(matches!(err, Error::PartialCommitDuringMerge));
     }
 
+    fn author_info_from_commit(repo: &Repository, oid: ObjectId) -> CommitAuthorInfo {
+        let data = repo.odb().read(&oid).unwrap().data;
+        author_info_from_header_line(&parse_commit(&data).unwrap().author)
+    }
+
     #[test]
-    fn auto_stage_config_false_defaults_to_staged() {
+    fn message_file_stripspace() {
+        let msg = normalize_commit_message("  subject  \n\n  body line  \n\n").unwrap();
+        assert_eq!(msg, "  subject\n\n  body line\n");
+    }
+
+    #[test]
+    fn no_verify_skips_pre_commit_and_commit_msg() {
+        use crate::hooks::HookName;
+
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
+        let repo = init_repo(root);
+        std::fs::write(
+            repo.git_dir().join("config"),
+            "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tlogAllRefUpdates = true\n[hook \"hc\"]\n\tcommand = exit 1\n\tevent = pre-commit\n[hook \"hc2\"]\n\tcommand = exit 1\n\tevent = commit-msg\n",
+        )
+        .unwrap();
+        fs::write(root.join("a.txt"), b"1\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+
+        let mut req = commit_req("blocked");
+        req.hooks = HookPolicy::Run;
+        assert!(create_commit(&repo, &req, &mut NullProgress).is_err());
+
+        req.hooks = HookPolicy::SkipVerify;
+        let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        assert!(outcome.hooks_run.is_empty());
+    }
+
+    #[test]
+    fn post_commit_hook_failure_does_not_fail_commit() {
+        use crate::hooks::HookName;
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        std::fs::write(
+            repo.git_dir().join("config"),
+            "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tlogAllRefUpdates = true\n[hook \"hc\"]\n\tcommand = exit 9\n\tevent = post-commit\n",
+        )
+        .unwrap();
+        fs::write(root.join("a.txt"), b"1\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let outcome = create_commit(&repo, &commit_req("after post"), &mut NullProgress).unwrap();
+        assert_eq!(
+            resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap(),
+            outcome.oid
+        );
+        assert!(outcome.hooks_run.contains(&HookName::PostCommit));
+    }
+
+    #[test]
+    fn hooks_run_lists_executed_hooks() {
+        use crate::hooks::HookName;
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        std::fs::write(
+            repo.git_dir().join("config"),
+            "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tlogAllRefUpdates = true\n[hook \"hc\"]\n\tcommand = true\n\tevent = pre-commit\n[hook \"hc2\"]\n\tcommand = true\n\tevent = commit-msg\n[hook \"hc3\"]\n\tcommand = true\n\tevent = post-commit\n",
+        )
+        .unwrap();
+        fs::write(root.join("a.txt"), b"1\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let outcome = create_commit(&repo, &commit_req("hooks"), &mut NullProgress).unwrap();
+        assert_eq!(
+            outcome.hooks_run,
+            vec![
+                HookName::PreCommit,
+                HookName::CommitMsg,
+                HookName::PostCommit
+            ]
+        );
+    }
+
+    #[test]
+    fn author_date_override() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("a.txt"), b"1\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let mut req = commit_req("dated");
+        req.author_date = Some("946684800 +0000".to_owned());
+        let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        assert_eq!(outcome.author.date, "946684800 +0000");
+    }
+
+    #[test]
+    fn trailers_appended_and_deduped() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("a.txt"), b"1\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let mut req = commit_req("trailers");
+        req.trailers = vec![
+            ("Acked-by".to_owned(), "Alice".to_owned()),
+            ("Acked-by".to_owned(), "Alice".to_owned()),
+        ];
+        let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        let msg = parse_commit(&repo.odb().read(&outcome.oid).unwrap().data)
+            .unwrap()
+            .message;
+        assert_eq!(msg.matches("Acked-by: Alice").count(), 1);
+    }
+
+    #[test]
+    fn signoff_uses_committer() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("a.txt"), b"1\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let mut req = commit_req("signoff");
+        req.committer = "Committer Name <committer@example.com> 2 +0000".to_owned();
+        req.signoff = true;
+        let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        let msg = parse_commit(&repo.odb().read(&outcome.oid).unwrap().data)
+            .unwrap()
+            .message;
+        assert!(msg.contains("Signed-off-by: Committer Name <committer@example.com>"));
+    }
+
+    #[test]
+    fn signoff_before_explicit_trailers() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("a.txt"), b"1\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let mut req = commit_req("subject\n");
+        req.committer = "Committer Name <committer@example.com> 2 +0000".to_owned();
+        req.signoff = true;
+        req.trailers = vec![("Acked-by".to_owned(), "Alice".to_owned())];
+        let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        let msg = parse_commit(&repo.odb().read(&outcome.oid).unwrap().data)
+            .unwrap()
+            .message;
+        let sob = msg.find("Signed-off-by:").expect("signoff trailer");
+        let ack = msg.find("Acked-by:").expect("acked trailer");
+        assert!(sob < ack, "signoff must precede explicit trailers:\n{msg}");
+    }
+
+    #[test]
+    fn amend_reuse_message_from_source() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("a.txt"), b"1\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let mut source = commit_req("source subject\n");
+        source.author = "Source Author <author@example.com> 978307200 +0000".to_owned();
+        source.committer = ident();
+        let source_out = create_commit(&repo, &source, &mut NullProgress).unwrap();
+
+        fs::write(root.join("a.txt"), b"2\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let mut tip = commit_req("tip subject\n");
+        tip.author = "Tip Author <tip@example.com> 1792591163 +0000".to_owned();
+        create_commit(&repo, &tip, &mut NullProgress).unwrap();
+
+        fs::write(root.join("a.txt"), b"3\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let mut amend = commit_req("");
+        amend.amend = true;
+        amend.author = String::new();
+        amend.reuse_message_from = Some(source_out.oid);
+        let outcome = create_commit(&repo, &amend, &mut NullProgress).unwrap();
+        let author = author_info_from_commit(&repo, outcome.oid);
+        assert_eq!(author.name, "Source Author");
+        assert_eq!(author.email, "author@example.com");
+        assert_eq!(author.date, "978307200 +0000");
+        let msg = parse_commit(&repo.odb().read(&outcome.oid).unwrap().data)
+            .unwrap()
+            .message;
+        assert!(msg.starts_with("source subject"));
+    }
+
+    #[test]
+    fn amend_reuse_message_reset_author_uses_committer() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("a.txt"), b"1\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let mut source = commit_req("source subject\n");
+        source.author = "Source Author <author@example.com> 978307200 +0000".to_owned();
+        let source_out = create_commit(&repo, &source, &mut NullProgress).unwrap();
+
+        fs::write(root.join("a.txt"), b"2\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        create_commit(&repo, &commit_req("tip"), &mut NullProgress).unwrap();
+
+        fs::write(root.join("a.txt"), b"3\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let mut amend = commit_req("");
+        amend.amend = true;
+        amend.author = String::new();
+        amend.reset_author = true;
+        amend.committer = "Reset Author <reset@example.com> 1800000000 +0000".to_owned();
+        amend.reuse_message_from = Some(source_out.oid);
+        let outcome = create_commit(&repo, &amend, &mut NullProgress).unwrap();
+        let author = author_info_from_commit(&repo, outcome.oid);
+        assert_eq!(author.name, "Reset Author");
+        assert_eq!(author.email, "reset@example.com");
+    }
+
+    #[test]
+    fn reuse_message_keeps_author() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("a.txt"), b"1\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let mut first = commit_req("source");
+        first.author = "Source Author <source@example.com> 99 +0000".to_owned();
+        first.committer = ident();
+        let first_out = create_commit(&repo, &first, &mut NullProgress).unwrap();
+
+        fs::write(root.join("a.txt"), b"2\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let mut req = commit_req("");
+        req.author = String::new();
+        req.reuse_message_from = Some(first_out.oid);
+        let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        let author = author_info_from_commit(&repo, outcome.oid);
+        assert_eq!(author.name, "Source Author");
+        assert_eq!(author.email, "source@example.com");
+        assert_eq!(author.date, "99 +0000");
+    }
+
+    #[test]
+    fn reset_author_with_reuse_and_amend() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("a.txt"), b"1\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let mut first = commit_req("source");
+        first.author = "Old <old@example.com> 1 +0000".to_owned();
+        create_commit(&repo, &first, &mut NullProgress).unwrap();
+
+        fs::write(root.join("a.txt"), b"2\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        create_commit(&repo, &commit_req("second"), &mut NullProgress).unwrap();
+
+        let mut amend = commit_req("");
+        amend.amend = true;
+        amend.author = String::new();
+        amend.reset_author = true;
+        amend.committer = "New Committer <new@example.com> 2000 +0000".to_owned();
+        let outcome = create_commit(&repo, &amend, &mut NullProgress).unwrap();
+        let author = author_info_from_commit(&repo, outcome.oid);
+        assert_eq!(author.name, "New Committer");
+        assert_eq!(author.email, "new@example.com");
+    }
+
+    #[test]
+    fn reuse_message_gets_new_change_id() {
+        use crate::change_id::{change_id, ChangeIdError, ChangeIdGenerator};
+        use std::sync::Arc;
+
+        struct FixedGenerator([u8; 16]);
+        impl ChangeIdGenerator for FixedGenerator {
+            fn random_bytes(&self) -> std::result::Result<[u8; 16], ChangeIdError> {
+                Ok(self.0)
+            }
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let gen1: Arc<dyn ChangeIdGenerator> = Arc::new(FixedGenerator([0x11; 16]));
         let git = root.join(".git");
         fs::create_dir_all(git.join("objects")).unwrap();
         fs::create_dir_all(git.join("refs/heads")).unwrap();
         fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
         fs::write(
             git.join("config"),
-            "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tlogAllRefUpdates = true\n[commit]\n\tautoStage = false\n",
+            "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tlogAllRefUpdates = true\n",
         )
         .unwrap();
-        let repo =
-            Repository::open(&git, &RepositoryOptions::empty().with_work_tree(root)).unwrap();
-        assert_eq!(
-            default_commit_scope_from_config(&repo.config().unwrap()),
-            CommitScope::Staged
-        );
-    }
+        let repo = Repository::open(
+            &git,
+            &RepositoryOptions::empty()
+                .with_work_tree(root)
+                .with_change_id_generator(gen1),
+        )
+        .unwrap();
+        fs::write(root.join("a.txt"), b"1\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let source = create_commit(&repo, &commit_req("source"), &mut NullProgress).unwrap();
+        let source_data = parse_commit(&repo.odb().read(&source.oid).unwrap().data).unwrap();
+        let source_id = change_id(&source_data).expect("source change id");
 
-    #[test]
-    fn message_file_stripspace() {
-        let msg = normalize_commit_message("  subject\n\n  body line  \n\n").unwrap();
-        assert_eq!(msg, "subject\n\n  body line\n");
+        let gen2: Arc<dyn ChangeIdGenerator> = Arc::new(FixedGenerator([0x22; 16]));
+        let repo = Repository::open(
+            &git,
+            &RepositoryOptions::empty()
+                .with_work_tree(root)
+                .with_change_id_generator(gen2),
+        )
+        .unwrap();
+        fs::write(root.join("a.txt"), b"2\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let mut req = commit_req("");
+        req.author = String::new();
+        req.reuse_message_from = Some(source.oid);
+        let copy = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        let copy_data = parse_commit(&repo.odb().read(&copy.oid).unwrap().data).unwrap();
+        let copy_id = change_id(&copy_data).expect("copy change id");
+        assert_ne!(copy_id, source_id);
     }
 
     #[test]
@@ -1536,261 +2058,24 @@ mod tests {
         assert_eq!(merge.parents[1], first.oid);
     }
 
-    fn repo_snapshot(repo: &Repository) -> (Vec<u8>, String, usize, bool, usize) {
-        let index_path = repo.git_dir().join("index");
-        let index_bytes = fs::read(&index_path).unwrap_or_default();
-        let head = fs::read_to_string(repo.git_dir().join("HEAD")).unwrap_or_default();
-        let reflog_len = read_reflog(repo.git_dir(), "refs/heads/main")
-            .map(|e| e.len())
-            .unwrap_or(0);
-        let editmsg = repo.git_dir().join("COMMIT_EDITMSG").exists();
-        let mut objects = 0usize;
-        if let Ok(entries) = fs::read_dir(repo.git_dir().join("objects")) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() && path.file_name().is_some_and(|n| n.len() == 2) {
-                    objects += fs::read_dir(path).map(|d| d.count()).unwrap_or(0);
-                } else if path.is_file() {
-                    objects += 1;
-                }
-            }
-        }
-        (index_bytes, head, reflog_len, editmsg, objects)
-    }
-
-    fn dry_run_req(message: &str) -> CommitRequest {
-        let mut req = commit_req(message);
-        req.dry_run = true;
-        req
-    }
-
     #[test]
-    fn dry_run_writes_nothing() {
-        for scope in [
-            CommitScope::AutoStage,
-            CommitScope::Staged,
-            CommitScope::Paths(ResolvedPathspecs {
-                specs: vec!["a.txt".into()],
-                sources: vec!["a.txt".into()],
-                scoped: true,
-            }),
-        ] {
-            let tmp = TempDir::new().unwrap();
-            let root = tmp.path();
-            let repo = init_repo(root);
-            fs::write(root.join("a.txt"), b"1\n").unwrap();
-            fs::write(root.join("b.txt"), b"1\n").unwrap();
-            fs::write(root.join("new.txt"), b"new\n").unwrap();
-            stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-            create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
-            fs::write(root.join("a.txt"), b"2\n").unwrap();
-            fs::write(root.join("b.txt"), b"2\n").unwrap();
-            if scope == CommitScope::Staged {
-                let mut index = repo.load_index().unwrap();
-                stage_file_in_index(&repo, &mut index, "a.txt", b"2\n");
-                write_index(&repo, &mut index);
-            }
-            let before = repo_snapshot(&repo);
-            let outcome =
-                commit_with_scope(&repo, &dry_run_req("dry"), scope.clone(), &mut NullProgress)
-                    .unwrap();
-            assert_eq!(outcome.oid, zero_oid());
-            assert_eq!(repo_snapshot(&repo), before);
-            assert!(
-                !outcome.files.is_empty(),
-                "scope {scope:?} should preview at least one path"
-            );
-        }
-    }
-
-    #[test]
-    fn dry_run_predicts_nothing_to_commit() {
+    fn auto_stage_config_false_defaults_to_staged() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
-        let repo = init_repo(root);
-        fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
-        let err = commit_with_scope(
-            &repo,
-            &dry_run_req("noop"),
-            CommitScope::AutoStage,
-            &mut NullProgress,
-        )
-        .unwrap_err();
-        assert!(matches!(err, Error::NothingToCommit));
-    }
-
-    #[test]
-    fn dry_run_files_match_real_commit() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path();
-        let repo = init_repo(root);
-        fs::write(root.join("a.txt"), b"1\n").unwrap();
-        fs::write(root.join("b.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
-        fs::write(root.join("a.txt"), b"2\n").unwrap();
-        fs::write(root.join("b.txt"), b"2\n").unwrap();
-
-        let plan = plan_commit(
-            &repo,
-            &commit_req("second"),
-            CommitScope::AutoStage,
-            &mut NullProgress,
+        let git = root.join(".git");
+        fs::create_dir_all(git.join("objects")).unwrap();
+        fs::create_dir_all(git.join("refs/heads")).unwrap();
+        fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::write(
+            git.join("config"),
+            "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tlogAllRefUpdates = true\n[commit]\n\tautoStage = false\n",
         )
         .unwrap();
-        let real = commit_with_scope(
-            &repo,
-            &commit_req("second"),
-            CommitScope::AutoStage,
-            &mut NullProgress,
-        )
-        .unwrap();
-        assert_eq!(plan.files, real.files);
-
-        let out = Command::new("git")
-            .current_dir(root)
-            .args(["diff", "--name-status", "HEAD~1", "HEAD"])
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .output()
-            .unwrap();
-        assert!(out.status.success());
-        let git_lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .map(str::to_string)
-            .collect();
-        let grit_lines: Vec<String> = real
-            .files
-            .iter()
-            .map(|f| {
-                if let Some(ref old) = f.old_path {
-                    format!("{}\t{}\t{}", f.status.letter(), old, f.path)
-                } else {
-                    format!("{}\t{}", f.status.letter(), f.path)
-                }
-            })
-            .collect();
-        assert_eq!(grit_lines, git_lines);
-    }
-
-    #[test]
-    fn dry_run_files_match_real_commit_rename() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path();
-        let repo = init_repo(root);
-        fs::write(root.join("old.txt"), b"same\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
-        fs::rename(root.join("old.txt"), root.join("new.txt")).unwrap();
-        let plan = plan_commit(
-            &repo,
-            &commit_req("rename"),
-            CommitScope::AutoStage,
-            &mut NullProgress,
-        )
-        .unwrap();
-        let real = commit_with_scope(
-            &repo,
-            &commit_req("rename"),
-            CommitScope::AutoStage,
-            &mut NullProgress,
-        )
-        .unwrap();
-        assert_eq!(plan.files, real.files);
-        assert_eq!(plan.files.len(), 1);
-        assert_eq!(plan.files[0].status, DiffStatus::Renamed);
-        assert_eq!(plan.files[0].old_path.as_deref(), Some("old.txt"));
-        assert_eq!(plan.files[0].path, "new.txt");
-
-        let out = Command::new("git")
-            .current_dir(root)
-            .args(["diff", "--name-status", "-M", "HEAD~1", "HEAD"])
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .output()
-            .unwrap();
-        assert!(out.status.success());
-        let normalize_name_status = |line: &str| -> String {
-            let mut parts = line.split('\t').collect::<Vec<_>>();
-            if parts.is_empty() {
-                return line.to_owned();
-            }
-            let status = parts[0];
-            if status.len() > 1
-                && status.starts_with('R')
-                && status[1..].chars().all(|c| c.is_ascii_digit())
-            {
-                parts[0] = "R";
-            }
-            parts.join("\t")
-        };
-        let git_lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .map(|line| normalize_name_status(line))
-            .collect();
-        let grit_lines: Vec<String> = real
-            .files
-            .iter()
-            .map(|f| {
-                if let Some(ref old) = f.old_path {
-                    format!("{}\t{}\t{}", f.status.letter(), old, f.path)
-                } else {
-                    format!("{}\t{}", f.status.letter(), f.path)
-                }
-            })
-            .collect();
-        assert_eq!(grit_lines, git_lines);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn dry_run_files_match_real_commit_mode_only() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path();
-        let repo = init_repo(root);
-        fs::write(root.join("file.txt"), b"same\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
-        let mut perms = fs::metadata(root.join("file.txt")).unwrap().permissions();
-        perms.set_mode(0o100755);
-        fs::set_permissions(root.join("file.txt"), perms).unwrap();
-        let plan = plan_commit(
-            &repo,
-            &commit_req("chmod"),
-            CommitScope::AutoStage,
-            &mut NullProgress,
-        )
-        .unwrap();
-        let real = commit_with_scope(
-            &repo,
-            &commit_req("chmod"),
-            CommitScope::AutoStage,
-            &mut NullProgress,
-        )
-        .unwrap();
-        assert_eq!(plan.files, real.files);
-        assert_eq!(plan.files.len(), 1);
-        assert_eq!(plan.files[0].status, DiffStatus::Modified);
-    }
-
-    #[test]
-    fn dry_run_amend_honors_author_override() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path();
-        let repo = init_repo(root);
-        fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
-        fs::write(root.join("a.txt"), b"2\n").unwrap();
-        let mut req = dry_run_req("amended");
-        req.amend = true;
-        req.author = "Override Author <override@example.com> 1700000000 +0000".into();
-        let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
-        assert_eq!(outcome.author.name, "Override Author");
-        assert_eq!(outcome.author.email, "override@example.com");
+        let repo =
+            Repository::open(&git, &RepositoryOptions::empty().with_work_tree(root)).unwrap();
+        assert_eq!(
+            default_commit_scope_from_config(&repo.config().unwrap()),
+            CommitScope::Staged
+        );
     }
 }

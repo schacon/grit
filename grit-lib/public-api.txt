@@ -793,6 +793,28 @@ impl core::marker::Unpin for grit_lib::command_runner::hooks::HookError
 impl core::marker::UnsafeUnpin for grit_lib::command_runner::hooks::HookError
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::command_runner::hooks::HookError
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::command_runner::hooks::HookError
+pub enum grit_lib::command_runner::hooks::HookName
+pub grit_lib::command_runner::hooks::HookName::CommitMsg
+pub grit_lib::command_runner::hooks::HookName::PostCommit
+pub grit_lib::command_runner::hooks::HookName::PreCommit
+impl grit_lib::command_runner::hooks::HookName
+pub const fn grit_lib::command_runner::hooks::HookName::as_str(self) -> &'static str
+impl core::clone::Clone for grit_lib::command_runner::hooks::HookName
+pub fn grit_lib::command_runner::hooks::HookName::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::command_runner::hooks::HookName
+impl core::cmp::PartialEq for grit_lib::command_runner::hooks::HookName
+pub fn grit_lib::command_runner::hooks::HookName::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::command_runner::hooks::HookName
+pub fn grit_lib::command_runner::hooks::HookName::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::command_runner::hooks::HookName
+impl core::marker::StructuralPartialEq for grit_lib::command_runner::hooks::HookName
+impl core::marker::Freeze for grit_lib::command_runner::hooks::HookName
+impl core::marker::Send for grit_lib::command_runner::hooks::HookName
+impl core::marker::Sync for grit_lib::command_runner::hooks::HookName
+impl core::marker::Unpin for grit_lib::command_runner::hooks::HookName
+impl core::marker::UnsafeUnpin for grit_lib::command_runner::hooks::HookName
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::command_runner::hooks::HookName
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::command_runner::hooks::HookName
 pub enum grit_lib::command_runner::hooks::HookResult
 pub grit_lib::command_runner::hooks::HookResult::Failed(i32)
 pub grit_lib::command_runner::hooks::HookResult::NotFound
@@ -1780,6 +1802,29 @@ impl<'repo> core::marker::UnsafeUnpin for grit_lib::config::handle::ConfigHandle
 impl<'repo> !core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::handle::ConfigHandle<'repo>
 impl<'repo> !core::panic::unwind_safe::UnwindSafe for grit_lib::config::handle::ConfigHandle<'repo>
 pub mod grit_lib::config::ident
+pub enum grit_lib::config::ident::AuthorArgError
+pub grit_lib::config::ident::AuthorArgError::EmptyEmail
+pub grit_lib::config::ident::AuthorArgError::InvalidCharacter
+pub grit_lib::config::ident::AuthorArgError::InvalidFormat
+pub grit_lib::config::ident::AuthorArgError::TrailingText
+impl core::clone::Clone for grit_lib::config::ident::AuthorArgError
+pub fn grit_lib::config::ident::AuthorArgError::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::config::ident::AuthorArgError
+impl core::cmp::PartialEq for grit_lib::config::ident::AuthorArgError
+pub fn grit_lib::config::ident::AuthorArgError::eq(&self, &Self) -> bool
+impl core::error::Error for grit_lib::config::ident::AuthorArgError
+impl core::fmt::Debug for grit_lib::config::ident::AuthorArgError
+pub fn grit_lib::config::ident::AuthorArgError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::config::ident::AuthorArgError
+pub fn grit_lib::config::ident::AuthorArgError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::config::ident::AuthorArgError
+impl core::marker::Freeze for grit_lib::config::ident::AuthorArgError
+impl core::marker::Send for grit_lib::config::ident::AuthorArgError
+impl core::marker::Sync for grit_lib::config::ident::AuthorArgError
+impl core::marker::Unpin for grit_lib::config::ident::AuthorArgError
+impl core::marker::UnsafeUnpin for grit_lib::config::ident::AuthorArgError
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::ident::AuthorArgError
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::config::ident::AuthorArgError
 pub enum grit_lib::config::ident::SignatureTail
 pub grit_lib::config::ident::SignatureTail::NonNumeric
 pub grit_lib::config::ident::SignatureTail::Overflow
@@ -1818,6 +1863,24 @@ impl core::marker::Unpin for grit_lib::config::ident::SignatureTimestamp
 impl core::marker::UnsafeUnpin for grit_lib::config::ident::SignatureTimestamp
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::ident::SignatureTimestamp
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::config::ident::SignatureTimestamp
+pub struct grit_lib::config::ident::AuthorContact
+pub grit_lib::config::ident::AuthorContact::email: alloc::string::String
+pub grit_lib::config::ident::AuthorContact::name: alloc::string::String
+impl core::clone::Clone for grit_lib::config::ident::AuthorContact
+pub fn grit_lib::config::ident::AuthorContact::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::config::ident::AuthorContact
+impl core::cmp::PartialEq for grit_lib::config::ident::AuthorContact
+pub fn grit_lib::config::ident::AuthorContact::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::config::ident::AuthorContact
+pub fn grit_lib::config::ident::AuthorContact::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::config::ident::AuthorContact
+impl core::marker::Freeze for grit_lib::config::ident::AuthorContact
+impl core::marker::Send for grit_lib::config::ident::AuthorContact
+impl core::marker::Sync for grit_lib::config::ident::AuthorContact
+impl core::marker::Unpin for grit_lib::config::ident::AuthorContact
+impl core::marker::UnsafeUnpin for grit_lib::config::ident::AuthorContact
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::ident::AuthorContact
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::config::ident::AuthorContact
 pub struct grit_lib::config::ident::ParsedSignatureTimes
 pub grit_lib::config::ident::ParsedSignatureTimes::tz_hhmm_range: core::ops::range::Range<usize>
 pub grit_lib::config::ident::ParsedSignatureTimes::tz_offset_secs: i64
@@ -1837,11 +1900,13 @@ impl core::marker::Unpin for grit_lib::config::ident::ParsedSignatureTimes
 impl core::marker::UnsafeUnpin for grit_lib::config::ident::ParsedSignatureTimes
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::ident::ParsedSignatureTimes
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::config::ident::ParsedSignatureTimes
+pub fn grit_lib::config::ident::author_identity_line(&grit_lib::config::ident::AuthorContact, core::option::Option<&str>, time::offset_date_time::OffsetDateTime) -> alloc::string::String
 pub fn grit_lib::config::ident::committer_timestamp_for_until_filter(&str) -> i64
 pub fn grit_lib::config::ident::committer_timestamp_for_until_filter_bytes(&[u8]) -> i64
 pub fn grit_lib::config::ident::committer_unix_seconds_for_ordering(&str) -> i64
 pub fn grit_lib::config::ident::committer_unix_seconds_for_ordering_bytes(&[u8]) -> i64
 pub fn grit_lib::config::ident::fsck_commit_idents(&[u8], grit_lib::objects::HashAlgo) -> core::result::Result<(), alloc::string::String>
+pub fn grit_lib::config::ident::parse_author_arg(&str) -> core::result::Result<grit_lib::config::ident::AuthorContact, grit_lib::config::ident::AuthorArgError>
 pub fn grit_lib::config::ident::parse_signature_tail(&str) -> core::option::Option<grit_lib::config::ident::SignatureTail>
 pub fn grit_lib::config::ident::parse_signature_times(&str) -> core::option::Option<grit_lib::config::ident::ParsedSignatureTimes>
 pub fn grit_lib::config::ident::signature_timestamp_for_pretty(&str) -> grit_lib::config::ident::SignatureTimestamp
@@ -10793,6 +10858,27 @@ impl core::marker::Unpin for grit_lib::porcelain::commit::CommitScope
 impl core::marker::UnsafeUnpin for grit_lib::porcelain::commit::CommitScope
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::commit::CommitScope
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::commit::CommitScope
+pub enum grit_lib::porcelain::commit::HookPolicy
+pub grit_lib::porcelain::commit::HookPolicy::Run
+pub grit_lib::porcelain::commit::HookPolicy::SkipVerify
+impl core::clone::Clone for grit_lib::porcelain::commit::HookPolicy
+pub fn grit_lib::porcelain::commit::HookPolicy::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::porcelain::commit::HookPolicy
+impl core::cmp::PartialEq for grit_lib::porcelain::commit::HookPolicy
+pub fn grit_lib::porcelain::commit::HookPolicy::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::porcelain::commit::HookPolicy
+pub fn grit_lib::porcelain::commit::HookPolicy::default() -> Self
+impl core::fmt::Debug for grit_lib::porcelain::commit::HookPolicy
+pub fn grit_lib::porcelain::commit::HookPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::porcelain::commit::HookPolicy
+impl core::marker::StructuralPartialEq for grit_lib::porcelain::commit::HookPolicy
+impl core::marker::Freeze for grit_lib::porcelain::commit::HookPolicy
+impl core::marker::Send for grit_lib::porcelain::commit::HookPolicy
+impl core::marker::Sync for grit_lib::porcelain::commit::HookPolicy
+impl core::marker::Unpin for grit_lib::porcelain::commit::HookPolicy
+impl core::marker::UnsafeUnpin for grit_lib::porcelain::commit::HookPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::commit::HookPolicy
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::commit::HookPolicy
 pub struct grit_lib::porcelain::commit::CommitAuthorInfo
 pub grit_lib::porcelain::commit::CommitAuthorInfo::date: alloc::string::String
 pub grit_lib::porcelain::commit::CommitAuthorInfo::email: alloc::string::String
@@ -10837,7 +10923,7 @@ pub grit_lib::porcelain::commit::CommitOutcome::branch: alloc::string::String
 pub grit_lib::porcelain::commit::CommitOutcome::change_id: core::option::Option<grit_lib::change_id::ChangeId>
 pub grit_lib::porcelain::commit::CommitOutcome::changes: usize
 pub grit_lib::porcelain::commit::CommitOutcome::files: alloc::vec::Vec<grit_lib::porcelain::commit::CommitFile>
-pub grit_lib::porcelain::commit::CommitOutcome::hooks_run: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::porcelain::commit::CommitOutcome::hooks_run: alloc::vec::Vec<grit_lib::command_runner::hooks::HookName>
 pub grit_lib::porcelain::commit::CommitOutcome::oid: grit_lib::objects::ObjectId
 pub grit_lib::porcelain::commit::CommitOutcome::parent: core::option::Option<grit_lib::objects::ObjectId>
 pub grit_lib::porcelain::commit::CommitOutcome::parents: alloc::vec::Vec<grit_lib::objects::ObjectId>
@@ -10881,12 +10967,20 @@ pub grit_lib::porcelain::commit::CommitRequest::allow_empty: bool
 pub grit_lib::porcelain::commit::CommitRequest::amend: bool
 pub grit_lib::porcelain::commit::CommitRequest::assume_worktree_synced: bool
 pub grit_lib::porcelain::commit::CommitRequest::author: alloc::string::String
+pub grit_lib::porcelain::commit::CommitRequest::author_date: core::option::Option<alloc::string::String>
 pub grit_lib::porcelain::commit::CommitRequest::committer: alloc::string::String
 pub grit_lib::porcelain::commit::CommitRequest::dry_run: bool
+pub grit_lib::porcelain::commit::CommitRequest::hooks: grit_lib::porcelain::commit::HookPolicy
 pub grit_lib::porcelain::commit::CommitRequest::message: alloc::string::String
+pub grit_lib::porcelain::commit::CommitRequest::reset_author: bool
+pub grit_lib::porcelain::commit::CommitRequest::reuse_message_from: core::option::Option<grit_lib::objects::ObjectId>
 pub grit_lib::porcelain::commit::CommitRequest::sign_override: core::option::Option<bool>
+pub grit_lib::porcelain::commit::CommitRequest::signoff: bool
+pub grit_lib::porcelain::commit::CommitRequest::trailers: alloc::vec::Vec<(alloc::string::String, alloc::string::String)>
 impl core::clone::Clone for grit_lib::porcelain::commit::CommitRequest
 pub fn grit_lib::porcelain::commit::CommitRequest::clone(&self) -> Self
+impl core::default::Default for grit_lib::porcelain::commit::CommitRequest
+pub fn grit_lib::porcelain::commit::CommitRequest::default() -> Self
 impl core::fmt::Debug for grit_lib::porcelain::commit::CommitRequest
 pub fn grit_lib::porcelain::commit::CommitRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Freeze for grit_lib::porcelain::commit::CommitRequest
