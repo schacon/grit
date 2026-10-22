@@ -10,7 +10,9 @@ use crate::refs::SYMREF_MAXDEPTH;
 use super::error::RefStoreError;
 use super::semantics::format_reflog_identity;
 use super::transaction::expected_matches;
-use super::types::{Expected, RawRef, RefUpdate, RefUpdateFlags, ReflogUpdate};
+use super::types::{
+    Expected, RawRef, RefCaseOnlyRename, RefReflogRename, RefUpdate, RefUpdateFlags, ReflogUpdate,
+};
 
 type StoreResult<T> = std::result::Result<T, RefStoreError>;
 
@@ -102,7 +104,12 @@ fn storage_write_for_update(
 }
 
 /// Verify CAS and apply every update to `trial`, returning the first error.
-pub fn simulate_batch_apply(state: &RefBatchState, updates: &[RefUpdate]) -> StoreResult<()> {
+pub fn simulate_batch_apply(
+    state: &RefBatchState,
+    updates: &[RefUpdate],
+    reflog_renames: &[RefReflogRename],
+    case_only_renames: &[RefCaseOnlyRename],
+) -> StoreResult<()> {
     let mut trial = state.snapshot();
     let mut storage_writes = HashMap::new();
     for update in updates {
@@ -116,6 +123,59 @@ pub fn simulate_batch_apply(state: &RefBatchState, updates: &[RefUpdate]) -> Sto
         check_storage_write(&mut storage_writes, &trial, update)?;
         apply_update(&mut trial, update)?;
     }
+    for rename in case_only_renames {
+        apply_case_only_ref_rename(&mut trial, rename)?;
+    }
+    for rename in reflog_renames {
+        apply_reflog_rename(&mut trial, rename)?;
+    }
+    Ok(())
+}
+
+/// Move a ref entry when only the spelling's case changes.
+pub fn apply_case_only_ref_rename(
+    state: &mut RefBatchState,
+    rename: &RefCaseOnlyRename,
+) -> StoreResult<()> {
+    if rename.from == rename.to {
+        return Ok(());
+    }
+    let value = state.refs.remove(&rename.from).ok_or_else(|| {
+        RefStoreError::ExpectedMismatch {
+            name: rename.from.clone(),
+            expected: Expected::Exists,
+            actual: None,
+        }
+    })?;
+    if state.refs.contains_key(&rename.to) {
+        return Err(RefStoreError::Corrupt(format!(
+            "case-only rename blocked: '{}' already exists",
+            rename.to
+        )));
+    }
+    state.refs.insert(rename.to.clone(), value);
+    Ok(())
+}
+
+/// Move `rename.from`'s reflog to `rename.to` and append `rename.append`.
+pub fn apply_reflog_rename(
+    state: &mut RefBatchState,
+    rename: &RefReflogRename,
+) -> StoreResult<()> {
+    let mut entries = state.reflogs.remove(&rename.from).unwrap_or_default();
+    state.reflogs.remove(&rename.to);
+    let old_oid = rename
+        .append
+        .old_oid
+        .unwrap_or_else(|| entries.last().map(|e| e.new_oid).unwrap_or_else(zero_oid));
+    let new_oid = rename.append.new_oid.unwrap_or(old_oid);
+    entries.push(ReflogEntry {
+        old_oid,
+        new_oid,
+        identity: format_reflog_identity(&rename.append.identity, rename.append.time),
+        message: rename.append.message.clone(),
+    });
+    state.reflogs.insert(rename.to.clone(), entries);
     Ok(())
 }
 
@@ -393,7 +453,7 @@ mod tests {
             direct_update("refs/heads/sym1", oid(2)),
             direct_update("refs/heads/sym2", oid(3)),
         ];
-        let err = simulate_batch_apply(&state, &updates).expect_err("conflicting peel writes");
+        let err = simulate_batch_apply(&state, &updates, &[], &[]).expect_err("conflicting peel writes");
         assert!(matches!(
             err,
             RefStoreError::DuplicateUpdate {
@@ -428,7 +488,7 @@ mod tests {
                 flags: RefUpdateFlags::default(),
             },
         ];
-        simulate_batch_apply(&state, &updates).expect("delete-then-create on peeled target");
+        simulate_batch_apply(&state, &updates, &[], &[]).expect("delete-then-create on peeled target");
     }
 
     #[test]

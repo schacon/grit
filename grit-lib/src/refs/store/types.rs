@@ -108,6 +108,26 @@ pub struct RefUpdateFlags {
     pub log_only: bool,
 }
 
+/// Rename a loose ref when only letter case changes (case-insensitive filesystems).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefCaseOnlyRename {
+    /// Full ref name before rename (for example `refs/heads/topic`).
+    pub from: String,
+    /// Full ref name after rename (for example `refs/heads/Topic`).
+    pub to: String,
+}
+
+/// Move a branch reflog to a new ref name and append one entry (branch rename).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefReflogRename {
+    /// Full ref name whose reflog is moved (for example `refs/heads/topic`).
+    pub from: String,
+    /// Destination ref name (for example `refs/heads/new`).
+    pub to: String,
+    /// Rename entry appended as the newest reflog line on `to`.
+    pub append: ReflogUpdate,
+}
+
 /// One ref create, update, delete, or reflog-only touch in a transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefUpdate {
