@@ -3,6 +3,7 @@
 //! Ids hash side, path, and hunk line bodies (not line numbers) so they stay stable
 //! when earlier hunks are staged and later hunks shift in the file.
 
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 
@@ -132,31 +133,32 @@ struct DuplicateSortKey {
 }
 
 fn duplicate_ranks(hunks: &[StructuredHunk], peer_hunks: &[StructuredHunk]) -> Vec<Option<u32>> {
-    let body_counts = body_count_map(hunks, peer_hunks);
-    hunks
+    let own_digests: Vec<Vec<u8>> = hunks.iter().map(hunk_body_digest).collect();
+    let peer_digests: Vec<Vec<u8>> = peer_hunks.iter().map(hunk_body_digest).collect();
+    let body_counts = body_count_map_from_digests(&own_digests, &peer_digests);
+    own_digests
         .iter()
         .enumerate()
-        .map(|(i, h)| {
-            let body = hunk_body_digest(h);
-            if body_counts.get(&body).copied().unwrap_or(0) <= 1 {
+        .map(|(i, body)| {
+            if body_counts.get(body).copied().unwrap_or(0) <= 1 {
                 return None;
             }
             let mut keys: Vec<DuplicateSortKey> = Vec::new();
-            for (j, x) in hunks.iter().enumerate() {
-                if hunk_body_digest(x) == body {
+            for (j, digest) in own_digests.iter().enumerate() {
+                if digest == body {
                     keys.push(DuplicateSortKey {
-                        old_start: x.old_start,
-                        new_start: x.new_start,
+                        old_start: hunks[j].old_start,
+                        new_start: hunks[j].new_start,
                         is_peer: false,
                         index: j,
                     });
                 }
             }
-            for (j, x) in peer_hunks.iter().enumerate() {
-                if hunk_body_digest(x) == body {
+            for (j, digest) in peer_digests.iter().enumerate() {
+                if digest == body {
                     keys.push(DuplicateSortKey {
-                        old_start: x.old_start,
-                        new_start: x.new_start,
+                        old_start: peer_hunks[j].old_start,
+                        new_start: peer_hunks[j].new_start,
                         is_peer: true,
                         index: j,
                     });
@@ -166,20 +168,16 @@ fn duplicate_ranks(hunks: &[StructuredHunk], peer_hunks: &[StructuredHunk]) -> V
             let rank = keys
                 .iter()
                 .position(|k| !k.is_peer && k.index == i)
-                .map(|p| p as u32)?;
+                .map(|pos| pos as u32)?;
             Some(rank)
         })
         .collect()
 }
 
-fn body_count_map(
-    hunks: &[StructuredHunk],
-    peer_hunks: &[StructuredHunk],
-) -> std::collections::HashMap<Vec<u8>, u32> {
-    let mut counts: std::collections::HashMap<Vec<u8>, u32> = std::collections::HashMap::new();
-    for h in hunks.iter().chain(peer_hunks.iter()) {
-        let body = hunk_body_digest(h);
-        *counts.entry(body).or_insert(0) += 1;
+fn body_count_map_from_digests(own: &[Vec<u8>], peer: &[Vec<u8>]) -> HashMap<Vec<u8>, u32> {
+    let mut counts: HashMap<Vec<u8>, u32> = HashMap::new();
+    for body in own.iter().chain(peer.iter()) {
+        *counts.entry(body.clone()).or_insert(0) += 1;
     }
     counts
 }
@@ -213,6 +211,38 @@ fn hunk_body_digest(hunk: &StructuredHunk) -> Vec<u8> {
 #[must_use]
 pub fn hunk_ids(side: DiffSide, path: &str, hunks: &[StructuredHunk]) -> Vec<HunkId> {
     hunk_ids_with_duplicate_peers(side, path, hunks, &[])
+}
+
+/// True when a diff entry's displayed or old path is listed in the primary change set.
+///
+/// Used to limit opposite-side peer loading to paths that can affect duplicate hunk ids.
+#[must_use]
+pub fn peer_scope_includes_path(
+    display_path: &str,
+    old_path: Option<&str>,
+    primary: &HashSet<&str>,
+) -> bool {
+    if primary.contains(display_path) {
+        return true;
+    }
+    if let Some(old) = old_path {
+        if old != display_path && primary.contains(old) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Keep structured peer hunks only for paths present in the primary side.
+#[must_use]
+pub fn peer_hunks_by_primary_path(
+    primary: &HashSet<&str>,
+    peer_by_path: impl IntoIterator<Item = (String, Vec<StructuredHunk>)>,
+) -> HashMap<String, Vec<StructuredHunk>> {
+    peer_by_path
+        .into_iter()
+        .filter(|(path, _)| primary.contains(path.as_str()))
+        .collect()
 }
 
 /// Like [`hunk_ids`], but `peer_hunks` on the same path (typically the other index/worktree
@@ -357,6 +387,37 @@ mod tests {
 
         let after = hunk_ids_with_duplicate_peers(DiffSide::Unstaged, "f", &[shifted], &[first]);
         assert_eq!(after[0], id_later);
+    }
+
+    #[test]
+    #[test]
+    fn peer_hunks_by_primary_path_excludes_unrelated() {
+        let primary: HashSet<&str> = ["primary.txt"].into_iter().collect();
+        let body = vec![line(StructuredLineKind::Add, "x")];
+        let peer = peer_hunks_by_primary_path(
+            &primary,
+            [
+                ("primary.txt".into(), vec![hunk(body.clone())]),
+                ("unrelated.txt".into(), vec![hunk(body)]),
+            ],
+        );
+        assert_eq!(peer.len(), 1);
+        assert!(peer.contains_key("primary.txt"));
+    }
+
+    #[test]
+    fn peer_scope_includes_path_matches_old_and_new() {
+        let primary: HashSet<&str> = ["new.txt"].into_iter().collect();
+        assert!(peer_scope_includes_path(
+            "new.txt",
+            Some("old.txt"),
+            &primary
+        ));
+        assert!(!peer_scope_includes_path(
+            "other.txt",
+            Some("old.txt"),
+            &primary
+        ));
     }
 
     #[test]

@@ -1613,6 +1613,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 word_level_inline: matches!(opts.mode, crate::output::OutputMode::Human)
                     && commands::diff::diff_word_level_inline_for_output(),
                 quiet,
+                emit_json_hunk_ids: opts.mode == crate::output::OutputMode::Json,
             };
             let run_result = commands::diff::run(run_opts);
             match run_result {
