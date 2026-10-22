@@ -272,6 +272,92 @@ fn overlapping_namespaces_deduplicate_by_full_name() {
 }
 
 #[test]
+fn symbolic_ref_listing_does_not_leak_resolved_peel() {
+    let commit: ObjectId = "00000000000000000000000000000000000000ab".parse().unwrap();
+    let store = MemoryRefStore::new();
+    store
+        .set_ref("refs/heads/main", RawRef::Direct(commit))
+        .unwrap();
+    store
+        .set_ref(
+            "refs/remotes/origin/HEAD",
+            RawRef::Symbolic("refs/heads/main".to_owned()),
+        )
+        .unwrap();
+
+    let rows = query_listings_on_store(
+        &store,
+        &RefQuery {
+            namespaces: vec![RefNamespace::Remotes],
+            ..RefQuery::default()
+        },
+        &RefQueryOptions::default(),
+        None,
+    )
+    .unwrap();
+    let sym = rows
+        .iter()
+        .find(|r| r.full_name == "refs/remotes/origin/HEAD")
+        .expect("symbolic ref");
+    assert_eq!(sym.oid, commit);
+    assert_eq!(sym.peeled, None);
+}
+
+#[test]
+fn date_sort_keeps_refs_with_missing_objects() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = Repository::init(dir.path(), &InitOptions::default()).unwrap();
+    let ident = "T <t@example.com> 1700000000 +0000".to_owned();
+    let commit = create_commit(
+        &repo,
+        &CommitRequest {
+            message: "c".into(),
+            author: ident.clone(),
+            committer: ident,
+            allow_empty: true,
+            sign_override: None,
+            amend: false,
+            assume_worktree_synced: false,
+            skip_pre_commit_tree_match: false,
+            staged_change_count: None,
+            ..Default::default()
+        },
+        &mut NullProgress,
+    )
+    .unwrap()
+    .oid;
+    let store = MemoryRefStore::new();
+    store
+        .set_ref("refs/tags/good", RawRef::Direct(commit))
+        .unwrap();
+    let missing: ObjectId = "00000000000000000000000000000000000000ff".parse().unwrap();
+    store
+        .set_ref("refs/tags/bad", RawRef::Direct(missing))
+        .unwrap();
+
+    let rows = query_listings_on_store(
+        &store,
+        &RefQuery {
+            namespaces: vec![RefNamespace::Tags],
+            sort: RefSort {
+                key: SortKey::Date,
+                reverse: false,
+            },
+            ..RefQuery::default()
+        },
+        &RefQueryOptions::default(),
+        Some(repo.odb()),
+    )
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+    let bad = rows
+        .iter()
+        .find(|r| r.full_name == "refs/tags/bad")
+        .expect("bad ref listed");
+    assert_eq!(bad.oid, missing);
+}
+
+#[test]
 fn pairs_query_short_name_uses_longest_namespace_prefix() {
     let pairs = vec![(
         "refs/tags/foo/bar".to_owned(),
