@@ -19,6 +19,21 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
+/// True when `token` appears as its own path segment (not e.g. `TreeSha256::`).
+fn line_has_forbidden_token(line: &str, token: &str) -> bool {
+    let mut start = 0;
+    while let Some(rel) = line[start..].find(token) {
+        let at = start + rel;
+        let prefix_ok = at == 0
+            || !line.as_bytes()[at - 1].is_ascii_alphanumeric() && line.as_bytes()[at - 1] != b'_';
+        if prefix_ok {
+            return true;
+        }
+        start = at + 1;
+    }
+    false
+}
+
 fn is_excluded(path: &Path) -> bool {
     let path_str = path.to_string_lossy();
     if path_str.contains("/target/") || path_str.contains("\\target\\") {
@@ -52,7 +67,7 @@ fn scan_rs_files(dir: &Path, violations: &mut Vec<String>) {
             let text = std::fs::read_to_string(&path).expect("read rust source");
             for (line_no, line) in text.lines().enumerate() {
                 for token in forbidden_tokens() {
-                    if line.contains(token) {
+                    if line_has_forbidden_token(line, token) {
                         violations.push(format!(
                             "{}:{}: forbidden token `{token}`",
                             path.display(),
