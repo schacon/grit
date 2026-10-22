@@ -205,12 +205,10 @@ pub fn continue_replay_sequence(repo: &Repository, identity: &str) -> Result<Seq
         "",
         crate::write_tree::WriteTreeFlags::silent(),
     )?;
-    let allow_empty = active.opts.empty == ReplayEmptyPolicy::Keep;
-    if !allow_empty {
-        let head_tree = commit_tree(repo, &head_oid)?;
-        if new_tree == head_tree {
-            return Err(Error::NothingToCommit);
-        }
+    let head_tree = commit_tree(repo, &head_oid)?;
+    let allow_empty = active.opts.empty == ReplayEmptyPolicy::Keep || new_tree == head_tree;
+    if !allow_empty && new_tree == head_tree {
+        return Err(Error::NothingToCommit);
     }
     let new_oid = write_replay_commit(
         repo,
@@ -240,7 +238,7 @@ pub fn continue_replay_sequence(repo: &Repository, identity: &str) -> Result<Seq
     }
     let sequence_start = read_sequencer_head(repo.git_dir()).unwrap_or(active.abort_safety);
     let continued = replay_created_record(repo, source, new_oid)?;
-    run_sequence(
+    match run_sequence(
         repo,
         &refname,
         new_oid,
@@ -252,7 +250,12 @@ pub fn continue_replay_sequence(repo: &Repository, identity: &str) -> Result<Seq
         &mut todo,
         vec![continued],
         Vec::new(),
-    )
+    )? {
+        SequenceOutcome::Completed { created, dropped } => {
+            Ok(SequenceOutcome::Completed { created, dropped })
+        }
+        other => Ok(other),
+    }
 }
 
 /// Skip the current todo step and apply later entries.
@@ -411,7 +414,7 @@ fn run_sequence(
     committer: &str,
     opts: &ReplayOptions,
     todo: &mut Vec<TodoEntry>,
-    mut created_so_far: Vec<ReplayCreated>,
+    prior_created: Vec<ReplayCreated>,
     mut dropped: Vec<ObjectId>,
 ) -> Result<SequenceOutcome> {
     let mut head = head_oid;
@@ -432,14 +435,13 @@ fn run_sequence(
             StepResult::Committed { oid } => {
                 todo.remove(0);
                 let record = replay_created_record(repo, entry.oid, oid)?;
-                created_so_far.push(record.clone());
                 created_this_call.push(record);
                 write_sequencer_abort_safety(repo.git_dir(), oid)?;
                 write_sequencer_todo(repo.git_dir(), todo)?;
                 if todo.is_empty() {
                     clear_replay_state(repo.git_dir())?;
                     return Ok(SequenceOutcome::Completed {
-                        created: created_this_call,
+                        created: merge_created_records(&prior_created, &created_this_call),
                         dropped,
                     });
                 }
@@ -450,7 +452,7 @@ fn run_sequence(
                 if todo.is_empty() {
                     clear_replay_state(repo.git_dir())?;
                     return Ok(SequenceOutcome::Completed {
-                        created: created_this_call,
+                        created: merge_created_records(&prior_created, &created_this_call),
                         dropped,
                     });
                 }
@@ -484,7 +486,7 @@ fn run_sequence(
                 return Ok(SequenceOutcome::Conflicts {
                     current: entry.oid,
                     conflicts,
-                    created_so_far,
+                    created_so_far: merge_created_records(&prior_created, &created_this_call),
                     remaining,
                 });
             }
@@ -510,7 +512,7 @@ fn run_sequence(
                 )?;
                 return Ok(SequenceOutcome::Empty {
                     current: entry.oid,
-                    created_so_far,
+                    created_so_far: merge_created_records(&prior_created, &created_this_call),
                     remaining,
                 });
             }
@@ -518,9 +520,18 @@ fn run_sequence(
     }
     clear_replay_state(repo.git_dir())?;
     Ok(SequenceOutcome::Completed {
-        created: created_this_call,
+        created: merge_created_records(&prior_created, &created_this_call),
         dropped,
     })
+}
+
+fn merge_created_records(
+    started: &[ReplayCreated],
+    this_call: &[ReplayCreated],
+) -> Vec<ReplayCreated> {
+    let mut out = started.to_vec();
+    out.extend_from_slice(this_call);
+    out
 }
 
 enum StepResult {
@@ -739,19 +750,12 @@ fn replay_message(
             ))
         }
         ReplayDirection::Revert => {
-            let (title, mut body) = merge_commit_message_for_revert(source, source_oid, false, '#');
-            if source.parents.len() > 1 {
-                if let Some(m) = opts.mainline {
-                    let idx = m.get() as usize - 1;
-                    if let Some(parent) = source.parents.get(idx) {
-                        body = format!(
-                            "This reverts commit {}, reversing\nchanges made to {}.\n\n",
-                            source_oid.to_hex(),
-                            parent.to_hex()
-                        );
-                    }
-                }
-            }
+            let mainline_parent = opts.mainline.and_then(|m| {
+                let idx = m.get() as usize - 1;
+                source.parents.get(idx).copied()
+            });
+            let (title, body) =
+                merge_commit_message_for_revert(source, source_oid, false, '#', mainline_parent);
             Ok(format!("{title}\n{body}"))
         }
     }
