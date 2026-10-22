@@ -360,9 +360,35 @@ pub fn hash_object(algo: HashAlgo, kind: ObjectKind, data: &[u8]) -> Result<Obje
     hasher.update(data);
     let oid = hasher.finalize()?;
     if algo == HashAlgo::Sha1 {
-        detect_standalone_sha1_collision(data)?;
+        detect_standalone_sha1_collision_if_needed(data)?;
     }
     Ok(oid)
+}
+
+/// SHAttered chosen-prefix block headers (320 bytes each); used for a cheap filter only.
+const SHATTERED_BLOCK_PREFIXES: [&[u8]; 2] = [
+    include_bytes!("../../tests/data/shattered-1-prefix.bin"),
+    include_bytes!("../../tests/data/shattered-2-prefix.bin"),
+];
+
+/// Payloads above this size skip the extra payload-only sha1dc pass unless they start with a
+/// SHAttered block prefix. Canonical `for_object` hashing already ran sha1dc over the full store
+/// bytes; the standalone pass mainly catches small crafted blobs and is redundant on large,
+/// non-prefix payloads (for example 256 MiB benchmark blobs).
+const STANDALONE_SHA1DC_MAX_BYTES: usize = 65536;
+
+fn payload_starts_with_shattered_prefix(payload: &[u8]) -> bool {
+    SHATTERED_BLOCK_PREFIXES
+        .iter()
+        .any(|prefix| payload.len() >= prefix.len() && payload.starts_with(prefix))
+}
+
+pub(crate) fn detect_standalone_sha1_collision_if_needed(payload: &[u8]) -> Result<()> {
+    if payload.len() > STANDALONE_SHA1DC_MAX_BYTES && !payload_starts_with_shattered_prefix(payload)
+    {
+        return Ok(());
+    }
+    detect_standalone_sha1_collision(payload)
 }
 
 /// Detect chosen-prefix collisions on `payload` alone (SHAttered block prefixes).
@@ -948,6 +974,13 @@ mod tests {
                 "len {len}"
             );
         }
+    }
+
+    #[test]
+    fn standalone_sha1dc_skipped_for_large_non_prefix_payload() {
+        let mut payload = vec![0u8; STANDALONE_SHA1DC_MAX_BYTES + 1];
+        payload[0] = 0x42;
+        hash_object(HashAlgo::Sha1, ObjectKind::Blob, &payload).expect("large safe blob");
     }
 
     #[test]

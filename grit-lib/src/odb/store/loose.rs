@@ -274,8 +274,7 @@ impl ObjectStore for LooseStore {
 
 impl WritableObjectStore for LooseStore {
     fn write(&self, kind: ObjectKind, data: &[u8], options: WriteOptions) -> Result<ObjectId> {
-        let store_bytes = build_store_bytes(kind, data);
-        let oid = hash::hash_object(self.hash_algo, kind, data)?;
+        let (store_bytes, oid) = build_store_bytes_and_hash(self.hash_algo, kind, data)?;
         if let Some(existing) = self.try_finish_if_loose_present(&oid, options)? {
             return Ok(existing);
         }
@@ -469,6 +468,17 @@ pub(crate) fn build_store_bytes(kind: ObjectKind, data: &[u8]) -> Vec<u8> {
     out.extend_from_slice(header.as_bytes());
     out.extend_from_slice(data);
     out
+}
+
+/// Build canonical store bytes and the object id for a loose write.
+pub(crate) fn build_store_bytes_and_hash(
+    algo: HashAlgo,
+    kind: ObjectKind,
+    data: &[u8],
+) -> Result<(Vec<u8>, ObjectId)> {
+    let store_bytes = build_store_bytes(kind, data);
+    let oid = hash::hash_object(algo, kind, data)?;
+    Ok((store_bytes, oid))
 }
 
 pub(crate) fn zlib_compress_store_bytes(
