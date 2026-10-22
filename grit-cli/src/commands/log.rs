@@ -631,8 +631,8 @@ fn build_commit_outcome(
     let detail = format.detail_for_log();
 
     let (commit_json_rows, commit_rows) = if need_refs {
-        let loader = CommitJsonLoader::new(repo)?;
-        loader.load_with_summaries_reusing(repo, oids, now, parsed)?
+        CommitJsonLoader::for_listed_commits()
+            .load_with_summaries_reusing(repo, oids, now, parsed)?
     } else {
         let summaries = CommitJsonLoader::load_summaries_only(repo, oids, parsed)?;
         let json_rows = summaries
