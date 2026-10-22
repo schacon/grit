@@ -4686,11 +4686,16 @@ pub grit_lib::error::Error::WorktreePathRegistered
 pub grit_lib::error::Error::WorktreePathRegistered::path: alloc::string::String
 pub grit_lib::error::Error::WorktreePathRegisteredMissing
 pub grit_lib::error::Error::WorktreePathRegisteredMissing::path: alloc::string::String
+pub grit_lib::error::Error::WouldOverwrite
+pub grit_lib::error::Error::WouldOverwrite::message: alloc::string::String
+pub grit_lib::error::Error::WouldOverwrite::paths: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::error::Error::WouldOverwrite::reason: grit_lib::error::OverwriteReason
 pub grit_lib::error::Error::Zlib(alloc::string::String)
 impl grit_lib::error::Error
 pub fn grit_lib::error::Error::git_stderr_message(&self) -> alloc::string::String
 pub fn grit_lib::error::Error::invalid_path_component(impl core::convert::Into<alloc::string::String>, grit_lib::path_validate::PathComponentError) -> Self
 pub fn grit_lib::error::Error::wants_fatal_prefix(&self) -> bool
+pub fn grit_lib::error::Error::would_overwrite(grit_lib::error::OverwriteReason, alloc::vec::Vec<alloc::string::String>) -> Self
 impl core::convert::From<core::io::error::Error> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(core::io::error::Error) -> Self
 impl core::convert::From<grit_lib::command_runner::hooks::HookError> for grit_lib::error::Error
@@ -4873,6 +4878,29 @@ impl core::marker::Unpin for grit_lib::prelude::MidxError
 impl core::marker::UnsafeUnpin for grit_lib::prelude::MidxError
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::prelude::MidxError
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::prelude::MidxError
+pub enum grit_lib::error::OverwriteReason
+pub grit_lib::error::OverwriteReason::LocalChanges
+pub grit_lib::error::OverwriteReason::Untracked
+impl core::clone::Clone for grit_lib::error::OverwriteReason
+pub fn grit_lib::error::OverwriteReason::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::error::OverwriteReason
+impl core::cmp::PartialEq for grit_lib::error::OverwriteReason
+pub fn grit_lib::error::OverwriteReason::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::error::OverwriteReason
+pub fn grit_lib::error::OverwriteReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::error::OverwriteReason
+pub fn grit_lib::error::OverwriteReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for grit_lib::error::OverwriteReason
+pub fn grit_lib::error::OverwriteReason::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for grit_lib::error::OverwriteReason
+impl core::marker::StructuralPartialEq for grit_lib::error::OverwriteReason
+impl core::marker::Freeze for grit_lib::error::OverwriteReason
+impl core::marker::Send for grit_lib::error::OverwriteReason
+impl core::marker::Sync for grit_lib::error::OverwriteReason
+impl core::marker::Unpin for grit_lib::error::OverwriteReason
+impl core::marker::UnsafeUnpin for grit_lib::error::OverwriteReason
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::error::OverwriteReason
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::error::OverwriteReason
 #[non_exhaustive] pub enum grit_lib::error::PathOutsideRepoError
 pub grit_lib::error::PathOutsideRepoError::OutsideRepository
 pub grit_lib::error::PathOutsideRepoError::OutsideRepository::path: alloc::string::String
@@ -12327,6 +12355,7 @@ impl core::marker::UnsafeUnpin for grit_lib::porcelain::switch::SwitchMode
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::switch::SwitchMode
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::switch::SwitchMode
 pub struct grit_lib::porcelain::switch::SwitchOptions
+pub grit_lib::porcelain::switch::SwitchOptions::dry_run: bool
 pub grit_lib::porcelain::switch::SwitchOptions::mode: grit_lib::porcelain::switch::SwitchMode
 impl core::clone::Clone for grit_lib::porcelain::switch::SwitchOptions
 pub fn grit_lib::porcelain::switch::SwitchOptions::clone(&self) -> Self
@@ -12341,9 +12370,11 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::switch::Sw
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::switch::SwitchOptions
 pub struct grit_lib::porcelain::switch::SwitchOutcome
 pub grit_lib::porcelain::switch::SwitchOutcome::branch: alloc::string::String
+pub grit_lib::porcelain::switch::SwitchOutcome::changed_paths: usize
 pub grit_lib::porcelain::switch::SwitchOutcome::commit: grit_lib::objects::ObjectId
 pub grit_lib::porcelain::switch::SwitchOutcome::created: bool
 pub grit_lib::porcelain::switch::SwitchOutcome::detached: bool
+pub grit_lib::porcelain::switch::SwitchOutcome::dry_run: bool
 impl core::clone::Clone for grit_lib::porcelain::switch::SwitchOutcome
 pub fn grit_lib::porcelain::switch::SwitchOutcome::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::porcelain::switch::SwitchOutcome
@@ -12674,11 +12705,16 @@ pub grit_lib::prelude::Error::WorktreePathRegistered
 pub grit_lib::prelude::Error::WorktreePathRegistered::path: alloc::string::String
 pub grit_lib::prelude::Error::WorktreePathRegisteredMissing
 pub grit_lib::prelude::Error::WorktreePathRegisteredMissing::path: alloc::string::String
+pub grit_lib::prelude::Error::WouldOverwrite
+pub grit_lib::prelude::Error::WouldOverwrite::message: alloc::string::String
+pub grit_lib::prelude::Error::WouldOverwrite::paths: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::prelude::Error::WouldOverwrite::reason: grit_lib::error::OverwriteReason
 pub grit_lib::prelude::Error::Zlib(alloc::string::String)
 impl grit_lib::error::Error
 pub fn grit_lib::error::Error::git_stderr_message(&self) -> alloc::string::String
 pub fn grit_lib::error::Error::invalid_path_component(impl core::convert::Into<alloc::string::String>, grit_lib::path_validate::PathComponentError) -> Self
 pub fn grit_lib::error::Error::wants_fatal_prefix(&self) -> bool
+pub fn grit_lib::error::Error::would_overwrite(grit_lib::error::OverwriteReason, alloc::vec::Vec<alloc::string::String>) -> Self
 impl core::convert::From<core::io::error::Error> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(core::io::error::Error) -> Self
 impl core::convert::From<grit_lib::command_runner::hooks::HookError> for grit_lib::error::Error

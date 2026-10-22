@@ -1,6 +1,11 @@
 //! After `switch_repository`, system `git` sees a clean index and worktree.
 
+mod switch_overwrite_git_helpers;
+
 use std::process::Command;
+
+use grit_lib::error::{Error, OverwriteReason};
+use switch_overwrite_git_helpers::git_switch_refused_paths;
 
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
@@ -117,6 +122,7 @@ fn switch_nested_gitattributes_crlf_clean_worktree_matches_git() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect("grit switch must succeed on clean nested-eol=crlf worktree like git");
@@ -192,6 +198,7 @@ fn switch_wholesale_deleted_gitattributes_does_not_apply_stale_eol() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect("grit switch");
@@ -267,6 +274,7 @@ fn switch_preserves_untracked_in_wholesale_deleted_directory() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect("grit switch to target");
@@ -340,6 +348,7 @@ fn switch_preserves_untracked_fifo_under_fast_wholesale_delete_scan() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect("grit switch to target");
@@ -405,6 +414,7 @@ fn switch_preserves_ignored_file_in_wholesale_deleted_directory() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect("grit switch to target");
@@ -468,6 +478,7 @@ fn switch_preserves_ignored_file_from_nested_tracked_gitignore() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect("grit switch to target");
@@ -531,6 +542,7 @@ fn switch_preserves_ignored_file_from_deep_nested_tracked_gitignore() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect("grit switch to target");
@@ -611,6 +623,7 @@ fn switch_preserves_populated_gitlink_under_wholesale_deleted_directory() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect("grit switch to target");
@@ -634,7 +647,6 @@ fn switch_refuses_racy_same_size_dirty_file_like_git() {
     use std::process::Command;
 
     use filetime::FileTime;
-    use grit_lib::error::Error;
     use grit_lib::index::{entry_from_metadata, Index, MODE_REGULAR};
     use grit_lib::objects::ObjectKind;
 
@@ -722,6 +734,7 @@ fn switch_refuses_racy_same_size_dirty_file_like_git() {
 
     let target_oid =
         ObjectId::from_hex(git(tmp.path(), &["rev-parse", "target"]).trim()).expect("target oid");
+    let git_paths = git_switch_refused_paths(tmp.path(), "target");
     let err = switch_repository(
         &grit_repo,
         &SwitchOptions {
@@ -729,15 +742,18 @@ fn switch_refuses_racy_same_size_dirty_file_like_git() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect_err("grit switch must refuse racy dirty worktree like git");
     match err {
-        Error::Message(msg) => {
-            assert!(
-                msg.contains("uncommitted changes"),
-                "expected uncommitted changes error, got: {msg}"
-            );
+        Error::WouldOverwrite {
+            reason: OverwriteReason::LocalChanges,
+            paths,
+            ..
+        } => {
+            assert_eq!(paths, git_paths);
+            assert!(paths.contains(&"hot.txt".to_owned()));
         }
         other => panic!("unexpected error: {other:?}"),
     }
@@ -776,6 +792,7 @@ fn switch_tree_diff_git_clean_after() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect("switch to target");
@@ -822,6 +839,7 @@ fn switch_refuses_dirty_conflicting_path_and_leaves_file() {
     let other_oid =
         ObjectId::from_hex(git(tmp.path(), &["rev-parse", "other"]).trim()).expect("other oid");
 
+    let git_paths = git_switch_refused_paths(tmp.path(), "other");
     let err = switch_repository(
         &grit_repo,
         &SwitchOptions {
@@ -829,14 +847,18 @@ fn switch_refuses_dirty_conflicting_path_and_leaves_file() {
                 branch: "other".into(),
                 oid: other_oid,
             },
+            dry_run: false,
         },
     )
     .expect_err("dirty switch must fail");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("uncommitted changes"),
-        "expected uncommitted changes error, got: {msg}"
-    );
+    match err {
+        Error::WouldOverwrite {
+            reason: OverwriteReason::LocalChanges,
+            paths,
+            ..
+        } => assert_eq!(paths, git_paths),
+        other => panic!("expected WouldOverwrite LocalChanges, got {other:?}"),
+    }
     let after = std::fs::read(tmp.path().join("hot.txt")).expect("read after");
     assert_eq!(before, after, "conflicting dirty file must be untouched");
 }
@@ -921,6 +943,7 @@ fn switch_refuses_dirty_file_deleted_on_target_like_git() {
     let target_oid =
         ObjectId::from_hex(git(tmp.path(), &["rev-parse", "target"]).trim()).expect("target oid");
 
+    let git_paths = git_switch_refused_paths(tmp.path(), "target");
     let err = switch_repository(
         &grit_repo,
         &SwitchOptions {
@@ -928,13 +951,18 @@ fn switch_refuses_dirty_file_deleted_on_target_like_git() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect_err("grit must refuse switch like git");
-    assert!(
-        err.to_string().contains("uncommitted changes"),
-        "unexpected error: {err}"
-    );
+    match err {
+        Error::WouldOverwrite {
+            reason: OverwriteReason::LocalChanges,
+            paths,
+            ..
+        } => assert_eq!(paths, git_paths),
+        other => panic!("expected WouldOverwrite LocalChanges, got {other:?}"),
+    }
     assert_eq!(
         std::fs::read(tmp.path().join("victim.txt")).expect("read after grit"),
         before,
@@ -994,6 +1022,7 @@ fn switch_tree_diff_type_and_mode_round_trip_git_clean() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect("switch");
@@ -1018,6 +1047,7 @@ fn switch_tree_diff_type_and_mode_round_trip_git_clean() {
                 oid: ObjectId::from_hex(git(tmp.path(), &["rev-parse", "main"]).trim())
                     .expect("main oid"),
             },
+            dry_run: false,
         },
     )
     .expect("switch back");
@@ -1132,6 +1162,7 @@ fn switch_removes_gitlink_when_parent_directory_dropped() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect("grit switch");
@@ -1231,6 +1262,7 @@ fn switch_dirty_gitlink_on_changing_gitlink_matches_git() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect("grit switch must match git and preserve dirty gitlink worktree");
@@ -1276,6 +1308,7 @@ fn switch_scoped_worktree_diff_limits_metadata_probes() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect("switch");
@@ -1364,6 +1397,7 @@ fn switch_tracked_deletes_match_git_when_wholesale_dir_removal_fails() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect("grit switch");
@@ -1441,6 +1475,7 @@ fn issue_1160_unstaged_delete_with_staged_add_deleted_allows_switch() {
                 branch: "main".into(),
                 oid: main_oid,
             },
+            dry_run: false,
         },
     )
     .expect("grit switch main with unstaged delete + AD path");
@@ -1523,6 +1558,7 @@ fn issue_1160_dangling_symlink_with_staged_add_deleted_refuses_switch() {
     .expect("open grit repo");
     let main_oid =
         ObjectId::from_hex(git(grit_root, &["rev-parse", "main"]).trim()).expect("main oid");
+    let git_paths = git_switch_refused_paths(grit_root, "main");
     let grit_err = switch_repository(
         &grit_repo,
         &SwitchOptions {
@@ -1530,13 +1566,18 @@ fn issue_1160_dangling_symlink_with_staged_add_deleted_refuses_switch() {
                 branch: "main".into(),
                 oid: main_oid,
             },
+            dry_run: false,
         },
     )
     .expect_err("grit must refuse switch for retargeted dangling symlink");
-    assert!(
-        grit_err.to_string().contains("uncommitted changes"),
-        "unexpected error: {grit_err}"
-    );
+    match grit_err {
+        Error::WouldOverwrite {
+            reason: OverwriteReason::LocalChanges,
+            paths,
+            ..
+        } => assert_eq!(paths, git_paths),
+        other => panic!("expected WouldOverwrite LocalChanges, got {other:?}"),
+    }
     assert_eq!(
         std::fs::read_link(grit_root.join("extra-link")).expect("readlink"),
         std::path::PathBuf::from("changed-target")
@@ -1604,6 +1645,7 @@ fn switch_bulk_add_mod_delete_leaves_git_clean() {
                 branch: "target".into(),
                 oid: target_oid,
             },
+            dry_run: false,
         },
     )
     .expect("grit switch to target");
@@ -1625,6 +1667,7 @@ fn switch_bulk_add_mod_delete_leaves_git_clean() {
                 branch: "main".into(),
                 oid: main_oid,
             },
+            dry_run: false,
         },
     )
     .expect("grit switch back to main");

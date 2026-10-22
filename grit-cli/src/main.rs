@@ -794,6 +794,9 @@ enum Command {
         /// Check out a commit in detached HEAD mode.
         #[arg(long = "detach")]
         detach: bool,
+        /// Run overwrite checks without updating refs, the index, or the worktree.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
     },
     /// Move the branch tip and optionally reset the index or worktree.
     Reset {
@@ -1641,8 +1644,9 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             start_point,
             create,
             detach,
+            dry_run,
         } => emit(
-            &commands::switch::run(branch, start_point, create, detach)?,
+            &commands::switch::run(branch, start_point, create, detach, dry_run)?,
             opts,
             ctx,
         ),
