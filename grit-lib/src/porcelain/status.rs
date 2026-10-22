@@ -556,7 +556,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
         .entries
         .iter()
         .filter(|e| e.stage() == 0 && e.mode == MODE_GITLINK)
-        .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+        .map(|e| crate::repo_relpath::storage_string(&e.path))
         .collect();
 
     let mut untracked = Vec::new();
@@ -899,26 +899,33 @@ fn visit_untracked_dir_entry(
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
 ) -> Result<UntrackedWalkStep> {
-    let raw_name = entry.file_name().to_string_lossy().to_string();
-    if raw_name == ".git" {
+    let name_bytes = dir_entry_name_bytes(entry);
+    if name_bytes == b".git"[..] {
         return Ok(UntrackedWalkStep::Continue);
     }
-    let name = if precompose_unicode {
-        precompose_utf8_segment(&raw_name).into_owned()
+    let name_bytes: Vec<u8> = if precompose_unicode {
+        if let Ok(raw_name) = std::str::from_utf8(&name_bytes) {
+            precompose_utf8_segment(raw_name).into_owned().into_bytes()
+        } else {
+            name_bytes
+        }
     } else {
-        raw_name
+        name_bytes
     };
     let path = entry.path();
-    let child_rel = relative_path(rel, &name);
+    let parent = crate::repo_relpath::storage_bytes(rel);
+    let child_bytes = crate::repo_relpath::join_rel(&parent, &name_bytes);
+    let child_rel = crate::repo_relpath::storage_string(&child_bytes);
+    let child_rel_match = crate::repo_relpath::as_utf8_for_matching(&child_rel);
     let is_dir = crate::read_dir_kind::entry_is_dir(entry).unwrap_or(false);
 
     if is_dir && gitlinks.contains(&child_rel) {
         return Ok(UntrackedWalkStep::Continue);
     }
 
-    if tracked_paths.contains(&child_rel) {
+    if tracked_paths.contains_bytes(&child_bytes) {
         let index_is_tree = index
-            .get(child_rel.as_bytes(), 0)
+            .get(&child_bytes, 0)
             .is_some_and(|e| e.mode == MODE_TREE || e.mode == MODE_GITLINK);
         if !(is_dir && !index_is_tree) {
             return Ok(UntrackedWalkStep::Continue);
@@ -957,7 +964,7 @@ fn visit_untracked_dir_entry(
         ) {
             return Ok(UntrackedWalkStep::Continue);
         }
-        let is_ign = matcher.is_path_ignored(repo, Some(index), &child_rel, false)?;
+        let is_ign = matcher.is_path_ignored(repo, Some(index), child_rel_match.as_ref(), false)?;
         if is_ign {
             if !check_only && ignored_mode != IgnoredMode::No {
                 ignored_out.push(child_rel);
@@ -1434,14 +1441,6 @@ fn has_tracked_under(index: &Index, gitlinks: &HashSet<String>, rel_dir: &str) -
     })
 }
 
-fn relative_path(parent: &str, name: &str) -> String {
-    if parent.is_empty() {
-        name.to_string()
-    } else {
-        format!("{parent}/{name}")
-    }
-}
-
 /// Whether `dir` is the work tree of a nested submodule of the superproject at
 /// `super_git_dir` (its `.git` resolves under `super_git_dir/modules`).
 pub fn dir_is_nested_submodule_worktree(super_git_dir: &Path, dir: &Path) -> bool {
@@ -1644,10 +1643,22 @@ pub fn conflicts_from_index(index: &Index) -> Vec<Conflict> {
 }
 
 fn index_relpath_to_string(path: &[u8]) -> String {
-    match std::str::from_utf8(path) {
-        Ok(s) => s.to_owned(),
-        Err(_) => path.iter().map(|&b| b as char).collect(),
-    }
+    crate::repo_relpath::storage_string(path)
+}
+
+#[cfg(unix)]
+fn dir_entry_name_bytes(entry: &std::fs::DirEntry) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    entry.file_name().as_os_str().as_bytes().to_vec()
+}
+
+#[cfg(not(unix))]
+fn dir_entry_name_bytes(entry: &std::fs::DirEntry) -> Vec<u8> {
+    entry
+        .file_name()
+        .to_string_lossy()
+        .into_owned()
+        .into_bytes()
 }
 
 fn conflict_paths_from_index_raw(index: &Index) -> Vec<Vec<u8>> {

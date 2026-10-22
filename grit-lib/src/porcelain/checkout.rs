@@ -143,8 +143,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
         if target_paths.contains(path) {
             continue;
         }
-        let path_str = String::from_utf8_lossy(path);
-        let abs = work_tree.join(path_str.as_ref());
+        let abs = crate::index::worktree_path_from_index_rel(work_tree, path);
         if let Some(entry) = index.get(path, 0) {
             if entry.mode == MODE_GITLINK {
                 remove_uninitialized_gitlink_worktree(&abs);
@@ -172,7 +171,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
                 continue;
             }
             if let Some(path) = &change.new_path {
-                written_by_tree_diff.insert(path.as_bytes().to_vec());
+                written_by_tree_diff.insert(crate::repo_relpath::storage_bytes(path).into_owned());
             }
         }
     }
@@ -187,11 +186,11 @@ pub fn checkout_hard_to_tree_from_head_tree(
     let mut dir_cache = LeadingDirCache::with_protect(protect);
 
     for te in target_entries {
-        let path = String::from_utf8_lossy(&te.path).into_owned();
+        let abs = crate::index::worktree_path_from_index_rel(work_tree, &te.path);
         let mode = te.mode;
         if mode == MODE_GITLINK {
             if trees_differ && written_by_tree_diff.contains(&te.path) {
-                let abs = work_tree.join(&path);
+                let abs = abs.clone();
                 let mut entry = entry_from_stat(&abs, te.path.as_slice(), te.oid, MODE_GITLINK)?;
                 entry.size = 0;
                 new_entries.push(entry);
@@ -200,9 +199,9 @@ pub fn checkout_hard_to_tree_from_head_tree(
             if let Some(existing) = index.get(te.path.as_slice(), 0) {
                 if existing.oid == te.oid
                     && existing.mode == MODE_GITLINK
-                    && gitlink_worktree_matches_index(&work_tree.join(&path))
+                    && gitlink_worktree_matches_index(&abs)
                 {
-                    let abs = work_tree.join(&path);
+                    let abs = abs.clone();
                     let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
                     let mut entry =
                         entry_from_metadata(&meta, te.path.as_slice(), te.oid, MODE_GITLINK);
@@ -211,8 +210,9 @@ pub fn checkout_hard_to_tree_from_head_tree(
                     continue;
                 }
             }
+            let path = crate::repo_relpath::storage_string(&te.path);
             materialize_gitlink_worktree(work_tree, &path, &mut dir_cache)?;
-            let abs = work_tree.join(&path);
+            let abs = abs.clone();
             let mut entry = entry_from_stat(&abs, te.path.as_slice(), te.oid, MODE_GITLINK)?;
             entry.size = 0;
             new_entries.push(entry);
@@ -220,12 +220,12 @@ pub fn checkout_hard_to_tree_from_head_tree(
         }
 
         if trees_differ && written_by_tree_diff.contains(&te.path) {
-            let abs = work_tree.join(&path);
             let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
             new_entries.push(entry_from_metadata(&meta, te.path.as_slice(), te.oid, mode));
             continue;
         }
 
+        let path = crate::repo_relpath::storage_string(&te.path);
         if let Some(existing) = index.get(te.path.as_slice(), 0) {
             if crate::diff::path_checkout_skip_blob_write_when_up_to_date_with_config(
                 repo.odb(),
@@ -239,7 +239,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
                 Some(rules.filter_process()),
                 Some(config.as_ref()),
             )? {
-                let abs = work_tree.join(&path);
+                let abs = abs.clone();
                 let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
                 new_entries.push(entry_from_metadata(&meta, te.path.as_slice(), te.oid, mode));
                 continue;
@@ -699,6 +699,14 @@ pub(crate) fn path_under_wholesale_directory(
     })
 }
 
+fn checkout_stored_worktree_abs(work_tree: &Path, stored_path: &str) -> PathBuf {
+    crate::repo_relpath::worktree_abs(work_tree, stored_path)
+}
+
+fn checkout_stored_index_path_bytes(stored_path: &str) -> Vec<u8> {
+    crate::repo_relpath::storage_bytes(stored_path).into_owned()
+}
+
 const BULK_ADD_CHECKOUT_MIN: usize = 32;
 const BULK_DELETE_CHECKOUT_MIN: usize = 32;
 
@@ -1061,8 +1069,10 @@ fn checkout_bulk_mod_delete_tree_changes(
     if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
         let policy = repo.thread_policy();
         let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-        let wt = work_tree.to_path_buf();
-        let abs_paths: Vec<PathBuf> = per_file_deletes.iter().map(|p| wt.join(p)).collect();
+        let abs_paths: Vec<PathBuf> = per_file_deletes
+            .iter()
+            .map(|p| checkout_stored_worktree_abs(work_tree, p))
+            .collect();
         try_par_map(&abs_paths, options, 0, |abs| {
             let _ = fs::remove_file(abs);
             Ok(())
@@ -1085,17 +1095,17 @@ fn checkout_bulk_mod_delete_tree_changes(
             || !path_under_wholesale_directory(path, &wholesale_dirs_removed)
         {
             if old_mode == MODE_GITLINK {
-                let abs = work_tree.join(path);
+                let abs = checkout_stored_worktree_abs(work_tree, path);
                 remove_uninitialized_gitlink_worktree(&abs);
                 deleted_abs_paths.push(abs);
             } else if !parallel_deleted_paths.contains(path) {
-                let abs = work_tree.join(path);
+                let abs = checkout_stored_worktree_abs(work_tree, path);
                 let _ = fs::remove_file(&abs);
                 deleted_abs_paths.push(abs);
             }
         }
         if !path_under_wholesale_directory(path, wholesale_index_prefixes) {
-            paths_to_remove.push(path.as_bytes().to_vec());
+            paths_to_remove.push(checkout_stored_index_path_bytes(path));
         }
         progress.inc(1);
     }
@@ -1189,8 +1199,10 @@ fn checkout_bulk_deleted_tree_changes(
         let config = repo.config()?;
         let policy = repo.thread_policy();
         let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-        let wt = work_tree.to_path_buf();
-        let abs_paths: Vec<PathBuf> = per_file_deletes.iter().map(|p| wt.join(p)).collect();
+        let abs_paths: Vec<PathBuf> = per_file_deletes
+            .iter()
+            .map(|p| checkout_stored_worktree_abs(work_tree, p))
+            .collect();
         try_par_map(&abs_paths, options, 0, |abs| {
             let _ = fs::remove_file(abs);
             Ok(())
@@ -1215,17 +1227,17 @@ fn checkout_bulk_deleted_tree_changes(
         if old_mode == MODE_GITLINK || !path_under_wholesale_directory(path, wholesale_dirs_removed)
         {
             if old_mode == MODE_GITLINK {
-                let abs = work_tree.join(path);
+                let abs = checkout_stored_worktree_abs(work_tree, path);
                 remove_uninitialized_gitlink_worktree(&abs);
                 deleted_abs_paths.push(abs);
             } else if !parallel_deleted_paths.contains(path) {
-                let abs = work_tree.join(path);
+                let abs = checkout_stored_worktree_abs(work_tree, path);
                 let _ = fs::remove_file(&abs);
                 deleted_abs_paths.push(abs);
             }
         }
         if !path_under_wholesale_directory(path, wholesale_index_prefixes) {
-            paths_to_remove.push(path.as_bytes().to_vec());
+            paths_to_remove.push(checkout_stored_index_path_bytes(path));
         }
         progress.inc(1);
     }
@@ -1496,8 +1508,10 @@ fn checkout_tree_changes_with_progress(
     if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
         let policy = repo.thread_policy();
         let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-        let wt = work_tree.to_path_buf();
-        let abs_paths: Vec<PathBuf> = per_file_deletes.iter().map(|p| wt.join(p)).collect();
+        let abs_paths: Vec<PathBuf> = per_file_deletes
+            .iter()
+            .map(|p| checkout_stored_worktree_abs(work_tree, p))
+            .collect();
         try_par_map(&abs_paths, options, 0, |abs| {
             let _ = fs::remove_file(abs);
             Ok(())
@@ -1521,17 +1535,17 @@ fn checkout_tree_changes_with_progress(
                         || !path_under_wholesale_directory(path, &wholesale_dirs_removed)
                     {
                         if old_mode == MODE_GITLINK {
-                            let abs = work_tree.join(path);
+                            let abs = checkout_stored_worktree_abs(work_tree, path);
                             remove_uninitialized_gitlink_worktree(&abs);
                             deleted_abs_paths.push(abs);
                         } else if !parallel_deleted_paths.contains(path) {
-                            let abs = work_tree.join(path);
+                            let abs = checkout_stored_worktree_abs(work_tree, path);
                             let _ = fs::remove_file(&abs);
                             deleted_abs_paths.push(abs);
                         }
                     }
                     if !path_under_wholesale_directory(path, &wholesale_dirs_removed) {
-                        paths_to_remove.push(path.as_bytes().to_vec());
+                        paths_to_remove.push(checkout_stored_index_path_bytes(path));
                     }
                 }
                 progress.inc(1);
@@ -1562,19 +1576,16 @@ fn checkout_tree_changes_with_progress(
             }
             let mode = parse_git_mode(&change.new_mode);
             if mode == MODE_GITLINK {
-                if let Some(existing) = index.get(path.as_bytes(), 0) {
+                let index_path = checkout_stored_index_path_bytes(path);
+                let abs = checkout_stored_worktree_abs(work_tree, path);
+                if let Some(existing) = index.get(&index_path, 0) {
                     if existing.oid == change.new_oid
                         && existing.mode == MODE_GITLINK
-                        && gitlink_worktree_matches_index(&work_tree.join(path))
+                        && gitlink_worktree_matches_index(&abs)
                     {
-                        let abs = work_tree.join(path);
                         let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
-                        let mut entry = entry_from_metadata(
-                            &meta,
-                            path.as_bytes(),
-                            change.new_oid,
-                            MODE_GITLINK,
-                        );
+                        let mut entry =
+                            entry_from_metadata(&meta, &index_path, change.new_oid, MODE_GITLINK);
                         entry.size = 0;
                         plan.push(CheckoutPlanSlot::Ready(entry));
                         progress.inc(1);
@@ -1582,15 +1593,15 @@ fn checkout_tree_changes_with_progress(
                     }
                 }
                 materialize_gitlink_worktree(work_tree, path, &mut dir_cache)?;
-                let abs = work_tree.join(path);
-                let mut entry =
-                    entry_from_stat(&abs, path.as_bytes(), change.new_oid, MODE_GITLINK)?;
+                let mut entry = entry_from_stat(&abs, &index_path, change.new_oid, MODE_GITLINK)?;
                 entry.size = 0;
                 plan.push(CheckoutPlanSlot::Ready(entry));
                 progress.inc(1);
                 continue;
             }
-            if let Some(existing) = index.get(path.as_bytes(), 0) {
+            let index_path = checkout_stored_index_path_bytes(path);
+            let abs = checkout_stored_worktree_abs(work_tree, path);
+            if let Some(existing) = index.get(&index_path, 0) {
                 if crate::diff::path_checkout_skip_blob_write_when_up_to_date_with_config(
                     repo.odb(),
                     repo.git_dir(),
@@ -1603,11 +1614,10 @@ fn checkout_tree_changes_with_progress(
                     Some(rules.filter_process()),
                     Some(config.as_ref()),
                 )? {
-                    let abs = work_tree.join(path);
                     let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
                     plan.push(CheckoutPlanSlot::Ready(entry_from_metadata(
                         &meta,
-                        path.as_bytes(),
+                        &index_path,
                         change.new_oid,
                         mode,
                     )));
@@ -2116,7 +2126,7 @@ fn materialize_gitlink_worktree(
     dir_cache: &mut LeadingDirCache,
 ) -> Result<()> {
     dir_cache.ensure_parents(work_tree, rel_path)?;
-    let file_path = work_tree.join(rel_path);
+    let file_path = crate::repo_relpath::worktree_abs(work_tree, rel_path);
     if let Ok(meta) = fs::symlink_metadata(&file_path) {
         if meta.file_type().is_symlink() || meta.is_file() {
             fs::remove_file(&file_path)?;
@@ -2151,14 +2161,15 @@ fn write_checkout_entry(
     dir_cache: &mut LeadingDirCache,
     oid: ObjectId,
 ) -> Result<IndexEntry> {
+    let index_path = crate::repo_relpath::storage_bytes(rel_path).into_owned();
     if mode == MODE_SYMLINK {
         let meta = write_to_worktree_cached(work_tree, rel_path, data, mode, dir_cache)?;
-        return Ok(entry_from_metadata(&meta, rel_path.as_bytes(), oid, mode));
+        return Ok(entry_from_metadata(&meta, &index_path, oid, mode));
     }
 
     if can_overwrite_regular_in_place(change) {
         dir_cache.ensure_parents(work_tree, rel_path)?;
-        let abs_path = work_tree.join(rel_path);
+        let abs_path = crate::repo_relpath::worktree_abs(work_tree, rel_path);
         let old_mode = parse_git_mode(&change.old_mode);
         let mut file = match OpenOptions::new()
             .write(true)
@@ -2168,7 +2179,7 @@ fn write_checkout_entry(
             Ok(f) => f,
             Err(_) => {
                 let meta = write_to_worktree_cached(work_tree, rel_path, data, mode, dir_cache)?;
-                return Ok(entry_from_metadata(&meta, rel_path.as_bytes(), oid, mode));
+                return Ok(entry_from_metadata(&meta, &index_path, oid, mode));
             }
         };
         file.write_all(data)
@@ -2176,11 +2187,11 @@ fn write_checkout_entry(
         drop(file);
         apply_in_place_git_mode_transition_at_path(&abs_path, old_mode, mode)?;
         let meta = written_file_symlink_metadata(&abs_path)?;
-        return Ok(entry_from_metadata(&meta, rel_path.as_bytes(), oid, mode));
+        return Ok(entry_from_metadata(&meta, &index_path, oid, mode));
     }
 
     let meta = write_to_worktree_cached(work_tree, rel_path, data, mode, dir_cache)?;
-    Ok(entry_from_metadata(&meta, rel_path.as_bytes(), oid, mode))
+    Ok(entry_from_metadata(&meta, &index_path, oid, mode))
 }
 
 /// Adjust only the executable bit for an in-place overwrite, preserving umask-driven permissions.
@@ -2270,18 +2281,21 @@ impl LeadingDirCache {
     }
 
     fn ensure_parents(&mut self, work_tree: &Path, rel_path: &str) -> Result<()> {
-        use std::path::Component;
-        let path = Path::new(rel_path);
-        let Some(parent_rel) = path.parent() else {
-            return Ok(());
-        };
-        if parent_rel.as_os_str().is_empty() {
+        let rel_bytes = crate::repo_relpath::storage_bytes(rel_path);
+        let parent = crate::repo_relpath::parent_dir(&rel_bytes);
+        if parent.is_empty() {
             return Ok(());
         }
-        let mut cur = work_tree.to_path_buf();
-        for comp in parent_rel.components() {
-            if let Component::Normal(name) = comp {
-                cur.push(name);
+        #[cfg(unix)]
+        {
+            use std::ffi::OsStr;
+            use std::os::unix::ffi::OsStrExt;
+            let mut cur = work_tree.to_path_buf();
+            for comp in parent.split(|&b| b == b'/') {
+                if comp.is_empty() {
+                    continue;
+                }
+                cur.push(OsStr::from_bytes(comp));
                 if self.ready.contains(&cur) {
                     continue;
                 }
@@ -2294,6 +2308,31 @@ impl LeadingDirCache {
                     // Exists as a directory already.
                 }
                 self.ready.insert(cur.clone());
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            use std::path::Component;
+            let parent_str = std::str::from_utf8(&parent)
+                .map_err(|_| Error::Message("non-UTF-8 parent path during checkout".into()))?;
+            let path = Path::new(parent_str);
+            let mut cur = work_tree.to_path_buf();
+            for comp in path.components() {
+                if let Component::Normal(name) = comp {
+                    cur.push(name);
+                    if self.ready.contains(&cur) {
+                        continue;
+                    }
+                    if let Ok(meta) = leading_dir_metadata(&cur) {
+                        if meta.file_type().is_symlink() || !meta.is_dir() {
+                            fs::remove_file(&cur)?;
+                        }
+                    }
+                    if fs::create_dir(&cur).is_err() {
+                        // Exists as a directory already.
+                    }
+                    self.ready.insert(cur.clone());
+                }
             }
         }
         Ok(())
@@ -2406,7 +2445,7 @@ pub fn apply_index_file_mode(abs_path: &Path, mode: u32) -> Result<()> {
 pub fn prepare_parent_dirs_for_checkout(work_tree: &Path, rel_path: &str) -> Result<()> {
     let mut cache = LeadingDirCache::new();
     cache.ensure_parents(work_tree, rel_path)?;
-    let abs_path = work_tree.join(rel_path);
+    let abs_path = crate::repo_relpath::worktree_abs(work_tree, rel_path);
     if let Some(parent) = abs_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
             Error::PathError(format!("creating parent directories for '{rel_path}': {e}"))
@@ -2428,8 +2467,9 @@ pub(crate) fn write_to_worktree_cached(
     mode: u32,
     dir_cache: &mut LeadingDirCache,
 ) -> Result<fs::Metadata> {
-    validate_worktree_path(rel_path.as_bytes(), mode, dir_cache.protect)?;
-    let abs_path = work_tree.join(rel_path);
+    let rel_bytes = crate::repo_relpath::storage_bytes(rel_path);
+    validate_worktree_path(&rel_bytes, mode, dir_cache.protect)?;
+    let abs_path = crate::index::worktree_path_from_index_rel(work_tree, &rel_bytes);
 
     dir_cache.ensure_parents(work_tree, rel_path)?;
     if let Some(parent) = abs_path.parent() {
