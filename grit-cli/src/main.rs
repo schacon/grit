@@ -308,6 +308,11 @@ enum HistoryAction {
         #[command(flatten)]
         shared: commands::history::HistoryRewriteArgs,
     },
+    /// Undo the last applied history rewrite using the recorded ref plan.
+    Undo {
+        #[command(flatten)]
+        shared: commands::history::HistoryRewriteArgs,
+    },
     /// Fold a revision range into the oldest commit and replay descendants.
     Squash {
         /// Revision range (same syntax as `git rev-list`, for example `base..tip`).
@@ -2122,6 +2127,9 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 opts,
                 ctx,
             ),
+            HistoryAction::Undo { shared } => {
+                emit(&commands::history::run_undo(&shared)?, opts, ctx)
+            }
             HistoryAction::Squash {
                 range,
                 message,
@@ -2460,10 +2468,24 @@ mod tests {
             .any(|arg| arg.get_id() == "markdown" || arg.get_long() == Some("markdown"))
     }
 
+    fn with_cli_root<R>(run: impl FnOnce(clap::Command) -> R + Send + 'static) -> R
+    where
+        R: Send + 'static,
+    {
+        const STACK: usize = 16 * 1024 * 1024;
+        std::thread::Builder::new()
+            .stack_size(STACK)
+            .spawn(move || run(Cli::command()))
+            .expect("spawn cli root builder")
+            .join()
+            .expect("join cli root builder")
+    }
+
     fn cli_supports_markdown() -> bool {
-        Cli::command()
-            .get_arguments()
-            .any(|arg| arg.get_id() == "markdown" || arg.get_long() == Some("markdown"))
+        with_cli_root(|root| {
+            root.get_arguments()
+                .any(|arg| arg.get_id() == "markdown" || arg.get_long() == Some("markdown"))
+        })
     }
 
     fn top_level_keys(value: &Value) -> HashSet<String> {
@@ -2568,22 +2590,24 @@ mod tests {
     /// Every command page uses the documented section order.
     #[test]
     fn command_pages_follow_template() {
-        let dir = commands_dir();
-        let mut problems = Vec::new();
-        for command in Cli::command().get_subcommands() {
-            let name = command.get_name();
-            if name == "help" {
-                continue;
+        with_cli_root(|root| {
+            let dir = commands_dir();
+            let mut problems = Vec::new();
+            for command in root.get_subcommands() {
+                let name = command.get_name();
+                if name == "help" {
+                    continue;
+                }
+                let path = dir.join(format!("{name}.md"));
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    problems.push(format!("missing page {}", path.display()));
+                    continue;
+                };
+                let (_, body) = split_front_matter(&text);
+                problems.extend(validate_page_headings(name, &h2_headings(body)));
             }
-            let path = dir.join(format!("{name}.md"));
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                problems.push(format!("missing page {}", path.display()));
-                continue;
-            };
-            let (_, body) = split_front_matter(&text);
-            problems.extend(validate_page_headings(name, &h2_headings(body)));
-        }
-        assert!(problems.is_empty(), "{}", problems.join("\n"));
+            assert!(problems.is_empty(), "{}", problems.join("\n"));
+        });
     }
 
     #[test]
@@ -2635,67 +2659,69 @@ Example:
     /// JSON examples in the JSON output section must parse, and document top-level keys.
     #[test]
     fn json_examples_parse() {
-        let dir = commands_dir();
-        let mut problems = Vec::new();
-        for command in Cli::command().get_subcommands() {
-            let name = command.get_name();
-            if name == "help" {
-                continue;
-            }
-            let path = dir.join(format!("{name}.md"));
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let (_, body) = split_front_matter(&text);
-            let Some(section) = section_body(body, "JSON output") else {
-                problems.push(format!("{name}.md: no JSON output section"));
-                continue;
-            };
-            let blocks = fenced_json_blocks(&section);
-            if NO_JSON_COMMANDS.contains(&name) {
-                if !blocks.is_empty() {
-                    problems.push(format!(
-                        "{name}.md: plumbing command must not include ```json examples"
-                    ));
-                }
-                if !json_section_is_none(&section) {
-                    problems.push(format!(
-                        "{name}.md: JSON output section must explain that there is no JSON"
-                    ));
-                }
-                continue;
-            }
-            if blocks.is_empty() {
-                problems.push(format!(
-                    "{name}.md: JSON output section needs a ```json example"
-                ));
-                continue;
-            }
-            if !json_section_has_field_table(&section) {
-                problems.push(format!(
-                    "{name}.md: JSON output section needs a field table (| Field | … |)"
-                ));
-                continue;
-            }
-            let table_keys = field_table_top_level_keys(&section);
-            for (i, block) in blocks.iter().enumerate() {
-                let parsed: Value = serde_json::from_str(block).unwrap_or_else(|e| {
-                    problems.push(format!("{name}.md: JSON example {i} does not parse: {e}"));
-                    Value::Null
-                });
-                if parsed.is_null() {
+        with_cli_root(|root| {
+            let dir = commands_dir();
+            let mut problems = Vec::new();
+            for command in root.get_subcommands() {
+                let name = command.get_name();
+                if name == "help" {
                     continue;
                 }
-                for key in top_level_keys(&parsed) {
-                    if !table_keys.contains(&key) {
+                let path = dir.join(format!("{name}.md"));
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                let (_, body) = split_front_matter(&text);
+                let Some(section) = section_body(body, "JSON output") else {
+                    problems.push(format!("{name}.md: no JSON output section"));
+                    continue;
+                };
+                let blocks = fenced_json_blocks(&section);
+                if NO_JSON_COMMANDS.contains(&name) {
+                    if !blocks.is_empty() {
                         problems.push(format!(
+                            "{name}.md: plumbing command must not include ```json examples"
+                        ));
+                    }
+                    if !json_section_is_none(&section) {
+                        problems.push(format!(
+                            "{name}.md: JSON output section must explain that there is no JSON"
+                        ));
+                    }
+                    continue;
+                }
+                if blocks.is_empty() {
+                    problems.push(format!(
+                        "{name}.md: JSON output section needs a ```json example"
+                    ));
+                    continue;
+                }
+                if !json_section_has_field_table(&section) {
+                    problems.push(format!(
+                        "{name}.md: JSON output section needs a field table (| Field | … |)"
+                    ));
+                    continue;
+                }
+                let table_keys = field_table_top_level_keys(&section);
+                for (i, block) in blocks.iter().enumerate() {
+                    let parsed: Value = serde_json::from_str(block).unwrap_or_else(|e| {
+                        problems.push(format!("{name}.md: JSON example {i} does not parse: {e}"));
+                        Value::Null
+                    });
+                    if parsed.is_null() {
+                        continue;
+                    }
+                    for key in top_level_keys(&parsed) {
+                        if !table_keys.contains(&key) {
+                            problems.push(format!(
                             "{name}.md: JSON example documents `{key}` but the field table does not"
                         ));
+                        }
                     }
                 }
             }
-        }
-        assert!(problems.is_empty(), "{}", problems.join("\n"));
+            assert!(problems.is_empty(), "{}", problems.join("\n"));
+        });
     }
 
     #[test]
@@ -2716,28 +2742,30 @@ The keys are `initialized`, `path`, `bare`, and `branch`.
     /// `--markdown` is documented only when clap exposes a `markdown` flag.
     #[test]
     fn markdown_output_only_when_supported() {
-        let dir = commands_dir();
-        let global_markdown = cli_supports_markdown();
-        let mut problems = Vec::new();
-        for command in Cli::command().get_subcommands() {
-            let name = command.get_name();
-            if name == "help" {
-                continue;
+        with_cli_root(|root| {
+            let dir = commands_dir();
+            let global_markdown = cli_supports_markdown();
+            let mut problems = Vec::new();
+            for command in root.get_subcommands() {
+                let name = command.get_name();
+                if name == "help" {
+                    continue;
+                }
+                let path = dir.join(format!("{name}.md"));
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                let (_, body) = split_front_matter(&text);
+                let mentions_markdown = page_mentions_markdown(body);
+                let supported = global_markdown || command_supports_markdown(command);
+                if mentions_markdown && !supported {
+                    problems.push(format!(
+                        "{name}.md documents --markdown but the command has no markdown flag"
+                    ));
+                }
             }
-            let path = dir.join(format!("{name}.md"));
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let (_, body) = split_front_matter(&text);
-            let mentions_markdown = page_mentions_markdown(body);
-            let supported = global_markdown || command_supports_markdown(command);
-            if mentions_markdown && !supported {
-                problems.push(format!(
-                    "{name}.md documents --markdown but the command has no markdown flag"
-                ));
-            }
-        }
-        assert!(problems.is_empty(), "{}", problems.join("\n"));
+            assert!(problems.is_empty(), "{}", problems.join("\n"));
+        });
     }
 
     #[test]
@@ -2785,17 +2813,18 @@ The keys are `initialized`, `path`, `bare`, and `branch`.
             cli_has_path(sub, tail)
         }
 
-        let root = Cli::command();
-        let mut problems = Vec::new();
-        for (area, path) in LIBRARY_AREAS {
-            if !cli_has_path(&root, path) {
-                problems.push(format!(
-                    "library area `{area}` has no CLI path `{}`",
-                    path.join(" ")
-                ));
+        with_cli_root(|root| {
+            let mut problems = Vec::new();
+            for (area, path) in LIBRARY_AREAS {
+                if !cli_has_path(&root, path) {
+                    problems.push(format!(
+                        "library area `{area}` has no CLI path `{}`",
+                        path.join(" ")
+                    ));
+                }
             }
-        }
-        assert!(problems.is_empty(), "{}", problems.join("\n"));
+            assert!(problems.is_empty(), "{}", problems.join("\n"));
+        });
     }
 
     /// Every command (including hidden plumbing) has a man page in
@@ -2803,42 +2832,44 @@ The keys are `initialized`, `path`, `bare`, and `branch`.
     /// subcommands. Positional arguments are named freely in the synopsis. Run `python3 scripts/docs.py` after editing the pages.
     #[test]
     fn every_command_is_documented() {
-        let pages = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../content/docs/commands");
-        let mut problems = Vec::new();
-        for command in Cli::command().get_subcommands() {
-            let name = command.get_name();
-            if name == "help" {
-                continue;
-            }
-            let path = pages.join(format!("{name}.md"));
-            let Ok(page) = std::fs::read_to_string(&path) else {
-                problems.push(format!("missing page {}", path.display()));
-                continue;
-            };
-            for arg in command.get_arguments() {
-                let id = arg.get_id().as_str();
-                if GLOBAL_OPTIONS.contains(&id) {
+        with_cli_root(|root| {
+            let pages = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../content/docs/commands");
+            let mut problems = Vec::new();
+            for command in root.get_subcommands() {
+                let name = command.get_name();
+                if name == "help" {
                     continue;
                 }
-                let spellings = arg
-                    .get_long()
-                    .map(|long| format!("--{long}"))
-                    .into_iter()
-                    .chain(arg.get_short().map(|short| format!("-{short}")));
-                for spelling in spellings {
-                    if !page.contains(&format!("`{spelling}")) {
-                        problems.push(format!("{name}.md does not document `{spelling}`"));
+                let path = pages.join(format!("{name}.md"));
+                let Ok(page) = std::fs::read_to_string(&path) else {
+                    problems.push(format!("missing page {}", path.display()));
+                    continue;
+                };
+                for arg in command.get_arguments() {
+                    let id = arg.get_id().as_str();
+                    if GLOBAL_OPTIONS.contains(&id) {
+                        continue;
+                    }
+                    let spellings = arg
+                        .get_long()
+                        .map(|long| format!("--{long}"))
+                        .into_iter()
+                        .chain(arg.get_short().map(|short| format!("-{short}")));
+                    for spelling in spellings {
+                        if !page.contains(&format!("`{spelling}")) {
+                            problems.push(format!("{name}.md does not document `{spelling}`"));
+                        }
+                    }
+                }
+                for sub in command.get_subcommands() {
+                    let sub_name = sub.get_name();
+                    if sub_name != "help" && !page.contains(&format!("`{sub_name}")) {
+                        problems.push(format!("{name}.md does not document `{sub_name}`"));
                     }
                 }
             }
-            for sub in command.get_subcommands() {
-                let sub_name = sub.get_name();
-                if sub_name != "help" && !page.contains(&format!("`{sub_name}")) {
-                    problems.push(format!("{name}.md does not document `{sub_name}`"));
-                }
-            }
-        }
-        assert!(problems.is_empty(), "{}", problems.join("\n"));
+            assert!(problems.is_empty(), "{}", problems.join("\n"));
+        });
     }
 
     fn snapshot_dir() -> PathBuf {
@@ -2892,33 +2923,35 @@ The keys are `initialized`, `path`, `bare`, and `branch`.
     #[test]
     fn every_command_has_output_snapshots() {
         use crate::json_schema::discover_snapshot_stems;
-        let dir = snapshot_dir();
-        let stems = discover_snapshot_stems(&dir);
-        let mut problems = Vec::new();
-        for stem in &stems {
-            let Some(payload) = read_snapshot_payload(stem) else {
-                problems.push(format!("snapshot `{stem}` is unreadable"));
-                continue;
-            };
-            if !snapshot_has_three_modes(stem, &payload) {
-                problems.push(format!(
-                    "snapshot `{stem}` must include human, json, and markdown sections"
-                ));
+        with_cli_root(move |root| {
+            let dir = snapshot_dir();
+            let stems = discover_snapshot_stems(&dir);
+            let mut problems = Vec::new();
+            for stem in &stems {
+                let Some(payload) = read_snapshot_payload(stem) else {
+                    problems.push(format!("snapshot `{stem}` is unreadable"));
+                    continue;
+                };
+                if !snapshot_has_three_modes(stem, &payload) {
+                    problems.push(format!(
+                        "snapshot `{stem}` must include human, json, and markdown sections"
+                    ));
+                }
             }
-        }
-        for command in Cli::command().get_subcommands() {
-            let name = command.get_name();
-            if OUTPUT_SNAPSHOT_EXEMPT.contains(&name) {
-                continue;
+            for command in root.get_subcommands() {
+                let name = command.get_name();
+                if OUTPUT_SNAPSHOT_EXEMPT.contains(&name) {
+                    continue;
+                }
+                let covered = stems
+                    .iter()
+                    .any(|stem| command_covered_by_snapshot_stem(stem, name));
+                if !covered {
+                    problems.push(format!("command `{name}` has no output snapshot"));
+                }
             }
-            let covered = stems
-                .iter()
-                .any(|stem| command_covered_by_snapshot_stem(stem, name));
-            if !covered {
-                problems.push(format!("command `{name}` has no output snapshot"));
-            }
-        }
-        assert!(problems.is_empty(), "{}", problems.join("\n"));
+            assert!(problems.is_empty(), "{}", problems.join("\n"));
+        });
     }
 
     fn schema_top_level_field_names(schema: &serde_json::Value) -> HashSet<String> {
@@ -2985,57 +3018,59 @@ The keys are `initialized`, `path`, `bare`, and `branch`.
     /// JSON field tables document exactly the top-level schema properties; Markdown sections link schemas.
     #[test]
     fn json_field_tables_match_schemas() {
-        let dir = commands_dir();
-        let mut problems = Vec::new();
-        for command in Cli::command().get_subcommands() {
-            let name = command.get_name();
-            if name == "help" || NO_JSON_COMMANDS.contains(&name) {
-                continue;
-            }
-            let path = dir.join(format!("{name}.md"));
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                problems.push(format!("missing page {}", path.display()));
-                continue;
-            };
-            let (_, body) = split_front_matter(&text);
-            let Some(json_section) = section_body(body, "JSON output") else {
-                problems.push(format!("{name}.md: no JSON output section"));
-                continue;
-            };
-            if !json_section.contains("Schema:") && !json_section.contains("/schemas/") {
-                problems.push(format!(
-                    "{name}.md: JSON output section must link the v1 schema under /schemas/"
-                ));
-            }
-            let table_keys = field_table_top_level_keys(&json_section);
-            let schema_keys = schema_keys_for_command(name);
-            if table_keys != schema_keys {
-                let missing: Vec<_> = schema_keys.difference(&table_keys).collect();
-                let extra: Vec<_> = table_keys.difference(&schema_keys).collect();
-                if !missing.is_empty() {
-                    problems.push(format!(
-                        "{name}.md: field table missing schema keys: {missing:?}"
-                    ));
+        with_cli_root(|root| {
+            let dir = commands_dir();
+            let mut problems = Vec::new();
+            for command in root.get_subcommands() {
+                let name = command.get_name();
+                if name == "help" || NO_JSON_COMMANDS.contains(&name) {
+                    continue;
                 }
-                if !extra.is_empty() {
-                    problems.push(format!(
-                        "{name}.md: field table documents keys not in schema: {extra:?}"
-                    ));
-                }
-            }
-            if page_requires_markdown(command) {
-                let Some(md_section) = section_body(body, "Markdown output") else {
-                    problems.push(format!("{name}.md: missing ## Markdown output section"));
+                let path = dir.join(format!("{name}.md"));
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    problems.push(format!("missing page {}", path.display()));
                     continue;
                 };
-                if !markdown_section_has_schema_link(&md_section, name) {
+                let (_, body) = split_front_matter(&text);
+                let Some(json_section) = section_body(body, "JSON output") else {
+                    problems.push(format!("{name}.md: no JSON output section"));
+                    continue;
+                };
+                if !json_section.contains("Schema:") && !json_section.contains("/schemas/") {
                     problems.push(format!(
-                        "{name}.md: Markdown output must link the command JSON schema"
+                        "{name}.md: JSON output section must link the v1 schema under /schemas/"
                     ));
                 }
+                let table_keys = field_table_top_level_keys(&json_section);
+                let schema_keys = schema_keys_for_command(name);
+                if table_keys != schema_keys {
+                    let missing: Vec<_> = schema_keys.difference(&table_keys).collect();
+                    let extra: Vec<_> = table_keys.difference(&schema_keys).collect();
+                    if !missing.is_empty() {
+                        problems.push(format!(
+                            "{name}.md: field table missing schema keys: {missing:?}"
+                        ));
+                    }
+                    if !extra.is_empty() {
+                        problems.push(format!(
+                            "{name}.md: field table documents keys not in schema: {extra:?}"
+                        ));
+                    }
+                }
+                if page_requires_markdown(command) {
+                    let Some(md_section) = section_body(body, "Markdown output") else {
+                        problems.push(format!("{name}.md: missing ## Markdown output section"));
+                        continue;
+                    };
+                    if !markdown_section_has_schema_link(&md_section, name) {
+                        problems.push(format!(
+                            "{name}.md: Markdown output must link the command JSON schema"
+                        ));
+                    }
+                }
             }
-        }
-        assert!(problems.is_empty(), "{}", problems.join("\n"));
+            assert!(problems.is_empty(), "{}", problems.join("\n"));
+        });
     }
 
     #[test]

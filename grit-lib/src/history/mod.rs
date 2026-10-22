@@ -49,6 +49,7 @@ mod apply;
 mod drop;
 mod error;
 mod fixup;
+mod last;
 mod r#move;
 mod plan;
 mod rebase;
@@ -58,6 +59,7 @@ mod split;
 mod squash;
 mod subject;
 mod types;
+mod undo;
 
 pub use absorb::{
     absorb, default_absorb_base, format_hunk_range_header, staged_absorb_paths, AbsorbOptions,
@@ -68,6 +70,7 @@ pub use apply::{apply_absorb_rewrite, apply_fixup_rewrite, apply_rewrite, verify
 pub use drop::drop;
 pub use error::HistoryError;
 pub use fixup::{fixup, staged_fixup_paths, FixupOptions};
+pub use last::{read_history_last, HistoryLastRecord};
 pub use plan::plan_rewrite;
 #[cfg(any(test, feature = "unstable-bench-helpers"))]
 pub use plan::{test_merge_tree_call_count, test_reset_merge_tree_call_count};
@@ -86,5 +89,6 @@ pub use subject::{commit_message_subject_line, rewritten_row_subject};
 pub use types::{
     AppliedRewrite, ApplyOptions, CommitEdit, EmptyPolicy, HeadEffect, HistoryEdits, NewCommit,
     Pathspec, PlannedRefUpdate, RefScope, RewriteOptions, RewritePlan, RewrittenCommit,
-    SplitOptions,
+    SplitOptions, UndoOutcome,
 };
+pub use undo::undo_last_rewrite;

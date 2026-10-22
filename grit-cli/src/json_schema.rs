@@ -173,6 +173,7 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<HistoryRewriteOutcome>("history.squash"),
         entry::<HistoryRewriteOutcome>("history.split"),
         entry::<HistoryAbsorbOutcome>("history.absorb"),
+        entry::<HistoryRewriteOutcome>("history.undo"),
         entry::<RevertOutcome>("revert"),
         entry::<StashPushOutcome>("stash"),
         entry::<StashPushOutcome>("stash.push"),
@@ -305,6 +306,7 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
             Some("squash") => "history.squash",
             Some("split") => "history.split",
             Some("absorb") => "history.absorb",
+            Some("undo") => "history.undo",
             _ => return None,
         },
         cmd if NO_JSON_COMMANDS.contains(&cmd) => return None,
@@ -384,6 +386,7 @@ fn root_schema_to_document(command: &str, root: RootSchema) -> serde_json::Value
         || command == "history.squash"
         || command == "history.split"
         || command == "history.absorb"
+        || command == "history.undo"
     {
         ensure_required_nullable_head(&mut value);
     }
@@ -777,22 +780,30 @@ mod tests {
 
     #[test]
     fn schema_registry_covers_all_commands() {
-        let expected = expected_json_command_paths();
-        let registered: std::collections::BTreeSet<_> =
-            schema_registry().iter().map(|e| e.command).collect();
-        let mut missing = Vec::new();
-        for cmd in expected {
-            if cmd == "error" {
-                continue;
-            }
-            if !registered.contains(cmd.as_str()) {
-                missing.push(cmd);
-            }
-        }
-        assert!(
-            missing.is_empty(),
-            "schema_registry missing commands: {missing:?}"
-        );
+        const STACK: usize = 16 * 1024 * 1024;
+        std::thread::Builder::new()
+            .stack_size(STACK)
+            .spawn(|| {
+                let expected = expected_json_command_paths();
+                let registered: std::collections::BTreeSet<_> =
+                    schema_registry().iter().map(|e| e.command).collect();
+                let mut missing = Vec::new();
+                for cmd in expected {
+                    if cmd == "error" {
+                        continue;
+                    }
+                    if !registered.contains(cmd.as_str()) {
+                        missing.push(cmd);
+                    }
+                }
+                assert!(
+                    missing.is_empty(),
+                    "schema_registry missing commands: {missing:?}"
+                );
+            })
+            .expect("spawn schema registry audit")
+            .join()
+            .expect("schema registry audit thread");
     }
 
     fn validate_json_against_schema(name: &str, schema_key: &str, instance: &Value) {

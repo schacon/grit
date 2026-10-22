@@ -32,6 +32,7 @@ fn apply_opts() -> ApplyOptions {
     ApplyOptions {
         identity: "OptsHarness <opts@grit.test>".into(),
         reflog_message: "history options".into(),
+        record_operation: None,
     }
 }
 

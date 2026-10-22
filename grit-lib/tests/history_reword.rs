@@ -125,6 +125,7 @@ fn reword_author_only_keeps_message_and_date() {
         &ApplyOptions {
             identity: "Rewriter <r@grit.test>".into(),
             reflog_message: "history reword".into(),
+            record_operation: None,
         },
     )
     .expect("apply");
@@ -170,6 +171,7 @@ fn reword_author_and_message() {
         &ApplyOptions {
             identity: "Rewriter <r@grit.test>".into(),
             reflog_message: "history reword".into(),
+            record_operation: None,
         },
     )
     .expect("apply");
@@ -387,6 +389,7 @@ fn reword_root_replays_merge_with_merge_only_tree_content() {
         &ApplyOptions {
             identity: "Rewriter <rewriter@test>".into(),
             reflog_message: "history reword".into(),
+            record_operation: None,
         },
     )
     .expect("apply");
