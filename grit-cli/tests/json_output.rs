@@ -2354,6 +2354,7 @@ fn schema_top_level_keys_are_stable() -> TestResult {
             "modified",
             "removed",
             "staged",
+            "staged_hunks",
         ]
     );
 

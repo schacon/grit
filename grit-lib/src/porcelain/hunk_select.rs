@@ -13,8 +13,8 @@ use crate::diff::hunk_id::{
 };
 use crate::diff::structured::{StructuredHunk, StructuredLineKind};
 use crate::diff::{
-    collect_files_for_target, unstaged_file_diffs_with_peer_hunks, DiffOptions, DiffStatus,
-    DiffTarget, FileDiff,
+    collect_files_for_target, hunk_diff_bundle, unstaged_file_diffs_with_peer_hunks, DiffOptions,
+    DiffStatus, DiffTarget, FileDiff,
 };
 use crate::error::{ApplyError, Error};
 use crate::repo::Repository;
@@ -237,36 +237,38 @@ fn resolve_unstaged(
     opts: DiffOptions,
     requested: &HashSet<HunkId>,
 ) -> std::result::Result<ResolvedSelection, HunkSelectError> {
-    if let Some(id) = find_id_on_staged_side(repo, pathspecs, opts.clone(), requested)? {
+    let bundle = hunk_diff_bundle(repo, pathspecs, opts)?;
+    if let Some(id) = find_id_on_staged_files(&bundle.staged_files, requested) {
         return Err(HunkSelectError::WrongSide {
             id,
             actual_side: "staged",
             requested_side: "unstaged",
         });
     }
-    let (files, peer_hunks) = unstaged_file_diffs_with_peer_hunks(repo, pathspecs, opts)?;
-    resolve_on_files(DiffSide::Unstaged, files, peer_hunks, requested, pathspecs)
+    resolve_on_files(
+        DiffSide::Unstaged,
+        bundle.unstaged,
+        bundle.peer_hunks,
+        requested,
+        pathspecs,
+    )
 }
 
-fn find_id_on_staged_side(
-    repo: &Repository,
-    pathspecs: &[String],
-    opts: DiffOptions,
+fn find_id_on_staged_files(
+    staged_files: &[FileDiff],
     requested: &HashSet<HunkId>,
-) -> std::result::Result<Option<HunkId>, HunkSelectError> {
-    let staged = collect_files_for_target(repo, &DiffTarget::IndexVsHead, pathspecs, opts)?;
-    for file in staged {
+) -> Option<HunkId> {
+    for file in staged_files {
         if file.binary {
             continue;
         }
-        let ids = hunk_ids(DiffSide::Staged, &file.path, &file.hunks);
-        for id in ids {
+        for id in hunk_ids(DiffSide::Staged, &file.path, &file.hunks) {
             if requested.contains(&id) {
-                return Ok(Some(id));
+                return Some(id);
             }
         }
     }
-    Ok(None)
+    None
 }
 
 fn resolve_on_files(

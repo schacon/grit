@@ -100,9 +100,11 @@ Example:
   "added": ["src/new.rs"],
   "modified": ["README.md"],
   "removed": [],
+  "intent_to_add": [],
   "dry_run": false,
   "count": 2,
-  "staged": 2
+  "staged": 2,
+  "staged_hunks": {}
 }
 ```
 

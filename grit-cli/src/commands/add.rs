@@ -40,8 +40,7 @@ pub struct AddOutcome {
     pub count: usize,
     /// How many paths were staged (alias of `count` for scripts written before path lists).
     pub staged: usize,
-    /// Hunk ids staged per path when `--hunks` was used.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    /// Hunk ids staged per path when `--hunks` was used (empty object when unused).
     pub staged_hunks: BTreeMap<String, Vec<String>>,
     /// Whether the invocation had no path arguments (stages everything).
     #[serde(skip)]
