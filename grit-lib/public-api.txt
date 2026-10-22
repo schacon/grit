@@ -14268,7 +14268,9 @@ pub fn grit_lib::refs::listing::compare_version_names(&str, &str, &[alloc::strin
 pub fn grit_lib::refs::listing::creator_date(&grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<i64>
 pub fn grit_lib::refs::listing::creator_date_from_bytes(grit_lib::objects::ObjectKind, &[u8]) -> i64
 pub fn grit_lib::refs::listing::epoch_from_identity(&str) -> i64
+pub fn grit_lib::refs::listing::pattern_matches_ls_remote_refname(&str, &str) -> bool
 pub fn grit_lib::refs::listing::pattern_matches_short_name(&str, &str, bool) -> bool
+pub fn grit_lib::refs::listing::patterns_match_ls_remote(&str, &[alloc::string::String]) -> bool
 pub fn grit_lib::refs::listing::query_listings_from_pairs<I>(I, &grit_lib::refs::listing::RefQuery, &grit_lib::refs::listing::RefQueryOptions, core::option::Option<&grit_lib::objects::odb::Odb>) -> core::result::Result<alloc::vec::Vec<grit_lib::refs::listing::RefListing>, grit_lib::refs::listing::RefQueryError> where I: core::iter::traits::collect::IntoIterator<Item = (alloc::string::String, grit_lib::objects::ObjectId, core::option::Option<grit_lib::objects::ObjectId>)>
 pub fn grit_lib::refs::listing::query_listings_on_store(&dyn grit_lib::refs::store::RefStore, &grit_lib::refs::listing::RefQuery, &grit_lib::refs::listing::RefQueryOptions, core::option::Option<&grit_lib::objects::odb::Odb>) -> core::result::Result<alloc::vec::Vec<grit_lib::refs::listing::RefListing>, grit_lib::refs::listing::RefQueryError>
 pub fn grit_lib::refs::listing::query_refs(&grit_lib::repo::Repository, &grit_lib::refs::listing::RefQuery, &grit_lib::refs::listing::RefQueryOptions) -> core::result::Result<alloc::vec::Vec<grit_lib::refs::listing::RefListing>, grit_lib::refs::listing::RefQueryError>
@@ -17208,11 +17210,14 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::DefaultHttpCl
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::DefaultHttpClientFactory
 pub struct grit_lib::remote::ListRefsOptions
 pub grit_lib::remote::ListRefsOptions::heads: bool
+pub grit_lib::remote::ListRefsOptions::limit: core::option::Option<usize>
 pub grit_lib::remote::ListRefsOptions::peel: bool
 pub grit_lib::remote::ListRefsOptions::prefixes: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::remote::ListRefsOptions::protocol_version: core::option::Option<u8>
+pub grit_lib::remote::ListRefsOptions::sort: grit_lib::refs::listing::RefSort
 pub grit_lib::remote::ListRefsOptions::symrefs: bool
 pub grit_lib::remote::ListRefsOptions::tags: bool
+pub grit_lib::remote::ListRefsOptions::versionsort_suffixes: alloc::vec::Vec<alloc::string::String>
 impl core::clone::Clone for grit_lib::remote::ListRefsOptions
 pub fn grit_lib::remote::ListRefsOptions::clone(&self) -> Self
 impl core::default::Default for grit_lib::remote::ListRefsOptions
@@ -17275,6 +17280,7 @@ impl grit_lib::remote::HttpClientFactory for grit_lib::remote::DefaultHttpClient
 pub fn grit_lib::remote::DefaultHttpClientFactory::create(&self, &grit_lib::config::ConfigSet) -> core::result::Result<alloc::boxed::Box<dyn grit_lib::remote::transport::http::HttpClient>, grit_lib::remote::RemoteError>
 pub fn grit_lib::remote::list_refs_from_git_dir(&std::path::Path, core::option::Option<&grit_lib::objects::odb::Odb>, &grit_lib::remote::ListRefsOptions) -> core::result::Result<alloc::vec::Vec<grit_lib::remote::RemoteRef>, grit_lib::remote::RemoteError>
 pub fn grit_lib::remote::parse_remote_url(&str) -> core::result::Result<grit_lib::remote::RemoteUrl, grit_lib::remote::RemoteError>
+pub fn grit_lib::remote::query_remote_refs_in_memory(alloc::vec::Vec<grit_lib::remote::RemoteRef>, &grit_lib::remote::ListRefsOptions, &grit_lib::refs::listing::RefQueryOptions) -> alloc::vec::Vec<grit_lib::remote::RemoteRef>
 pub fn grit_lib::remote::ref_matches_ls_remote_patterns(&str, &[alloc::string::String]) -> bool
 pub mod grit_lib::repo
 pub mod grit_lib::repo::caches
