@@ -974,12 +974,62 @@ pub(crate) fn parse_oid_field(value: &[u8]) -> Result<ObjectId> {
         .map_err(|_| Error::CorruptObject("invalid object id in commit header".to_owned()))
 }
 
-/// Parse only `tree` and `parent` headers from a commit object (stops at the blank line).
+/// Parse `tree` and `parent` headers from a possibly truncated leading slice of a commit.
 ///
-/// Used on hot paths such as blame history walks that do not need author/committer data.
-pub(crate) fn parse_commit_tree_and_parents(data: &[u8]) -> Result<(ObjectId, Vec<ObjectId>)> {
-    let commit = super::CommitRef::parse(data)?;
-    Ok((commit.tree(), commit.parents().to_vec()))
+/// `prefix` may be cut anywhere (for example a fixed-size inflate of the object start).
+/// Returns `Some` only when the slice provably holds the complete parent list: the `tree`
+/// line, every `parent` line, and the start of a following line that cannot be another
+/// `parent` header. Returns `None` when the slice ends inside that region or the headers are
+/// not in canonical form; parse the whole object with
+/// [`parse_commit_tree_and_parents_lenient`] instead, which then yields the same result
+/// whenever this returns `Some`.
+pub(crate) fn parse_commit_tree_and_parents_prefix(
+    prefix: &[u8],
+    hex_len: usize,
+) -> Option<(ObjectId, Vec<ObjectId>)> {
+    canonical_commit_tree_and_parents(prefix, hex_len, false)
+}
+
+/// Parse `tree` and `parent` headers of a whole commit object the way Git's commit parser
+/// does: a leading `tree` line followed by any number of `parent` lines.
+///
+/// Nothing after the parent list is inspected, so a commit missing `author` or `committer`
+/// (or with other malformed headers) still yields its tree and parents. Returns `None` when
+/// the first line is not a valid `tree` header or a `parent` line is malformed.
+pub(crate) fn parse_commit_tree_and_parents_lenient(
+    data: &[u8],
+    hex_len: usize,
+) -> Option<(ObjectId, Vec<ObjectId>)> {
+    canonical_commit_tree_and_parents(data, hex_len, true)
+}
+
+fn canonical_commit_tree_and_parents(
+    data: &[u8],
+    hex_len: usize,
+    complete: bool,
+) -> Option<(ObjectId, Vec<ObjectId>)> {
+    fn header_oid<'a>(rest: &'a [u8], key: &[u8], hex_len: usize) -> Option<(ObjectId, &'a [u8])> {
+        let line = rest.strip_prefix(key)?;
+        if line.len() <= hex_len || line[hex_len] != b'\n' {
+            return None;
+        }
+        let oid = ObjectId::from_hex(std::str::from_utf8(&line[..hex_len]).ok()?).ok()?;
+        Some((oid, &line[hex_len + 1..]))
+    }
+    const PARENT: &[u8] = b"parent ";
+    let (tree, mut rest) = header_oid(data, b"tree ", hex_len)?;
+    let mut parents = Vec::new();
+    loop {
+        if !complete && rest.len() < PARENT.len() && PARENT.starts_with(rest) {
+            return None;
+        }
+        if !rest.starts_with(PARENT) {
+            return Some((tree, parents));
+        }
+        let (parent, next) = header_oid(rest, PARENT, hex_len)?;
+        parents.push(parent);
+        rest = next;
+    }
 }
 
 /// Parse the raw data of a commit object.
@@ -1341,6 +1391,112 @@ mod commit_parse_tests {
         let entries = parse_tree_with_oid_len(&raw, HashAlgo::Sha256.len()).expect("tree");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].oid, oid);
+    }
+
+    #[test]
+    fn parse_commit_tree_and_parents_prefix_matches_full_parse_or_declines() -> Result<()> {
+        let tree = "1111111111111111111111111111111111111111";
+        let p1 = "2222222222222222222222222222222222222222";
+        let p2 = "3333333333333333333333333333333333333333";
+        let raw = format!(
+            "tree {tree}\nparent {p1}\nparent {p2}\nauthor A <a@x> 1 +0000\n\
+             committer C <c@x> 2 +0000\n\nmessage\n"
+        );
+        let commit = parse_commit(raw.as_bytes())?;
+        let full = (commit.tree, commit.parents);
+        assert_eq!(full.1.len(), 2);
+        assert_eq!(
+            parse_commit_tree_and_parents_lenient(raw.as_bytes(), HashAlgo::Sha1.hex_len()),
+            Some(full.clone())
+        );
+        let hex_len = HashAlgo::Sha1.hex_len();
+        let header_end = raw.find("author").expect("author line");
+        for cut in 0..=raw.len() {
+            let got = parse_commit_tree_and_parents_prefix(&raw.as_bytes()[..cut], hex_len);
+            if cut > header_end {
+                assert_eq!(got.as_ref(), Some(&full), "cut at {cut}");
+            } else {
+                assert_eq!(
+                    got, None,
+                    "cut at {cut} must not claim a complete parent list"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn commit_tree_and_parents_prefix_never_disagrees_with_whole_object() {
+        let tree = "tree 1111111111111111111111111111111111111111\n";
+        let parent = "parent 2222222222222222222222222222222222222222\n";
+        let parent2 = "parent 3333333333333333333333333333333333333333\n";
+        let bodies = [
+            format!("{tree}{parent}author A <a@x> 1 +0000\n\nmessage\n"),
+            format!("{tree}{parent}{parent2}committer C <c@x> 2 +0000\n\nno author\n"),
+            format!("{tree}{parent}"),
+            format!("{tree}{parent}{parent2}"),
+            format!("{tree}author A <a@x> 1 +0000\n{parent}\nlate parent is ignored\n"),
+            format!("{tree}{parent}not a header\n"),
+            format!("{tree}parent zz\n\n"),
+            format!("{tree}{parent}parent 2222"),
+            format!("author A <a@x> 1 +0000\n{tree}\n"),
+        ];
+        let hex_len = HashAlgo::Sha1.hex_len();
+        for body in &bodies {
+            let whole = parse_commit_tree_and_parents_lenient(body.as_bytes(), hex_len);
+            for cut in 0..=body.len() {
+                if let Some(got) =
+                    parse_commit_tree_and_parents_prefix(&body.as_bytes()[..cut], hex_len)
+                {
+                    assert_eq!(Some(got), whole, "cut {cut} of {body:?}");
+                }
+            }
+        }
+        let parents_of = |body: &str| {
+            parse_commit_tree_and_parents_lenient(body.as_bytes(), hex_len).map(|(_, p)| p.len())
+        };
+        assert_eq!(parents_of(&bodies[1]), Some(2), "missing author is fine");
+        assert_eq!(
+            parents_of(&bodies[3]),
+            Some(2),
+            "object may end after parents"
+        );
+        assert_eq!(
+            parents_of(&bodies[4]),
+            Some(0),
+            "only leading parents count"
+        );
+        assert_eq!(parents_of(&bodies[6]), None, "malformed parent line");
+        assert_eq!(parents_of(&bodies[7]), None, "truncated parent line");
+        assert_eq!(parents_of(&bodies[8]), None, "tree must come first");
+    }
+
+    #[test]
+    fn parse_commit_tree_and_parents_prefix_handles_root_and_sha256() -> Result<()> {
+        let root = b"tree 1111111111111111111111111111111111111111\nauthor A <a@x> 1 +0000\n";
+        let (tree, parents) =
+            parse_commit_tree_and_parents_prefix(root, HashAlgo::Sha1.hex_len()).expect("root");
+        assert_eq!(tree.to_hex(), "1111111111111111111111111111111111111111");
+        assert!(parents.is_empty());
+
+        let t = "a".repeat(64);
+        let p = "b".repeat(64);
+        let raw = format!("tree {t}\nparent {p}\ncommitter C <c@x> 2 +0000\n");
+        let (tree, parents) =
+            parse_commit_tree_and_parents_prefix(raw.as_bytes(), HashAlgo::Sha256.hex_len())
+                .expect("sha256");
+        assert_eq!(tree.to_hex(), t);
+        assert_eq!(parents.len(), 1);
+        assert_eq!(parents[0].to_hex(), p);
+
+        assert!(parse_commit_tree_and_parents_prefix(raw.as_bytes(), 40).is_none());
+        assert!(parse_commit_tree_and_parents_prefix(b"parent x\n", 40).is_none());
+        assert!(parse_commit_tree_and_parents_prefix(
+            b"tree zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\nauthor\n",
+            40
+        )
+        .is_none());
+        Ok(())
     }
 
     #[test]
