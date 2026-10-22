@@ -1,8 +1,8 @@
 //! Ref-name version ordering for `version:refname` sort.
 //!
-//! Numeric runs in ref names are ordered like GNU `strverscmp` (Git's version sort).
-//! Configured prerelease suffixes are applied on raw bytes at the first mismatch,
-//! matching Git's `versionsort.suffix` behavior.
+//! Numeric runs in ref names follow Git's `versioncmp` / version sort (same rules as
+//! `git for-each-ref --sort=version:refname`). Configured prerelease suffixes are
+//! applied on raw bytes at the first mismatch, matching Git's `versionsort.suffix`.
 
 use std::cmp::Ordering;
 
@@ -25,16 +25,107 @@ pub fn compare_refname_versions(
     compare_version_bytes(lb, rb)
 }
 
-/// GNU `strverscmp` on raw bytes (portable; used on every target).
+/// Version-order comparison on raw bytes (portable; used on every target).
 #[must_use]
 pub(crate) fn compare_version_bytes(left: &[u8], right: &[u8]) -> Ordering {
-    strverscmp_bytes(left, right)
+    versioncmp_bytes(left, right)
 }
 
-fn strverscmp_bytes(s1: &[u8], s2: &[u8]) -> Ordering {
+/// Symbol class for the version-sort state machine (non-digit, non-zero digit, zero digit).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SymbolClass {
+    Other = 0,
+    Digit = 1,
+    ZeroDigit = 2,
+}
+
+fn symbol_class(c: u8) -> SymbolClass {
+    if c == b'0' {
+        SymbolClass::ZeroDigit
+    } else if c.is_ascii_digit() {
+        SymbolClass::Digit
+    } else {
+        SymbolClass::Other
+    }
+}
+
+/// Base comparison mode in Git's version sort automaton.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CompareMode {
+    Normal = 0,
+    Integral = 1,
+    Fraction = 2,
+    ZeroRun = 3,
+}
+
+fn next_mode(mode: CompareMode, class: SymbolClass) -> CompareMode {
+    match (mode, class) {
+        (CompareMode::Normal, SymbolClass::Other) => CompareMode::Normal,
+        (CompareMode::Normal, SymbolClass::Digit) => CompareMode::Integral,
+        (CompareMode::Normal, SymbolClass::ZeroDigit) => CompareMode::ZeroRun,
+        (CompareMode::Integral, SymbolClass::Other) => CompareMode::Normal,
+        (CompareMode::Integral, SymbolClass::Digit | SymbolClass::ZeroDigit) => {
+            CompareMode::Integral
+        }
+        (CompareMode::Fraction, SymbolClass::Other) => CompareMode::Normal,
+        (CompareMode::Fraction, SymbolClass::Digit | SymbolClass::ZeroDigit) => {
+            CompareMode::Fraction
+        }
+        (CompareMode::ZeroRun, SymbolClass::Other) => CompareMode::Normal,
+        (CompareMode::ZeroRun, SymbolClass::Digit) => CompareMode::Fraction,
+        (CompareMode::ZeroRun, SymbolClass::ZeroDigit) => CompareMode::ZeroRun,
+    }
+}
+
+enum MismatchAction {
+    ByCharDiff,
+    NumericRunLength,
+    PreferLess,
+    PreferGreater,
+}
+
+fn mismatch_action(
+    mode: CompareMode,
+    left_class: SymbolClass,
+    right_class: SymbolClass,
+) -> MismatchAction {
+    use CompareMode::{Fraction, Integral, Normal, ZeroRun};
+    use MismatchAction::{ByCharDiff, NumericRunLength, PreferGreater, PreferLess};
+    use SymbolClass::{Digit, Other, ZeroDigit};
+
+    match (mode, left_class, right_class) {
+        (Normal, Digit, Digit) => NumericRunLength,
+        (Integral, Other, Digit | ZeroDigit) => PreferLess,
+        (Integral, Digit | ZeroDigit, Other) => PreferGreater,
+        (Integral, Digit | ZeroDigit, Digit | ZeroDigit) => NumericRunLength,
+        (ZeroRun, Other, Digit | ZeroDigit) => PreferGreater,
+        (ZeroRun, Digit | ZeroDigit, Other) => PreferLess,
+        (Integral, Other, Other) => ByCharDiff,
+        (Fraction, _, _) | (Normal, _, _) | (ZeroRun, _, _) => ByCharDiff,
+    }
+}
+
+fn resolve_mismatch(
+    mode: CompareMode,
+    left_class: SymbolClass,
+    right_class: SymbolClass,
+    diff: i32,
+    tail1: &[u8],
+    tail2: &[u8],
+) -> Ordering {
+    match mismatch_action(mode, left_class, right_class) {
+        MismatchAction::ByCharDiff => diff.cmp(&0),
+        MismatchAction::PreferLess => Ordering::Less,
+        MismatchAction::PreferGreater => Ordering::Greater,
+        MismatchAction::NumericRunLength => compare_remaining_digit_runs(diff, tail1, tail2),
+    }
+}
+
+fn versioncmp_bytes(s1: &[u8], s2: &[u8]) -> Ordering {
     if s1 == s2 {
         return Ordering::Equal;
     }
+
     let mut p1 = 0usize;
     let mut p2 = 0usize;
     let mut c1 = *s1.first().unwrap_or(&0);
@@ -46,17 +137,25 @@ fn strverscmp_bytes(s1: &[u8], s2: &[u8]) -> Ordering {
         p2 += 1;
     }
 
-    let mut phase = char_phase_offset(c1);
+    let mut mode = CompareMode::Normal;
+    let mut left_class = symbol_class(c1);
 
     loop {
         let diff = c1 as i32 - c2 as i32;
         if diff != 0 {
-            return resolve_mismatch(phase, c2, diff, s1, p1, s2, p2);
+            return resolve_mismatch(
+                mode,
+                left_class,
+                symbol_class(c2),
+                diff,
+                s1.get(p1..).unwrap_or(&[]),
+                s2.get(p2..).unwrap_or(&[]),
+            );
         }
         if c1 == 0 {
             return Ordering::Equal;
         }
-        phase = NEXT_STATE[phase as usize];
+        mode = next_mode(mode, left_class);
         c1 = *s1.get(p1).unwrap_or(&0);
         c2 = *s2.get(p2).unwrap_or(&0);
         if p1 < s1.len() {
@@ -65,57 +164,28 @@ fn strverscmp_bytes(s1: &[u8], s2: &[u8]) -> Ordering {
         if p2 < s2.len() {
             p2 += 1;
         }
-        phase += char_phase_offset(c1);
+        left_class = symbol_class(c1);
     }
 }
 
-fn char_phase_offset(c: u8) -> i32 {
-    (c == b'0') as i32 + c.is_ascii_digit() as i32
-}
-
-/// GNU `strverscmp` transition table (12 states).
-const NEXT_STATE: [i32; 12] = [0, 3, 9, 0, 3, 3, 0, 6, 6, 0, 6, 9];
-
-fn resolve_mismatch(
-    phase: i32,
-    c2: u8,
-    diff: i32,
-    s1: &[u8],
-    p1: usize,
-    s2: &[u8],
-    p2: usize,
-) -> Ordering {
-    let idx = phase as usize * 3 + char_phase_offset(c2) as usize;
-    const RESULT: [i8; 36] = [
-        2, 2, 2, 2, 3, 2, 2, 2, 2, 2, -1, -1, 1, 3, 3, 1, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1,
-        -1, 2, 2, -1, 2, 2,
-    ];
-    match RESULT[idx] {
-        3 => {
-            let mut q1 = p1;
-            while s1.get(q1).is_some_and(u8::is_ascii_digit) {
-                q1 += 1;
+/// When two digit runs disagree mid-run, walk the rest of the runs (Git `LEN` case).
+fn compare_remaining_digit_runs(diff: i32, mut tail1: &[u8], mut tail2: &[u8]) -> Ordering {
+    loop {
+        match tail1.first() {
+            Some(&d) if d.is_ascii_digit() => {
+                tail1 = &tail1[1..];
+                match tail2.first() {
+                    Some(&d2) if d2.is_ascii_digit() => tail2 = &tail2[1..],
+                    _ => return Ordering::Greater,
+                }
             }
-            let mut q2 = p2;
-            while s2.get(q2).is_some_and(u8::is_ascii_digit) {
-                q2 += 1;
-            }
-            if q1 > p1 && !s2.get(p2).is_some_and(u8::is_ascii_digit) {
-                return Ordering::Greater;
-            }
-            if s2.get(p2).is_some_and(u8::is_ascii_digit) {
-                return Ordering::Less;
-            }
-            diff.cmp(&0)
+            _ => break,
         }
-        2 => diff.cmp(&0),
-        sign => {
-            if sign > 0 {
-                Ordering::Greater
-            } else {
-                Ordering::Less
-            }
-        }
+    }
+    if tail2.first().is_some_and(|d| d.is_ascii_digit()) {
+        Ordering::Less
+    } else {
+        diff.cmp(&0)
     }
 }
 
@@ -180,27 +250,30 @@ fn best_suffix_hit(haystack: &[u8], suffixes: &[String], near: usize) -> Option<
 
     for (config_index, suffix) in suffixes.iter().enumerate() {
         let needle = suffix.as_bytes();
-        if needle.is_empty() || haystack.len() < needle.len() {
+        let needle_len = needle.len();
+        if haystack.len() < needle_len {
             continue;
         }
-        let start = near.saturating_sub(needle.len());
-        let end = haystack.len() - needle.len();
-        if end < start {
+        // Git `versioncmp` / `find_better_matching_suffix`: empty suffix matches at `start`.
+        let start = near.saturating_sub(needle_len);
+        if start > haystack.len().saturating_sub(needle_len) {
             continue;
         }
-        let scan_end = if best_len < needle.len() {
+        let scan_end = if best_len < needle_len {
             near
         } else {
             best_offset.saturating_sub(1)
         };
+        let end = haystack.len() - needle_len;
         for offset in start..=end.min(scan_end) {
-            if haystack[offset..offset + needle.len()] == *needle {
+            let matches = needle_len == 0 || haystack[offset..offset + needle_len] == *needle;
+            if matches {
                 let better =
-                    offset < best_offset || (offset == best_offset && needle.len() > best_len);
+                    offset < best_offset || (offset == best_offset && needle_len > best_len);
                 if better {
                     best_index = Some(config_index);
                     best_offset = offset;
-                    best_len = needle.len();
+                    best_len = needle_len;
                 }
                 break;
             }
@@ -250,5 +323,29 @@ mod tests {
             compare_refname_versions("v1.0", "v1.0-rc1", &suffixes),
             Ordering::Greater
         );
+    }
+
+    #[test]
+    fn empty_versionsort_suffix_places_release_between_rc_and_beta() {
+        let suffixes = vec!["-rc".to_owned(), String::new(), "-beta".to_owned()];
+        assert_eq!(
+            compare_refname_versions("refs/tags/v1.0-rc1", "refs/tags/v1.0", &suffixes),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_refname_versions("refs/tags/v1.0", "refs/tags/v1.0-beta1", &suffixes),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn differing_digit_runs_are_antisymmetric() {
+        let a = "refs/tags/a80";
+        let b = "refs/tags/a90";
+        let ab = compare_refname_versions(a, b, &[]);
+        let ba = compare_refname_versions(b, a, &[]);
+        assert_eq!(ab, Ordering::Less);
+        assert_eq!(ba, Ordering::Greater);
+        assert_eq!(ab, ba.reverse());
     }
 }

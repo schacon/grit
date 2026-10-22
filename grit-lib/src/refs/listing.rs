@@ -503,12 +503,16 @@ fn insert_collected_ref(
         crate::refs::store::RawRef::Direct(oid) => *oid,
         crate::refs::store::RawRef::Symbolic(_) => resolved,
     };
+    let peeled = match &entry.value {
+        crate::refs::store::RawRef::Direct(_) => entry.peeled,
+        crate::refs::store::RawRef::Symbolic(_) => None,
+    };
     let kind = ref_kind_from_name(&entry.name);
     collected.entry(entry.name.clone()).or_insert(CollectedRef {
         full_name: entry.name.clone(),
         short_name,
         oid: direct_oid,
-        peeled: entry.peeled,
+        peeled,
         kind,
         creator_date: 0,
     });
@@ -570,7 +574,7 @@ fn finish_query(
     if matches!(query.sort.key, SortKey::Date) {
         let odb = odb.ok_or(RefQueryError::MissingObjectDatabase)?;
         for entry in &mut collected {
-            entry.creator_date = creator_date(odb, &entry.oid)?;
+            entry.creator_date = creator_date(odb, &entry.oid).unwrap_or(0);
         }
     }
     let suffixes = &options.versionsort_suffixes;
