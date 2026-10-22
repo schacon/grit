@@ -416,6 +416,23 @@ fn history_reword_json_schema() -> TestResult {
     assert!(json.get("rewritten").is_some());
     assert!(json.get("refs").is_some());
     assert_eq!(json["dry_run"], false);
+    let rewritten = json["rewritten"].as_array().ok_or("rewritten array")?;
+    assert!(
+        rewritten.iter().all(|row| row.get("subject").is_some()),
+        "each rewritten row must include subject: {json}"
+    );
+    assert!(
+        rewritten
+            .iter()
+            .any(|row| row["subject"].as_str() == Some("schema test")),
+        "reworded subject in JSON: {json}"
+    );
+    let refs = json["refs"].as_array().ok_or("refs array")?;
+    assert!(
+        refs.iter()
+            .all(|row| row.get("ref").is_some() && row.get("name").is_some()),
+        "each ref row must include ref and deprecated name: {json}"
+    );
     let mut keys: Vec<_> = json
         .as_object()
         .ok_or("expected object")?
@@ -424,6 +441,29 @@ fn history_reword_json_schema() -> TestResult {
         .collect();
     keys.sort();
     assert_eq!(keys, ["dry_run", "head", "operation", "refs", "rewritten"]);
+    git_fsck_strict(dir)?;
+    Ok(())
+}
+
+#[test]
+fn history_reword_json_subject_is_first_line_only() -> TestResult {
+    let scratch = Scratch::new("multiline-subject")?;
+    let dir = scratch.path();
+    let (_a, b, _c) = init_linear_repo(dir)?;
+    let message = "replacement first\nreplacement continuation";
+    let out = gs(dir, ["history", "reword", &b, "-m", message, "--json"])?;
+    assert!(out.success(), "{}", out.stderr);
+    let json = parse_json(&out.stdout)?;
+    let rewritten = json["rewritten"].as_array().ok_or("rewritten array")?;
+    let row = rewritten
+        .iter()
+        .find(|row| row["new"].is_string())
+        .ok_or("rewritten replacement row")?;
+    assert_eq!(
+        row["subject"].as_str(),
+        Some("replacement first"),
+        "subject must be first line only: {json}"
+    );
     git_fsck_strict(dir)?;
     Ok(())
 }
