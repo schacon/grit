@@ -52,7 +52,7 @@ Already up to date.
 
 Schema: [v2](/schemas/pull/v2.json) · [v1](/schemas/pull/v1.json)
 
-The same shape as [`grit merge`](../merge/#json-output). Pass `--json` for stable, scripting-friendly output:
+Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
@@ -61,6 +61,8 @@ The same shape as [`grit merge`](../merge/#json-output). Pass `--json` for stabl
 | `oid` | string or null | Commit the current branch points at after the pull, when applicable. |
 | `change_id` | string or null | Stored `change-id` on `oid` when present (merge commit, fast-forward tip, or adopted upstream). |
 | `upstream` | string or null | For `set_upstream`, the remote-tracking branch that was adopted. |
+| `conflicts` | array of strings or null | Path names when `result` is `conflicts` (legacy list). |
+| `conflict_details` | array or null | When `result` is `conflicts`, structured items with `path`, `kind`, and optional `summary`. |
 | `ahead` | integer or null | Local-only commits when `result` is `refused_not_ff`. |
 | `behind` | integer or null | Upstream-only commits when `result` is `refused_not_ff`. |
 | `conflicts` | array or null | When `result` is `conflicts`, short conflict labels (legacy v1 field; may be null in v2). |
