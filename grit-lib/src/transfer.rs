@@ -280,6 +280,29 @@ pub fn resolve_fetch_prune(
     Ok(false)
 }
 
+/// Resolve tag-following policy for a fetch.
+///
+/// When `cli_tags` is [`Some`], `true` maps to [`TagMode::All`] (`--tags`) and
+/// `false` to [`TagMode::None`] (`--no-tags`). Otherwise reads
+/// `remote.<remote>.tagOpt` (`--tags` / `--no-tags`, Git-compatible) and defaults
+/// to [`TagMode::Following`].
+#[must_use]
+pub fn resolve_fetch_tags(
+    config: &crate::config::ConfigSet,
+    remote: &str,
+    cli_tags: Option<bool>,
+) -> TagMode {
+    if let Some(all) = cli_tags {
+        return if all { TagMode::All } else { TagMode::None };
+    }
+    let key = format!("remote.{remote}.tagOpt");
+    match config.get(&key).as_deref().map(str::trim) {
+        Some("--tags") | Some("tags") | Some("all") => TagMode::All,
+        Some("--no-tags") | Some("no-tags") | Some("no") | Some("never") => TagMode::None,
+        _ => TagMode::Following,
+    }
+}
+
 fn optional_config_bool(config: &crate::config::ConfigSet, key: &str) -> Result<Option<bool>> {
     match config.get_bool(key) {
         None => Ok(None),
@@ -1322,11 +1345,7 @@ pub(crate) fn enforce_fetch_ref_update(
             }
         }
     }
-    if mode == UpdateMode::NonFastForwardRejected && explicit_refspec_fetch {
-        return Err(Error::FetchNonFastForward {
-            local_ref: local_ref.to_owned(),
-        });
-    }
+    let _ = explicit_refspec_fetch;
     Ok(())
 }
 
@@ -1575,10 +1594,10 @@ pub fn fetch_local_with_progress(
         crate::fetch::retain_following_tags(&local_odb, &mut matched, &pack_oids, &boundaries)?;
     }
 
-    // 4. Classify and apply ref updates. Ancestry checks use the local repo,
-    //    which now contains the fetched objects.
-    let local_repo = if opts.dry_run {
-        None
+    // 4. Classify and apply ref updates. Ancestry checks use the local repo
+    //    (or the bare remote during `--dry-run`, when objects are not copied).
+    let classify_repo = if opts.dry_run {
+        crate::repo::Repository::open(remote_git_dir, &RepositoryOptions::empty()).ok()
     } else {
         crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty()).ok()
     };
@@ -1628,7 +1647,14 @@ pub fn fetch_local_with_progress(
         let old = crate::refs::resolve_ref_cached(local_git_dir, local_ref, &packed)
             .ok()
             .flatten();
-        let mode = classify_update(old.as_ref(), &m.oid, m.force, m.is_tag, local_repo.as_ref());
+        let mode = classify_update(
+            old.as_ref(),
+            &m.oid,
+            m.force,
+            m.dest_is_tag,
+            classify_repo.as_ref(),
+            None,
+        );
 
         let write = matches!(
             mode,
@@ -1641,7 +1667,7 @@ pub fn fetch_local_with_progress(
             mode,
             opts,
             explicit_refspec_fetch,
-            local_repo.as_ref(),
+            classify_repo.as_ref(),
         )?;
         if write && !opts.dry_run {
             if !crate::refs::is_valid_storable_ref_name(local_ref) {
@@ -1655,7 +1681,7 @@ pub fn fetch_local_with_progress(
                 });
                 continue;
             }
-            if m.is_tag && !ref_target_exists(&local_odb, &remote_odb, m.oid) {
+            if m.dest_is_tag && !ref_target_exists(&local_odb, &remote_odb, m.oid) {
                 updates.push(RefUpdate {
                     remote_ref: m.remote_ref.clone(),
                     local_ref: Some(local_ref.clone()),
@@ -2245,6 +2271,8 @@ pub(crate) struct MatchedRef {
     pub(crate) oid: ObjectId,
     pub(crate) force: bool,
     pub(crate) is_tag: bool,
+    /// Local destination is under `refs/tags/` (tag clobber rules apply).
+    pub(crate) dest_is_tag: bool,
     /// Peeled target from ls-refs `peeled:` (annotated tags), when known.
     pub(crate) advertised_peel: Option<ObjectId>,
     /// How this ref appears in [`FETCH_HEAD`](https://git-scm.com/docs/git-fetch#_discussion).
@@ -2282,7 +2310,14 @@ pub(crate) fn finish_anonymous_url_fetch(
     if !write_fetch_head {
         return Ok(());
     }
-    let Some(source) = opts.fetch_source.as_deref() else {
+    let source = opts.fetch_source.clone().or_else(|| {
+        let name = opts.remote_name.as_deref()?;
+        let config = config_for_git_dir(git_dir)?;
+        config
+            .get(&format!("remote.{name}.url"))
+            .filter(|url| !url.trim().is_empty())
+    });
+    let Some(source) = source.as_deref() else {
         return Ok(());
     };
     let lines = fetch_head_lines_for_ad_hoc_fetch(
@@ -2531,6 +2566,7 @@ pub(crate) fn apply_tag_mode(
                 oid,
                 force: false,
                 is_tag: true,
+                dest_is_tag: true,
                 advertised_peel: peeled,
                 fetch_head: crate::fetch_request::FetchHeadPolicy::ForMerge,
             });
@@ -2553,12 +2589,17 @@ fn ref_target_exists(local_odb: &Odb, remote_odb: &Odb, tag_oid: ObjectId) -> bo
 }
 
 /// Classify a single ref update into an [`UpdateMode`].
+///
+/// When `classify_odb` is set (network fetch `--dry-run` after quarantined pack
+/// ingest), ancestry uses that store with its configured alternates instead of
+/// opening a [`crate::repo::Repository`].
 pub(crate) fn classify_update(
     old: Option<&ObjectId>,
     new: &ObjectId,
     force: bool,
     is_tag: bool,
     repo: Option<&crate::repo::Repository>,
+    classify_odb: Option<&crate::odb::Odb>,
 ) -> UpdateMode {
     let Some(old) = old else {
         return UpdateMode::New;
@@ -2567,9 +2608,13 @@ pub(crate) fn classify_update(
         return UpdateMode::UpToDate;
     }
     // Fast-forward when old is an ancestor of new (commit history only).
-    let ff = repo
-        .map(|r| crate::merge_base::is_ancestor(r, *old, *new).unwrap_or(false))
-        .unwrap_or(false);
+    let ff = if let Some(r) = repo {
+        crate::merge_base::is_ancestor(r, *old, *new).unwrap_or(false)
+    } else if let Some(odb) = classify_odb {
+        crate::merge_base::is_ancestor_odb_walk(odb, *old, *new).unwrap_or(false)
+    } else {
+        false
+    };
     if ff && !is_tag {
         return UpdateMode::FastForward;
     }

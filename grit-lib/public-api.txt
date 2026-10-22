@@ -16273,6 +16273,24 @@ impl core::marker::Unpin for grit_lib::remote::fetch_request::FetchRefspecSource
 impl core::marker::UnsafeUnpin for grit_lib::remote::fetch_request::FetchRefspecSourceKind
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::fetch_request::FetchRefspecSourceKind
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::fetch_request::FetchRefspecSourceKind
+pub struct grit_lib::remote::fetch_request::FetchInvocation
+pub grit_lib::remote::fetch_request::FetchInvocation::remote: alloc::string::String
+pub grit_lib::remote::fetch_request::FetchInvocation::user_refspecs: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for grit_lib::remote::fetch_request::FetchInvocation
+pub fn grit_lib::remote::fetch_request::FetchInvocation::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::remote::fetch_request::FetchInvocation
+impl core::cmp::PartialEq for grit_lib::remote::fetch_request::FetchInvocation
+pub fn grit_lib::remote::fetch_request::FetchInvocation::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::remote::fetch_request::FetchInvocation
+pub fn grit_lib::remote::fetch_request::FetchInvocation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::remote::fetch_request::FetchInvocation
+impl core::marker::Freeze for grit_lib::remote::fetch_request::FetchInvocation
+impl core::marker::Send for grit_lib::remote::fetch_request::FetchInvocation
+impl core::marker::Sync for grit_lib::remote::fetch_request::FetchInvocation
+impl core::marker::Unpin for grit_lib::remote::fetch_request::FetchInvocation
+impl core::marker::UnsafeUnpin for grit_lib::remote::fetch_request::FetchInvocation
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::fetch_request::FetchInvocation
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::fetch_request::FetchInvocation
 pub struct grit_lib::remote::fetch_request::FetchRefspecInput
 pub grit_lib::remote::fetch_request::FetchRefspecInput::configured_refspecs: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::remote::fetch_request::FetchRefspecInput::remote_name: core::option::Option<alloc::string::String>
@@ -16330,6 +16348,7 @@ impl core::marker::UnsafeUnpin for grit_lib::remote::fetch_request::ResolvedFetc
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::fetch_request::ResolvedFetchRef
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::fetch_request::ResolvedFetchRef
 pub fn grit_lib::remote::fetch_request::refname_match_fetch_dwim(&str, &str) -> u32
+pub fn grit_lib::remote::fetch_request::resolve_fetch_invocation(&grit_lib::config::ConfigSet, core::option::Option<&str>, &[alloc::string::String], &str) -> grit_lib::remote::fetch_request::FetchInvocation
 pub mod grit_lib::remote::github_auth
 #[non_exhaustive] pub enum grit_lib::remote::github_auth::DeviceFlowError
 pub grit_lib::remote::github_auth::DeviceFlowError::AccessDenied
@@ -17426,6 +17445,7 @@ pub fn grit_lib::remote::transfer::fetch_local_with_progress(&std::path::Path, &
 pub fn grit_lib::remote::transfer::push_local(&std::path::Path, &std::path::Path, &[grit_lib::remote::transfer::PushRefSpec], &grit_lib::remote::transfer::PushOptions) -> grit_lib::error::Result<grit_lib::remote::transfer::PushOutcome>
 pub fn grit_lib::remote::transfer::reachable_closure(&grit_lib::objects::odb::Odb, &[grit_lib::objects::ObjectId], &std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>, bool, &std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>) -> grit_lib::error::Result<std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>>
 pub fn grit_lib::remote::transfer::resolve_fetch_prune(&grit_lib::config::ConfigSet, &str, core::option::Option<bool>) -> grit_lib::error::Result<bool>
+pub fn grit_lib::remote::transfer::resolve_fetch_tags(&grit_lib::config::ConfigSet, &str, core::option::Option<bool>) -> grit_lib::remote::transfer::TagMode
 pub fn grit_lib::remote::transfer::resolve_push_delete_ref(&std::path::Path, &std::collections::hash::set::HashSet<alloc::string::String>, &str) -> alloc::string::String
 pub mod grit_lib::remote::transport
 pub mod grit_lib::remote::transport::http
@@ -18517,6 +18537,7 @@ impl core::marker::Unpin for grit_lib::repo_handles::StashPushOptions
 impl core::marker::UnsafeUnpin for grit_lib::repo_handles::StashPushOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::StashPushOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::StashPushOptions
+pub fn grit_lib::repo_handles::configured_remote_names(&grit_lib::config::ConfigSet) -> alloc::vec::Vec<alloc::string::String>
 pub mod grit_lib::revwalk
 pub mod grit_lib::revwalk::commit_graph
 pub enum grit_lib::revwalk::commit_graph::BloomPrecheck

@@ -938,14 +938,8 @@ enum Command {
     },
     /// Download refs and objects from a remote.
     Fetch {
-        /// Remote to fetch from (defaults to origin).
-        remote: Option<String>,
-        /// Remove remote-tracking refs that no longer exist on the remote.
-        #[arg(long = "prune")]
-        prune: bool,
-        /// Do not prune stale remote-tracking refs, even when config enables it.
-        #[arg(long = "no-prune", conflicts_with = "prune")]
-        no_prune: bool,
+        #[command(flatten)]
+        fetch: commands::fetch_args::FetchArgs,
     },
     /// Fetch from the remote and integrate it into the current branch.
     Pull {
@@ -2011,15 +2005,16 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 ctx,
             )
         }
-        Command::Fetch {
-            remote,
-            prune,
-            no_prune,
-        } => emit(
-            &commands::fetch::run(remote, prune, no_prune, opts.mode)?,
-            opts,
-            ctx,
-        ),
+        Command::Fetch { fetch } => {
+            let outcome = commands::fetch::run(&fetch, opts.mode)?;
+            if !(fetch.quiet && opts.mode == OutputMode::Human) {
+                emit(&outcome, opts, ctx)?;
+            }
+            if outcome.rejected {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Command::Pull {
             ff_only,
             no_rebase,

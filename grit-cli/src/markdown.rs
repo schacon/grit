@@ -418,16 +418,35 @@ pub fn print_fetch_updates(
         return Ok(());
     }
     outln!(w, "## Updates from `{remote}`");
+    let mut any_rejected = false;
     for update in updates {
+        if update.status == crate::commands::fetch::FetchUpdateStatus::Rejected {
+            any_rejected = true;
+            let reason = update.reason.as_deref().unwrap_or("ref update rejected");
+            outln!(w, "- **`{}`** · rejected: {reason}", update.ref_name);
+            continue;
+        }
         let from = update.old_oid.as_deref().map(short_hex).unwrap_or("new");
         let to = update
             .new_oid
             .as_deref()
             .map(short_hex)
             .unwrap_or("deleted");
-        outln!(w, "- `{}` · `{from}` → `{to}`", update.ref_name);
+        if update.remote_ref == update.ref_name {
+            outln!(w, "- `{}` · `{from}` → `{to}`", update.ref_name);
+        } else {
+            outln!(
+                w,
+                "- `{}` ← `{}` · `{from}` → `{to}`",
+                update.ref_name,
+                update.remote_ref
+            );
+        }
     }
-    if updated > 0 {
+    if any_rejected {
+        outln!(w);
+        outln!(w, "Some ref updates from `{remote}` were **rejected**.");
+    } else if updated > 0 {
         outln!(w);
         outln!(
             w,
