@@ -54,10 +54,14 @@ pub struct FilesRefStore {
     prepared: Mutex<Option<PreparedFilesBatch>>,
 }
 
+/// What a cached `packed-refs` view was read from. Writers replace the file by rename, so the
+/// file identity changes even when the new file has the same length and mtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PackedRefsStamp {
     len: u64,
     modified: Option<std::time::SystemTime>,
+    /// Device, inode and status-change time (seconds, nanoseconds), where the platform has them.
+    identity: Option<(u64, u64, i64, i64)>,
 }
 
 #[derive(Debug)]
@@ -119,12 +123,27 @@ impl FilesRefStore {
             Ok(meta) => PackedRefsStamp {
                 len: meta.len(),
                 modified: meta.modified().ok(),
+                identity: file_identity(&meta),
             },
             Err(_) => PackedRefsStamp {
                 len: 0,
                 modified: None,
+                identity: None,
             },
         }
+    }
+
+    /// Drop the cached `packed-refs` view so the next lookup reads the file again.
+    ///
+    /// Stamps can miss a replacement on filesystems with coarse timestamps or reused inodes,
+    /// so checks whose answer must reflect the file right now (the create-conflict recheck
+    /// under the ref lock) start from a fresh read.
+    fn forget_packed_cache(&self) {
+        let mut guard = self.packed_cache.lock().unwrap_or_else(|e| e.into_inner());
+        guard.loaded = false;
+        guard.file = None;
+        guard.map = None;
+        guard.map_is_complete = false;
     }
 
     fn invalidate_packed_cache_after_write(&self) {
@@ -896,6 +915,11 @@ impl FilesRefStore {
         carried: &mut Option<(String, PathBuf)>,
     ) -> Result<()> {
         let batch_extras: BTreeSet<String> = updates.iter().map(|u| u.name.clone()).collect();
+        if updates.iter().any(|u| {
+            u.new_value.is_some() && !u.flags.log_only && !before.refs.contains_key(&u.name)
+        }) {
+            self.forget_packed_cache();
+        }
 
         let mut names: BTreeSet<String> = BTreeSet::new();
         names.extend(before.refs.keys().cloned());
@@ -1408,6 +1432,17 @@ fn collect_loose_file_names(dir: &Path, prefix: &str, out: &mut BTreeSet<String>
     }
 }
 
+#[cfg(unix)]
+fn file_identity(meta: &fs::Metadata) -> Option<(u64, u64, i64, i64)> {
+    use std::os::unix::fs::MetadataExt;
+    Some((meta.dev(), meta.ino(), meta.ctime(), meta.ctime_nsec()))
+}
+
+#[cfg(not(unix))]
+fn file_identity(_meta: &fs::Metadata) -> Option<(u64, u64, i64, i64)> {
+    None
+}
+
 fn read_reflog_at_path(path: &Path) -> Result<Vec<ReflogEntry>> {
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
@@ -1689,6 +1724,79 @@ mod tests {
             refs.read_raw("refs/tags/t0009").expect("read"),
             Some(RawRef::Direct(oid(2)))
         );
+    }
+
+    /// Replace `packed-refs` by renaming a same-length file over it, then put back the old
+    /// mtime (as a coarse-mtime filesystem would show it).
+    fn replace_packed_refs_keeping_len_and_mtime(path: &Path, body: &str) {
+        let packed = path.join("packed-refs");
+        let before = fs::metadata(&packed).expect("meta");
+        assert_eq!(before.len(), body.len() as u64, "same length");
+        let tmp = path.join("packed-refs.new");
+        fs::write(&tmp, body).expect("write");
+        fs::File::options()
+            .write(true)
+            .open(&tmp)
+            .expect("open")
+            .set_modified(before.modified().expect("mtime"))
+            .expect("pin mtime");
+        fs::rename(&tmp, &packed).expect("rename");
+        let after = fs::metadata(&packed).expect("meta");
+        assert_eq!(after.len(), before.len());
+        assert_eq!(after.modified().ok(), before.modified().ok());
+    }
+
+    #[test]
+    fn create_rechecks_a_packed_refs_replaced_with_same_len_and_mtime() {
+        assert_create_blocked_by_replaced_packed_descendant(false);
+    }
+
+    #[test]
+    fn create_rechecks_packed_refs_even_when_the_stamp_cannot_tell() {
+        assert_create_blocked_by_replaced_packed_descendant(true);
+    }
+
+    /// Prime a store with `refs/heads/blocked-child` packed, swap in an equal-length
+    /// `packed-refs` holding `refs/heads/blocked/child`, then create `refs/heads/blocked`.
+    fn assert_create_blocked_by_replaced_packed_descendant(stamp_collides: bool) {
+        let dir = git_dir();
+        let path = dir.path();
+        let hex = oid(1).to_hex();
+        let header = "# pack-refs with: peeled fully-peeled sorted \n";
+        fs::write(
+            path.join("packed-refs"),
+            format!("{header}{hex} refs/heads/blocked-child\n"),
+        )
+        .expect("packed-refs");
+        let writer = store(path);
+        assert_eq!(
+            writer.read_raw("refs/heads/blocked-child").expect("prime"),
+            Some(RawRef::Direct(oid(1)))
+        );
+        replace_packed_refs_keeping_len_and_mtime(
+            path,
+            &format!("{header}{hex} refs/heads/blocked/child\n"),
+        );
+        if stamp_collides {
+            // A replacement no stamp can see (coarse timestamps and a reused inode): only a
+            // fresh read under the ref lock notices it.
+            let mut guard = writer.packed_cache.lock().expect("cache");
+            guard.stamp = FilesRefStore::packed_refs_stamp(&path.join("packed-refs"));
+        }
+
+        let err = set(&writer, "refs/heads/blocked", oid(2), Expected::Missing)
+            .expect_err("packed descendant blocks the create");
+        assert!(
+            matches!(
+                err,
+                RefStoreError::NameUnavailable {
+                    reason: RefnameUnavailable::DescendantExists { ref blocking, .. }
+                } if blocking == "refs/heads/blocked/child"
+            ),
+            "{err:?}"
+        );
+        assert!(!path.join("refs/heads/blocked").exists());
+        assert!(!path.join("refs/heads/blocked.lock").exists());
     }
 
     #[test]
