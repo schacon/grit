@@ -141,8 +141,8 @@ pub struct FetchOptions {
     pub initial_remote_fetch: bool,
     /// Remote name paired with [`Self::initial_remote_fetch`] (e.g. `"origin"`).
     pub remote_name: Option<String>,
-    /// Source label written into [`FETCH_HEAD`](https://git-scm.com/docs/git-fetch#_discussion) for
-    /// anonymous URL/path fetches ([`crate::remote::Remote::from_url`] sets this automatically).
+    /// Source label written into [`FETCH_HEAD`](https://git-scm.com/docs/git-fetch#_discussion).
+    /// [`crate::remote::Remote::fetch`] sets this from the fetch URL when unset.
     pub fetch_source: Option<String>,
     /// Configured `remote.<name>.fetch` refspecs (for opportunistic tracking when [`Self::refspecs`]
     /// overrides them). [`crate::remote::Remote::fetch`] fills this for named remotes.
