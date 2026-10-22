@@ -1373,7 +1373,7 @@ pub(crate) fn build_fetch_matched_set(
         negatives.push(item);
     }
 
-    let positive = match &plan {
+    let mut positive = match &plan {
         FetchRefspecPlan::Pattern { positive, .. } => positive.clone(),
         FetchRefspecPlan::Mixed {
             pattern_positive, ..
@@ -1389,6 +1389,13 @@ pub(crate) fn build_fetch_matched_set(
             positive
         }
     };
+    if opts.prune {
+        crate::fetch_request::supplement_positive_for_explicit_prune(
+            &mut positive,
+            &opts.configured_refspecs,
+            opts.remote_name.as_deref(),
+        );
+    }
 
     let matched =
         crate::fetch_request::matched_refs_with_negatives(&plan, remote, &negatives, opts.prune)?;

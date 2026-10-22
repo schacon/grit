@@ -549,11 +549,66 @@ fn append_opportunistic_tracking(
 /// Best-effort remote ref name for an explicit refspec when the source vanished
 /// and `--prune` will delete the stale tracking ref.
 fn explicit_remote_ref_for_prune(src: &str) -> String {
+    if src.is_empty() || src == "HEAD" || src == "@" {
+        return "HEAD".to_owned();
+    }
     if src.starts_with("refs/") {
         src.to_owned()
     } else {
         format!("refs/heads/{src}")
     }
+}
+
+/// Explicit refspecs without a `:dst` side (e.g. `fetch origin topic --prune`) do
+/// not carry a tracking destination, so [`crate::transfer::prune_tracking_refs`]
+/// would skip them. When configured refspecs map the vanished source to a
+/// remote-tracking ref, add positive entries with that destination filled in.
+pub(crate) fn supplement_positive_for_explicit_prune(
+    positive: &mut Vec<RefspecItem>,
+    configured_refspecs: &[String],
+    remote_name: Option<&str>,
+) {
+    let Some(remote_name) = remote_name else {
+        return;
+    };
+    if remote_name.contains('/') || remote_name.starts_with('.') {
+        return;
+    }
+    let mut configured_positive = Vec::new();
+    for spec in configured_refspecs {
+        if let Ok(item) = parse_fetch_refspec(spec) {
+            if !item.negative {
+                configured_positive.push(item);
+            }
+        }
+    }
+    if configured_positive.is_empty() {
+        return;
+    }
+
+    let mut extras = Vec::new();
+    for item in positive.iter() {
+        if item.negative || item.pattern || item.matching {
+            continue;
+        }
+        if item.dst.as_ref().is_some_and(|d| !d.is_empty()) {
+            continue;
+        }
+        let Some(src) = item.src.as_deref() else {
+            continue;
+        };
+        let remote_ref = explicit_remote_ref_for_prune(src);
+        let Some(local) =
+            crate::transfer::match_positive(&remote_ref, &configured_positive).and_then(|o| o)
+        else {
+            continue;
+        };
+        extras.push(RefspecItem {
+            dst: Some(local),
+            ..item.clone()
+        });
+    }
+    positive.extend(extras);
 }
 
 fn resolve_explicit_source(
@@ -832,6 +887,63 @@ mod tests {
                 .iter()
                 .any(|m| m.local_ref.as_deref() == Some("refs/remotes/origin/topic")),
             "negative refspec must drop topic"
+        );
+    }
+
+    #[test]
+    fn explicit_remote_ref_for_prune_keeps_head_symbol() {
+        assert_eq!(explicit_remote_ref_for_prune("HEAD"), "HEAD");
+        assert_eq!(explicit_remote_ref_for_prune("@"), "HEAD");
+        assert_eq!(explicit_remote_ref_for_prune(""), "HEAD");
+        assert_eq!(explicit_remote_ref_for_prune("topic"), "refs/heads/topic");
+    }
+
+    #[test]
+    fn vanished_head_prune_does_not_match_refs_heads_head_branch() {
+        let oid = ObjectId::from_hex("0000000000000000000000000000000000000002").unwrap();
+        let refs = vec![("refs/heads/HEAD".to_string(), oid)];
+        let plan = FetchRefspecPlan::resolve(
+            &FetchRefspecInput {
+                user_refspecs: vec!["HEAD".into()],
+                allow_missing_explicit_for_prune: true,
+                ..Default::default()
+            },
+            FetchRemoteAdvertisement {
+                refs: &refs,
+                head_oid: None,
+            },
+        )
+        .unwrap();
+        let matched = matched_refs_with_negatives(
+            &plan,
+            FetchRemoteAdvertisement {
+                refs: &refs,
+                head_oid: None,
+            },
+            &[],
+            true,
+        )
+        .unwrap();
+        assert!(
+            matched.is_empty(),
+            "vanished HEAD must not be confused with a refs/heads/HEAD branch"
+        );
+    }
+
+    #[test]
+    fn supplement_positive_adds_tracking_dst_for_short_explicit_prune() {
+        let mut positive = vec![parse_fetch_refspec("topic").unwrap()];
+        supplement_positive_for_explicit_prune(
+            &mut positive,
+            &["+refs/heads/*:refs/remotes/origin/*".into()],
+            Some("origin"),
+        );
+        assert!(
+            positive.iter().any(|i| {
+                i.src.as_deref() == Some("topic")
+                    && i.dst.as_deref() == Some("refs/remotes/origin/topic")
+            }),
+            "short explicit refspec must gain configured tracking dst for prune"
         );
     }
 
