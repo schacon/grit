@@ -187,13 +187,19 @@ fn is_fetch_remote_token(config: &ConfigSet, token: &str) -> bool {
     if Path::new(token).exists() {
         return true;
     }
-    token.contains("://")
+    if token.contains("://")
         || token.starts_with('/')
         || token.starts_with("./")
         || token.starts_with("../")
         || token.ends_with(".git")
         || token.ends_with(".bundle")
-        || (token.contains(':') && !token.contains(' ') && !looks_like_fetch_refspec(token))
+    {
+        return true;
+    }
+    if token.contains(':') && !token.contains(' ') {
+        return !looks_like_fetch_refspec(token);
+    }
+    false
 }
 
 /// True when `token` is an explicit `src:dst` fetch refspec, not an scp-style remote URL.
@@ -903,5 +909,22 @@ mod tests {
                 user_refspecs: vec!["main".into()],
             }
         );
+
+        let refspec = "refs/heads/main:refs/remotes/origin/main".to_owned();
+        assert_eq!(
+            resolve_fetch_invocation(&config, None, &[refspec.clone()], "origin"),
+            FetchInvocation {
+                remote: "origin".into(),
+                user_refspecs: vec![refspec],
+            }
+        );
+
+        assert!(super::is_fetch_remote_token(
+            &config,
+            "git@github.com:org/repo.git"
+        ));
+        assert!(!super::looks_like_fetch_refspec(
+            "git@github.com:org/repo.git"
+        ));
     }
 }

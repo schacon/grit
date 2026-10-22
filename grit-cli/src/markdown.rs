@@ -432,7 +432,7 @@ pub fn print_fetch_updates(
             .as_deref()
             .map(short_hex)
             .unwrap_or("deleted");
-        if update.remote_ref == update.ref_name {
+        if update.remote_ref.is_empty() || update.remote_ref == update.ref_name {
             outln!(w, "- `{}` · `{from}` → `{to}`", update.ref_name);
         } else {
             outln!(
