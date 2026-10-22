@@ -4575,11 +4575,14 @@ pub grit_lib::error::Error::DeltaChainTooDeep::limit: usize
 pub grit_lib::error::Error::DetachedHead
 pub grit_lib::error::Error::DiffPath(grit_lib::error::DiffPathError)
 pub grit_lib::error::Error::DubiousOwnership(alloc::string::String)
+pub grit_lib::error::Error::FetchDeepenRelativeUnsupported
 pub grit_lib::error::Error::FetchIntoCheckedOutBranch
 pub grit_lib::error::Error::FetchIntoCheckedOutBranch::branch: alloc::string::String
 pub grit_lib::error::Error::FetchNonFastForward
 pub grit_lib::error::Error::FetchNonFastForward::local_ref: alloc::string::String
 pub grit_lib::error::Error::FetchRefspec(grit_lib::remote::fetch_request::FetchRefspecError)
+pub grit_lib::error::Error::FetchShallowUnsupported
+pub grit_lib::error::Error::FetchUnshallowNotShallow
 pub grit_lib::error::Error::Filter(grit_lib::error::FilterError)
 pub grit_lib::error::Error::ForbiddenBareRepository(alloc::string::String)
 pub grit_lib::error::Error::HashCollision
@@ -4650,9 +4653,6 @@ pub grit_lib::error::Error::PathspecIgnored
 pub grit_lib::error::Error::PathspecIgnored::paths: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::error::Error::PathspecNoMatch
 pub grit_lib::error::Error::PathspecNoMatch::spec: alloc::string::String
-pub grit_lib::error::Error::FetchDeepenRelativeUnsupported
-pub grit_lib::error::Error::FetchShallowUnsupported
-pub grit_lib::error::Error::FetchUnshallowNotShallow
 pub grit_lib::error::Error::PushOptionsUnsupported
 pub grit_lib::error::Error::ReceivedPackTempMissing
 pub grit_lib::error::Error::ReceivedPackTempMissing::path: std::path::PathBuf
@@ -12973,11 +12973,14 @@ pub grit_lib::prelude::Error::DeltaChainTooDeep::limit: usize
 pub grit_lib::prelude::Error::DetachedHead
 pub grit_lib::prelude::Error::DiffPath(grit_lib::error::DiffPathError)
 pub grit_lib::prelude::Error::DubiousOwnership(alloc::string::String)
+pub grit_lib::prelude::Error::FetchDeepenRelativeUnsupported
 pub grit_lib::prelude::Error::FetchIntoCheckedOutBranch
 pub grit_lib::prelude::Error::FetchIntoCheckedOutBranch::branch: alloc::string::String
 pub grit_lib::prelude::Error::FetchNonFastForward
 pub grit_lib::prelude::Error::FetchNonFastForward::local_ref: alloc::string::String
 pub grit_lib::prelude::Error::FetchRefspec(grit_lib::remote::fetch_request::FetchRefspecError)
+pub grit_lib::prelude::Error::FetchShallowUnsupported
+pub grit_lib::prelude::Error::FetchUnshallowNotShallow
 pub grit_lib::prelude::Error::Filter(grit_lib::error::FilterError)
 pub grit_lib::prelude::Error::ForbiddenBareRepository(alloc::string::String)
 pub grit_lib::prelude::Error::HashCollision
@@ -17127,6 +17130,29 @@ impl core::marker::UnsafeUnpin for grit_lib::remote::sideband_lines::SidebandLin
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::sideband_lines::SidebandLines
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::sideband_lines::SidebandLines
 pub mod grit_lib::remote::transfer
+pub enum grit_lib::remote::transfer::FetchDepth
+pub grit_lib::remote::transfer::FetchDepth::Deepen(core::num::nonzero::NonZeroU32)
+pub grit_lib::remote::transfer::FetchDepth::Depth(core::num::nonzero::NonZeroU32)
+pub grit_lib::remote::transfer::FetchDepth::Unshallow
+impl grit_lib::remote::transfer::FetchDepth
+pub fn grit_lib::remote::transfer::FetchDepth::deepen(u32) -> core::option::Option<Self>
+pub fn grit_lib::remote::transfer::FetchDepth::depth(u32) -> core::option::Option<Self>
+impl core::clone::Clone for grit_lib::remote::transfer::FetchDepth
+pub fn grit_lib::remote::transfer::FetchDepth::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::remote::transfer::FetchDepth
+impl core::cmp::PartialEq for grit_lib::remote::transfer::FetchDepth
+pub fn grit_lib::remote::transfer::FetchDepth::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::remote::transfer::FetchDepth
+pub fn grit_lib::remote::transfer::FetchDepth::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::remote::transfer::FetchDepth
+impl core::marker::StructuralPartialEq for grit_lib::remote::transfer::FetchDepth
+impl core::marker::Freeze for grit_lib::remote::transfer::FetchDepth
+impl core::marker::Send for grit_lib::remote::transfer::FetchDepth
+impl core::marker::Sync for grit_lib::remote::transfer::FetchDepth
+impl core::marker::Unpin for grit_lib::remote::transfer::FetchDepth
+impl core::marker::UnsafeUnpin for grit_lib::remote::transfer::FetchDepth
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::transfer::FetchDepth
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::transfer::FetchDepth
 pub enum grit_lib::remote::transfer::TagMode
 pub grit_lib::remote::transfer::TagMode::All
 pub grit_lib::remote::transfer::TagMode::Following
@@ -17192,39 +17218,15 @@ impl core::marker::Unpin for grit_lib::remote::transfer::CloneReflog
 impl core::marker::UnsafeUnpin for grit_lib::remote::transfer::CloneReflog
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::transfer::CloneReflog
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::transfer::CloneReflog
-pub enum grit_lib::remote::transfer::FetchDepth
-pub grit_lib::remote::transfer::FetchDepth::Deepen(core::num::NonZeroU32)
-pub grit_lib::remote::transfer::FetchDepth::Depth(core::num::NonZeroU32)
-pub grit_lib::remote::transfer::FetchDepth::Unshallow
-impl grit_lib::remote::transfer::FetchDepth
-pub fn grit_lib::remote::transfer::FetchDepth::deepen(u32) -> core::option::Option<Self>
-pub fn grit_lib::remote::transfer::FetchDepth::depth(u32) -> core::option::Option<Self>
-impl core::clone::Clone for grit_lib::remote::transfer::FetchDepth
-pub fn grit_lib::remote::transfer::FetchDepth::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::remote::transfer::FetchDepth
-impl core::cmp::PartialEq for grit_lib::remote::transfer::FetchDepth
-pub fn grit_lib::remote::transfer::FetchDepth::eq(&self, &Self) -> bool
-impl core::fmt::Debug for grit_lib::remote::transfer::FetchDepth
-pub fn grit_lib::remote::transfer::FetchDepth::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for grit_lib::remote::transfer::FetchDepth
-impl core::marker::StructuralPartialEq for grit_lib::remote::transfer::FetchDepth
-impl core::marker::Freeze for grit_lib::remote::transfer::FetchDepth
-impl core::marker::Send for grit_lib::remote::transfer::FetchDepth
-impl core::marker::Sync for grit_lib::remote::transfer::FetchDepth
-impl core::marker::Unpin for grit_lib::remote::transfer::FetchDepth
-impl core::marker::UnsafeUnpin for grit_lib::remote::transfer::FetchDepth
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::transfer::FetchDepth
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::transfer::FetchDepth
-pub fn grit_lib::remote::transfer::validate_fetch_depth_local(&std::path::Path, &grit_lib::remote::transfer::FetchOptions) -> grit_lib::error::Result<()>
 pub struct grit_lib::remote::transfer::FetchOptions
 pub grit_lib::remote::transfer::FetchOptions::clone_reflog: core::option::Option<grit_lib::remote::transfer::CloneReflog>
 pub grit_lib::remote::transfer::FetchOptions::configured_refspecs: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::remote::transfer::FetchOptions::deepen_not: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::remote::transfer::FetchOptions::deepen_since: core::option::Option<alloc::string::String>
-pub grit_lib::remote::transfer::FetchOptions::fetch_depth: core::option::Option<grit_lib::remote::transfer::FetchDepth>
 pub grit_lib::remote::transfer::FetchOptions::diagnostics: core::option::Option<grit_lib::diagnostics::DiagnosticsHandle>
 pub grit_lib::remote::transfer::FetchOptions::dry_run: bool
 pub grit_lib::remote::transfer::FetchOptions::environment: grit_lib::config::environment::Environment
+pub grit_lib::remote::transfer::FetchOptions::fetch_depth: core::option::Option<grit_lib::remote::transfer::FetchDepth>
 pub grit_lib::remote::transfer::FetchOptions::fetch_source: core::option::Option<alloc::string::String>
 pub grit_lib::remote::transfer::FetchOptions::http_protocol_version: core::option::Option<u8>
 pub grit_lib::remote::transfer::FetchOptions::index_pack_threads: core::option::Option<usize>
@@ -17474,6 +17476,7 @@ pub fn grit_lib::remote::transfer::reachable_closure(&grit_lib::objects::odb::Od
 pub fn grit_lib::remote::transfer::resolve_fetch_prune(&grit_lib::config::ConfigSet, &str, core::option::Option<bool>) -> grit_lib::error::Result<bool>
 pub fn grit_lib::remote::transfer::resolve_fetch_tags(&grit_lib::config::ConfigSet, &str, core::option::Option<bool>) -> grit_lib::remote::transfer::TagMode
 pub fn grit_lib::remote::transfer::resolve_push_delete_ref(&std::path::Path, &std::collections::hash::set::HashSet<alloc::string::String>, &str) -> alloc::string::String
+pub fn grit_lib::remote::transfer::validate_fetch_depth_local(&std::path::Path, &grit_lib::remote::transfer::FetchOptions) -> grit_lib::error::Result<()>
 pub mod grit_lib::remote::transport
 pub mod grit_lib::remote::transport::http
 pub mod grit_lib::remote::transport::http::ureq_client
