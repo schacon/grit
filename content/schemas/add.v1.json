@@ -41,6 +41,16 @@
       "format": "uint",
       "minimum": 0.0,
       "type": "integer"
+    },
+    "staged_hunks": {
+      "additionalProperties": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "description": "Hunk ids staged per path when `--hunks` was used.",
+      "type": "object"
     }
   },
   "required": [
@@ -50,7 +60,8 @@
     "intent_to_add",
     "modified",
     "removed",
-    "staged"
+    "staged",
+    "staged_hunks"
   ],
   "title": "AddOutcome",
   "type": "object"

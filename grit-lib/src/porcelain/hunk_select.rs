@@ -64,6 +64,15 @@ pub enum HunkSelectError {
     /// Index apply failed after hunk resolution.
     #[error("{0}")]
     Apply(#[from] ApplyError),
+    /// Repository or diff engine failure (not a hunk-id selection error).
+    #[error("{0}")]
+    Repo(String),
+}
+
+impl From<Error> for HunkSelectError {
+    fn from(err: Error) -> Self {
+        HunkSelectError::Repo(err.to_string())
+    }
 }
 
 impl From<HunkIdError> for HunkSelectError {
@@ -120,8 +129,8 @@ pub fn unstaged_file_diffs(
     repo: &Repository,
     pathspecs: &[String],
 ) -> std::result::Result<Vec<(FileDiff, Vec<StructuredHunk>)>, Error> {
-    let (files, peers) =
-        unstaged_file_diffs_with_peer_hunks(repo, pathspecs, DiffOptions::default())?;
+    let opts = DiffOptions::from_config(repo.config()?.as_ref());
+    let (files, peers) = unstaged_file_diffs_with_peer_hunks(repo, pathspecs, opts)?;
     Ok(files
         .into_iter()
         .map(|f| {
@@ -166,10 +175,33 @@ pub fn resolve_selection(
     selection: &HunkSelection,
     pathspecs: &[String],
 ) -> std::result::Result<Vec<FilePatch>, HunkSelectError> {
+    // Returns index-ready patches; see [`resolve_selection_with_staged`] for staged id map.
+    Ok(resolve_selection_with_staged(repo, side, selection, pathspecs)?.patches)
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedSelection {
+    patches: Vec<FilePatch>,
+    staged_hunks: BTreeMap<String, Vec<HunkId>>,
+}
+
+fn diff_opts(repo: &Repository) -> std::result::Result<DiffOptions, HunkSelectError> {
+    Ok(DiffOptions::from_config(repo.config()?.as_ref()))
+}
+
+fn resolve_selection_with_staged(
+    repo: &Repository,
+    side: DiffSide,
+    selection: &HunkSelection,
+    pathspecs: &[String],
+) -> std::result::Result<ResolvedSelection, HunkSelectError> {
     if selection.ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(ResolvedSelection {
+            patches: Vec::new(),
+            staged_hunks: BTreeMap::new(),
+        });
     }
-    let opts = DiffOptions::default();
+    let opts = diff_opts(repo)?;
     let requested: HashSet<HunkId> = selection.ids.iter().cloned().collect();
 
     match side {
@@ -188,9 +220,8 @@ fn resolve_staged(
     pathspecs: &[String],
     opts: DiffOptions,
     requested: &HashSet<HunkId>,
-) -> std::result::Result<Vec<FilePatch>, HunkSelectError> {
-    let files = collect_files_for_target(repo, &DiffTarget::IndexVsHead, pathspecs, opts)
-        .map_err(|e| HunkSelectError::UnknownId { id: e.to_string() })?;
+) -> std::result::Result<ResolvedSelection, HunkSelectError> {
+    let files = collect_files_for_target(repo, &DiffTarget::IndexVsHead, pathspecs, opts)?;
     resolve_on_files(
         DiffSide::Staged,
         files,
@@ -205,7 +236,7 @@ fn resolve_unstaged(
     pathspecs: &[String],
     opts: DiffOptions,
     requested: &HashSet<HunkId>,
-) -> std::result::Result<Vec<FilePatch>, HunkSelectError> {
+) -> std::result::Result<ResolvedSelection, HunkSelectError> {
     if let Some(id) = find_id_on_staged_side(repo, pathspecs, opts.clone(), requested)? {
         return Err(HunkSelectError::WrongSide {
             id,
@@ -213,8 +244,7 @@ fn resolve_unstaged(
             requested_side: "unstaged",
         });
     }
-    let (files, peer_hunks) =
-        unstaged_file_diffs_with_peer_hunks(repo, pathspecs, opts).map_err(map_repo_err)?;
+    let (files, peer_hunks) = unstaged_file_diffs_with_peer_hunks(repo, pathspecs, opts)?;
     resolve_on_files(DiffSide::Unstaged, files, peer_hunks, requested, pathspecs)
 }
 
@@ -224,8 +254,7 @@ fn find_id_on_staged_side(
     opts: DiffOptions,
     requested: &HashSet<HunkId>,
 ) -> std::result::Result<Option<HunkId>, HunkSelectError> {
-    let staged = collect_files_for_target(repo, &DiffTarget::IndexVsHead, pathspecs, opts)
-        .map_err(map_repo_err)?;
+    let staged = collect_files_for_target(repo, &DiffTarget::IndexVsHead, pathspecs, opts)?;
     for file in staged {
         if file.binary {
             continue;
@@ -246,7 +275,7 @@ fn resolve_on_files(
     peer_hunks: HashMap<String, Vec<StructuredHunk>>,
     requested: &HashSet<HunkId>,
     pathspecs: &[String],
-) -> std::result::Result<Vec<FilePatch>, HunkSelectError> {
+) -> std::result::Result<ResolvedSelection, HunkSelectError> {
     let mut found = HashSet::new();
     let mut patches = Vec::new();
     let mut staged_by_path: BTreeMap<String, Vec<HunkId>> = BTreeMap::new();
@@ -282,6 +311,15 @@ fn resolve_on_files(
         .cloned()
         .collect();
     if let Some(id) = missing.first().cloned() {
+        if let Some(path) = stale_path_hint(pathspecs, &files) {
+            if files
+                .iter()
+                .find(|f| f.path == path)
+                .is_some_and(|f| f.binary)
+            {
+                return Err(HunkSelectError::Binary { path });
+            }
+        }
         let current_ids = current_ids_for_stale(side, pathspecs, &files, &peer_hunks);
         return Err(HunkSelectError::StaleId {
             id,
@@ -290,8 +328,10 @@ fn resolve_on_files(
         });
     }
 
-    let _ = staged_by_path;
-    Ok(patches)
+    Ok(ResolvedSelection {
+        patches,
+        staged_hunks: staged_by_path,
+    })
 }
 
 fn stale_path_hint(pathspecs: &[String], files: &[FileDiff]) -> Option<String> {
@@ -415,63 +455,14 @@ pub fn stage_hunks(
     pathspecs: &[String],
     dry_run: bool,
 ) -> std::result::Result<StageHunksOutcome, HunkSelectError> {
-    let patches = resolve_selection(repo, side, selection, pathspecs)?;
-    let staged_hunks = staged_ids_from_patches(repo, side, selection, pathspecs, &patches)?;
-    let apply = apply_patch_to_index_and_write(repo, &patches, &IndexApplyOptions { dry_run })?;
-    Ok(StageHunksOutcome::from_apply(dry_run, staged_hunks, apply))
-}
-
-fn staged_ids_from_patches(
-    repo: &Repository,
-    side: DiffSide,
-    selection: &HunkSelection,
-    pathspecs: &[String],
-    patches: &[FilePatch],
-) -> std::result::Result<BTreeMap<String, Vec<HunkId>>, HunkSelectError> {
-    let opts = DiffOptions::default();
-    let (files, peer_hunks) = match side {
-        DiffSide::Unstaged => {
-            unstaged_file_diffs_with_peer_hunks(repo, pathspecs, opts).map_err(map_repo_err)?
-        }
-        DiffSide::Staged => {
-            let files = collect_files_for_target(repo, &DiffTarget::IndexVsHead, pathspecs, opts)
-                .map_err(map_repo_err)?;
-            (files, HashMap::new())
-        }
-        DiffSide::Other => (Vec::new(), HashMap::new()),
-    };
-    let requested: HashSet<HunkId> = selection.ids.iter().cloned().collect();
-    let mut out = BTreeMap::new();
-    for patch in patches {
-        let path = patch
-            .effective_path()
-            .ok_or_else(|| HunkSelectError::UnknownId {
-                id: "patch missing path".into(),
-            })?
-            .to_string();
-        let Some(file) = files.iter().find(|f| f.path == path) else {
-            continue;
-        };
-        let peer = peer_hunks
-            .get(&file.path)
-            .map(|h| h.as_slice())
-            .unwrap_or(&[]);
-        let ids = hunk_ids_with_duplicate_peers(side, &file.path, &file.hunks, peer);
-        let staged: Vec<HunkId> = ids
-            .into_iter()
-            .filter(|id| requested.contains(id))
-            .collect();
-        if !staged.is_empty() {
-            out.insert(path, staged);
-        }
-    }
-    Ok(out)
-}
-
-fn map_repo_err(err: Error) -> HunkSelectError {
-    HunkSelectError::UnknownId {
-        id: err.to_string(),
-    }
+    let resolved = resolve_selection_with_staged(repo, side, selection, pathspecs)?;
+    let apply =
+        apply_patch_to_index_and_write(repo, &resolved.patches, &IndexApplyOptions { dry_run })?;
+    Ok(StageHunksOutcome::from_apply(
+        dry_run,
+        resolved.staged_hunks,
+        apply,
+    ))
 }
 
 #[cfg(test)]
@@ -507,13 +498,18 @@ mod tests {
     }
 
     fn spaced_two_hunk_body() -> (String, String) {
+        three_hunk_body()
+    }
+
+    fn three_hunk_body() -> (String, String) {
         let mut base = String::new();
-        for i in 0..24 {
+        for i in 0..30 {
             base.push_str(&format!("line{i}\n"));
         }
         let mut edited = base.clone();
         edited = edited.replacen("line5\n", "LINE5\n", 1);
-        edited = edited.replacen("line18\n", "LINE18\n", 1);
+        edited = edited.replacen("line13\n", "LINE13\n", 1);
+        edited = edited.replacen("line21\n", "LINE21\n", 1);
         (base, edited)
     }
 
@@ -536,7 +532,7 @@ mod tests {
             &files[0].hunks,
             peers.get("f.txt").map(|v| v.as_slice()).unwrap_or(&[]),
         );
-        assert_eq!(ids.len(), 2);
+        assert!(ids.len() >= 2);
         let selection = HunkSelection {
             ids: vec![ids[0].clone()],
         };
@@ -629,13 +625,9 @@ mod tests {
             &files[0].hunks,
             peers.get("f.txt").map(|v| v.as_slice()).unwrap_or(&[]),
         );
-        assert!(
-            ids.len() >= 2,
-            "expected at least two hunks, got {}",
-            ids.len()
-        );
+        assert_eq!(ids.len(), 3, "expected three hunks, got {}", ids.len());
         let id0 = ids[0].clone();
-        let id2 = ids[1].clone();
+        let id2 = ids[2].clone();
         stage_hunks(
             &repo,
             DiffSide::Unstaged,
@@ -653,6 +645,80 @@ mod tests {
         )
         .unwrap();
         git(root, &["fsck"]);
+    }
+
+    #[test]
+    fn stage_hunks_inter_hunk_context_matches_diff_ids() {
+        let (dir, repo) = init_repo();
+        let root = dir.path();
+        git(root, &["config", "diff.interHunkContext", "1"]);
+        let (base, _edited) = three_hunk_body();
+        let mut edited_two = base.clone();
+        edited_two = edited_two.replacen("line5\n", "LINE5\n", 1);
+        edited_two = edited_two.replacen("line13\n", "LINE13\n", 1);
+        std::fs::write(root.join("f.txt"), base).unwrap();
+        git(root, &["add", "f.txt"]);
+        git(root, &["commit", "-qm", "init"]);
+        std::fs::write(root.join("f.txt"), edited_two).unwrap();
+
+        let opts = DiffOptions::from_config(repo.config().unwrap().as_ref());
+        let (files, peers) = unstaged_file_diffs_with_peer_hunks(&repo, &[], opts.clone()).unwrap();
+        let ids = hunk_ids_with_duplicate_peers(
+            DiffSide::Unstaged,
+            "f.txt",
+            &files[0].hunks,
+            peers.get("f.txt").map(|v| v.as_slice()).unwrap_or(&[]),
+        );
+        assert_eq!(
+            ids.len(),
+            1,
+            "interHunkContext=1 should merge edits at lines 5 and 13"
+        );
+        stage_hunks(
+            &repo,
+            DiffSide::Unstaged,
+            &HunkSelection {
+                ids: vec![ids[0].clone()],
+            },
+            &[],
+            false,
+        )
+        .unwrap();
+        git(root, &["fsck"]);
+    }
+
+    #[test]
+    fn stage_hunks_text_to_binary_returns_binary_error() {
+        let (dir, repo) = init_repo();
+        let root = dir.path();
+        let (base, edited) = spaced_two_hunk_body();
+        std::fs::write(root.join("f.txt"), base).unwrap();
+        git(root, &["add", "f.txt"]);
+        git(root, &["commit", "-qm", "init"]);
+        std::fs::write(root.join("f.txt"), edited).unwrap();
+        let (files, peers) =
+            unstaged_file_diffs_with_peer_hunks(&repo, &[], DiffOptions::default()).unwrap();
+        let ids = hunk_ids_with_duplicate_peers(
+            DiffSide::Unstaged,
+            "f.txt",
+            &files[0].hunks,
+            peers.get("f.txt").map(|v| v.as_slice()).unwrap_or(&[]),
+        );
+        let id = ids[0].clone();
+        let binary = b"before\0after".to_vec();
+        std::fs::write(root.join("f.txt"), &binary).unwrap();
+        let err = stage_hunks(
+            &repo,
+            DiffSide::Unstaged,
+            &HunkSelection { ids: vec![id] },
+            &["f.txt".into()],
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, HunkSelectError::Binary { .. }),
+            "expected Binary, got {err:?}"
+        );
     }
 
     #[test]

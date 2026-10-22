@@ -382,12 +382,8 @@ pub fn prepare_add_hunks_large(git: &Path) -> Result<()> {
     let (file, peer) = snapshots
         .first()
         .context("large.txt should appear in unstaged diff")?;
-    let ids = hunk_ids_with_duplicate_peers(
-        DiffSide::Unstaged,
-        LARGE_HUNKS_FILE,
-        &file.hunks,
-        peer,
-    );
+    let ids =
+        hunk_ids_with_duplicate_peers(DiffSide::Unstaged, LARGE_HUNKS_FILE, &file.hunks, peer);
     let half_len = ids.len() / 2;
     let half_ids: Vec<_> = ids.iter().take(half_len).cloned().collect();
     let id_line = half_ids
