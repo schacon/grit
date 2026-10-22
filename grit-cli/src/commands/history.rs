@@ -86,10 +86,10 @@ pub struct HistoryRewriteArgs {
     pub keep_committer: bool,
 }
 
-/// Result of `grit history drop`, `move`, `reword`, `fixup`, `squash`, `absorb`, and `undo`.
+/// Result of `grit history drop`, `move`, `reword`, `fixup`, `squash`, `absorb`, `rebase`, and `undo`, and top-level `grit rebase`.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct HistoryRewriteOutcome {
-    /// Operation name (`drop`, `move`, `reword`, `fixup`, `squash`, or `undo`).
+    /// Operation name (`drop`, `move`, `reword`, `fixup`, `squash`, `rebase`, or `undo`).
     pub operation: String,
     /// Original and replacement commit OIDs for every rewritten commit.
     pub rewritten: Vec<RewrittenPair>,
