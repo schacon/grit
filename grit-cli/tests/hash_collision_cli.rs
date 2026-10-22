@@ -63,8 +63,7 @@ fn grit_add_shattered_file_fails_with_hash_collision_json() {
         .success());
 
     let data = shattered_prefix(1);
-    let oid = match hash_object(HashAlgo::Sha1, ObjectKind::Blob, &data).expect_err("collision")
-    {
+    let oid = match hash_object(HashAlgo::Sha1, ObjectKind::Blob, &data).expect_err("collision") {
         LibError::HashCollision { oid } => oid,
         other => panic!("expected HashCollision, got {other:?}"),
     };
@@ -177,8 +176,7 @@ fn grit_fetch_shattered_pack_fails_with_hash_collision_json() {
     fs::create_dir(&upstream).expect("upstream dir");
     git_in(&upstream, &["init", "-b", "main"]);
     let data = shattered_prefix(1);
-    let oid = match hash_object(HashAlgo::Sha1, ObjectKind::Blob, &data).expect_err("collision")
-    {
+    let oid = match hash_object(HashAlgo::Sha1, ObjectKind::Blob, &data).expect_err("collision") {
         LibError::HashCollision { oid } => oid,
         other => panic!("expected HashCollision, got {other:?}"),
     };
