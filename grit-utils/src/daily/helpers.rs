@@ -403,6 +403,15 @@ pub fn add_hunks_bench(ctx: &DailyHeadlineContext) -> (BenchArgv, BenchArgv) {
     )
 }
 
+pub fn add_lines_bench(ctx: &DailyHeadlineContext) -> (BenchArgv, BenchArgv) {
+    (
+        sh_script(crate::worktree_fixture::shell_grit_add_lines(&ctx.grit)),
+        sh_script(crate::worktree_fixture::shell_git_apply_lines_half(
+            &ctx.git,
+        )),
+    )
+}
+
 pub fn commit_small_bench(ctx: &DailyHeadlineContext) -> (BenchArgv, BenchArgv) {
     (
         sh_devnull(&ctx.grit, &["commit", "bench"]),
@@ -660,6 +669,7 @@ pub fn prepare_bench_argv(
         PrepareKind::WorktreeAdd => "prepare-worktree-add",
         PrepareKind::WorktreeAddPatchFile => "prepare-worktree-add-patch-file",
         PrepareKind::WorktreeAddHunks => "prepare-worktree-add-hunks",
+        PrepareKind::WorktreeAddLines => "prepare-worktree-add-lines",
         PrepareKind::WorktreeCommit => "prepare-worktree-commit",
         PrepareKind::WorktreeCommitStaged => "prepare-worktree-commit-staged",
         PrepareKind::WorktreeDiff => "prepare-worktree-diff",
@@ -755,6 +765,12 @@ pub fn prepare_worktree_add_hunks(
     _: &super::plan::DailyHeadlineContext,
 ) -> super::plan::DailyPrepare {
     super::plan::DailyPrepare::Hook(PrepareKind::WorktreeAddHunks)
+}
+
+pub fn prepare_worktree_add_lines(
+    _: &super::plan::DailyHeadlineContext,
+) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::WorktreeAddLines)
 }
 
 pub fn prepare_worktree_commit(_: &super::plan::DailyHeadlineContext) -> super::plan::DailyPrepare {
