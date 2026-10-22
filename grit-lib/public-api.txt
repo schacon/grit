@@ -11836,7 +11836,7 @@ pub grit_lib::porcelain::pull::PullError::DetachedHead
 pub grit_lib::porcelain::pull::PullError::InvalidHead
 pub grit_lib::porcelain::pull::PullError::NoUpstream
 pub grit_lib::porcelain::pull::PullError::NoUpstream::branch: alloc::string::String
-pub grit_lib::porcelain::pull::PullError::RebaseUnsupported
+pub grit_lib::porcelain::pull::PullError::RebaseInteractive
 pub grit_lib::porcelain::pull::PullError::Remote(grit_lib::remote::RemoteError)
 pub grit_lib::porcelain::pull::PullError::Repository(grit_lib::error::Error)
 impl core::convert::From<grit_lib::error::Error> for grit_lib::porcelain::pull::PullError
@@ -11880,6 +11880,7 @@ pub enum grit_lib::porcelain::pull::PullResult
 pub grit_lib::porcelain::pull::PullResult::Conflicts
 pub grit_lib::porcelain::pull::PullResult::FastForward
 pub grit_lib::porcelain::pull::PullResult::Merged
+pub grit_lib::porcelain::pull::PullResult::Rebased
 pub grit_lib::porcelain::pull::PullResult::RefusedNotFf
 pub grit_lib::porcelain::pull::PullResult::SetUpstream
 pub grit_lib::porcelain::pull::PullResult::UpToDate
@@ -11942,7 +11943,7 @@ impl core::marker::UnsafeUnpin for grit_lib::porcelain::pull::PullOutcome
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::pull::PullOutcome
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::pull::PullOutcome
 pub fn grit_lib::porcelain::pull::pull<P>(&grit_lib::repo::Repository, &grit_lib::porcelain::pull::PullOptions, &mut P, core::option::Option<&dyn grit_lib::remote::HttpClientFactory>) -> core::result::Result<grit_lib::porcelain::pull::PullOutcome, grit_lib::porcelain::pull::PullError> where P: grit_lib::remote::fetch::Progress
-pub fn grit_lib::porcelain::pull::resolve_pull_mode(&grit_lib::config::ConfigSet, core::option::Option<grit_lib::porcelain::pull::PullMode>) -> grit_lib::porcelain::pull::PullMode
+pub fn grit_lib::porcelain::pull::resolve_pull_mode(&grit_lib::config::ConfigSet, core::option::Option<&str>, core::option::Option<grit_lib::porcelain::pull::PullMode>) -> core::result::Result<grit_lib::porcelain::pull::PullMode, grit_lib::porcelain::pull::PullError>
 pub mod grit_lib::porcelain::quote_path
 pub fn grit_lib::porcelain::quote_path::format_diff_path_with_prefix(&str, &str, bool) -> alloc::string::String
 pub fn grit_lib::porcelain::quote_path::quote_c_style(&str, bool) -> alloc::string::String
@@ -19235,6 +19236,7 @@ impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::PlannedRefUpdate
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::PlannedRefUpdate
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::PlannedRefUpdate
 pub struct grit_lib::revwalk::history::RebaseOntoOptions
+pub grit_lib::revwalk::history::RebaseOntoOptions::flatten_leaf_merges: bool
 pub grit_lib::revwalk::history::RebaseOntoOptions::rewrite: grit_lib::revwalk::history::RewriteOptions
 pub grit_lib::revwalk::history::RebaseOntoOptions::skip_applied: bool
 impl grit_lib::revwalk::history::RebaseOntoOptions

@@ -98,7 +98,19 @@ pub fn rebase_onto(
             .iter()
             .all(|parent| *parent == upstream || !range_set.contains(parent));
         if is_local_root {
-            edits.insert(commit, CommitEdit::Reparent { parent: onto });
+            let reparent_onto = if let Some(mainline) =
+                mainline_anchor_for_parallel_root(repo, commit, &range_set)?
+            {
+                mainline
+            } else {
+                onto
+            };
+            edits.insert(
+                commit,
+                CommitEdit::Reparent {
+                    parent: reparent_onto,
+                },
+            );
         }
         if opts.flatten_leaf_merges && is_leaf_merge_in_range(repo, commit, &range_set)? {
             edits.insert(commit, CommitEdit::Drop);
@@ -153,6 +165,22 @@ fn extend_rebase_replay_order(
         }
     }
     Ok(order)
+}
+
+/// When `commit` is the tip of a side branch merged into the range, return the first parent
+/// of that merge on the mainline so the side replay chains onto the replayed mainline commit.
+fn mainline_anchor_for_parallel_root(
+    repo: &Repository,
+    commit: ObjectId,
+    range_set: &HashSet<ObjectId>,
+) -> Result<Option<ObjectId>, HistoryError> {
+    for &merge_oid in range_set {
+        let parents = commit_parents(repo, merge_oid)?;
+        if parents.len() >= 2 && parents[1] == commit {
+            return Ok(Some(parents[0]));
+        }
+    }
+    Ok(None)
 }
 
 fn is_leaf_merge_in_range(

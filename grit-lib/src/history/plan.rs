@@ -931,15 +931,23 @@ fn reparent_parent_list(
     mapping: &HashMap<ObjectId, ObjectId>,
 ) -> Vec<ObjectId> {
     if old.parents.len() <= 1 {
-        return vec![new_first_parent];
+        return vec![mapping
+            .get(&new_first_parent)
+            .copied()
+            .unwrap_or(new_first_parent)];
     }
-    std::iter::once(new_first_parent)
-        .chain(
-            old.parents[1..]
-                .iter()
-                .map(|parent| mapping.get(parent).copied().unwrap_or(*parent)),
-        )
-        .collect()
+    std::iter::once(
+        mapping
+            .get(&new_first_parent)
+            .copied()
+            .unwrap_or(new_first_parent),
+    )
+    .chain(
+        old.parents[1..]
+            .iter()
+            .map(|parent| mapping.get(parent).copied().unwrap_or(*parent)),
+    )
+    .collect()
 }
 
 /// Rebuild a merge commit tree after parent OIDs move, preserving merge-only changes and resolutions.

@@ -1,22 +1,10 @@
 //! Fetch from a remote and integrate the configured upstream into the current branch.
 //!
-<<<<<<< New base: Update grit-lib public-api snapshot for push plan API
 //! [`pull`] runs fetch, resolves the branch upstream via [`pull_upstream_branch`], then
-//! fast-forwards, merges, or refuses when `--ff-only` / `pull.ff=only` forbids a
-//! merge commit. Rebase pulls return [`PullError::RebaseUnsupported`] until the
-//! history engine wires `pull.rebase`.
-||||||| Common ancestor
-//! [`pull`] runs fetch, resolves the branch upstream via [`upstream_branch`], then
-//! fast-forwards, merges, or refuses when `--ff-only` / `pull.ff=only` forbids a
-//! merge commit. Rebase pulls return [`PullError::RebaseUnsupported`] until the
-//! history engine wires `pull.rebase`.
-=======
-//! [`pull`] runs fetch, resolves the branch upstream via [`upstream_branch`], then
 //! fast-forwards, merges, rebases local commits onto the upstream tip, or refuses
 //! when `--ff-only` / `pull.ff=only` forbids a merge commit. Rebase conflicts abort
 //! atomically (no sequencer state); stop/continue rebase is a follow-up once the
 //! shared history conflict model lands.
->>>>>>> Current commit: feat(pull): rebase integration via history engine and pull --rebase
 
 use crate::branch_tracking::pull_upstream_branch;
 use crate::change_id::{logical_change_id_for_commit, ChangeId};
@@ -30,16 +18,8 @@ use crate::objects::{parse_commit, ObjectId};
 use crate::porcelain::checkout::checkout_between_trees;
 use crate::porcelain::checkout_reflog::checkout_reflog_identity;
 use crate::porcelain::merge::{
-<<<<<<< New base: Update grit-lib public-api snapshot for push plan API
     ensure_branch_tip, integrate_branch_with_options, update_checked_out_branch,
-    IntegrateBranchOptions, IntegrateBranchOutcome, MergeConflictDetail,
-||||||| Common ancestor
-    integrate_branch_with_options, IntegrateBranchOptions, IntegrateBranchOutcome,
-    MergeConflictDetail,
-=======
-    integrate_branch_with_options, IntegrateBranchOptions, IntegrateBranchOutcome,
-    MergeConflictDetail, MergeConflictKind,
->>>>>>> Current commit: feat(pull): rebase integration via history engine and pull --rebase
+    IntegrateBranchOptions, IntegrateBranchOutcome, MergeConflictDetail, MergeConflictKind,
 };
 use crate::porcelain::worktree_guard::prepare_tree_checkout;
 use crate::remote::fetch::Progress;
@@ -487,7 +467,7 @@ fn rebase_fetched_upstream(
                 result: PullResult::Conflicts,
                 label: label.to_owned(),
                 oid: Some(head_oid),
-                change_id: logical_change_id(repo, head_oid),
+                change_id: logical_change_id_for_commit(repo, head_oid)?,
                 upstream: None,
                 conflicts: Some(details),
                 ahead: None,
@@ -511,7 +491,7 @@ fn rebase_fetched_upstream(
             result: PullResult::Rebased,
             label: label.to_owned(),
             oid: Some(applied.head),
-            change_id: logical_change_id(repo, applied.head),
+            change_id: logical_change_id_for_commit(repo, applied.head)?,
             upstream: None,
             conflicts: None,
             ahead: None,

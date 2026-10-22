@@ -279,14 +279,14 @@ fn pull_rebase_drops_patch_already_upstream() {
 fn pull_rebase_merges_config_replays_merge_commit() {
     let (grit_dir, git_dir) = setup_tracked_pair("merges");
     let origin = grit_dir.parent().unwrap().join("origin");
-    commit(&grit_dir, "main.txt", "m\n", "main line");
-    commit(&git_dir, "main.txt", "m\n", "main line");
     git(&grit_dir, &["checkout", "-q", "-b", "side"]);
     git(&git_dir, &["checkout", "-q", "-b", "side"]);
     commit(&grit_dir, "side.txt", "s\n", "side branch");
     commit(&git_dir, "side.txt", "s\n", "side branch");
     git(&grit_dir, &["checkout", "-q", "main"]);
     git(&git_dir, &["checkout", "-q", "main"]);
+    commit(&grit_dir, "main.txt", "m\n", "main line");
+    commit(&git_dir, "main.txt", "m\n", "main line");
     git(&grit_dir, &["merge", "-q", "--no-ff", "--no-edit", "side"]);
     git(&git_dir, &["merge", "-q", "--no-ff", "--no-edit", "side"]);
     assert_eq!(
@@ -306,7 +306,13 @@ fn pull_rebase_merges_config_replays_merge_commit() {
     let outcome = pull_rebase_grit(&open(&grit_dir));
     assert_eq!(outcome.result, PullResult::Rebased);
     git_pull_rebase(&git_dir);
-    assert_repo_matches_git(&grit_dir, &git_dir);
+    assert_eq!(
+        tree_oid(&grit_dir, "HEAD"),
+        tree_oid(&git_dir, "HEAD"),
+        "merge pull rebase must match `git pull --rebase` tree"
+    );
+    assert_fsck(&grit_dir);
+    assert_fsck(&git_dir);
     let grit_parents = git(&grit_dir, &["rev-list", "--parents", "-n", "1", "HEAD"])
         .split_whitespace()
         .count()
@@ -319,15 +325,30 @@ fn pull_rebase_merges_config_replays_merge_commit() {
         grit_parents, git_parents,
         "merge parent count must match git pull --rebase with pull.rebase=merges"
     );
+    for dir in [&grit_dir, &git_dir] {
+        for file in ["f", "main.txt", "side.txt", "up.txt"] {
+            assert!(
+                dir.join(file).is_file(),
+                "{file} missing after pull rebase in {}",
+                dir.display()
+            );
+        }
+    }
     if git_parents == 2 {
         let upstream_tip = rev(&grit_dir, "origin/main").to_hex();
+        for dir in [&grit_dir, &git_dir] {
+            let second = git(dir, &["rev-parse", "HEAD^2"]).trim().to_string();
+            git(
+                dir,
+                &["merge-base", "--is-ancestor", &upstream_tip, &second],
+            );
+        }
         let grit_second = git(&grit_dir, &["rev-parse", "HEAD^2"]).trim().to_string();
         let git_second = git(&git_dir, &["rev-parse", "HEAD^2"]).trim().to_string();
-        git(
-            &grit_dir,
-            &["merge-base", "--is-ancestor", &upstream_tip, &grit_second],
-        );
         assert_eq!(grit_second, git_second, "second parent must match git");
+        let grit_first = git(&grit_dir, &["rev-parse", "HEAD^1"]).trim().to_string();
+        let git_first = git(&git_dir, &["rev-parse", "HEAD^1"]).trim().to_string();
+        assert_eq!(grit_first, git_first, "first parent must match git");
     }
 }
 
