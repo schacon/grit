@@ -33,3 +33,14 @@ println!("{}", report.digest);
 ## Missing submodules
 
 When a gitlink submodule is not checked out or its commit is absent, hashing returns [`Error::TreeSha256MissingSubmodules`](rustdoc:grit_lib::error::Error::TreeSha256MissingSubmodules) listing every path.
+
+## Tag header claim
+
+Annotated tags can carry a [`TreeSha256Claim`](rustdoc:grit_lib::tree_sha256::TreeSha256Claim) in extra headers (immediately after `tagger`, before any other custom headers):
+
+- one `tree-sha256-excluded <path>` line per excluded submodule (sorted when written)
+- one `tree-sha256 <64-hex>` line with **exactly** 64 hex digits (no surrounding whitespace)
+
+Read a claim with [`TreeSha256Claim::from_tag`](rustdoc:grit_lib::tree_sha256::TreeSha256Claim::from_tag) on [`TagData`](rustdoc:grit_lib::objects::TagData), or attach one with [`TreeSha256Claim::apply_to_tag`](rustdoc:grit_lib::tree_sha256::TreeSha256Claim::apply_to_tag). Header names are [`TREE_SHA256_HEADER`](rustdoc:grit_lib::tree_sha256::TREE_SHA256_HEADER) and [`TREE_SHA256_EXCLUDED_HEADER`](rustdoc:grit_lib::tree_sha256::TREE_SHA256_EXCLUDED_HEADER).
+
+Excluded paths in [`TreeSha256Claim::excluded`](rustdoc:grit_lib::tree_sha256::TreeSha256Claim::excluded) must be non-empty and must not contain NUL or newline when calling `apply_to_tag` (the same rules enforced when reading tags).
