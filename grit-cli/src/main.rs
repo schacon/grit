@@ -39,6 +39,20 @@ use clap_complete::Shell;
 
 use output::{emit, OutputMode, OutputOptions, RenderContext};
 
+/// List-only flags for `grit branch`.
+#[derive(Debug, clap::Args, Default, Clone)]
+struct BranchListCliArgs {
+    /// List remote-tracking branches only (`refs/remotes/*`).
+    #[arg(long = "remote")]
+    remote: bool,
+    /// List local and remote-tracking branches.
+    #[arg(long = "all", id = "branch_list_all")]
+    all: bool,
+    /// Return at most this many branches when listing (after sorting by name).
+    #[arg(short = 'n', long = "limit", value_name = "N")]
+    limit: Option<usize>,
+}
+
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 enum LogGroupByArg {
     Author,
@@ -859,6 +873,8 @@ enum Command {
         /// Delete even when the branch is not fully merged into the current branch.
         #[arg(short = 'D', long = "force-delete")]
         force_delete: bool,
+        #[command(flatten)]
+        list: BranchListCliArgs,
         /// Preview the operation without updating refs, config, or reflogs.
         #[arg(long = "dry-run")]
         dry_run: bool,
@@ -1878,6 +1894,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             force_rename,
             delete,
             force_delete,
+            list,
             dry_run,
         } => emit(
             &commands::branch::run(commands::branch::BranchRunOptions {
@@ -1892,6 +1909,10 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 force_rename,
                 delete,
                 force_delete,
+                remote: list.remote,
+                all: list.all,
+                limit: list.limit,
+                list_full_detail: opts.mode != OutputMode::Human,
                 dry_run,
             })?,
             opts,
