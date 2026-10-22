@@ -413,7 +413,7 @@ fn sha256_fetch_over_git_daemon_v2() {
         conn.capabilities()
     );
 
-    let opts = FetchOptions {
+    let mut opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
         tags: TagMode::All,
         ..Default::default()
@@ -702,12 +702,12 @@ fn sha256_push_over_git_daemon() {
 
     let spec = PushRefSpec {
         src: Some(main_oid),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     };
     let outcome = push_remote(
         &local_git,
@@ -776,12 +776,12 @@ fn sha256_push_over_git_daemon() {
     );
     let nonff = PushRefSpec {
         src: Some(diverged),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     };
     let outcome2 = push_remote(
         &local_git,
@@ -809,12 +809,12 @@ fn sha256_push_over_git_daemon() {
         .expect("reconnect for forced push");
     let forced = PushRefSpec {
         src: Some(diverged),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: true,
         delete: false,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     };
     let outcome3 = push_remote(
         &local_git,
@@ -931,12 +931,12 @@ fn sha256_push_over_smart_http() {
     // --- 1. Create push of refs/heads/main ------------------------------------
     let spec = PushRefSpec {
         src: Some(main_oid),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     };
     let outcome = push_http(
         client.clone(),
@@ -996,12 +996,12 @@ fn sha256_push_over_smart_http() {
 
     let spec_feature = PushRefSpec {
         src: Some(feature_oid),
+        src_ref: None,
         dst: "refs/heads/feature".to_owned(),
         force: false,
         delete: false,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     };
     let outcome_feature = push_http(
         client.clone(),

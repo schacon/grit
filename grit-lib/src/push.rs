@@ -938,7 +938,7 @@ mod tests {
     fn make_decision(refname: &str, send: bool) -> PushDecision {
         PushDecision {
             result: PushRefResult {
-                local_ref: crate::transfer::push_spec_local_ref(spec),
+                local_ref: None,
                 remote_ref: refname.to_owned(),
                 old_oid: None,
                 new_oid: None,
@@ -990,7 +990,7 @@ mod tests {
     fn send_decision(refname: &str, new_oid: ObjectId) -> PushDecision {
         PushDecision {
             result: PushRefResult {
-                local_ref: crate::transfer::push_spec_local_ref(spec),
+                local_ref: None,
                 remote_ref: refname.to_owned(),
                 old_oid: None,
                 new_oid: Some(new_oid),

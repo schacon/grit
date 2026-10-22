@@ -116,12 +116,12 @@ fn current_branch_spec(git_dir: &std::path::Path, force: bool) -> Result<PushRef
         .with_context(|| format!("cannot resolve {head}"))?;
     Ok(PushRefSpec {
         src: Some(oid),
+        src_ref: Some(format!("refs/heads/{branch}")),
         dst: format!("refs/heads/{branch}"),
         force,
         delete: false,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     })
 }
 
@@ -143,12 +143,12 @@ fn parse_refspec(git_dir: &std::path::Path, spec: &str, force_flag: bool) -> Res
         }
         return Ok(PushRefSpec {
             src: None,
+            src_ref: None,
             dst: normalize_ref(dst),
             force,
             delete: true,
             expected_old: None,
             expect_absent: false,
-            ..Default::default()
         });
     }
 
@@ -159,12 +159,12 @@ fn parse_refspec(git_dir: &std::path::Path, spec: &str, force_flag: bool) -> Res
         .with_context(|| format!("cannot resolve source '{src}'"))?;
     Ok(PushRefSpec {
         src: Some(oid),
+        src_ref: None,
         dst: normalize_ref(dst),
         force,
         delete: false,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     })
 }
 

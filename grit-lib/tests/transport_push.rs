@@ -177,12 +177,12 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
 
     let spec = PushRefSpec {
         src: Some(main_oid),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     };
     let outcome = push_remote(
         &local_git,
@@ -270,12 +270,12 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
 
     let nonff = PushRefSpec {
         src: Some(diverged),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     };
     let outcome2 = push_remote(
         &local_git,
@@ -315,12 +315,12 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
         .expect("reconnect for forced push");
     let forced = PushRefSpec {
         src: Some(diverged),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: true,
         delete: false,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     };
     let outcome3 = push_remote(
         &local_git,
@@ -375,12 +375,12 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
         .expect("reconnect to create deletable ref");
     let mk = PushRefSpec {
         src: Some(diverged),
+        src_ref: None,
         dst: "refs/heads/scratch".to_owned(),
         force: false,
         delete: false,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     };
     push_remote(
         &local_git,
@@ -402,12 +402,12 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
         .expect("reconnect for deletion");
     let del = PushRefSpec {
         src: None,
+        src_ref: None,
         dst: "refs/heads/scratch".to_owned(),
         force: false,
         delete: true,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     };
     let outcome_del = push_remote(
         &local_git,
@@ -445,7 +445,7 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
 fn push_new_branch_without_local_copy_of_advanced_remote_main() {
     use grit_lib::config::environment::RepositoryOptions;
     use grit_lib::porcelain::add::stage_for_commit;
-    use grit_lib::porcelain::commit::{create_commit, CommitRequest};
+    use grit_lib::porcelain::commit::{create_commit, CommitRequest, HookPolicy};
     use grit_lib::progress::NullProgress;
     use grit_lib::repo::Repository;
 
@@ -498,6 +498,7 @@ fn push_new_branch_without_local_copy_of_advanced_remote_main() {
                 assume_worktree_synced: false,
                 skip_pre_commit_tree_match: false,
                 staged_change_count: None,
+                ..Default::default()
             },
             &mut NullProgress,
         )
@@ -532,12 +533,12 @@ fn push_new_branch_without_local_copy_of_advanced_remote_main() {
         &mut *conn_a,
         &[PushRefSpec {
             src: Some(advanced),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,
             expected_old: None,
             expect_absent: false,
-            ..Default::default()
         }],
         &PushOptions::default(),
         &mut NoProgress,
@@ -574,12 +575,12 @@ fn push_new_branch_without_local_copy_of_advanced_remote_main() {
         &mut *conn_b,
         &[PushRefSpec {
             src: Some(new_tip),
+            src_ref: None,
             dst: "refs/heads/newbr".to_owned(),
             force: false,
             delete: false,
             expected_old: None,
             expect_absent: false,
-            ..Default::default()
         }],
         &PushOptions::default(),
         &mut NoProgress,
@@ -615,12 +616,12 @@ fn push_new_branch_without_local_copy_of_advanced_remote_main() {
         &mut *conn_force,
         &[PushRefSpec {
             src: Some(new_tip),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: true,
             delete: false,
             expected_old: None,
             expect_absent: false,
-            ..Default::default()
         }],
         &PushOptions::default(),
         &mut NoProgress,

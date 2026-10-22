@@ -77,12 +77,12 @@ fn main() -> Result<(), grit_lib::error::Error> {
 
     let spec = PushRefSpec {
         src: Some(new_oid),
+        src_ref: Some("refs/heads/main".to_owned()),
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     };
     remote::push(&repo, &remote_info, &[spec], &PushOptions::default())
         .map_err(|e| grit_lib::error::Error::Message(e.to_string()))?;

@@ -198,12 +198,12 @@ impl Drop for DaemonGuard {
 fn spec(src: ObjectId, dst: &str) -> PushRefSpec {
     PushRefSpec {
         src: Some(src),
+        src_ref: None,
         dst: dst.to_owned(),
         force: false,
         delete: false,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     }
 }
 

@@ -399,12 +399,12 @@ fn remote_push_local_file_url_matches_git() {
 
     let push_spec = PushRefSpec {
         src: Some(tip),
+        src_ref: None,
         dst: "refs/heads/pushed".to_owned(),
         force: false,
         delete: false,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     };
     remote
         .push(

@@ -178,12 +178,12 @@ fn build_source(dir: &Path) -> Graph {
 fn spec(src: Option<ObjectId>, dst: &str) -> PushRefSpec {
     PushRefSpec {
         src,
+        src_ref: None,
         dst: dst.to_owned(),
         force: false,
         delete: false,
         expected_old: None,
         expect_absent: false,
-        ..Default::default()
     }
 }
 
