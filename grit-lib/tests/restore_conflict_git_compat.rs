@@ -70,7 +70,70 @@ fn conflict_opts(side: Option<ConflictSide>, remerge: Option<ConflictStyle>) -> 
 }
 
 fn worktree_bytes(dir: &tempfile::TempDir) -> Vec<u8> {
-    fs::read(dir.path().join("f.txt")).unwrap_or_default()
+    worktree_bytes_path(dir, "f.txt")
+}
+
+fn worktree_bytes_path(dir: &tempfile::TempDir, path: &str) -> Vec<u8> {
+    fs::read(dir.path().join(path)).unwrap_or_default()
+}
+
+fn merge_add_add_conflict_repo(dir: &tempfile::TempDir) {
+    fs::write(dir.path().join("anchor.txt"), "anchor\n").unwrap();
+    git_cmd(dir.path(), &["add", "anchor.txt"]);
+    git_cmd(dir.path(), &["commit", "-qm", "base"]);
+    git_cmd(dir.path(), &["branch", "side"]);
+    git_cmd(dir.path(), &["switch", "side"]);
+    fs::write(dir.path().join("f.txt"), "ours\n").unwrap();
+    git_cmd(dir.path(), &["add", "f.txt"]);
+    git_cmd(dir.path(), &["commit", "-qm", "side"]);
+    git_cmd(dir.path(), &["switch", "master"]);
+    fs::write(dir.path().join("f.txt"), "theirs\n").unwrap();
+    git_cmd(dir.path(), &["add", "f.txt"]);
+    git_cmd(dir.path(), &["commit", "-qm", "master"]);
+    git_merge_expect_conflict(dir, "side");
+    assert!(
+        git_cmd(dir.path(), &["ls-files", "-u", "f.txt"])
+            .lines()
+            .all(|line| !line.contains(" 1\t")),
+        "add/add should not have stage 1: {}",
+        git_cmd(dir.path(), &["ls-files", "-u", "f.txt"])
+    );
+}
+
+fn merge_binary_conflict_repo(dir: &tempfile::TempDir) {
+    fs::write(dir.path().join("anchor.txt"), "anchor\n").unwrap();
+    git_cmd(dir.path(), &["add", "anchor.txt"]);
+    git_cmd(dir.path(), &["commit", "-qm", "base"]);
+    git_cmd(dir.path(), &["branch", "side"]);
+    git_cmd(dir.path(), &["switch", "side"]);
+    fs::write(dir.path().join("f.bin"), [0, 1, b'o', b'u', b'r', b's']).unwrap();
+    git_cmd(dir.path(), &["add", "f.bin"]);
+    git_cmd(dir.path(), &["commit", "-qm", "side"]);
+    git_cmd(dir.path(), &["switch", "master"]);
+    fs::write(
+        dir.path().join("f.bin"),
+        [0, 1, b't', b'h', b'e', b'i', b'r', b's'],
+    )
+    .unwrap();
+    git_cmd(dir.path(), &["add", "f.bin"]);
+    git_cmd(dir.path(), &["commit", "-qm", "master"]);
+    git_merge_expect_conflict(dir, "side");
+}
+
+fn conflict_opts_path(
+    path: &str,
+    side: Option<ConflictSide>,
+    remerge: Option<ConflictStyle>,
+) -> RestoreOptions {
+    RestoreOptions {
+        pathspecs: vec![path.into()],
+        pathspec_sources: vec![path.into()],
+        source: RestoreSource::Index,
+        staged: false,
+        worktree: true,
+        stage: side,
+        remerge,
+    }
 }
 
 fn git_restore(dir: &tempfile::TempDir, args: &[&str]) {
@@ -121,6 +184,40 @@ fn restore_ours_leaves_index_unmerged() {
     let before = ls_files_unmerged(&dir);
     restore_paths(&repo, &conflict_opts(Some(ConflictSide::Ours), None)).expect("restore");
     assert_eq!(ls_files_unmerged(&dir), before);
+}
+
+#[test]
+fn restore_merge_add_add_byte_equal_git() {
+    let (dir_git, _repo_git) = init_repo();
+    merge_add_add_conflict_repo(&dir_git);
+    git_restore(&dir_git, &["--merge", "f.txt"]);
+    let want = worktree_bytes(&dir_git);
+
+    let (dir, repo) = init_repo();
+    merge_add_add_conflict_repo(&dir);
+    restore_paths(
+        &repo,
+        &conflict_opts_path("f.txt", None, Some(ConflictStyle::Merge)),
+    )
+    .expect("restore merge add/add");
+    assert_eq!(worktree_bytes(&dir), want);
+}
+
+#[test]
+fn restore_merge_binary_byte_equal_git() {
+    let (dir_git, _repo_git) = init_repo();
+    merge_binary_conflict_repo(&dir_git);
+    git_restore(&dir_git, &["--merge", "f.bin"]);
+    let want = worktree_bytes_path(&dir_git, "f.bin");
+
+    let (dir, repo) = init_repo();
+    merge_binary_conflict_repo(&dir);
+    restore_paths(
+        &repo,
+        &conflict_opts_path("f.bin", None, Some(ConflictStyle::Merge)),
+    )
+    .expect("restore merge binary");
+    assert_eq!(worktree_bytes_path(&dir, "f.bin"), want);
 }
 
 #[test]

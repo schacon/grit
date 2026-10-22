@@ -26,15 +26,5 @@ impl From<ConflictStyleArg> for ConflictStyle {
 
 /// Read `merge.conflictStyle` from repository config (Git default: `merge`).
 pub fn conflict_style_from_repo(repo: &grit_lib::repo::Repository) -> ConflictStyle {
-    let Ok(config) = repo.config() else {
-        return ConflictStyle::Merge;
-    };
-    let Some(value) = config.get("merge.conflictStyle") else {
-        return ConflictStyle::Merge;
-    };
-    match value.as_str() {
-        "diff3" => ConflictStyle::Diff3,
-        "zdiff3" => ConflictStyle::ZealousDiff3,
-        _ => ConflictStyle::Merge,
-    }
+    grit_lib::porcelain::restore::conflict_style_from_config(repo)
 }

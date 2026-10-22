@@ -13,7 +13,7 @@ use crate::diff::{
 use crate::error::{Error, Result};
 use crate::index::index_file_mtime;
 use crate::index::{entry_from_metadata, Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK};
-use crate::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
+use crate::merge_file::{is_binary, merge, ConflictStyle, MergeFavor, MergeInput};
 use crate::objects::ObjectKind;
 use crate::objects::{parse_commit, ObjectId};
 use crate::pathspec::{
@@ -84,8 +84,12 @@ pub struct RestoreOutcome {
 ///
 /// # Errors
 ///
-/// Returns [`Error::PathspecNoMatch`] when a positive pathspec matches nothing,
-/// or I/O / object-store failures while reading trees and blobs.
+/// Returns [`Error::PathspecNoMatch`] when a positive pathspec matches nothing.
+/// Conflict options ([`RestoreOptions::stage`], [`RestoreOptions::remerge`]) also
+/// return [`Error::RestoreConflictWithStaged`], [`Error::RestoreConflictWithSource`],
+/// [`Error::RestoreConflictMissingOurs`], [`Error::RestoreConflictMissingTheirs`],
+/// or [`Error::RestoreConflictNotUnmerged`] when the index shape does not allow
+/// the requested checkout. Other failures are I/O or object-store errors.
 pub fn restore_paths(repo: &Repository, opts: &RestoreOptions) -> Result<RestoreOutcome> {
     let work_tree = repo
         .work_tree()
@@ -267,7 +271,9 @@ fn restore_conflict_paths(
     Ok(outcome)
 }
 
-fn conflict_style_from_config(repo: &Repository) -> ConflictStyle {
+/// Default conflict-marker style from `merge.conflictStyle` (Git default: `merge`).
+#[must_use]
+pub fn conflict_style_from_config(repo: &Repository) -> ConflictStyle {
     let Ok(config) = repo.config() else {
         return ConflictStyle::Merge;
     };
@@ -385,23 +391,36 @@ fn restore_conflict_remerge(
     {
         *index_dirty = true;
     }
-    let (Some(base), Some(ours), Some(theirs)) = (
-        index.get(path_bytes, 1),
-        index.get(path_bytes, 2),
-        index.get(path_bytes, 3),
-    ) else {
+    let (Some(ours), Some(theirs)) = (index.get(path_bytes, 2), index.get(path_bytes, 3)) else {
         return Err(Error::RestoreConflictNotUnmerged {
             path: path.to_string(),
         });
     };
-    if base.mode == MODE_GITLINK || ours.mode == MODE_GITLINK || theirs.mode == MODE_GITLINK {
+    if ours.mode == MODE_GITLINK || theirs.mode == MODE_GITLINK {
         return Ok(());
     }
-    let base_blob = repo.odb().read(&base.oid)?;
+    if index
+        .get(path_bytes, 1)
+        .is_some_and(|e| e.mode == MODE_GITLINK)
+    {
+        return Ok(());
+    }
+
     let ours_blob = repo.odb().read(&ours.oid)?;
     let theirs_blob = repo.odb().read(&theirs.oid)?;
+    let base_bytes = match index.get(path_bytes, 1) {
+        None => Vec::new(),
+        Some(base) => repo.odb().read(&base.oid)?.data,
+    };
+
+    if is_binary(&base_bytes) || is_binary(&ours_blob.data) || is_binary(&theirs_blob.data) {
+        write_smudged_blob_to_worktree(repo, work_tree, rules, path, &ours.oid, ours.mode)?;
+        outcome.restored.push(path.to_string());
+        return Ok(());
+    }
+
     let input = MergeInput {
-        base: &base_blob.data,
+        base: &base_bytes,
         ours: &ours_blob.data,
         theirs: &theirs_blob.data,
         label_ours: "ours",
