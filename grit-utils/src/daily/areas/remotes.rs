@@ -6,11 +6,33 @@ use super::super::remote_fixture::{
     clone_bench_script, clone_bench_script_grit, setup_git_git_file_remote,
     setup_git_git_grit_http_fetch_remote, setup_git_git_grit_http_push_remote,
     setup_many_refs_file_remote, setup_synth10k_file_remote, setup_synth10k_grit_http_remote,
+<<<<<<< New base: feat(fetch): shared FetchArgs, refspec CLI, and fetch JSON v1 fields
     setup_synth10k_pull_rebase_remote, verify_clone_http, verify_clone_local,
     verify_fetch_dry_run, verify_fetch_incremental, verify_fetch_incremental_http,
     verify_fetch_noop, verify_fetch_one_branch, verify_ls_remote_all,
     verify_pull_fast_forward, verify_pull_rebase, verify_push_incremental,
     verify_push_incremental_http, verify_push_refspec,
+||||||| Common ancestor
+<<<<<<< New base: Update grit-lib public-api snapshot for push plan API
+    verify_clone_http, verify_clone_local, verify_fetch_incremental, verify_fetch_incremental_http,
+    verify_fetch_noop, verify_ls_remote_all, verify_pull_fast_forward, verify_push_incremental,
+    verify_push_incremental_http, verify_push_refspec,
+||||||| Common ancestor
+    verify_clone_http, verify_clone_local, verify_fetch_incremental, verify_fetch_incremental_http,
+    verify_fetch_noop, verify_ls_remote_all, verify_pull_fast_forward, verify_push_incremental,
+    verify_push_incremental_http,
+=======
+    verify_clone_http, verify_clone_local, verify_fetch_dry_run, verify_fetch_incremental,
+    verify_fetch_incremental_http, verify_fetch_noop, verify_fetch_one_branch,
+    verify_ls_remote_all, verify_pull_fast_forward, verify_push_incremental,
+    verify_push_incremental_http,
+>>>>>>> Current commit: feat(fetch): shared FetchArgs, refspec CLI, and fetch JSON v1 fields
+=======
+    verify_clone_http, verify_clone_local, verify_fetch_dry_run, verify_fetch_incremental,
+    verify_fetch_incremental_http, verify_fetch_noop, verify_fetch_one_branch,
+    verify_ls_remote_all, verify_pull_fast_forward, verify_push_incremental,
+    verify_push_incremental_http, verify_push_refspec,
+>>>>>>> Current commit: fix(rustdoc): repair intra-doc links blocking workspace doc
 };
 use super::super::runner::BenchArgv;
 
