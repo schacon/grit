@@ -107,8 +107,12 @@ fn grit_fsck_json_reports_hash_collision() {
     let loose_oid = write_loose_object(repo.odb().objects_dir(), FixtureAlgo::Sha1, "blob", &data)
         .expect("write loose");
 
-    let out = fix.run(&["fsck", "--json"]);
-    assert_eq!(out.status, Some(1), "fsck should fail on sha1 collision");
+    let out = fix.run(&["fsck", "--strict", "--json"]);
+    assert_eq!(
+        out.status,
+        Some(1),
+        "fsck --strict should fail on sha1 collision"
+    );
 
     let parsed: serde_json::Value = serde_json::from_str(&out.stdout).expect("json");
     assert_eq!(parsed.get("ok"), Some(&serde_json::Value::Bool(false)));
@@ -135,7 +139,7 @@ fn grit_fsck_json_reports_hash_collision() {
         collision.get("detail")
     );
 
-    let human = fix.run(&["fsck"]);
+    let human = fix.run(&["fsck", "--strict"]);
     assert_eq!(human.status, Some(1));
     assert!(
         human.stdout.contains("sha1Collision"),
@@ -148,7 +152,7 @@ fn grit_fsck_json_reports_hash_collision() {
         human.stdout
     );
 
-    let md = fix.run(&["fsck", "--markdown"]);
+    let md = fix.run(&["fsck", "--strict", "--markdown"]);
     assert_eq!(md.status, Some(1));
     assert!(
         md.stdout.contains("sha1Collision"),
