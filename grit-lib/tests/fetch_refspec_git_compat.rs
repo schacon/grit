@@ -602,10 +602,7 @@ mod http {
             ],
         );
         let server = start_http_server(remote.path());
-        let ls = git_out(
-            tmp.path(),
-            &["ls-remote", server.url.as_str()],
-        );
+        let ls = git_out(tmp.path(), &["ls-remote", server.url.as_str()]);
         assert!(
             ls.lines().any(|l| l.ends_with("\trefs/pull/123/head")),
             "HTTP remote must advertise pull ref:\n{ls}"

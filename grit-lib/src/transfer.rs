@@ -147,9 +147,6 @@ pub struct FetchOptions {
     /// Configured `remote.<name>.fetch` refspecs (for opportunistic tracking when [`Self::refspecs`]
     /// overrides them). [`crate::remote::Remote::fetch`] fills this for named remotes.
     pub configured_refspecs: Vec<String>,
-    /// Set when [`Self::refspecs`] include explicit (non-wildcard) refspecs; drives FETCH_HEAD
-    /// and stricter ref-update errors.
-    pub explicit_refspec_fetch: bool,
     /// Clone-only reflog entries for `refs/remotes/{remote}/HEAD` (not remote branches).
     pub clone_reflog: Option<CloneReflog>,
     /// Diagnostic sink for [`crate::diagnostics::Trace::Network`] events.
@@ -187,7 +184,6 @@ impl Default for FetchOptions {
             remote_name: None,
             fetch_source: None,
             configured_refspecs: Vec::new(),
-            explicit_refspec_fetch: false,
             clone_reflog: None,
             diagnostics: None,
             network_trace: false,
@@ -226,7 +222,6 @@ impl Clone for FetchOptions {
             remote_name: self.remote_name.clone(),
             fetch_source: self.fetch_source.clone(),
             configured_refspecs: self.configured_refspecs.clone(),
-            explicit_refspec_fetch: self.explicit_refspec_fetch,
             clone_reflog: self.clone_reflog.clone(),
             diagnostics: self.diagnostics.clone(),
             network_trace: self.network_trace,
@@ -1216,8 +1211,7 @@ pub fn fetch_local(
     remote_git_dir: &Path,
     opts: &FetchOptions,
 ) -> Result<FetchOutcome> {
-    let mut opts = opts.clone();
-    fetch_local_with_progress(local_git_dir, remote_git_dir, &mut opts, &mut NoProgress)
+    fetch_local_with_progress(local_git_dir, remote_git_dir, opts, &mut NoProgress)
 }
 
 /// Result of matching remote refs to fetch refspecs.
@@ -1332,7 +1326,7 @@ pub(crate) fn enforce_fetch_ref_update(
 pub fn fetch_local_with_progress(
     local_git_dir: &Path,
     remote_git_dir: &Path,
-    opts: &mut FetchOptions,
+    opts: &FetchOptions,
     progress: &mut dyn Progress,
 ) -> Result<FetchOutcome> {
     // Validate that the remote is actually a Git repository: a missing or
@@ -2767,13 +2761,8 @@ mod tests {
             ..Default::default()
         };
         let mut rec = PhaseRecorder::default();
-        fetch_local_with_progress(
-            &local.path().join(".git"),
-            remote.path(),
-            &mut opts,
-            &mut rec,
-        )
-        .expect("fetch_local");
+        fetch_local_with_progress(&local.path().join(".git"), remote.path(), &opts, &mut rec)
+            .expect("fetch_local");
 
         assert!(
             rec.started

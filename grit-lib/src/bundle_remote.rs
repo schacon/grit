@@ -115,15 +115,14 @@ pub fn fetch_from_bundle(
     bundle_path: &Path,
     opts: &FetchOptions,
 ) -> Result<FetchOutcome> {
-    let mut opts = opts.clone();
-    fetch_from_bundle_with_progress(local_git_dir, bundle_path, &mut opts, &mut NoProgress)
+    fetch_from_bundle_with_progress(local_git_dir, bundle_path, opts, &mut NoProgress)
 }
 
 /// Like [`fetch_from_bundle`], reporting bundle receive and index-pack progress.
 pub fn fetch_from_bundle_with_progress(
     local_git_dir: &Path,
     bundle_path: &Path,
-    opts: &mut FetchOptions,
+    opts: &FetchOptions,
     progress: &mut dyn Progress,
 ) -> Result<FetchOutcome> {
     let bundle = Bundle::open(bundle_path).map_err(map_bundle_err)?;
@@ -153,8 +152,9 @@ pub fn fetch_from_bundle_with_progress(
     let default_branch =
         default_branch_from_bundle_head(&header.refs, init_default_branch.as_deref());
 
-    if opts.remote_name.is_none() && opts.fetch_source.is_none() {
-        opts.fetch_source = Some(bundle_path.to_string_lossy().into_owned());
+    let mut effective = opts.clone();
+    if effective.remote_name.is_none() && effective.fetch_source.is_none() {
+        effective.fetch_source = Some(bundle_path.to_string_lossy().into_owned());
     }
 
     complete_bundle_fetch(
@@ -162,7 +162,7 @@ pub fn fetch_from_bundle_with_progress(
         repo.odb(),
         &remote_refs,
         default_branch,
-        opts,
+        &effective,
         &HashSet::new(),
         pack_oids,
         transfer,
@@ -221,7 +221,7 @@ fn complete_bundle_fetch(
     local_odb: &crate::odb::Odb,
     remote_refs: &[(String, ObjectId)],
     default_branch: Option<String>,
-    opts: &mut FetchOptions,
+    opts: &FetchOptions,
     remote_shallow: &HashSet<ObjectId>,
     pack_oids: HashSet<ObjectId>,
     transfer: TransferStats,
