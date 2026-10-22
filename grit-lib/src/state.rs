@@ -250,18 +250,8 @@ pub fn operation_next_steps(
                 vec![NextStep::Continue(kind)]
             }
         }
-        InProgressOperation::Rebase => {
-            if has_unmerged_conflicts {
-                vec![
-                    NextStep::ResolveConflicts,
-                    NextStep::StageResolved,
-                    NextStep::Continue(InProgressOperation::Rebase),
-                ]
-            } else {
-                vec![NextStep::Continue(InProgressOperation::Rebase)]
-            }
-        }
-        InProgressOperation::RebaseInteractive
+        InProgressOperation::Rebase
+        | InProgressOperation::RebaseInteractive
         | InProgressOperation::Am
         | InProgressOperation::Bisect => vec![],
     }
@@ -280,11 +270,8 @@ pub fn operation_alternatives(kind: InProgressOperation) -> Vec<NextStep> {
             NextStep::Abort(InProgressOperation::Revert),
             NextStep::Skip(InProgressOperation::Revert),
         ],
-        InProgressOperation::Rebase => vec![
-            NextStep::Abort(InProgressOperation::Rebase),
-            NextStep::Skip(InProgressOperation::Rebase),
-        ],
-        InProgressOperation::RebaseInteractive
+        InProgressOperation::Rebase
+        | InProgressOperation::RebaseInteractive
         | InProgressOperation::Am
         | InProgressOperation::Bisect => vec![],
     }
@@ -434,6 +421,11 @@ fn resolve_head_impl(git_dir: &Path, repo: Option<&crate::repo::Repository>) -> 
     }
 }
 
+/// True when grit owns the in-progress rebase (`.git/rebase-merge/grit-plan`).
+fn grit_rebase_plan_active(rebase_merge: &Path) -> bool {
+    rebase_merge.join("grit-plan").is_file()
+}
+
 /// Detect in-progress operations by checking for sentinel files.
 ///
 /// # Parameters
@@ -453,7 +445,7 @@ pub fn detect_in_progress(git_dir: &Path) -> Vec<InProgressOperation> {
     // Interactive rebase: rebase-merge/ directory
     let rebase_merge = git_dir.join("rebase-merge");
     if rebase_merge.is_dir() {
-        if rebase_merge.join("interactive").exists() {
+        if rebase_merge.join("interactive").exists() && !grit_rebase_plan_active(&rebase_merge) {
             ops.push(InProgressOperation::RebaseInteractive);
         } else {
             ops.push(InProgressOperation::Rebase);
@@ -665,12 +657,13 @@ fn wt_status_check_rebase(git_dir: &Path, state: &mut WtStatusState) -> bool {
     }
     let merge = git_dir.join("rebase-merge");
     if merge.is_dir() {
-        if merge.join("interactive").exists() {
+        let grit_plan = grit_rebase_plan_active(&merge);
+        if merge.join("interactive").exists() && !grit_plan {
             state.rebase_interactive_in_progress = true;
         } else {
             state.rebase_in_progress = true;
         }
-        state.grit_rebase_in_progress = merge.join("grit-plan").is_file();
+        state.grit_rebase_in_progress = grit_plan;
         state.rebase_branch = get_branch_display(git_dir, "rebase-merge/head-name");
         state.rebase_onto = get_branch_display(git_dir, "rebase-merge/onto");
         return true;

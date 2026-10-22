@@ -93,37 +93,30 @@ mod tests {
 
     #[test]
     fn skill_mentions_only_real_commands() {
-        use clap::CommandFactory;
-
-        const STACK: usize = 16 * 1024 * 1024;
-        std::thread::Builder::new()
-            .stack_size(STACK)
-            .spawn(|| {
-                let cli = crate::Cli::command();
-                let known: Vec<String> = cli
-                    .get_subcommands()
-                    .flat_map(|c| {
-                        std::iter::once(c.get_name().to_owned())
-                            .chain(c.get_all_aliases().map(str::to_owned))
-                    })
+        crate::cli_test_stack::run(|| {
+            use clap::CommandFactory;
+            let cli = crate::Cli::command();
+            let known: Vec<String> = cli
+                .get_subcommands()
+                .flat_map(|c| {
+                    std::iter::once(c.get_name().to_owned())
+                        .chain(c.get_all_aliases().map(str::to_owned))
+                })
+                .collect();
+            let mut missing = Vec::new();
+            for (i, _) in SKILL.match_indices("`grit ") {
+                let word: String = SKILL[i + 6..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
                     .collect();
-                let mut missing = Vec::new();
-                for (i, _) in SKILL.match_indices("`grit ") {
-                    let word: String = SKILL[i + 6..]
-                        .chars()
-                        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
-                        .collect();
-                    if !word.is_empty() && !known.contains(&word) {
-                        missing.push(word);
-                    }
+                if !word.is_empty() && !known.contains(&word) {
+                    missing.push(word);
                 }
-                assert!(
-                    missing.is_empty(),
-                    "unknown commands in skill.md: {missing:?}"
-                );
-            })
-            .expect("spawn skill command audit")
-            .join()
-            .expect("skill command audit thread");
+            }
+            assert!(
+                missing.is_empty(),
+                "unknown commands in skill.md: {missing:?}"
+            );
+        });
     }
 }

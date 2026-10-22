@@ -18,18 +18,11 @@ mod tests {
     use std::io::Cursor;
 
     fn script_for(shell: Shell) -> String {
-        // Zsh completion generation is deeply recursive; keep headroom as the CLI grows.
-        const STACK: usize = 16 * 1024 * 1024;
-        std::thread::Builder::new()
-            .stack_size(STACK)
-            .spawn(move || {
-                let mut buf = Cursor::new(Vec::new());
-                generate(shell, &mut Cli::command(), "grit", &mut buf);
-                String::from_utf8(buf.into_inner()).expect("completion script is utf-8")
-            })
-            .expect("spawn completion generator")
-            .join()
-            .expect("completion generator thread")
+        crate::cli_test_stack::run(move || {
+            let mut buf = Cursor::new(Vec::new());
+            generate(shell, &mut Cli::command(), "grit", &mut buf);
+            String::from_utf8(buf.into_inner()).expect("completion script is utf-8")
+        })
     }
 
     #[test]

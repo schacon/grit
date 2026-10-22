@@ -10,12 +10,14 @@ use grit_lib::error::Error as LibError;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 use grit_lib::revwalk::history::{
-    absorb, apply_absorb_rewrite, apply_fixup_rewrite, apply_rewrite, drop as history_drop, fixup,
-    format_hunk_range_header, move_commit, plan_rebase, plan_rebase_check, reword_with, split,
-    squash, staged_fixup_paths, undo_last_rewrite, verify_rewrite_plan, AbsorbOptions,
-    ApplyOptions, EmptyPolicy, FixupOptions, HistoryError, HunkAssignment, HunkRange, Placement,
-    RebaseCheckPlan, RebaseOntoOptions, RebasePlan, RebaseRequest, RefScope, RewordOptions,
-    RewriteOptions, RewritePlan, SplitOptions, SquashMessage, SquashOptions, UnassignedHunk,
+    abort_rebase, absorb, apply_absorb_rewrite, apply_fixup_rewrite, apply_rewrite,
+    continue_rebase, drop as history_drop, fixup, format_hunk_range_header, move_commit,
+    plan_rebase, plan_rebase_check, reword_with, skip_rebase, split, squash, staged_fixup_paths,
+    start_rebase, undo_last_rewrite, verify_rewrite_plan, AbsorbOptions, ApplyOptions, EmptyPolicy,
+    FixupOptions, HistoryError, HunkAssignment, HunkRange, Placement, RebaseCheckPlan,
+    RebaseOntoOptions, RebaseOutcome, RebasePlan, RebaseRequest, RebaseSessionError, RefScope,
+    RewordOptions, RewriteOptions, RewritePlan, SplitOptions, SquashMessage, SquashOptions,
+    StartRebaseOptions, UnassignedHunk,
 };
 use grit_lib::revwalk::rev_parse::resolve_revision_as_commit;
 use grit_lib::revwalk::rev_parse_error::RevParseError;
@@ -26,7 +28,10 @@ use crate::commands::merge_strategy::MergeStrategyArg;
 use crate::context;
 use crate::json_error;
 use crate::markdown;
-use crate::operation_output::{render_conflicts_human, ConflictJson};
+use crate::operation_output::{
+    render_conflicts_human, render_rebase_conflict_footer_human, ConflictJson,
+    OperationConflictBlock,
+};
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 use crate::pathspec_args::TrailingPathspecArgs;
 
@@ -178,32 +183,6 @@ impl MarkdownRender for RebaseCheckOutcome {
     }
 }
 
-/// Either a normal rewrite outcome or a `--check` prediction.
-#[derive(Serialize, JsonSchema)]
-#[serde(untagged)]
-pub enum RebaseRunOutcome {
-    Rewrite(HistoryRewriteOutcome),
-    Check(RebaseCheckOutcome),
-}
-
-impl HumanRender for RebaseRunOutcome {
-    fn render_human(&self, w: &mut dyn Write, ctx: &RenderContext) -> Result<()> {
-        match self {
-            Self::Rewrite(o) => o.render_human(w, ctx),
-            Self::Check(o) => o.render_human(w, ctx),
-        }
-    }
-}
-
-impl MarkdownRender for RebaseRunOutcome {
-    fn render_markdown(&self, w: &mut dyn Write, ctx: &RenderContext) -> Result<()> {
-        match self {
-            Self::Rewrite(o) => o.render_markdown(w, ctx),
-            Self::Check(o) => o.render_markdown(w, ctx),
-        }
-    }
-}
-
 /// Shared flags for history rewrite subcommands.
 #[derive(Debug, clap::Args)]
 pub struct HistoryRewriteArgs {
@@ -314,6 +293,162 @@ pub struct HeadPair {
     pub old: String,
     /// Commit OID at `HEAD` after rewrite (full hex).
     pub new: String,
+}
+
+/// High-level result of `grit rebase`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RebaseResult {
+    Completed,
+    Conflicts,
+    Aborted,
+}
+
+/// Result of `grit rebase` and `grit history rebase`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RebaseCliOutcome {
+    pub result: RebaseResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rewritten: Vec<RewrittenPair>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refs: Vec<RefPair>,
+    #[serde(default)]
+    pub head: Option<HeadPair>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dry_run: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub conflicts: Option<Vec<ConflictJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub next_steps: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub alternatives: Option<Vec<String>>,
+}
+
+impl RebaseCliOutcome {
+    fn aborted() -> Self {
+        Self {
+            result: RebaseResult::Aborted,
+            operation: None,
+            rewritten: Vec::new(),
+            refs: Vec::new(),
+            head: None,
+            dry_run: false,
+            commit: None,
+            conflicts: None,
+            next_steps: None,
+            alternatives: None,
+        }
+    }
+
+    fn from_rewrite(outcome: HistoryRewriteOutcome) -> Self {
+        Self {
+            result: RebaseResult::Completed,
+            operation: Some(outcome.operation),
+            rewritten: outcome.rewritten,
+            refs: outcome.refs,
+            head: outcome.head,
+            dry_run: outcome.dry_run,
+            commit: None,
+            conflicts: None,
+            next_steps: None,
+            alternatives: None,
+        }
+    }
+
+    fn from_stop(commit: ObjectId, conflicts: &[grit_lib::operation::Conflict]) -> Self {
+        let block = OperationConflictBlock::for_rebase(conflicts);
+        Self {
+            result: RebaseResult::Conflicts,
+            operation: Some("rebase".into()),
+            rewritten: Vec::new(),
+            refs: Vec::new(),
+            head: None,
+            dry_run: false,
+            commit: Some(commit.to_hex()),
+            conflicts: Some(block.conflicts),
+            next_steps: Some(block.next_steps),
+            alternatives: block.alternatives,
+        }
+    }
+}
+
+impl HumanRender for RebaseCliOutcome {
+    fn render_human(&self, w: &mut dyn Write, ctx: &RenderContext) -> Result<()> {
+        match self.result {
+            RebaseResult::Aborted => outln!(w, "Rebase aborted."),
+            RebaseResult::Conflicts => {
+                if let Some(details) = &self.conflicts {
+                    render_conflicts_human(details, w)?;
+                }
+                render_rebase_conflict_footer_human();
+            }
+            RebaseResult::Completed => {
+                HistoryRewriteOutcome {
+                    operation: self.operation.clone().unwrap_or_else(|| "rebase".into()),
+                    rewritten: self.rewritten.clone(),
+                    refs: self.refs.clone(),
+                    head: self.head.clone(),
+                    dry_run: self.dry_run,
+                }
+                .render_human(w, ctx)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl MarkdownRender for RebaseCliOutcome {
+    fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
+        markdown::print_rebase_outcome(w, self)?;
+        Ok(())
+    }
+}
+
+/// Either a resumable rebase outcome or a `--check` prediction.
+#[derive(Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum RebaseRunOutcome {
+    Rebase(RebaseCliOutcome),
+    Check(RebaseCheckOutcome),
+}
+
+impl HumanRender for RebaseRunOutcome {
+    fn render_human(&self, w: &mut dyn Write, ctx: &RenderContext) -> Result<()> {
+        match self {
+            Self::Rebase(o) => o.render_human(w, ctx),
+            Self::Check(o) => o.render_human(w, ctx),
+        }
+    }
+}
+
+impl MarkdownRender for RebaseRunOutcome {
+    fn render_markdown(&self, w: &mut dyn Write, ctx: &RenderContext) -> Result<()> {
+        match self {
+            Self::Rebase(o) => o.render_markdown(w, ctx),
+            Self::Check(o) => o.render_markdown(w, ctx),
+        }
+    }
+}
+
+/// Options for [`run_rebase`].
+#[derive(Debug)]
+pub struct RebaseRunOptions<'a> {
+    pub upstream: Option<String>,
+    pub onto: Option<String>,
+    pub continue_rebase: bool,
+    pub abort: bool,
+    pub skip: bool,
+    pub flags: &'a RebaseRunFlags,
+    pub shared: &'a HistoryRewriteArgs,
 }
 
 fn short(hex: &str) -> &str {
@@ -811,65 +946,157 @@ impl MarkdownRender for HistoryAbsorbOutcome {
 }
 
 /// Replay local commits onto a new base (`grit rebase` / `grit history rebase`).
-pub fn run_rebase(
-    upstream: Option<String>,
-    onto: Option<String>,
-    shared: &HistoryRewriteArgs,
-    flags: &RebaseRunFlags,
-) -> Result<RebaseRunOutcome> {
+pub fn run_rebase(opts: &RebaseRunOptions<'_>) -> Result<RebaseRunOutcome> {
+    let shared = opts.shared;
+    let flags = opts.flags;
     let on_err = history_error("rebase");
     let repo = context::discover()?;
-    let branch_tip = resolve_commit(&repo, "HEAD", "HEAD")?;
-    let upstream_oid = resolve_rebase_upstream(&repo, upstream.as_deref())?;
-    let onto_oid = onto
-        .as_deref()
-        .map(|rev| resolve_commit(&repo, rev, "onto"))
-        .transpose()?;
+    if opts.abort {
+        abort_rebase(&repo, &reflog_identity(&repo)?).map_err(map_rebase_session_error)?;
+        return Ok(RebaseRunOutcome::Rebase(RebaseCliOutcome::aborted()));
+    }
+
     let rewrite = Rewrite::new(repo, shared)?;
+    let resume_apply = rewrite.apply_options("rebase", "rebase: continue".into())?;
+
+    if opts.continue_rebase || opts.skip {
+        let head_oid = resolve_commit(&rewrite.repo, "HEAD", "HEAD")?;
+        let resume_opts = StartRebaseOptions {
+            request: RebaseRequest {
+                upstream: head_oid,
+                onto: None,
+                branch_tip: head_oid,
+            },
+            rebase: RebaseOntoOptions::new(rewrite.options.clone()),
+            apply: resume_apply,
+        };
+        let outcome = if opts.continue_rebase {
+            continue_rebase(&rewrite.repo, &resume_opts).map_err(map_rebase_session_error)?
+        } else {
+            skip_rebase(&rewrite.repo, &resume_opts).map_err(map_rebase_session_error)?
+        };
+        return Ok(RebaseRunOutcome::Rebase(map_rebase_outcome(outcome)?));
+    }
+
+    let branch_tip = resolve_commit(&rewrite.repo, "HEAD", "HEAD")?;
+    let upstream_oid = resolve_rebase_upstream(&rewrite.repo, opts.upstream.as_deref())?;
+    let onto_oid = opts
+        .onto
+        .as_deref()
+        .map(|rev| resolve_commit(&rewrite.repo, rev, "onto"))
+        .transpose()?;
     let request = RebaseRequest {
         upstream: upstream_oid,
         onto: onto_oid,
         branch_tip,
     };
-    let mut opts = RebaseOntoOptions::new(rewrite.options.clone());
+    let mut rebase_opts = RebaseOntoOptions::new(rewrite.options.clone());
     if flags.check {
-        // Match `--dry-run`: prediction must not invoke commit signing.
-        opts.rewrite.sign = false;
+        rebase_opts.rewrite.sign = false;
     }
     if let Some(strategy) = flags.strategy {
-        opts.favor = strategy.into();
+        rebase_opts.favor = strategy.into();
     }
     if flags.check {
-        return run_rebase_check(&rewrite.repo, &request, &opts, on_err);
+        return run_rebase_check(&rewrite.repo, &request, &rebase_opts, on_err);
     }
-    let plan = plan_rebase(&rewrite.repo, &request, &opts).map_err(on_err)?;
-    match plan {
-        RebasePlan::UpToDate => Ok(RebaseRunOutcome::Rewrite(
-            HistoryRewriteOutcome::up_to_date("rebase", shared.dry_run),
-        )),
-        RebasePlan::Conflict { commit, paths } => Err(json_error::operation_conflict(
-            "rebase",
-            paths,
-            Some(commit),
-        )),
-        RebasePlan::Plan(plan) => {
-            verify_rewrite_plan(&rewrite.repo, &plan).map_err(on_err)?;
-            if !shared.dry_run {
-                let effective_onto = onto_oid.unwrap_or(upstream_oid);
-                let message = format!("rebase: onto {}", short(&effective_onto.to_hex()));
-                apply_rewrite(
-                    &rewrite.repo,
-                    &plan,
-                    &rewrite.apply_options("rebase", message)?,
-                )
-                .map_err(on_err)?;
-            }
-            Ok(RebaseRunOutcome::Rewrite(HistoryRewriteOutcome::new(
+
+    if flags.strategy.is_some() {
+        let plan = plan_rebase(&rewrite.repo, &request, &rebase_opts).map_err(on_err)?;
+        return match plan {
+            RebasePlan::UpToDate => Ok(RebaseRunOutcome::Rebase(RebaseCliOutcome::from_rewrite(
+                HistoryRewriteOutcome::up_to_date("rebase", shared.dry_run),
+            ))),
+            RebasePlan::Conflict { commit, paths } => Err(json_error::operation_conflict(
                 "rebase",
-                &plan,
-                shared.dry_run,
-            )))
+                paths,
+                Some(commit),
+            )),
+            RebasePlan::Plan(plan) => {
+                verify_rewrite_plan(&rewrite.repo, &plan).map_err(on_err)?;
+                if !shared.dry_run {
+                    let effective_onto = onto_oid.unwrap_or(upstream_oid);
+                    let message = format!("rebase: onto {}", short(&effective_onto.to_hex()));
+                    apply_rewrite(
+                        &rewrite.repo,
+                        &plan,
+                        &rewrite.apply_options("rebase", message)?,
+                    )
+                    .map_err(on_err)?;
+                }
+                Ok(RebaseRunOutcome::Rebase(RebaseCliOutcome::from_rewrite(
+                    HistoryRewriteOutcome::new("rebase", &plan, shared.dry_run),
+                )))
+            }
+        };
+    }
+
+    let effective_onto = onto_oid.unwrap_or(upstream_oid);
+    let apply_message = format!("rebase: onto {}", short(&effective_onto.to_hex()));
+    let start_opts = StartRebaseOptions {
+        request,
+        rebase: rebase_opts.clone(),
+        apply: rewrite.apply_options("rebase", apply_message)?,
+    };
+
+    if shared.dry_run {
+        let plan = plan_rebase(&rewrite.repo, &start_opts.request, &rebase_opts).map_err(on_err)?;
+        return match plan {
+            RebasePlan::UpToDate => Ok(RebaseRunOutcome::Rebase(RebaseCliOutcome::from_rewrite(
+                HistoryRewriteOutcome::up_to_date("rebase", true),
+            ))),
+            RebasePlan::Conflict { .. } => bail!(
+                "rebase would conflict; run without --dry-run to start a resumable rebase session"
+            ),
+            RebasePlan::Plan(plan) => {
+                verify_rewrite_plan(&rewrite.repo, &plan).map_err(on_err)?;
+                Ok(RebaseRunOutcome::Rebase(RebaseCliOutcome::from_rewrite(
+                    HistoryRewriteOutcome::new("rebase", &plan, true),
+                )))
+            }
+        };
+    }
+
+    let outcome = start_rebase(&rewrite.repo, &start_opts).map_err(map_rebase_session_error)?;
+    Ok(RebaseRunOutcome::Rebase(map_rebase_outcome(outcome)?))
+}
+
+fn reflog_identity(repo: &Repository) -> Result<String> {
+    let env = repo.environment();
+    let config =
+        ConfigSet::load(env, Some(repo.git_dir()), true).context("could not load config")?;
+    context::committer_reflog_identity(env, &config)
+}
+
+fn map_rebase_outcome(outcome: RebaseOutcome) -> Result<RebaseCliOutcome> {
+    match outcome {
+        RebaseOutcome::Done { plan, .. } => Ok(RebaseCliOutcome::from_rewrite(
+            HistoryRewriteOutcome::new("rebase", &plan, false),
+        )),
+        RebaseOutcome::Stopped(stop) => {
+            Ok(RebaseCliOutcome::from_stop(stop.commit, &stop.conflicts))
         }
+    }
+}
+
+fn map_rebase_session_error(err: RebaseSessionError) -> anyhow::Error {
+    match err {
+        RebaseSessionError::NoRebaseInProgress => anyhow::anyhow!("no rebase in progress"),
+        RebaseSessionError::RebaseAlreadyInProgress => {
+            anyhow::anyhow!("rebase is already in progress")
+        }
+        RebaseSessionError::UnmergedPaths => {
+            anyhow::anyhow!("cannot continue: unmerged paths remain in the index")
+        }
+        RebaseSessionError::NothingToCommit => {
+            anyhow::anyhow!("nothing to commit after conflict resolution")
+        }
+        RebaseSessionError::NotOnBranch => {
+            anyhow::anyhow!("rebase session requires HEAD on a branch")
+        }
+        RebaseSessionError::History(e) => history_error("rebase")(e),
+        RebaseSessionError::Library(e) => e.into(),
+        _ => err.into(),
     }
 }
 
