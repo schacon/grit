@@ -10,8 +10,8 @@ order: 6
 ```text
 grit history drop <commit>
 grit history move <commit> (--before <anchor> | --after <anchor>)
-grit history reword <commit> -m <message>
-grit history reword <commit> --message-file <path|->
+grit history reword <commit> (-m <message> | --message-file <path|-> | --author <ident>)
+grit history reword <commit> --author <ident> [-m <message>]
 grit history drop|move|reword|fixup|squash|absorb … [--dry-run] [--update-refs=(branches|head)]
 grit history fixup <commit> [--empty=(drop|keep|abort)] [-m|--message-file]
 grit history squash <range>… [-m|--message-file|--combine]
@@ -43,9 +43,9 @@ Provide exactly one of `--before` or `--after` naming another commit on that cha
 
 ### `reword`
 
-Replace one commit’s message and replay descendants onto the rewritten history. Author, tree, and parents stay the same on the edited commit; committer identity and time come from your configured committer and `GIT_COMMITTER_DATE`, like [`grit commit`](commit.md).
+Replace one commit’s message and/or author and replay descendants onto the rewritten history. On the edited commit, tree and parents stay the same; only the message and/or author line change. Committer identity and time come from your configured committer and `GIT_COMMITTER_DATE`, like [`grit commit`](commit.md).
 
-Provide exactly one of `-m` / `--message` or `--message-file` (use `-` to read from stdin). Grit does not open an editor.
+Provide at least one of `-m` / `--message`, `--message-file` (use `-` to read from stdin), or `--author`. The author value uses the same `Name <email>` / bare-email rules as [`grit commit --author`](commit.md); when you omit a date, grit keeps the edited commit’s author timestamp. Grit does not open an editor.
 
 Descendant **merge** commits are replayed the same way as for [`drop`](#drop): parents are remapped and the merge tree is updated to match the rewritten first-parent chain.
 
@@ -82,6 +82,7 @@ Provide `-m` / `--message-file` for the new parent commit and one or more paths 
 | `--after` | Place `<commit>` immediately after this revision (`move` only). |
 | `-m`, `--message` | New commit message (conflicts with `--message-file`). |
 | `--message-file` | Read the new message from a file, or `-` for stdin. |
+| `--author` | Replacement author ident (`Name <email>` or bare email). |
 | `--dry-run` | List ref updates without moving refs. |
 | `--update-refs` | `branches` (default) or `head`. |
 
@@ -136,6 +137,13 @@ $ grit history reword HEAD~1 -m " clearer subject line "
 Rewrote 2 commit(s)
   commit a1b2c3d → d4e5f60
   refs/heads/main d4e5f60 → f6a7b89
+```
+
+Change only the author on an older commit (message and author date unchanged):
+
+```console
+$ grit history reword HEAD~2 --author "Ada Lovelace <ada@example.com>" --json
+{"operation":"reword","rewritten":[…],"refs":[…],"head":{…},"dry_run":false}
 ```
 
 Preview ref movements without updating branches:

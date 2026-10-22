@@ -74,7 +74,7 @@ pub use r#move::{move_commit, Placement};
 pub use rebase::{plan_rebase, rebase_onto, RebaseOntoOptions, RebasePlan, RebaseRequest};
 #[cfg(any(test, feature = "unstable-bench-helpers"))]
 pub use rebase::{test_patch_id_compute_call_count, test_reset_patch_id_compute_call_count};
-pub use reword::{normalize_rewrite_message, reword};
+pub use reword::{normalize_rewrite_message, reword, reword_with, RewordOptions};
 pub use split::split;
 pub use squash::{squash, SquashMessage, SquashOptions};
 pub use subject::{commit_message_subject_line, rewritten_row_subject};
