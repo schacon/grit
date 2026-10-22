@@ -390,6 +390,8 @@ fn root_schema_to_document(command: &str, root: RootSchema) -> serde_json::Value
         || command == "history.squash"
         || command == "history.split"
         || command == "history.absorb"
+        || command == "history.rebase"
+        || command == "rebase"
         || command == "history.undo"
     {
         ensure_required_nullable_head(&mut value);
@@ -616,6 +618,7 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
             "history_squash",
             &["history", "squash", "HEAD~2..HEAD", "--update-refs", "head"],
         ),
+        ("rebase", &["rebase", "HEAD~2", "--dry-run"]),
         ("revert", &["revert", "HEAD"]),
         ("shortlog", &["shortlog"]),
         ("revs_head", &["revs", "HEAD"]),
