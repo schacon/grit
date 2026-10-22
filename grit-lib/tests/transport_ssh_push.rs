@@ -129,6 +129,7 @@ fn spec_update(src: ObjectId, dst: &str, force: bool) -> PushRefSpec {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        ..Default::default()
     }
 }
 

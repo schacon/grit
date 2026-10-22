@@ -255,6 +255,14 @@ fn split_positionals(
             positionals[0].clone(),
         )));
     }
+    if positionals.len() > 1
+        && !is_configured_remote(config, &positionals[0])
+        && !looks_like_remote_name(&positionals[0])
+    {
+        return Err(plan_error(PushPlanError::UnknownRemote(
+            positionals[0].clone(),
+        )));
+    }
     let _ = repo;
     Ok((None, positionals.to_vec()))
 }

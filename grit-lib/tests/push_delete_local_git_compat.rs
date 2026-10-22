@@ -56,6 +56,7 @@ fn push_delete_tag_on_local_remote() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
     )
@@ -73,6 +74,7 @@ fn push_delete_tag_on_local_remote() {
             delete: true,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
     )

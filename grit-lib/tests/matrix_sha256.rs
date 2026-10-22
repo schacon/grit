@@ -708,6 +708,7 @@ fn sha256_push_over_git_daemon() {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        ..Default::default()
     };
     let outcome = push_remote(
         &local_git,
@@ -782,6 +783,7 @@ fn sha256_push_over_git_daemon() {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        ..Default::default()
     };
     let outcome2 = push_remote(
         &local_git,
@@ -815,6 +817,7 @@ fn sha256_push_over_git_daemon() {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        ..Default::default()
     };
     let outcome3 = push_remote(
         &local_git,
@@ -937,6 +940,7 @@ fn sha256_push_over_smart_http() {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        ..Default::default()
     };
     let outcome = push_http(
         client.clone(),
@@ -1002,6 +1006,7 @@ fn sha256_push_over_smart_http() {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        ..Default::default()
     };
     let outcome_feature = push_http(
         client.clone(),

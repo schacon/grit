@@ -183,6 +183,7 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        ..Default::default()
     };
     let outcome = push_remote(
         &local_git,
@@ -276,6 +277,7 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        ..Default::default()
     };
     let outcome2 = push_remote(
         &local_git,
@@ -321,6 +323,7 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        ..Default::default()
     };
     let outcome3 = push_remote(
         &local_git,
@@ -381,6 +384,7 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        ..Default::default()
     };
     push_remote(
         &local_git,
@@ -408,6 +412,7 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
         delete: true,
         expected_old: None,
         expect_absent: false,
+        ..Default::default()
     };
     let outcome_del = push_remote(
         &local_git,
@@ -539,6 +544,7 @@ fn push_new_branch_without_local_copy_of_advanced_remote_main() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
         &mut NoProgress,
@@ -581,6 +587,7 @@ fn push_new_branch_without_local_copy_of_advanced_remote_main() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
         &mut NoProgress,
@@ -622,6 +629,7 @@ fn push_new_branch_without_local_copy_of_advanced_remote_main() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
         &mut NoProgress,

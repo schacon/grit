@@ -84,6 +84,7 @@ fn push_local_full_lifecycle() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
     )
@@ -137,6 +138,7 @@ fn push_local_full_lifecycle() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
     )
@@ -160,6 +162,7 @@ fn push_local_full_lifecycle() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
     )
@@ -182,6 +185,7 @@ fn push_local_full_lifecycle() {
             delete: true,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
     )
@@ -211,6 +215,7 @@ fn push_local_full_lifecycle() {
             // Expect c2 but remote is actually c1 -> stale.
             expected_old: Some(c2),
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
     )
@@ -231,6 +236,7 @@ fn push_local_full_lifecycle() {
             delete: false,
             expected_old: Some(c1),
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
     )
@@ -276,6 +282,7 @@ fn push_local_atomic_rejects_all_on_any_failure() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
     )
@@ -295,6 +302,7 @@ fn push_local_atomic_rejects_all_on_any_failure() {
                 delete: false,
                 expected_old: None,
                 expect_absent: false,
+                ..Default::default()
             },
             PushRefSpec {
                 src: Some(c2),
@@ -304,6 +312,7 @@ fn push_local_atomic_rejects_all_on_any_failure() {
                 delete: false,
                 expected_old: Some(c2), // wrong: remote is c1
                 expect_absent: false,
+                ..Default::default()
             },
         ],
         &PushOptions {
@@ -367,6 +376,7 @@ fn push_local_non_atomic_df_applies_first_ref_only() {
                 delete: false,
                 expected_old: None,
                 expect_absent: false,
+                ..Default::default()
             },
             PushRefSpec {
                 src: Some(tip),
@@ -376,6 +386,7 @@ fn push_local_non_atomic_df_applies_first_ref_only() {
                 delete: false,
                 expected_old: None,
                 expect_absent: false,
+                ..Default::default()
             },
         ],
         &PushOptions::default(),
@@ -429,6 +440,7 @@ fn push_local_atomic_store_batch_df_marks_atomic_push_failed() {
                 delete: false,
                 expected_old: None,
                 expect_absent: false,
+                ..Default::default()
             },
             PushRefSpec {
                 src: Some(tip),
@@ -438,6 +450,7 @@ fn push_local_atomic_store_batch_df_marks_atomic_push_failed() {
                 delete: false,
                 expected_old: None,
                 expect_absent: false,
+                ..Default::default()
             },
         ],
         &PushOptions {
@@ -500,6 +513,7 @@ fn push_local_updates_remote_tracking_ref_when_configured() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions {
             tracking_remote: Some("origin".to_owned()),
@@ -553,6 +567,7 @@ fn push_local_up_to_date_refreshes_stale_remote_tracking_ref() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions {
             tracking_remote: Some("origin".to_owned()),
@@ -575,6 +590,7 @@ fn push_local_up_to_date_refreshes_stale_remote_tracking_ref() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions {
             tracking_remote: Some("origin".to_owned()),
@@ -634,6 +650,7 @@ fn push_local_honors_custom_fetch_refspec_for_tracking() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions {
             tracking_remote: Some("origin".to_owned()),
@@ -678,6 +695,7 @@ fn push_local_missing_remote_is_error() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
     )
@@ -730,6 +748,7 @@ fn push_local_does_not_use_decoy_repo_when_parent_relative_target_missing() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
     )
@@ -808,6 +827,7 @@ fn linked_worktree_resolves_relative_remote_from_worktree_root() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
     )
@@ -861,6 +881,7 @@ fn push_local_into_empty_repo_links_local_pack() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
     )
@@ -940,6 +961,7 @@ fn push_local_shallow_repacked_missing_parent_fails() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
     )
@@ -1017,6 +1039,7 @@ fn push_local_installs_single_pack_without_loose_objects() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
     )

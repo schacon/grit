@@ -1134,6 +1134,7 @@ fn push_over_smart_http_lands_ref_and_objects_and_reports_rejection() {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        ..Default::default()
     };
     let outcome = push_http(
         client.clone(),
@@ -1213,6 +1214,7 @@ fn push_over_smart_http_lands_ref_and_objects_and_reports_rejection() {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        ..Default::default()
     };
     let outcome_topic = push_http(
         client.clone(),
@@ -1256,6 +1258,7 @@ fn push_over_smart_http_lands_ref_and_objects_and_reports_rejection() {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        ..Default::default()
     };
     let outcome2 = push_http(
         client.clone(),
@@ -1299,6 +1302,7 @@ fn push_over_smart_http_lands_ref_and_objects_and_reports_rejection() {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        ..Default::default()
     };
     let outcome3 = push_http(
         client.clone(),
@@ -1405,6 +1409,7 @@ fn push_then_fetch_roundtrip_and_server_side_rejection_over_http() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         },
         PushRefSpec {
             src: Some(topic_oid),
@@ -1414,6 +1419,7 @@ fn push_then_fetch_roundtrip_and_server_side_rejection_over_http() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         },
     ];
     let push_outcome = push_http(
@@ -1541,6 +1547,7 @@ fn push_then_fetch_roundtrip_and_server_side_rejection_over_http() {
         delete: false,
         expected_old: Some(main_oid),
         expect_absent: false,
+        ..Default::default()
     };
     let reject_outcome = push_http(
         client.clone(),
