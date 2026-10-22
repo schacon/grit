@@ -188,10 +188,11 @@ mod tests {
     }
 
     #[test]
-    fn worktree_add_rejects_shattered_file() {
+    fn worktree_add_accepts_shattered_file_like_git() {
         let dir = tempfile::tempdir().expect("tempdir");
         let file = dir.path().join("shattered.bin");
-        fs::write(&file, shattered_prefix()).expect("write");
+        let data = shattered_prefix();
+        fs::write(&file, &data).expect("write");
         let meta = fs::symlink_metadata(&file).expect("stat");
         let odb = Odb::new(&dir.path().join("objects"));
         fs::create_dir_all(odb.objects_dir()).expect("objects");
@@ -203,16 +204,18 @@ mod tests {
             file_attrs: FileAttrs::default(),
             cached_meta: Some(meta),
         };
-        match prepare_worktree_blobs_parallel(
+        let prepared = prepare_worktree_blobs_parallel(
             &odb,
             &[input],
             &conv,
             Parallelism::resolve(Some(1)),
             None,
-        ) {
-            Err(Error::HashCollision { .. }) => {}
-            Ok(_) => panic!("expected HashCollision"),
-            Err(other) => panic!("expected HashCollision, got {other}"),
-        }
+        )
+        .expect("prepare shattered blob");
+        assert_eq!(prepared.len(), 1);
+        assert_eq!(
+            prepared[0].oid,
+            hash_object(HashAlgo::Sha1, ObjectKind::Blob, &data).expect("blob id")
+        );
     }
 }

@@ -1714,11 +1714,15 @@ mod tests {
     }
 
     #[test]
-    fn apply_rejects_shattered_result_blob() {
-        use crate::error::Error;
+    fn apply_accepts_shattered_result_blob_like_git() {
         let shattered = shattered_prefix_fixture();
-        let err = write_git_binary_patch(b"ok", &shattered, "a/f", "b/f").expect_err("collision");
-        assert!(matches!(err, Error::HashCollision { .. }));
+        let body = write_git_binary_patch(b"ok", &shattered, "a/f", "b/f").expect("binary patch");
+        let patch = format!("diff --git a/f b/f\n{body}");
+        let patches = parse_patch(&patch, 1, "p", false, None).expect("parse");
+        let payload = patches[0].binary_patch.as_ref().expect("binary payload");
+        let materialized =
+            materialize_binary_patch_forward(payload, b"ok").expect("materialize shattered blob");
+        assert_eq!(materialized, shattered);
     }
 
     #[test]

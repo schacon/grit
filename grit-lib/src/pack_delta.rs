@@ -998,7 +998,9 @@ mod tests {
         for i in 0..count {
             let mut data = vec![b'x'; 2048];
             data.push(b'a' + i);
-            let oid = HashAlgo::Sha1.hash_object(ObjectKind::Blob, &data);
+            let oid = HashAlgo::Sha1
+                .hash_object(ObjectKind::Blob, &data)
+                .expect("test blob hash");
             objects.insert(oid, Object::new(ObjectKind::Blob, data));
             oids.push(oid);
         }

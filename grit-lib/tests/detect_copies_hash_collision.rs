@@ -1,10 +1,9 @@
-//! Copy detection must propagate [`Error::HashCollision`] from worktree blob hashing.
+//! Copy detection accepts blobs whose payload alone triggers sha1dc, as Git does.
 
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{detect_copies_with_policy, zero_oid, DiffEntry, DiffStatus};
-use grit_lib::error::Error;
 use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::parallel::ThreadPolicy;
@@ -20,7 +19,7 @@ fn shattered_prefix(which: u8) -> Vec<u8> {
 }
 
 #[test]
-fn detect_copies_rejects_shattered_modified_worktree_blob() {
+fn detect_copies_accepts_shattered_modified_worktree_blob() {
     let td = tempfile::tempdir().expect("tempdir");
     let wt = td.path();
     let objects = wt.join("objects");
@@ -66,10 +65,10 @@ fn detect_copies_rejects_shattered_modified_worktree_blob() {
         &[],
         &config,
         &policy,
-    );
-
-    assert!(
-        matches!(result, Err(Error::HashCollision { .. })),
-        "expected HashCollision from modified-as-copy worktree hash, got {result:?}"
-    );
+    )
+    .expect("copy detection accepts SHAttered payload as a blob");
+    assert_eq!(result.len(), 2);
+    assert!(result
+        .iter()
+        .all(|entry| entry.status == DiffStatus::Modified));
 }

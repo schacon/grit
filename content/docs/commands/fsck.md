@@ -104,7 +104,10 @@ Example with a problem:
 }
 ```
 
-When configured to surface sha1dc diagnostics, `sha1Collision` is a **warning** by default (strict mode promotes it to an error):
+When configured to surface sha1dc diagnostics, `sha1Collision` is a **warning**
+by default (strict mode promotes it to an error). Detection covers the object
+header and payload together, as in Git, so a blob that merely contains colliding
+bytes, such as the SHAttered PDFs in Git's own test suite, is an ordinary object:
 
 ```json
 {
