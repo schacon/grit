@@ -23,7 +23,7 @@ use crate::state::{resolve_head, HeadState};
 use super::error::HistoryError;
 use super::fixup::staged_fixup_paths;
 use super::plan::plan_rewrite;
-use super::types::{CommitEdit, EmptyPolicy, HistoryEdits, RewriteOptions, RewritePlan};
+use super::types::{CommitEdit, HistoryEdits, RewriteOptions, RewritePlan};
 
 /// Default maximum number of commits considered when `--base` is omitted.
 pub const DEFAULT_ABSORB_STACK_LIMIT: usize = 10;
@@ -211,8 +211,7 @@ pub fn absorb(repo: &Repository, opts: &AbsorbOptions) -> Result<AbsorbPlan, His
     }
 
     let mut edits = HistoryEdits::new();
-    let mut rewrite_opts = opts.rewrite.clone();
-    rewrite_opts.empty = EmptyPolicy::Drop;
+    let rewrite_opts = opts.rewrite.clone();
 
     let mut targets: Vec<ObjectId> = assignments
         .iter()

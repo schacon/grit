@@ -128,6 +128,47 @@ fn split_original_keeps_tree_and_author() {
 }
 
 #[test]
+fn split_keep_committer_preserves_source_committer_line() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let _ = commit_file(wt, "initial.t", "x", "initial");
+    std::fs::write(wt.join("bar"), b"").unwrap();
+    std::fs::write(wt.join("foo"), b"").unwrap();
+    git(wt, &["add", "bar", "foo"]);
+    git(wt, &["commit", "-m", "split-me"]);
+    let head: ObjectId = git(wt, &["rev-parse", "HEAD"]).trim().parse().unwrap();
+    let grit = open_grit(wt);
+    let plan = split(
+        &grit,
+        head,
+        &["foo".to_string()],
+        "split side\n".into(),
+        &SplitOptions::default(),
+        &RewriteOptions {
+            scope: RefScope::Branches,
+            empty: EmptyPolicy::Drop,
+            committer: committer(999),
+            preserve_committer: true,
+            sign: true,
+        },
+    )
+    .expect("split");
+    let new_head = plan.replacement(head).expect("rest commit");
+    let old_raw = grit.odb().read(&head).expect("read old").data;
+    let new_raw = grit.odb().read(&new_head).expect("read new").data;
+    let old_line = old_raw
+        .split(|&b| b == b'\n')
+        .find_map(|line| line.strip_prefix(b"committer "))
+        .expect("old committer");
+    let new_line = new_raw
+        .split(|&b| b == b'\n')
+        .find_map(|line| line.strip_prefix(b"committer "))
+        .expect("new committer");
+    assert_eq!(new_line, old_line);
+    git_fsck_strict(wt);
+}
+
+#[test]
 fn split_rejects_all_or_nothing_selection() {
     let repo = HistoryRepo::init();
     let wt = repo.worktree();
