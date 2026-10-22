@@ -3,8 +3,9 @@
 use anyhow::{Context, Result};
 use grit_lib::config::ConfigSet;
 use grit_lib::remote::push_plan::{
-    configured_remote_for_push, parse_force_mode, resolve_push, PushPlanContext, PushPlanError,
-    PushPlanKind, PushRequest,
+    apply_set_upstream_after_push, configured_remote_for_push, parse_force_mode,
+    push_follow_tags_config, resolve_push, PushPlanContext, PushPlanError, PushPlanKind,
+    PushRequest,
 };
 use grit_lib::remote::push_report::PushRefStatus;
 use grit_lib::remote::transfer::PushOptions;
@@ -34,6 +35,10 @@ pub struct PushOutcome {
     pub rejected: bool,
     /// True when `--dry-run` was used (no refs or objects written).
     pub dry_run: bool,
+    /// Branch short names whose upstream was configured (`-u` / `--set-upstream`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub upstream_set: Option<Vec<String>>,
 }
 
 /// JSON classification for [`PushOutcome`].
@@ -141,7 +146,15 @@ impl MarkdownRender for PushOutcome {
     }
 }
 
+/// Wire and local options forwarded to [`PushOptions`].
+struct PushWireOptions<'a> {
+    dry_run: bool,
+    atomic: bool,
+    push_options: &'a [String],
+}
+
 /// Positional `[<remote>] [<refspec>...]` plus flags.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     tags: bool,
     delete_refs: &[String],
@@ -150,6 +163,10 @@ pub fn run(
     dry_run: bool,
     force: bool,
     force_with_lease: Option<Option<String>>,
+    set_upstream: bool,
+    atomic: bool,
+    push_options: &[String],
+    follow_tags: bool,
 ) -> Result<PushOutcome> {
     let repo = context::discover()?;
     let config = ConfigSet::load(&crate::context::environment(), Some(repo.git_dir()), true)
@@ -161,34 +178,49 @@ pub fn run(
 
     let force_mode = parse_force_mode(&repo, force, force_with_lease).map_err(plan_error)?;
 
-    let plan = resolve_push(
-        &repo,
-        &config,
-        &PushRequest {
-            remote: remote_override,
-            refspecs,
-            tags,
-            delete: delete_refs.to_vec(),
-            force: force_mode,
-        },
-        &plan_ctx,
-    )
-    .map_err(plan_error)?;
+    let follow = follow_tags || push_follow_tags_config(&config);
+
+    let push_request = PushRequest {
+        remote: remote_override,
+        refspecs,
+        tags,
+        delete: delete_refs.to_vec(),
+        force: force_mode,
+        follow_tags: follow,
+        set_upstream,
+    };
+
+    let plan = resolve_push(&repo, &config, &push_request, &plan_ctx).map_err(plan_error)?;
 
     let factory = DefaultHttpClientFactory;
-    let report = match push_once(&repo, &config, &plan.remote, &plan.specs, dry_run, &factory) {
+    let wire = PushWireOptions {
+        dry_run,
+        atomic,
+        push_options,
+    };
+    let report = match push_once(&repo, &config, &plan.remote, &plan.specs, &wire, &factory) {
         Ok(report) => report,
         Err(err) => {
             let url = config
                 .get(&format!("remote.{}.url", plan.remote))
                 .unwrap_or_default();
             if auth::offer_reauth(&err, &url)? {
-                push_once(&repo, &config, &plan.remote, &plan.specs, dry_run, &factory)?
+                push_once(&repo, &config, &plan.remote, &plan.specs, &wire, &factory)?
             } else {
                 return Err(err);
             }
         }
     };
+
+    let upstream_set = apply_set_upstream_after_push(
+        &repo,
+        &plan.remote,
+        push_request.set_upstream,
+        dry_run,
+        &plan.specs,
+        &report.results,
+    )
+    .map_err(|e| anyhow::Error::msg(e.to_string()))?;
 
     let mut rejected = false;
     let results = report
@@ -235,6 +267,7 @@ pub fn run(
         results,
         rejected,
         dry_run,
+        upstream_set: (!upstream_set.is_empty()).then_some(upstream_set),
     })
 }
 
@@ -261,14 +294,6 @@ fn split_positionals(
     }
     if looks_like_remote_name(&positionals[0]) {
         return Ok((Some(positionals[0].clone()), positionals[1..].to_vec()));
-    }
-    if positionals.len() > 1
-        && !is_configured_remote(config, &positionals[0])
-        && !looks_like_remote_name(&positionals[0])
-    {
-        return Err(plan_error(PushPlanError::UnknownRemote(
-            positionals[0].clone(),
-        )));
     }
     if positionals.len() > 1
         && !is_configured_remote(config, &positionals[0])
@@ -306,12 +331,20 @@ fn load_remote_ref_names(
     let advertised = remote_handle
         .list_refs(Some(repo), &ListRefsOptions::default(), Some(&factory))
         .unwrap_or_default();
+    let remote_branch_tips: HashSet<_> = advertised
+        .iter()
+        .filter(|r| r.name.starts_with("refs/heads/") && !r.name.ends_with("^{}"))
+        .map(|r| r.oid)
+        .collect();
     let remote_ref_names: HashSet<String> = advertised
         .into_iter()
         .map(|r| r.name)
         .filter(|n| !n.ends_with("^{}"))
         .collect();
-    Ok(PushPlanContext { remote_ref_names })
+    Ok(PushPlanContext {
+        remote_ref_names,
+        remote_branch_tips,
+    })
 }
 
 fn open_remote_for_push(config: &ConfigSet, remote_name: &str) -> Result<Remote> {
@@ -327,7 +360,7 @@ fn push_once(
     config: &ConfigSet,
     remote_name: &str,
     specs: &[grit_lib::remote::transfer::PushRefSpec],
-    dry_run: bool,
+    wire: &PushWireOptions<'_>,
     factory: &DefaultHttpClientFactory,
 ) -> Result<grit_lib::remote::transfer::PushOutcome> {
     open_remote_for_push(config, remote_name)?
@@ -335,7 +368,9 @@ fn push_once(
             repo,
             specs,
             PushOptions {
-                dry_run,
+                dry_run: wire.dry_run,
+                atomic: wire.atomic,
+                push_options: wire.push_options.to_vec(),
                 tracking_remote: Some(remote_name.to_owned()),
                 ..Default::default()
             },
