@@ -11,7 +11,7 @@ mod imp {
 
     use libc::{
         regcomp, regex_t, regexec, regfree, regmatch_t, REG_EXTENDED, REG_ICASE, REG_NEWLINE,
-        REG_NOMATCH, REG_STARTEND,
+        REG_NOMATCH,
     };
 
     /// Compiled POSIX ERE (`REG_EXTENDED | REG_NEWLINE`).
@@ -84,32 +84,57 @@ mod imp {
             if from > haystack.len() {
                 return None;
             }
-            let mut pmatch = regmatch_t {
-                rm_so: from as libc::regoff_t,
-                rm_eo: haystack.len() as libc::regoff_t,
-            };
-            let rc = unsafe {
-                regexec(
-                    &self.inner.re,
-                    haystack.as_ptr().cast(),
-                    1,
-                    &mut pmatch,
-                    REG_STARTEND,
-                )
-            };
-            if rc == REG_NOMATCH {
-                return None;
-            }
-            if rc != 0 {
-                return None;
-            }
-            let start = pmatch.rm_so.max(0) as usize;
-            let end = pmatch.rm_eo.max(0) as usize;
-            if start > end || end > haystack.len() {
-                return None;
-            }
-            Some((start, end))
+            regexec_from(&self.inner.re, haystack, from)
         }
+    }
+
+    /// Length-bounded search from `from` using `REG_STARTEND` (glibc, BSD, …).
+    #[cfg(not(target_env = "musl"))]
+    fn regexec_from(re: &regex_t, haystack: &[u8], from: usize) -> Option<(usize, usize)> {
+        use libc::REG_STARTEND;
+
+        let mut pmatch = regmatch_t {
+            rm_so: from as libc::regoff_t,
+            rm_eo: haystack.len() as libc::regoff_t,
+        };
+        let rc = unsafe { regexec(re, haystack.as_ptr().cast(), 1, &mut pmatch, REG_STARTEND) };
+        decode_regexec(haystack.len(), rc, &pmatch)
+    }
+
+    /// musl's Rust `libc` bindings omit `REG_STARTEND`. Copy the suffix into a
+    /// NUL-terminated buffer and clear `REG_NOTBOL` only for the first scan so `^`
+    /// does not re-anchor on continuation offsets.
+    #[cfg(target_env = "musl")]
+    fn regexec_from(re: &regex_t, haystack: &[u8], from: usize) -> Option<(usize, usize)> {
+        const REG_NOTBOL: i32 = 1;
+
+        let suffix = &haystack[from..];
+        let mut nul_terminated = Vec::with_capacity(suffix.len().saturating_add(1));
+        nul_terminated.extend_from_slice(suffix);
+        nul_terminated.push(0);
+
+        let mut eflags = 0;
+        if from > 0 {
+            eflags |= REG_NOTBOL;
+        }
+
+        let mut pmatch = regmatch_t { rm_so: 0, rm_eo: 0 };
+        let rc = unsafe { regexec(re, nul_terminated.as_ptr().cast(), 1, &mut pmatch, eflags) };
+        let region_len = suffix.len();
+        decode_regexec(region_len, rc, &pmatch)
+            .map(|(rel_start, rel_end)| (from + rel_start, from + rel_end))
+    }
+
+    fn decode_regexec(max_end: usize, rc: i32, pmatch: &regmatch_t) -> Option<(usize, usize)> {
+        if rc == REG_NOMATCH || rc != 0 {
+            return None;
+        }
+        let start = pmatch.rm_so.max(0) as usize;
+        let end = pmatch.rm_eo.max(0) as usize;
+        if start > end || end > max_end {
+            return None;
+        }
+        Some((start, end))
     }
 
     fn regcomp_error_message(re: &regex_t, rc: i32) -> String {
@@ -136,6 +161,40 @@ mod imp {
         fn grouping_alternation_counts_once_on_shortest_match() {
             let re = PosixEre::compile("(a|aa)", false).expect("compile");
             assert_eq!(re.count_nonoverlapping(b"aa\n"), 1);
+        }
+
+        #[test]
+        fn anchored_alternation_counts_once_in_ab() {
+            let re = PosixEre::compile("a|^b", false).expect("compile");
+            assert_eq!(re.count_nonoverlapping(b"ab"), 1);
+        }
+
+        #[test]
+        fn anchored_branch_does_not_match_at_continuation_offset() {
+            let re = PosixEre::compile("a|^b", false).expect("compile");
+            assert_eq!(re.find_from(b"ab", 0), Some((0, 1)));
+            assert_eq!(re.find_from(b"ab", 1), None);
+        }
+
+        #[test]
+        fn exact_length_buffer_without_trailing_nul_byte() {
+            let re = PosixEre::compile("needle", false).expect("compile");
+            let mut storage = Vec::from(b"prefixneedle");
+            storage.shrink_to_fit();
+            assert!(
+                storage.capacity() == storage.len(),
+                "test requires tight allocation without spare capacity"
+            );
+            let haystack = storage.as_slice();
+            assert!(re.is_match(haystack));
+            assert_eq!(re.find_from(haystack, 6), Some((6, 12)));
+        }
+
+        #[test]
+        fn offset_scan_does_not_match_past_region_end() {
+            let re = PosixEre::compile("z", false).expect("compile");
+            let haystack = b"abc";
+            assert_eq!(re.find_from(haystack, 1), None);
         }
     }
 }
