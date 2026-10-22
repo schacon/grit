@@ -92,6 +92,85 @@ fn upstream_uses_custom_fetch_refspec_mapping() {
 }
 
 #[test]
+fn subject_preserves_whitespace_like_git() {
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("f"), b"x").unwrap();
+    git(dir.path(), &["add", "f"]);
+    let msg_path = dir.path().join("msg.txt");
+    std::fs::write(
+        &msg_path,
+        "  hello   world\tthere  \n  next\t line  \n\nbody\n",
+    )
+    .unwrap();
+    git(dir.path(), &["commit", "-F", msg_path.to_str().unwrap()]);
+
+    let git_subject = Command::new("git")
+        .current_dir(dir.path())
+        .args([
+            "for-each-ref",
+            "--format=%(contents:subject)",
+            "refs/heads/main",
+        ])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git");
+    assert!(git_subject.status.success());
+    let expected = String::from_utf8_lossy(&git_subject.stdout);
+    let expected = expected.strip_suffix('\n').unwrap_or(&expected);
+
+    let repo = open(dir.path());
+    let rows = list_branches(
+        &repo,
+        &BranchListQuery {
+            scope: BranchScope::Local,
+            refs: RefQuery::default(),
+        },
+        BranchDetail::Full,
+    )
+    .expect("list");
+    assert_eq!(rows[0].subject.as_deref(), Some(expected));
+}
+
+#[test]
+fn empty_commit_message_subject_is_empty() {
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("f"), b"x").unwrap();
+    git(dir.path(), &["add", "f"]);
+    git(dir.path(), &["commit", "--allow-empty-message", "-m", ""]);
+
+    let git_subject = Command::new("git")
+        .current_dir(dir.path())
+        .args([
+            "for-each-ref",
+            "--format=%(contents:subject)",
+            "refs/heads/main",
+        ])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git");
+    assert!(git_subject.status.success());
+    let expected = String::from_utf8_lossy(&git_subject.stdout);
+    let expected = expected.strip_suffix('\n').unwrap_or(&expected);
+    assert!(expected.is_empty());
+
+    let repo = open(dir.path());
+    let rows = list_branches(
+        &repo,
+        &BranchListQuery {
+            scope: BranchScope::Local,
+            refs: RefQuery::default(),
+        },
+        BranchDetail::Full,
+    )
+    .expect("list");
+    assert_eq!(rows[0].subject.as_deref(), Some(""));
+}
+
+#[test]
 fn multiline_subject_matches_git_contents_subject() {
     let dir = TempDir::new().expect("tempdir");
     git(dir.path(), &["init", "-q", "-b", "main"]);

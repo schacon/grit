@@ -931,8 +931,10 @@ pub struct CommitData {
 
 /// First paragraph of a commit message, folded like Git `%(contents:subject)`.
 ///
-/// Lines in the first paragraph are trimmed and joined with a single space; the paragraph
-/// ends at the first blank line.
+/// Non-blank lines in the first paragraph are joined with a single space. Each line keeps
+/// its leading whitespace and internal spacing; only trailing whitespace on each line is
+/// removed before joining. The paragraph ends at the first blank line. An empty message
+/// yields an empty string.
 #[must_use]
 pub fn commit_subject_pretty(message: &str) -> String {
     let mut parts = Vec::new();
@@ -940,13 +942,9 @@ pub fn commit_subject_pretty(message: &str) -> String {
         if line.trim().is_empty() {
             break;
         }
-        parts.push(line.trim());
+        parts.push(line.trim_end());
     }
-    if parts.is_empty() {
-        "(no subject)".to_owned()
-    } else {
-        parts.join(" ")
-    }
+    parts.join(" ")
 }
 
 /// Subject from commit object bytes (see [`commit_subject_pretty`]).
@@ -1316,9 +1314,11 @@ mod commit_parse_tests {
 
     #[test]
     fn commit_subject_pretty_folds_first_paragraph() {
+        assert_eq!(commit_subject_pretty("hello\nworld\n\nbody"), "hello world");
+        assert_eq!(commit_subject_pretty(""), "");
         assert_eq!(
-            commit_subject_pretty("hello\nworld\n\nbody"),
-            "hello world"
+            commit_subject_pretty("  hello   world\tthere  \n  next\t line  \n\nbody\n"),
+            "  hello   world\tthere   next\t line"
         );
     }
 
