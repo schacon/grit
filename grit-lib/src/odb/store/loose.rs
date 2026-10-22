@@ -416,9 +416,9 @@ pub(crate) fn strip_decompressed_object_header(
     let size_usize = usize::try_from(size)
         .map_err(|_| Error::CorruptObject(format!("invalid object size: {size}")))?;
     if buf.len().saturating_sub(payload_start) != size_usize {
-        let oid_str = oid_hint
-            .map(ObjectId::to_hex)
-            .unwrap_or_else(|| hash_algo_digest_hex(HashAlgo::Sha1, buf));
+        let oid_str = oid_hint.map(ObjectId::to_hex).unwrap_or_else(|| {
+            hash_algo_digest_hex(HashAlgo::Sha1, buf).unwrap_or_else(|_| "?".to_owned())
+        });
         return Err(Error::CorruptObject(format!(
             "object {oid_str} size mismatch: header says {size}, got {}",
             buf.len().saturating_sub(payload_start)

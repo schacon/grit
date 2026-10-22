@@ -7,7 +7,7 @@ use std::process::Command;
 
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::error::Error as LibError;
-use grit_lib::objects::hash::{hash_object, try_hash_object};
+use grit_lib::objects::hash::hash_object;
 use grit_lib::objects::{HashAlgo, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_test_support::{write_loose_object, CliFixture, HashAlgo as FixtureAlgo};
@@ -63,7 +63,7 @@ fn grit_add_shattered_file_fails_with_hash_collision_json() {
         .success());
 
     let data = shattered_prefix(1);
-    let oid = match try_hash_object(HashAlgo::Sha1, ObjectKind::Blob, &data).expect_err("collision")
+    let oid = match hash_object(HashAlgo::Sha1, ObjectKind::Blob, &data).expect_err("collision")
     {
         LibError::HashCollision { oid } => oid,
         other => panic!("expected HashCollision, got {other:?}"),
@@ -102,10 +102,9 @@ fn grit_add_shattered_file_fails_with_hash_collision_json() {
 fn grit_fsck_json_reports_hash_collision() {
     let fix = CliFixture::empty();
     let data = shattered_prefix(2);
-    let oid = hash_object(HashAlgo::Sha1, ObjectKind::Blob, &data);
     let repo =
         Repository::discover(Some(fix.path()), &RepositoryOptions::default()).expect("discover");
-    write_loose_object(repo.odb().objects_dir(), FixtureAlgo::Sha1, "blob", &data)
+    let loose_oid = write_loose_object(repo.odb().objects_dir(), FixtureAlgo::Sha1, "blob", &data)
         .expect("write loose");
 
     let out = fix.run(&["fsck", "--json"]);
@@ -125,7 +124,7 @@ fn grit_fsck_json_reports_hash_collision() {
     assert_eq!(collision.get("severity"), Some(&serde_json::json!("error")));
     assert_eq!(
         collision.get("oid"),
-        Some(&serde_json::Value::String(oid.to_hex()))
+        Some(&serde_json::Value::String(loose_oid.clone()))
     );
     assert!(
         collision
@@ -174,7 +173,7 @@ fn grit_fetch_shattered_pack_fails_with_hash_collision_json() {
     fs::create_dir(&upstream).expect("upstream dir");
     git_in(&upstream, &["init", "-b", "main"]);
     let data = shattered_prefix(1);
-    let oid = match try_hash_object(HashAlgo::Sha1, ObjectKind::Blob, &data).expect_err("collision")
+    let oid = match hash_object(HashAlgo::Sha1, ObjectKind::Blob, &data).expect_err("collision")
     {
         LibError::HashCollision { oid } => oid,
         other => panic!("expected HashCollision, got {other:?}"),

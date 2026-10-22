@@ -130,7 +130,7 @@ pub fn read_into_matches_read<S: ObjectStore>(seed: &impl Fn(&[(ObjectKind, Vec<
     let mut buf = Vec::with_capacity(4096);
     let initial_cap = buf.capacity();
     for (kind, data) in &specs {
-        let oid = hash::hash_object(algo, *kind, data);
+        let oid = hash::hash_object(algo, *kind, data).expect("hash");
         let whole = store
             .read(&oid)
             .expect("read_into_matches_read: read")
