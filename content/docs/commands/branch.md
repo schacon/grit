@@ -57,7 +57,7 @@ On failure with `--json`, stdout includes `error` and a stable `kind` (for examp
 | `-u`, `--set-upstream-to` | Set upstream for `<name>` or the current branch when `<name>` is omitted. |
 | `--unset-upstream` | Clear upstream for `<name>` or the current branch. |
 | `-m`, `--move` | Rename: `-m <new>` or `-m <old> <new>`. |
-| `-M` | Rename the current branch to `<name>`, with `--force`. |
+| `-M` | Force rename: `-M <new>` (current branch) or `-M <old> <new>`. |
 | `-d`, `--delete` | Delete the branch when it is fully merged. |
 | `-D`, `--force-delete` | Delete even when not fully merged. |
 | `--dry-run` | Preview without writing refs, config, or reflogs. |

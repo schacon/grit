@@ -3,8 +3,9 @@
 use anyhow::{bail, Context, Error as AnyhowError, Result};
 use grit_lib::error::Error;
 use grit_lib::porcelain::branch::{
-    create_branch, delete_branch, list_branches, rename_branch, set_upstream, unset_upstream,
-    CreateBranchOptions, DeleteMode, RenameBranchOptions, StartPoint, TrackMode,
+    create_branch, delete_branch, list_branches, preview_unset_upstream, rename_branch,
+    set_upstream, unset_upstream, validate_set_upstream, CreateBranchOptions, DeleteMode,
+    RenameBranchOptions, StartPoint, TrackMode,
 };
 use grit_lib::refs::branch_tracking::upstream_branch;
 use grit_lib::repo::Repository;
@@ -258,7 +259,18 @@ impl fmt::Display for BranchUsageError {
 impl StdError for BranchUsageError {}
 
 fn branch_usage(message: impl Into<String>) -> AnyhowError {
-    AnyhowError::new(BranchUsageError).context(message.into())
+    let human = message.into();
+    AnyhowError::new(StructuredCliError {
+        payload: StructuredJsonError {
+            error: human.clone(),
+            kind: "usage",
+            conflicts: None,
+            would_overwrite: None,
+            oid: None,
+        },
+        human,
+    })
+    .context(BranchUsageError)
 }
 
 pub(crate) fn is_branch_usage_error(err: &AnyhowError) -> bool {
@@ -500,7 +512,10 @@ fn rename(
 }
 
 fn set(repo: &Repository, branch: &str, upstream: &str, dry_run: bool) -> Result<BranchOutcome> {
-    let display = set_upstream(repo, branch, upstream, dry_run).map_err(map_branch_error)?;
+    let display = validate_set_upstream(repo, branch, upstream).map_err(map_branch_error)?;
+    if !dry_run {
+        set_upstream(repo, branch, upstream).map_err(map_branch_error)?;
+    }
     Ok(BranchOutcome::SetUpstream {
         branch: branch.to_owned(),
         upstream: display,
@@ -509,7 +524,11 @@ fn set(repo: &Repository, branch: &str, upstream: &str, dry_run: bool) -> Result
 }
 
 fn unset(repo: &Repository, branch: &str, dry_run: bool) -> Result<BranchOutcome> {
-    unset_upstream(repo, branch, dry_run).map_err(map_branch_error)?;
+    if dry_run {
+        preview_unset_upstream(repo, branch).map_err(map_branch_error)?;
+    } else {
+        unset_upstream(repo, branch).map_err(map_branch_error)?;
+    }
     Ok(BranchOutcome::UnsetUpstream {
         branch: branch.to_owned(),
         dry_run,

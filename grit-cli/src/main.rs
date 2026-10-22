@@ -794,11 +794,7 @@ enum Command {
         /// Start commit when creating (`grit branch <name> <start>`).
         start: Option<String>,
         /// Overwrite an existing branch when creating or renaming.
-        #[arg(
-            short = 'f',
-            long = "force",
-            conflicts_with_all = ["delete", "force_delete", "force_rename"]
-        )]
+        #[arg(short = 'f', long = "force", conflicts_with = "force_rename")]
         force: bool,
         /// Configure upstream from the start point when creating.
         #[arg(short = 't', long = "track", conflicts_with = "no_track")]
@@ -1261,7 +1257,10 @@ fn main() {
             .is_some_and(|p| p.kind == "invalid_pattern")
         {
             crate::json_error::INVALID_COMMIT_FILTER_EXIT
-        } else if commands::branch::is_branch_usage_error(&err) {
+        } else if commands::branch::is_branch_usage_error(&err)
+            || crate::json_error::structured_json_payload(&err)
+                .is_some_and(|payload| payload.kind == "usage")
+        {
             2
         } else {
             1

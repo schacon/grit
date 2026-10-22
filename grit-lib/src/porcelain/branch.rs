@@ -592,15 +592,11 @@ pub fn upstream_tracking_display(remote: &str, merge: &str) -> String {
         .unwrap_or_else(|| merge.to_owned())
 }
 
-/// Configure `branch.<branch>.remote` and `branch.<branch>.merge` from a resolved upstream ref.
-///
-/// Returns the canonical upstream display name (for example `origin/main`).
-pub fn set_upstream(
+fn resolve_set_upstream(
     repo: &Repository,
     branch: &str,
     upstream: &str,
-    dry_run: bool,
-) -> Result<String> {
+) -> Result<(String, String, String)> {
     validate_branch_short_name(branch).map_err(|reason| {
         Error::Branch(BranchError::InvalidName {
             name: branch.to_owned(),
@@ -624,14 +620,23 @@ pub fn set_upstream(
         })
     })?;
     let display = upstream_tracking_display(&remote, &merge);
-    if !dry_run {
-        write_branch_upstream_config(repo, branch, &remote, &merge)?;
-    }
-    Ok(display)
+    Ok((remote, merge, display))
 }
 
-/// Clear upstream configuration for `branch`.
-pub fn unset_upstream(repo: &Repository, branch: &str, dry_run: bool) -> Result<()> {
+/// Validate [`set_upstream`] inputs and return the canonical upstream display name.
+///
+/// Performs the same checks as [`set_upstream`] without writing config.
+pub fn validate_set_upstream(repo: &Repository, branch: &str, upstream: &str) -> Result<String> {
+    resolve_set_upstream(repo, branch, upstream).map(|(_, _, display)| display)
+}
+
+/// Configure `branch.<branch>.remote` and `branch.<branch>.merge` from a resolved upstream ref.
+pub fn set_upstream(repo: &Repository, branch: &str, upstream: &str) -> Result<()> {
+    let (remote, merge, _) = resolve_set_upstream(repo, branch, upstream)?;
+    write_branch_upstream_config(repo, branch, &remote, &merge)
+}
+
+fn validate_unset_upstream(repo: &Repository, branch: &str) -> Result<()> {
     validate_branch_short_name(branch).map_err(|reason| {
         Error::Branch(BranchError::InvalidName {
             name: branch.to_owned(),
@@ -652,11 +657,22 @@ pub fn unset_upstream(repo: &Repository, branch: &str, dry_run: bool) -> Result<
             name: branch.to_owned(),
         }));
     }
-    if !dry_run {
-        let handle = repo.config_handle();
-        handle.unset_local(&remote_key)?;
-        handle.unset_local(&merge_key)?;
-    }
+    Ok(())
+}
+
+/// Validate [`unset_upstream`] inputs without clearing config.
+pub fn preview_unset_upstream(repo: &Repository, branch: &str) -> Result<()> {
+    validate_unset_upstream(repo, branch)
+}
+
+/// Clear upstream configuration for `branch`.
+pub fn unset_upstream(repo: &Repository, branch: &str) -> Result<()> {
+    validate_unset_upstream(repo, branch)?;
+    let remote_key = format!("branch.{branch}.remote");
+    let merge_key = format!("branch.{branch}.merge");
+    let handle = repo.config_handle();
+    handle.unset_local(&remote_key)?;
+    handle.unset_local(&merge_key)?;
     Ok(())
 }
 

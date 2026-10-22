@@ -149,6 +149,11 @@ fn delete_rejects_force_flag() {
     git(&root, &["branch", "ghost"]);
     let safe = grit(&root, &["branch", "-d", "ghost", "--force", "--json"]);
     assert_eq!(safe.status.code(), Some(2));
+    let err: serde_json::Value = serde_json::from_slice(&safe.stdout).expect("json error");
+    assert!(
+        err["error"].as_str().unwrap_or("").contains("force-delete"),
+        "usage error must mention --force-delete: {err}"
+    );
     assert!(git_ref_exists(&root, "ghost"));
 
     git(&root, &["branch", "victim"]);
