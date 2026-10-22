@@ -19,8 +19,8 @@ use grit_lib::diff::{
     apply_diff_filter, apply_rename_detection_to_diff_entries, build_file_diffs, commit_diff_files,
     diff_commits_with_renames_and_policy, diff_index_to_tree_with_renames,
     diff_index_to_worktree_with_renames, diff_trees_with_renames_and_policy,
-    hunk_ids_with_duplicate_peers, line_change_counts, read_submodule_head_oid,
-    read_worktree_side_bytes_for_diff,
+    hunk_ids_with_duplicate_peers, line_change_counts, peer_hunks_by_primary_path,
+    peer_scope_includes_path, read_submodule_head_oid, read_worktree_side_bytes_for_diff,
     structured::{
         format_hunk_range, structured_file_diff, SideBytes, StructuredFileDiff, StructuredLineKind,
     },
@@ -325,6 +325,8 @@ pub struct DiffRunOptions {
     pub word_level_inline: bool,
     /// Print nothing; `main` then exits with the `--exit-code` status.
     pub quiet: bool,
+    /// Assign stable hunk ids (loads opposite-side peers when needed). True for `--json` patch output only.
+    pub emit_json_hunk_ids: bool,
 }
 
 /// Exit status when `grit diff` fails while `--exit-code` or `--quiet` is set.
@@ -600,8 +602,9 @@ fn lib_file_to_cli(f: grit_lib::diff::ListedFileDiff, detail: DiffDetail) -> Fil
                 .collect(),
         )
     } else {
-        f.structured
-            .map(|structured| hunk_assign_ids(DiffSide::Other, &f.path, structured.hunks, &[]))
+        f.structured.map(|structured| {
+            hunk_assign_ids(DiffSide::Other, &f.path, structured.hunks, &[], false)
+        })
     };
     FileDiff {
         path: f.path,
@@ -960,7 +963,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
             anyhow::bail!("--staged cannot be combined with revision arguments or --against");
         }
         let pathspecs = resolve_worktree_diff_pathspecs(&repo, &path_args)?;
-        let mut index = repo
+        let index = repo
             .index_handle()
             .load()
             .context("could not load the index")?;
@@ -975,12 +978,16 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
             }
             _ => {
                 let staged = staged_changes_from_entries(&repo, entries)?;
-                let peer = peer_unstaged_changes_for_hunk_ids(
-                    &repo,
-                    &diff_options,
-                    &pathspecs,
-                    staged.iter().map(|fc| fc.path.as_str()),
-                );
+                let peer = if opts.emit_json_hunk_ids {
+                    peer_unstaged_changes_for_hunk_ids(
+                        &repo,
+                        &diff_options,
+                        &pathspecs,
+                        staged.iter().map(|fc| fc.path.as_str()),
+                    )
+                } else {
+                    Vec::new()
+                };
                 outcome_from_changes(
                     staged,
                     peer,
@@ -989,6 +996,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
                     diff_options,
                     format,
                     DiffSide::Staged,
+                    opts.emit_json_hunk_ids,
                 )
             }
         };
@@ -1018,14 +1026,17 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
                 outcome_from_entries(&repo, entries, detail, diff_options, format)?
             }
             _ => {
-                let unstaged =
-                    unstaged_changes_from_entries_with_index(&repo, entries, &index)?;
-                let peer = peer_staged_changes_for_hunk_ids(
-                    &repo,
-                    &diff_options,
-                    &pathspecs,
-                    unstaged.iter().map(|fc| fc.path.as_str()),
-                );
+                let unstaged = unstaged_changes_from_entries_with_index(&repo, entries, &index)?;
+                let peer = if opts.emit_json_hunk_ids {
+                    peer_staged_changes_for_hunk_ids(
+                        &repo,
+                        &diff_options,
+                        &pathspecs,
+                        unstaged.iter().map(|fc| fc.path.as_str()),
+                    )
+                } else {
+                    Vec::new()
+                };
                 outcome_from_changes(
                     unstaged,
                     peer,
@@ -1034,6 +1045,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
                     diff_options,
                     format,
                     DiffSide::Unstaged,
+                    opts.emit_json_hunk_ids,
                 )
             }
         };
@@ -1069,6 +1081,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
                     diff_options,
                     format,
                     DiffSide::Other,
+                    false,
                 ),
                 _ => outcome_from_changes(
                     changes,
@@ -1078,6 +1091,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
                     diff_options,
                     format,
                     DiffSide::Other,
+                    false,
                 ),
             };
             return Ok(finish_outcome(&repo, format, outcome));
@@ -1179,6 +1193,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
             diff_options,
             format,
             DiffSide::Other,
+            false,
         ),
         DiffDetail::Stat => outcome_stat_from_changes(filtered, diff_options, format),
         DiffDetail::NameOnly | DiffDetail::NameStatus => {
@@ -1192,6 +1207,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
             diff_options,
             format,
             DiffSide::Other,
+            false,
         ),
     };
     Ok(finish_outcome(&repo, format, outcome))
@@ -1294,6 +1310,7 @@ pub fn outcome_from_tree_entries(
             diff_options,
             format,
             DiffSide::Other,
+            false,
         ),
     ))
 }
@@ -1338,7 +1355,13 @@ fn file_diff_from_lib(f: grit_lib::diff::FileDiff, detail: DiffDetail) -> FileDi
         None
     };
     let hunks = if detail == DiffDetail::Patch {
-        Some(hunk_assign_ids(DiffSide::Other, &f.path, f.hunks, &[]))
+        Some(hunk_assign_ids(
+            DiffSide::Other,
+            &f.path,
+            f.hunks,
+            &[],
+            false,
+        ))
     } else {
         None
     };
@@ -1373,7 +1396,7 @@ fn file_diff_from_tree_structured(t: TreeDiffStructured) -> FileDiff {
         .filter(|op| op.as_str() != path)
         .cloned();
     let structured = t.structured;
-    let hunks = hunk_assign_ids(DiffSide::Other, &path, structured.hunks, &[]);
+    let hunks = hunk_assign_ids(DiffSide::Other, &path, structured.hunks, &[], false);
     FileDiff {
         path,
         old_path,
@@ -1396,8 +1419,9 @@ fn hunk_assign_ids(
     path: &str,
     hunks: Vec<grit_lib::diff::structured::StructuredHunk>,
     peer_hunks: &[grit_lib::diff::structured::StructuredHunk],
+    assign_hunk_ids: bool,
 ) -> Vec<Hunk> {
-    let assign = matches!(side, DiffSide::Unstaged | DiffSide::Staged);
+    let assign = assign_hunk_ids && matches!(side, DiffSide::Unstaged | DiffSide::Staged);
     let ids = if assign {
         hunk_ids_with_duplicate_peers(side, path, &hunks, peer_hunks)
     } else {
@@ -1461,16 +1485,7 @@ fn diff_entry_display_path(e: &DiffEntry) -> &str {
 }
 
 fn diff_entry_matches_primary(e: &DiffEntry, primary: &std::collections::HashSet<&str>) -> bool {
-    let path = diff_entry_display_path(e);
-    if primary.contains(path) {
-        return true;
-    }
-    if let Some(old_path) = e.old_path.as_deref() {
-        if old_path != path && primary.contains(old_path) {
-            return true;
-        }
-    }
-    false
+    peer_scope_includes_path(diff_entry_display_path(e), e.old_path.as_deref(), primary)
 }
 
 fn filter_entries_to_primary_paths(
@@ -1533,7 +1548,7 @@ fn peer_unstaged_changes_for_hunk_ids<'a>(
     use std::collections::HashSet;
 
     let primary: HashSet<&str> = primary_paths.into_iter().collect();
-    if primary.is_empty() {
+    if primary.is_empty() || repo.work_tree().is_none() {
         return Vec::new();
     }
     let Ok(entries) = unstaged_entries(repo, diff_options) else {
@@ -1564,6 +1579,7 @@ fn peer_staged_changes_for_hunk_ids<'a>(
     staged_file_changes_for_entries(repo, entries).unwrap_or_default()
 }
 
+#[expect(clippy::too_many_arguments)]
 fn outcome_from_changes(
     changes: Vec<FileChange>,
     peer_changes: Vec<FileChange>,
@@ -1572,23 +1588,21 @@ fn outcome_from_changes(
     diff_options: DiffOptions,
     format: DiffFormatArgs,
     side: DiffSide,
+    assign_hunk_ids: bool,
 ) -> DiffOutcome {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
 
     let diff_options = diff_options.cap_word_level_inline_for_changed_files(changes.len());
     let primary_paths: HashSet<&str> = changes.iter().map(|fc| fc.path.as_str()).collect();
-    let peer_hunks_by_path: HashMap<String, Vec<grit_lib::diff::structured::StructuredHunk>> =
-        if matches!(side, DiffSide::Unstaged | DiffSide::Staged) {
-            peer_changes
-                .into_iter()
-                .filter(|fc| primary_paths.contains(fc.path.as_str()))
-                .map(|fc| {
-                    let structured = structured_for_file_change(&fc, diff_options.clone());
-                    (fc.path, structured.hunks)
-                })
-                .collect()
+    let peer_hunks_by_path =
+        if assign_hunk_ids && matches!(side, DiffSide::Unstaged | DiffSide::Staged) {
+            let peer_pairs = peer_changes.into_iter().map(|fc| {
+                let structured = structured_for_file_change(&fc, diff_options.clone());
+                (fc.path, structured.hunks)
+            });
+            peer_hunks_by_primary_path(&primary_paths, peer_pairs)
         } else {
-            HashMap::new()
+            std::collections::HashMap::new()
         };
     let mut par_opts = thread_policy.resolve(ParallelOp::DiffContent, config);
     par_opts.min_items = 0;
@@ -1599,7 +1613,7 @@ fn outcome_from_changes(
             .get(&fc.path)
             .map(|h| h.as_slice())
             .unwrap_or(&[]);
-        build_file_diff(fc, diff_options.clone(), side, peer_hunks)
+        build_file_diff(fc, diff_options.clone(), side, peer_hunks, assign_hunk_ids)
     })
     .into_iter()
     .filter(|f| {
@@ -2500,9 +2514,16 @@ fn build_file_diff(
     diff_options: DiffOptions,
     side: DiffSide,
     peer_hunks: &[grit_lib::diff::structured::StructuredHunk],
+    assign_hunk_ids: bool,
 ) -> FileDiff {
     let structured = structured_for_file_change(fc, diff_options);
-    let hunks = hunk_assign_ids(side, &fc.path, structured.hunks, peer_hunks);
+    let hunks = hunk_assign_ids(
+        side,
+        &fc.path,
+        structured.hunks,
+        peer_hunks,
+        assign_hunk_ids,
+    );
 
     FileDiff {
         path: fc.path.clone(),

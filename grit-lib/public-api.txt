@@ -3022,6 +3022,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::hunk_id::HunkId
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::hunk_id::HunkId
 pub fn grit_lib::diff::hunk_id::hunk_ids(grit_lib::diff::hunk_id::DiffSide, &str, &[grit_lib::diff::structured::StructuredHunk]) -> alloc::vec::Vec<grit_lib::diff::hunk_id::HunkId>
 pub fn grit_lib::diff::hunk_id::hunk_ids_with_duplicate_peers(grit_lib::diff::hunk_id::DiffSide, &str, &[grit_lib::diff::structured::StructuredHunk], &[grit_lib::diff::structured::StructuredHunk]) -> alloc::vec::Vec<grit_lib::diff::hunk_id::HunkId>
+pub fn grit_lib::diff::hunk_id::peer_hunks_by_primary_path(&std::collections::hash::set::HashSet<&str>, impl core::iter::traits::collect::IntoIterator<Item = (alloc::string::String, alloc::vec::Vec<grit_lib::diff::structured::StructuredHunk>)>) -> std::collections::hash::map::HashMap<alloc::string::String, alloc::vec::Vec<grit_lib::diff::structured::StructuredHunk>>
+pub fn grit_lib::diff::hunk_id::peer_scope_includes_path(&str, core::option::Option<&str>, &std::collections::hash::set::HashSet<&str>) -> bool
 pub mod grit_lib::diff::merge_diff
 pub fn grit_lib::diff::merge_diff::all_blob_paths_in_tree_order(&grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId) -> alloc::vec::Vec<alloc::string::String>
 pub fn grit_lib::diff::merge_diff::blob_oid_at_path(&grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &str) -> core::option::Option<grit_lib::objects::ObjectId>
@@ -4590,6 +4592,8 @@ pub fn grit_lib::diff::parse_diff_rename_score_token(&str) -> core::option::Opti
 pub fn grit_lib::diff::parse_diff_rename_threshold_percent(&str) -> core::option::Option<u8>
 pub fn grit_lib::diff::parse_indent_heuristic_cli_flags(&[alloc::string::String]) -> (bool, bool)
 pub fn grit_lib::diff::path_checkout_skip_blob_write_when_up_to_date(&grit_lib::objects::odb::Odb, &std::path::Path, &std::path::Path, &grit_lib::index::Index, &grit_lib::index::IndexEntry, &grit_lib::objects::ObjectId, u32, &str, core::option::Option<&grit_lib::filter_process::FilterProcessState>) -> grit_lib::error::Result<bool>
+pub fn grit_lib::diff::peer_hunks_by_primary_path(&std::collections::hash::set::HashSet<&str>, impl core::iter::traits::collect::IntoIterator<Item = (alloc::string::String, alloc::vec::Vec<grit_lib::diff::structured::StructuredHunk>)>) -> std::collections::hash::map::HashMap<alloc::string::String, alloc::vec::Vec<grit_lib::diff::structured::StructuredHunk>>
+pub fn grit_lib::diff::peer_scope_includes_path(&str, core::option::Option<&str>, &std::collections::hash::set::HashSet<&str>) -> bool
 pub fn grit_lib::diff::postprocess_diff_entries(&grit_lib::objects::odb::Odb, alloc::vec::Vec<grit_lib::diff::DiffEntry>, core::option::Option<&grit_lib::objects::ObjectId>, core::option::Option<&std::path::Path>, core::option::Option<&grit_lib::diff::DiffPostprocessWorktree<'_>>, &grit_lib::config::ConfigSet, &grit_lib::parallel::ThreadPolicy, &grit_lib::diff::DiffPostprocessOptions) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
 pub fn grit_lib::diff::read_orderfile_patterns(&str, &std::path::Path) -> grit_lib::error::Result<alloc::vec::Vec<alloc::string::String>>
 pub fn grit_lib::diff::read_submodule_head_for_checkout(&std::path::Path) -> core::option::Option<grit_lib::objects::ObjectId>

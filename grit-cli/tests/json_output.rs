@@ -1569,6 +1569,35 @@ fn diff_staged_only() -> TestResult {
 }
 
 #[test]
+fn diff_staged_json_emits_hunk_ids_human_patch_does_not() -> TestResult {
+    let scratch = Scratch::new("diffstagedidfmt")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    write_file(&repo.join("staged.txt"), "a\n");
+    write_file(&repo.join("unrelated.txt"), "b\n");
+    gs_ok(&repo, &["commit", "init"]);
+    write_file(&repo.join("staged.txt"), "A\n");
+    write_file(&repo.join("unrelated.txt"), "B\n");
+    gs_ok(&repo, &["add", "staged.txt"]);
+
+    let json = gs_json(&repo, &["diff", "--staged"]);
+    let hunks = json["files"][0]["hunks"].as_array().expect("hunks");
+    assert!(
+        hunks[0].get("id").and_then(|v| v.as_str()).is_some(),
+        "json staged diff should include hunk ids: {json}"
+    );
+
+    let human = gs(&repo, &["diff", "--staged"]);
+    assert_eq!(human.status, Some(0), "{}", human.dump());
+    assert!(
+        !human.stdout.contains("\"id\""),
+        "human patch output must not include JSON id fields"
+    );
+    Ok(())
+}
+
+#[test]
 fn diff_staged_via_git_dir_does_not_require_unstaged_worktree_scan() -> TestResult {
     let scratch = Scratch::new("diffstagedgitdir")?;
     let repo = scratch.child("repo");
