@@ -391,10 +391,12 @@ fn local_objects_pack_dir(git_dir: &Path) -> PathBuf {
 }
 
 /// A single ref update requested by a push.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PushRefSpec {
     /// The source object to push (`None` for a deletion).
     pub src: Option<ObjectId>,
+    /// Local source ref name when known (for reports and `git push --porcelain`).
+    pub src_ref: Option<String>,
     /// The destination ref on the remote (e.g. `refs/heads/main`).
     pub dst: String,
     /// Whether a non-fast-forward update is allowed.
@@ -409,6 +411,12 @@ pub struct PushRefSpec {
     /// is rejected as stale (used for "create only" pushes whose lease is the
     /// ref's absence). Independent of [`Self::expected_old`].
     pub expect_absent: bool,
+}
+
+/// Local ref name carried on a push spec for status reporting.
+#[must_use]
+pub(crate) fn push_spec_local_ref(spec: &PushRefSpec) -> Option<String> {
+    spec.src_ref.clone()
 }
 
 /// Resolve the remote ref name for a push deletion from a short name or full ref.

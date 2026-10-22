@@ -203,7 +203,7 @@ fn fetch_over_git_daemon_lands_refs_and_objects() {
         main_oid.to_hex()
     );
 
-    let mut opts = FetchOptions {
+    let opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
         tags: TagMode::All,
         ..Default::default()
@@ -339,7 +339,7 @@ fn fetch_following_lightweight_tag_at_branch_tip_downloads_branch() {
         }
     };
 
-    let mut opts = FetchOptions {
+    let opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
         tags: TagMode::Following,
         ..Default::default()
@@ -422,7 +422,7 @@ fn fetch_remote_following_imports_annotated_tag_on_existing_tip() {
         }
     };
 
-    let mut opts = FetchOptions {
+    let opts = FetchOptions {
         refspecs: vec!["+refs/heads/main:refs/remotes/origin/main".to_owned()],
         tags: TagMode::Following,
         ..Default::default()
@@ -510,7 +510,7 @@ fn push_annotated_tag_on_existing_commit_over_git_daemon() {
             return;
         }
     };
-    let mut fetch_opts = FetchOptions {
+    let fetch_opts = FetchOptions {
         refspecs: vec!["+refs/heads/main:refs/remotes/origin/main".to_owned()],
         tags: TagMode::None,
         ..Default::default()
@@ -555,6 +555,7 @@ fn push_annotated_tag_on_existing_commit_over_git_daemon() {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            ..Default::default()
         }],
         &PushOptions::default(),
         &mut NoProgress,

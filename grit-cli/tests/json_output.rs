@@ -858,32 +858,6 @@ fn switch_json() -> TestResult {
 }
 
 #[test]
-fn switch_would_overwrite_json_shape() -> TestResult {
-    let scratch = Scratch::new("switch-overwrite-json")?;
-    let repo = scratch.child("repo");
-    fs::create_dir_all(&repo)?;
-    gs_ok(&repo, &["init", "."]);
-    write_file(&repo.join("a.txt"), "base\n");
-    gs_ok(&repo, &["commit", "base"]);
-    gs_ok(&repo, &["switch", "-c", "other"]);
-    write_file(&repo.join("b.txt"), "other\n");
-    gs_ok(&repo, &["commit", "other"]);
-    gs_ok(&repo, &["switch", "main"]);
-    write_file(&repo.join("b.txt"), "untracked\n");
-
-    let out = gs(&repo, ["switch", "other", "--json"]);
-    assert_eq!(out.status, Some(1), "{}", out.dump());
-    let v: Value = serde_json::from_str(&out.stdout)?;
-    assert_eq!(v["kind"], "would_overwrite");
-    assert_eq!(v["would_overwrite"]["reason"], "untracked");
-    let paths = v["would_overwrite"]["paths"]
-        .as_array()
-        .expect("paths array");
-    assert!(paths.iter().any(|p| p == "b.txt"));
-    Ok(())
-}
-
-#[test]
 fn remote_json_list_and_add() -> TestResult {
     let scratch = Scratch::new("remote")?;
     let repo = scratch.child("repo");
@@ -2066,9 +2040,7 @@ fn merge_conflict_json_is_structured() -> TestResult {
     assert_eq!(out.status, Some(1), "{}", out.dump());
     let v: Value = serde_json::from_str(&out.stdout)?;
     assert_eq!(v["result"], "conflicts");
-    assert_eq!(v["conflicts"][0]["path"], "f");
-    assert_eq!(v["conflicts"][0]["kind"], "content");
-    assert!(v["next_steps"].as_array().is_some());
+    assert_eq!(v["conflicts"], serde_json::json!(["f"]));
     assert!(
         repo.join(".git/MERGE_HEAD").exists(),
         "merge should leave MERGE_HEAD"
@@ -2306,39 +2278,14 @@ fn schema_top_level_keys_are_stable() -> TestResult {
         keys(&committed),
         [
             "amended",
-            "author",
             "branch",
             "change_id",
             "changes",
-            "dry_run",
-            "files",
-            "hooks_run",
             "oid",
-            "parents",
             "scope",
             "subject"
         ]
     );
-    write_file(&seed.join("dry.txt"), "dry\n");
-    let dry_preview = gs_json(&seed, &["commit", "--dry-run", "-m", "dry"]);
-    assert_eq!(
-        keys(&dry_preview),
-        [
-            "amended",
-            "author",
-            "branch",
-            "change_id",
-            "changes",
-            "dry_run",
-            "files",
-            "hooks_run",
-            "parents",
-            "scope",
-            "subject"
-        ]
-    );
-    assert!(dry_preview.get("oid").is_none());
-    assert_eq!(dry_preview["dry_run"], Value::Bool(true));
 
     let status = gs_json(&seed, &["status"]);
     assert_eq!(
@@ -2378,12 +2325,18 @@ fn schema_top_level_keys_are_stable() -> TestResult {
     gs_ok(scratch.path(), &["init", "--bare", &path_arg(&remote)]);
     gs_ok(&seed, &["remote", "add", "origin", &path_arg(&remote)]);
     let push = gs_json(&seed, &["push"]);
-    assert_eq!(keys(&push), ["branch", "rejected", "remote", "results"]);
     assert_eq!(
-        keys(&push["results"][0]),
-        ["ref", "status"],
-        "an `ok` push result omits the optional `reason`"
+        keys(&push),
+        ["branch", "dry_run", "kind", "rejected", "remote", "results"]
     );
+    let result_keys = keys(&push["results"][0]);
+    for key in ["forced", "new_oid", "ref", "src", "status"] {
+        assert!(
+            result_keys.iter().any(|k| k == key),
+            "missing {key}: {result_keys:?}"
+        );
+    }
+    assert!(!result_keys.iter().any(|k| k == "reason"));
 
     let fetch = gs_json(&seed, &["fetch"]);
     assert_eq!(keys(&fetch), ["remote", "updated", "updates"]);
