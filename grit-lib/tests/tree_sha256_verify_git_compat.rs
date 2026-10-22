@@ -892,6 +892,186 @@ fn verify_tag_deep_nested_exclusion_path_from_root() {
 }
 
 #[test]
+fn verify_tag_deep_nested_missing_submodule_path_from_root() {
+    if !ssh_keygen_available() {
+        eprintln!("skipping: ssh-keygen not available");
+        return;
+    }
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let leaf = tmp.path().join("leaf-src");
+    fs::create_dir(&leaf).unwrap();
+    git(&leaf, &["init", "-q", "-b", "main"]);
+    fs::write(leaf.join("x.txt"), b"x\n").unwrap();
+    git(&leaf, &["add", "x.txt"]);
+    git(&leaf, &["commit", "-m", "leaf"]);
+    let leaf_head = git(&leaf, &["rev-parse", "HEAD"]).trim().to_string();
+
+    let mid = tmp.path().join("mid-src");
+    fs::create_dir(&mid).unwrap();
+    git(&mid, &["init", "-q", "-b", "main"]);
+    fs::write(
+        mid.join(".gitmodules"),
+        format!(
+            "[submodule \"leaf\"]\n\tpath = leaf\n\turl = file://{}\n",
+            leaf.display()
+        ),
+    )
+    .unwrap();
+    Command::new("git")
+        .current_dir(&mid)
+        .args([
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{leaf_head},leaf"),
+        ])
+        .status()
+        .unwrap();
+    git(&mid, &["add", ".gitmodules"]);
+    git(&mid, &["commit", "-m", "mid"]);
+    let mid_head = git(&mid, &["rev-parse", "HEAD"]).trim().to_string();
+
+    let inner = tmp.path().join("inner-src");
+    fs::create_dir(&inner).unwrap();
+    git(&inner, &["init", "-q", "-b", "main"]);
+    fs::write(
+        inner.join(".gitmodules"),
+        format!(
+            "[submodule \"mid\"]\n\tpath = mid\n\turl = file://{}\n",
+            mid.display()
+        ),
+    )
+    .unwrap();
+    Command::new("git")
+        .current_dir(&inner)
+        .args([
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{mid_head},mid"),
+        ])
+        .status()
+        .unwrap();
+    git(&inner, &["add", ".gitmodules"]);
+    git(&inner, &["commit", "-m", "inner"]);
+    let inner_head = git(&inner, &["rev-parse", "HEAD"]).trim().to_string();
+
+    let root = tmp.path().join("root");
+    fs::create_dir(&root).unwrap();
+    git(&root, &["init", "-q", "-b", "main"]);
+    fs::write(
+        root.join(".gitmodules"),
+        format!(
+            "[submodule \"inner\"]\n\tpath = inner\n\turl = file://{}\n",
+            inner.display()
+        ),
+    )
+    .unwrap();
+    Command::new("git")
+        .current_dir(&root)
+        .args([
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{inner_head},inner"),
+        ])
+        .status()
+        .unwrap();
+    git(&root, &["add", ".gitmodules"]);
+    git(&root, &["commit", "-m", "root"]);
+    install_submodule_checkout(&root, "inner", &inner, &inner_head);
+    git(
+        &root.join("inner"),
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+            "mid",
+        ],
+    );
+    git(
+        &root.join("inner/mid"),
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+            "leaf",
+        ],
+    );
+
+    let key = tmp.path().join("sign-key");
+    Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(&key)
+        .status()
+        .expect("ssh-keygen");
+    git(&root, &["config", "user.name", "T"]);
+    git(&root, &["config", "user.email", "t@example.com"]);
+    git(&root, &["config", "gpg.format", "ssh"]);
+    git(
+        &root,
+        &[
+            "config",
+            "user.signingkey",
+            &key.with_extension("pub").to_string_lossy(),
+        ],
+    );
+    let pub_key = std::fs::read_to_string(key.with_extension("pub")).expect("read pub");
+    let allowed = root.join("allowed_signers");
+    fs::write(&allowed, format!("t@example.com {pub_key}")).expect("allowed_signers");
+    git(
+        &root,
+        &[
+            "config",
+            "gpg.ssh.allowedSignersFile",
+            &allowed.to_string_lossy(),
+        ],
+    );
+
+    let repo = Repository::discover(Some(&root), &RepositoryOptions::empty()).expect("open");
+    let head: grit_lib::objects::ObjectId =
+        git(&root, &["rev-parse", "HEAD"]).trim().parse().unwrap();
+    let digest = repo
+        .tree_sha256(head, &grit_lib::tree_sha256::TreeSha256Options::default())
+        .expect("hash with leaf present")
+        .digest;
+
+    let body = format!(
+        "object {}\ntype commit\ntag deep-miss\ntagger T <t@example.com> 1 +0000\n\
+{TREE_SHA256_HEADER} {digest}\n\ndeep missing leaf tag\n",
+        head.to_hex()
+    );
+    let signed = sign_payload_ssh(&key, body.as_bytes());
+    let tag_oid = repo
+        .odb()
+        .write(ObjectKind::Tag, &signed)
+        .expect("write tag");
+
+    fs::remove_dir_all(root.join("inner/mid/leaf")).expect("remove leaf checkout");
+
+    let err = repo
+        .verify_tag(
+            tag_oid,
+            &TagVerifyOptions {
+                check_signature: true,
+                gpg: gpg_config(&repo),
+            },
+        )
+        .unwrap_err();
+    match err {
+        Error::TreeSha256MissingSubmodules(list) => {
+            assert_eq!(list.len(), 1);
+            assert_eq!(list[0].path, "inner/mid/leaf");
+        }
+        other => panic!("expected missing submodule error, got {other:?}"),
+    }
+}
+
+#[test]
 fn parse_tree_sha256_tag_headers_reads_excluded() {
     let data = b"object 0000000000000000000000000000000000000001\n\
 type commit\ntag t\ntagger T <t@e.com> 1 +0000\n\

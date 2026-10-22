@@ -341,9 +341,7 @@ impl ComputeCtx<'_> {
             }
             Err(Error::TreeSha256MissingSubmodules(mut miss)) => {
                 self.commit_chain.pop();
-                for m in &mut miss {
-                    m.path = qualify_submodule_path(&global_path, &m.path);
-                }
+                // Child missing paths are already qualified to the top repository.
                 self.missing.append(&mut miss);
             }
             Err(e) => {
