@@ -6,7 +6,9 @@ use std::process::Command;
 
 use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::objects::ObjectId;
-use grit_lib::porcelain::pull::{pull, resolve_pull_mode, PullMode, PullOptions, PullResult};
+use grit_lib::porcelain::pull::{
+    pull, resolve_pull_mode, PullError, PullMode, PullOptions, PullResult,
+};
 use grit_lib::refs::resolve_ref;
 use grit_lib::remote::fetch::NoProgress;
 use grit_lib::remote::transfer::{FetchOptions, TagMode};
@@ -88,6 +90,14 @@ fn fetch_opts(env: &Environment) -> FetchOptions {
 fn pull_grit(repo: &Repository, options: &PullOptions) -> grit_lib::porcelain::pull::PullOutcome {
     let mut progress = NoProgress;
     pull(repo, options, &mut progress, None).expect("grit pull")
+}
+
+fn try_pull_grit(
+    repo: &Repository,
+    options: &PullOptions,
+) -> Result<grit_lib::porcelain::pull::PullOutcome, PullError> {
+    let mut progress = NoProgress;
+    pull(repo, options, &mut progress, None)
 }
 
 fn assert_fsck(dir: &Path) {
@@ -191,6 +201,48 @@ fn pull_implicit_upstream_tracking_ref_without_merge_config() {
     );
     assert_eq!(outcome.result, PullResult::SetUpstream);
     assert_eq!(rev(&grit_dir, "HEAD"), rev(&origin, "main"));
+}
+
+#[test]
+fn pull_refuses_when_configured_merge_ref_did_not_fetch() {
+    let (grit_dir, git_dir) = setup_tracked_pair("missing-merge-upstream");
+    for dir in [&grit_dir, &git_dir] {
+        git(dir, &["config", "branch.main.merge", "refs/heads/missing"]);
+        git(dir, &["config", "branch.main.remote", "origin"]);
+    }
+    let origin = grit_dir.parent().unwrap().join("origin");
+    commit(&origin, "f", "advance-main");
+    git(&grit_dir, &["fetch", "-q"]);
+    git(&git_dir, &["fetch", "-q"]);
+
+    let head_before = rev(&grit_dir, "HEAD");
+    assert!(
+        resolve_ref(grit_dir.join(".git").as_path(), "refs/remotes/origin/main").is_ok(),
+        "origin/main exists but configured upstream is missing"
+    );
+    assert!(resolve_ref(
+        grit_dir.join(".git").as_path(),
+        "refs/remotes/origin/missing"
+    )
+    .is_err());
+
+    let repo = open(&grit_dir);
+    let err = try_pull_grit(
+        &repo,
+        &PullOptions {
+            fetch: fetch_opts(&Environment::empty()),
+            ..PullOptions::default()
+        },
+    )
+    .expect_err("must not fall back to origin/main");
+    assert!(
+        matches!(err, PullError::NoUpstream { ref branch } if branch == "main"),
+        "unexpected error: {err:?}"
+    );
+    assert_eq!(rev(&grit_dir, "HEAD"), head_before, "branch unchanged");
+
+    git_allow_fail(&git_dir, &["-c", "pull.rebase=false", "pull", "-q"]);
+    assert_eq!(rev(&git_dir, "HEAD"), head_before, "git also refuses pull");
 }
 
 #[test]

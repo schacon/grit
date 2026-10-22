@@ -237,17 +237,22 @@ pub fn upstream_branch(repo: &Repository, branch_short: &str) -> Option<Comparis
     comparison_base_from_full_ref(repo, &full_ref, BaseSource::Upstream)
 }
 
-/// Upstream ref for [`crate::porcelain::pull::pull`]: configured tracking ref when
-/// present, otherwise `refs/remotes/<remote>/<branch_short>` (Git's default when
-/// `branch.<name>.merge` is unset).
+/// Upstream ref for [`crate::porcelain::pull::pull`].
+///
+/// When `branch.<name>.merge` is set, only that configured tracking ref is used; if it
+/// does not resolve after fetch, returns `None` (no implicit fallback). When merge is
+/// unset, uses Git's default `refs/remotes/<remote>/<branch_short>`.
 #[must_use]
 pub fn pull_upstream_branch(
     repo: &Repository,
     branch_short: &str,
     remote_name: &str,
 ) -> Option<ComparisonBase> {
-    if let Some(upstream) = upstream_branch(repo, branch_short) {
-        return Some(upstream);
+    let config = repo.config().ok()?;
+    let merge_key = format!("branch.{branch_short}.merge");
+    if config.get(&merge_key).is_some() {
+        let full_ref = upstream_tracking_full_ref(repo, branch_short)?;
+        return comparison_base_from_full_ref(repo, &full_ref, BaseSource::Upstream);
     }
     let full_ref = format!("refs/remotes/{remote_name}/{branch_short}");
     comparison_base_from_full_ref(repo, &full_ref, BaseSource::Upstream)
