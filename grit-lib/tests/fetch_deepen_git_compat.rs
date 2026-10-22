@@ -263,7 +263,7 @@ fn grit_fetch_daemon(
     let mut conn = transport
         .connect(url, Service::UploadPack, &connect_opts)
         .expect("connect git daemon");
-    let mut opts = FetchOptions {
+    let opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
         tags: TagMode::Following,
         fetch_depth,
@@ -277,14 +277,7 @@ fn init_shallow_client_from_daemon(tmp: &Path, url: &str, name: &str) -> PathBuf
     std::fs::create_dir_all(dest.parent().unwrap_or(tmp)).unwrap();
     git(
         tmp,
-        &[
-            "clone",
-            "-q",
-            "--depth",
-            "1",
-            url,
-            dest.to_str().unwrap(),
-        ],
+        &["clone", "-q", "--depth", "1", url, dest.to_str().unwrap()],
     );
     dest
 }
@@ -318,21 +311,11 @@ fn deepen_unshallow_over_system_git_daemon_v2_matches_git() {
     assert_twin_matches(&git_client, &grit_client);
 
     git_fetch(&git_client, &["fetch", "--deepen", "3", "origin"]);
-    grit_fetch_daemon(
-        &grit_client,
-        &url,
-        FetchDepth::deepen(3),
-        2,
-    );
+    grit_fetch_daemon(&grit_client, &url, FetchDepth::deepen(3), 2);
     assert_twin_matches(&git_client, &grit_client);
 
     git_fetch(&git_client, &["fetch", "--unshallow", "origin"]);
-    grit_fetch_daemon(
-        &grit_client,
-        &url,
-        Some(FetchDepth::Unshallow),
-        2,
-    );
+    grit_fetch_daemon(&grit_client, &url, Some(FetchDepth::Unshallow), 2);
     assert_twin_matches(&git_client, &grit_client);
     assert!(read_shallow_set(&git_client.join(".git")).is_empty());
 }
