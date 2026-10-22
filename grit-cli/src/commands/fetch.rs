@@ -78,6 +78,11 @@ pub struct FetchUpdate {
 impl HumanRender for FetchOutcome {
     fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         for update in &self.updates {
+            if update.status == FetchUpdateStatus::Rejected {
+                let reason = update.reason.as_deref().unwrap_or("ref update rejected");
+                outln!(w, "  ! rejected {}  {}", update.ref_name, reason);
+                continue;
+            }
             let from = update.old_oid.as_deref().map_or("new", short_hex);
             let to = update.new_oid.as_deref().map_or("deleted", short_hex);
             if update.remote_ref == update.ref_name {

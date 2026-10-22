@@ -141,9 +141,11 @@ pub struct FetchInvocation {
 
 /// Classify `grit fetch [<remote>] [<refspec>…]` positionals (no refspec parsing).
 ///
-/// The first token is treated as the remote when it names a configured remote,
-/// looks like a URL, or is an existing path; otherwise the default remote is
-/// used and every token is a refspec.
+/// When the CLI supplies a first positional (`remote`), it is always the
+/// repository (configured name, URL, scp-style `host:path`, or path) — matching
+/// Git. Remaining positionals are refspecs. With no first positional, an initial
+/// token that looks like a repository is consumed as the remote; otherwise the
+/// default remote is used and every token is a refspec.
 #[must_use]
 pub fn resolve_fetch_invocation(
     config: &ConfigSet,
@@ -151,30 +153,29 @@ pub fn resolve_fetch_invocation(
     refspecs: &[String],
     default_remote: &str,
 ) -> FetchInvocation {
-    let mut tokens: Vec<String> = Vec::new();
-    if let Some(name) = remote {
-        if !name.is_empty() {
-            tokens.push(name.to_owned());
-        }
+    if let Some(name) = remote.filter(|s| !s.is_empty()) {
+        return FetchInvocation {
+            remote: name.to_owned(),
+            user_refspecs: refspecs.to_vec(),
+        };
     }
-    tokens.extend_from_slice(refspecs);
 
-    if tokens.is_empty() {
+    if refspecs.is_empty() {
         return FetchInvocation {
             remote: default_remote.to_owned(),
             user_refspecs: Vec::new(),
         };
     }
 
-    if is_fetch_remote_token(config, &tokens[0]) {
+    if is_fetch_remote_token(config, &refspecs[0]) {
         FetchInvocation {
-            remote: tokens.remove(0),
-            user_refspecs: tokens,
+            remote: refspecs[0].clone(),
+            user_refspecs: refspecs[1..].to_vec(),
         }
     } else {
         FetchInvocation {
             remote: default_remote.to_owned(),
-            user_refspecs: tokens,
+            user_refspecs: refspecs.to_vec(),
         }
     }
 }
@@ -197,13 +198,27 @@ fn is_fetch_remote_token(config: &ConfigSet, token: &str) -> bool {
 
 /// True when `token` is an explicit `src:dst` fetch refspec, not an scp-style remote URL.
 fn looks_like_fetch_refspec(token: &str) -> bool {
+    if token.contains('@') {
+        return false;
+    }
     let Ok(item) = parse_fetch_refspec(token) else {
         return false;
     };
     if item.negative || item.pattern || item.matching {
         return false;
     }
-    token.contains(':') && item.src.is_some()
+    if !token.contains(':') || item.src.is_none() {
+        return false;
+    }
+    let src = item.src.as_deref().unwrap_or("");
+    let dst = item.dst.as_deref().unwrap_or("");
+    if src.contains('.') && !src.starts_with("refs/") {
+        return false;
+    }
+    if dst.contains('/') && !dst.starts_with("refs/") {
+        return false;
+    }
+    true
 }
 
 /// Inputs for [`FetchRefspecPlan::resolve`].
@@ -815,6 +830,52 @@ mod tests {
         );
     }
 
+    #[test]
+    fn explicit_remote_positional_includes_scp_style_urls() {
+        use super::{resolve_fetch_invocation, FetchInvocation};
+        use crate::config::ConfigSet;
+
+        let config = ConfigSet::new();
+        assert_eq!(
+            resolve_fetch_invocation(&config, Some("example.com:repo"), &[], "origin"),
+            FetchInvocation {
+                remote: "example.com:repo".into(),
+                user_refspecs: vec![],
+            }
+        );
+        assert_eq!(
+            resolve_fetch_invocation(&config, Some("git@host:org/repo"), &[], "origin"),
+            FetchInvocation {
+                remote: "git@host:org/repo".into(),
+                user_refspecs: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn configured_remote_with_colon_refspec() {
+        use super::{resolve_fetch_invocation, FetchInvocation};
+        use crate::config::{ConfigFile, ConfigScope, ConfigSet};
+
+        let file = ConfigFile::parse(
+            std::path::Path::new("cfg"),
+            "[remote \"origin\"]\n\turl = /tmp/x.git\n",
+            ConfigScope::Local,
+        )
+        .expect("parse");
+        let mut config = ConfigSet::new();
+        config.merge(&file);
+
+        assert_eq!(
+            resolve_fetch_invocation(&config, Some("origin"), &["a:b".into()], "origin"),
+            FetchInvocation {
+                remote: "origin".into(),
+                user_refspecs: vec!["a:b".into()],
+            }
+        );
+    }
+
+    #[test]
     fn resolve_fetch_invocation_remote_vs_refspec() {
         use super::{resolve_fetch_invocation, FetchInvocation};
         use crate::config::{ConfigFile, ConfigScope, ConfigSet};

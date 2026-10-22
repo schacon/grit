@@ -343,6 +343,28 @@ fn fetch_trailing_dry_run_flag() -> TestResult {
 }
 
 #[test]
+fn fetch_trailing_tags_and_quiet_flags() -> TestResult {
+    let base = tempfile::tempdir()?;
+    let (origin, _seed) = seed_remote(base.path())?;
+    let client = git_clone(base.path(), &origin, "client");
+
+    let out = grit(&client, &["fetch", "origin", "main", "--tags", "-q"]);
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.stdout.is_empty());
+    assert!(out.stderr.is_empty());
+
+    let json_out = grit(&client, &["--json", "fetch", "origin", "main", "--dry-run"]);
+    assert!(json_out.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&json_out.stdout)?;
+    assert_eq!(json["dry_run"], true);
+    Ok(())
+}
+
+#[test]
 fn fetch_branch_to_tag_rejected_exit_one() -> TestResult {
     let base = tempfile::tempdir()?;
     let (origin, seed) = seed_remote(base.path())?;
