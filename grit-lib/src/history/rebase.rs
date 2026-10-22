@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 #[cfg(any(test, feature = "unstable-bench-helpers"))]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
 
 use crate::diff::diff_trees;
 use crate::merge_base::{is_ancestor, merge_bases_first_vs_rest};
@@ -17,19 +17,21 @@ use super::plan::{collect_scoped_refs, commit_parents, plan_rewrite_with_order};
 use super::types::{CommitEdit, HistoryEdits, RefScope, RewriteOptions, RewritePlan};
 
 #[cfg(any(test, feature = "unstable-bench-helpers"))]
-static PATCH_ID_COMPUTE_CALLS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static PATCH_ID_COMPUTE_CALLS: Cell<usize> = const { Cell::new(0) };
+}
 
-/// Returns how many times patch-id computation ran since the last reset.
+/// Returns how many times patch-id computation ran on this thread since the last reset.
 #[cfg(any(test, feature = "unstable-bench-helpers"))]
 #[must_use]
 pub fn test_patch_id_compute_call_count() -> usize {
-    PATCH_ID_COMPUTE_CALLS.load(Ordering::Relaxed)
+    PATCH_ID_COMPUTE_CALLS.with(Cell::get)
 }
 
-/// Clears the patch-id computation counter used by tests and benchmarks.
+/// Clears the patch-id computation counter on this thread (tests and benchmarks).
 #[cfg(any(test, feature = "unstable-bench-helpers"))]
 pub fn test_reset_patch_id_compute_call_count() {
-    PATCH_ID_COMPUTE_CALLS.store(0, Ordering::Relaxed);
+    PATCH_ID_COMPUTE_CALLS.with(|c| c.set(0));
 }
 
 /// Inputs for [`plan_rebase`], matching `git rebase [--onto <base>] <upstream>` on a single branch tip.
@@ -468,7 +470,7 @@ fn compute_patch_id_recorded(
     mode: PatchIdMode,
 ) -> Result<Option<ObjectId>, crate::error::Error> {
     #[cfg(any(test, feature = "unstable-bench-helpers"))]
-    PATCH_ID_COMPUTE_CALLS.fetch_add(1, Ordering::Relaxed);
+    PATCH_ID_COMPUTE_CALLS.with(|c| c.set(c.get().saturating_add(1)));
     compute_patch_id(algo, odb, commit_oid, mode)
 }
 
