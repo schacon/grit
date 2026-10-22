@@ -58,34 +58,39 @@ fn git_remote_branch_names(dir: &Path) -> Vec<String> {
     remote_tracking_branch_names(names)
 }
 
-fn clone_with_remotes() -> PathBuf {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let origin = tmp.path().join("origin");
+struct RemoteListFixture {
+    _root: tempfile::TempDir,
+    clone: PathBuf,
+}
+
+fn clone_with_remotes() -> RemoteListFixture {
+    let root = tempfile::tempdir().expect("tempdir");
+    let origin = root.path().join("origin");
     std::fs::create_dir_all(&origin).expect("mkdir");
     git(&origin, &["init", "-q", "-b", "main"]);
     git(&origin, &["commit", "-q", "--allow-empty", "-m", "seed"]);
     git(&origin, &["branch", "-q", "topic"]);
     git(&origin, &["checkout", "-q", "main"]);
-    let clone = tmp.path().join("clone");
+    let clone = root.path().join("clone");
     git(
-        tmp.path(),
+        root.path(),
         &["clone", "-q", "origin", clone.to_str().unwrap()],
     );
     git(&clone, &["fetch", "-q", "origin"]);
-    std::mem::forget(tmp);
-    clone
+    RemoteListFixture { _root: root, clone }
 }
 
 #[test]
 fn branch_remote_json_matches_git_for_each_ref() {
-    let repo = clone_with_remotes();
-    let expected = git_remote_branch_names(&repo);
+    let fixture = clone_with_remotes();
+    let repo = &fixture.clone;
+    let expected = git_remote_branch_names(repo);
     assert!(
         expected.len() >= 2,
         "fixture should have main and topic on origin"
     );
 
-    let listed = grit_json(&repo, &["branch", "--remote"]);
+    let listed = grit_json(repo, &["branch", "--remote"]);
     assert_eq!(listed["action"], "list");
     let names: Vec<String> = listed["branches"]
         .as_array()
@@ -106,7 +111,29 @@ fn branch_remote_json_matches_git_for_each_ref() {
 
 #[test]
 fn branch_limit_caps_remote_list() {
-    let repo = clone_with_remotes();
-    let listed = grit_json(&repo, &["branch", "--remote", "-n", "1"]);
+    let fixture = clone_with_remotes();
+    let listed = grit_json(&fixture.clone, &["branch", "--remote", "-n", "1"]);
     assert_eq!(listed["branches"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn branch_remote_empty_list_message() {
+    let root = tempfile::tempdir().expect("tempdir");
+    git(root.path(), &["init", "-q", "-b", "main"]);
+    git(
+        root.path(),
+        &["commit", "-q", "--allow-empty", "-m", "seed"],
+    );
+    let out = Command::new(GS)
+        .args(["branch", "--remote"])
+        .current_dir(root.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("grit");
+    assert!(out.status.success(), "{:?}", out.stderr);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "No remote-tracking branches."
+    );
 }

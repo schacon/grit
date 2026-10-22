@@ -270,9 +270,10 @@ fn segments_text(segments: &[Segment]) -> String {
 pub fn print_branch_list(
     w: &mut dyn Write,
     branches: &[crate::commands::branch::BranchEntry],
+    scope: crate::commands::branch::BranchListScope,
 ) -> anyhow::Result<()> {
     if branches.is_empty() {
-        outln!(w, "No branches yet.");
+        outln!(w, "{}", crate::commands::branch::empty_list_message(scope));
         return Ok(());
     }
     outln!(w, "## Branches");

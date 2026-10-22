@@ -2,27 +2,6 @@
   "$id": "https://grit-scm.com/schemas/branch/v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "definitions": {
-    "BranchUpstreamEntry": {
-      "description": "Configured upstream for a local branch in a `list` outcome.",
-      "properties": {
-        "ahead": {
-          "type": "integer"
-        },
-        "behind": {
-          "type": "integer"
-        },
-        "gone": {
-          "type": "boolean"
-        },
-        "name": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "name"
-      ],
-      "type": "object"
-    },
     "BranchEntry": {
       "description": "One branch in a `list` outcome.",
       "properties": {
@@ -36,18 +15,62 @@
           "type": "string"
         },
         "oid": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "short_oid": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "upstream": {
-          "$ref": "#/definitions/BranchUpstreamEntry"
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BranchUpstreamEntry"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
         "current",
         "is_remote",
+        "name"
+      ],
+      "type": "object"
+    },
+    "BranchUpstreamEntry": {
+      "description": "Configured upstream for a local branch in a `list` outcome.",
+      "properties": {
+        "ahead": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "behind": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "gone": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
         "name"
       ],
       "type": "object"

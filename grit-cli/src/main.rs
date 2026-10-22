@@ -1912,7 +1912,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 remote: list.remote,
                 all: list.all,
                 limit: list.limit,
-                list_full_detail: opts.mode != OutputMode::Human,
+                list_full_detail: opts.mode == OutputMode::Json,
                 dry_run,
             })?,
             opts,

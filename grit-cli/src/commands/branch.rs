@@ -58,6 +58,22 @@ pub struct BranchRunOptions {
     pub dry_run: bool,
 }
 
+/// Which branches were listed (human / markdown empty-state text only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BranchListScope {
+    Local,
+    Remote,
+    All,
+}
+
+pub(crate) fn empty_list_message(scope: BranchListScope) -> &'static str {
+    match scope {
+        BranchListScope::Local => "No branches yet.",
+        BranchListScope::Remote => "No remote-tracking branches.",
+        BranchListScope::All => "No branches.",
+    }
+}
+
 /// Result of `grit branch`, tagged by `action`.
 #[derive(Serialize, JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case")]
@@ -66,6 +82,9 @@ pub enum BranchOutcome {
         /// The current branch, or `null` when detached / unborn.
         current: Option<String>,
         branches: Vec<BranchEntry>,
+        #[serde(skip)]
+        #[schemars(skip)]
+        scope: BranchListScope,
     },
     Create {
         name: String,
@@ -152,9 +171,11 @@ pub struct BranchEntry {
 impl HumanRender for BranchOutcome {
     fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         match self {
-            BranchOutcome::List { branches, .. } => {
+            BranchOutcome::List {
+                branches, scope, ..
+            } => {
                 if branches.is_empty() {
-                    outln!(w, "No branches yet.");
+                    outln!(w, "{}", empty_list_message(*scope));
                     return Ok(());
                 }
                 for branch in branches {
@@ -228,7 +249,11 @@ impl HumanRender for BranchOutcome {
 impl MarkdownRender for BranchOutcome {
     fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         match self {
-            BranchOutcome::List { branches, .. } => markdown::print_branch_list(w, branches)?,
+            BranchOutcome::List {
+                branches, scope, ..
+            } => {
+                markdown::print_branch_list(w, branches, *scope)?;
+            }
             BranchOutcome::Create {
                 name,
                 short_oid,
@@ -486,9 +511,15 @@ fn list(repo: &Repository, opts: &BranchRunOptions) -> Result<BranchOutcome> {
         HeadState::Branch { short_name, .. } => Some(short_name),
         HeadState::Detached { .. } | HeadState::Invalid => None,
     };
+    let list_scope = match scope {
+        BranchScope::Local => BranchListScope::Local,
+        BranchScope::Remote => BranchListScope::Remote,
+        BranchScope::All => BranchListScope::All,
+    };
     Ok(BranchOutcome::List {
         current,
         branches: rows.into_iter().map(summary_to_entry).collect(),
+        scope: list_scope,
     })
 }
 
