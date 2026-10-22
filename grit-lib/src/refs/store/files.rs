@@ -17,8 +17,8 @@ use crate::refs::{
 };
 
 use super::apply::{
-    apply_update, ref_lock_names_for_updates, simulate_batch_apply,
-    symref_deref_delete_changed_targets, RefBatchState,
+    apply_case_only_ref_rename, apply_reflog_rename, apply_update, ref_lock_names_for_updates,
+    simulate_batch_apply, symref_deref_delete_changed_targets, RefBatchState,
 };
 use super::error::RefStoreError;
 use super::routing::{resolve_common_dir, route_ref_storage_with_namespace, RefStorageRoute};
@@ -70,6 +70,7 @@ struct PackedCacheEntry {
 #[derive(Debug)]
 struct PreparedFilesBatch {
     updates: Vec<RefUpdate>,
+    case_only_renames: Vec<super::RefCaseOnlyRename>,
     ref_locks: HashMap<String, PathBuf>,
     packed_lock: Option<PathBuf>,
     /// Ref/reflog state observed at prepare (must drive commit, not a reload).
@@ -219,11 +220,24 @@ impl FilesRefStore {
         Ok(())
     }
 
-    fn load_batch_state_for_prepare(&self, updates: &[RefUpdate]) -> Result<RefBatchState> {
+    fn load_batch_state_for_prepare(
+        &self,
+        updates: &[RefUpdate],
+        reflog_renames: &[super::RefReflogRename],
+        case_only_renames: &[super::RefCaseOnlyRename],
+    ) -> Result<RefBatchState> {
         let mut refs = BTreeMap::new();
         for update in updates {
             if let Some(raw) = self.read_raw(&update.name)? {
                 refs.insert(update.name.clone(), raw);
+            }
+        }
+        for rename in case_only_renames {
+            if refs.contains_key(&rename.from) {
+                continue;
+            }
+            if let Some(raw) = self.read_raw(&rename.from)? {
+                refs.insert(rename.from.clone(), raw);
             }
         }
         self.insert_head_for_batch_state(&mut refs)?;
@@ -237,8 +251,28 @@ impl FilesRefStore {
             self.insert_symref_peel_chain(&mut refs, "HEAD")?;
         }
 
-        let reflogs = self.load_reflogs_for_updates(&refs, updates)?;
+        let mut reflogs = self.load_reflogs_for_updates(&refs, updates)?;
+        for rename in reflog_renames {
+            if reflogs.contains_key(&rename.from) {
+                continue;
+            }
+            let entries = read_reflog_at_path(&self.reflog_path(&rename.from))?;
+            if !entries.is_empty() {
+                reflogs.insert(rename.from.clone(), entries);
+            }
+        }
         Ok(RefBatchState { refs, reflogs })
+    }
+
+    fn ensure_reflog_path_writable(&self, name: &str) -> StoreResult<()> {
+        let path = self.reflog_path(name);
+        if path.is_dir() {
+            return Err(RefStoreError::Corrupt(format!(
+                "refusing to write reflog at '{}': path is a directory",
+                path.display()
+            )));
+        }
+        Ok(())
     }
 
     fn read_raw_at_route(&self, route: &RefStorageRoute) -> Result<Option<RawRef>> {
@@ -492,6 +526,44 @@ impl FilesRefStore {
         Ok(())
     }
 
+    fn persist_case_only_loose_ref(
+        &self,
+        rename: &super::RefCaseOnlyRename,
+        after: &RefBatchState,
+        packed_lock_held: bool,
+    ) -> Result<()> {
+        let Some(value) = after.refs.get(&rename.to) else {
+            return Err(Error::Message(format!(
+                "case-only rename missing destination ref '{}'",
+                rename.to
+            )));
+        };
+        let (_, from_path, from_lock) = self.ref_lock_paths(&rename.from);
+        if let Some(parent) = from_lock.parent() {
+            fs::create_dir_all(parent).map_err(Error::Io)?;
+        }
+        self.acquire_ref_lock(&from_lock, &rename.from)
+            .map_err(Error::from)?;
+        let route = self.route(&rename.from);
+        if !from_path.is_file() {
+            if packed_lock_held {
+                remove_packed_ref_under_lock(&route.storage_dir, &route.storage_name)?;
+            } else {
+                remove_packed_ref(&route.storage_dir, &route.storage_name)?;
+            }
+            FilesRefStore::write_loose_value(&from_path, &from_lock, value)?;
+        }
+        let (_, to_path, _) = self.ref_lock_paths(&rename.to);
+        if from_path != to_path {
+            if let Some(parent) = to_path.parent() {
+                fs::create_dir_all(parent).map_err(Error::Io)?;
+            }
+            fs::rename(&from_path, &to_path).map_err(Error::Io)?;
+        }
+        let _ = fs::remove_file(&from_lock);
+        Ok(())
+    }
+
     fn delete_loose_ref(&self, refname: &str, lock: &Path, packed_lock_held: bool) -> Result<()> {
         let route = self.route(refname);
         let path = route.storage_dir.join(&route.storage_name);
@@ -739,6 +811,7 @@ impl FilesRefStore {
         after: &RefBatchState,
         packed_lock_held: bool,
         updates: &[RefUpdate],
+        case_only_renames: &[super::RefCaseOnlyRename],
         carried: &mut Option<(String, PathBuf)>,
     ) -> Result<()> {
         let batch_extras: BTreeSet<String> = updates.iter().map(|u| u.name.clone()).collect();
@@ -757,6 +830,11 @@ impl FilesRefStore {
         }
 
         let mut persisted_refs = HashSet::new();
+        for rename in case_only_renames {
+            self.persist_case_only_loose_ref(rename, after, packed_lock_held)?;
+            persisted_refs.insert(rename.from.clone());
+            persisted_refs.insert(rename.to.clone());
+        }
         let mut running = before.clone();
         for (idx, update) in updates.iter().enumerate() {
             if update.flags.log_only {
@@ -855,10 +933,18 @@ impl RefStore for FilesRefStore {
         txn: RefTransaction,
     ) -> StoreResult<Box<dyn PreparedRefTransaction + Send + '_>> {
         RefTransaction::validate_no_duplicates(txn.updates())?;
-        let updates = txn.into_updates();
+        let (updates, reflog_renames, case_only_renames) = txn.into_parts();
 
         for update in &updates {
             validate_storable_refname(&update.name)?;
+        }
+        for rename in &reflog_renames {
+            validate_storable_refname(&rename.from)?;
+            validate_storable_refname(&rename.to)?;
+        }
+        for rename in &case_only_renames {
+            validate_storable_refname(&rename.from)?;
+            validate_storable_refname(&rename.to)?;
         }
 
         let mut prepared_guard = self.prepared.lock().unwrap_or_else(|e| e.into_inner());
@@ -878,10 +964,16 @@ impl RefStore for FilesRefStore {
             self.load_batch_state()
                 .map_err(|e| RefStoreError::Corrupt(e.to_string()))?
         } else {
-            self.load_batch_state_for_prepare(&updates)
+            self.load_batch_state_for_prepare(&updates, &reflog_renames, &case_only_renames)
                 .map_err(|e| RefStoreError::Corrupt(e.to_string()))?
         };
         verify_create_conflicts(&preliminary.refs, &updates)?;
+        for rename in &reflog_renames {
+            self.ensure_reflog_path_writable(&rename.to)?;
+        }
+        for rename in &case_only_renames {
+            self.ensure_reflog_path_writable(&rename.to)?;
+        }
         let lock_names = ref_lock_names_for_updates(&preliminary, &updates);
 
         let mut ref_locks: HashMap<String, PathBuf> = HashMap::new();
@@ -899,7 +991,9 @@ impl RefStore for FilesRefStore {
             ref_locks.insert(name.clone(), lock);
         }
 
-        if let Err(err) = simulate_batch_apply(&preliminary, &updates) {
+        if let Err(err) =
+            simulate_batch_apply(&preliminary, &updates, &reflog_renames, &case_only_renames)
+        {
             for acquired in ref_locks.values() {
                 let _ = fs::remove_file(acquired);
             }
@@ -932,6 +1026,12 @@ impl RefStore for FilesRefStore {
         let mut after_commit = before_commit.clone();
         for update in &updates {
             apply_update(&mut after_commit, update)?;
+        }
+        for rename in &case_only_renames {
+            apply_case_only_ref_rename(&mut after_commit, rename)?;
+        }
+        for rename in &reflog_renames {
+            apply_reflog_rename(&mut after_commit, rename)?;
         }
         let mut changed = changed_ref_names(&before_commit.refs, &after_commit.refs);
         for update in &updates {
@@ -986,6 +1086,7 @@ impl RefStore for FilesRefStore {
 
         *prepared_guard = Some(PreparedFilesBatch {
             updates,
+            case_only_renames,
             ref_locks,
             packed_lock,
             before_commit,
@@ -1114,6 +1215,7 @@ impl PreparedRefTransaction for FilesPrepared<'_> {
             &batch.after_commit,
             packed_lock_held,
             &batch.updates,
+            &batch.case_only_renames,
             &mut carried,
         );
         if let Some((_, lock)) = carried {

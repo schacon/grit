@@ -1,20 +1,31 @@
-//! Local branches: create one without switching `HEAD`, list them, delete one, and configure upstream.
+//! Local branches: create one without switching `HEAD`, list them, delete one, rename one, and configure upstream.
+
+use std::fs;
 
 use crate::branch_tracking::{
     remote_tracking_ref_is_mapped, upstream_branch, upstream_config_for_branch_ref,
 };
 use crate::check_ref_format::validate_branch_short_name;
-use crate::config::{parse_git_config_maybe_bool, ConfigSet};
+use crate::config::{parse_git_config_maybe_bool, ConfigFile, ConfigScope, ConfigSet};
 use crate::error::{Error, Result};
 use crate::merge_base::is_ancestor;
 use crate::objects::ObjectId;
 use crate::porcelain::checkout_reflog::{
-    branch_create_reflog_source_label, create_branch_ref_with_reflog, reset_branch_ref_with_reflog,
+    branch_create_reflog_source_label, checkout_reflog_identity, create_branch_ref_with_reflog,
+    reset_branch_ref_with_reflog,
+};
+use crate::ref_storage::RefStorageFormat;
+use crate::refs;
+use crate::refs::store::{
+    Expected, RawRef, RefCaseOnlyRename, RefReflogRename, RefUpdate, RefUpdateFlags, ReflogUpdate,
 };
 use crate::repo::Repository;
 use crate::rev_parse::peel_to_commit_for_merge_base;
 use crate::state::{resolve_head, resolve_head_for_repository, HeadState};
-use crate::worktree::ensure_branch_not_checked_out_in_any_worktree;
+use crate::worktree::{
+    admin_dirs_match, ensure_branch_not_checked_out_in_any_worktree, list_worktrees,
+    worktree_admin_dir,
+};
 
 pub use crate::porcelain::branch_error::{BranchError, DeleteMode, StartPoint, TrackMode};
 
@@ -47,6 +58,34 @@ impl CreateBranchOptions {
             dry_run: false,
         }
     }
+}
+
+/// Options for [`rename_branch`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameBranchOptions {
+    /// Current short branch name.
+    pub old: String,
+    /// New short branch name.
+    pub new: String,
+    /// Replace an existing `refs/heads/<new>` (and its config section) when set.
+    pub force: bool,
+    /// Validate and preview without updating refs, config, or worktree `HEAD`s.
+    pub dry_run: bool,
+}
+
+/// Outcome of [`rename_branch`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameBranchOutcome {
+    /// Previous short branch name.
+    pub old: String,
+    /// New short branch name.
+    pub new: String,
+    /// Tip commit before the rename, when the branch ref existed.
+    pub oid: Option<ObjectId>,
+    /// Previous tip of `new` when `force` replaced an existing branch.
+    pub replaced: Option<ObjectId>,
+    /// Whether this outcome was preview-only.
+    pub dry_run: bool,
 }
 
 /// Outcome of [`create_branch`].
@@ -266,6 +305,282 @@ pub fn delete_branch(
         name: name.to_owned(),
         oid,
     })
+}
+
+/// Rename `refs/heads/<old>` to `refs/heads/<new>` through one ref-store transaction.
+///
+/// Copies the branch reflog (plus a Git-compatible rename entry), renames the
+/// `branch.<old>` config section, and retargets every worktree `HEAD` symref that
+/// pointed at `old`. When the branch ref is missing but a worktree `HEAD` still
+/// points at `old` (unborn branch), only `HEAD` and config are updated.
+///
+/// # Errors
+///
+/// - [`BranchError::NotFound`] when `old` is missing and no worktree uses it.
+/// - [`BranchError::AlreadyExists`] when `new` exists and `force` is unset.
+/// - [`Error::BranchCheckedOutInWorktree`] when `force` would clobber a branch
+///   checked out in another worktree.
+/// - Ref store, config, and I/O errors are propagated.
+pub fn rename_branch(repo: &Repository, opts: &RenameBranchOptions) -> Result<RenameBranchOutcome> {
+    validate_branch_short_name(&opts.old).map_err(|e| {
+        Error::Branch(BranchError::InvalidName {
+            name: opts.old.clone(),
+            reason: e.to_string(),
+        })
+    })?;
+    validate_branch_short_name(&opts.new).map_err(|e| {
+        Error::Branch(BranchError::InvalidName {
+            name: opts.new.clone(),
+            reason: e.to_string(),
+        })
+    })?;
+
+    let old_ref = branch_ref(&opts.old);
+    let new_ref = branch_ref(&opts.new);
+    let refs = repo.references();
+    let old_existing = refs.read_existing(&old_ref)?;
+    let new_existing = refs.read_existing(&new_ref)?;
+    let head_uses_old = worktree_heads_on_branch(repo, &opts.old)?;
+
+    if old_existing.is_none() && !head_uses_old {
+        return Err(Error::Branch(BranchError::NotFound {
+            name: opts.old.clone(),
+        }));
+    }
+
+    if opts.old == opts.new {
+        return Ok(RenameBranchOutcome {
+            old: opts.old.clone(),
+            new: opts.new.clone(),
+            oid: old_existing.as_ref().map(|existing| existing.oid),
+            replaced: None,
+            dry_run: opts.dry_run,
+        });
+    }
+
+    let case_only_same_branch = old_existing.as_ref().is_some_and(|old| {
+        opts.old != opts.new
+            && opts.old.eq_ignore_ascii_case(&opts.new)
+            && new_existing
+                .as_ref()
+                .is_none_or(|newer| newer.oid == old.oid)
+    });
+
+    let replaced = if let Some(existing) = &new_existing {
+        if case_only_same_branch {
+            None
+        } else if !opts.force {
+            return Err(Error::Branch(BranchError::AlreadyExists {
+                name: opts.new.clone(),
+            }));
+        } else {
+            ensure_branch_not_checked_out_in_any_worktree(repo, &opts.new)?;
+            Some(existing.oid)
+        }
+    } else {
+        None
+    };
+
+    let oid = old_existing.as_ref().map(|existing| existing.oid);
+
+    if opts.dry_run {
+        return Ok(RenameBranchOutcome {
+            old: opts.old.clone(),
+            new: opts.new.clone(),
+            oid,
+            replaced,
+            dry_run: true,
+        });
+    }
+
+    if let Some(existing) = old_existing {
+        let reflog_rename = branch_rename_reflog_update(repo, &old_ref, &new_ref, existing.oid);
+        if case_only_same_branch
+            && RefStorageFormat::detect(repo.git_dir())? == RefStorageFormat::Files
+        {
+            refs::commit_ref_batch_on_store(
+                repo.refs(),
+                &[],
+                &[reflog_rename],
+                &[RefCaseOnlyRename {
+                    from: old_ref.clone(),
+                    to: new_ref.clone(),
+                }],
+            )?;
+        } else {
+            rename_existing_branch_ref(
+                repo,
+                &old_ref,
+                &new_ref,
+                &existing,
+                new_existing.as_ref(),
+                reflog_rename,
+            )?;
+        }
+    }
+
+    retarget_branch_head_symrefs(repo, &opts.old, &new_ref)?;
+    rename_branch_config_section(repo, &opts.old, &opts.new, opts.force)?;
+
+    Ok(RenameBranchOutcome {
+        old: opts.old.clone(),
+        new: opts.new.clone(),
+        oid,
+        replaced,
+        dry_run: false,
+    })
+}
+
+fn branch_ref(short: &str) -> String {
+    format!("{HEADS_PREFIX}{short}")
+}
+
+fn worktree_heads_on_branch(repo: &Repository, short: &str) -> Result<bool> {
+    Ok(list_worktrees(repo)?.into_iter().any(
+        |entry| matches!(&entry.head, HeadState::Branch { short_name, .. } if short_name == short),
+    ))
+}
+
+fn branch_rename_reflog_update(
+    repo: &Repository,
+    old_ref: &str,
+    new_ref: &str,
+    tip: ObjectId,
+) -> RefReflogRename {
+    RefReflogRename {
+        from: old_ref.to_owned(),
+        to: new_ref.to_owned(),
+        append: ReflogUpdate {
+            identity: checkout_reflog_identity(repo),
+            message: format!("Branch: renamed {old_ref} to {new_ref}"),
+            time: repo.identity_now(),
+            old_oid: Some(tip),
+            new_oid: Some(tip),
+        },
+    }
+}
+
+fn rename_existing_branch_ref(
+    repo: &Repository,
+    old_ref: &str,
+    new_ref: &str,
+    old_existing: &crate::refs::handle::ExistingRef,
+    new_existing: Option<&crate::refs::handle::ExistingRef>,
+    reflog_rename: RefReflogRename,
+) -> Result<()> {
+    let mut updates = Vec::new();
+
+    if let Some(new_existing) = new_existing {
+        let (expected, no_deref) = expected_for_existing(new_existing);
+        updates.push(RefUpdate {
+            name: new_ref.to_owned(),
+            new_value: Some(RawRef::Direct(old_existing.oid)),
+            expected,
+            reflog: None,
+            flags: RefUpdateFlags {
+                no_deref,
+                ..RefUpdateFlags::default()
+            },
+        });
+    } else {
+        updates.push(RefUpdate {
+            name: new_ref.to_owned(),
+            new_value: Some(RawRef::Direct(old_existing.oid)),
+            expected: Expected::Missing,
+            reflog: None,
+            flags: RefUpdateFlags::default(),
+        });
+    }
+
+    let (expected, no_deref) = expected_for_existing(old_existing);
+    updates.push(RefUpdate {
+        name: old_ref.to_owned(),
+        new_value: None,
+        expected,
+        reflog: None,
+        flags: RefUpdateFlags {
+            no_deref,
+            ..RefUpdateFlags::default()
+        },
+    });
+
+    refs::commit_ref_updates_on_store(repo.refs(), &updates, &[reflog_rename])?;
+    Ok(())
+}
+
+fn expected_for_existing(existing: &crate::refs::handle::ExistingRef) -> (Expected, bool) {
+    match &existing.raw {
+        RawRef::Symbolic(target) => (Expected::Symref(target.clone()), true),
+        RawRef::Direct(oid) => (Expected::Oid(*oid), false),
+    }
+}
+
+fn retarget_branch_head_symrefs(repo: &Repository, old_short: &str, new_ref: &str) -> Result<()> {
+    let old_ref = branch_ref(old_short);
+    let current_admin = worktree_admin_dir(repo);
+    let head_update = RefUpdate {
+        name: "HEAD".to_owned(),
+        new_value: Some(RawRef::Symbolic(new_ref.to_owned())),
+        expected: Expected::Symref(old_ref.clone()),
+        reflog: None,
+        flags: RefUpdateFlags {
+            no_deref: true,
+            ..RefUpdateFlags::default()
+        },
+    };
+    for entry in list_worktrees(repo)? {
+        if !matches!(&entry.head, HeadState::Branch { short_name, .. } if short_name == old_short) {
+            continue;
+        }
+        if admin_dirs_match(&entry.admin_dir, &current_admin) {
+            continue;
+        }
+        let store = repo
+            .caches()
+            .open_ref_store(&entry.admin_dir, repo.environment())?;
+        refs::commit_ref_updates_on_store(store.as_ref(), std::slice::from_ref(&head_update), &[])?;
+    }
+    if repository_head_points_at(repo, &old_ref)? {
+        refs::commit_ref_updates_on_store(repo.refs(), &[head_update], &[])?;
+    }
+    Ok(())
+}
+
+fn repository_head_points_at(repo: &Repository, refname: &str) -> Result<bool> {
+    Ok(matches!(
+        repo.refs().read_raw("HEAD")?,
+        Some(RawRef::Symbolic(target)) if target == refname
+    ))
+}
+
+fn rename_branch_config_section(
+    repo: &Repository,
+    old_short: &str,
+    new_short: &str,
+    force: bool,
+) -> Result<()> {
+    let path = crate::repo::local_config_write_path(repo.git_dir());
+    let content = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(Error::Io(e)),
+    };
+    if content.trim().is_empty() {
+        return Ok(());
+    }
+    let mut file = ConfigFile::parse(&path, &content, ConfigScope::Local)?;
+    let old_section = format!("branch.{old_short}");
+    let new_section = format!("branch.{new_short}");
+    let mut changed = false;
+    if force {
+        changed |= file.remove_section(&new_section)?;
+    }
+    changed |= file.rename_section(&old_section, &new_section)?;
+    if changed {
+        file.write()?;
+        repo.reload_config()?;
+    }
+    Ok(())
 }
 
 /// Configure `branch.<branch>.remote` and `branch.<branch>.merge` from a resolved upstream ref.

@@ -8,9 +8,13 @@ use crate::error::Result;
 type StoreResult<T> = std::result::Result<T, RefStoreError>;
 use crate::reflog::ReflogEntry;
 
-use super::apply::{apply_update, resolve_map, simulate_batch_apply, RefBatchState};
+use super::apply::{
+    apply_case_only_ref_rename, apply_reflog_rename, apply_update, resolve_map,
+    simulate_batch_apply, RefBatchState,
+};
 use super::error::RefStoreError;
 use super::transaction::RefTransaction;
+use super::types::{RefCaseOnlyRename, RefReflogRename};
 use super::validation::verify_create_conflicts;
 use super::{PreparedRefTransaction, RawRef, RefEntry, RefStorageFormat, RefStore, RefUpdate};
 
@@ -30,6 +34,8 @@ impl MemoryRefStoreInner {
 struct PreparedBatch {
     lock_name: String,
     updates: Vec<RefUpdate>,
+    reflog_renames: Vec<RefReflogRename>,
+    case_only_renames: Vec<RefCaseOnlyRename>,
 }
 
 /// Fully in-memory ref database with transactional updates.
@@ -114,7 +120,7 @@ impl RefStore for MemoryRefStore {
         txn: RefTransaction,
     ) -> StoreResult<Box<dyn PreparedRefTransaction + Send + '_>> {
         RefTransaction::validate_no_duplicates(txn.updates())?;
-        let updates = txn.into_updates();
+        let (updates, reflog_renames, case_only_renames) = txn.into_parts();
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(active) = &inner.prepared {
             return Err(RefStoreError::LockHeld {
@@ -123,13 +129,20 @@ impl RefStore for MemoryRefStore {
         }
 
         verify_create_conflicts(&inner.state.refs, &updates)?;
-        simulate_batch_apply(&inner.state, &updates)?;
+        simulate_batch_apply(&inner.state, &updates, &reflog_renames, &case_only_renames)?;
 
         let lock_name = updates
             .first()
             .map(|u| u.name.clone())
+            .or_else(|| reflog_renames.first().map(|r| r.from.clone()))
+            .or_else(|| case_only_renames.first().map(|r| r.from.clone()))
             .unwrap_or_else(|| "refs".to_owned());
-        inner.prepared = Some(PreparedBatch { lock_name, updates });
+        inner.prepared = Some(PreparedBatch {
+            lock_name,
+            updates,
+            reflog_renames,
+            case_only_renames,
+        });
 
         Ok(Box::new(MemoryPrepared {
             store: self,
@@ -211,6 +224,12 @@ impl PreparedRefTransaction for MemoryPrepared<'_> {
         let mut trial = inner.snapshot_for_apply();
         for update in &batch.updates {
             apply_update(&mut trial, update)?;
+        }
+        for rename in &batch.case_only_renames {
+            apply_case_only_ref_rename(&mut trial, rename)?;
+        }
+        for rename in &batch.reflog_renames {
+            apply_reflog_rename(&mut trial, rename)?;
         }
         inner.state = trial;
         self.committed = true;

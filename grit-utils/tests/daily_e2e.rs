@@ -126,10 +126,11 @@ fn smoke_report_validates() {
     }
 }
 
-const BRANCHING_MAINTENANCE_MISC_MATRIX_IDS: [&str; 28] = [
+const BRANCHING_MAINTENANCE_MISC_MATRIX_IDS: [&str; 29] = [
     "switch/branch@synth-100k",
     "branch/create@many-refs",
     "branch/delete@many-refs",
+    "branch/rename@many-refs",
     "branch/list@many-refs-loose",
     "tag/list@many-refs",
     "tag/create@many-refs",

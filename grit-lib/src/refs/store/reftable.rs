@@ -18,12 +18,14 @@ use crate::reftable::{
 };
 use crate::repo::init_repository;
 
+use super::apply::{apply_reflog_rename, RefBatchState};
 use super::error::RefStoreError;
 use super::semantics::{
     apply_update_to_map, format_reflog_identity, reflog_new_oid_before, reflog_old_oid_before,
     reftable_write_target, simulate_batch_apply,
 };
 use super::transaction::RefTransaction;
+use super::types::RefReflogRename;
 use super::validation::verify_create_conflicts;
 use super::{
     Expected, PreparedRefTransaction, RawRef, RefEntry, RefStorageFormat, RefStore, RefUpdate,
@@ -41,6 +43,7 @@ pub struct ReftableRefStore {
 struct PreparedReftableBatch {
     logical_updates: Vec<RefUpdate>,
     stacks: Vec<LockedStackBatch>,
+    reflog_renames: Vec<RefReflogRename>,
 }
 
 struct LockedStackBatch {
@@ -506,7 +509,7 @@ impl RefStore for ReftableRefStore {
         txn: RefTransaction,
     ) -> StoreResult<Box<dyn PreparedRefTransaction + Send + '_>> {
         RefTransaction::validate_no_duplicates(txn.updates())?;
-        let updates = txn.into_updates();
+        let (updates, reflog_renames, _case_only_renames) = txn.into_parts();
         let mut guard_state = self.prepared.lock().unwrap_or_else(|e| e.into_inner());
         if guard_state.is_some() {
             return Err(RefStoreError::LockHeld {
@@ -547,6 +550,7 @@ impl RefStore for ReftableRefStore {
         *guard_state = Some(PreparedReftableBatch {
             logical_updates,
             stacks,
+            reflog_renames,
         });
 
         Ok(Box::new(ReftablePrepared {
@@ -632,6 +636,29 @@ impl RefStore for ReftableRefStore {
     }
 }
 
+fn commit_reflog_rename_on_stack(
+    git_dir: &Path,
+    stack: &mut ReftableStack,
+    rename: &RefReflogRename,
+) -> StoreResult<()> {
+    let entries = read_reflog_entries_from_stack(git_dir, &rename.from)
+        .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
+    let mut batch = RefBatchState {
+        refs: BTreeMap::new(),
+        reflogs: BTreeMap::from([(rename.from.clone(), entries)]),
+    };
+    apply_reflog_rename(&mut batch, rename)?;
+    let new_entries = batch.reflogs.get(&rename.to).cloned().unwrap_or_default();
+    let (_, from_storage) = reftable_storage_location(git_dir, &rename.from);
+    let (_, to_storage) = reftable_storage_location(git_dir, &rename.to);
+    stack
+        .replace_logs_for_ref(&to_storage, &new_entries)
+        .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
+    stack
+        .replace_logs_for_ref(&from_storage, &[])
+        .map_err(|e| RefStoreError::Corrupt(e.to_string()))
+}
+
 struct ReftablePrepared<'a> {
     store: &'a ReftableRefStore,
     committed: bool,
@@ -657,6 +684,15 @@ impl PreparedRefTransaction for ReftablePrepared<'_> {
                         &stack_batch.opts,
                     )
                     .map_err(map_reftable_err)?;
+            }
+            for rename in &batch.reflog_renames {
+                let (store_git_dir, _) =
+                    reftable_storage_location(&self.store.git_dir, &rename.from);
+                if store_git_dir != stack_batch._store_git_dir {
+                    continue;
+                }
+                commit_reflog_rename_on_stack(&self.store.git_dir, &mut stack_batch.stack, rename)
+                    .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
             }
         }
         for update in &batch.logical_updates {

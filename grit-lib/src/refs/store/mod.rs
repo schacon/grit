@@ -26,7 +26,8 @@ pub(crate) use open::open_ref_store_uncached;
 pub use reftable::ReftableRefStore;
 pub use transaction::RefTransaction;
 pub use types::{
-    Expected, RawRef, RefEntry, RefName, RefStorageFormat, RefUpdate, RefUpdateFlags, ReflogUpdate,
+    Expected, RawRef, RefCaseOnlyRename, RefEntry, RefName, RefReflogRename, RefStorageFormat,
+    RefUpdate, RefUpdateFlags, ReflogUpdate,
 };
 
 use std::fmt::Debug;

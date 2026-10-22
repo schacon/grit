@@ -3,12 +3,14 @@
 use std::collections::HashSet;
 
 use super::error::RefStoreError;
-use super::types::{Expected, RawRef, RefUpdate};
+use super::types::{Expected, RawRef, RefCaseOnlyRename, RefReflogRename, RefUpdate};
 
 /// Batch of ref updates prepared for [`super::RefStore::prepare`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RefTransaction {
     updates: Vec<RefUpdate>,
+    reflog_renames: Vec<RefReflogRename>,
+    case_only_renames: Vec<RefCaseOnlyRename>,
 }
 
 impl RefTransaction {
@@ -57,6 +59,32 @@ impl RefTransaction {
     #[must_use]
     pub fn into_updates(self) -> Vec<RefUpdate> {
         self.updates
+    }
+
+    /// Reflog rename operations bundled with this transaction.
+    #[must_use]
+    pub fn reflog_renames(&self) -> &[RefReflogRename] {
+        &self.reflog_renames
+    }
+
+    /// Append a branch reflog rename to this transaction.
+    #[must_use]
+    pub fn with_reflog_rename(mut self, rename: RefReflogRename) -> Self {
+        self.reflog_renames.push(rename);
+        self
+    }
+
+    /// Append a case-only branch ref rename (files backend).
+    #[must_use]
+    pub fn with_case_only_rename(mut self, rename: RefCaseOnlyRename) -> Self {
+        self.case_only_renames.push(rename);
+        self
+    }
+
+    /// Split into ref updates, reflog renames, and case-only ref renames.
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<RefUpdate>, Vec<RefReflogRename>, Vec<RefCaseOnlyRename>) {
+        (self.updates, self.reflog_renames, self.case_only_renames)
     }
 
     pub(crate) fn validate_no_duplicates(updates: &[RefUpdate]) -> Result<(), RefStoreError> {

@@ -46,8 +46,8 @@ use std::io;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use store::{
-    open_ref_store, Expected, RawRef as StoreRawRef, RefEntry, RefStorageFormat, RefStore,
-    RefTransaction, RefUpdate, RefUpdateFlags, ReflogUpdate,
+    open_ref_store, Expected, RawRef as StoreRawRef, RefCaseOnlyRename, RefEntry, RefReflogRename,
+    RefStorageFormat, RefStore, RefTransaction, RefUpdate, RefUpdateFlags, ReflogUpdate,
 };
 
 use crate::check_ref_format::{check_refname_format, RefNameOptions};
@@ -193,14 +193,55 @@ pub fn commit_ref_store_batch(git_dir: &Path, updates: &[RefUpdate]) -> Result<(
     if updates.is_empty() {
         return Ok(());
     }
-    let label = updates.first().map(|u| u.name.as_str()).unwrap_or("refs");
     let store = open_ref_store(git_dir)?;
+    commit_ref_updates_on_store(store.as_ref(), updates, &[])
+}
+
+/// Apply several ref updates atomically through an existing [`RefStore`].
+///
+/// # Errors
+///
+/// Propagates validation, compare-and-swap, and backend errors from [`RefStore::prepare`].
+pub fn commit_ref_updates_on_store(
+    store: &dyn RefStore,
+    updates: &[RefUpdate],
+    reflog_renames: &[RefReflogRename],
+) -> Result<()> {
+    commit_ref_batch_on_store(store, updates, reflog_renames, &[])
+}
+
+/// Apply ref updates, reflog renames, and optional case-only ref renames atomically.
+///
+/// # Errors
+///
+/// Propagates validation, compare-and-swap, and backend errors from [`RefStore::prepare`].
+pub fn commit_ref_batch_on_store(
+    store: &dyn RefStore,
+    updates: &[RefUpdate],
+    reflog_renames: &[RefReflogRename],
+    case_only_renames: &[RefCaseOnlyRename],
+) -> Result<()> {
+    if updates.is_empty() && reflog_renames.is_empty() && case_only_renames.is_empty() {
+        return Ok(());
+    }
+    let label = updates
+        .first()
+        .map(|u| u.name.as_str())
+        .or_else(|| reflog_renames.first().map(|r| r.from.as_str()))
+        .or_else(|| case_only_renames.first().map(|r| r.from.as_str()))
+        .unwrap_or("refs");
     let mut txn = RefTransaction::new();
     for update in updates {
         let name = update.name.clone();
         txn = txn
             .update(update.clone())
             .map_err(|e| map_public_ref_store_error(Error::from(e), &name))?;
+    }
+    for rename in reflog_renames {
+        txn = txn.with_reflog_rename(rename.clone());
+    }
+    for rename in case_only_renames {
+        txn = txn.with_case_only_rename(rename.clone());
     }
     let prepared = store
         .prepare(txn)

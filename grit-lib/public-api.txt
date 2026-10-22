@@ -11024,6 +11024,47 @@ impl core::marker::Unpin for grit_lib::porcelain::branch::LocalBranch
 impl core::marker::UnsafeUnpin for grit_lib::porcelain::branch::LocalBranch
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::branch::LocalBranch
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::branch::LocalBranch
+pub struct grit_lib::porcelain::branch::RenameBranchOptions
+pub grit_lib::porcelain::branch::RenameBranchOptions::dry_run: bool
+pub grit_lib::porcelain::branch::RenameBranchOptions::force: bool
+pub grit_lib::porcelain::branch::RenameBranchOptions::new: alloc::string::String
+pub grit_lib::porcelain::branch::RenameBranchOptions::old: alloc::string::String
+impl core::clone::Clone for grit_lib::porcelain::branch::RenameBranchOptions
+pub fn grit_lib::porcelain::branch::RenameBranchOptions::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::porcelain::branch::RenameBranchOptions
+impl core::cmp::PartialEq for grit_lib::porcelain::branch::RenameBranchOptions
+pub fn grit_lib::porcelain::branch::RenameBranchOptions::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::porcelain::branch::RenameBranchOptions
+pub fn grit_lib::porcelain::branch::RenameBranchOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::porcelain::branch::RenameBranchOptions
+impl core::marker::Freeze for grit_lib::porcelain::branch::RenameBranchOptions
+impl core::marker::Send for grit_lib::porcelain::branch::RenameBranchOptions
+impl core::marker::Sync for grit_lib::porcelain::branch::RenameBranchOptions
+impl core::marker::Unpin for grit_lib::porcelain::branch::RenameBranchOptions
+impl core::marker::UnsafeUnpin for grit_lib::porcelain::branch::RenameBranchOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::branch::RenameBranchOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::branch::RenameBranchOptions
+pub struct grit_lib::porcelain::branch::RenameBranchOutcome
+pub grit_lib::porcelain::branch::RenameBranchOutcome::dry_run: bool
+pub grit_lib::porcelain::branch::RenameBranchOutcome::new: alloc::string::String
+pub grit_lib::porcelain::branch::RenameBranchOutcome::oid: core::option::Option<grit_lib::objects::ObjectId>
+pub grit_lib::porcelain::branch::RenameBranchOutcome::old: alloc::string::String
+pub grit_lib::porcelain::branch::RenameBranchOutcome::replaced: core::option::Option<grit_lib::objects::ObjectId>
+impl core::clone::Clone for grit_lib::porcelain::branch::RenameBranchOutcome
+pub fn grit_lib::porcelain::branch::RenameBranchOutcome::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::porcelain::branch::RenameBranchOutcome
+impl core::cmp::PartialEq for grit_lib::porcelain::branch::RenameBranchOutcome
+pub fn grit_lib::porcelain::branch::RenameBranchOutcome::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::porcelain::branch::RenameBranchOutcome
+pub fn grit_lib::porcelain::branch::RenameBranchOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::porcelain::branch::RenameBranchOutcome
+impl core::marker::Freeze for grit_lib::porcelain::branch::RenameBranchOutcome
+impl core::marker::Send for grit_lib::porcelain::branch::RenameBranchOutcome
+impl core::marker::Sync for grit_lib::porcelain::branch::RenameBranchOutcome
+impl core::marker::Unpin for grit_lib::porcelain::branch::RenameBranchOutcome
+impl core::marker::UnsafeUnpin for grit_lib::porcelain::branch::RenameBranchOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::branch::RenameBranchOutcome
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::branch::RenameBranchOutcome
 pub struct grit_lib::porcelain::branch::StartPoint
 pub grit_lib::porcelain::branch::StartPoint::label: alloc::string::String
 pub grit_lib::porcelain::branch::StartPoint::oid: grit_lib::objects::ObjectId
@@ -11045,6 +11086,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::branch_error:
 pub fn grit_lib::porcelain::branch::create_branch(&grit_lib::repo::Repository, &grit_lib::porcelain::branch::CreateBranchOptions) -> grit_lib::error::Result<grit_lib::porcelain::branch::CreateBranchOutcome>
 pub fn grit_lib::porcelain::branch::delete_branch(&grit_lib::repo::Repository, &str, grit_lib::porcelain::branch_error::DeleteMode, bool) -> grit_lib::error::Result<grit_lib::porcelain::branch::DeletedBranch>
 pub fn grit_lib::porcelain::branch::list_branches(&grit_lib::repo::Repository) -> grit_lib::error::Result<grit_lib::porcelain::branch::BranchList>
+pub fn grit_lib::porcelain::branch::rename_branch(&grit_lib::repo::Repository, &grit_lib::porcelain::branch::RenameBranchOptions) -> grit_lib::error::Result<grit_lib::porcelain::branch::RenameBranchOutcome>
 pub fn grit_lib::porcelain::branch::resolve_create_tracking(&grit_lib::repo::Repository, &str, &str, grit_lib::objects::ObjectId, grit_lib::porcelain::branch_error::TrackMode) -> grit_lib::error::Result<core::option::Option<(alloc::string::String, alloc::string::String)>>
 pub fn grit_lib::porcelain::branch::set_upstream(&grit_lib::repo::Repository, &str, &str) -> grit_lib::error::Result<()>
 pub fn grit_lib::porcelain::branch::unset_upstream(&grit_lib::repo::Repository, &str) -> grit_lib::error::Result<()>
@@ -15323,6 +15365,24 @@ impl core::marker::Unpin for grit_lib::refs::store::MemoryRefStore
 impl core::marker::UnsafeUnpin for grit_lib::refs::store::MemoryRefStore
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::store::MemoryRefStore
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::store::MemoryRefStore
+pub struct grit_lib::refs::store::RefCaseOnlyRename
+pub grit_lib::refs::store::RefCaseOnlyRename::from: alloc::string::String
+pub grit_lib::refs::store::RefCaseOnlyRename::to: alloc::string::String
+impl core::clone::Clone for grit_lib::refs::store::RefCaseOnlyRename
+pub fn grit_lib::refs::store::RefCaseOnlyRename::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::refs::store::RefCaseOnlyRename
+impl core::cmp::PartialEq for grit_lib::refs::store::RefCaseOnlyRename
+pub fn grit_lib::refs::store::RefCaseOnlyRename::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::refs::store::RefCaseOnlyRename
+pub fn grit_lib::refs::store::RefCaseOnlyRename::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::refs::store::RefCaseOnlyRename
+impl core::marker::Freeze for grit_lib::refs::store::RefCaseOnlyRename
+impl core::marker::Send for grit_lib::refs::store::RefCaseOnlyRename
+impl core::marker::Sync for grit_lib::refs::store::RefCaseOnlyRename
+impl core::marker::Unpin for grit_lib::refs::store::RefCaseOnlyRename
+impl core::marker::UnsafeUnpin for grit_lib::refs::store::RefCaseOnlyRename
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::store::RefCaseOnlyRename
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::store::RefCaseOnlyRename
 pub struct grit_lib::refs::store::RefEntry
 pub grit_lib::refs::store::RefEntry::name: alloc::string::String
 pub grit_lib::refs::store::RefEntry::peeled: core::option::Option<grit_lib::objects::ObjectId>
@@ -15371,13 +15431,36 @@ impl core::marker::Unpin for grit_lib::refs::store::RefName
 impl core::marker::UnsafeUnpin for grit_lib::refs::store::RefName
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::store::RefName
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::store::RefName
+pub struct grit_lib::refs::store::RefReflogRename
+pub grit_lib::refs::store::RefReflogRename::append: grit_lib::refs::store::ReflogUpdate
+pub grit_lib::refs::store::RefReflogRename::from: alloc::string::String
+pub grit_lib::refs::store::RefReflogRename::to: alloc::string::String
+impl core::clone::Clone for grit_lib::refs::store::RefReflogRename
+pub fn grit_lib::refs::store::RefReflogRename::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::refs::store::RefReflogRename
+impl core::cmp::PartialEq for grit_lib::refs::store::RefReflogRename
+pub fn grit_lib::refs::store::RefReflogRename::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::refs::store::RefReflogRename
+pub fn grit_lib::refs::store::RefReflogRename::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::refs::store::RefReflogRename
+impl core::marker::Freeze for grit_lib::refs::store::RefReflogRename
+impl core::marker::Send for grit_lib::refs::store::RefReflogRename
+impl core::marker::Sync for grit_lib::refs::store::RefReflogRename
+impl core::marker::Unpin for grit_lib::refs::store::RefReflogRename
+impl core::marker::UnsafeUnpin for grit_lib::refs::store::RefReflogRename
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::store::RefReflogRename
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::store::RefReflogRename
 pub struct grit_lib::refs::store::RefTransaction
 impl grit_lib::refs::store::RefTransaction
+pub fn grit_lib::refs::store::RefTransaction::into_parts(self) -> (alloc::vec::Vec<grit_lib::refs::store::RefUpdate>, alloc::vec::Vec<grit_lib::refs::store::RefReflogRename>, alloc::vec::Vec<grit_lib::refs::store::RefCaseOnlyRename>)
 pub fn grit_lib::refs::store::RefTransaction::into_updates(self) -> alloc::vec::Vec<grit_lib::refs::store::RefUpdate>
 pub fn grit_lib::refs::store::RefTransaction::new() -> Self
 pub fn grit_lib::refs::store::RefTransaction::push_update(&mut self, grit_lib::refs::store::RefUpdate) -> core::result::Result<(), grit_lib::refs::store::RefStoreError>
+pub fn grit_lib::refs::store::RefTransaction::reflog_renames(&self) -> &[grit_lib::refs::store::RefReflogRename]
 pub fn grit_lib::refs::store::RefTransaction::update(self, grit_lib::refs::store::RefUpdate) -> core::result::Result<Self, grit_lib::refs::store::RefStoreError>
 pub fn grit_lib::refs::store::RefTransaction::updates(&self) -> &[grit_lib::refs::store::RefUpdate]
+pub fn grit_lib::refs::store::RefTransaction::with_case_only_rename(self, grit_lib::refs::store::RefCaseOnlyRename) -> Self
+pub fn grit_lib::refs::store::RefTransaction::with_reflog_rename(self, grit_lib::refs::store::RefReflogRename) -> Self
 impl core::clone::Clone for grit_lib::refs::store::RefTransaction
 pub fn grit_lib::refs::store::RefTransaction::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::refs::store::RefTransaction
@@ -15726,8 +15809,10 @@ pub const grit_lib::refs::SYMREF_MAXDEPTH: usize
 pub fn grit_lib::refs::append_reflog(&std::path::Path, &str, &grit_lib::objects::ObjectId, &grit_lib::objects::ObjectId, &str, &str, bool) -> grit_lib::error::Result<()>
 pub fn grit_lib::refs::append_reflog_with_config(&std::path::Path, &str, &grit_lib::objects::ObjectId, &grit_lib::objects::ObjectId, &str, &str, bool, core::option::Option<&grit_lib::config::ConfigSet>) -> grit_lib::error::Result<()>
 pub fn grit_lib::refs::collect_alternate_ref_oids(&std::path::Path) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
+pub fn grit_lib::refs::commit_ref_batch_on_store(&dyn grit_lib::refs::store::RefStore, &[grit_lib::refs::store::RefUpdate], &[grit_lib::refs::store::RefReflogRename], &[grit_lib::refs::store::RefCaseOnlyRename]) -> grit_lib::error::Result<()>
 pub fn grit_lib::refs::commit_ref_store_batch(&std::path::Path, &[grit_lib::refs::store::RefUpdate]) -> grit_lib::error::Result<()>
 pub fn grit_lib::refs::commit_ref_update_on_store(&dyn grit_lib::refs::store::RefStore, grit_lib::refs::store::RefUpdate) -> grit_lib::error::Result<()>
+pub fn grit_lib::refs::commit_ref_updates_on_store(&dyn grit_lib::refs::store::RefStore, &[grit_lib::refs::store::RefUpdate], &[grit_lib::refs::store::RefReflogRename]) -> grit_lib::error::Result<()>
 pub fn grit_lib::refs::common_dir(&std::path::Path) -> core::option::Option<std::path::PathBuf>
 pub fn grit_lib::refs::create_ref_with_reflog(&std::path::Path, &str, &grit_lib::objects::ObjectId, &str, &str) -> grit_lib::error::Result<()>
 pub fn grit_lib::refs::delete_ref(&std::path::Path, &str) -> grit_lib::error::Result<()>

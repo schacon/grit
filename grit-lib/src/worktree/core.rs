@@ -121,7 +121,7 @@ fn head_is_branch(head: &HeadState, branch_short_name: &str) -> bool {
     }
 }
 
-fn admin_dirs_match(a: &Path, b: &Path) -> bool {
+pub(crate) fn admin_dirs_match(a: &Path, b: &Path) -> bool {
     path_for_disk_compare(a) == path_for_disk_compare(b) || a == b
 }
 
