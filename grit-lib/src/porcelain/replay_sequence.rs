@@ -35,6 +35,7 @@ use crate::state::{
     read_cherry_pick_head, read_merge_msg, read_orig_head, read_revert_head, resolve_head,
     HeadState,
 };
+use crate::stripspace::{process as stripspace_process, Mode as StripspaceMode};
 use crate::write_tree::{write_tree_update_index, WriteTreeFlags};
 
 /// How to handle a replay step whose merged tree matches `HEAD` (empty patch).
@@ -184,6 +185,27 @@ pub fn start_replay_sequence(
     )
 }
 
+fn sanitize_replay_continue_message(repo: &Repository, raw: &str) -> Result<String> {
+    let config = repo.config()?;
+    let comment_char = config
+        .get("core.commentChar")
+        .and_then(|v| v.chars().next())
+        .unwrap_or('#');
+    let processed = stripspace_process(
+        raw.as_bytes(),
+        &StripspaceMode::StripComments(comment_char.to_string()),
+    );
+    let message = String::from_utf8(processed).map_err(|_| Error::NothingToCommit)?;
+    if message.trim().is_empty() {
+        return Err(Error::NothingToCommit);
+    }
+    let mut message = message;
+    if !message.ends_with('\n') {
+        message.push('\n');
+    }
+    Ok(message)
+}
+
 /// Commit the resolved index for the current step and apply subsequent todo entries.
 ///
 /// # Errors
@@ -198,18 +220,61 @@ pub fn continue_replay_sequence(repo: &Repository, identity: &str) -> Result<Seq
     }
     let (refname, head_oid) = branch_head(repo)?;
     let source = active.current_source()?.ok_or(Error::NoReplayInProgress)?;
-    let message = read_merge_msg(repo.git_dir())?.ok_or(Error::NoReplayInProgress)?;
+    let raw_message = read_merge_msg(repo.git_dir())?.ok_or(Error::NoReplayInProgress)?;
+    let message = sanitize_replay_continue_message(repo, &raw_message)?;
     let new_tree = write_tree_update_index(
         repo.odb(),
         &mut index,
         "",
         crate::write_tree::WriteTreeFlags::silent(),
     )?;
-    let head_tree = commit_tree(repo, &head_oid)?;
-    let allow_empty = active.opts.empty == ReplayEmptyPolicy::Keep || new_tree == head_tree;
-    if !allow_empty && new_tree == head_tree {
-        return Err(Error::NothingToCommit);
+    if active.opts.no_commit {
+        let head_tree = commit_tree(repo, &head_oid)?;
+        if new_tree == head_tree {
+            return Err(Error::NothingToCommit);
+        }
+    } else {
+        let allow_empty = active.opts.empty == ReplayEmptyPolicy::Keep;
+        if !allow_empty {
+            let head_tree = commit_tree(repo, &head_oid)?;
+            if new_tree == head_tree {
+                return Err(Error::NothingToCommit);
+            }
+        }
     }
+
+    clear_step_heads(repo.git_dir(), active.direction)?;
+    let mut todo = active.todo;
+    if !todo.is_empty() {
+        todo.remove(0);
+    }
+    write_sequencer_todo(repo.git_dir(), &todo)?;
+
+    if active.opts.no_commit {
+        write_sequencer_abort_safety(repo.git_dir(), head_oid)?;
+        if todo.is_empty() {
+            clear_replay_state(repo.git_dir())?;
+            return Ok(SequenceOutcome::Completed {
+                created: Vec::new(),
+                dropped: Vec::new(),
+            });
+        }
+        let sequence_start = read_sequencer_head(repo.git_dir()).unwrap_or(active.abort_safety);
+        return run_sequence(
+            repo,
+            &refname,
+            head_oid,
+            head_oid,
+            sequence_start,
+            active.direction,
+            identity,
+            &active.opts,
+            &mut todo,
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+    let allow_empty = active.opts.empty == ReplayEmptyPolicy::Keep;
     let new_oid = write_replay_commit(
         repo,
         &refname,
@@ -221,12 +286,6 @@ pub fn continue_replay_sequence(repo: &Repository, identity: &str) -> Result<Seq
         new_tree,
         allow_empty,
     )?;
-    clear_step_heads(repo.git_dir(), active.direction)?;
-    let mut todo = active.todo;
-    if !todo.is_empty() {
-        todo.remove(0);
-    }
-    write_sequencer_todo(repo.git_dir(), &todo)?;
     write_sequencer_abort_safety(repo.git_dir(), new_oid)?;
     if todo.is_empty() {
         clear_replay_state(repo.git_dir())?;

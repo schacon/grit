@@ -413,6 +413,7 @@ fn revert_mainline_matches_git_revert_m1_tree_and_message() {
     assert!(matches!(out, SequenceOutcome::Completed { .. }));
     assert_eq!(head_tree_hex(root.path()), head_tree_hex(git_wt.path()));
     git_fsck_strict(root.path());
+    git_fsck_strict(git_wt.path());
 }
 
 #[test]
@@ -630,6 +631,90 @@ fn continued_commit_gets_new_change_id() {
     let src = parse_commit(&src_obj.data).expect("src parse");
     assert_ne!(change_id(&commit), change_id(&src));
     assert_eq!(record.change_id, change_id(&commit));
+    git_fsck_strict(root.path());
+}
+
+#[test]
+fn continue_after_conflict_reports_all_created_in_range() {
+    let root = tempfile::tempdir().expect("tempdir");
+    init_repo(root.path());
+    commit_file(root.path(), "f", "base\n", "base");
+    git(root.path(), &["switch", "-c", "topic"]);
+    fs::write(root.path().join("f"), "topic\n").unwrap();
+    git(root.path(), &["commit", "-qam", "topic-f"]);
+    let c1 = oid_from_rev(root.path(), "HEAD");
+    let c2 = commit_file(root.path(), "only-topic.txt", "extra\n", "topic-file");
+    git(root.path(), &["switch", "main"]);
+    fs::write(root.path().join("f"), "main\n").unwrap();
+    git(root.path(), &["commit", "-qam", "main"]);
+
+    let repo = open_repo(root.path());
+    start_replay_sequence(&repo, &pick_req(vec![c1, c2], ReplayOptions::default())).expect("pick");
+    fs::write(root.path().join("f"), "resolved\n").unwrap();
+    git(root.path(), &["add", "f"]);
+    let out = continue_replay_sequence(&repo, IDENT).expect("continue");
+    let created = match out {
+        SequenceOutcome::Completed { created, .. } => created,
+        other => panic!("expected completed, got {other:?}"),
+    };
+    assert_eq!(created.len(), 2);
+    assert_eq!(created[0].source, c1);
+    assert_eq!(created[1].source, c2);
+    git_fsck_strict(root.path());
+}
+
+#[test]
+fn no_commit_continue_leaves_head_uncommitted() {
+    let root = tempfile::tempdir().expect("tempdir");
+    init_repo(root.path());
+    commit_file(root.path(), "f", "base\n", "base");
+    git(root.path(), &["switch", "-c", "topic"]);
+    fs::write(root.path().join("f"), "topic\n").unwrap();
+    git(root.path(), &["commit", "-qam", "topic-f"]);
+    let pick = oid_from_rev(root.path(), "HEAD");
+    git(root.path(), &["switch", "main"]);
+    fs::write(root.path().join("f"), "main\n").unwrap();
+    git(root.path(), &["commit", "-qam", "main"]);
+    let start = oid_from_rev(root.path(), "HEAD");
+
+    let repo = open_repo(root.path());
+    let mut opts = ReplayOptions::default();
+    opts.no_commit = true;
+    start_replay_sequence(&repo, &pick_req(vec![pick], opts)).expect("pick");
+    fs::write(root.path().join("f"), "resolved\n").unwrap();
+    git(root.path(), &["add", "f"]);
+    let out = continue_replay_sequence(&repo, IDENT).expect("continue");
+    assert!(matches!(out, SequenceOutcome::Completed { .. }));
+    assert_eq!(oid_from_rev(root.path(), "HEAD"), start);
+    assert_eq!(git(root.path(), &["show", ":f"]).trim(), "resolved");
+    git_fsck_strict(root.path());
+}
+
+#[test]
+fn continue_omits_conflict_comment_lines_from_merge_msg() {
+    let root = tempfile::tempdir().expect("tempdir");
+    init_repo(root.path());
+    commit_file(root.path(), "f", "base\n", "base");
+    git(root.path(), &["switch", "-c", "topic"]);
+    fs::write(root.path().join("f"), "topic\n").unwrap();
+    git(root.path(), &["commit", "-qam", "topic-f"]);
+    let pick = oid_from_rev(root.path(), "HEAD");
+    git(root.path(), &["switch", "main"]);
+    fs::write(root.path().join("f"), "main\n").unwrap();
+    git(root.path(), &["commit", "-qam", "main"]);
+
+    let repo = open_repo(root.path());
+    start_replay_sequence(&repo, &pick_req(vec![pick], ReplayOptions::default())).expect("pick");
+    fs::write(root.path().join("f"), "resolved\n").unwrap();
+    git(root.path(), &["add", "f"]);
+    let merge_msg = root.path().join(".git/MERGE_MSG");
+    let mut msg = fs::read_to_string(&merge_msg).expect("merge msg");
+    msg.insert_str(0, "# Conflicts:\n#\tf.txt\n#\n");
+    fs::write(&merge_msg, msg).expect("write merge msg");
+    continue_replay_sequence(&repo, IDENT).expect("continue");
+    let body = git(root.path(), &["log", "-1", "--format=%B"]);
+    assert!(!body.contains("# Conflicts:"));
+    assert!(!body.contains("#\tf.txt"));
     git_fsck_strict(root.path());
 }
 

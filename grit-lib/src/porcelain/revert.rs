@@ -153,3 +153,15 @@ pub fn merge_commit_message_for_revert(
     let title = format!("Revert \"{subject_line}\"\n");
     (title, body)
 }
+
+/// Extra body paragraph when reverting a merge commit with an explicit mainline parent.
+///
+/// Wording is Grit-specific (not Git's sequencer template).
+#[must_use]
+pub fn merge_mainline_revert_note(source_oid: ObjectId, mainline_parent: ObjectId) -> String {
+    format!(
+        "Reverted merge {} using mainline parent {}.\n\n",
+        source_oid.to_hex(),
+        mainline_parent.to_hex()
+    )
+}
