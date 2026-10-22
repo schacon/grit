@@ -492,11 +492,7 @@ pub fn continue_merge(
         author: options.author.clone(),
         committer: options.committer.clone(),
         allow_empty: false,
-        sign_override: None,
-        amend: false,
-        assume_worktree_synced: false,
-        skip_pre_commit_tree_match: false,
-        staged_change_count: None,
+        ..Default::default()
     };
     let outcome = create_commit(repo, &req, progress).map_err(ContinueMergeError::Repository)?;
     Ok(ContinueOutcome {

@@ -66,7 +66,12 @@ fn merge_continue_json() {
     let (code, v) = grit_json(repo, &["merge", "--continue"]);
     assert_ne!(code, 0);
     assert_eq!(v["result"], "conflicts");
-    assert!(v["conflicts"].as_array().unwrap().iter().any(|p| p == "f"));
+    assert_eq!(v["branch"], "side");
+    let conflicts = v["conflicts"].as_array().expect("conflicts array");
+    assert!(
+        conflicts.iter().any(|c| c["path"].as_str() == Some("f")),
+        "expected conflict on f: {v}"
+    );
 
     fs::write(repo.join("f"), "resolved\n").unwrap();
     system_git_ok(repo, &["add", "f"]);
@@ -74,6 +79,34 @@ fn merge_continue_json() {
     let (code, v) = grit_json(repo, &["merge", "--continue"]);
     assert_eq!(code, 0);
     assert_eq!(v["result"], "merged");
+    assert_eq!(v["branch"], "side");
     assert!(v["oid"].as_str().is_some());
     assert!(!repo.join(".git/MERGE_HEAD").exists());
+}
+
+#[test]
+fn merge_branch_with_continue_is_usage_error() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo = tmp.path();
+    system_git_ok(repo, &["init", "-q", "-b", "main"]);
+    let out = Command::new(env!("CARGO_BIN_EXE_grit"))
+        .args(["merge", "topic", "--continue", "--json"])
+        .current_dir(repo)
+        .env("GIT_CONFIG_GLOBAL", null_device())
+        .env("GIT_CONFIG_SYSTEM", null_device())
+        .output()
+        .expect("grit");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json on stdout");
+    assert!(
+        v["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("continue") || e.contains("topic")),
+        "expected usage error JSON: {v}"
+    );
 }

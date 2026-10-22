@@ -834,7 +834,10 @@ enum Command {
     /// Merge another branch into the current one.
     Merge {
         /// Branch to merge in.
-        #[arg(required_unless_present_any = ["abort", "continue_merge"])]
+        #[arg(
+            required_unless_present_any = ["abort", "continue_merge"],
+            conflicts_with = "continue_merge"
+        )]
         branch: Option<String>,
         /// Cancel an in-progress merge and restore the pre-merge state.
         #[arg(long = "abort", conflicts_with = "continue_merge")]

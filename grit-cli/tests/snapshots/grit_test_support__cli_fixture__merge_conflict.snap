@@ -6,7 +6,7 @@ expression: payload
   "human": {
     "exit": 1,
     "stdout": "",
-    "stderr": "CONFLICT (content): f.txt\n\nAutomatic merge failed; fix conflicts and run `grit commit`, or run `grit merge --abort`.\n"
+    "stderr": "CONFLICT (content): f.txt\n\nAutomatic merge failed; fix conflicts and run `grit merge --continue`, or run `grit merge --abort`.\n"
   },
   "json": {
     "exit": 1,

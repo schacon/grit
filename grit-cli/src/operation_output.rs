@@ -148,6 +148,6 @@ pub fn render_operation_guidance_markdown(
 /// Human hint after conflicts (merge-specific wording).
 pub fn render_merge_conflict_footer_human() {
     eprintln!(
-        "\nAutomatic merge failed; fix conflicts and run `grit commit`, or run `grit merge --abort`."
+        "\nAutomatic merge failed; fix conflicts and run `grit merge --continue`, or run `grit merge --abort`."
     );
 }

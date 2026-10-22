@@ -154,7 +154,6 @@ impl NextStep {
             Self::Abort(InProgressOperation::Merge) => Some("grit merge --abort".to_owned()),
             Self::Abort(InProgressOperation::CherryPick) => Some("grit pick --abort".to_owned()),
             Self::Abort(InProgressOperation::Revert) => Some("grit revert --abort".to_owned()),
-            Self::Continue(InProgressOperation::Merge) => Some("grit merge --continue".to_owned()),
             Self::Continue(InProgressOperation::CherryPick) => {
                 Some("grit pick --continue".to_owned())
             }

@@ -4740,6 +4740,8 @@ impl core::convert::From<grit_lib::error::Error> for grit_lib::objects::bitmap::
 pub fn grit_lib::objects::bitmap::BitmapWalkError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::objects::midx::CompactError
 pub fn grit_lib::objects::midx::CompactError::from(grit_lib::error::Error) -> Self
+impl core::convert::From<grit_lib::error::Error> for grit_lib::porcelain::merge::ContinueMergeError
+pub fn grit_lib::porcelain::merge::ContinueMergeError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::porcelain::pull::PullError
 pub fn grit_lib::porcelain::pull::PullError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::refs::listing::RefQueryError
@@ -11534,6 +11536,27 @@ pub fn grit_lib::porcelain::log::normalize_glob_ref(&str) -> alloc::string::Stri
 pub fn grit_lib::porcelain::log::peel_to_commit_hex(&grit_lib::objects::odb::Odb, &str) -> core::option::Option<alloc::string::String>
 pub type grit_lib::porcelain::log::DecorationMap = std::collections::hash::map::HashMap<alloc::string::String, alloc::vec::Vec<grit_lib::porcelain::log::DecorationItem>>
 pub mod grit_lib::porcelain::merge
+pub enum grit_lib::porcelain::merge::ContinueMergeError
+pub grit_lib::porcelain::merge::ContinueMergeError::EmptyMessage
+pub grit_lib::porcelain::merge::ContinueMergeError::NoMergeInProgress
+pub grit_lib::porcelain::merge::ContinueMergeError::Repository(grit_lib::error::Error)
+pub grit_lib::porcelain::merge::ContinueMergeError::UnmergedPaths
+pub grit_lib::porcelain::merge::ContinueMergeError::UnmergedPaths::paths: alloc::vec::Vec<alloc::string::String>
+impl core::convert::From<grit_lib::error::Error> for grit_lib::porcelain::merge::ContinueMergeError
+pub fn grit_lib::porcelain::merge::ContinueMergeError::from(grit_lib::error::Error) -> Self
+impl core::error::Error for grit_lib::porcelain::merge::ContinueMergeError
+pub fn grit_lib::porcelain::merge::ContinueMergeError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for grit_lib::porcelain::merge::ContinueMergeError
+pub fn grit_lib::porcelain::merge::ContinueMergeError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::porcelain::merge::ContinueMergeError
+pub fn grit_lib::porcelain::merge::ContinueMergeError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::porcelain::merge::ContinueMergeError
+impl core::marker::Send for grit_lib::porcelain::merge::ContinueMergeError
+impl core::marker::Sync for grit_lib::porcelain::merge::ContinueMergeError
+impl core::marker::Unpin for grit_lib::porcelain::merge::ContinueMergeError
+impl core::marker::UnsafeUnpin for grit_lib::porcelain::merge::ContinueMergeError
+impl !core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::merge::ContinueMergeError
+impl !core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::merge::ContinueMergeError
 pub enum grit_lib::porcelain::merge::IntegrateBranchOutcome
 pub grit_lib::porcelain::merge::IntegrateBranchOutcome::Conflicts
 pub grit_lib::porcelain::merge::IntegrateBranchOutcome::Conflicts::details: alloc::vec::Vec<grit_lib::operation::Conflict>
@@ -11583,6 +11606,39 @@ impl core::marker::Unpin for grit_lib::operation::ConflictKind
 impl core::marker::UnsafeUnpin for grit_lib::operation::ConflictKind
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::operation::ConflictKind
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::operation::ConflictKind
+pub struct grit_lib::porcelain::merge::ContinueOptions
+pub grit_lib::porcelain::merge::ContinueOptions::author: alloc::string::String
+pub grit_lib::porcelain::merge::ContinueOptions::committer: alloc::string::String
+pub grit_lib::porcelain::merge::ContinueOptions::message: core::option::Option<alloc::string::String>
+impl core::clone::Clone for grit_lib::porcelain::merge::ContinueOptions
+pub fn grit_lib::porcelain::merge::ContinueOptions::clone(&self) -> Self
+impl core::fmt::Debug for grit_lib::porcelain::merge::ContinueOptions
+pub fn grit_lib::porcelain::merge::ContinueOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::porcelain::merge::ContinueOptions
+impl core::marker::Send for grit_lib::porcelain::merge::ContinueOptions
+impl core::marker::Sync for grit_lib::porcelain::merge::ContinueOptions
+impl core::marker::Unpin for grit_lib::porcelain::merge::ContinueOptions
+impl core::marker::UnsafeUnpin for grit_lib::porcelain::merge::ContinueOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::merge::ContinueOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::merge::ContinueOptions
+pub struct grit_lib::porcelain::merge::ContinueOutcome
+pub grit_lib::porcelain::merge::ContinueOutcome::change_id: core::option::Option<grit_lib::change_id::ChangeId>
+pub grit_lib::porcelain::merge::ContinueOutcome::oid: grit_lib::objects::ObjectId
+impl core::clone::Clone for grit_lib::porcelain::merge::ContinueOutcome
+pub fn grit_lib::porcelain::merge::ContinueOutcome::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::porcelain::merge::ContinueOutcome
+impl core::cmp::PartialEq for grit_lib::porcelain::merge::ContinueOutcome
+pub fn grit_lib::porcelain::merge::ContinueOutcome::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::porcelain::merge::ContinueOutcome
+pub fn grit_lib::porcelain::merge::ContinueOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::porcelain::merge::ContinueOutcome
+impl core::marker::Freeze for grit_lib::porcelain::merge::ContinueOutcome
+impl core::marker::Send for grit_lib::porcelain::merge::ContinueOutcome
+impl core::marker::Sync for grit_lib::porcelain::merge::ContinueOutcome
+impl core::marker::Unpin for grit_lib::porcelain::merge::ContinueOutcome
+impl core::marker::UnsafeUnpin for grit_lib::porcelain::merge::ContinueOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::merge::ContinueOutcome
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::merge::ContinueOutcome
 pub struct grit_lib::porcelain::merge::IntegrateBranchOptions
 pub grit_lib::porcelain::merge::IntegrateBranchOptions::allow_fast_forward: bool
 impl core::clone::Clone for grit_lib::porcelain::merge::IntegrateBranchOptions
@@ -11625,6 +11681,7 @@ pub fn grit_lib::porcelain::merge::abort_branch_merge(&grit_lib::repo::Repositor
 pub fn grit_lib::porcelain::merge::compose_fast_forward_index(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, &grit_lib::index::Index) -> grit_lib::error::Result<grit_lib::index::Index>
 pub fn grit_lib::porcelain::merge::compose_octopus_final_index(&grit_lib::index::Index, &mut grit_lib::index::Index)
 pub fn grit_lib::porcelain::merge::conflicts_from_tree_merge(&grit_lib::diff::merge_trees::TreeMergeOutput) -> alloc::vec::Vec<grit_lib::operation::Conflict>
+pub fn grit_lib::porcelain::merge::continue_merge(&grit_lib::repo::Repository, &grit_lib::porcelain::merge::ContinueOptions, &mut dyn grit_lib::progress::ProgressSink) -> core::result::Result<grit_lib::porcelain::merge::ContinueOutcome, grit_lib::porcelain::merge::ContinueMergeError>
 pub fn grit_lib::porcelain::merge::integrate_branch(&grit_lib::repo::Repository, &str, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, &str) -> grit_lib::error::Result<grit_lib::porcelain::merge::IntegrateBranchOutcome>
 pub fn grit_lib::porcelain::merge::integrate_branch_with_options(&grit_lib::repo::Repository, &str, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, &str, grit_lib::porcelain::merge::IntegrateBranchOptions) -> grit_lib::error::Result<grit_lib::porcelain::merge::IntegrateBranchOutcome>
 pub fn grit_lib::porcelain::merge::reduce_octopus_merge_heads(&grit_lib::repo::Repository, &[grit_lib::objects::ObjectId], &[alloc::string::String]) -> grit_lib::error::Result<(alloc::vec::Vec<grit_lib::objects::ObjectId>, alloc::vec::Vec<alloc::string::String>)>
@@ -12872,6 +12929,8 @@ impl core::convert::From<grit_lib::error::Error> for grit_lib::objects::bitmap::
 pub fn grit_lib::objects::bitmap::BitmapWalkError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::objects::midx::CompactError
 pub fn grit_lib::objects::midx::CompactError::from(grit_lib::error::Error) -> Self
+impl core::convert::From<grit_lib::error::Error> for grit_lib::porcelain::merge::ContinueMergeError
+pub fn grit_lib::porcelain::merge::ContinueMergeError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::porcelain::pull::PullError
 pub fn grit_lib::porcelain::pull::PullError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::refs::listing::RefQueryError
