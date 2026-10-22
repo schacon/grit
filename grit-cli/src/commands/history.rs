@@ -315,6 +315,7 @@ pub struct RebaseCliOutcome {
     pub rewritten: Vec<RewrittenPair>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub refs: Vec<RefPair>,
+    /// Previous and new `HEAD` commit OIDs when `HEAD`'s commit changes.
     #[serde(default)]
     pub head: Option<HeadPair>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

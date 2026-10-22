@@ -44,29 +44,12 @@
     },
     "RebaseResult": {
       "description": "High-level result of `grit rebase`.",
-      "oneOf": [
-        {
-          "description": "Every commit was replayed (or `--dry-run` printed the plan).",
-          "enum": [
-            "completed"
-          ],
-          "type": "string"
-        },
-        {
-          "description": "Replay stopped on merge conflicts.",
-          "enum": [
-            "conflicts"
-          ],
-          "type": "string"
-        },
-        {
-          "description": "`--abort` restored the pre-rebase branch tip.",
-          "enum": [
-            "aborted"
-          ],
-          "type": "string"
-        }
-      ]
+      "enum": [
+        "completed",
+        "conflicts",
+        "aborted"
+      ],
+      "type": "string"
     },
     "RefPair": {
       "description": "One ref tip before and after rewrite.",
@@ -134,7 +117,6 @@
   "description": "Result of `grit rebase` and `grit history rebase`.",
   "properties": {
     "alternatives": {
-      "description": "Mutually exclusive options (`--abort`, `--skip`) when paused.",
       "items": {
         "type": "string"
       },
@@ -144,14 +126,12 @@
       ]
     },
     "commit": {
-      "description": "Source commit that stopped the rebase, when `result` is `conflicts`.",
       "type": [
         "string",
         "null"
       ]
     },
     "conflicts": {
-      "description": "Conflicted paths when `result` is `conflicts`.",
       "items": {
         "$ref": "#/definitions/ConflictJson"
       },
@@ -161,7 +141,6 @@
       ]
     },
     "dry_run": {
-      "description": "Whether refs were left unchanged (`true` for `--dry-run`).",
       "type": "boolean"
     },
     "head": {
@@ -177,7 +156,6 @@
       "description": "Previous and new `HEAD` commit OIDs when `HEAD`'s commit changes."
     },
     "next_steps": {
-      "description": "Suggested follow-up commands when `result` is `conflicts`.",
       "items": {
         "type": "string"
       },
@@ -187,14 +165,12 @@
       ]
     },
     "operation": {
-      "description": "Always `rebase` when present.",
       "type": [
         "string",
         "null"
       ]
     },
     "refs": {
-      "description": "Planned or applied ref tip updates.",
       "items": {
         "$ref": "#/definitions/RefPair"
       },
@@ -204,7 +180,6 @@
       "$ref": "#/definitions/RebaseResult"
     },
     "rewritten": {
-      "description": "Original and replacement commit OIDs for every replayed commit.",
       "items": {
         "$ref": "#/definitions/RewrittenPair"
       },

@@ -33,6 +33,14 @@ When there is nothing to replay, human output is `Already up to date` and `--jso
 
 Shared rewrite flags match [`grit history`](history.md): `--dry-run`, `--update-refs`, `--empty`, and `--keep-committer`.
 
+### Exit codes
+
+| Code | When |
+| --- | --- |
+| **0** | Rebase completed, `--dry-run` plan printed, `--abort` succeeded, or already up to date. |
+| **1** | Replay stopped on conflicts (`result: conflicts` in `--json`). |
+| **≠ 0** | Other errors (missing upstream, no session for `--continue`, unmerged index, …). |
+
 ## Options
 
 | Option | Description |
@@ -48,14 +56,6 @@ Shared rewrite flags match [`grit history`](history.md): `--dry-run`, `--update-
 | `--keep-committer` | Preserve committer ident and timestamp on replayed commits. |
 | `--check` | Predict success or conflicts without changing refs, index, or worktree (conflicts with `--dry-run`). |
 | `-X ours\|theirs` | Auto-resolve replay conflicts in favor of the onto side (`ours`) or replayed commits (`theirs`). |
-
-## Exit codes
-
-| Code | When |
-| --- | --- |
-| **0** | Rebase completed, `--dry-run` plan printed, `--abort` succeeded, or already up to date. |
-| **1** | Replay stopped on conflicts (`result: conflicts` in `--json`). |
-| **≠ 0** | Other errors (missing upstream, no session for `--continue`, unmerged index, …). |
 
 ## Examples
 
