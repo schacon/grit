@@ -1,10 +1,17 @@
 //! Fetch from a remote and integrate the configured upstream into the current branch.
 //!
+<<<<<<< HEAD
 //! [`pull`] runs fetch, resolves the branch upstream via [`resolve_pull_integration_base`], then
 //! fast-forwards, merges, rebases local commits onto the upstream tip, or refuses
 //! when `--ff-only` / `pull.ff=only` forbids a merge commit. Rebase conflicts abort
 //! atomically (no sequencer state); stop/continue rebase is a follow-up once the
 //! shared history conflict model lands.
+=======
+//! [`pull`] runs fetch, resolves the branch upstream via [`pull_upstream_branch`], then
+//! fast-forwards, merges, or refuses when `--ff-only` / `pull.ff=only` forbids a
+//! merge commit. Rebase pulls return [`PullError::RebaseUnsupported`] until the
+//! history engine wires `pull.rebase`.
+>>>>>>> 0ddfb7765 (fix(merge): tighten SQUASH_MSG cleanup and squash conflict test)
 
 use crate::branch_tracking::resolve_pull_integration_base;
 use crate::change_id::{logical_change_id_for_commit, ChangeId};
