@@ -313,6 +313,17 @@ enum HistoryAction {
         #[command(flatten)]
         shared: commands::history::HistoryRewriteArgs,
     },
+    /// Replay local commits onto a new base (same as top-level `grit rebase`).
+    Rebase {
+        /// Commits to replay are those reachable from `HEAD` but not from this revision (defaults to `@{upstream}`).
+        #[arg(value_name = "UPSTREAM")]
+        upstream: Option<String>,
+        /// Replay onto this commit instead of `UPSTREAM`.
+        #[arg(long = "onto", value_name = "REV")]
+        onto: Option<String>,
+        #[command(flatten)]
+        shared: commands::history::HistoryRewriteArgs,
+    },
     /// Peel path-limited changes out of a commit into a new parent and replay descendants.
     Split {
         /// Commit to split (revision spec).
@@ -1134,6 +1145,17 @@ enum Command {
         /// Fetch and report whether a fast-forward is possible without changing the branch.
         #[arg(long = "check", conflicts_with_all = ["autostash", "ff_only", "no_rebase", "rebase"])]
         check: bool,
+    },
+    /// Replay local commits onto a new base (atomic ref update).
+    Rebase {
+        /// Commits to replay are those reachable from `HEAD` but not from this revision (defaults to `@{upstream}`).
+        #[arg(value_name = "UPSTREAM")]
+        upstream: Option<String>,
+        /// Replay onto this commit instead of `UPSTREAM`.
+        #[arg(long = "onto", value_name = "REV")]
+        onto: Option<String>,
+        #[command(flatten)]
+        shared: commands::history::HistoryRewriteArgs,
     },
     /// Publish refs to a remote.
     Push {
@@ -2245,6 +2267,15 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 opts,
                 ctx,
             ),
+            HistoryAction::Rebase {
+                upstream,
+                onto,
+                shared,
+            } => emit(
+                &commands::history::run_rebase(upstream, onto, &shared)?,
+                opts,
+                ctx,
+            ),
             HistoryAction::Absorb { base, shared } => emit(
                 &commands::history::run_absorb(base.as_deref(), &shared)?,
                 opts,
@@ -2400,6 +2431,15 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             }
             Ok(())
         }
+        Command::Rebase {
+            upstream,
+            onto,
+            shared,
+        } => emit(
+            &commands::history::run_rebase(upstream, onto, &shared)?,
+            opts,
+            ctx,
+        ),
         Command::Push {
             tags,
             delete,

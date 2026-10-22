@@ -12,10 +12,11 @@ grit history drop <commit>
 grit history move <commit> (--before <anchor> | --after <anchor>)
 grit history reword <commit> (-m <message> | --message-file <path|-> | --author <ident>)
 grit history reword <commit> --author <ident> [-m <message>]
-grit history drop|move|reword|fixup|squash|absorb … [--dry-run] [--update-refs=(branches|head)] [--empty=(drop|keep|abort)] [--keep-committer]
+grit history drop|move|reword|fixup|squash|absorb|rebase … [--dry-run] [--update-refs=(branches|head)] [--empty=(drop|keep|abort)] [--keep-committer]
 grit history fixup <commit> [-m|--message-file]
 grit history squash <range>… [-m|--message-file|--combine]
 grit history absorb [--base <rev>]
+grit history rebase [<upstream>] [--onto <rev>]
 grit history split <commit> -m <message> [--rest-message <message>] -- <path>…
 grit history undo [--dry-run]
 ```
@@ -62,6 +63,10 @@ Assign **staged** hunks into the commits that last touched overlapping lines (be
 
 `--base` is exclusive: commits at and before the base are not considered. When omitted, grit hides other local branch tips, applies an upstream fork-point when configured, and caps the stack at ten commits.
 
+### `rebase`
+
+Replay commits on the current branch onto `<upstream>` (or `--onto`), matching [`grit rebase`](rebase.md). Prefer the top-level command for everyday use; `grit history rebase` shares the same handler and JSON shape (`operation: "rebase"`).
+
 ### `undo`
 
 Restore branch tips (and the worktree when `HEAD`'s tree changed) from the last successful history rewrite that moved refs. Grit records each apply in `.git/grit/history-last` (ignored by `git fsck --strict`); `undo` inverts that plan when every recorded ref is still at its post-rewrite tip. A second `undo` redoes the rewrite. Recorded applies always write reflog entries for moved refs (even when `core.logAllRefUpdates=false`) so the pre-rewrite tips stay reachable until undo or reflog expiry.
@@ -92,6 +97,8 @@ Provide `-m` / `--message-file` for the new parent commit and one or more paths 
 | `--author` | Replacement author ident (`Name <email>` or bare email). |
 | `--dry-run` | List ref updates without moving refs. |
 | `--update-refs` | `branches` (default) or `head`. |
+| `--empty` | `drop` (default), `keep`, or `abort` when a replay would become empty. |
+| `--keep-committer` | Preserve committer ident and timestamp on replayed commits. |
 
 ### `split` options
 

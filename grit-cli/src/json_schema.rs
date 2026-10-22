@@ -171,6 +171,8 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<HistoryRewriteOutcome>("history.move"),
         entry::<HistoryRewriteOutcome>("history.fixup"),
         entry::<HistoryRewriteOutcome>("history.squash"),
+        entry::<HistoryRewriteOutcome>("history.rebase"),
+        entry::<HistoryRewriteOutcome>("rebase"),
         entry::<HistoryRewriteOutcome>("history.split"),
         entry::<HistoryAbsorbOutcome>("history.absorb"),
         entry::<HistoryRewriteOutcome>("history.undo"),
@@ -306,9 +308,11 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
             Some("squash") => "history.squash",
             Some("split") => "history.split",
             Some("absorb") => "history.absorb",
+            Some("rebase") => "history.rebase",
             Some("undo") => "history.undo",
             _ => return None,
         },
+        "rebase" => "rebase",
         cmd if NO_JSON_COMMANDS.contains(&cmd) => return None,
         cmd => cmd,
     };
@@ -494,7 +498,6 @@ pub const SNAPSHOT_FILE_PREFIX: &str = "grit_test_support__cli_fixture__";
 /// output snapshot coverage still requires human/json/markdown sections for render stems.
 pub const SNAPSHOT_JSON_SCHEMA_SKIP: &[&str] = &[
     "auth_render",
-    "history_rebase",
     "log_json_filter_commits_oid",
     "update_render",
 ];
