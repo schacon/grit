@@ -180,6 +180,20 @@ impl MergeOutcome {
         }
     }
 
+    /// Render a library integration result labelled with the merge source.
+    pub fn from_integrate(label: &str, outcome: IntegrateBranchOutcome) -> Self {
+        match outcome {
+            IntegrateBranchOutcome::UpToDate => Self::up_to_date(label),
+            IntegrateBranchOutcome::FastForward { oid, change_id } => {
+                Self::fast_forward(label, oid, change_id)
+            }
+            IntegrateBranchOutcome::Merged { oid, change_id } => {
+                Self::merged(label, oid, change_id)
+            }
+            IntegrateBranchOutcome::Conflicts { details, .. } => Self::conflicts(label, details),
+        }
+    }
+
     /// Reserved for historical merge JSON (`set_upstream` moved to `grit pull`).
     #[allow(dead_code)]
     pub fn set_upstream(
