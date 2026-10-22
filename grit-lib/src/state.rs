@@ -150,6 +150,7 @@ impl NextStep {
             Self::ResolveConflicts => Some("grit diff".to_owned()),
             Self::StageResolved => Some("grit add .".to_owned()),
             Self::Commit => Some("grit commit \"message\"".to_owned()),
+            Self::Continue(InProgressOperation::Merge) => Some("grit merge --continue".to_owned()),
             Self::Abort(InProgressOperation::Merge) => Some("grit merge --abort".to_owned()),
             Self::Abort(InProgressOperation::CherryPick) => Some("grit pick --abort".to_owned()),
             Self::Abort(InProgressOperation::Revert) => Some("grit revert --abort".to_owned()),
@@ -219,7 +220,7 @@ pub fn operation_next_steps(
             if has_unmerged_conflicts {
                 vec![NextStep::ResolveConflicts, NextStep::StageResolved]
             } else {
-                vec![NextStep::Commit]
+                vec![NextStep::Continue(InProgressOperation::Merge)]
             }
         }
         InProgressOperation::CherryPick | InProgressOperation::Revert => {
