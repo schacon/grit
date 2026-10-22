@@ -18,8 +18,9 @@ use anyhow::{Context, Result};
 use grit_lib::diff::{
     apply_diff_filter, apply_rename_detection_to_diff_entries, build_file_diffs, commit_diff_files,
     diff_commits_with_renames_and_policy, diff_index_to_tree_with_renames,
-    diff_index_to_worktree_with_renames, diff_trees_with_renames_and_policy, hunk_ids,
-    line_change_counts, read_submodule_head_oid, read_worktree_side_bytes_for_diff,
+    diff_index_to_worktree_with_renames, diff_trees_with_renames_and_policy,
+    hunk_ids_with_duplicate_peers, line_change_counts, read_submodule_head_oid,
+    read_worktree_side_bytes_for_diff,
     structured::{
         format_hunk_range, structured_file_diff, SideBytes, StructuredFileDiff, StructuredLineKind,
     },
@@ -600,7 +601,7 @@ fn lib_file_to_cli(f: grit_lib::diff::ListedFileDiff, detail: DiffDetail) -> Fil
         )
     } else {
         f.structured
-            .map(|structured| hunk_assign_ids(DiffSide::Other, &f.path, structured.hunks))
+            .map(|structured| hunk_assign_ids(DiffSide::Other, &f.path, structured.hunks, &[]))
     };
     FileDiff {
         path: f.path,
@@ -959,19 +960,39 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
             anyhow::bail!("--staged cannot be combined with revision arguments or --against");
         }
         let pathspecs = resolve_worktree_diff_pathspecs(&repo, &path_args)?;
-        let entries = filter_diff_entries(staged_entries(&repo, &diff_options)?, &repo, &pathspecs);
+        let mut index = repo
+            .index_handle()
+            .load()
+            .context("could not load the index")?;
+        let entries = filter_diff_entries(
+            staged_entries_in_index(&repo, &index, &diff_options)?,
+            &repo,
+            &pathspecs,
+        );
         let outcome = match detail {
             DiffDetail::Stat | DiffDetail::NameOnly | DiffDetail::NameStatus => {
                 outcome_from_entries(&repo, entries, detail, diff_options, format)?
             }
-            _ => outcome_from_changes(
-                staged_changes_from_entries(&repo, entries)?,
-                &config,
-                &thread_policy,
-                diff_options,
-                format,
-                DiffSide::Staged,
-            ),
+            _ => {
+                let unstaged_peer = filter_file_changes(
+                    unstaged_changes_from_entries_with_index(
+                        &repo,
+                        unstaged_entries_in_index(&repo, &mut index, &diff_options)?,
+                        &index,
+                    )?,
+                    &repo,
+                    &pathspecs,
+                );
+                outcome_from_changes(
+                    staged_changes_from_entries(&repo, entries)?,
+                    unstaged_peer,
+                    &config,
+                    &thread_policy,
+                    diff_options,
+                    format,
+                    DiffSide::Staged,
+                )
+            }
         };
         return Ok(finish_outcome(&repo, format, outcome));
     }
@@ -980,8 +1001,15 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
             anyhow::bail!("--unstaged cannot be combined with revision arguments or --against");
         }
         let pathspecs = resolve_worktree_diff_pathspecs(&repo, &path_args)?;
-        let entries =
-            filter_diff_entries(unstaged_entries(&repo, &diff_options)?, &repo, &pathspecs);
+        let mut index = repo
+            .index_handle()
+            .load()
+            .context("could not load the index")?;
+        let entries = filter_diff_entries(
+            unstaged_entries_in_index(&repo, &mut index, &diff_options)?,
+            &repo,
+            &pathspecs,
+        );
         let outcome = match detail {
             DiffDetail::Stat => outcome_stat_from_changes(
                 unstaged_changes_from_entries(&repo, entries)?,
@@ -991,14 +1019,29 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
             DiffDetail::NameOnly | DiffDetail::NameStatus => {
                 outcome_from_entries(&repo, entries, detail, diff_options, format)?
             }
-            _ => outcome_from_changes(
-                unstaged_changes_from_entries(&repo, entries)?,
-                &config,
-                &thread_policy,
-                diff_options,
-                format,
-                DiffSide::Unstaged,
-            ),
+            _ => {
+                let staged_peer = filter_file_changes(
+                    staged_changes_from_entries(
+                        &repo,
+                        filter_diff_entries(
+                            staged_entries_in_index(&repo, &index, &diff_options)?,
+                            &repo,
+                            &pathspecs,
+                        ),
+                    )?,
+                    &repo,
+                    &pathspecs,
+                );
+                outcome_from_changes(
+                    unstaged_changes_from_entries_with_index(&repo, entries, &index)?,
+                    staged_peer,
+                    &config,
+                    &thread_policy,
+                    diff_options,
+                    format,
+                    DiffSide::Unstaged,
+                )
+            }
         };
         return Ok(finish_outcome(&repo, format, outcome));
     }
@@ -1026,6 +1069,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
                 DiffDetail::Stat => outcome_stat_from_changes(changes, diff_options, format),
                 DiffDetail::Patch => outcome_from_changes(
                     changes,
+                    Vec::new(),
                     &config,
                     &thread_policy,
                     diff_options,
@@ -1034,6 +1078,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
                 ),
                 _ => outcome_from_changes(
                     changes,
+                    Vec::new(),
                     &config,
                     &thread_policy,
                     diff_options,
@@ -1134,6 +1179,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
     let outcome = match detail {
         DiffDetail::Patch => outcome_from_changes(
             filtered,
+            Vec::new(),
             &config,
             &thread_policy,
             diff_options,
@@ -1146,6 +1192,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
         }
         _ => outcome_from_changes(
             filtered,
+            Vec::new(),
             &config,
             &thread_policy,
             diff_options,
@@ -1247,6 +1294,7 @@ pub fn outcome_from_tree_entries(
         format,
         outcome_from_changes(
             changes,
+            Vec::new(),
             &config,
             &thread_policy,
             diff_options,
@@ -1296,7 +1344,7 @@ fn file_diff_from_lib(f: grit_lib::diff::FileDiff, detail: DiffDetail) -> FileDi
         None
     };
     let hunks = if detail == DiffDetail::Patch {
-        Some(hunk_assign_ids(DiffSide::Other, &f.path, f.hunks))
+        Some(hunk_assign_ids(DiffSide::Other, &f.path, f.hunks, &[]))
     } else {
         None
     };
@@ -1331,7 +1379,7 @@ fn file_diff_from_tree_structured(t: TreeDiffStructured) -> FileDiff {
         .filter(|op| op.as_str() != path)
         .cloned();
     let structured = t.structured;
-    let hunks = hunk_assign_ids(DiffSide::Other, &path, structured.hunks);
+    let hunks = hunk_assign_ids(DiffSide::Other, &path, structured.hunks, &[]);
     FileDiff {
         path,
         old_path,
@@ -1353,10 +1401,11 @@ fn hunk_assign_ids(
     side: DiffSide,
     path: &str,
     hunks: Vec<grit_lib::diff::structured::StructuredHunk>,
+    peer_hunks: &[grit_lib::diff::structured::StructuredHunk],
 ) -> Vec<Hunk> {
     let assign = matches!(side, DiffSide::Unstaged | DiffSide::Staged);
     let ids = if assign {
-        hunk_ids(side, path, &hunks)
+        hunk_ids_with_duplicate_peers(side, path, &hunks, peer_hunks)
     } else {
         Vec::new()
     };
@@ -1412,19 +1461,38 @@ fn hunk_from_structured(h: grit_lib::diff::structured::StructuredHunk) -> Hunk {
 
 fn outcome_from_changes(
     changes: Vec<FileChange>,
+    peer_changes: Vec<FileChange>,
     config: &grit_lib::config::ConfigSet,
     thread_policy: &grit_lib::parallel::ThreadPolicy,
     diff_options: DiffOptions,
     format: DiffFormatArgs,
     side: DiffSide,
 ) -> DiffOutcome {
+    use std::collections::HashMap;
+
     let diff_options = diff_options.cap_word_level_inline_for_changed_files(changes.len());
+    let peer_hunks_by_path: HashMap<String, Vec<grit_lib::diff::structured::StructuredHunk>> =
+        if matches!(side, DiffSide::Unstaged | DiffSide::Staged) {
+            peer_changes
+                .into_iter()
+                .map(|fc| {
+                    let structured = structured_for_file_change(&fc, diff_options.clone());
+                    (fc.path, structured.hunks)
+                })
+                .collect()
+        } else {
+            HashMap::new()
+        };
     let mut par_opts = thread_policy.resolve(ParallelOp::DiffContent, config);
     par_opts.min_items = 0;
     let est_bytes = changes.len().saturating_mul(8192);
     use grit_lib::parallel::par_map;
     let files: Vec<FileDiff> = par_map(&changes, par_opts, est_bytes, |fc| {
-        build_file_diff(fc, diff_options.clone(), side)
+        let peer_hunks = peer_hunks_by_path
+            .get(&fc.path)
+            .map(|h| h.as_slice())
+            .unwrap_or(&[]);
+        build_file_diff(fc, diff_options.clone(), side, peer_hunks)
     })
     .into_iter()
     .filter(|f| {
@@ -1688,19 +1756,27 @@ fn unstaged_entries(
     repo: &grit_lib::repo::Repository,
     diff_options: &DiffOptions,
 ) -> Result<Vec<DiffEntry>> {
-    let work_tree = repo.work_tree().context("grit diff needs a working tree")?;
     let mut index = repo
         .index_handle()
         .load()
         .context("could not load the index")?;
+    unstaged_entries_in_index(repo, &mut index, diff_options)
+}
+
+fn unstaged_entries_in_index(
+    repo: &grit_lib::repo::Repository,
+    index: &mut Index,
+    diff_options: &DiffOptions,
+) -> Result<Vec<DiffEntry>> {
+    let work_tree = repo.work_tree().context("grit diff needs a working tree")?;
     let rules_arc = std::sync::Arc::new(std::sync::Mutex::new(
-        WorktreeRules::from_repository(repo, &index).context("could not load worktree rules")?,
+        WorktreeRules::from_repository(repo, index).context("could not load worktree rules")?,
     ));
     let config_arc = rules_arc
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .config_arc();
-    let diff_index_mtime = grit_lib::diff::index_mtime_for_diff(&index, None);
+    let diff_index_mtime = grit_lib::diff::index_mtime_for_diff(index, None);
     let diff_opts = DiffIndexToWorktreeOptions {
         repository_git_dir: Some(repo.git_dir().to_path_buf()),
         index_mtime: diff_index_mtime,
@@ -1715,7 +1791,7 @@ fn unstaged_entries(
     };
     let (mut entries, _) = diff_index_to_worktree_with_renames(
         repo,
-        &mut index,
+        index,
         work_tree,
         diff_opts,
         rename_similarity_threshold(diff_options),
@@ -1738,17 +1814,25 @@ fn unstaged_changes_from_entries(
     repo: &grit_lib::repo::Repository,
     entries: Vec<DiffEntry>,
 ) -> Result<Vec<FileChange>> {
-    let work_tree = repo.work_tree().context("grit diff needs a working tree")?;
     let index = repo
         .index_handle()
         .load()
         .context("could not load the index")?;
+    unstaged_changes_from_entries_with_index(repo, entries, &index)
+}
+
+fn unstaged_changes_from_entries_with_index(
+    repo: &grit_lib::repo::Repository,
+    entries: Vec<DiffEntry>,
+    index: &Index,
+) -> Result<Vec<FileChange>> {
+    let work_tree = repo.work_tree().context("grit diff needs a working tree")?;
     let rules_arc = std::sync::Arc::new(std::sync::Mutex::new(
-        WorktreeRules::from_repository(repo, &index).context("could not load worktree rules")?,
+        WorktreeRules::from_repository(repo, index).context("could not load worktree rules")?,
     ));
     let side = WorktreeDiffSide {
         work_tree,
-        index: &index,
+        index,
         rules: std::sync::Arc::clone(&rules_arc),
     };
     entries
@@ -1912,20 +1996,28 @@ fn staged_entries(
     repo: &grit_lib::repo::Repository,
     diff_options: &DiffOptions,
 ) -> Result<Vec<DiffEntry>> {
+    let index = repo
+        .index_handle()
+        .load()
+        .context("could not load the index")?;
+    staged_entries_in_index(repo, &index, diff_options)
+}
+
+fn staged_entries_in_index(
+    repo: &grit_lib::repo::Repository,
+    index: &Index,
+    diff_options: &DiffOptions,
+) -> Result<Vec<DiffEntry>> {
     let head = resolve_head(repo.git_dir()).context("could not resolve HEAD")?;
     let head_tree = match head.oid() {
         Some(oid) => Some(context::commit_tree(repo, oid)?),
         None => None,
     };
-    let index = repo
-        .index_handle()
-        .load()
-        .context("could not load the index")?;
     let config = repo.config().context("could not load config")?;
     let thread_policy = repo.thread_policy();
     let mut entries = diff_index_to_tree_with_renames(
         repo.odb(),
-        &index,
+        index,
         head_tree.as_ref(),
         false,
         rename_similarity_threshold(diff_options),
@@ -2303,9 +2395,14 @@ fn structured_for_file_change(fc: &FileChange, diff_options: DiffOptions) -> Str
     }
 }
 
-fn build_file_diff(fc: &FileChange, diff_options: DiffOptions, side: DiffSide) -> FileDiff {
+fn build_file_diff(
+    fc: &FileChange,
+    diff_options: DiffOptions,
+    side: DiffSide,
+    peer_hunks: &[grit_lib::diff::structured::StructuredHunk],
+) -> FileDiff {
     let structured = structured_for_file_change(fc, diff_options);
-    let hunks = hunk_assign_ids(side, &fc.path, structured.hunks);
+    let hunks = hunk_assign_ids(side, &fc.path, structured.hunks, peer_hunks);
 
     FileDiff {
         path: fc.path.clone(),
