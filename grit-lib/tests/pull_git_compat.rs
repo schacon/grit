@@ -9,6 +9,7 @@ use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::pull::{
     pull, resolve_pull_mode, PullError, PullMode, PullOptions, PullResult,
 };
+use grit_lib::porcelain::stash::list_stashes;
 use grit_lib::refs::resolve_ref;
 use grit_lib::remote::fetch::NoProgress;
 use grit_lib::remote::transfer::{FetchOptions, TagMode};
@@ -554,8 +555,13 @@ fn pull_dry_run_leaves_head_unchanged() {
 #[test]
 fn pull_autostash_restored_when_fetch_fails() {
     let (grit_dir, _git_dir) = setup_tracked_pair("autostash-fetch-err");
-    write_file(&grit_dir, "dirty.txt", "keep-me\n");
+    write_file(&grit_dir, "f", "local edit\n");
+    write_file(&grit_dir, "u", "untracked\n");
     let repo = open(&grit_dir);
+    assert!(
+        list_stashes(&repo).expect("list stashes").is_empty(),
+        "pre-pull stash list must be empty"
+    );
     let err = try_pull_grit(
         &repo,
         &PullOptions {
@@ -569,8 +575,57 @@ fn pull_autostash_restored_when_fetch_fails() {
     .expect_err("missing remote must fail");
     assert!(matches!(err, PullError::Remote(_)));
     assert_eq!(
-        fs::read_to_string(grit_dir.join("dirty.txt")).expect("read"),
-        "keep-me\n"
+        fs::read_to_string(grit_dir.join("f")).expect("read tracked"),
+        "local edit\n"
+    );
+    assert_eq!(
+        fs::read_to_string(grit_dir.join("u")).expect("read untracked"),
+        "untracked\n"
+    );
+    assert!(
+        list_stashes(&repo)
+            .expect("list stashes after abort")
+            .is_empty(),
+        "operation autostash must be dropped after conflict-free restore"
+    );
+}
+
+#[test]
+fn pull_explicit_fetch_dry_run_without_fetch_head() {
+    let root = unique_tmp("pull-git", "dry-run-no-fetch-head");
+    let origin = root.join("origin");
+    fs::create_dir_all(&origin).expect("origin");
+    git(&origin, &["init", "-q", "-b", "main"]);
+    commit(&origin, "f", "seed");
+
+    let grit_dir = root.join("grit");
+    fs::create_dir_all(&grit_dir).expect("grit");
+    git(&grit_dir, &["init", "-q", "-b", "main"]);
+    grit_identity(&grit_dir);
+    commit(&grit_dir, "local", "local-only");
+    assert!(
+        !grit_dir.join(".git/FETCH_HEAD").exists(),
+        "repo must not have FETCH_HEAD before explicit fetch dry-run"
+    );
+
+    let repo = open(&grit_dir);
+    let head_before = rev(&grit_dir, "HEAD");
+    let mut fetch = fetch_opts(&Environment::empty());
+    fetch.dry_run = true;
+    let outcome = pull_grit(
+        &repo,
+        &PullOptions {
+            remote: Some(origin.to_str().unwrap().into()),
+            branch: Some("main".into()),
+            fetch,
+            ..PullOptions::default()
+        },
+    );
+    assert_eq!(outcome.result, PullResult::UpToDate);
+    assert_eq!(rev(&grit_dir, "HEAD"), head_before);
+    assert!(
+        !grit_dir.join(".git/FETCH_HEAD").exists(),
+        "fetch dry-run must not write FETCH_HEAD"
     );
 }
 

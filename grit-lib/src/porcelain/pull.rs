@@ -1,6 +1,6 @@
 //! Fetch from a remote and integrate the configured upstream into the current branch.
 //!
-//! [`pull`] runs fetch, resolves the branch upstream via [`pull_upstream_branch`], then
+//! [`pull`] runs fetch, resolves the branch upstream via [`resolve_pull_integration_base`], then
 //! fast-forwards, merges, rebases local commits onto the upstream tip, or refuses
 //! when `--ff-only` / `pull.ff=only` forbids a merge commit. Rebase conflicts abort
 //! atomically (no sequencer state); stop/continue rebase is a follow-up once the
@@ -356,16 +356,6 @@ where
         .unwrap_or_else(|| DEFAULT_REMOTE.to_owned());
 
     let integration = resolve_pull_integration(config.as_ref(), Some(&short_name), options.mode)?;
-    let autostash = resolve_pull_autostash(config.as_ref(), integration.mode, options.autostash)
-        && !options.check;
-
-    let identity = checkout_reflog_identity(repo);
-    let stash_oid = if autostash {
-        push_operation_autostash(repo, &identity).map_err(PullError::Repository)?
-    } else {
-        None
-    };
-
     let (explicit_fetch, branch_refspecs) = pull_fetch_refspecs(options);
     let mut fetch_opts = options.fetch.clone();
     fetch_opts.refspecs = branch_refspecs;
@@ -377,6 +367,17 @@ where
     }
     let fetch_dry_run = fetch_opts.dry_run;
 
+    let autostash = resolve_pull_autostash(config.as_ref(), integration.mode, options.autostash)
+        && !options.check
+        && !fetch_dry_run;
+
+    let identity = checkout_reflog_identity(repo);
+    let stash_oid = if autostash {
+        push_operation_autostash(repo, &identity).map_err(PullError::Repository)?
+    } else {
+        None
+    };
+
     let core: std::result::Result<PullOutcome, PullError> = (|| {
         if remote_name != "." {
             let remote =
@@ -386,19 +387,10 @@ where
                 .map_err(PullError::Remote)?;
         }
 
-        let upstream =
-            resolve_pull_integration_base(repo, &short_name, &remote_name, explicit_fetch).ok_or(
-                PullError::NoUpstream {
-                    branch: short_name.clone(),
-                },
-            )?;
-        let label = upstream.name.clone();
-        let upstream_oid = upstream.oid;
-
         if fetch_dry_run {
             return Ok(PullOutcome {
                 result: PullResult::UpToDate,
-                label,
+                label: short_name.clone(),
                 oid: head_oid,
                 change_id: head_oid
                     .and_then(|oid| logical_change_id_for_commit(repo, oid).ok())
@@ -410,6 +402,15 @@ where
                 check: None,
             });
         }
+
+        let upstream =
+            resolve_pull_integration_base(repo, &short_name, &remote_name, explicit_fetch).ok_or(
+                PullError::NoUpstream {
+                    branch: short_name.clone(),
+                },
+            )?;
+        let label = upstream.name.clone();
+        let upstream_oid = upstream.oid;
 
         if options.check {
             return pull_check_outcome(repo, head_oid, upstream_oid, &label, integration);

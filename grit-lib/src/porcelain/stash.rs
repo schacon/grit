@@ -1758,7 +1758,10 @@ pub fn restore_operation_autostash(
     let work_tree = repo
         .work_tree()
         .ok_or_else(|| Error::Message("cannot restore autostash in a bare repository".into()))?;
-    let _ = apply_stash(repo, work_tree, stash_oid, false, identity)?;
+    let conflicts = apply_stash(repo, work_tree, stash_oid, false, identity)?;
+    if !conflicts {
+        let _ = drop_stash_commit(repo.git_dir(), stash_oid)?;
+    }
     Ok(())
 }
 
