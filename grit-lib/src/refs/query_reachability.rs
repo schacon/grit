@@ -101,7 +101,12 @@ fn peel_ref_tip_commit(
     peeled: Option<ObjectId>,
 ) -> std::result::Result<Option<ObjectId>, RefQueryError> {
     if let Some(p) = peeled {
-        return Ok(Some(p));
+        if matches!(
+            repo.odb().read_info(&p),
+            Ok(info) if info.kind == ObjectKind::Commit
+        ) {
+            return Ok(Some(p));
+        }
     }
     match repo.odb().peel_to_commit(ref_oid) {
         Ok(opt) => {

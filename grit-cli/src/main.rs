@@ -1281,7 +1281,14 @@ enum Command {
         #[arg(value_name = "TARGET", conflicts_with_all = ["object", "verify"])]
         target: Option<String>,
         /// List tags matching `PATTERN` (repeatable). Omit `PATTERN` to list all tags.
-        #[arg(short = 'l', long = "list", value_name = "PATTERN", num_args = 0..=1)]
+        #[arg(
+            short = 'l',
+            long = "list",
+            value_name = "PATTERN",
+            num_args = 0..=1,
+            default_missing_value = "",
+            action = clap::ArgAction::Append
+        )]
         list: Vec<String>,
         /// Sort listed tags by version, date, or name.
         #[arg(long = "sort", value_enum, default_value_t = commands::tag::TagListSort::Version)]

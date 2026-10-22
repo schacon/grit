@@ -392,6 +392,33 @@ fn points_at_deep_tag_chain_matches_git() {
 }
 
 #[test]
+fn contains_excludes_tree_tag_without_commit_tip() {
+    if !git_interop_available(Backend::Files) {
+        return;
+    }
+    let root = tempfile::tempdir().expect("tempdir");
+    let worktree = root.path();
+    let repo = init_repo(worktree, Backend::Files);
+    git(worktree, &["commit", "--allow-empty", "-q", "-m", "base"]);
+    let tree = git(worktree, &["rev-parse", "HEAD^{tree}"])
+        .trim()
+        .to_string();
+    git(worktree, &["tag", "-a", "tree-tag", "-m", "tree", &tree]);
+    git(worktree, &["tag", "lightweight-tree", &tree]);
+    let target = ObjectId::from_hex(git(worktree, &["rev-parse", "HEAD"]).trim()).expect("target");
+    assert_same(
+        worktree,
+        &repo,
+        &["refs/tags/", &format!("--contains={target}")],
+        RefQuery {
+            namespaces: vec![RefNamespace::Tags],
+            contains: vec![target],
+            ..RefQuery::default()
+        },
+    );
+}
+
+#[test]
 fn contains_missing_object_is_typed() {
     if !git_interop_available(Backend::Files) {
         return;
