@@ -586,6 +586,12 @@ fn rename_branch_config_section(
 /// Display name for configured upstream (`origin/main` from remote + merge ref).
 #[must_use]
 pub fn upstream_tracking_display(remote: &str, merge: &str) -> String {
+    if remote == "." {
+        return merge
+            .strip_prefix("refs/heads/")
+            .unwrap_or(merge)
+            .to_owned();
+    }
     merge
         .strip_prefix("refs/heads/")
         .map(|tail| format!("{remote}/{tail}"))
@@ -932,6 +938,11 @@ mod tests {
         for branch in &list.branches {
             assert_eq!(branch.current, branch.name == current, "{branch:?}");
         }
+    }
+
+    #[test]
+    fn upstream_tracking_display_local_branch_uses_short_name() {
+        assert_eq!(upstream_tracking_display(".", "refs/heads/base"), "base");
     }
 
     #[test]

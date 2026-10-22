@@ -163,6 +163,49 @@ fn delete_rejects_force_flag() {
 }
 
 #[test]
+fn rename_positional_old_with_single_move_arg() {
+    let root = init_repo();
+    git(&root, &["branch", "old"]);
+    git(&root, &["switch", "-q", "main"]);
+    assert!(git_ref_exists(&root, "old"));
+
+    let v = json_ok(&root, &["branch", "old", "-m", "new"]);
+    assert_eq!(v["action"], "rename");
+    assert_eq!(v["old"], "old");
+    assert_eq!(v["new"], "new");
+    assert!(!git_ref_exists(&root, "old"));
+    assert!(git_ref_exists(&root, "new"));
+}
+
+#[test]
+fn local_track_dry_run_upstream_matches_live_create() {
+    let root = init_repo();
+    git(&root, &["branch", "base"]);
+    git(&root, &["commit", "-q", "--allow-empty", "-m", "c3"]);
+
+    let preview = json_ok(&root, &["branch", "topic", "base", "--track", "--dry-run"]);
+    assert_eq!(preview["upstream"], "base");
+
+    let live = json_ok(&root, &["branch", "topic", "base", "--track"]);
+    assert_eq!(live["upstream"], "base");
+}
+
+#[test]
+fn delete_with_upstream_flags_is_rejected() {
+    let root = init_repo();
+    git(&root, &["branch", "topic"]);
+    for args in [
+        &["branch", "-d", "topic", "-u", "main"][..],
+        &["branch", "-D", "topic", "-m", "other"][..],
+        &["branch", "-D", "topic", "main~1"][..],
+    ] {
+        let out = grit(&root, args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+    }
+    assert!(git_ref_exists(&root, "topic"));
+}
+
+#[test]
 fn rename_and_force_move_match_git() {
     let root = init_repo();
     git(&root, &["branch", "old"]);

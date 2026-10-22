@@ -285,15 +285,26 @@ pub fn run(opts: BranchRunOptions) -> Result<BranchOutcome> {
             "`--force` does not delete branches; use `--force-delete` (or `-D`) when the branch is not fully merged",
         ));
     }
+    let deleting = opts.delete || opts.force_delete;
     if (opts.delete || opts.force_delete) && (opts.rename.is_some() || opts.force_rename.is_some())
     {
         return Err(branch_usage("cannot combine `--delete` with `--move`"));
+    }
+    if deleting && opts.unset_upstream {
+        return Err(branch_usage(
+            "cannot combine `--delete` with `--unset-upstream`",
+        ));
+    }
+    if deleting && opts.set_upstream_to.is_some() {
+        return Err(branch_usage(
+            "cannot combine `--delete` with `--set-upstream-to`",
+        ));
     }
     if opts.unset_upstream && opts.set_upstream_to.is_some() {
         bail!("cannot combine `--unset-upstream` with `--set-upstream-to`");
     }
     if opts.start.is_some()
-        && (opts.delete
+        && (deleting
             || opts.unset_upstream
             || opts.set_upstream_to.is_some()
             || opts.rename.is_some()
@@ -360,9 +371,13 @@ fn resolve_rename(
     let current = current_branch_short(repo).ok();
     Ok(Some(match args.len() {
         1 => {
-            let old = current.ok_or_else(|| {
-                anyhow::anyhow!("branch name required when HEAD is not on a branch")
-            })?;
+            let old = if let Some(name) = &opts.name {
+                name.clone()
+            } else {
+                current.ok_or_else(|| {
+                    anyhow::anyhow!("branch name required when HEAD is not on a branch")
+                })?
+            };
             (old, args[0].clone(), force)
         }
         2 => (args[0].clone(), args[1].clone(), force),
