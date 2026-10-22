@@ -9,8 +9,8 @@ use crate::error::{Error, Result};
 use crate::objects::{ObjectId, ObjectKind};
 use crate::repo::Repository;
 use crate::tree_sha256::{
-    tree_sha256, TreeSha256, TreeSha256Options, TreeSha256Report, TREE_SHA256_EXCLUDED_HEADER,
-    TREE_SHA256_HEADER,
+    tree_sha256, MissingSubmodule, TreeSha256, TreeSha256Options, TreeSha256Report,
+    TREE_SHA256_EXCLUDED_HEADER, TREE_SHA256_HEADER,
 };
 
 /// Options for [`verify_tag`].
@@ -29,6 +29,8 @@ pub struct TagVerification {
     pub signature: SignatureVerdict,
     /// Present when the tag object carries a `tree-sha256` header.
     pub tree_sha256: Option<TreeSha256Verdict>,
+    /// Submodule paths that blocked digest recomputation (tag had a `tree-sha256` claim).
+    pub missing_submodules: Vec<MissingSubmodule>,
 }
 
 impl TagVerification {
@@ -44,6 +46,9 @@ impl TagVerification {
             SignatureVerdict::Good { .. } | SignatureVerdict::NotChecked
         );
         if !sig_ok {
+            return false;
+        }
+        if !self.missing_submodules.is_empty() {
             return false;
         }
         match &self.tree_sha256 {
@@ -86,6 +91,10 @@ pub struct TreeSha256Verdict {
     pub bogus_excluded: Vec<String>,
     /// Submodule cycle paths recorded while hashing.
     pub cycles: Vec<String>,
+    /// Regular files included in the digest (excluding excluded submodules).
+    pub files: usize,
+    /// Submodule gitlinks included in the digest.
+    pub submodules: usize,
 }
 
 /// Parsed tree-sha256-related headers from a raw annotated tag object.
@@ -147,8 +156,9 @@ pub fn parse_tree_sha256_tag_headers(data: &[u8]) -> Result<TreeSha256TagHeaders
 /// # Errors
 ///
 /// Returns [`Error::TagVerifyNotTag`] when `oid` is not a tag object, header parse
-/// failures, signing subprocess errors, or [`Error::TreeSha256MissingSubmodules`]
-/// when digest recomputation requires missing submodules.
+/// failures, or signing subprocess errors. When digest recomputation requires missing
+/// submodules, returns [`Ok`] with [`TagVerification::tree_sha256`] set to `None` and
+/// [`TagVerification::missing_submodules`] populated.
 pub fn verify_tag(
     repo: &Repository,
     oid: ObjectId,
@@ -196,14 +206,22 @@ pub fn verify_tag(
         let signature = sig_handle
             .join()
             .map_err(|_| Error::Message("signature verification thread panicked".into()))??;
-        let tree_sha256 = hash_handle
+        let hash_result = hash_handle
             .join()
-            .map_err(|_| Error::Message("tree-sha256 verification thread panicked".into()))??;
-
-        Ok(TagVerification {
-            signature,
-            tree_sha256,
-        })
+            .map_err(|_| Error::Message("tree-sha256 verification thread panicked".into()))?;
+        match hash_result {
+            Ok(tree_sha256) => Ok(TagVerification {
+                signature,
+                tree_sha256,
+                missing_submodules: Vec::new(),
+            }),
+            Err(Error::TreeSha256MissingSubmodules(missing)) => Ok(TagVerification {
+                signature,
+                tree_sha256: None,
+                missing_submodules: missing,
+            }),
+            Err(err) => Err(err),
+        }
     })
 }
 
@@ -224,6 +242,8 @@ fn tree_sha256_verdict(
         excluded: report.excluded.clone(),
         bogus_excluded,
         cycles: report.cycles.clone(),
+        files: report.files,
+        submodules: report.submodules,
     }
 }
 

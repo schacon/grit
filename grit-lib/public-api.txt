@@ -21122,6 +21122,7 @@ impl core::marker::UnsafeUnpin for grit_lib::tree_sha256::MissingSubmodule
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::tree_sha256::MissingSubmodule
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::tree_sha256::MissingSubmodule
 pub struct grit_lib::tree_sha256::TagVerification
+pub grit_lib::tree_sha256::TagVerification::missing_submodules: alloc::vec::Vec<grit_lib::tree_sha256::MissingSubmodule>
 pub grit_lib::tree_sha256::TagVerification::signature: grit_lib::tree_sha256::SignatureVerdict
 pub grit_lib::tree_sha256::TagVerification::tree_sha256: core::option::Option<grit_lib::tree_sha256::TreeSha256Verdict>
 impl grit_lib::tree_sha256::TagVerification
@@ -21269,6 +21270,8 @@ pub grit_lib::tree_sha256::TreeSha256Verdict::claimed: grit_lib::tree_sha256::Tr
 pub grit_lib::tree_sha256::TreeSha256Verdict::computed: grit_lib::tree_sha256::TreeSha256
 pub grit_lib::tree_sha256::TreeSha256Verdict::cycles: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::tree_sha256::TreeSha256Verdict::excluded: alloc::vec::Vec<(alloc::string::String, grit_lib::objects::ObjectId)>
+pub grit_lib::tree_sha256::TreeSha256Verdict::files: usize
+pub grit_lib::tree_sha256::TreeSha256Verdict::submodules: usize
 impl core::clone::Clone for grit_lib::tree_sha256::TreeSha256Verdict
 pub fn grit_lib::tree_sha256::TreeSha256Verdict::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::tree_sha256::TreeSha256Verdict

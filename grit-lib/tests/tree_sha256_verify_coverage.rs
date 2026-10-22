@@ -22,6 +22,7 @@ fn public_tag_verify_types() {
         TagVerification {
             signature: SignatureVerdict::NotChecked,
             tree_sha256: None,
+            missing_submodules: vec![],
         },
         TreeSha256Verdict {
             claimed: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -33,6 +34,8 @@ fn public_tag_verify_types() {
             excluded: vec![],
             bogus_excluded: vec![],
             cycles: vec![],
+            files: 0,
+            submodules: 0,
         },
         TreeSha256TagHeaders {
             target: "0000000000000000000000000000000000000001".parse().unwrap(),

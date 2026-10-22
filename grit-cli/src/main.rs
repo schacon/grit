@@ -962,9 +962,10 @@ enum Command {
     /// List tags, or create / delete one.
     Tag {
         /// Name of the tag to create. Omit to list tags.
+        #[arg(value_name = "NAME", conflicts_with = "verify")]
         name: Option<String>,
         /// Revision to tag (default `HEAD`).
-        #[arg(value_name = "TARGET", conflicts_with = "object")]
+        #[arg(value_name = "TARGET", conflicts_with_all = ["object", "verify"])]
         target: Option<String>,
         /// Delete the named tag instead of creating it.
         #[arg(short = 'd', long = "delete")]
@@ -1003,6 +1004,35 @@ enum Command {
         /// Signing key id or path (overrides `user.signingkey` for this tag).
         #[arg(long = "signing-key", value_name = "KEY")]
         signing_key: Option<String>,
+        /// Verify annotated tag signatures and optional `tree-sha256` claims.
+        #[arg(
+            short = 'v',
+            long = "verify",
+            conflicts_with_all = [
+                "delete",
+                "message",
+                "message_file",
+                "force",
+                "dry_run",
+                "sign",
+                "no_sign",
+                "signing_key",
+                "object"
+            ]
+        )]
+        verify: bool,
+        /// Tag names to verify (one or more, with `--verify`).
+        #[arg(
+            id = "verify_names",
+            value_name = "TAG",
+            num_args = 1..,
+            requires = "verify",
+            last = true
+        )]
+        verify_names: Vec<String>,
+        /// Skip signature verification (still checks `tree-sha256` when present).
+        #[arg(long = "no-signature", requires = "verify")]
+        no_signature: bool,
     },
     /// List, add, or remove linked worktrees.
     Worktree {
@@ -1074,10 +1104,63 @@ struct ServeArgs {
     directory: String,
 }
 
+/// True when this token is a `tag` subcommand flag that consumes the next argv word.
+///
+/// Keep this list in sync with value-taking [`Cli`] global options (`--filter`, `--threads`).
+fn tag_verify_subarg_takes_value(arg: &str) -> bool {
+    matches!(arg, "--filter" | "--threads")
+}
+
+/// Route verify tag names to `verify_names` by inserting `--` before bare arguments.
+fn normalize_tag_verify_argv(mut args: Vec<String>) -> Vec<String> {
+    let Some(tag_idx) = args.iter().position(|a| a == "tag") else {
+        return args;
+    };
+    let sub = &args[tag_idx + 1..];
+    if !sub.iter().any(|a| a == "--verify" || a == "-v") {
+        return args;
+    }
+    if sub.contains(&"--".to_owned()) {
+        return args;
+    }
+    let mut flags = Vec::new();
+    let mut names = Vec::new();
+    let mut i = 0;
+    while i < sub.len() {
+        let arg = &sub[i];
+        if tag_verify_subarg_takes_value(arg) {
+            flags.push(arg.clone());
+            if i + 1 < sub.len() {
+                flags.push(sub[i + 1].clone());
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if arg.starts_with('-') {
+            flags.push(arg.clone());
+            i += 1;
+            continue;
+        }
+        names.push(arg.clone());
+        i += 1;
+    }
+    if names.is_empty() {
+        return args;
+    }
+    args.truncate(tag_idx + 1);
+    args.extend(flags);
+    args.push("--".into());
+    args.extend(names);
+    args
+}
+
 fn main() {
     stdio::configure();
     grit_trace::maybe_init_from_env();
-    let parse_argv = diff_args::normalize_diff_argv(std::env::args().collect());
+    let parse_argv =
+        normalize_tag_verify_argv(diff_args::normalize_diff_argv(std::env::args().collect()));
     let cli = match Cli::try_parse_from(parse_argv) {
         Ok(cli) => cli,
         Err(err) if err.use_stderr() => {
@@ -1631,6 +1714,9 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             sign,
             no_sign,
             signing_key,
+            verify,
+            verify_names,
+            no_signature,
         } => {
             let sign_override = if sign {
                 Some(true)
@@ -1639,23 +1725,27 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             } else {
                 None
             };
-            emit(
-                &commands::tag::run(commands::tag::TagRunOptions {
-                    name,
-                    target,
-                    object,
-                    delete,
-                    message,
-                    message_file,
-                    force,
-                    dry_run,
-                    sign: sign_override,
-                    signing_key,
-                    now: ctx.now,
-                })?,
-                opts,
-                ctx,
-            )
+            let outcome = commands::tag::run(commands::tag::TagRunOptions {
+                name,
+                target,
+                object,
+                delete,
+                message,
+                message_file,
+                force,
+                dry_run,
+                sign: sign_override,
+                signing_key,
+                now: ctx.now,
+                verify,
+                verify_names,
+                no_signature,
+            })?;
+            emit(&outcome, opts, ctx)?;
+            if verify {
+                std::process::exit(commands::tag::verify_exit_code(&outcome));
+            }
+            Ok(())
         }
         Command::Worktree { action } => match action {
             WorktreeAction::List => emit(&commands::worktree::run_list()?, opts, ctx),
@@ -2653,5 +2743,70 @@ The keys are `initialized`, `path`, `bare`, and `branch`.
         let md_section = "Pass `--markdown` for agent-friendly output.\n";
         assert!(markdown_section_has_schema_link(json_section, "pull"));
         assert!(!markdown_section_has_schema_link(md_section, "pull"));
+    }
+
+    #[test]
+    fn normalize_tag_verify_argv_two_names_and_globals() {
+        let out = super::normalize_tag_verify_argv(vec![
+            "grit".into(),
+            "tag".into(),
+            "--verify".into(),
+            "one".into(),
+            "two".into(),
+            "--no-signature".into(),
+            "--json".into(),
+        ]);
+        assert_eq!(
+            out,
+            vec![
+                "grit",
+                "tag",
+                "--verify",
+                "--no-signature",
+                "--json",
+                "--",
+                "one",
+                "two"
+            ]
+        );
+    }
+
+    #[test]
+    fn normalize_tag_verify_argv_preserves_filter_and_threads_values() {
+        let filter = super::normalize_tag_verify_argv(vec![
+            "grit".into(),
+            "tag".into(),
+            "--verify".into(),
+            "missing".into(),
+            "--filter".into(),
+            ".tags".into(),
+            "--json".into(),
+        ]);
+        assert_eq!(
+            filter,
+            vec!["grit", "tag", "--verify", "--filter", ".tags", "--json", "--", "missing"]
+        );
+        let threads = super::normalize_tag_verify_argv(vec![
+            "grit".into(),
+            "tag".into(),
+            "--verify".into(),
+            "missing".into(),
+            "--threads".into(),
+            "1".into(),
+            "--json".into(),
+        ]);
+        assert_eq!(
+            threads,
+            vec![
+                "grit",
+                "tag",
+                "--verify",
+                "--threads",
+                "1",
+                "--json",
+                "--",
+                "missing"
+            ]
+        );
     }
 }
