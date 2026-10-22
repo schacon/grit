@@ -151,7 +151,7 @@ pub fn tree_sha256(
     oid: ObjectId,
     options: &TreeSha256Options,
 ) -> Result<TreeSha256Report> {
-    tree_sha256_with_chain(repo, oid, options, &[])
+    tree_sha256_with_chain(repo, oid, options, &[], "")
 }
 
 fn tree_sha256_with_chain(
@@ -159,6 +159,7 @@ fn tree_sha256_with_chain(
     oid: ObjectId,
     options: &TreeSha256Options,
     parent_chain: &[ObjectId],
+    path_prefix_from_root: &str,
 ) -> Result<TreeSha256Report> {
     let tree_oid = peel_to_tree(repo, oid)?;
     let root_commit = peel_to_commit(repo, oid)?;
@@ -172,6 +173,7 @@ fn tree_sha256_with_chain(
         repo,
         options,
         commit_chain,
+        path_prefix_from_root: path_prefix_from_root.to_owned(),
         records: Vec::new(),
         missing: Vec::new(),
         files: 0,
@@ -240,6 +242,8 @@ struct ComputeCtx<'a> {
     repo: &'a Repository,
     options: &'a TreeSha256Options,
     commit_chain: Vec<ObjectId>,
+    /// Path from the top-level repository to this walk's root (empty at the superproject).
+    path_prefix_from_root: String,
     records: Vec<Vec<u8>>,
     missing: Vec<MissingSubmodule>,
     files: usize,
@@ -313,7 +317,7 @@ impl ComputeCtx<'_> {
             exclude_globs: self.options.exclude_globs.clone(),
             exclude_exact: self.options.exclude_exact.clone(),
         };
-        match tree_sha256_with_chain(&sub_repo, gitlink, &sub_opts, &self.commit_chain) {
+        match tree_sha256_with_chain(&sub_repo, gitlink, &sub_opts, &self.commit_chain, &path_str) {
             Ok(sub_report) => {
                 self.commit_chain.pop();
                 self.push_submodule_record(path, &sub_report.digest);
@@ -343,19 +347,28 @@ impl ComputeCtx<'_> {
         Ok(())
     }
 
+    fn global_path_from_root(&self, local_path: &[u8]) -> String {
+        let local = path_bytes_to_string(local_path);
+        if self.path_prefix_from_root.is_empty() {
+            return local;
+        }
+        qualify_submodule_path(&self.path_prefix_from_root, &local)
+    }
+
     fn is_excluded(&self, path: &[u8]) -> bool {
+        let global = self.global_path_from_root(path);
         if self
             .options
             .exclude_exact
             .iter()
-            .any(|p| path == p.as_bytes())
+            .any(|p| p.as_bytes() == path || p == &global)
         {
             return true;
         }
         self.options
             .exclude_globs
             .iter()
-            .any(|g| path_matches_glob_bytes(path, g.as_bytes()))
+            .any(|g| path_matches_glob_bytes(path, g.as_bytes()) || path_matches_glob(&global, g))
     }
 
     fn open_submodule_repo(&self, rel_path: &[u8]) -> Result<Option<Repository>> {

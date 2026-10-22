@@ -2,11 +2,12 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use grit_lib::command_runner::{CommandRunner, CommandSpec, RecordedResponse, RecordingRunner};
 use grit_lib::commit::signing::GpgConfig;
@@ -105,6 +106,51 @@ fn sign_payload_ssh(key: &Path, payload: &[u8]) -> Vec<u8> {
     out
 }
 
+fn copy_dir_all(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dest = to.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &dest)?;
+        } else {
+            fs::copy(entry.path(), dest)?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_worktree_from(source: &Path, dest: &Path) {
+    for entry in fs::read_dir(source).expect("read_dir") {
+        let entry = entry.expect("entry");
+        if entry.file_name() == ".git" {
+            continue;
+        }
+        let from = entry.path();
+        let to = dest.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir_all(&from, &to).expect("copy dir");
+        } else {
+            fs::copy(&from, &to).expect("copy file");
+        }
+    }
+}
+
+fn install_submodule_checkout(super_dir: &Path, name: &str, source_repo: &Path, gitlink: &str) {
+    let wt = super_dir.join(name);
+    fs::create_dir_all(&wt).expect("mkdir submodule wt");
+    copy_worktree_from(source_repo, &wt);
+    let modules = super_dir.join(".git/modules").join(name);
+    if modules.exists() {
+        fs::remove_dir_all(&modules).ok();
+    }
+    copy_dir_all(&source_repo.join(".git"), &modules).expect("copy module git");
+    grit_lib::config::gitmodules::gitdir::write_submodule_gitfile(&wt, &modules).expect("gitfile");
+    grit_lib::config::gitmodules::gitdir::init_submodule_head_from_gitlink(&modules, gitlink)
+        .expect("module head");
+}
+
 fn tree_sha256_digest(repo: &Repository, commit: grit_lib::objects::ObjectId) -> TreeSha256 {
     use grit_lib::tree_sha256::TreeSha256Options;
     repo.tree_sha256(commit, &TreeSha256Options::default())
@@ -133,12 +179,31 @@ fn git_made_tag_with_header_verifies() {
         "object {commit}\ntype commit\ntag signed-hdr\ntagger T <t@example.com> 1 +0000\n\
 {TREE_SHA256_HEADER} {digest}\n\nrelease\n"
     );
-    let unsigned = body.as_bytes();
-    let signed = sign_payload_ssh(&key, unsigned);
+    let tag_oid_hex = git_mktag(root, &body);
+    let raw_unsigned = Command::new("git")
+        .current_dir(root)
+        .args(["cat-file", "-p", &tag_oid_hex])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .expect("cat-file");
+    assert!(raw_unsigned.status.success());
+    let signed = sign_payload_ssh(&key, &raw_unsigned.stdout);
     let tag_oid = repo
         .odb()
         .write(ObjectKind::Tag, &signed)
         .expect("write tag");
+    git(
+        root,
+        &["update-ref", "refs/tags/signed-hdr", &tag_oid.to_hex()],
+    );
+    Command::new("git")
+        .current_dir(root)
+        .args(["verify-tag", "signed-hdr"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status()
+        .expect("git verify-tag status");
 
     let opts = TagVerifyOptions {
         check_signature: true,
@@ -448,17 +513,21 @@ fn non_tag_object_rejected() {
 }
 
 #[derive(Debug)]
-struct DelaySigningRunner {
+struct GateSigningRunner {
     inner: Arc<RecordingRunner>,
-    delay: Duration,
+    gate: Arc<std::sync::atomic::AtomicBool>,
+    hash_done: Arc<std::sync::atomic::AtomicBool>,
 }
 
-impl CommandRunner for DelaySigningRunner {
+impl CommandRunner for GateSigningRunner {
     fn spawn(
         &self,
         spec: &CommandSpec,
     ) -> std::io::Result<grit_lib::command_runner::RunningCommand> {
-        std::thread::sleep(self.delay);
+        while !self.hash_done.load(std::sync::atomic::Ordering::Acquire) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.gate.store(true, std::sync::atomic::Ordering::Release);
         self.inner.spawn(spec)
     }
 }
@@ -487,36 +556,175 @@ fn signature_and_hash_run_concurrently() {
         stdout: b"[GNUPG:] NEWSIG\n[GNUPG:] VALIDSIG abc 123 456 0 0\n[GNUPG:] GOODSIG user User <u@e.com>\n[GNUPG:] TRUST_FULLY 0 pgp\n".to_vec(),
         code: 0,
     });
-    let delay_runner = Arc::new(DelaySigningRunner {
+    let hash_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sign_gate = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let gate_runner = Arc::new(GateSigningRunner {
         inner: recording.clone(),
-        delay: Duration::from_millis(250),
+        gate: sign_gate.clone(),
+        hash_done: hash_done.clone(),
     });
     let gpg = GpgConfig::from_config(repo.config().expect("config").as_ref())
         .expect("gpg")
-        .with_command_runner(delay_runner);
+        .with_command_runner(gate_runner);
 
-    let started = Instant::now();
-    let report = verify_tag(
-        &repo,
-        tag_oid,
-        &TagVerifyOptions {
-            check_signature: true,
-            gpg,
-        },
-    )
-    .expect("verify");
-    let elapsed = started.elapsed();
+    let handle = std::thread::spawn({
+        let gpg = gpg.clone();
+        move || {
+            verify_tag(
+                &repo,
+                tag_oid,
+                &TagVerifyOptions {
+                    check_signature: true,
+                    gpg,
+                },
+            )
+        }
+    });
+    for _ in 0..30 {
+        assert!(
+            !sign_gate.load(std::sync::atomic::Ordering::Acquire),
+            "signing subprocess started while hash gate was closed"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    hash_done.store(true, std::sync::atomic::Ordering::Release);
+    let report = handle.join().expect("join").expect("verify");
     assert!(report.tree_sha256.is_some());
     assert!(matches!(report.signature, SignatureVerdict::Good { .. }));
-    assert!(
-        !recording.specs().is_empty(),
-        "signing subprocess should run"
+    assert!(!recording.specs().is_empty());
+}
+
+#[test]
+fn verify_tag_nested_exclusion_path_from_root() {
+    if !ssh_keygen_available() {
+        eprintln!("skipping: ssh-keygen not available");
+        return;
+    }
+    use std::fs;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let nest = tmp.path().join("nest-src");
+    fs::create_dir(&nest).unwrap();
+    git(&nest, &["init", "-q", "-b", "main"]);
+    fs::write(nest.join("n.txt"), b"n\n").unwrap();
+    git(&nest, &["add", "n.txt"]);
+    git(&nest, &["commit", "-m", "nest"]);
+    let nest_head = git(&nest, &["rev-parse", "HEAD"]).trim().to_string();
+
+    let inner = tmp.path().join("inner-src");
+    fs::create_dir(&inner).unwrap();
+    git(&inner, &["init", "-q", "-b", "main"]);
+    fs::write(
+        inner.join(".gitmodules"),
+        format!(
+            "[submodule \"nest\"]\n\tpath = nest\n\turl = file://{}\n",
+            nest.display()
+        ),
+    )
+    .unwrap();
+    Command::new("git")
+        .current_dir(&inner)
+        .args([
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{nest_head},nest"),
+        ])
+        .status()
+        .unwrap();
+    git(&inner, &["add", ".gitmodules"]);
+    git(&inner, &["commit", "-m", "inner"]);
+    let inner_head = git(&inner, &["rev-parse", "HEAD"]).trim().to_string();
+
+    let root = tmp.path().join("root");
+    fs::create_dir(&root).unwrap();
+    git(&root, &["init", "-q", "-b", "main"]);
+    fs::write(
+        root.join(".gitmodules"),
+        format!(
+            "[submodule \"inner\"]\n\tpath = inner\n\turl = file://{}\n",
+            inner.display()
+        ),
+    )
+    .unwrap();
+    Command::new("git")
+        .current_dir(&root)
+        .args([
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{inner_head},inner"),
+        ])
+        .status()
+        .unwrap();
+    git(&root, &["add", ".gitmodules"]);
+    git(&root, &["commit", "-m", "root"]);
+    install_submodule_checkout(&root, "inner", &inner, &inner_head);
+
+    let key = tmp.path().join("sign-key");
+    Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(&key)
+        .status()
+        .expect("ssh-keygen");
+    git(&root, &["config", "user.name", "T"]);
+    git(&root, &["config", "user.email", "t@example.com"]);
+    git(&root, &["config", "gpg.format", "ssh"]);
+    git(
+        &root,
+        &[
+            "config",
+            "user.signingkey",
+            &key.with_extension("pub").to_string_lossy(),
+        ],
     );
-    assert!(
-        elapsed < Duration::from_millis(400),
-        "hash and signature should overlap; sequential would exceed 400ms, took {elapsed:?}"
+    let pub_key = std::fs::read_to_string(key.with_extension("pub")).expect("read pub");
+    let allowed = root.join("allowed_signers");
+    std::fs::write(&allowed, format!("t@example.com {pub_key}")).expect("allowed_signers");
+    git(
+        &root,
+        &[
+            "config",
+            "gpg.ssh.allowedSignersFile",
+            &allowed.to_string_lossy(),
+        ],
     );
-    assert!(elapsed >= Duration::from_millis(200));
+
+    let repo = Repository::discover(Some(&root), &RepositoryOptions::empty()).expect("open");
+    let head: grit_lib::objects::ObjectId =
+        git(&root, &["rev-parse", "HEAD"]).trim().parse().unwrap();
+    let mut opts = grit_lib::tree_sha256::TreeSha256Options::default();
+    opts.exclude_exact = vec!["inner/nest".into()];
+    let digest = repo
+        .tree_sha256(head, &opts)
+        .expect("hash with exclusion")
+        .digest;
+
+    let key = key;
+    let commit = head.to_hex();
+    let body = format!(
+        "object {commit}\ntype commit\ntag nested-excl\ntagger T <t@example.com> 1 +0000\n\
+{TREE_SHA256_EXCLUDED_HEADER} inner/nest\n\
+{TREE_SHA256_HEADER} {digest}\n\nnested exclusion tag\n"
+    );
+    let signed = sign_payload_ssh(&key, body.as_bytes());
+    let tag_oid = repo
+        .odb()
+        .write(ObjectKind::Tag, &signed)
+        .expect("write tag");
+    let report = repo
+        .verify_tag(
+            tag_oid,
+            &TagVerifyOptions {
+                check_signature: true,
+                gpg: gpg_config(&repo),
+            },
+        )
+        .expect("verify nested exclusion");
+    assert!(report.is_ok(), "{report:?}");
+    assert_eq!(
+        report.tree_sha256.as_ref().unwrap().excluded,
+        vec![("inner/nest".to_owned(), nest_head.parse().unwrap())]
+    );
 }
 
 #[test]

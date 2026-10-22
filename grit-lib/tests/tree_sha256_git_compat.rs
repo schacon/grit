@@ -624,7 +624,7 @@ fn nested_submodule_excluded_paths_are_qualified() {
     let repo = Repository::discover(Some(&root), &RepositoryOptions::empty()).unwrap();
     let head: ObjectId = git(&root, &["rev-parse", "HEAD"]).trim().parse().unwrap();
     let mut opts = TreeSha256Options::default();
-    opts.exclude_exact = vec!["nest".into()];
+    opts.exclude_exact = vec!["inner/nest".into()];
     let report = tree_sha256(&repo, head, &opts).unwrap();
     assert_eq!(report.excluded.len(), 1);
     assert_eq!(report.excluded[0].0, "inner/nest");

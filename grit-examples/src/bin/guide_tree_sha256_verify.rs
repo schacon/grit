@@ -13,7 +13,7 @@ fn main() -> Result<(), Error> {
     let repo = grit_lib::repo::Repository::discover(None, &options)?;
     let tag = std::env::args()
         .nth(1)
-        .expect("usage: guide_tree_sha256_verify <tag>");
+        .ok_or_else(|| Error::Message("usage: guide_tree_sha256_verify <tag>".to_owned()))?;
     let oid = grit_lib::revwalk::rev_parse::resolve_revision(&repo, &tag)?;
     let gpg =
         GpgConfig::from_config(repo.config()?.as_ref())?.with_command_runner(repo.command_runner());
