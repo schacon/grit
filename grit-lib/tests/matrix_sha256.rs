@@ -702,6 +702,7 @@ fn sha256_push_over_git_daemon() {
 
     let spec = PushRefSpec {
         src: Some(main_oid),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
@@ -775,6 +776,7 @@ fn sha256_push_over_git_daemon() {
     );
     let nonff = PushRefSpec {
         src: Some(diverged),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
@@ -807,6 +809,7 @@ fn sha256_push_over_git_daemon() {
         .expect("reconnect for forced push");
     let forced = PushRefSpec {
         src: Some(diverged),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: true,
         delete: false,
@@ -928,6 +931,7 @@ fn sha256_push_over_smart_http() {
     // --- 1. Create push of refs/heads/main ------------------------------------
     let spec = PushRefSpec {
         src: Some(main_oid),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
@@ -992,6 +996,7 @@ fn sha256_push_over_smart_http() {
 
     let spec_feature = PushRefSpec {
         src: Some(feature_oid),
+        src_ref: None,
         dst: "refs/heads/feature".to_owned(),
         force: false,
         delete: false,

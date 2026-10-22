@@ -1128,6 +1128,7 @@ fn push_over_smart_http_lands_ref_and_objects_and_reports_rejection() {
     // --- 1. Push refs/heads/main (create) -------------------------------------
     let spec = PushRefSpec {
         src: Some(main_oid),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
@@ -1206,6 +1207,7 @@ fn push_over_smart_http_lands_ref_and_objects_and_reports_rejection() {
 
     let spec_topic = PushRefSpec {
         src: Some(topic_oid),
+        src_ref: None,
         dst: "refs/heads/feature".to_owned(),
         force: false,
         delete: false,
@@ -1248,6 +1250,7 @@ fn push_over_smart_http_lands_ref_and_objects_and_reports_rejection() {
 
     let nonff = PushRefSpec {
         src: Some(diverged),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
@@ -1290,6 +1293,7 @@ fn push_over_smart_http_lands_ref_and_objects_and_reports_rejection() {
     // --- 4. Forced non-ff push moves the ref (cross-check with system git) -----
     let forced = PushRefSpec {
         src: Some(diverged),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: true,
         delete: false,
@@ -1395,6 +1399,7 @@ fn push_then_fetch_roundtrip_and_server_side_rejection_over_http() {
     let specs = [
         PushRefSpec {
             src: Some(main_oid),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,
@@ -1403,6 +1408,7 @@ fn push_then_fetch_roundtrip_and_server_side_rejection_over_http() {
         },
         PushRefSpec {
             src: Some(topic_oid),
+            src_ref: None,
             dst: "refs/heads/topic".to_owned(),
             force: false,
             delete: false,
@@ -1529,6 +1535,7 @@ fn push_then_fetch_roundtrip_and_server_side_rejection_over_http() {
 
     let forced_spec = PushRefSpec {
         src: Some(diverged),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: true, // client accepts; server must decline (denyNonFastForwards)
         delete: false,

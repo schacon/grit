@@ -475,6 +475,7 @@ fn push_over_authed_http_succeeds_with_right_credentials_and_fails_typed_otherwi
 
     let spec = PushRefSpec {
         src: Some(main_oid),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,

@@ -550,6 +550,7 @@ fn push_annotated_tag_on_existing_commit_over_git_daemon() {
         &mut *conn,
         &[PushRefSpec {
             src: Some(tag_outcome.oid),
+            src_ref: None,
             dst: "refs/tags/v1-ann".to_owned(),
             force: false,
             delete: false,

@@ -50,6 +50,7 @@ fn push_delete_tag_on_local_remote() {
         &origin,
         &[PushRefSpec {
             src: Some(tag_oid),
+            src_ref: None,
             dst: "refs/tags/v1".to_owned(),
             force: false,
             delete: false,
@@ -66,6 +67,7 @@ fn push_delete_tag_on_local_remote() {
         &origin,
         &[PushRefSpec {
             src: None,
+            src_ref: None,
             dst: "refs/tags/v1".to_owned(),
             force: false,
             delete: true,

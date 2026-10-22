@@ -190,6 +190,7 @@ fn git_daemon_noop_fetch_and_push_send_flush_not_hangup() {
             &repo,
             &[PushRefSpec {
                 src: Some(main_tip),
+                src_ref: None,
                 dst: "refs/heads/main".to_owned(),
                 force: false,
                 delete: false,

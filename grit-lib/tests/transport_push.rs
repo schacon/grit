@@ -177,6 +177,7 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
 
     let spec = PushRefSpec {
         src: Some(main_oid),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
@@ -269,6 +270,7 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
 
     let nonff = PushRefSpec {
         src: Some(diverged),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
@@ -313,6 +315,7 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
         .expect("reconnect for forced push");
     let forced = PushRefSpec {
         src: Some(diverged),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: true,
         delete: false,
@@ -372,6 +375,7 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
         .expect("reconnect to create deletable ref");
     let mk = PushRefSpec {
         src: Some(diverged),
+        src_ref: None,
         dst: "refs/heads/scratch".to_owned(),
         force: false,
         delete: false,
@@ -398,6 +402,7 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
         .expect("reconnect for deletion");
     let del = PushRefSpec {
         src: None,
+        src_ref: None,
         dst: "refs/heads/scratch".to_owned(),
         force: false,
         delete: true,
@@ -528,6 +533,7 @@ fn push_new_branch_without_local_copy_of_advanced_remote_main() {
         &mut *conn_a,
         &[PushRefSpec {
             src: Some(advanced),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,
@@ -569,6 +575,7 @@ fn push_new_branch_without_local_copy_of_advanced_remote_main() {
         &mut *conn_b,
         &[PushRefSpec {
             src: Some(new_tip),
+            src_ref: None,
             dst: "refs/heads/newbr".to_owned(),
             force: false,
             delete: false,
@@ -609,6 +616,7 @@ fn push_new_branch_without_local_copy_of_advanced_remote_main() {
         &mut *conn_force,
         &[PushRefSpec {
             src: Some(new_tip),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: true,
             delete: false,

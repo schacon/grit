@@ -390,6 +390,7 @@ fn push_remote_rejects_protocol_v2_typed_before_touching_refs() {
 
     let spec = PushRefSpec {
         src: Some(main_oid),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
@@ -451,6 +452,7 @@ fn push_remote_unpack_failure_report_demotes_all_sent_refs() {
 
     let spec = PushRefSpec {
         src: Some(main_oid),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
@@ -575,6 +577,7 @@ fn push_http_rejects_v2_receive_pack_advertisement_typed() {
     });
     let spec = PushRefSpec {
         src: Some(main_oid),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,
@@ -618,6 +621,7 @@ fn push_http_propagates_discovery_transport_error_typed() {
     });
     let spec = PushRefSpec {
         src: Some(main_oid),
+        src_ref: None,
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,

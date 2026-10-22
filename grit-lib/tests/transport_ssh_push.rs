@@ -123,6 +123,7 @@ eval "exec $cmd" 2>/dev/null
 fn spec_update(src: ObjectId, dst: &str, force: bool) -> PushRefSpec {
     PushRefSpec {
         src: Some(src),
+        src_ref: None,
         dst: dst.to_owned(),
         force,
         delete: false,

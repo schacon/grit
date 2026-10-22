@@ -163,6 +163,7 @@ fn push_local_empty_bare_links_pack_within_budget() {
         &dest,
         &[PushRefSpec {
             src: Some(tip),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,

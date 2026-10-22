@@ -78,6 +78,7 @@ fn push_local_full_lifecycle() {
         remote_git,
         &[PushRefSpec {
             src: Some(c2),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,
@@ -130,6 +131,7 @@ fn push_local_full_lifecycle() {
         remote_git,
         &[PushRefSpec {
             src: Some(c2_prime),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,
@@ -152,6 +154,7 @@ fn push_local_full_lifecycle() {
         remote_git,
         &[PushRefSpec {
             src: Some(c2_prime),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: true,
             delete: false,
@@ -173,6 +176,7 @@ fn push_local_full_lifecycle() {
         remote_git,
         &[PushRefSpec {
             src: None,
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: true,
@@ -200,6 +204,7 @@ fn push_local_full_lifecycle() {
         remote_git,
         &[PushRefSpec {
             src: Some(c2_prime),
+            src_ref: None,
             dst: "refs/heads/cas".to_owned(),
             force: true,
             delete: false,
@@ -220,6 +225,7 @@ fn push_local_full_lifecycle() {
         remote_git,
         &[PushRefSpec {
             src: Some(c2_prime),
+            src_ref: None,
             dst: "refs/heads/cas".to_owned(),
             force: true,
             delete: false,
@@ -264,6 +270,7 @@ fn push_local_atomic_rejects_all_on_any_failure() {
         remote_git,
         &[PushRefSpec {
             src: Some(c1),
+            src_ref: None,
             dst: "refs/heads/locked".to_owned(),
             force: false,
             delete: false,
@@ -282,6 +289,7 @@ fn push_local_atomic_rejects_all_on_any_failure() {
         &[
             PushRefSpec {
                 src: Some(c2),
+                src_ref: None,
                 dst: "refs/heads/fresh".to_owned(),
                 force: false,
                 delete: false,
@@ -290,6 +298,7 @@ fn push_local_atomic_rejects_all_on_any_failure() {
             },
             PushRefSpec {
                 src: Some(c2),
+                src_ref: None,
                 dst: "refs/heads/locked".to_owned(),
                 force: false,
                 delete: false,
@@ -352,6 +361,7 @@ fn push_local_non_atomic_df_applies_first_ref_only() {
         &[
             PushRefSpec {
                 src: Some(tip),
+                src_ref: None,
                 dst: "refs/heads/parent".to_owned(),
                 force: false,
                 delete: false,
@@ -360,6 +370,7 @@ fn push_local_non_atomic_df_applies_first_ref_only() {
             },
             PushRefSpec {
                 src: Some(tip),
+                src_ref: None,
                 dst: "refs/heads/parent/child".to_owned(),
                 force: false,
                 delete: false,
@@ -412,6 +423,7 @@ fn push_local_atomic_store_batch_df_marks_atomic_push_failed() {
         &[
             PushRefSpec {
                 src: Some(tip),
+                src_ref: None,
                 dst: "refs/heads/parent".to_owned(),
                 force: false,
                 delete: false,
@@ -420,6 +432,7 @@ fn push_local_atomic_store_batch_df_marks_atomic_push_failed() {
             },
             PushRefSpec {
                 src: Some(tip),
+                src_ref: None,
                 dst: "refs/heads/parent/child".to_owned(),
                 force: false,
                 delete: false,
@@ -481,6 +494,7 @@ fn push_local_updates_remote_tracking_ref_when_configured() {
         remote_git,
         &[PushRefSpec {
             src: Some(c1),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,
@@ -533,6 +547,7 @@ fn push_local_up_to_date_refreshes_stale_remote_tracking_ref() {
         remote_git,
         &[PushRefSpec {
             src: Some(c2),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,
@@ -554,6 +569,7 @@ fn push_local_up_to_date_refreshes_stale_remote_tracking_ref() {
         remote_git,
         &[PushRefSpec {
             src: Some(c2),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,
@@ -612,6 +628,7 @@ fn push_local_honors_custom_fetch_refspec_for_tracking() {
         remote_git,
         &[PushRefSpec {
             src: Some(c1),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,
@@ -655,6 +672,7 @@ fn push_local_missing_remote_is_error() {
         &missing,
         &[PushRefSpec {
             src: Some(c1),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,
@@ -706,6 +724,7 @@ fn push_local_does_not_use_decoy_repo_when_parent_relative_target_missing() {
         &remote_git,
         &[PushRefSpec {
             src: Some(c1),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,
@@ -783,6 +802,7 @@ fn linked_worktree_resolves_relative_remote_from_worktree_root() {
         &resolved,
         &[PushRefSpec {
             src: Some(head),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,
@@ -835,6 +855,7 @@ fn push_local_into_empty_repo_links_local_pack() {
         remote_git,
         &[PushRefSpec {
             src: Some(tip),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,
@@ -913,6 +934,7 @@ fn push_local_shallow_repacked_missing_parent_fails() {
         dest_git,
         &[PushRefSpec {
             src: Some(tip),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,
@@ -989,6 +1011,7 @@ fn push_local_installs_single_pack_without_loose_objects() {
         remote_git,
         &[PushRefSpec {
             src: Some(tip),
+            src_ref: None,
             dst: "refs/heads/main".to_owned(),
             force: false,
             delete: false,

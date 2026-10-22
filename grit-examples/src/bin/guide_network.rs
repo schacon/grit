@@ -77,6 +77,7 @@ fn main() -> Result<(), grit_lib::error::Error> {
 
     let spec = PushRefSpec {
         src: Some(new_oid),
+        src_ref: Some("refs/heads/main".to_owned()),
         dst: "refs/heads/main".to_owned(),
         force: false,
         delete: false,

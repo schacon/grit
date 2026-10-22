@@ -213,6 +213,7 @@ fn push_to_empty_bare_packs_only_loose_objects_beside_linked_pack() {
         .into_iter()
         .map(|name| PushRefSpec {
             src: Some(rev_parse(&src, name)),
+            src_ref: None,
             dst: name.to_owned(),
             force: false,
             delete: false,
