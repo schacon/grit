@@ -83,13 +83,7 @@ impl RefTransaction {
 
     /// Split into ref updates, reflog renames, and case-only ref renames.
     #[must_use]
-    pub fn into_parts(
-        self,
-    ) -> (
-        Vec<RefUpdate>,
-        Vec<RefReflogRename>,
-        Vec<RefCaseOnlyRename>,
-    ) {
+    pub fn into_parts(self) -> (Vec<RefUpdate>, Vec<RefReflogRename>, Vec<RefCaseOnlyRename>) {
         (self.updates, self.reflog_renames, self.case_only_renames)
     }
 

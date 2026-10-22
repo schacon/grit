@@ -11,17 +11,21 @@ use crate::error::{Error, Result};
 use crate::merge_base::is_ancestor;
 use crate::objects::ObjectId;
 use crate::porcelain::checkout_reflog::{
-    branch_create_reflog_source_label, checkout_reflog_identity, create_branch_ref_with_reflog, reset_branch_ref_with_reflog,
+    branch_create_reflog_source_label, checkout_reflog_identity, create_branch_ref_with_reflog,
+    reset_branch_ref_with_reflog,
 };
-use crate::refs;
 use crate::ref_storage::RefStorageFormat;
+use crate::refs;
 use crate::refs::store::{
     Expected, RawRef, RefCaseOnlyRename, RefReflogRename, RefUpdate, RefUpdateFlags, ReflogUpdate,
 };
 use crate::repo::Repository;
 use crate::rev_parse::peel_to_commit_for_merge_base;
 use crate::state::{resolve_head, resolve_head_for_repository, HeadState};
-use crate::worktree::{ensure_branch_not_checked_out_in_any_worktree, list_worktrees};
+use crate::worktree::{
+    admin_dirs_match, ensure_branch_not_checked_out_in_any_worktree, list_worktrees,
+    worktree_admin_dir,
+};
 
 pub use crate::porcelain::branch_error::{BranchError, DeleteMode, StartPoint, TrackMode};
 
@@ -512,12 +516,41 @@ fn expected_for_existing(existing: &crate::refs::handle::ExistingRef) -> (Expect
 }
 
 fn retarget_branch_head_symrefs(repo: &Repository, old_short: &str, new_ref: &str) -> Result<()> {
+    let old_ref = branch_ref(old_short);
+    let current_admin = worktree_admin_dir(repo);
+    let head_update = RefUpdate {
+        name: "HEAD".to_owned(),
+        new_value: Some(RawRef::Symbolic(new_ref.to_owned())),
+        expected: Expected::Symref(old_ref.clone()),
+        reflog: None,
+        flags: RefUpdateFlags {
+            no_deref: true,
+            ..RefUpdateFlags::default()
+        },
+    };
     for entry in list_worktrees(repo)? {
-        if matches!(&entry.head, HeadState::Branch { short_name, .. } if short_name == old_short) {
-            refs::write_symbolic_ref(&entry.admin_dir, "HEAD", new_ref)?;
+        if !matches!(&entry.head, HeadState::Branch { short_name, .. } if short_name == old_short) {
+            continue;
         }
+        if admin_dirs_match(&entry.admin_dir, &current_admin) {
+            continue;
+        }
+        let store = repo
+            .caches()
+            .open_ref_store(&entry.admin_dir, repo.environment())?;
+        refs::commit_ref_updates_on_store(store.as_ref(), std::slice::from_ref(&head_update), &[])?;
+    }
+    if repository_head_points_at(repo, &old_ref)? {
+        refs::commit_ref_updates_on_store(repo.refs(), &[head_update], &[])?;
     }
     Ok(())
+}
+
+fn repository_head_points_at(repo: &Repository, refname: &str) -> Result<bool> {
+    Ok(matches!(
+        repo.refs().read_raw("HEAD")?,
+        Some(RawRef::Symbolic(target)) if target == refname
+    ))
 }
 
 fn rename_branch_config_section(

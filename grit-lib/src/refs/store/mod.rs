@@ -27,8 +27,7 @@ pub use reftable::ReftableRefStore;
 pub use transaction::RefTransaction;
 pub use types::{
     Expected, RawRef, RefCaseOnlyRename, RefEntry, RefName, RefReflogRename, RefStorageFormat,
-    RefUpdate,
-    RefUpdateFlags, ReflogUpdate,
+    RefUpdate, RefUpdateFlags, ReflogUpdate,
 };
 
 use std::fmt::Debug;

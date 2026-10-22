@@ -18,14 +18,14 @@ use crate::reftable::{
 };
 use crate::repo::init_repository;
 
-use super::error::RefStoreError;
 use super::apply::{apply_reflog_rename, RefBatchState};
+use super::error::RefStoreError;
 use super::semantics::{
     apply_update_to_map, format_reflog_identity, reflog_new_oid_before, reflog_old_oid_before,
     reftable_write_target, simulate_batch_apply,
 };
-use super::types::RefReflogRename;
 use super::transaction::RefTransaction;
+use super::types::RefReflogRename;
 use super::validation::verify_create_conflicts;
 use super::{
     Expected, PreparedRefTransaction, RawRef, RefEntry, RefStorageFormat, RefStore, RefUpdate,
@@ -648,11 +648,7 @@ fn commit_reflog_rename_on_stack(
         reflogs: BTreeMap::from([(rename.from.clone(), entries)]),
     };
     apply_reflog_rename(&mut batch, rename)?;
-    let new_entries = batch
-        .reflogs
-        .get(&rename.to)
-        .cloned()
-        .unwrap_or_default();
+    let new_entries = batch.reflogs.get(&rename.to).cloned().unwrap_or_default();
     let (_, from_storage) = reftable_storage_location(git_dir, &rename.from);
     let (_, to_storage) = reftable_storage_location(git_dir, &rename.to);
     stack
@@ -695,12 +691,8 @@ impl PreparedRefTransaction for ReftablePrepared<'_> {
                 if store_git_dir != stack_batch._store_git_dir {
                     continue;
                 }
-                commit_reflog_rename_on_stack(
-                    &self.store.git_dir,
-                    &mut stack_batch.stack,
-                    rename,
-                )
-                .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
+                commit_reflog_rename_on_stack(&self.store.git_dir, &mut stack_batch.stack, rename)
+                    .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
             }
         }
         for update in &batch.logical_updates {

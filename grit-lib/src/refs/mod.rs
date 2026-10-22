@@ -46,8 +46,8 @@ use std::io;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use store::{
-    open_ref_store, Expected, RawRef as StoreRawRef, RefEntry, RefStorageFormat, RefStore,
-    RefCaseOnlyRename, RefReflogRename, RefTransaction, RefUpdate, RefUpdateFlags, ReflogUpdate,
+    open_ref_store, Expected, RawRef as StoreRawRef, RefCaseOnlyRename, RefEntry, RefReflogRename,
+    RefStorageFormat, RefStore, RefTransaction, RefUpdate, RefUpdateFlags, ReflogUpdate,
 };
 
 use crate::check_ref_format::{check_refname_format, RefNameOptions};

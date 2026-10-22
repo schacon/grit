@@ -12,9 +12,9 @@ use super::apply::{
     apply_case_only_ref_rename, apply_reflog_rename, apply_update, resolve_map,
     simulate_batch_apply, RefBatchState,
 };
-use super::types::{RefCaseOnlyRename, RefReflogRename};
 use super::error::RefStoreError;
 use super::transaction::RefTransaction;
+use super::types::{RefCaseOnlyRename, RefReflogRename};
 use super::validation::verify_create_conflicts;
 use super::{PreparedRefTransaction, RawRef, RefEntry, RefStorageFormat, RefStore, RefUpdate};
 
@@ -129,12 +129,7 @@ impl RefStore for MemoryRefStore {
         }
 
         verify_create_conflicts(&inner.state.refs, &updates)?;
-        simulate_batch_apply(
-            &inner.state,
-            &updates,
-            &reflog_renames,
-            &case_only_renames,
-        )?;
+        simulate_batch_apply(&inner.state, &updates, &reflog_renames, &case_only_renames)?;
 
         let lock_name = updates
             .first()

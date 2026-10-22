@@ -376,6 +376,61 @@ fn rename_on_injected_memory_ref_store() {
 }
 
 #[test]
+fn rename_retargets_head_on_injected_store_when_branch_checked_out() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("repo");
+    std::fs::create_dir_all(&dir).unwrap();
+    git(&dir, &["init", "-q", "-b", "main"]);
+    commit(&dir, "c1");
+    let tip = oid(&dir, "HEAD");
+
+    let store = Arc::new(MemoryRefStore::new());
+    let direct = |name: &str| RefUpdate {
+        name: name.to_owned(),
+        new_value: Some(RawRef::Direct(tip)),
+        expected: Expected::Missing,
+        reflog: None,
+        flags: RefUpdateFlags::default(),
+    };
+    store
+        .prepare(
+            RefTransaction::new()
+                .update(direct("refs/heads/topic"))
+                .unwrap()
+                .update(RefUpdate {
+                    name: "HEAD".to_owned(),
+                    new_value: Some(RawRef::Symbolic("refs/heads/topic".to_owned())),
+                    expected: Expected::Missing,
+                    reflog: None,
+                    flags: RefUpdateFlags {
+                        no_deref: true,
+                        ..RefUpdateFlags::default()
+                    },
+                })
+                .unwrap(),
+        )
+        .unwrap()
+        .commit()
+        .unwrap();
+
+    let repo = open(&dir).with_ref_store(store.clone());
+    rename_branch(
+        &repo,
+        &RenameBranchOptions {
+            old: "topic".into(),
+            new: "renamed".into(),
+            force: false,
+            dry_run: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        store.read_raw("HEAD").unwrap(),
+        Some(RawRef::Symbolic("refs/heads/renamed".to_owned()))
+    );
+}
+
+#[test]
 fn rename_same_missing_branch_returns_not_found() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("repo");
@@ -393,7 +448,7 @@ fn rename_same_missing_branch_returns_not_found() {
     )
     .unwrap_err();
     assert!(
-        matches!(&err, Error::Branch(BranchError::NotFound { branch }) if branch == "nope"),
+        matches!(&err, Error::Branch(BranchError::NotFound { name }) if name == "nope"),
         "{err:?}"
     );
 }
@@ -416,7 +471,10 @@ fn rename_same_invalid_name_returns_invalid() {
         },
     )
     .unwrap_err();
-    assert!(matches!(&err, Error::Branch(BranchError::InvalidName { .. })), "{err:?}");
+    assert!(
+        matches!(&err, Error::Branch(BranchError::InvalidName { .. })),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -437,16 +495,12 @@ fn rename_aborts_when_destination_reflog_path_is_directory() {
     )
     .unwrap_err();
     assert!(err.to_string().contains("directory"), "{err:?}");
-    assert!(
-        git_cmd(&["show-ref", "--verify", "refs/heads/topic"])
-            .in_dir(&dir)
-            .exec()
-            .ok()
-    );
-    assert!(
-        !git_cmd(&["show-ref", "--verify", "refs/heads/new"])
-            .in_dir(&dir)
-            .exec()
-            .ok()
-    );
+    assert!(git_cmd(&["show-ref", "--verify", "refs/heads/topic"])
+        .in_dir(&dir)
+        .exec()
+        .ok());
+    assert!(!git_cmd(&["show-ref", "--verify", "refs/heads/new"])
+        .in_dir(&dir)
+        .exec()
+        .ok());
 }
