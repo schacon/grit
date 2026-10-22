@@ -18521,6 +18521,7 @@ impl<'repo> !core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::Re
 pub struct grit_lib::repo_handles::RepositoryRemotes<'repo>
 impl<'repo> grit_lib::repo_handles::RepositoryRemotes<'repo>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::fetch(&self, &grit_lib::remote::Remote, grit_lib::remote::transfer::FetchOptions, &mut dyn grit_lib::remote::fetch::Progress, core::option::Option<&dyn grit_lib::remote::HttpClientFactory>) -> core::result::Result<grit_lib::remote::transfer::FetchOutcome, grit_lib::remote::RemoteError>
+pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::fetch_all(&self, &grit_lib::config::ConfigSet, &grit_lib::remote::transfer::FetchOptions, core::option::Option<bool>, core::option::Option<bool>, &mut dyn grit_lib::remote::fetch::Progress, core::option::Option<&dyn grit_lib::remote::HttpClientFactory>) -> grit_lib::error::Result<alloc::vec::Vec<(alloc::string::String, core::result::Result<grit_lib::remote::transfer::FetchOutcome, grit_lib::remote::RemoteError>)>>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::get(&self, &str) -> core::result::Result<grit_lib::remote::Remote, grit_lib::remote::RemoteError>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::get_or_default(&self, &str) -> core::result::Result<grit_lib::remote::Remote, grit_lib::remote::RemoteError>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::list(&self) -> grit_lib::error::Result<alloc::vec::Vec<alloc::string::String>>
@@ -18611,6 +18612,8 @@ impl core::marker::UnsafeUnpin for grit_lib::repo_handles::StashPushOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::StashPushOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::StashPushOptions
 pub fn grit_lib::repo_handles::configured_remote_names(&grit_lib::config::ConfigSet) -> alloc::vec::Vec<alloc::string::String>
+pub fn grit_lib::repo_handles::configured_remote_names_in_config_order(&grit_lib::config::ConfigSet) -> alloc::vec::Vec<alloc::string::String>
+pub fn grit_lib::repo_handles::remote_skip_fetch_all(&grit_lib::config::ConfigSet, &str) -> bool
 pub mod grit_lib::revwalk
 pub mod grit_lib::revwalk::commit_graph
 pub enum grit_lib::revwalk::commit_graph::BloomPrecheck
