@@ -3,7 +3,7 @@
 use super::super::helpers::{
     branch_list_bench, headline_spec, matrix_spec, merge_bench, pick_bench,
     prepare_history_rewrite_reset, prepare_merge_reset, prepare_pick_reset, prepare_revert_reset,
-    prepare_switch_reset, setup_hot_path_pick_merge,
+    prepare_switch_reset, setup_git_git_history, setup_hot_path_pick_merge,
 };
 use super::super::matrix_helpers::{
     branch_create_bench, branch_delete_bench, branch_rename_bench, history_reword_bench,
@@ -14,6 +14,7 @@ use super::super::matrix_helpers::{
     setup_hot_path_pick_merge_100k, setup_hot_path_revert, setup_hot_path_switch_100k,
     setup_many_refs, setup_many_refs_loose, setup_many_refs_merged, setup_stash_with_entry,
     setup_tag_create, stash_list_bench, switch_100k_bench, tag_create_bench, tag_list_bench,
+    tag_list_sort_version_git_git_bench,
 };
 use super::super::plan::DailyHeadlinePlan;
 
@@ -152,6 +153,15 @@ pub fn plans() -> Vec<DailyHeadlinePlan> {
             prepare: prepare_stash_list,
             build_git: |c| stash_list_bench(c).1,
             build_grit: |c| stash_list_bench(c).0,
+            correctness: None,
+        },
+        DailyHeadlinePlan {
+            spec: matrix_spec("tag/list-sort-version@git-git"),
+            pending: false,
+            setup: setup_git_git_history,
+            prepare: super::super::helpers::prepare_none,
+            build_git: |c| tag_list_sort_version_git_git_bench(c).1,
+            build_grit: |c| tag_list_sort_version_git_git_bench(c).0,
             correctness: None,
         },
         DailyHeadlinePlan {

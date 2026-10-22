@@ -18,6 +18,7 @@ use grit_lib::porcelain::tag::{
     create_tag, delete_tag, list_tags, CreateTagRequest, TagError, TagKind,
 };
 use grit_lib::progress::NullProgress;
+use grit_lib::refs::listing::{RefNamespace, RefQuery, RefSort, SortKey};
 use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::refs::store::{
     Expected, MemoryRefStore, RawRef, RefStore, RefTransaction, RefUpdate, RefUpdateFlags,
@@ -125,7 +126,18 @@ fn list_branches_matches_git_for_each_ref() {
 fn list_tags_matches_git_and_classifies_targets() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = git_fixture(tmp.path());
-    let tags = list_tags(&open(&dir)).unwrap();
+    let tags = list_tags(
+        &open(&dir),
+        &RefQuery {
+            namespaces: vec![RefNamespace::Tags],
+            sort: RefSort {
+                key: SortKey::Name,
+                reverse: false,
+            },
+            ..RefQuery::default()
+        },
+    )
+    .unwrap();
 
     let ours: Vec<(String, ObjectId)> = tags.iter().map(|t| (t.name.clone(), t.oid)).collect();
     assert_eq!(ours, for_each_ref(&dir, "refs/tags/"));
@@ -333,7 +345,18 @@ fn list_and_delete_on_reftable_backend() {
         .map(|b| b.name)
         .collect();
     assert_eq!(names, ["main", "topic"]);
-    assert_eq!(list_tags(&repo).unwrap().len(), 1);
+    assert_eq!(
+        list_tags(
+            &repo,
+            &RefQuery {
+                namespaces: vec![RefNamespace::Tags],
+                ..RefQuery::default()
+            },
+        )
+        .unwrap()
+        .len(),
+        1
+    );
 
     assert_eq!(
         delete_branch(&repo, "topic", DeleteMode::Safe, false)
@@ -349,7 +372,15 @@ fn list_and_delete_on_reftable_backend() {
         .map(|b| b.name)
         .collect();
     assert_eq!(names, ["main"]);
-    assert!(list_tags(&repo).unwrap().is_empty());
+    assert!(list_tags(
+        &repo,
+        &RefQuery {
+            namespaces: vec![RefNamespace::Tags],
+            ..RefQuery::default()
+        },
+    )
+    .unwrap()
+    .is_empty());
 }
 
 /// A repository whose refs live only in an injected `MemoryRefStore`: `HEAD -> main`,
@@ -412,11 +443,21 @@ fn list_and_delete_use_injected_memory_ref_store() {
         .map(|b| (b.name.as_str(), b.current))
         .collect();
     assert_eq!(names, [("main", true), ("topic", false)]);
-    let tags: Vec<String> = list_tags(&repo)
-        .unwrap()
-        .into_iter()
-        .map(|t| t.name)
-        .collect();
+    let tags: Vec<String> = list_tags(
+        &repo,
+        &RefQuery {
+            namespaces: vec![RefNamespace::Tags],
+            sort: RefSort {
+                key: SortKey::Name,
+                reverse: false,
+            },
+            ..RefQuery::default()
+        },
+    )
+    .unwrap()
+    .into_iter()
+    .map(|t| t.name)
+    .collect();
     assert_eq!(tags, ["injected"]);
 
     let err = delete_branch(&repo, "main", DeleteMode::Force, false).unwrap_err();
@@ -433,7 +474,15 @@ fn list_and_delete_use_injected_memory_ref_store() {
 
     assert_eq!(delete_tag(&repo, "injected", false).unwrap(), tip);
     assert_eq!(store.read_raw("refs/tags/injected").unwrap(), None);
-    assert!(list_tags(&repo).unwrap().is_empty());
+    assert!(list_tags(
+        &repo,
+        &RefQuery {
+            namespaces: vec![RefNamespace::Tags],
+            ..RefQuery::default()
+        },
+    )
+    .unwrap()
+    .is_empty());
 
     // The on-disk store was never consulted for these refs.
     assert_eq!(for_each_ref(&dir, "refs/"), [("main".to_owned(), tip)]);

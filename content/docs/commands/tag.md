@@ -9,6 +9,8 @@ order: 5
 
 ```text
 grit tag
+grit tag -l [<pattern>...]
+grit tag --sort version|date|name [--reverse] [--contains [REV]] [--points-at REV] [-n N]
 grit tag <name>
 grit tag <name> [<target>]
 grit tag <name> -m <message>
@@ -23,7 +25,9 @@ grit tag -v <name>... --no-signature
 
 ## Description
 
-With no arguments, lists your tags. With a name and no `-m`/`-F`, creates a **lightweight** tag pointing at `HEAD` or the optional `<target>` revision. With `-m` or `-F`, creates an **annotated** tag object with that message (comment lines starting with `#` are stripped, matching Git's default cleanup). Use `-s` / `--sign` (or `tag.gpgSign=true`) to cryptographically sign an annotated tag; signed tags verify with `git verify-tag` and system `git tag -v`.
+With no arguments, lists your tags sorted by **version** (`version:refname`). Use `-l` / `--list` with optional glob patterns (repeatable), `--sort version|date|name`, `--reverse`, `--contains [REV]` (defaults to `HEAD`), `--points-at <REV>` (repeatable), and `-n` / `--limit` to cap the list. Annotated tags show the subject on the human line; `--json` includes full `annotation` metadata.
+
+With a name and no `-m`/`-F`, creates a **lightweight** tag pointing at `HEAD` or the optional `<target>` revision. With `-m` or `-F`, creates an **annotated** tag object with that message (comment lines starting with `#` are stripped, matching Git's default cleanup). Use `-s` / `--sign` (or `tag.gpgSign=true`) to cryptographically sign an annotated tag; signed tags verify with `git verify-tag` and system `git tag -v`.
 
 Use `-f` / `--force` to replace an existing tag (lightweight or annotated). The previous ref target is reported in `--json` as `replaced`.
 
@@ -43,6 +47,12 @@ Tags are local until you publish them with [`grit push --tags`](../push/). Delet
 | --- | --- |
 | `<name>` | The tag to create or delete. Omit to list tags. |
 | `<target>` | Revision to tag (default `HEAD`). |
+| `-l`, `--list` | List tags matching `PATTERN` (repeatable). Omit `PATTERN` to list all. |
+| `--sort` | `version` (default), `date`, or `name`. |
+| `--reverse` | Reverse the sort order. |
+| `--contains` | Only tags whose peeled commit contains `REV` (default `HEAD`). |
+| `--points-at` | Only tags pointing at `REV` (repeatable). |
+| `-n`, `--limit` | Maximum number of tags to print. |
 | `-d`, `--delete` | Delete the tag locally. |
 | `-m`, `--message` | Annotated tag message. |
 | `-F`, `--file` | Read the annotated tag message from a file (`-` reads stdin). |
@@ -95,7 +105,7 @@ Pass `--json` for stable, scripting-friendly output. The object's `action` field
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
 | `action` | string | `list`, `create`, `delete`, or `verify`. |
-| `tags` | array | For `list`, each tag with `name`, `oid`, `kind`, and optional `peeled`. |
+| `tags` | array | For `list`, each tag with `name`, `oid`, `kind`, `target_kind`, optional `peeled`, and optional `annotation` (`subject`, `message`, `tagger`, `date`). |
 | `name` | string | For `create` or `delete`, the tag name. |
 | `oid` | string | For `create`, full id the tag ref points at (tag object or commit). |
 | `kind` | string | For `create` or list entries: `lightweight` or `annotated`. |
@@ -117,7 +127,14 @@ Listing tags:
       "name": "v0.1",
       "oid": "92501f188ae0815af09a0cef6e121eddda4113cf",
       "kind": "annotated",
-      "peeled": "abc1234567890abcdef1234567890abcdef123456"
+      "target_kind": "commit",
+      "peeled": "abc1234567890abcdef1234567890abcdef123456",
+      "annotation": {
+        "subject": "First release",
+        "message": "First release\n",
+        "tagger": { "name": "Alex", "email": "alex@example.com" },
+        "date": 1700000000
+      }
     }
   ]
 }

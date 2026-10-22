@@ -5,6 +5,7 @@
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectKind;
 use grit_lib::porcelain::tag::{create_tag, list_tags, CreateTagRequest, TagKind};
+use grit_lib::refs::listing::RefQuery;
 use grit_lib::repo::Repository;
 use std::process::Command;
 
@@ -40,7 +41,7 @@ fn force_replace_lightweight_with_annotated_git_clean() {
     let (repo, head) = seed_repo(&root);
     git(&root, &["tag", "v1"]);
 
-    let lightweight = list_tags(&repo).unwrap()[0].oid;
+    let lightweight = list_tags(&repo, &RefQuery::default()).unwrap()[0].oid;
     let tagger = "Tagger <t@example.com> 946684800 +0000";
     let outcome = create_tag(
         &repo,
@@ -80,7 +81,7 @@ fn force_replace_annotated_with_lightweight_git_clean() {
     let (repo, head) = seed_repo(&root);
     git(&root, &["tag", "-a", "v1", "-m", "old"]);
 
-    let annotated = list_tags(&repo).unwrap()[0].oid;
+    let annotated = list_tags(&repo, &RefQuery::default()).unwrap()[0].oid;
     let outcome = create_tag(
         &repo,
         &CreateTagRequest {
@@ -131,7 +132,7 @@ fn create_dry_run_leaves_refs_untouched() {
     )
     .expect("dry-run create");
 
-    assert!(list_tags(&repo).unwrap().is_empty());
+    assert!(list_tags(&repo, &RefQuery::default()).unwrap().is_empty());
 
     git(&root, &["tag", "existing"]);
     create_tag(
@@ -149,7 +150,7 @@ fn create_dry_run_leaves_refs_untouched() {
     )
     .expect("dry-run force");
 
-    let listed = list_tags(&repo).unwrap();
+    let listed = list_tags(&repo, &RefQuery::default()).unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].kind, TagKind::Lightweight);
 
