@@ -840,14 +840,17 @@ enum Command {
         )]
         branch: Option<String>,
         /// Cancel an in-progress merge and restore the pre-merge state.
-        #[arg(long = "abort", conflicts_with = "continue_merge")]
+        #[arg(long = "abort", conflicts_with_all = ["continue_merge", "check"])]
         abort: bool,
         /// Finish an in-progress merge after resolving conflicts (or after `--no-commit`).
-        #[arg(long = "continue", conflicts_with = "abort")]
+        #[arg(long = "continue", conflicts_with_all = ["abort", "check"])]
         continue_merge: bool,
         /// Commit message (only with `--continue`; overrides `MERGE_MSG`).
         #[arg(short = 'm', long = "message", requires = "continue_merge")]
         message: Option<String>,
+        /// Predict whether the merge would succeed without changing refs, index, or worktree.
+        #[arg(long = "check", conflicts_with_all = ["abort", "continue_merge"])]
+        check: bool,
     },
     /// Cherry-pick a commit onto the current branch.
     Pick {
@@ -1701,9 +1704,15 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             abort,
             continue_merge,
             message,
+            check,
         } => {
-            let outcome =
-                commands::merge::run(branch.as_deref(), abort, continue_merge, message.as_deref())?;
+            let outcome = commands::merge::run(
+                branch.as_deref(),
+                abort,
+                continue_merge,
+                message.as_deref(),
+                check,
+            )?;
             emit(&outcome, opts, ctx)?;
             if outcome.result == commands::merge::MergeResult::Conflicts {
                 std::process::exit(1);

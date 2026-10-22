@@ -9,6 +9,7 @@ order: 3
 
 ```text
 grit merge <branch>
+grit merge --check <branch>
 grit merge --continue [-m <message>]
 grit merge --abort
 ```
@@ -32,7 +33,8 @@ Local edits are allowed when they only touch paths the merge does not change, or
 | Option | Description |
 | --- | --- |
 | `<branch>` | The branch to merge into the current one. |
-| `--continue` | Finish an in-progress merge after conflicts are resolved (or after `--no-commit`). Conflicts with `<branch>` and `--abort`. |
+| `--check` | Predict whether the merge would succeed without changing refs, the index, or the working tree. Exit **0** when it would fast-forward, already be up to date, or merge cleanly; exit **1** when it would conflict. Other failures use the usual error exit. |
+| `--continue` | Finish an in-progress merge after conflicts are resolved (or after `--no-commit`). Conflicts with `<branch>`, `--check`, and `--abort`. |
 | `-m`, `--message` | Commit message for `--continue` only (overrides `MERGE_MSG`). |
 | `--abort` | Cancel an in-progress merge and restore the state recorded in `ORIG_HEAD`. |
 
@@ -93,9 +95,9 @@ Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `result` | string | `up_to_date`, `fast_forward`, `merged`, `conflicts`, `aborted`, or `set_upstream`. |
+| `result` | string | `up_to_date`, `fast_forward`, `clean` (`--check` only), `merged`, `conflicts`, `aborted`, or `set_upstream`. |
 | `branch` | string | The branch that was merged in (or set as upstream). |
-| `oid` | string or null | Commit the current branch points at after the merge, when applicable. |
+| `oid` | string or null | Resulting commit after a real merge or fast-forward; for `--check` with `result: clean`, the predicted merge tree OID. |
 | `change_id` | string or null | Stored `change-id` on `oid` when present (merge commit or fast-forward tip). |
 | `upstream` | string or null | For `set_upstream`, the remote-tracking branch that was adopted. |
 | `conflicts` | array or null | When `result` is `conflicts`, each item has `path`, `kind` (`content`, `add_add`, or `modify_delete`), and optional `summary` text. |
@@ -108,6 +110,16 @@ Example:
 {
   "result": "up_to_date",
   "branch": "main"
+}
+```
+
+Dry-run prediction with `--check` (exit code 0):
+
+```json
+{
+  "result": "clean",
+  "branch": "topic",
+  "oid": "4b825dc642cb6eb9a06054e089d91b5929f0d0a"
 }
 ```
 
