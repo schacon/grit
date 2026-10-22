@@ -117,7 +117,12 @@ mod unix {
             &mut NullProgress,
         )
         .expect("stage must not hang or fail on fifo");
-        assert_eq!(outcome.added, 1, "only new.txt staged, got {outcome:?}");
+        assert_eq!(
+            outcome.added.len(),
+            1,
+            "only new.txt staged, got {outcome:?}"
+        );
+        assert_eq!(outcome.added[0], "new.txt");
 
         let staged = git(root, &["diff", "--cached", "--name-only"]);
         assert_eq!(staged.trim(), "new.txt");

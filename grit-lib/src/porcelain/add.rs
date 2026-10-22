@@ -73,17 +73,19 @@ pub struct StageOptions {
     /// Override bulk/parallel staging thresholds (integration tests only).
     #[doc(hidden)]
     pub staging_thresholds: Option<IndexStagingThresholds>,
+    /// When true, classify paths that would be staged without writing blobs, the index, or UNTR.
+    pub dry_run: bool,
 }
 
-/// Counts returned by [`stage`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// Paths returned by [`stage`] (repository-relative, `/` separators).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StageOutcome {
     /// New untracked paths staged at stage 0.
-    pub added: usize,
+    pub added: Vec<String>,
     /// Tracked paths updated in the index (including conflict resolution and gitlinks).
-    pub modified: usize,
+    pub modified: Vec<String>,
     /// Tracked paths removed from the index because they are absent from the work tree.
-    pub removed: usize,
+    pub removed: Vec<String>,
 }
 
 impl StageOutcome {
@@ -91,8 +93,48 @@ impl StageOutcome {
     #[must_use]
     pub fn total(&self) -> usize {
         self.added
-            .saturating_add(self.modified)
-            .saturating_add(self.removed)
+            .len()
+            .saturating_add(self.modified.len())
+            .saturating_add(self.removed.len())
+    }
+}
+
+fn index_path_to_string(path: &[u8]) -> String {
+    std::str::from_utf8(path)
+        .map(str::to_owned)
+        .unwrap_or_else(|_| String::from_utf8_lossy(path).into_owned())
+}
+
+fn index_position_for_path(index: &Index, path: &str) -> usize {
+    index
+        .entries
+        .iter()
+        .position(|e| e.stage() == 0 && index_path_to_string(&e.path) == path)
+        .unwrap_or(usize::MAX)
+}
+
+fn sort_outcome_paths_in_index_order(outcome: &mut StageOutcome, index: &Index) {
+    let sort_paths = |paths: &mut Vec<String>| {
+        paths.sort_by(|a, b| {
+            index_position_for_path(index, a)
+                .cmp(&index_position_for_path(index, b))
+                .then_with(|| a.as_str().cmp(b))
+        });
+        paths.dedup();
+    };
+    sort_paths(&mut outcome.added);
+    sort_paths(&mut outcome.modified);
+    sort_paths(&mut outcome.removed);
+}
+
+fn sort_outcome_paths_lexicographic(outcome: &mut StageOutcome) {
+    for paths in [
+        &mut outcome.added,
+        &mut outcome.modified,
+        &mut outcome.removed,
+    ] {
+        paths.sort();
+        paths.dedup();
     }
 }
 
@@ -163,7 +205,7 @@ pub fn stage(
     opts: &StageOptions,
     progress: &mut dyn ProgressSink,
 ) -> Result<StageOutcome> {
-    if opts.pathspecs.is_empty() && opts.mode == StageMode::All {
+    if opts.pathspecs.is_empty() && opts.mode == StageMode::All && !opts.dry_run {
         return stage_with_tracked_scan(repo, opts, progress);
     }
     stage_via_worktree_diff(repo, opts, progress)
@@ -211,6 +253,8 @@ fn stage_inner_on_index(
     index: &mut Index,
     write_index: bool,
 ) -> Result<StageOutcome> {
+    let dry_run = opts.dry_run;
+    let persist_index = write_index && !dry_run;
     let work_tree = repo
         .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
@@ -263,14 +307,24 @@ fn stage_inner_on_index(
             thread_policy: Some(repo.thread_policy()),
             ..DiffIndexToWorktreeOptions::default()
         };
-        let (unstaged, _, staging_stats) = crate::diff::diff_index_to_worktree_for_staging(
-            repo.odb(),
-            repo.git_dir(),
-            index,
-            work_tree,
-            diff_opts,
-        )?;
-        (unstaged, staging_stats)
+        if dry_run {
+            let (unstaged, _) = crate::diff::diff_index_to_worktree_with_options(
+                repo.odb(),
+                index,
+                work_tree,
+                diff_opts,
+            )?;
+            (unstaged, std::collections::BTreeMap::new())
+        } else {
+            let (unstaged, _, staging_stats) = crate::diff::diff_index_to_worktree_for_staging(
+                repo.odb(),
+                repo.git_dir(),
+                index,
+                work_tree,
+                diff_opts,
+            )?;
+            (unstaged, staging_stats)
+        }
     };
 
     let rules = lock_rules(&rules_arc)?;
@@ -349,39 +403,53 @@ fn stage_inner_on_index(
     };
 
     if let Some(summary) = &tracked_scan_summary {
-        outcome.modified = summary.modified.len();
-        outcome.removed = summary.removed.len();
+        for raw in &summary.modified {
+            outcome.modified.push(index_path_to_string(raw));
+        }
+        for raw in &summary.removed {
+            outcome.removed.push(index_path_to_string(raw));
+        }
     } else {
         let worktree_updates = collect_tracked_stage_plans(&unstaged, &matches);
         for (path, plan) in worktree_updates {
-            if has_unmerged && unmerged_only_paths.contains(path.as_bytes()) {
+            if has_unmerged
+                && unmerged_only_paths.contains(path.as_bytes())
+                && opts.mode != StageMode::Update
+            {
                 continue;
             }
             if plan.remove {
-                if index.remove(path.as_bytes()) {
-                    outcome.removed += 1;
+                if dry_run {
+                    if index.get(path.as_bytes(), 0).is_some() {
+                        outcome.removed.push(path);
+                    }
+                } else if index.remove(path.as_bytes()) {
+                    outcome.removed.push(path);
                 }
                 continue;
             }
-            icase_map.remove_alias_of(index, path.as_bytes());
-            apply_tracked_stage_plan(
-                repo,
-                work_tree,
-                &path,
-                &plan,
-                staging_stats.get(&path),
-                index,
-                has_unmerged,
-                opts.executable_hint,
-                &matches,
-            )?;
-            outcome.modified += 1;
+            if !dry_run {
+                icase_map.remove_alias_of(index, path.as_bytes());
+                apply_tracked_stage_plan(
+                    repo,
+                    work_tree,
+                    &path,
+                    &plan,
+                    staging_stats.get(&path),
+                    index,
+                    has_unmerged,
+                    opts.executable_hint,
+                    &matches,
+                )?;
+            }
+            outcome.modified.push(path);
         }
     }
 
     if ignorecase {
-        outcome.modified +=
-            stage_ignorecase_spelling_updates(repo, work_tree, &icase_map, &matches, index)?;
+        outcome.modified.extend(stage_ignorecase_spelling_updates(
+            repo, work_tree, &icase_map, &matches, index, dry_run,
+        )?);
     }
 
     if !untracked.is_empty() {
@@ -398,25 +466,40 @@ fn stage_inner_on_index(
             index,
             parallelism,
             opts.executable_hint,
+            dry_run,
             &mut outcome,
         )?;
     }
 
-    if has_unmerged && !opts.pathspecs.is_empty() {
-        outcome.modified +=
-            stage_unmerged_paths_matching_pathspecs(repo, work_tree, &matches, index, &rules)?;
+    if has_unmerged && (!opts.pathspecs.is_empty() || opts.mode == StageMode::Update) {
+        let (modified, removed) = stage_unmerged_paths_matching_pathspecs(
+            repo, work_tree, &matches, index, &rules, dry_run,
+        )?;
+        outcome.modified.extend(modified);
+        outcome.removed.extend(removed);
     }
 
     if opts.executable_hint != StageExecutableHint::None && !opts.pathspecs.is_empty() {
-        outcome.modified += apply_executable_hint_to_index(index, opts.executable_hint, &matches)?;
+        outcome.modified.extend(apply_executable_hint_to_index(
+            index,
+            opts.executable_hint,
+            &matches,
+            dry_run,
+        )?);
     }
 
-    if outcome.total() > 0 {
+    if dry_run {
+        sort_outcome_paths_lexicographic(&mut outcome);
+    } else if outcome.total() > 0 {
+        sort_outcome_paths_in_index_order(&mut outcome, index);
+    }
+
+    if outcome.total() > 0 && !dry_run {
         if let Some(summary) = &tracked_scan_summary {
             replay_deferred_untracked_invalidations(index, summary);
         }
         index.ensure_canonical_order();
-        if write_index {
+        if persist_index {
             repo.write_index(index)?;
         }
     }
@@ -447,14 +530,16 @@ fn stage_unmerged_paths_matching_pathspecs(
     matches: &impl Fn(&str) -> bool,
     index: &mut Index,
     rules: &WorktreeRules,
-) -> Result<usize> {
+    dry_run: bool,
+) -> Result<(Vec<String>, Vec<String>)> {
     let mut unmerged: BTreeMap<Vec<u8>, ()> = BTreeMap::new();
     for entry in &index.entries {
         if entry.stage() != 0 {
             unmerged.insert(entry.path.clone(), ());
         }
     }
-    let mut updated = 0usize;
+    let mut modified = Vec::new();
+    let mut removed = Vec::new();
     for raw_path in unmerged.keys() {
         let rel = match std::str::from_utf8(raw_path) {
             Ok(s) => s,
@@ -466,8 +551,18 @@ fn stage_unmerged_paths_matching_pathspecs(
         let abs = work_tree.join(rel);
         let meta = match fs::symlink_metadata(&abs) {
             Ok(m) => m,
-            Err(_) => continue,
+            Err(e) if worktree_path_is_missing(&e) => {
+                if dry_run || index.remove(raw_path) {
+                    removed.push(rel.to_owned());
+                }
+                continue;
+            }
+            Err(e) => return Err(Error::Io(e)),
         };
+        if dry_run {
+            modified.push(rel.to_owned());
+            continue;
+        }
         let file_attrs = rules.file_attrs(rel, false);
         let mode = mode_from_metadata(&meta);
         let oid = materialize_worktree_blob(
@@ -486,9 +581,13 @@ fn stage_unmerged_paths_matching_pathspecs(
         validate_index_staging_path(repo, raw_path, mode)?;
         index.stage_file(entry);
         mark_fsmonitor_staged(index, rel);
-        updated += 1;
+        modified.push(rel.to_owned());
     }
-    Ok(updated)
+    Ok((modified, removed))
+}
+
+fn worktree_path_is_missing(err: &std::io::Error) -> bool {
+    matches!(err.kind(), std::io::ErrorKind::NotFound)
 }
 
 struct TrackedStagePlan {
@@ -645,8 +744,9 @@ fn stage_ignorecase_spelling_updates(
     icase_map: &Stage0IcasePathMap,
     matches: &impl Fn(&str) -> bool,
     index: &mut Index,
-) -> Result<usize> {
-    let mut updated = 0usize;
+    dry_run: bool,
+) -> Result<Vec<String>> {
+    let mut updated = Vec::new();
     let stage0: Vec<Vec<u8>> = index
         .entries
         .iter()
@@ -673,6 +773,10 @@ fn stage_ignorecase_spelling_updates(
         if !paths_equal(raw_path.as_slice(), actual_rel.as_bytes(), true) {
             continue;
         }
+        if dry_run {
+            updated.push(actual_rel);
+            continue;
+        }
         let Some(entry) = index
             .entries
             .iter()
@@ -687,7 +791,7 @@ fn stage_ignorecase_spelling_updates(
         validate_index_staging_path(repo, refreshed.path.as_slice(), refreshed.mode)?;
         index.stage_file(refreshed);
         mark_fsmonitor_staged(index, &actual_rel);
-        updated += 1;
+        updated.push(actual_rel);
     }
     Ok(updated)
 }
@@ -759,6 +863,7 @@ fn stage_untracked_paths_parallel(
     index: &mut Index,
     parallelism: Parallelism,
     executable_hint: StageExecutableHint,
+    dry_run: bool,
     outcome: &mut StageOutcome,
 ) -> Result<()> {
     let precompose_unicode = rules
@@ -818,26 +923,28 @@ fn stage_untracked_paths_parallel(
         Some(rules.filter_process()),
     )?;
 
-    if !prepared.is_empty() {
+    if !dry_run && !prepared.is_empty() {
         repo.odb().ensure_all_loose_prefix_dirs()?;
     }
     let write_opts = BULK_NEW_LOOSE_WRITE;
     let write_bytes: usize = prepared.iter().map(|p| p.zlib_store.len()).sum();
     let threads = parallelism.threads();
-    let _written: Vec<ObjectId> = try_par_hash_with(&prepared, threads, write_bytes, |prep| {
-        repo.odb()
-            .write_loose_zlib_prehashed(&prep.oid, &prep.zlib_store, write_opts)
-            .map_err(|e| match e {
-                Error::Io(source) => Error::LooseObjectWrite {
-                    path: prep.index_relpath.clone(),
-                    source,
-                },
-                other => other,
-            })
-    })
-    .map_err(|e: ParallelHashError<Error>| match e {
-        ParallelHashError::Task(err) => err,
-    })?;
+    if !dry_run {
+        let _written: Vec<ObjectId> = try_par_hash_with(&prepared, threads, write_bytes, |prep| {
+            repo.odb()
+                .write_loose_zlib_prehashed(&prep.oid, &prep.zlib_store, write_opts)
+                .map_err(|e| match e {
+                    Error::Io(source) => Error::LooseObjectWrite {
+                        path: prep.index_relpath.clone(),
+                        source,
+                    },
+                    other => other,
+                })
+        })
+        .map_err(|e: ParallelHashError<Error>| match e {
+            ParallelHashError::Task(err) => err,
+        })?;
+    }
 
     let skip_per_path_cache_invalidate =
         index.cache_tree.is_none() && index.untracked_cache.is_none();
@@ -851,6 +958,10 @@ fn stage_untracked_paths_parallel(
             deferred.push(prep.index_relpath);
             continue;
         }
+        if dry_run {
+            outcome.added.push(prep.index_relpath);
+            continue;
+        }
         icase_map.remove_alias_of(index, prep.index_relpath.as_bytes());
         let mode =
             mode_with_executable_hint(prep.mode, &prep.index_relpath, executable_hint, matches);
@@ -862,21 +973,27 @@ fn stage_untracked_paths_parallel(
             index.invalidate_cache_tree_for_path(&entry.path);
         }
         batch_entries.push(entry);
-        outcome.added += 1;
+        outcome.added.push(prep.index_relpath);
     }
     let staged_batch_count = batch_entries.len();
     for entry in batch_entries {
         validate_index_staging_path(repo, &entry.path, entry.mode)?;
-        if let Ok(rel) = std::str::from_utf8(&entry.path) {
-            mark_fsmonitor_staged(index, rel);
+        if !dry_run {
+            if let Ok(rel) = std::str::from_utf8(&entry.path) {
+                mark_fsmonitor_staged(index, rel);
+            }
+            index.add_or_replace(entry);
         }
-        index.add_or_replace(entry);
     }
-    if staged_batch_count > 0 && index.fsmonitor_last_update.is_some() {
+    if staged_batch_count > 0 && !dry_run && index.fsmonitor_last_update.is_some() {
         index.fsmonitor_validity_changed();
     }
 
     for path in deferred {
+        if dry_run {
+            outcome.added.push(path);
+            continue;
+        }
         icase_map.remove_alias_of(index, path.as_bytes());
         stage_untracked_path(
             repo,
@@ -887,7 +1004,7 @@ fn stage_untracked_paths_parallel(
             executable_hint,
             matches,
         )?;
-        outcome.added += 1;
+        outcome.added.push(path);
     }
 
     Ok(())
@@ -1217,7 +1334,7 @@ mod tests {
         fs::write(root.join("z.txt"), b"3\n").unwrap();
 
         let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        assert_eq!(outcome.added, 3);
+        assert_eq!(outcome.added.len(), 3);
 
         let index = repo.load_index().unwrap();
         let paths: Vec<String> = index
@@ -1244,9 +1361,9 @@ mod tests {
         fs::write(root.join("fresh.txt"), b"added\n").unwrap();
 
         let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        assert_eq!(outcome.added, 1);
-        assert_eq!(outcome.modified, 1);
-        assert_eq!(outcome.removed, 1);
+        assert_eq!(outcome.added.len(), 1);
+        assert_eq!(outcome.modified.len(), 1);
+        assert_eq!(outcome.removed.len(), 1);
 
         let index = repo.load_index().unwrap();
         assert!(index.get(b"fresh.txt", 0).is_some());
@@ -1265,7 +1382,7 @@ mod tests {
         fs::write(root.join("new.txt"), b"fresh\n").unwrap();
 
         let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        assert_eq!(outcome.added, 1);
+        assert_eq!(outcome.added.len(), 1);
         let index = repo.load_index().unwrap();
         assert!(index.get(b"new.txt", 0).is_some());
     }
@@ -1281,7 +1398,7 @@ mod tests {
         fs::write(root.join("new.txt"), b"fresh\n").unwrap();
 
         let outcome = stage_for_commit(&repo, &mut NullProgress).unwrap();
-        assert_eq!(outcome.added, 1);
+        assert_eq!(outcome.added.len(), 1);
         let index = repo.load_index().unwrap();
         assert!(index.get(b"new.txt", 0).is_some());
     }
@@ -1307,7 +1424,7 @@ mod tests {
             &mut NullProgress,
         )
         .unwrap();
-        assert_eq!(outcome.modified, 1);
+        assert_eq!(outcome.modified.len(), 1);
         assert_eq!(outcome.total(), 1);
 
         let index = repo.load_index().unwrap();
@@ -1351,8 +1468,8 @@ mod tests {
             &mut NullProgress,
         )
         .unwrap();
-        assert_eq!(outcome.modified, 4);
-        assert_eq!(outcome.added, 1);
+        assert_eq!(outcome.modified.len(), 4);
+        assert_eq!(outcome.added.len(), 1);
         let index = repo.load_index().unwrap();
         assert!(index.get(b"new.txt", 0).is_some());
 
@@ -1503,7 +1620,7 @@ mod tests {
 
         let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
 
-        assert_eq!(outcome.added, 1);
+        assert_eq!(outcome.added.len(), 1);
         let index = repo.load_index().unwrap();
         let entry = index.get("caf\u{e9}.txt".as_bytes(), 0).unwrap();
         assert!(index.get(nfd.as_bytes(), 0).is_none());
@@ -1523,7 +1640,7 @@ mod tests {
 
         repo.odb().enable_mem_overlay();
         let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        assert_eq!(outcome.modified, 1);
+        assert_eq!(outcome.modified.len(), 1);
         assert_eq!(outcome.total(), 1);
 
         let overlay_len = repo
@@ -1606,7 +1723,7 @@ mod tests {
             &mut NullProgress,
         )
         .unwrap();
-        assert_eq!(outcome.modified, 1);
+        assert_eq!(outcome.modified.len(), 1);
 
         let index = repo.load_index().unwrap();
         assert!(!index.has_unmerged_entries());
@@ -1853,7 +1970,7 @@ mod tests {
     }
 
     #[test]
-    fn stage_mode_update_skips_untracked() {
+    fn stage_update_ignores_untracked() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let repo = init_repo(root);
@@ -1872,12 +1989,405 @@ mod tests {
             &mut NullProgress,
         )
         .unwrap();
-        assert_eq!(outcome.modified, 1);
-        assert_eq!(outcome.added, 0);
+        assert_eq!(outcome.modified.len(), 1);
+        assert_eq!(outcome.added.len(), 0);
         assert_eq!(outcome.total(), 1);
 
         let index = repo.load_index().unwrap();
         assert!(index.get(b"tracked.txt", 0).is_some());
         assert!(index.get(b"brand-new.txt", 0).is_none());
+    }
+
+    fn count_loose_objects(root: &Path) -> usize {
+        let objects = root.join(".git/objects");
+        let mut count = 0usize;
+        for shard in fs::read_dir(&objects).unwrap() {
+            let shard = shard.unwrap();
+            if !shard.file_type().unwrap().is_dir() {
+                continue;
+            }
+            let name = shard.file_name();
+            if name == "info" || name == "pack" {
+                continue;
+            }
+            count += fs::read_dir(shard.path()).unwrap().count();
+        }
+        count
+    }
+
+    #[test]
+    fn stage_dry_run_writes_nothing() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("tracked.txt"), b"v1\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        fs::write(root.join("tracked.txt"), b"v2\n").unwrap();
+        fs::write(root.join("new.txt"), b"n\n").unwrap();
+        let index_before = repo.load_index().unwrap();
+        let mtime_before = fs::metadata(repo.index_path()).unwrap().modified().ok();
+        let objects_before = count_loose_objects(root);
+
+        let outcome = stage(
+            &repo,
+            &StageOptions {
+                dry_run: true,
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap();
+        assert!(!outcome.added.is_empty() || !outcome.modified.is_empty());
+        let index_after = repo.load_index().unwrap();
+        assert_eq!(index_before.entries, index_after.entries);
+        if let Some(before) = mtime_before {
+            let after = fs::metadata(repo.index_path()).unwrap().modified().ok();
+            assert_eq!(Some(before), after);
+        }
+        assert_eq!(
+            count_loose_objects(root),
+            objects_before,
+            "dry-run must not write loose objects"
+        );
+        stage(
+            &repo,
+            &StageOptions {
+                dry_run: true,
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap();
+        assert_eq!(count_loose_objects(root), objects_before);
+    }
+
+    #[test]
+    fn add_update_resolves_unmerged_pathless() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        let base = repo.odb().write(ObjectKind::Blob, b"base\n").unwrap();
+        let theirs = repo.odb().write(ObjectKind::Blob, b"base\nfeat\n").unwrap();
+
+        let mut index = Index::new();
+        index
+            .entries
+            .push(conflict_index_entry("f", 1, base, MODE_REGULAR));
+        index
+            .entries
+            .push(conflict_index_entry("f", 3, theirs, MODE_REGULAR));
+        write_index(&repo, &mut index);
+        fs::write(root.join("f"), b"base\nfeat\n").unwrap();
+
+        let outcome = stage(
+            &repo,
+            &StageOptions {
+                mode: StageMode::Update,
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap();
+        assert_eq!(outcome.total(), 1, "pathless -u must stage resolved file");
+
+        let index = repo.load_index().unwrap();
+        assert!(
+            !index.has_unmerged_entries(),
+            "pathless -u must clear unmerged stages"
+        );
+        assert!(index.get(b"f", 0).is_some());
+    }
+
+    #[test]
+    fn add_update_unmerged_deletion_pathless() {
+        if !std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+        {
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        grit_test_support::git(root, &["config", "user.email", "t@example.com"]);
+        grit_test_support::git(root, &["config", "user.name", "Test"]);
+        fs::write(root.join("f"), b"base\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        grit_test_support::git(root, &["commit", "-qm", "seed"]);
+
+        let base = repo.odb().write(ObjectKind::Blob, b"base\n").unwrap();
+        let theirs = repo.odb().write(ObjectKind::Blob, b"base\nfeat\n").unwrap();
+        let mut index = Index::new();
+        index
+            .entries
+            .push(conflict_index_entry("f", 1, base, MODE_REGULAR));
+        index
+            .entries
+            .push(conflict_index_entry("f", 3, theirs, MODE_REGULAR));
+        write_index(&repo, &mut index);
+        let _ = fs::remove_file(root.join("f"));
+
+        let outcome = stage(
+            &repo,
+            &StageOptions {
+                mode: StageMode::Update,
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap();
+        assert_eq!(outcome.removed, vec!["f".to_owned()]);
+        assert!(outcome.modified.is_empty());
+        assert_eq!(outcome.total(), 1);
+
+        let index = repo.load_index().unwrap();
+        assert!(
+            !index.has_unmerged_entries(),
+            "deletion resolution must drop all conflict stages"
+        );
+        assert!(index.get(b"f", 0).is_none());
+
+        let unmerged_lines: Vec<String> = String::from_utf8(
+            std::process::Command::new("git")
+                .args(["ls-files", "-u"])
+                .current_dir(root)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+        assert!(
+            unmerged_lines.is_empty(),
+            "git ls-files -u after grit add -u: {unmerged_lines:?}"
+        );
+
+        let tmp2 = TempDir::new().unwrap();
+        let root2 = tmp2.path();
+        grit_test_support::git(root2, &["init", "-q", "-b", "main"]);
+        grit_test_support::git(root2, &["config", "user.email", "t@example.com"]);
+        grit_test_support::git(root2, &["config", "user.name", "Test"]);
+        fs::write(root2.join("f"), b"base\n").unwrap();
+        grit_test_support::git(root2, &["add", "f"]);
+        grit_test_support::git(root2, &["commit", "-qm", "seed"]);
+        let repo2 = Repository::discover(Some(root2), &RepositoryOptions::empty()).unwrap();
+        let mut index2 = Index::new();
+        index2
+            .entries
+            .push(conflict_index_entry("f", 1, base, MODE_REGULAR));
+        index2
+            .entries
+            .push(conflict_index_entry("f", 3, theirs, MODE_REGULAR));
+        write_index(&repo2, &mut index2);
+        let _ = fs::remove_file(root2.join("f"));
+        grit_test_support::git(root2, &["add", "-u"]);
+        let git_unmerged: Vec<String> = String::from_utf8(
+            std::process::Command::new("git")
+                .args(["ls-files", "-u"])
+                .current_dir(root2)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+        assert!(
+            git_unmerged.is_empty(),
+            "git add -u reference must clear unmerged entries"
+        );
+    }
+
+    #[test]
+    fn stage_outcome_lists_paths_bulk_and_serial() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("a.txt"), b"a\n").unwrap();
+        fs::write(root.join("b.txt"), b"b\n").unwrap();
+        let bulk = stage(
+            &repo,
+            &StageOptions {
+                staging_thresholds: Some(IndexStagingThresholds {
+                    large_index_restage: 0,
+                    parallel_tracked_restage: 0,
+                }),
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap();
+        assert_eq!(bulk.added.len(), 2);
+        assert!(bulk.added.contains(&"a.txt".to_owned()));
+        assert!(bulk.added.contains(&"b.txt".to_owned()));
+
+        fs::write(root.join("c.txt"), b"c\n").unwrap();
+        let serial = stage(
+            &repo,
+            &StageOptions {
+                pathspecs: vec!["c.txt".to_owned()],
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap();
+        assert_eq!(serial.added, vec!["c.txt".to_owned()]);
+    }
+
+    fn git_ls_files_s(repo: &Repository) -> Vec<String> {
+        let wt = repo.work_tree().unwrap();
+        let out = std::process::Command::new("git")
+            .args(["ls-files", "-s"])
+            .current_dir(wt)
+            .output()
+            .expect("git ls-files");
+        assert!(out.status.success());
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn add_update_deleted_file() {
+        if !std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+        {
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        grit_test_support::git(root, &["config", "user.email", "t@example.com"]);
+        grit_test_support::git(root, &["config", "user.name", "Test"]);
+        fs::write(root.join("keep.txt"), b"k\n").unwrap();
+        fs::write(root.join("gone.txt"), b"g\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        grit_test_support::git(root, &["commit", "-qm", "seed"]);
+        fs::remove_file(root.join("gone.txt")).unwrap();
+        fs::write(root.join("keep.txt"), b"k2\n").unwrap();
+
+        let outcome = stage(
+            &repo,
+            &StageOptions {
+                mode: StageMode::Update,
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap();
+        assert!(outcome.removed.iter().any(|p| p == "gone.txt"));
+        assert!(outcome.modified.iter().any(|p| p == "keep.txt"));
+
+        let grit_lines = git_ls_files_s(&repo);
+        grit_test_support::git(root, &["reset"]);
+        grit_test_support::git(root, &["add", "-u"]);
+        let git_lines: Vec<String> = String::from_utf8(
+            std::process::Command::new("git")
+                .args(["ls-files", "-s"])
+                .current_dir(root)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+        assert_eq!(grit_lines, git_lines);
+        assert!(std::process::Command::new("git")
+            .arg("fsck")
+            .current_dir(root)
+            .status()
+            .expect("git fsck")
+            .success());
+    }
+
+    #[test]
+    fn add_update_subdirectory_pathspec() {
+        if !std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+        {
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        grit_test_support::git(root, &["config", "user.email", "t@example.com"]);
+        grit_test_support::git(root, &["config", "user.name", "Test"]);
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join("sub/a.txt"), b"1\n").unwrap();
+        fs::write(root.join("top.txt"), b"t\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        grit_test_support::git(root, &["commit", "-qm", "seed"]);
+        fs::write(root.join("sub/a.txt"), b"2\n").unwrap();
+        fs::write(root.join("top.txt"), b"T\n").unwrap();
+
+        let outcome = stage(
+            &repo,
+            &StageOptions {
+                mode: StageMode::Update,
+                pathspecs: vec!["sub".to_owned()],
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap();
+        assert_eq!(outcome.modified, vec!["sub/a.txt".to_owned()]);
+        assert!(!outcome.modified.iter().any(|p| p == "top.txt"));
+    }
+
+    #[test]
+    fn add_update_empty_pathspecs_whole_tree() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("f.txt"), b"1\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        fs::write(root.join("f.txt"), b"2\n").unwrap();
+        let outcome = stage(
+            &repo,
+            &StageOptions {
+                mode: StageMode::Update,
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap();
+        assert_eq!(outcome.modified.len(), 1);
+        assert_eq!(outcome.added.len(), 0);
+    }
+
+    #[test]
+    fn add_dry_run_lists_paths_without_writing() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("f.txt"), b"1\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        fs::write(root.join("f.txt"), b"2\n").unwrap();
+        fs::write(root.join("n.txt"), b"n\n").unwrap();
+        let outcome = stage(
+            &repo,
+            &StageOptions {
+                dry_run: true,
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap();
+        assert!(outcome.modified.contains(&"f.txt".to_owned()));
+        assert!(outcome.added.contains(&"n.txt".to_owned()));
+        let index = repo.load_index().unwrap();
+        assert!(index.get(b"n.txt", 0).is_none());
     }
 }
