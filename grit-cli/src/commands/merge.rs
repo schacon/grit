@@ -6,6 +6,7 @@
 
 use crate::context;
 use crate::markdown;
+use crate::merge_strategy_args::MergeStrategyArgs;
 use crate::message_input::{read_message_input, MessageInputArgs};
 use crate::operation_output::{render_conflicts_human, ConflictJson, OperationConflictBlock};
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
@@ -35,6 +36,8 @@ pub struct MergeRunOptions {
     pub no_ff: bool,
     pub no_commit: bool,
     pub squash: bool,
+    pub allow_unrelated_histories: bool,
+    pub strategy: MergeStrategyArgs,
     pub message: MessageInputArgs,
 }
 
@@ -467,10 +470,14 @@ fn build_merge_options(run: &MergeRunOptions) -> Result<MergeOptions> {
     } else {
         MergeCommitMode::Commit
     };
+    let (favor, conflict_style) = run.strategy.clone().into_merge_fields();
     Ok(MergeOptions {
         fast_forward,
         commit,
         message: read_message_input(&run.message)?,
+        favor,
+        conflict_style,
+        allow_unrelated: run.allow_unrelated_histories,
     })
 }
 

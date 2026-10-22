@@ -25,6 +25,7 @@ mod json_filter;
 mod json_schema;
 mod log_display;
 mod markdown;
+mod merge_strategy_args;
 mod message_input;
 mod operation_output;
 mod output;
@@ -1019,6 +1020,11 @@ enum Command {
             conflicts_with_all = ["no_commit", "continue_merge", "check"]
         )]
         squash: bool,
+        /// Merge histories that share no commits (uses the empty tree as merge base).
+        #[arg(long = "allow-unrelated-histories")]
+        allow_unrelated_histories: bool,
+        #[command(flatten)]
+        strategy: merge_strategy_args::MergeStrategyArgs,
         #[command(flatten)]
         message: message_input::MessageInputArgs,
     },
@@ -2230,6 +2236,8 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             no_ff,
             no_commit,
             squash,
+            allow_unrelated_histories,
+            strategy,
             message,
         } => {
             let outcome = commands::merge::run(
@@ -2242,6 +2250,8 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                     no_ff,
                     no_commit,
                     squash,
+                    allow_unrelated_histories,
+                    strategy,
                     message,
                 },
             )?;

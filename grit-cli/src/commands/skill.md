@@ -99,7 +99,7 @@ Each commit gets a stable **`change-id`** header (on by default) that survives `
 
 ## Combining work
 
-- `grit merge <branch>` fast-forwards when it can, otherwise records a merge commit. `<branch>` can be local or remote-tracking (`origin/main`). Use `grit merge --check <branch>` to predict conflicts in memory without touching refs, the index, or the worktree. Common flags: `--ff-only` (exit 128 when diverged), `--no-ff`, `--squash` (writes `SQUASH_MSG`; finish with `grit commit`), `--no-commit` (Git merge state; finish with `grit commit`), `-m` / `--message-file`.
+- `grit merge <branch>` fast-forwards when it can, otherwise records a merge commit. `<branch>` can be local or remote-tracking (`origin/main`). Use `grit merge --check <branch>` to predict conflicts in memory without touching refs, the index, or the worktree. Common flags: `--ff-only` (exit 128 when diverged), `--no-ff`, `--squash` (writes `SQUASH_MSG`; finish with `grit commit`), `--no-commit` (Git merge state; finish with `grit commit`), `-X ours|theirs`, `--conflict diff3|zdiff3|merge`, `--allow-unrelated-histories`, `-m` / `--message-file`.
 - `grit pick <commit>` applies one non-merge commit to the current branch as a new commit, keeping its author and message.
 - `grit revert [<commit>…]` undoes one or more commits (ranges OK; newest first). Merge commits need `--mainline <n>`. `-m` / `--message-file` set the message for a **single** commit only.
 - `grit revert --continue`, `--abort`, and `--skip` resume or cancel a stopped revert sequence (same conflict model as pick).
