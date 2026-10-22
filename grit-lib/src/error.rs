@@ -844,6 +844,10 @@ pub enum Error {
         branch: String,
     },
 
+    /// [`list_branches`](crate::branch_tracking::list_branches) with [`BranchDetail::Names`](crate::branch_tracking::BranchDetail::Names) cannot use date sort.
+    #[error("branch list with Names detail cannot use date sort (date sort reads commit objects)")]
+    BranchListNamesDateSort,
+
     /// [`delete_branch`](crate::porcelain::branch::delete_branch) refuses to delete the branch
     /// `HEAD` points at.
     #[error("cannot delete '{branch}' — it is the current branch")]

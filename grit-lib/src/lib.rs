@@ -156,6 +156,7 @@ pub mod apply;
 pub(crate) mod attributes;
 pub mod blame;
 pub(crate) mod bloom;
+pub(crate) mod branch_inventory;
 pub(crate) mod branch_tracking;
 pub mod bundle;
 pub(crate) mod bundle_remote;

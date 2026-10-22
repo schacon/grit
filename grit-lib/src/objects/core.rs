@@ -929,11 +929,43 @@ pub struct CommitData {
     pub extra_headers: Vec<u8>,
 }
 
-/// Parse commit headers (tree, parents, author, committer) and skip the message body.
+/// First paragraph of a commit message, folded like Git `%(contents:subject)`.
+///
+/// Lines in the first paragraph are trimmed and joined with a single space; the paragraph
+/// ends at the first blank line.
+#[must_use]
+pub fn commit_subject_pretty(message: &str) -> String {
+    let mut parts = Vec::new();
+    for line in message.lines() {
+        if line.trim().is_empty() {
+            break;
+        }
+        parts.push(line.trim());
+    }
+    if parts.is_empty() {
+        "(no subject)".to_owned()
+    } else {
+        parts.join(" ")
+    }
+}
+
+/// Subject from commit object bytes (see [`commit_subject_pretty`]).
 ///
 /// # Errors
 ///
-/// Returns [`Error::CorruptObject`] if required headers are missing.
+/// Returns [`Error::CorruptObject`] when the commit headers are malformed.
+pub fn read_commit_subject_pretty(data: &[u8]) -> Result<String> {
+    let message_start = data
+        .windows(2)
+        .position(|w| w == b"\n\n")
+        .map(|p| p + 2)
+        .ok_or_else(|| {
+            Error::CorruptObject("commit missing blank line before message".to_owned())
+        })?;
+    let body = std::str::from_utf8(data.get(message_start..).unwrap_or_default()).unwrap_or("");
+    Ok(commit_subject_pretty(body))
+}
+
 /// First non-blank line of a commit object's message (header scan only).
 ///
 /// # Errors
@@ -1281,6 +1313,14 @@ pub fn serialize_commit(c: &CommitData) -> Vec<u8> {
 #[cfg(test)]
 mod commit_parse_tests {
     use super::*;
+
+    #[test]
+    fn commit_subject_pretty_folds_first_paragraph() {
+        assert_eq!(
+            commit_subject_pretty("hello\nworld\n\nbody"),
+            "hello world"
+        );
+    }
 
     #[test]
     fn commit_ref_matches_parse_commit_headers() {

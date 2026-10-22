@@ -148,6 +148,14 @@ pub fn upstream_tracking_full_ref(repo: &Repository, branch_short: &str) -> Opti
     upstream_ref_for_merge(&config, remote.trim(), &merge)
 }
 
+/// Same as [`upstream_tracking_full_ref`] with an already-loaded config (branch inventory).
+#[must_use]
+pub(crate) fn branch_upstream_full_ref(config: &ConfigSet, branch_short: &str) -> Option<String> {
+    let remote = config.get(&format!("branch.{branch_short}.remote"))?;
+    let merge = config.get(&format!("branch.{branch_short}.merge"))?;
+    upstream_ref_for_merge(config, remote.trim(), &merge)
+}
+
 /// The local ref that holds `merge` (a `branch.<name>.merge` value) of `remote`.
 ///
 /// For the local remote `.` the merge ref is itself a local ref. Otherwise the remote ref
@@ -745,6 +753,11 @@ impl TipComparison {
         Standing::from_counts(self.ahead, self.behind)
     }
 }
+
+pub use crate::branch_inventory::{
+    list_branches, upstream_status, BranchDetail, BranchListQuery, BranchScope, BranchSummary,
+    UpstreamStatus,
+};
 
 #[cfg(test)]
 mod tests {
