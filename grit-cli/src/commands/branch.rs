@@ -1,6 +1,6 @@
 //! `grit branch` — list branches, or create / delete / rename / configure one.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Context, Error as AnyhowError, Result};
 use grit_lib::error::Error;
 use grit_lib::porcelain::branch::{
     create_branch, delete_branch, list_branches, rename_branch, set_upstream, unset_upstream,
@@ -12,6 +12,8 @@ use grit_lib::revwalk::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, resolve_head_for_repository, HeadState};
 use schemars::JsonSchema;
 use serde::Serialize;
+use std::error::Error as StdError;
+use std::fmt;
 use std::io::Write;
 
 use crate::context;
@@ -41,8 +43,8 @@ pub struct BranchRunOptions {
     pub unset_upstream: bool,
     /// `-m` / `--move` arguments (`[old] new`).
     pub rename: Option<Vec<String>>,
-    /// `-M`: move with `--force` (or `grit branch -M <new>` on the current branch).
-    pub force_move: bool,
+    /// `-M`: force rename (`-M <new>` or `-M <old> <new>`).
+    pub force_rename: Option<Vec<String>>,
     pub delete: bool,
     pub force_delete: bool,
     pub dry_run: bool,
@@ -243,15 +245,37 @@ impl MarkdownRender for BranchOutcome {
     }
 }
 
+/// Usage mistakes specific to `grit branch` (exit code 2).
+#[derive(Debug)]
+pub struct BranchUsageError;
+
+impl fmt::Display for BranchUsageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("invalid branch arguments")
+    }
+}
+
+impl StdError for BranchUsageError {}
+
+fn branch_usage(message: impl Into<String>) -> AnyhowError {
+    AnyhowError::new(BranchUsageError).context(message.into())
+}
+
+pub(crate) fn is_branch_usage_error(err: &AnyhowError) -> bool {
+    err.chain()
+        .any(|cause| cause.downcast_ref::<BranchUsageError>().is_some())
+}
+
 /// List, create, delete, rename, or configure a branch depending on `opts`.
 pub fn run(opts: BranchRunOptions) -> Result<BranchOutcome> {
-    if opts.delete && opts.force {
-        bail!(
-            "`--force` does not delete branches; use `--force-delete` (or `-D`) when the branch is not fully merged"
-        );
+    if (opts.delete || opts.force_delete) && opts.force {
+        return Err(branch_usage(
+            "`--force` does not delete branches; use `--force-delete` (or `-D`) when the branch is not fully merged",
+        ));
     }
-    if opts.delete && (opts.force_move || opts.rename.is_some()) {
-        bail!("cannot combine `--delete` with `--move`");
+    if (opts.delete || opts.force_delete) && (opts.rename.is_some() || opts.force_rename.is_some())
+    {
+        return Err(branch_usage("cannot combine `--delete` with `--move`"));
     }
     if opts.unset_upstream && opts.set_upstream_to.is_some() {
         bail!("cannot combine `--unset-upstream` with `--set-upstream-to`");
@@ -261,9 +285,9 @@ pub fn run(opts: BranchRunOptions) -> Result<BranchOutcome> {
             || opts.unset_upstream
             || opts.set_upstream_to.is_some()
             || opts.rename.is_some()
-            || opts.force_move)
+            || opts.force_rename.is_some())
     {
-        bail!("unexpected start commit with this operation");
+        return Err(branch_usage("unexpected start commit with this operation"));
     }
 
     let repo = context::discover()?;
@@ -314,29 +338,24 @@ fn resolve_rename(
     repo: &Repository,
     opts: &BranchRunOptions,
 ) -> Result<Option<(String, String, bool)>> {
-    let force = opts.force || opts.force_move;
-    if let Some(args) = &opts.rename {
-        let current = current_branch_short(repo).ok();
-        return Ok(Some(match args.len() {
-            1 => {
-                let old = current.ok_or_else(|| {
-                    anyhow::anyhow!("branch name required when HEAD is not on a branch")
-                })?;
-                (old, args[0].clone(), force)
-            }
-            2 => (args[0].clone(), args[1].clone(), force),
-            _ => bail!("`--move` expects one or two branch names"),
-        }));
-    }
-    if opts.force_move {
-        let new = opts
-            .name
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("new branch name required with `-M`"))?;
-        let old = current_branch_short(repo)?;
-        return Ok(Some((old, new, true)));
-    }
-    Ok(None)
+    let (args, force) = if let Some(args) = &opts.force_rename {
+        (args.as_slice(), true)
+    } else if let Some(args) = &opts.rename {
+        (args.as_slice(), opts.force)
+    } else {
+        return Ok(None);
+    };
+    let current = current_branch_short(repo).ok();
+    Ok(Some(match args.len() {
+        1 => {
+            let old = current.ok_or_else(|| {
+                anyhow::anyhow!("branch name required when HEAD is not on a branch")
+            })?;
+            (old, args[0].clone(), force)
+        }
+        2 => (args[0].clone(), args[1].clone(), force),
+        _ => bail!("`--move` expects one or two branch names"),
+    }))
 }
 
 fn list(repo: &Repository) -> Result<BranchOutcome> {
@@ -426,14 +445,9 @@ fn predicted_upstream(
     };
     let tracking = resolve_create_tracking(repo, name, &label, start_oid, opts.track)
         .map_err(map_branch_error)?;
-    Ok(tracking.map(|(remote, merge)| format_upstream(&remote, &merge)))
-}
-
-fn format_upstream(remote: &str, merge: &str) -> String {
-    merge
-        .strip_prefix("refs/heads/")
-        .map(|tail| format!("{remote}/{tail}"))
-        .unwrap_or_else(|| merge.to_owned())
+    Ok(tracking.map(|(remote, merge)| {
+        grit_lib::porcelain::branch::upstream_tracking_display(&remote, &merge)
+    }))
 }
 
 fn remove(
@@ -486,28 +500,16 @@ fn rename(
 }
 
 fn set(repo: &Repository, branch: &str, upstream: &str, dry_run: bool) -> Result<BranchOutcome> {
-    if dry_run {
-        return Ok(BranchOutcome::SetUpstream {
-            branch: branch.to_owned(),
-            upstream: upstream.to_owned(),
-            dry_run: true,
-        });
-    }
-    set_upstream(repo, branch, upstream).map_err(map_branch_error)?;
-    let display = upstream_branch(repo, branch)
-        .map(|base| base.name)
-        .unwrap_or_else(|| upstream.to_owned());
+    let display = set_upstream(repo, branch, upstream, dry_run).map_err(map_branch_error)?;
     Ok(BranchOutcome::SetUpstream {
         branch: branch.to_owned(),
         upstream: display,
-        dry_run: false,
+        dry_run,
     })
 }
 
 fn unset(repo: &Repository, branch: &str, dry_run: bool) -> Result<BranchOutcome> {
-    if !dry_run {
-        unset_upstream(repo, branch).map_err(map_branch_error)?;
-    }
+    unset_upstream(repo, branch, dry_run).map_err(map_branch_error)?;
     Ok(BranchOutcome::UnsetUpstream {
         branch: branch.to_owned(),
         dry_run,

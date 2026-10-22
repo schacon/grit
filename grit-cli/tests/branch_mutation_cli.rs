@@ -96,7 +96,9 @@ fn create_at_start_matches_git() {
     assert_eq!(v["action"], "create");
     assert_eq!(v["name"], "topic");
     assert_eq!(v["oid"].as_str().unwrap(), git_rev_parse(&root, "topic"));
-    assert!(v.get("dry_run").is_none_or(|d| !d.as_bool().unwrap_or(false)));
+    assert!(v
+        .get("dry_run")
+        .is_none_or(|d| !d.as_bool().unwrap_or(false)));
 
     git(&root, &["fsck", "--no-progress"]);
     assert_eq!(git_rev_parse(&root, "topic"), start);
@@ -144,19 +146,15 @@ fn delete_safe_and_force_delete_match_git() {
 #[test]
 fn delete_rejects_force_flag() {
     let root = init_repo();
-    git(&root, &["branch", "keep"]);
-    let out = grit(&root, &["branch", "-d", "keep", "--force", "--json"]);
-    assert!(!out.status.success());
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stderr),
-        String::from_utf8_lossy(&out.stdout)
-    );
-    assert!(
-        combined.contains("force-delete") || combined.contains("force delete"),
-        "{combined}"
-    );
-    assert!(git_ref_exists(&root, "keep"));
+    git(&root, &["branch", "ghost"]);
+    let safe = grit(&root, &["branch", "-d", "ghost", "--force", "--json"]);
+    assert_eq!(safe.status.code(), Some(2));
+    assert!(git_ref_exists(&root, "ghost"));
+
+    git(&root, &["branch", "victim"]);
+    let force = grit(&root, &["branch", "-D", "victim", "--force", "--json"]);
+    assert_eq!(force.status.code(), Some(2));
+    assert!(git_ref_exists(&root, "victim"));
 }
 
 #[test]
@@ -174,10 +172,18 @@ fn rename_and_force_move_match_git() {
     assert_eq!(git_rev_parse(&root, "new"), tip);
 
     git(&root, &["branch", "other"]);
-    git(&root, &["switch", "-q", "new"]);
-    let m = json_ok(&root, &["branch", "-M", "other"]);
+    git(&root, &["branch", "extra"]);
+    let force_two = json_ok(&root, &["branch", "-M", "other", "extra"]);
+    assert_eq!(force_two["action"], "rename");
+    assert_eq!(force_two["old"], "other");
+    assert_eq!(force_two["new"], "extra");
+    assert!(!git_ref_exists(&root, "other"));
+    assert_eq!(git_rev_parse(&root, "extra"), tip);
+
+    git(&root, &["switch", "-q", "extra"]);
+    let m = json_ok(&root, &["branch", "-M", "renamed"]);
     assert_eq!(m["action"], "rename");
-    assert_eq!(m["new"], "other");
+    assert_eq!(m["new"], "renamed");
 }
 
 #[test]
@@ -188,11 +194,7 @@ fn set_and_unset_upstream_match_git_config() {
     let main_oid = git_rev_parse(&root, "main");
     git(
         &root,
-        &[
-            "update-ref",
-            "refs/remotes/origin/main",
-            main_oid.as_str(),
-        ],
+        &["update-ref", "refs/remotes/origin/main", main_oid.as_str()],
     );
 
     let set = json_ok(&root, &["branch", "-u", "origin/main", "topic"]);
@@ -220,11 +222,7 @@ fn dry_run_leaves_refs_config_and_reflogs_unchanged() {
     let main_oid = git_rev_parse(&root, "main");
     git(
         &root,
-        &[
-            "update-ref",
-            "refs/remotes/origin/main",
-            main_oid.as_str(),
-        ],
+        &["update-ref", "refs/remotes/origin/main", main_oid.as_str()],
     );
     let before = snapshot_hash(&root);
 
@@ -243,6 +241,32 @@ fn dry_run_leaves_refs_config_and_reflogs_unchanged() {
     assert_eq!(before, snapshot_hash(&root));
     assert!(git_ref_exists(&root, "topic"));
     assert!(!git_ref_exists(&root, "ghost"));
+}
+
+#[test]
+fn upstream_dry_run_validates_without_writing() {
+    let root = init_repo();
+    let before = snapshot_hash(&root);
+    for args in [
+        &[
+            "branch",
+            "-u",
+            "missing/upstream",
+            "ghost",
+            "--dry-run",
+            "--json",
+        ][..],
+        &["branch", "--unset-upstream", "ghost", "--dry-run", "--json"][..],
+    ] {
+        let out = grit(&root, args);
+        assert!(!out.status.success(), "expected failure for {args:?}");
+        let err: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert!(
+            err.get("kind").is_some(),
+            "structured error expected: {err}"
+        );
+    }
+    assert_eq!(before, snapshot_hash(&root));
 }
 
 fn git_rev_parse(dir: &Path, rev: &str) -> String {

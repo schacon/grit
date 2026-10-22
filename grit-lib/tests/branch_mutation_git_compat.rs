@@ -213,7 +213,7 @@ fn set_and_unset_upstream_match_git() {
     git(dir, &["remote", "add", "origin", "/nonexistent"]);
     git(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
     let repo = open(dir);
-    set_upstream(&repo, "topic", "origin/main").unwrap();
+    set_upstream(&repo, "topic", "origin/main", false).unwrap();
     fsck(dir);
     let ours = branch_config(dir);
 
@@ -232,7 +232,7 @@ fn set_and_unset_upstream_match_git() {
     );
     assert_eq!(ours, branch_config(copy.path()));
 
-    unset_upstream(&repo, "topic").unwrap();
+    unset_upstream(&repo, "topic", false).unwrap();
     fsck(dir);
     git(copy.path(), &["branch", "--unset-upstream", "topic"]);
     assert_eq!(branch_config(dir), branch_config(copy.path()));
@@ -462,7 +462,7 @@ fn public_branch_mutation_api_smoke() {
     let opts = CreateBranchOptions::at_head("x");
     assert_eq!(opts.track, TrackMode::Auto);
     let _ = create_branch(&repo, &opts).unwrap();
-    let _ = set_upstream(&repo, "x", "main").unwrap();
-    let _ = unset_upstream(&repo, "x").unwrap();
+    let _ = set_upstream(&repo, "x", "main", false).unwrap();
+    let _ = unset_upstream(&repo, "x", false).unwrap();
     let _ = delete_branch(&repo, "x", DeleteMode::Force, false).unwrap();
 }

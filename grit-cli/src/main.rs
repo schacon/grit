@@ -794,7 +794,11 @@ enum Command {
         /// Start commit when creating (`grit branch <name> <start>`).
         start: Option<String>,
         /// Overwrite an existing branch when creating or renaming.
-        #[arg(short = 'f', long = "force", conflicts_with = "force_move")]
+        #[arg(
+            short = 'f',
+            long = "force",
+            conflicts_with_all = ["delete", "force_delete", "force_rename"]
+        )]
         force: bool,
         /// Configure upstream from the start point when creating.
         #[arg(short = 't', long = "track", conflicts_with = "no_track")]
@@ -809,11 +813,17 @@ enum Command {
         #[arg(long = "unset-upstream")]
         unset_upstream: bool,
         /// Rename a branch: `-m <new>` or `-m <old> <new>`.
-        #[arg(short = 'm', long = "move", value_name = "NAME", num_args = 1..=2)]
+        #[arg(
+            short = 'm',
+            long = "move",
+            value_name = "NAME",
+            num_args = 1..=2,
+            conflicts_with = "force_rename"
+        )]
         rename: Option<Vec<String>>,
-        /// Rename the current branch to `<name>`, replacing `<name>` if it exists.
-        #[arg(short = 'M', conflicts_with_all = ["force", "rename"])]
-        force_move: bool,
+        /// Force rename: `-M <new>` or `-M <old> <new>`.
+        #[arg(short = 'M', value_name = "NAME", num_args = 1..=2, conflicts_with = "rename")]
+        force_rename: Option<Vec<String>>,
         /// Delete the named branch instead of creating it.
         #[arg(short = 'd', long = "delete")]
         delete: bool,
@@ -1251,6 +1261,8 @@ fn main() {
             .is_some_and(|p| p.kind == "invalid_pattern")
         {
             crate::json_error::INVALID_COMMIT_FILTER_EXIT
+        } else if commands::branch::is_branch_usage_error(&err) {
+            2
         } else {
             1
         };
@@ -1690,7 +1702,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             set_upstream_to,
             unset_upstream,
             rename,
-            force_move,
+            force_rename,
             delete,
             force_delete,
             dry_run,
@@ -1704,7 +1716,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 set_upstream_to,
                 unset_upstream,
                 rename,
-                force_move,
+                force_rename,
                 delete,
                 force_delete,
                 dry_run,
