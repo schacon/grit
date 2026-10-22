@@ -32,13 +32,6 @@ Integration mode follows Git's `pull.ff` and `pull.rebase` config unless overrid
 
 See also [global options](../global-options/).
 
-## Exit codes
-
-| Code | When |
-| ---- | ---- |
-| **0** | Success: up to date, fast-forward, merge, or unborn adoption. |
-| **1** | `--ff-only` refused on diverged history (`result`: `refused_not_ff`), or merge conflicts (`result`: `conflicts`). |
-
 ## Examples
 
 ```console
@@ -57,7 +50,9 @@ Not possible to fast-forward origin/main; local is 1 ahead, 2 behind.
 
 Schema: [v1](/schemas/pull/v1.json)
 
-Pass `--json` for stable, scripting-friendly output:
+Pass `--json` for stable, scripting-friendly output.
+
+Exit codes (also apply to default human output): **0** on success (`up_to_date`, `fast_forward`, `merged`, or `set_upstream`); **1** when `--ff-only` refuses diverged history (`refused_not_ff`, branch/index/worktree unchanged) or when the merge stops with conflicts (`conflicts`).
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |

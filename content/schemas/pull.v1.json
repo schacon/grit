@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "definitions": {
     "MergeConflictJson": {
-      "description": "One conflicted path in `--json` pull output.",
+      "description": "One conflicted path in `--json` merge output.",
       "properties": {
         "kind": {
           "type": "string"
@@ -25,7 +25,7 @@
       "type": "object"
     },
     "PullResult": {
-      "description": "Integration result of `grit pull`.",
+      "description": "Result of `grit pull` (`--json` contract).",
       "enum": [
         "up_to_date",
         "fast_forward",
@@ -40,32 +40,31 @@
   "description": "Outcome of `grit pull`.",
   "properties": {
     "ahead": {
-      "description": "Commits on the current branch not on the upstream when `result` is `refused_not_ff`.",
+      "format": "uint",
+      "minimum": 0.0,
       "type": [
         "integer",
         "null"
       ]
     },
     "behind": {
-      "description": "Commits on the upstream not on the current branch when `result` is `refused_not_ff`.",
+      "format": "uint",
+      "minimum": 0.0,
       "type": [
         "integer",
         "null"
       ]
     },
     "branch": {
-      "description": "Remote branch integrated, or the local branch name for `set_upstream`.",
       "type": "string"
     },
     "change_id": {
-      "description": "Stored `change-id` on the resulting commit when `oid` is set and a header is present.",
       "type": [
         "string",
         "null"
       ]
     },
     "conflict_details": {
-      "description": "Structured conflict metadata when `result` is `conflicts`.",
       "items": {
         "$ref": "#/definitions/MergeConflictJson"
       },
@@ -75,7 +74,6 @@
       ]
     },
     "conflicts": {
-      "description": "Conflicted paths when `result` is `conflicts`.",
       "items": {
         "type": "string"
       },
@@ -85,7 +83,6 @@
       ]
     },
     "oid": {
-      "description": "Resulting commit (fast-forward target, merge commit, or adopted upstream).",
       "type": [
         "string",
         "null"
@@ -95,7 +92,6 @@
       "$ref": "#/definitions/PullResult"
     },
     "upstream": {
-      "description": "For `set_upstream`, the remote-tracking branch that was adopted.",
       "type": [
         "string",
         "null"

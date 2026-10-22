@@ -3,11 +3,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::error::Error;
-use std::ffi::OsStr;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use grit_test_support::{git, unique_tmp, write_file};
 use serde_json::Value;
@@ -168,5 +166,68 @@ fn pull_json_conflicts_exit_one() -> TestResult {
     let json: Value = serde_json::from_str(&out.stdout)?;
     assert_eq!(json["result"], "conflicts");
     assert!(json["conflicts"].as_array().is_some());
+    Ok(())
+}
+
+#[test]
+fn pull_json_up_to_date() -> TestResult {
+    let root = unique_tmp("pull-json", "uptodate");
+    let upstream = root.join("upstream");
+    fs::create_dir_all(&upstream)?;
+    git(&upstream, &["init", "-q", "-b", "main"]);
+    commit(&upstream, "a", "seed");
+    git(
+        &root,
+        &["clone", "-q", upstream.to_str().unwrap(), "client"],
+    );
+    let client = root.join("client");
+    let json = gs_json(&client, &["pull"]);
+    assert_eq!(json["result"], "up_to_date");
+    Ok(())
+}
+
+#[test]
+fn pull_json_merged() -> TestResult {
+    let root = unique_tmp("pull-json", "merged");
+    let upstream = root.join("upstream");
+    fs::create_dir_all(&upstream)?;
+    git(&upstream, &["init", "-q", "-b", "main"]);
+    commit(&upstream, "a", "seed");
+    git(
+        &root,
+        &["clone", "-q", upstream.to_str().unwrap(), "client"],
+    );
+    let client = root.join("client");
+    commit(&client, "local", "local");
+    commit(&upstream, "remote", "remote");
+    git(&client, &["fetch", "-q"]);
+    git(&client, &["config", "user.email", "t@example.com"]);
+    git(&client, &["config", "user.name", "T"]);
+    let json = gs_json(&client, &["pull", "--no-rebase"]);
+    assert_eq!(json["result"], "merged");
+    assert!(json["oid"].as_str().is_some());
+    Ok(())
+}
+
+#[test]
+fn pull_json_set_upstream_unborn() -> TestResult {
+    let root = unique_tmp("pull-json", "set-upstream");
+    let upstream = root.join("upstream");
+    fs::create_dir_all(&upstream)?;
+    git(&upstream, &["init", "-q", "-b", "main"]);
+    commit(&upstream, "a", "seed");
+
+    let client = root.join("client");
+    fs::create_dir_all(&client)?;
+    git(&client, &["init", "-q", "-b", "main"]);
+    git(
+        &client,
+        &["remote", "add", "origin", upstream.to_str().unwrap()],
+    );
+    git(&client, &["config", "branch.main.remote", "origin"]);
+    git(&client, &["config", "branch.main.merge", "refs/heads/main"]);
+    let json = gs_json(&client, &["pull"]);
+    assert_eq!(json["result"], "set_upstream");
+    assert!(json["upstream"].as_str().is_some());
     Ok(())
 }

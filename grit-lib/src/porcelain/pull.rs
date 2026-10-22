@@ -5,23 +5,34 @@
 //! merge commit. Rebase pulls return [`PullError::RebaseUnsupported`] until the
 //! history engine wires `pull.rebase`.
 
-use crate::branch_tracking::upstream_branch;
+use crate::branch_tracking::pull_upstream_branch;
 use crate::change_id::{resolved_change_id, ChangeId, ChangeIdPolicy};
+use crate::config::environment::Environment;
 use crate::config::parse_git_config_maybe_bool;
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::merge_base::{count_symmetric_ahead_behind, is_ancestor};
 use crate::objects::{parse_commit, ObjectId};
 use crate::porcelain::checkout::checkout_between_trees;
-use crate::porcelain::merge::{integrate_branch, IntegrateBranchOutcome, MergeConflictDetail};
+use crate::porcelain::merge::{
+    integrate_branch_with_options, IntegrateBranchOptions, IntegrateBranchOutcome,
+    MergeConflictDetail,
+};
 use crate::porcelain::worktree_guard::prepare_tree_checkout;
 use crate::refs;
 use crate::remote::fetch::Progress;
-use crate::remote::transfer::FetchOptions;
+use crate::remote::transfer::{resolve_fetch_prune, FetchOptions, TagMode};
 use crate::remote::{HttpClientFactory, Remote, RemoteError, DEFAULT_REMOTE};
 use crate::repo::Repository;
 use crate::state::{resolve_head, HeadState};
 use thiserror::Error;
+
+/// Resolved integration behaviour after config and CLI overrides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PullIntegration {
+    mode: PullMode,
+    allow_fast_forward: bool,
+}
 
 /// How [`pull`] integrates upstream commits when a fast-forward is not possible.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,28 +125,97 @@ pub enum PullError {
 /// Resolve pull integration mode from config with optional CLI override.
 ///
 /// Precedence matches Git: explicit `--ff-only` / `--no-rebase`, then `pull.rebase`,
-/// then `pull.ff=only`, otherwise merge (fast-forward when possible).
+/// then `pull.ff` (`only` / `false` / default true).
 #[must_use]
 pub fn resolve_pull_mode(config: &ConfigSet, cli: Option<PullMode>) -> PullMode {
+    resolve_pull_integration(config, cli).mode
+}
+
+fn resolve_pull_integration(config: &ConfigSet, cli: Option<PullMode>) -> PullIntegration {
     if cli == Some(PullMode::FfOnly) {
-        return PullMode::FfOnly;
+        return PullIntegration {
+            mode: PullMode::FfOnly,
+            allow_fast_forward: true,
+        };
     }
     if cli == Some(PullMode::Merge) {
-        return PullMode::Merge;
+        return PullIntegration {
+            mode: PullMode::Merge,
+            allow_fast_forward: true,
+        };
     }
     if cli == Some(PullMode::Rebase) {
-        return PullMode::Rebase;
+        return PullIntegration {
+            mode: PullMode::Rebase,
+            allow_fast_forward: true,
+        };
     }
     if pull_rebase_enabled(config) {
-        return PullMode::Rebase;
+        return PullIntegration {
+            mode: PullMode::Rebase,
+            allow_fast_forward: true,
+        };
     }
-    if config
-        .get("pull.ff")
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case("only"))
-    {
-        return PullMode::FfOnly;
+    if let Some(raw) = config.get("pull.ff") {
+        let value = raw.trim();
+        if value.eq_ignore_ascii_case("only") {
+            return PullIntegration {
+                mode: PullMode::FfOnly,
+                allow_fast_forward: true,
+            };
+        }
+        if parse_git_config_maybe_bool(value) == Some(false) {
+            return PullIntegration {
+                mode: PullMode::Merge,
+                allow_fast_forward: false,
+            };
+        }
     }
-    PullMode::Merge
+    PullIntegration {
+        mode: PullMode::Merge,
+        allow_fast_forward: true,
+    }
+}
+
+impl PullOptions {
+    /// Build pull options for the current branch from config and CLI mode flags.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PullError::DetachedHead`] or [`PullError::InvalidHead`] when `HEAD`
+    /// is not on a branch.
+    pub fn for_working_branch(
+        repo: &Repository,
+        environment: Environment,
+        cli_mode: Option<PullMode>,
+    ) -> std::result::Result<Self, PullError> {
+        let short_name = match resolve_head(repo.git_dir()).map_err(PullError::Repository)? {
+            HeadState::Branch { short_name, .. } => short_name,
+            HeadState::Detached { .. } => return Err(PullError::DetachedHead),
+            HeadState::Invalid => return Err(PullError::InvalidHead),
+        };
+        let config = repo.config().map_err(PullError::Repository)?;
+        let remote_name = config
+            .get(&format!("branch.{short_name}.remote"))
+            .map(|r| r.trim().to_owned())
+            .filter(|r| !r.is_empty())
+            .unwrap_or_else(|| DEFAULT_REMOTE.to_owned());
+        let prune = resolve_fetch_prune(config.as_ref(), &remote_name, None)
+            .map_err(PullError::Repository)?;
+        Ok(Self {
+            remote: None,
+            branch: None,
+            mode: cli_mode,
+            fetch: FetchOptions {
+                tags: TagMode::Following,
+                thread_policy: repo.thread_policy(),
+                environment,
+                prune,
+                remote_name: Some(remote_name),
+                ..Default::default()
+            },
+        })
+    }
 }
 
 fn pull_rebase_enabled(config: &ConfigSet) -> bool {
@@ -197,7 +277,7 @@ where
         })
         .unwrap_or_else(|| DEFAULT_REMOTE.to_owned());
 
-    let mode = resolve_pull_mode(config.as_ref(), options.mode);
+    let integration = resolve_pull_integration(config.as_ref(), options.mode);
 
     let mut fetch_opts = options.fetch.clone();
     if fetch_opts.remote_name.is_none() {
@@ -209,16 +289,17 @@ where
         .fetch(repo, fetch_opts, progress, http_factory)
         .map_err(PullError::Remote)?;
 
-    let upstream = upstream_branch(repo, &short_name).ok_or(PullError::NoUpstream {
-        branch: short_name.clone(),
-    })?;
+    let upstream =
+        pull_upstream_branch(repo, &short_name, &remote_name).ok_or(PullError::NoUpstream {
+            branch: short_name.clone(),
+        })?;
     let label = upstream.name.clone();
     let upstream_oid = upstream.oid;
 
     match head_oid {
         None => adopt_unborn_upstream(repo, &refname, &short_name, &label, upstream_oid),
         Some(head_oid) => {
-            integrate_fetched_upstream(repo, &refname, head_oid, upstream_oid, &label, mode)
+            integrate_fetched_upstream(repo, &refname, head_oid, upstream_oid, &label, integration)
         }
     }
 }
@@ -252,14 +333,14 @@ fn integrate_fetched_upstream(
     head_oid: ObjectId,
     upstream_oid: ObjectId,
     label: &str,
-    mode: PullMode,
+    integration: PullIntegration,
 ) -> std::result::Result<PullOutcome, PullError> {
     let diverged = !is_ancestor(repo, upstream_oid, head_oid).map_err(PullError::Repository)?
         && !is_ancestor(repo, head_oid, upstream_oid).map_err(PullError::Repository)?
         && head_oid != upstream_oid;
 
     if diverged {
-        match mode {
+        match integration.mode {
             PullMode::FfOnly => {
                 let (ahead, behind) = count_symmetric_ahead_behind(repo, head_oid, upstream_oid)
                     .map_err(PullError::Repository)?;
@@ -277,12 +358,21 @@ fn integrate_fetched_upstream(
             PullMode::Rebase => return Err(PullError::RebaseUnsupported),
             PullMode::Merge => {}
         }
-    } else if mode == PullMode::Rebase && head_oid != upstream_oid {
+    } else if integration.mode == PullMode::Rebase && head_oid != upstream_oid {
         // Fast-forward path while `pull.rebase` is set: same result as merge until rebase lands.
     }
 
-    let integrate = integrate_branch(repo, refname, head_oid, upstream_oid, label)
-        .map_err(PullError::Repository)?;
+    let integrate = integrate_branch_with_options(
+        repo,
+        refname,
+        head_oid,
+        upstream_oid,
+        label,
+        IntegrateBranchOptions {
+            allow_fast_forward: integration.allow_fast_forward,
+        },
+    )
+    .map_err(PullError::Repository)?;
     Ok(map_integrate_outcome(integrate, label))
 }
 
@@ -395,5 +485,13 @@ mod tests {
     fn resolve_pull_mode_defaults_to_merge() {
         let config = ConfigSet::new();
         assert_eq!(resolve_pull_mode(&config, None), PullMode::Merge);
+    }
+
+    #[test]
+    fn resolve_pull_integration_ff_false_disables_fast_forward() {
+        let config = cfg(&[("pull.ff", "false")]);
+        let resolved = resolve_pull_integration(&config, None);
+        assert_eq!(resolved.mode, PullMode::Merge);
+        assert!(!resolved.allow_fast_forward);
     }
 }

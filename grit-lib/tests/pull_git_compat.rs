@@ -109,6 +109,13 @@ fn git_pull(dir: &Path) {
     git(dir, &["pull", "-q", "--no-rebase"]);
 }
 
+fn parent_count(dir: &Path, rev: &str) -> usize {
+    git(dir, &["rev-list", "--parents", "-n", "1", rev])
+        .split_whitespace()
+        .count()
+        .saturating_sub(1)
+}
+
 #[test]
 fn pull_up_to_date_matches_git() {
     let (grit_dir, git_dir) = setup_tracked_pair("uptodate");
@@ -124,6 +131,66 @@ fn pull_up_to_date_matches_git() {
     assert_eq!(outcome.result, PullResult::UpToDate);
     git_pull(&git_dir);
     assert_repo_matches_git(&grit_dir, &git_dir);
+}
+
+#[test]
+fn pull_ff_false_merge_commit_when_only_upstream_moved() {
+    let (grit_dir, git_dir) = setup_tracked_pair("ff-false");
+    let origin = grit_dir.parent().unwrap().join("origin");
+    commit(&origin, "f", "remote-only");
+    git(&grit_dir, &["fetch", "-q"]);
+    git(&git_dir, &["fetch", "-q"]);
+    git(&grit_dir, &["config", "pull.ff", "false"]);
+    git(&git_dir, &["config", "pull.ff", "false"]);
+
+    let repo = open(&grit_dir);
+    let outcome = pull_grit(
+        &repo,
+        &PullOptions {
+            fetch: fetch_opts(&Environment::empty()),
+            ..PullOptions::default()
+        },
+    );
+    assert_eq!(outcome.result, PullResult::Merged);
+    assert_eq!(parent_count(&grit_dir, "HEAD"), 2, "grit merge commit");
+
+    git_pull(&git_dir);
+    assert_eq!(parent_count(&git_dir, "HEAD"), 2, "git merge commit");
+    assert_repo_matches_git(&grit_dir, &git_dir);
+}
+
+#[test]
+fn pull_implicit_upstream_tracking_ref_without_merge_config() {
+    let root = unique_tmp("pull-git", "implicit-upstream");
+    let origin = root.join("origin");
+    fs::create_dir_all(&origin).expect("origin");
+    git(&origin, &["init", "-q", "-b", "main"]);
+    commit(&origin, "f", "seed");
+
+    let grit_dir = root.join("grit");
+    fs::create_dir_all(&grit_dir).expect("grit");
+    git(&grit_dir, &["init", "-q", "-b", "main"]);
+    git(
+        &grit_dir,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    git(&grit_dir, &["config", "branch.main.remote", "origin"]);
+    git(
+        &grit_dir,
+        &["fetch", "-q", "origin", "main:refs/remotes/origin/main"],
+    );
+    grit_identity(&grit_dir);
+
+    let repo = open(&grit_dir);
+    let outcome = pull_grit(
+        &repo,
+        &PullOptions {
+            fetch: fetch_opts(&Environment::empty()),
+            ..PullOptions::default()
+        },
+    );
+    assert_eq!(outcome.result, PullResult::SetUpstream);
+    assert_eq!(rev(&grit_dir, "HEAD"), rev(&origin, "main"));
 }
 
 #[test]

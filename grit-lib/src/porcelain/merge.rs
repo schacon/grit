@@ -250,6 +250,22 @@ pub struct MergeConflictDetail {
     pub kind: MergeConflictKind,
 }
 
+/// Options for [`integrate_branch`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IntegrateBranchOptions {
+    /// When `false`, a fast-forward is not performed even when `other_oid` is a
+    /// descendant of `into_oid`; a merge commit is recorded instead.
+    pub allow_fast_forward: bool,
+}
+
+impl Default for IntegrateBranchOptions {
+    fn default() -> Self {
+        Self {
+            allow_fast_forward: true,
+        }
+    }
+}
+
 /// Result of integrating another branch into the current one ([`integrate_branch`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IntegrateBranchOutcome {
@@ -295,6 +311,29 @@ pub fn integrate_branch(
     other_oid: ObjectId,
     label: &str,
 ) -> Result<IntegrateBranchOutcome> {
+    integrate_branch_with_options(
+        repo,
+        into_ref,
+        into_oid,
+        other_oid,
+        label,
+        IntegrateBranchOptions::default(),
+    )
+}
+
+/// Like [`integrate_branch`], with explicit fast-forward policy.
+///
+/// # Errors
+///
+/// Same as [`integrate_branch`].
+pub fn integrate_branch_with_options(
+    repo: &Repository,
+    into_ref: &str,
+    into_oid: ObjectId,
+    other_oid: ObjectId,
+    label: &str,
+    options: IntegrateBranchOptions,
+) -> Result<IntegrateBranchOutcome> {
     if into_oid == other_oid || is_ancestor(repo, other_oid, into_oid)? {
         return Ok(IntegrateBranchOutcome::UpToDate);
     }
@@ -302,7 +341,7 @@ pub fn integrate_branch(
     let into_tree = commit_tree(repo, &into_oid)?;
     let other_tree = commit_tree(repo, &other_oid)?;
 
-    if is_ancestor(repo, into_oid, other_oid)? {
+    if options.allow_fast_forward && is_ancestor(repo, into_oid, other_oid)? {
         merge_checkout_tree_transition(repo, Some(&into_tree), &other_tree)?;
         move_branch(
             repo,

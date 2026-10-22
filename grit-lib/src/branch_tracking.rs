@@ -234,12 +234,36 @@ pub fn target_branch(repo: &Repository) -> Result<Option<ComparisonBase>> {
 #[must_use]
 pub fn upstream_branch(repo: &Repository, branch_short: &str) -> Option<ComparisonBase> {
     let full_ref = upstream_tracking_full_ref(repo, branch_short)?;
-    let oid = resolve_optional(repo, &full_ref)?;
+    comparison_base_from_full_ref(repo, &full_ref, BaseSource::Upstream)
+}
+
+/// Upstream ref for [`crate::porcelain::pull::pull`]: configured tracking ref when
+/// present, otherwise `refs/remotes/<remote>/<branch_short>` (Git's default when
+/// `branch.<name>.merge` is unset).
+#[must_use]
+pub fn pull_upstream_branch(
+    repo: &Repository,
+    branch_short: &str,
+    remote_name: &str,
+) -> Option<ComparisonBase> {
+    if let Some(upstream) = upstream_branch(repo, branch_short) {
+        return Some(upstream);
+    }
+    let full_ref = format!("refs/remotes/{remote_name}/{branch_short}");
+    comparison_base_from_full_ref(repo, &full_ref, BaseSource::Upstream)
+}
+
+fn comparison_base_from_full_ref(
+    repo: &Repository,
+    full_ref: &str,
+    source: BaseSource,
+) -> Option<ComparisonBase> {
+    let oid = resolve_optional(repo, full_ref)?;
     Some(ComparisonBase {
-        name: abbreviate_ref_name(&full_ref),
-        full_ref,
+        name: abbreviate_ref_name(full_ref),
+        full_ref: full_ref.to_owned(),
         oid,
-        source: BaseSource::Upstream,
+        source,
     })
 }
 
