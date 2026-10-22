@@ -85,6 +85,8 @@ Each commit gets a stable **`change-id`** header (on by default) that survives `
 | Task | Command |
 | --- | --- |
 | List branches | `grit branch` |
+| List with filters / JSON detail | `grit branch --list 'feat*' -a --merged main --sort date -n 20 --json` |
+| Current branch name only | `grit branch --show-current` |
 | Create a branch at the current commit (no switch) | `grit branch <name>` |
 | Create at a specific commit | `grit branch <name> <start>` |
 | Create with upstream tracking | `grit branch -t <name> <remote>/<branch>` or rely on `branch.autoSetupMerge` |
@@ -96,6 +98,8 @@ Each commit gets a stable **`change-id`** header (on by default) that survives `
 | Delete a merged branch | `grit branch -d <name>` |
 | Delete regardless of merge | `grit branch --force-delete <name>` (short `-D`) |
 | Predict merge conflicts (no repo changes) | `grit merge --check <branch>` (exit 0 = clean/ff/up to date, 1 = would conflict; `--json` → `result: clean\|conflicts\|…`) |
+
+`grit branch --json` and `--markdown` list with `full_ref`, `oid`, `subject`, `date`, optional `upstream` (`ref`, `remote`, `gone`, `ahead`, `behind`), and `worktree` when checked out elsewhere. Human list output adds an upstream marker when configured.
 
 `grit switch`, `grit merge`, `grit pick`, `grit revert` and `grit pull` refuse to run when checkout would overwrite local edits or untracked files. Preflight with `grit switch <branch> --dry-run --json` (checks only; reports `changed_paths`) before switching. On refusal, `--json` emits `kind: would_overwrite` with `reason` (`local_changes` or `untracked`) and sorted `paths`.
 

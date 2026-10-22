@@ -10,7 +10,7 @@ use grit_lib::porcelain::branch::{
 use grit_lib::refs::branch_tracking::{
     list_branches, upstream_branch, BranchDetail, BranchListQuery, BranchScope, BranchSummary,
 };
-use grit_lib::refs::listing::RefQuery;
+use grit_lib::refs::listing::{RefQuery, RefSort, SortKey};
 use grit_lib::repo::Repository;
 use grit_lib::revwalk::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, resolve_head_for_repository, HeadState};
@@ -19,7 +19,9 @@ use serde::Serialize;
 use std::error::Error as StdError;
 use std::fmt;
 use std::io::Write;
+use time::format_description::well_known::Rfc3339;
 
+use crate::branch_list_args::BranchListArgs;
 use crate::context;
 use crate::json_error::{self, StructuredCliError, StructuredJsonError};
 use crate::markdown;
@@ -51,9 +53,7 @@ pub struct BranchRunOptions {
     pub force_rename: Option<Vec<String>>,
     pub delete: bool,
     pub force_delete: bool,
-    pub remote: bool,
-    pub all: bool,
-    pub limit: Option<usize>,
+    pub list: BranchListArgs,
     pub list_full_detail: bool,
     pub dry_run: bool,
 }
@@ -85,6 +85,9 @@ pub enum BranchOutcome {
         #[serde(skip)]
         #[schemars(skip)]
         scope: BranchListScope,
+        #[serde(skip)]
+        #[schemars(skip)]
+        show_current: bool,
     },
     Create {
         name: String,
@@ -139,7 +142,11 @@ pub enum BranchOutcome {
 /// Configured upstream for a local branch in a `list` outcome.
 #[derive(Serialize, JsonSchema)]
 pub struct BranchUpstreamEntry {
-    pub name: String,
+    #[serde(rename = "ref")]
+    pub ref_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub ahead: Option<usize>,
@@ -156,7 +163,15 @@ pub struct BranchUpstreamEntry {
 pub struct BranchEntry {
     pub name: String,
     pub current: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    #[schemars(default)]
     pub is_remote: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub full_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub oid: Option<String>,
@@ -165,24 +180,49 @@ pub struct BranchEntry {
     pub short_oid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
     pub upstream: Option<BranchUpstreamEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<String>,
 }
 
 impl HumanRender for BranchOutcome {
     fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         match self {
             BranchOutcome::List {
-                branches, scope, ..
+                branches,
+                scope,
+                show_current,
+                current,
+                ..
             } => {
+                if *show_current {
+                    if let Some(name) = current {
+                        outln!(w, "{name}");
+                    }
+                    return Ok(());
+                }
                 if branches.is_empty() {
                     outln!(w, "{}", empty_list_message(*scope));
                     return Ok(());
                 }
                 for branch in branches {
-                    if branch.current {
-                        outln!(w, "* {}", branch.name);
+                    let marker = branch
+                        .upstream
+                        .as_ref()
+                        .map(format_upstream_marker)
+                        .unwrap_or_default();
+                    let prefix = if branch.current { "* " } else { "  " };
+                    if marker.is_empty() {
+                        outln!(w, "{prefix}{}", branch.name);
                     } else {
-                        outln!(w, "  {}", branch.name);
+                        outln!(w, "{prefix}{} {marker}", branch.name);
                     }
                 }
             }
@@ -375,14 +415,14 @@ pub fn run(opts: BranchRunOptions) -> Result<BranchOutcome> {
             "cannot combine branch delete, rename, upstream, and create in one invocation",
         ));
     }
-    if opts.remote && opts.all {
-        return Err(branch_usage("cannot combine `--remote` with `--all`"));
+    if opts.list.remotes && opts.list.all {
+        return Err(branch_usage("cannot combine `--remotes` with `--all`"));
     }
-    if list_scope_flags(&opts)
+    if list_args_active(&opts.list)
         && (opts.name.is_some() || opts.start.is_some() || branch_mutation_count(&opts) > 0)
     {
         return Err(branch_usage(
-            "`--remote`, `--all`, and `-n` apply only when listing branches",
+            "list filters apply only when listing branches (omit the branch name)",
         ));
     }
 
@@ -415,8 +455,17 @@ pub fn run(opts: BranchRunOptions) -> Result<BranchOutcome> {
     }
 }
 
-fn list_scope_flags(opts: &BranchRunOptions) -> bool {
-    opts.remote || opts.all || opts.limit.is_some()
+fn list_args_active(args: &BranchListArgs) -> bool {
+    args.remotes
+        || args.all
+        || args.limit.is_some()
+        || !args.patterns.is_empty()
+        || args.merged.is_some()
+        || args.no_merged.is_some()
+        || args.contains.is_some()
+        || args.sort.is_some()
+        || args.reverse
+        || args.show_current
 }
 
 /// Count mutually exclusive branch mutations requested in one invocation.
@@ -488,19 +537,17 @@ fn resolve_rename(
 }
 
 fn list(repo: &Repository, opts: &BranchRunOptions) -> Result<BranchOutcome> {
-    let scope = if opts.all {
+    let list = &opts.list;
+    let scope = if list.all {
         BranchScope::All
-    } else if opts.remote {
+    } else if list.remotes {
         BranchScope::Remote
     } else {
         BranchScope::Local
     };
     let query = BranchListQuery {
         scope,
-        refs: RefQuery {
-            limit: opts.limit,
-            ..RefQuery::default()
-        },
+        refs: build_ref_query(repo, list)?,
     };
     let detail = if opts.list_full_detail {
         BranchDetail::Full
@@ -519,25 +566,106 @@ fn list(repo: &Repository, opts: &BranchRunOptions) -> Result<BranchOutcome> {
     };
     Ok(BranchOutcome::List {
         current,
-        branches: rows.into_iter().map(summary_to_entry).collect(),
+        show_current: list.show_current,
+        branches: rows
+            .into_iter()
+            .map(|row| summary_to_entry(row, opts.list_full_detail))
+            .collect(),
         scope: list_scope,
     })
 }
 
-fn summary_to_entry(row: BranchSummary) -> BranchEntry {
+fn build_ref_query(repo: &Repository, args: &BranchListArgs) -> Result<RefQuery> {
+    let sort_key = match args.sort.as_deref() {
+        None | Some("name") | Some("refname") => SortKey::Name,
+        Some("version") | Some("versionrefname") => SortKey::Version,
+        Some("date") | Some("committerdate") => SortKey::Date,
+        Some(other) => {
+            return Err(branch_usage(format!(
+                "unknown sort key '{other}' (expected name, version, or date)"
+            )));
+        }
+    };
+    Ok(RefQuery {
+        patterns: args.patterns.clone(),
+        sort: RefSort {
+            key: sort_key,
+            reverse: args.reverse,
+        },
+        limit: args.limit,
+        contains: resolve_filter_revs(repo, args.contains.as_deref())?,
+        merged: resolve_filter_revs(repo, args.merged.as_deref())?,
+        no_merged: resolve_filter_revs(repo, args.no_merged.as_deref())?,
+        ..RefQuery::default()
+    })
+}
+
+fn resolve_filter_revs(
+    repo: &Repository,
+    rev: Option<&str>,
+) -> Result<Vec<grit_lib::objects::ObjectId>> {
+    let Some(rev) = rev else {
+        return Ok(Vec::new());
+    };
+    let oid = resolve_revision(repo, rev).map_err(map_branch_error)?;
+    Ok(vec![oid])
+}
+
+fn summary_to_entry(row: BranchSummary, full_detail: bool) -> BranchEntry {
     let oid_hex = row.oid.to_hex();
-    BranchEntry {
+    let remote = remote_name_from_full_ref(&row.full_ref, row.is_remote);
+    let mut entry = BranchEntry {
         name: row.name,
         current: row.current,
         is_remote: row.is_remote,
+        full_ref: None,
+        remote: None,
         oid: Some(oid_hex.clone()),
         short_oid: Some(short_hex(&oid_hex)),
-        upstream: row.upstream.map(|up| BranchUpstreamEntry {
-            name: up.short,
-            ahead: up.ahead,
-            behind: up.behind,
-            gone: up.gone,
-        }),
+        subject: None,
+        date: None,
+        upstream: row.upstream.as_ref().map(upstream_to_entry),
+        worktree: None,
+    };
+    if full_detail {
+        entry.full_ref = Some(row.full_ref);
+        entry.remote = remote;
+        entry.subject = row.subject;
+        entry.date = row.committer_time.and_then(|t| t.format(&Rfc3339).ok());
+        entry.worktree = row.worktree.map(|p| p.display().to_string());
+    }
+    entry
+}
+
+fn upstream_to_entry(up: &grit_lib::refs::branch_tracking::UpstreamStatus) -> BranchUpstreamEntry {
+    BranchUpstreamEntry {
+        ref_name: up.short.clone(),
+        remote: Some(up.remote.clone()),
+        gone: up.gone,
+        ahead: up.ahead,
+        behind: up.behind,
+    }
+}
+
+fn remote_name_from_full_ref(full_ref: &str, is_remote: bool) -> Option<String> {
+    if !is_remote {
+        return None;
+    }
+    full_ref
+        .strip_prefix("refs/remotes/")
+        .and_then(|rest| rest.split('/').next())
+        .map(str::to_owned)
+}
+
+fn format_upstream_marker(up: &BranchUpstreamEntry) -> String {
+    if up.gone {
+        return "[gone]".to_owned();
+    }
+    match (up.ahead, up.behind) {
+        (Some(ahead), Some(behind)) => {
+            format!("[{}: ahead {ahead}, behind {behind}]", up.ref_name)
+        }
+        _ => format!("[{}]", up.ref_name),
     }
 }
 

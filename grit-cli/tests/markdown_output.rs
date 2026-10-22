@@ -296,8 +296,8 @@ fn branch_markdown_lists_branches_without_json_blob() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("## Branches"));
-    assert!(stdout.contains("**`main`** (current)"));
-    assert!(stdout.contains("`topic`"));
+    assert!(stdout.contains("| `main` | yes |"));
+    assert!(stdout.contains("| `topic` |"));
     assert!(
         !stdout.contains("**branches**:"),
         "should not dump nested JSON:\n{stdout}"

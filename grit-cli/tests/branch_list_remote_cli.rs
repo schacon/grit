@@ -1,4 +1,4 @@
-//! `grit branch --remote` / `--all` / `-n` vs system `git`.
+//! `grit branch -r` / `-a` / `-n` vs system `git`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
@@ -90,7 +90,7 @@ fn branch_remote_json_matches_git_for_each_ref() {
         "fixture should have main and topic on origin"
     );
 
-    let listed = grit_json(repo, &["branch", "--remote"]);
+    let listed = grit_json(repo, &["branch", "-r"]);
     assert_eq!(listed["action"], "list");
     let names: Vec<String> = listed["branches"]
         .as_array()
@@ -112,7 +112,7 @@ fn branch_remote_json_matches_git_for_each_ref() {
 #[test]
 fn branch_limit_caps_remote_list() {
     let fixture = clone_with_remotes();
-    let listed = grit_json(&fixture.clone, &["branch", "--remote", "-n", "1"]);
+    let listed = grit_json(&fixture.clone, &["branch", "-r", "-n", "1"]);
     assert_eq!(listed["branches"].as_array().unwrap().len(), 1);
 }
 
@@ -125,7 +125,7 @@ fn branch_remote_empty_list_message() {
         &["commit", "-q", "--allow-empty", "-m", "seed"],
     );
     let out = Command::new(GS)
-        .args(["branch", "--remote"])
+        .args(["branch", "-r"])
         .current_dir(root.path())
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")

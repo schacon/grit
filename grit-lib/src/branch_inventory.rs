@@ -164,7 +164,7 @@ pub fn list_branches(
         };
 
         out.push(BranchSummary {
-            name: listing.short_name,
+            name: branch_display_name(query.scope, is_remote, &listing.short_name),
             full_ref: listing.full_name,
             is_remote,
             current,
@@ -176,6 +176,14 @@ pub fn list_branches(
         });
     }
     Ok(out)
+}
+
+fn branch_display_name(scope: BranchScope, is_remote: bool, short_name: &str) -> String {
+    if is_remote && scope == BranchScope::All {
+        format!("remotes/{short_name}")
+    } else {
+        short_name.to_owned()
+    }
 }
 
 fn ref_query_for_branch_list(query: &BranchListQuery) -> RefQuery {
@@ -302,4 +310,22 @@ fn read_commit_meta(
             OffsetDateTime::from_unix_timestamp(cref.committer_unix_seconds_for_ordering()).ok()
         });
     Ok((subject, committer_time))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn branch_display_name_matches_git_branch_a_for_remotes() {
+        assert_eq!(
+            branch_display_name(BranchScope::All, true, "origin/main"),
+            "remotes/origin/main"
+        );
+        assert_eq!(
+            branch_display_name(BranchScope::Remote, true, "origin/main"),
+            "origin/main"
+        );
+        assert_eq!(branch_display_name(BranchScope::All, false, "main"), "main");
+    }
 }

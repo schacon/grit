@@ -8,7 +8,9 @@ order: 1
 ## Synopsis
 
 ```text
-grit branch
+grit branch [--list <glob>]... [-r | -a] [--merged [REV]] [--no-merged [REV]]
+            [--contains [REV]] [--sort name|version|date] [--reverse] [-n <N>]
+            [--show-current]
 grit branch <name> [<start>]
 grit branch -d <name>
 grit branch -D <name>
@@ -16,15 +18,16 @@ grit branch -m [<old>] <new>
 grit branch -M <new>
 grit branch -u <upstream> [<name>]
 grit branch --unset-upstream [<name>]
-grit branch [--remote | --all] [-n <N>]
 grit branch [--dry-run] …
 ```
 
 ## Description
 
-With no arguments, lists your local branches and marks the current one with `*`. Use `--remote` for remote-tracking branches (`origin/main`, …) and `--all` for both. `-n` / `--limit` caps how many names are returned after sorting by name.
+With no arguments, lists your local branches and marks the current one with `*`. When a branch has a configured upstream, the line includes a short marker such as `[origin/main: ahead 2, behind 1]` or `[gone]` when the tracking ref is missing.
 
-Upstream and ahead/behind counts appear only in `--json` / `--markdown` when an upstream is configured (plain list stays cheap). JSON list entries also include `oid`, `short_oid`, and `is_remote`.
+Use `-r` / `--remotes` for remote-tracking branches (`origin/main`, …) and `-a` / `--all` for both (remote names use the `remotes/origin/main` form, like `git branch -a`). `--list`, `--merged`, `--no-merged`, `--contains`, `--sort`, `--reverse`, and `-n` / `--max-count` follow Git’s branch listing filters. `--show-current` prints only the current branch name.
+
+With `--json` or `--markdown`, list output includes `full_ref`, commit `subject` and `date`, upstream details, and linked `worktree` paths when present. Plain human list stays names plus upstream markers.
 
 With a name, creates `refs/heads/<name>` at `<start>` or at `HEAD`. It does not switch to the new branch; use [`grit switch -c`](../switch/) to create and switch in one step.
 
@@ -63,9 +66,16 @@ On failure with `--json`, stdout includes `error` and a stable `kind` (for examp
 | `-M` | Force rename: `-M <new>` (current branch) or `-M <old> <new>`. |
 | `-d`, `--delete` | Delete the branch when it is fully merged. |
 | `-D`, `--force-delete` | Delete even when not fully merged. |
-| `--remote` | List remote-tracking branches only (list mode). |
-| `--all` | List local and remote-tracking branches (list mode). |
-| `-n`, `--limit` | Return at most this many branches when listing. |
+| `--list <glob>` | Include only branches whose short name matches `GLOB` (repeatable). |
+| `-r`, `--remotes` | List remote-tracking branches (list mode). |
+| `-a`, `--all` | List local and remote-tracking branches (list mode). |
+| `--merged [REV]` | Branches merged into `REV` (default `HEAD`). |
+| `--no-merged [REV]` | Branches not merged into `REV` (default `HEAD`). |
+| `--contains [REV]` | Branches whose tip contains `REV` (default `HEAD`). |
+| `--sort name\|version\|date` | Sort key (default name). |
+| `--reverse` | Reverse sort order. |
+| `-n`, `--max-count <N>` | Limit the number of branches listed. |
+| `--show-current` | Print only the current branch name (nothing when detached). |
 | `--dry-run` | Preview without writing refs, config, or reflogs. |
 
 `--force` does not delete branches. Use `--force-delete` (or `-D`) instead; passing `--force` with `--delete` is a usage error.
@@ -75,7 +85,14 @@ On failure with `--json`, stdout includes `error` and a stable `kind` (for examp
 ```console
 $ grit branch
   feature
-* main
+* main [origin/main: ahead 1, behind 0]
+
+$ grit branch --list 'feat*' --sort date -n 5
+  feature-old
+* feature
+
+$ grit branch --show-current
+main
 
 $ grit branch experiment
 Created branch experiment at a1b2c3d
@@ -115,12 +132,16 @@ Pass `--json` for stable, scripting-friendly output. The object's `action` field
 | `action` | string | `list`, `create`, `delete`, `rename`, `set_upstream`, or `unset_upstream`. |
 | `current` | string or null | For `list`, the current branch, or `null` when detached. |
 | `branches` | array | For `list`, each branch (see below). |
-| `branches[].name` | string | Short name (`main`, `origin/main`, …). |
+| `branches[].name` | string | Short name (`main`, `origin/main`, `remotes/origin/main` with `-a`, …). |
 | `branches[].current` | boolean | Whether this is the checked-out local branch. |
 | `branches[].is_remote` | boolean | True for remote-tracking refs. |
+| `branches[].full_ref` | string | Full ref (`refs/heads/…`, `refs/remotes/…`). |
 | `branches[].oid` | string | Tip object id (full hex). |
 | `branches[].short_oid` | string | Abbreviated tip id (seven hex digits when possible). |
-| `branches[].upstream` | object or omitted | For local branches with upstream config: `name`, optional `ahead` / `behind`, and `gone` when the upstream ref is missing. |
+| `branches[].subject` | string or null | Tip commit subject (`--json` / `--markdown` list). |
+| `branches[].date` | string or null | Tip committer time (RFC 3339). |
+| `branches[].upstream` | object or omitted | `ref`, optional `remote`, `gone`, `ahead`, `behind`. |
+| `branches[].worktree` | string or null | Linked worktree path when checked out elsewhere. |
 | `name` | string | For `create` or `delete`, the branch name. |
 | `oid` | string | For `create` or `delete`, full tip id. For `rename`, tip before rename when present. |
 | `short_oid` | string | Abbreviated tip id (seven hex digits when possible). |
@@ -142,15 +163,28 @@ Listing branches:
       "name": "feature",
       "current": false,
       "is_remote": false,
+      "full_ref": "refs/heads/feature",
       "oid": "a1b2c3d4e5f6789012345678901234567890abcd",
-      "short_oid": "a1b2c3d"
+      "short_oid": "a1b2c3d",
+      "subject": "Add feature",
+      "date": "2023-11-14T22:13:20Z",
+      "upstream": {
+        "ref": "origin/feature",
+        "remote": "origin",
+        "gone": false,
+        "ahead": 0,
+        "behind": 2
+      }
     },
     {
       "name": "main",
       "current": true,
       "is_remote": false,
+      "full_ref": "refs/heads/main",
       "oid": "b2c3d4e5f6789012345678901234567890abcde1",
-      "short_oid": "b2c3d4e"
+      "short_oid": "b2c3d4e",
+      "subject": "Initial commit",
+      "date": "2023-11-14T22:13:20Z"
     }
   ]
 }
@@ -191,7 +225,7 @@ Pass [`--markdown`](../global-options/) for agent-friendly output.
 
 Schema: [v1](/schemas/branch/v1.json)
 
-Markdown uses headings, bullet lists, and fenced blocks; pipe characters inside table cells are escaped. See the JSON output section for the stable field contract.
+Markdown lists branches in a table with upstream and worktree columns when present. Pipe characters inside table cells are escaped. See the JSON output section for the stable field contract.
 
 ## See also
 

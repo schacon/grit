@@ -8,6 +8,18 @@
         "current": {
           "type": "boolean"
         },
+        "date": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "full_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "is_remote": {
           "type": "boolean"
         },
@@ -20,7 +32,19 @@
             "null"
           ]
         },
+        "remote": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "short_oid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subject": {
           "type": [
             "string",
             "null"
@@ -35,11 +59,16 @@
               "type": "null"
             }
           ]
+        },
+        "worktree": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "current",
-        "is_remote",
         "name"
       ],
       "type": "object"
@@ -66,12 +95,18 @@
         "gone": {
           "type": "boolean"
         },
-        "name": {
+        "ref": {
           "type": "string"
+        },
+        "remote": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
-        "name"
+        "ref"
       ],
       "type": "object"
     }

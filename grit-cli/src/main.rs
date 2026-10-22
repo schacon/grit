@@ -5,6 +5,7 @@
 //! doubles as the home base: running `grit` with no arguments shows you where you
 //! are, what's changed, and what to do next.
 
+mod branch_list_args;
 mod clap_value_args;
 mod cli_messages;
 #[cfg(test)]
@@ -44,20 +45,6 @@ use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
 use output::{emit, OutputMode, OutputOptions, RenderContext};
-
-/// List-only flags for `grit branch`.
-#[derive(Debug, clap::Args, Default, Clone)]
-struct BranchListCliArgs {
-    /// List remote-tracking branches only (`refs/remotes/*`).
-    #[arg(long = "remote")]
-    remote: bool,
-    /// List local and remote-tracking branches.
-    #[arg(long = "all", id = "branch_list_all")]
-    all: bool,
-    /// Return at most this many branches when listing (after sorting by name).
-    #[arg(short = 'n', long = "limit", value_name = "N")]
-    limit: Option<usize>,
-}
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 enum LogGroupByArg {
@@ -965,7 +952,7 @@ enum Command {
         #[arg(short = 'D', long = "force-delete")]
         force_delete: bool,
         #[command(flatten)]
-        list: BranchListCliArgs,
+        list: branch_list_args::BranchListArgs,
         /// Preview the operation without updating refs, config, or reflogs.
         #[arg(long = "dry-run")]
         dry_run: bool,
@@ -2205,10 +2192,8 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 force_rename,
                 delete,
                 force_delete,
-                remote: list.remote,
-                all: list.all,
-                limit: list.limit,
-                list_full_detail: opts.mode == OutputMode::Json,
+                list,
+                list_full_detail: matches!(opts.mode, OutputMode::Json | OutputMode::Markdown),
                 dry_run,
             })?,
             opts,
