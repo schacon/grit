@@ -28,6 +28,26 @@ pub fn is_bundle_path(path: &Path) -> bool {
     bytes.starts_with(V2_SIGNATURE) || bytes.starts_with(V3_SIGNATURE)
 }
 
+/// Ref tips and revision tokens for [`write_bundle_with_options`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BundleCreateOptions {
+    /// When true, list `HEAD` and every ref under `refs/` in the bundle header (like `git bundle create --all`).
+    pub all_refs: bool,
+    /// Revision arguments (tips, ranges, exclusions). Ignored when `all_refs` is true.
+    pub rev_tokens: Vec<String>,
+}
+
+impl BundleCreateOptions {
+    /// Build options from positional revision tokens only.
+    #[must_use]
+    pub fn from_rev_tokens(rev_tokens: Vec<String>) -> Self {
+        Self {
+            all_refs: false,
+            rev_tokens,
+        }
+    }
+}
+
 /// Write a bundle file from revision arguments (supports `A..B` ranges like `git bundle create`).
 ///
 /// # Errors
@@ -38,33 +58,49 @@ pub fn write_bundle_from_rev_specs(
     path: &Path,
     rev_tokens: &[String],
 ) -> Result<usize> {
-    let (positive_specs, negative_specs) = split_revision_specs_for_bundle(rev_tokens);
-    if positive_specs.is_empty() {
+    write_bundle_with_options(
+        repo,
+        path,
+        &BundleCreateOptions::from_rev_tokens(rev_tokens.to_vec()),
+    )
+}
+
+/// Write a bundle file using ref-set flags and revision tokens.
+///
+/// When [`BundleCreateOptions::all_refs`] is true (or `--all` appears among `rev_tokens`), the bundle
+/// header lists `HEAD` and every ref under `refs/`, matching `git bundle create --all`.
+///
+/// # Errors
+///
+/// Propagates rev-list, ref resolution, and bundle write failures.
+pub fn write_bundle_with_options(
+    repo: &Repository,
+    path: &Path,
+    options: &BundleCreateOptions,
+) -> Result<usize> {
+    let (rev_tokens, all_from_token) = strip_all_rev_flag(&options.rev_tokens);
+    let all_refs = options.all_refs || all_from_token;
+
+    let (positive_specs, negative_specs) = split_revision_specs_for_bundle(&rev_tokens);
+
+    if positive_specs.is_empty() && !all_refs {
         return Err(Error::Message("at least one revision is required".into()));
     }
+
     let rev_opts = crate::rev_list::RevListOptions {
         boundary: true,
         objects: true,
+        all_refs,
         ..Default::default()
     };
     let revs = crate::rev_list::rev_list(repo, &positive_specs, &negative_specs, &rev_opts)?;
 
-    let mut include: Vec<(ObjectId, String)> = Vec::new();
-    for spec in &positive_specs {
-        if let Ok(oid) = crate::rev_parse::resolve_revision(repo, spec) {
-            if revs.commits.contains(&oid) || revs.objects.iter().any(|(o, _)| *o == oid) {
-                let name = display_ref_for_spec(repo, spec, oid)?;
-                if !include.iter().any(|(_, n)| n == &name) {
-                    include.push((oid, name));
-                }
-            }
-        }
-    }
-    if include.is_empty() {
-        for oid in &revs.commits {
-            include.push((*oid, format!("refs/heads/bundle-tip/{}", oid.to_hex())));
-        }
-    }
+    let include = if all_refs {
+        refs_for_bundle_header(repo)?
+    } else {
+        include_refs_from_rev_specs(repo, &positive_specs, &revs)?
+    };
+
     if include.is_empty() {
         return Err(map_bundle_err(BundleError::EmptyRefs));
     }
@@ -79,6 +115,54 @@ pub fn write_bundle_from_rev_specs(
     crate::bundle::write_bundle(repo, &spec, &mut out).map_err(map_bundle_err)?;
     out.flush().map_err(Error::Io)?;
     Ok(spec.include.len())
+}
+
+fn strip_all_rev_flag(tokens: &[String]) -> (Vec<String>, bool) {
+    let mut rev_tokens = Vec::new();
+    let mut all_refs = false;
+    for token in tokens {
+        if token == "--all" {
+            all_refs = true;
+        } else {
+            rev_tokens.push(token.clone());
+        }
+    }
+    (rev_tokens, all_refs)
+}
+
+fn refs_for_bundle_header(repo: &Repository) -> Result<Vec<(ObjectId, String)>> {
+    let mut include = Vec::new();
+    if let Ok(head) = crate::refs::resolve_ref(repo.git_dir(), "HEAD") {
+        include.push((head, "HEAD".to_owned()));
+    }
+    for (name, oid) in crate::refs::list_refs(repo.git_dir(), "refs/")? {
+        include.push((oid, name));
+    }
+    Ok(include)
+}
+
+fn include_refs_from_rev_specs(
+    repo: &Repository,
+    positive_specs: &[String],
+    revs: &crate::rev_list::RevListResult,
+) -> Result<Vec<(ObjectId, String)>> {
+    let mut include: Vec<(ObjectId, String)> = Vec::new();
+    for spec in positive_specs {
+        if let Ok(oid) = crate::rev_parse::resolve_revision(repo, spec) {
+            if revs.commits.contains(&oid) || revs.objects.iter().any(|(o, _)| *o == oid) {
+                let name = display_ref_for_spec(repo, spec, oid)?;
+                if !include.iter().any(|(_, n)| n == &name) {
+                    include.push((oid, name));
+                }
+            }
+        }
+    }
+    if include.is_empty() {
+        for oid in &revs.commits {
+            include.push((*oid, format!("refs/heads/bundle-tip/{}", oid.to_hex())));
+        }
+    }
+    Ok(include)
 }
 
 fn display_ref_for_spec(repo: &Repository, spec: &str, _oid: ObjectId) -> Result<String> {

@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
-use grit_lib::bundle::bundle_remote;
+use grit_lib::bundle::bundle_remote::{self, BundleCreateOptions};
 use grit_lib::bundle::{Bundle, BundleError, BundleVerifyReport};
 use grit_lib::objects::ObjectId;
 use schemars::JsonSchema;
@@ -184,13 +184,20 @@ impl MarkdownRender for BundleUnbundleOutcome {
 }
 
 /// Create a bundle from the current repository.
-pub fn run_create(path: PathBuf, revs: Vec<String>) -> Result<BundleCreateOutcome> {
+pub fn run_create(path: PathBuf, revs: Vec<String>, all: bool) -> Result<BundleCreateOutcome> {
     let repo = context::discover()?;
-    if revs.is_empty() {
-        bail!("at least one revision is required");
+    if revs.is_empty() && !all {
+        bail!("at least one revision is required (use `--all` to bundle every ref)");
     }
-    let refs =
-        bundle_remote::write_bundle_from_rev_specs(&repo, &path, &revs).map_err(map_lib_error)?;
+    let refs = bundle_remote::write_bundle_with_options(
+        &repo,
+        &path,
+        &BundleCreateOptions {
+            all_refs: all,
+            rev_tokens: revs,
+        },
+    )
+    .map_err(map_lib_error)?;
     Ok(BundleCreateOutcome {
         path: path.display().to_string(),
         refs,
