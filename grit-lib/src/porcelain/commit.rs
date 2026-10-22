@@ -198,12 +198,18 @@ pub(crate) fn clear_squash_commit_state(git_dir: &std::path::Path) -> Result<()>
 ///
 /// Propagates I/O and merge-state read failures.
 pub fn pending_commit_message(repo: &Repository) -> Result<Option<String>> {
-    let squash = repo.git_dir().join("SQUASH_MSG");
+    let git_dir = repo.git_dir();
+    let squash = git_dir.join("SQUASH_MSG");
+    let merge_msg = git_dir.join("MERGE_MSG");
+    // Squash merge conflicts store the editable message (including `-m`) in `MERGE_MSG`.
+    if squash.is_file() && merge_msg.is_file() {
+        return fs::read_to_string(merge_msg).map_err(Error::Io).map(Some);
+    }
     if squash.is_file() {
         return fs::read_to_string(squash).map_err(Error::Io).map(Some);
     }
-    if !read_merge_heads(repo.git_dir())?.is_empty() {
-        return read_merge_msg(repo.git_dir());
+    if !read_merge_heads(git_dir)?.is_empty() {
+        return read_merge_msg(git_dir);
     }
     Ok(None)
 }

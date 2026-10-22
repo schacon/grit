@@ -620,6 +620,7 @@ pub fn integrate_branch_with(
         let merge_msg = merge_message_text(label, options.message.as_deref());
         if matches!(options.commit, MergeCommitMode::Squash) {
             write_squash_msg_file(repo, into_oid, other_oid)?;
+            write_orig_head(repo.git_dir(), into_oid)?;
             write_squash_conflict_merge_msg(repo.git_dir(), &paths, options.message.as_deref())?;
         } else {
             record_merge_in_progress(repo.git_dir(), into_oid, other_oid, merge_msg)?;
@@ -842,7 +843,7 @@ fn squash_date_line(author: &str) -> String {
         time::Month::December => "Dec",
     };
     format!(
-        "{weekday} {month} {:02} {:02}:{:02}:{:02} {} {offset_str}",
+        "{weekday} {month} {} {:02}:{:02}:{:02} {} {offset_str}",
         dt.day(),
         dt.hour(),
         dt.minute(),
@@ -996,11 +997,19 @@ fn unmerged_index_paths(index: &Index) -> Vec<String> {
 ///
 /// Returns [`Error::Message`] when no merge is in progress, or propagates checkout and I/O errors.
 pub fn abort_branch_merge(repo: &Repository) -> Result<()> {
-    if read_merge_heads(repo.git_dir())?.is_empty() {
+    let git_dir = repo.git_dir();
+    let in_merge = !read_merge_heads(git_dir)?.is_empty();
+    let squash_conflict =
+        git_dir.join("SQUASH_MSG").is_file() && git_dir.join("MERGE_MSG").is_file();
+    if !in_merge && !squash_conflict {
         return Err(Error::Message(
             "there is no merge in progress — nothing to abort".into(),
         ));
     }
+    restore_pre_merge_state(repo)
+}
+
+fn restore_pre_merge_state(repo: &Repository) -> Result<()> {
     let orig = read_orig_head(repo.git_dir())?
         .ok_or_else(|| Error::Message("merge in progress but ORIG_HEAD is missing".into()))?;
     let head_tree = commit_tree(repo, &orig)?;
@@ -1141,6 +1150,14 @@ pub(crate) fn apply_conflict_merge_worktree(
     Ok(())
 }
 
+fn write_orig_head(git_dir: &Path, into_oid: ObjectId) -> Result<()> {
+    fs::write(
+        git_dir.join("ORIG_HEAD"),
+        format!("{}\n", into_oid.to_hex()),
+    )
+    .map_err(Error::Io)
+}
+
 fn record_merge_in_progress(
     git_dir: &Path,
     into_oid: ObjectId,
@@ -1152,11 +1169,7 @@ fn record_merge_in_progress(
         format!("{}\n", other_oid.to_hex()),
     )
     .map_err(Error::Io)?;
-    fs::write(
-        git_dir.join("ORIG_HEAD"),
-        format!("{}\n", into_oid.to_hex()),
-    )
-    .map_err(Error::Io)?;
+    write_orig_head(git_dir, into_oid)?;
     fs::write(git_dir.join("MERGE_MSG"), merge_msg).map_err(Error::Io)?;
     Ok(())
 }

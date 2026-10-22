@@ -3,9 +3,11 @@
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
+use grit_lib::porcelain::commit::pending_commit_message;
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::porcelain::merge::{
-    integrate_branch_with, FastForwardPolicy, IntegrateBranchOutcome, MergeCommitMode, MergeOptions,
+    abort_branch_merge, integrate_branch_with, FastForwardPolicy, IntegrateBranchOutcome,
+    MergeCommitMode, MergeOptions,
 };
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
@@ -314,9 +316,117 @@ fn squash_conflict_writes_merge_and_squash_msg_no_merge_head() {
     assert!(matches!(outcome, IntegrateBranchOutcome::Conflicts { .. }));
     assert!(!tmp.path().join(".git/MERGE_HEAD").exists());
     assert!(tmp.path().join(".git/SQUASH_MSG").exists());
+    assert!(tmp.path().join(".git/ORIG_HEAD").exists());
     assert_eq!(
         std::fs::read(tmp.path().join(".git/MERGE_MSG")).expect("merge msg"),
         b"\n# Conflicts:\n#\tf\n"
+    );
+}
+
+#[test]
+fn squash_msg_date_line_matches_git() {
+    let (tmp, main, topic) = linear_ff_repo();
+    git(tmp.path(), &["merge", "--squash", "topic"]);
+    let git_squash =
+        std::fs::read_to_string(tmp.path().join(".git/SQUASH_MSG")).expect("git squash");
+    let git_date = git_squash
+        .lines()
+        .find(|l| l.starts_with("Date:"))
+        .expect("git date line");
+
+    git(tmp.path(), &["reset", "--hard", main.to_hex().as_str()]);
+    let repo = grit_repo(&tmp);
+    integrate_branch_with(
+        &repo,
+        "refs/heads/main",
+        main,
+        topic,
+        "topic",
+        &MergeOptions {
+            commit: MergeCommitMode::Squash,
+            ..MergeOptions::default()
+        },
+    )
+    .expect("grit squash");
+    let grit_squash =
+        std::fs::read_to_string(tmp.path().join(".git/SQUASH_MSG")).expect("grit squash");
+    let grit_date = grit_squash
+        .lines()
+        .find(|l| l.starts_with("Date:"))
+        .expect("grit date line");
+    assert_eq!(grit_date, git_date, "SQUASH_MSG Date line must match git");
+}
+
+#[test]
+fn squash_conflict_abort_restores_pre_merge_state() {
+    let tmp = conflict_repo();
+    let main: ObjectId = git(tmp.path(), &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .expect("main");
+    let topic: ObjectId = git(tmp.path(), &["rev-parse", "topic"])
+        .trim()
+        .parse()
+        .expect("topic");
+    let repo = grit_repo(&tmp);
+    integrate_branch_with(
+        &repo,
+        "refs/heads/main",
+        main,
+        topic,
+        "topic",
+        &MergeOptions {
+            commit: MergeCommitMode::Squash,
+            ..MergeOptions::default()
+        },
+    )
+    .expect("squash conflicts");
+    abort_branch_merge(&repo).expect("abort squash conflict");
+    assert_eq!(
+        git(tmp.path(), &["rev-parse", "HEAD"]).trim(),
+        main.to_hex()
+    );
+    assert!(!tmp.path().join(".git/SQUASH_MSG").exists());
+    assert!(!tmp.path().join(".git/MERGE_MSG").exists());
+    git(tmp.path(), &["fsck", "--strict"]);
+}
+
+#[test]
+fn squash_conflict_pending_message_prefers_merge_msg() {
+    let tmp = conflict_repo();
+    let main: ObjectId = git(tmp.path(), &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .expect("main");
+    let topic: ObjectId = git(tmp.path(), &["rev-parse", "topic"])
+        .trim()
+        .parse()
+        .expect("topic");
+    let custom = "Squash title from -m\n";
+    let repo = grit_repo(&tmp);
+    integrate_branch_with(
+        &repo,
+        "refs/heads/main",
+        main,
+        topic,
+        "topic",
+        &MergeOptions {
+            commit: MergeCommitMode::Squash,
+            message: Some(custom.to_owned()),
+            ..MergeOptions::default()
+        },
+    )
+    .expect("squash conflicts");
+    let pending = pending_commit_message(&repo)
+        .expect("pending")
+        .expect("message");
+    assert!(
+        pending.starts_with(custom.trim()),
+        "pending message must include custom -m text, got: {pending:?}"
+    );
+    assert!(
+        !pending.starts_with("Squashed commit of the following"),
+        "must not use SQUASH_MSG template while MERGE_MSG holds the edit message"
     );
 }
 
