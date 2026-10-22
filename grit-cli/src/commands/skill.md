@@ -105,12 +105,17 @@ Each commit gets a stable **`change-id`** header (on by default) that survives `
 | Copy a repository | `grit clone <url> [<dir>]` |
 | List or add remotes | `grit remote`, `grit remote add <name> <url>` |
 | Download without changing your branch | `grit fetch [<remote>]` |
+| Fetch one branch or ref | `grit fetch origin main` (or `grit fetch origin pull/123/head:pr-123` for a PR) |
+| Shallow fetch controls | `grit fetch --depth N`, `--deepen N`, or `--unshallow` (same semantics as Git; mutually exclusive) |
 | Fetch and merge the remote copy of this branch | `grit pull` |
-| Fetch and replay local commits on top of upstream | `grit pull --rebase` (or `pull.rebase` in config) |
+| Pull only when a fast-forward is possible | `grit pull --ff-only` (exit **0** on success, **1** with `refused_not_ff` when diverged; branch unchanged) |
+| Fetch and replay local commits on top of upstream | `grit pull --rebase` (or `pull.rebase` in config; rebase conflicts abort atomically, exit **1**) |
 | Publish this branch to `origin` under the same name | `grit push` |
+| Push to a different remote branch name | `grit push origin HEAD:refs/heads/<name>` |
+| Publish rewritten history safely | `grit fetch`, then `grit push --force-with-lease` (or `--force-with-lease=<rev>` for one ref); stale lease → exit **1**, `"rejected": true` |
 | Publish all local tags | `grit push --tags` |
 
-`grit push` never force-pushes. If the remote has commits you don't, the push is rejected (exit 1, `"rejected": true`); run `grit pull`, then push again.
+Ordinary pushes must fast-forward the remote. If the remote has commits you don't, grit rejects the push (exit **1**, `"rejected": true`); run `grit pull`, then push again. After `grit history` edits (reword, drop, fixup, squash), fetch and use `--force-with-lease` instead of `--force` so you don't overwrite someone else's work. `--force` overwrites unconditionally when you really need it.
 
 URLs can be `https://`, `ssh://`, `user@host:path`, `git://`, `file://` or a local path.
 
