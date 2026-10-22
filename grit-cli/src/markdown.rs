@@ -1469,6 +1469,34 @@ mod tests {
     }
 
     #[test]
+    fn branch_list_table_escapes_pipe_in_subject() {
+        use crate::commands::branch::BranchEntry;
+
+        let branches = vec![BranchEntry {
+            name: "main".into(),
+            current: true,
+            full_ref: "refs/heads/main".into(),
+            remote: None,
+            oid: "b5ea30de417ac84c09b8cfc0acf5f2c39efc611f".into(),
+            subject: Some("fix|widget".into()),
+            date: None,
+            upstream: None,
+            worktree: None,
+        }];
+        let mut buf = Vec::new();
+        super::print_branch_list(&mut buf, &branches).expect("markdown");
+        let rendered = String::from_utf8(buf).expect("utf-8");
+        let row = rendered
+            .lines()
+            .find(|line| line.contains("| `main` |"))
+            .expect("branch row");
+        assert!(
+            row.contains("fix\\|widget"),
+            "subject cell should escape pipe delimiters: {row}"
+        );
+    }
+
+    #[test]
     fn worktree_list_table_escapes_pipe_in_branch_name() {
         use crate::commands::worktree::{WorktreeOutcome, WorktreeRow};
 

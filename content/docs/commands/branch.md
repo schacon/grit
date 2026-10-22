@@ -225,7 +225,7 @@ Pass [`--markdown`](../global-options/) for agent-friendly output.
 
 Schema: [v1](/schemas/branch/v1.json)
 
-Markdown lists branches in a table with upstream and worktree columns when present. Pipe characters inside table cells are escaped. See the JSON output section for the stable field contract.
+Markdown lists branches in a table with upstream and worktree columns when present. Table cells escape `|` and internal newlines so commit subjects and paths stay on one row. See the JSON output section for the stable field contract.
 
 ## See also
 

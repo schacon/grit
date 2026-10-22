@@ -296,11 +296,64 @@ fn branch_markdown_lists_branches_without_json_blob() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("## Branches"));
-    assert!(stdout.contains("| `main` | yes |"));
-    assert!(stdout.contains("| `topic` |"));
+    assert!(stdout.contains("| Branch | Current | OID | Subject | Upstream | Worktree |"));
+    assert!(stdout.contains("| --- | --- | --- | --- | --- | --- |"));
+    let rows: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.starts_with("| `") && line.contains(" | "))
+        .collect();
+    assert_eq!(
+        rows.len(),
+        2,
+        "expected one table row per branch:\n{stdout}"
+    );
+    let main_row = rows
+        .iter()
+        .find(|row| row.contains("| `main` |"))
+        .expect("main row");
+    assert!(
+        main_row.contains("| yes |"),
+        "current branch should be marked yes: {main_row}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("| `topic` |")),
+        "expected topic row:\n{stdout}"
+    );
     assert!(
         !stdout.contains("**branches**:"),
         "should not dump nested JSON:\n{stdout}"
+    );
+}
+
+#[test]
+fn branch_markdown_table_escapes_pipe_in_subject() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("f.txt"), "x\n").unwrap();
+    Command::new(GRIT)
+        .args(["add", "f.txt"])
+        .current_dir(dir.path())
+        .status()
+        .unwrap();
+    Command::new(GRIT)
+        .args(["commit", "-m", "fix|widget"])
+        .current_dir(dir.path())
+        .status()
+        .unwrap();
+    let out = Command::new(GRIT)
+        .args(["branch", "--markdown"])
+        .current_dir(dir.path())
+        .output()
+        .expect("branch");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let row = stdout
+        .lines()
+        .find(|line| line.contains("| `main` |"))
+        .expect("main row");
+    assert!(
+        row.contains("fix\\|widget"),
+        "subject cell should escape pipe: {row}"
     );
 }
 
