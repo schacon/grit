@@ -481,11 +481,10 @@ fn pull_explicit_remote_branch_via_fetch_head() {
     let repo = open(&grit_dir);
     let mut opts = PullOptions {
         remote: Some("origin".into()),
-        explicit_fetch: true,
+        branch: Some("feature".into()),
         fetch: fetch_opts(&Environment::empty()),
         ..PullOptions::default()
     };
-    opts.fetch.refspecs = vec!["feature".into()];
     opts.fetch.remote_name = Some("origin".into());
     let outcome = pull_grit(&repo, &opts);
     assert_eq!(outcome.result, PullResult::SetUpstream);
@@ -528,6 +527,78 @@ fn pull_autostash_restores_dirty_worktree_after_fast_forward() {
         dirty
     );
     assert_repo_matches_git(&grit_dir, &git_dir);
+}
+
+#[test]
+fn pull_dry_run_leaves_head_unchanged() {
+    let (grit_dir, _git_dir) = setup_tracked_pair("dry-run");
+    let origin = grit_dir.parent().unwrap().join("origin");
+    commit(&origin, "f", "remote");
+    git(&grit_dir, &["fetch", "-q"]);
+    let head_before = rev(&grit_dir, "HEAD");
+
+    let repo = open(&grit_dir);
+    let mut fetch = fetch_opts(&Environment::empty());
+    fetch.dry_run = true;
+    let outcome = pull_grit(
+        &repo,
+        &PullOptions {
+            fetch,
+            ..PullOptions::default()
+        },
+    );
+    assert_eq!(outcome.result, PullResult::UpToDate);
+    assert_eq!(rev(&grit_dir, "HEAD"), head_before);
+}
+
+#[test]
+fn pull_autostash_restored_when_fetch_fails() {
+    let (grit_dir, _git_dir) = setup_tracked_pair("autostash-fetch-err");
+    write_file(&grit_dir, "dirty.txt", "keep-me\n");
+    let repo = open(&grit_dir);
+    let err = try_pull_grit(
+        &repo,
+        &PullOptions {
+            remote: Some("/tmp/grit-pull-missing-remote-do-not-exist".into()),
+            branch: Some("main".into()),
+            autostash: true,
+            fetch: fetch_opts(&Environment::empty()),
+            ..PullOptions::default()
+        },
+    )
+    .expect_err("missing remote must fail");
+    assert!(matches!(err, PullError::Remote(_)));
+    assert_eq!(
+        fs::read_to_string(grit_dir.join("dirty.txt")).expect("read"),
+        "keep-me\n"
+    );
+}
+
+#[test]
+fn pull_literal_path_remote_and_branch() {
+    let root = unique_tmp("pull-git", "path-remote");
+    let origin = root.join("origin");
+    fs::create_dir_all(&origin).expect("origin");
+    git(&origin, &["init", "-q", "-b", "main"]);
+    commit(&origin, "f", "seed");
+
+    let grit_dir = root.join("grit");
+    fs::create_dir_all(&grit_dir).expect("grit");
+    git(&grit_dir, &["init", "-q", "-b", "main"]);
+    grit_identity(&grit_dir);
+
+    let repo = open(&grit_dir);
+    let outcome = pull_grit(
+        &repo,
+        &PullOptions {
+            remote: Some(origin.to_str().unwrap().into()),
+            branch: Some("main".into()),
+            fetch: fetch_opts(&Environment::empty()),
+            ..PullOptions::default()
+        },
+    );
+    assert_eq!(outcome.result, PullResult::SetUpstream);
+    assert_eq!(rev(&grit_dir, "HEAD"), rev(&origin, "main"));
 }
 
 #[test]

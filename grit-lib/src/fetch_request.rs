@@ -12,6 +12,7 @@ use thiserror::Error;
 use crate::config::ConfigSet;
 use crate::objects::ObjectId;
 use crate::refspec::{parse_fetch_refspec, RefspecError, RefspecItem};
+use crate::remote::{Remote, RemoteError};
 use crate::repo_handles::configured_remote_names;
 use crate::transfer::{match_positive, ref_excluded, MatchedRef};
 
@@ -137,6 +138,30 @@ pub struct FetchInvocation {
     pub remote: String,
     /// Command-line refspecs (`main`, `refs/heads/x:refs/heads/y`, …). Empty uses configured refspecs.
     pub user_refspecs: Vec<String>,
+}
+
+/// Resolve a configured remote name or literal URL/path for fetch and pull.
+///
+/// # Errors
+///
+/// Returns [`RemoteError`] when `remote_or_url` is not a configured remote and does not
+/// look like a URL or filesystem path.
+pub fn resolve_fetch_remote(
+    config: &ConfigSet,
+    remote_or_url: &str,
+) -> Result<Remote, RemoteError> {
+    if configured_remote_names(config)
+        .iter()
+        .any(|name| name == remote_or_url)
+    {
+        return Remote::from_config(config, remote_or_url);
+    }
+    if is_fetch_remote_token(config, remote_or_url) {
+        return Remote::from_url(remote_or_url);
+    }
+    Err(RemoteError::Library(crate::error::Error::Message(format!(
+        "unknown remote '{remote_or_url}'"
+    ))))
 }
 
 /// Classify `grit fetch [<remote>] [<refspec>…]` positionals (no refspec parsing).

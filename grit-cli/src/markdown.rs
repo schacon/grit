@@ -604,6 +604,21 @@ pub fn print_pull_outcome(
     use crate::commands::pull::PullResult;
     outln!(w, "## Pull");
     outln!(w);
+    if let Some(check) = &outcome.check {
+        outln!(
+            w,
+            "- Check: {ahead} ahead, {behind} behind · fast-forward {} · would `{would:?}`",
+            if check.fast_forward_possible {
+                "possible"
+            } else {
+                "not possible"
+            },
+            ahead = check.ahead,
+            behind = check.behind,
+            would = check.would
+        );
+        return Ok(());
+    }
     match outcome.result {
         PullResult::UpToDate => {
             outln!(w, "Already up to date with **`{}`**.", outcome.branch);
@@ -686,20 +701,6 @@ pub fn print_pull_outcome(
                 outcome.branch
             );
         }
-    }
-    if let Some(check) = &outcome.check {
-        outln!(
-            w,
-            "- Check: {ahead} ahead, {behind} behind · fast-forward {} · would `{would:?}`",
-            if check.fast_forward_possible {
-                "possible"
-            } else {
-                "not possible"
-            },
-            ahead = check.ahead,
-            behind = check.behind,
-            would = check.would
-        );
     }
     Ok(())
 }

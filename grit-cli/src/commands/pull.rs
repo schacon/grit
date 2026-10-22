@@ -54,6 +54,9 @@ pub fn run(args: &PullRunArgs, mode: OutputMode) -> Result<PullOutcome> {
     );
     options.remote = Some(invocation.remote.clone());
     options.explicit_fetch = !invocation.user_refspecs.is_empty();
+    if invocation.user_refspecs.len() == 1 {
+        options.branch = Some(invocation.user_refspecs[0].clone());
+    }
     options.autostash = args.autostash;
     options.check = args.check;
     options.fetch = FetchOptions {

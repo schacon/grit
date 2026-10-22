@@ -438,27 +438,43 @@ pub fn verify_fetch_one_branch(ctx: &DailyHeadlineContext, cwd: &Path) -> Result
     Ok(())
 }
 
+fn git_pull_check_ff_possible(git: &Path, cwd: &Path, upstream_ref: &str) -> Result<bool> {
+    let head = ref_oid(git, cwd, "HEAD")?;
+    let upstream = ref_oid(git, cwd, upstream_ref)?;
+    if head == upstream {
+        return Ok(true);
+    }
+    is_ancestor(git, cwd, head.as_str(), upstream_ref)
+}
+
 pub fn verify_pull_check(ctx: &DailyHeadlineContext, cwd: &Path) -> Result<()> {
     let remote = remote_state(ctx)?;
     configure_client_remote(&ctx.git, cwd, remote)?;
     let branch = remote.meta.default_branch.as_str();
+    let tracking = format!("origin/{branch}");
     prepare_network_fetch_incr(&ctx.git, &remote.bare)?;
     run_git(&ctx.git, cwd, &["fetch", "-q", "origin", branch])?;
     let head_before = ref_oid(&ctx.git, cwd, "HEAD")?;
-    let git_status = std::process::Command::new(&ctx.git)
-        .args(["pull", "--check", "-q", "origin", branch])
-        .current_dir(cwd)
-        .status()?;
-    if !git_status.success() {
-        bail!("git pull --check should succeed when fast-forward is possible");
+    if !git_pull_check_ff_possible(&ctx.git, cwd, &tracking)? {
+        bail!("git baseline: expected fast-forward to be possible after fetch");
     }
     if ref_oid(&ctx.git, cwd, "HEAD")? != head_before {
-        bail!("git pull --check must not move HEAD");
+        bail!("git fetch must not move HEAD");
     }
     prepare_network_fetch_incr(&ctx.git, &remote.bare)?;
     run_git(&ctx.git, cwd, &["fetch", "-q", "origin", branch])?;
     let head_before = ref_oid(&ctx.git, cwd, "HEAD")?;
-    run_grit(&ctx.grit, cwd, &["pull", "--check", "origin", branch])?;
+    let out = std::process::Command::new(&ctx.grit)
+        .args(["pull", "--check", "origin", branch])
+        .current_dir(cwd)
+        .output()
+        .context("grit pull --check")?;
+    if !out.status.success() {
+        bail!(
+            "grit pull --check should exit 0 when ff is possible: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
     if ref_oid(&ctx.git, cwd, "HEAD")? != head_before {
         bail!("grit pull --check must not move HEAD");
     }

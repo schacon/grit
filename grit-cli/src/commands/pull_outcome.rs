@@ -134,6 +134,21 @@ fn map_conflicts(
 
 impl HumanRender for PullOutcome {
     fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
+        if let Some(check) = &self.check {
+            outln!(
+                w,
+                "Would {} ({} ahead, {} behind). Fast-forward {}possible.",
+                check_would_phrase(check.would),
+                check.ahead,
+                check.behind,
+                if check.fast_forward_possible {
+                    ""
+                } else {
+                    "not "
+                }
+            );
+            return Ok(());
+        }
         let short = self.oid.as_deref().map(short_hex).unwrap_or_default();
         match self.result {
             PullResult::UpToDate => outln!(w, "Already up to date."),
@@ -191,20 +206,6 @@ impl HumanRender for PullOutcome {
                     self.branch
                 );
             }
-        }
-        if let Some(check) = &self.check {
-            outln!(
-                w,
-                "Would {} ({} ahead, {} behind). Fast-forward {}possible.",
-                check_would_phrase(check.would),
-                check.ahead,
-                check.behind,
-                if check.fast_forward_possible {
-                    ""
-                } else {
-                    "not "
-                }
-            );
         }
         Ok(())
     }

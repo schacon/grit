@@ -13,6 +13,7 @@ use super::super::remote_fixture::{
     verify_push_incremental, verify_push_incremental_http, verify_push_refspec,
 };
 use super::super::runner::BenchArgv;
+use crate::shell::shell_quote;
 
 fn prepare_network_fetch_incr(_: &DailyHeadlineContext) -> DailyPrepare {
     DailyPrepare::Network("prepare-network-fetch-incr")
@@ -158,7 +159,10 @@ fn fetch_dry_run_grit(ctx: &DailyHeadlineContext) -> BenchArgv {
 
 fn pull_check_git(ctx: &DailyHeadlineContext) -> BenchArgv {
     let branch = default_remote_branch(ctx);
-    sh_devnull(&ctx.git, &["pull", "--check", "-q", "origin", branch])
+    let git_q = shell_quote(&ctx.git.to_string_lossy());
+    sh_script(format!(
+        "{git_q} fetch -q origin {branch} && {git_q} rev-list --left-right --count HEAD...origin/{branch} >/dev/null"
+    ))
 }
 
 fn pull_check_grit(ctx: &DailyHeadlineContext) -> BenchArgv {

@@ -402,9 +402,7 @@ pub fn resolve_pull_integration_base(
     explicit_fetch: bool,
 ) -> Option<ComparisonBase> {
     if explicit_fetch {
-        if let Some(base) = pull_upstream_from_fetch_head(repo, remote_name) {
-            return Some(base);
-        }
+        return pull_upstream_from_fetch_head(repo, remote_name);
     }
     pull_upstream_branch(repo, branch_short, remote_name)
 }

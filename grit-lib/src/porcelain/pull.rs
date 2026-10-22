@@ -13,6 +13,7 @@ use crate::config::ident_resolve::{resolve_identity_with, IdentRole};
 use crate::config::parse_git_config_maybe_bool;
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
+use crate::fetch_request::resolve_fetch_remote;
 use crate::merge_base::{count_symmetric_ahead_behind, is_ancestor, merge_bases_first_vs_rest};
 use crate::objects::{parse_commit, ObjectId};
 use crate::porcelain::checkout::checkout_between_trees;
@@ -28,7 +29,7 @@ use crate::porcelain::stash::{
 use crate::porcelain::worktree_guard::prepare_tree_checkout;
 use crate::remote::fetch::Progress;
 use crate::remote::transfer::{resolve_fetch_prune, FetchOptions, TagMode};
-use crate::remote::{HttpClientFactory, Remote, RemoteError, DEFAULT_REMOTE};
+use crate::remote::{HttpClientFactory, RemoteError, DEFAULT_REMOTE};
 use crate::repo::Repository;
 use crate::revwalk::history::{
     apply_rewrite, rebase_onto, ApplyOptions, EmptyPolicy, HistoryError, RebaseOntoOptions,
@@ -365,74 +366,108 @@ where
         None
     };
 
-    let finish = |outcome: std::result::Result<PullOutcome, PullError>| {
-        restore_autostash_on_failure(repo, stash_oid.as_ref(), &identity, &outcome);
-        outcome
-    };
-
+    let (explicit_fetch, branch_refspecs) = pull_fetch_refspecs(options);
     let mut fetch_opts = options.fetch.clone();
+    fetch_opts.refspecs = branch_refspecs;
     if fetch_opts.remote_name.is_none() {
         fetch_opts.remote_name = Some(remote_name.clone());
     }
     if options.check {
         fetch_opts.dry_run = false;
     }
+    let fetch_dry_run = fetch_opts.dry_run;
 
-    if remote_name != "." {
-        let remote = Remote::from_config(config.as_ref(), &remote_name)?;
-        remote
-            .fetch(repo, fetch_opts, progress, http_factory)
-            .map_err(PullError::Remote)?;
-    }
-
-    let upstream =
-        resolve_pull_integration_base(repo, &short_name, &remote_name, options.explicit_fetch)
-            .ok_or(PullError::NoUpstream {
-                branch: short_name.clone(),
-            })?;
-    let label = upstream.name.clone();
-    let upstream_oid = upstream.oid;
-
-    if options.check {
-        return finish(pull_check_outcome(
-            repo,
-            head_oid,
-            upstream_oid,
-            &label,
-            integration,
-        ));
-    }
-
-    let outcome = match head_oid {
-        None => adopt_unborn_upstream(repo, &refname, &short_name, &label, upstream_oid),
-        Some(head_oid) => {
-            integrate_fetched_upstream(repo, &refname, head_oid, upstream_oid, &label, integration)
+    let core: std::result::Result<PullOutcome, PullError> = (|| {
+        if remote_name != "." {
+            let remote =
+                resolve_fetch_remote(config.as_ref(), &remote_name).map_err(PullError::Remote)?;
+            remote
+                .fetch(repo, fetch_opts, progress, http_factory)
+                .map_err(PullError::Remote)?;
         }
-    };
-    finish(apply_autostash_after_pull(
-        repo,
-        stash_oid.as_ref(),
-        &identity,
-        outcome,
-    ))
+
+        let upstream =
+            resolve_pull_integration_base(repo, &short_name, &remote_name, explicit_fetch).ok_or(
+                PullError::NoUpstream {
+                    branch: short_name.clone(),
+                },
+            )?;
+        let label = upstream.name.clone();
+        let upstream_oid = upstream.oid;
+
+        if fetch_dry_run {
+            return Ok(PullOutcome {
+                result: PullResult::UpToDate,
+                label,
+                oid: head_oid,
+                change_id: head_oid
+                    .and_then(|oid| logical_change_id_for_commit(repo, oid).ok())
+                    .flatten(),
+                upstream: None,
+                conflicts: None,
+                ahead: None,
+                behind: None,
+                check: None,
+            });
+        }
+
+        if options.check {
+            return pull_check_outcome(repo, head_oid, upstream_oid, &label, integration);
+        }
+
+        match head_oid {
+            None => adopt_unborn_upstream(repo, &refname, &short_name, &label, upstream_oid),
+            Some(head_oid) => integrate_fetched_upstream(
+                repo,
+                &refname,
+                head_oid,
+                upstream_oid,
+                &label,
+                integration,
+            ),
+        }
+    })();
+
+    match core {
+        Err(err) => {
+            restore_autostash_after_abort(repo, stash_oid.as_ref(), &identity);
+            Err(err)
+        }
+        Ok(outcome) => {
+            if fetch_dry_run {
+                restore_autostash_after_abort(repo, stash_oid.as_ref(), &identity);
+                return Ok(outcome);
+            }
+            if matches!(
+                outcome.result,
+                PullResult::Conflicts | PullResult::RefusedNotFf
+            ) {
+                restore_autostash_after_abort(repo, stash_oid.as_ref(), &identity);
+                return Ok(outcome);
+            }
+            apply_autostash_after_pull(repo, stash_oid.as_ref(), &identity, Ok(outcome))
+        }
+    }
 }
 
-fn restore_autostash_on_failure(
-    repo: &Repository,
-    stash_oid: Option<&ObjectId>,
-    identity: &str,
-    outcome: &std::result::Result<PullOutcome, PullError>,
-) {
+/// Merge [`PullOptions::branch`] into fetch refspecs for embedders and tests.
+fn pull_fetch_refspecs(options: &PullOptions) -> (bool, Vec<String>) {
+    let mut refspecs = options.fetch.refspecs.clone();
+    let mut explicit = options.explicit_fetch;
+    if let Some(branch) = options.branch.as_deref().filter(|b| !b.is_empty()) {
+        if refspecs.is_empty() {
+            refspecs.push(branch.to_owned());
+        }
+        explicit = true;
+    }
+    (explicit, refspecs)
+}
+
+fn restore_autostash_after_abort(repo: &Repository, stash_oid: Option<&ObjectId>, identity: &str) {
     let Some(stash_oid) = stash_oid else {
         return;
     };
-    let restore = match outcome {
-        Err(_) => true,
-        Ok(out) => matches!(out.result, PullResult::Conflicts | PullResult::RefusedNotFf),
-    };
-    if restore {
-        let _ = restore_operation_autostash(repo, stash_oid, identity);
-    }
+    let _ = restore_operation_autostash(repo, stash_oid, identity);
 }
 
 fn apply_autostash_after_pull(
