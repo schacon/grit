@@ -2417,6 +2417,9 @@ pub grit_lib::diagnostics::Warning::NonExecutableHookIgnored::hook_name: alloc::
 pub grit_lib::diagnostics::Warning::PackBitmapIgnored
 pub grit_lib::diagnostics::Warning::PackBitmapIgnored::path: std::path::PathBuf
 pub grit_lib::diagnostics::Warning::PackBitmapIgnored::reason: alloc::string::String
+pub grit_lib::diagnostics::Warning::ReflogNotWritten
+pub grit_lib::diagnostics::Warning::ReflogNotWritten::detail: alloc::string::String
+pub grit_lib::diagnostics::Warning::ReflogNotWritten::refname: alloc::string::String
 pub grit_lib::diagnostics::Warning::SplitIndexDisabledWhileConfigEnabled
 pub grit_lib::diagnostics::Warning::SplitIndexEnabledWhileConfigDisabled
 pub grit_lib::diagnostics::Warning::SubmoduleConfigLooksLikeOption
@@ -12949,6 +12952,9 @@ pub grit_lib::prelude::Warning::NonExecutableHookIgnored::hook_name: alloc::stri
 pub grit_lib::prelude::Warning::PackBitmapIgnored
 pub grit_lib::prelude::Warning::PackBitmapIgnored::path: std::path::PathBuf
 pub grit_lib::prelude::Warning::PackBitmapIgnored::reason: alloc::string::String
+pub grit_lib::prelude::Warning::ReflogNotWritten
+pub grit_lib::prelude::Warning::ReflogNotWritten::detail: alloc::string::String
+pub grit_lib::prelude::Warning::ReflogNotWritten::refname: alloc::string::String
 pub grit_lib::prelude::Warning::SplitIndexDisabledWhileConfigEnabled
 pub grit_lib::prelude::Warning::SplitIndexEnabledWhileConfigDisabled
 pub grit_lib::prelude::Warning::SubmoduleConfigLooksLikeOption

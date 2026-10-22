@@ -163,6 +163,13 @@ pub enum Warning {
         /// Additional human-readable detail for the failure.
         detail: String,
     },
+    /// A ref was updated but its reflog line could not be appended; the update stands.
+    ReflogNotWritten {
+        /// Ref whose reflog was not updated (for example `refs/heads/main` or `HEAD`).
+        refname: String,
+        /// Why the append failed.
+        detail: String,
+    },
     /// A traditional hook script exists but is not executable.
     NonExecutableHookIgnored {
         /// Hook script basename that was skipped.

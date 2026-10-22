@@ -145,6 +145,9 @@ pub fn format_warning_message(w: &Warning) -> String {
             "`index.version` is not a valid index format number (using format {fallback})"
         ),
         Warning::MailmapUnreadable { detail } => detail.clone(),
+        Warning::ReflogNotWritten { refname, detail } => {
+            format!("{refname} was updated, but its reflog could not be written: {detail}")
+        }
         Warning::NonExecutableHookIgnored { hook_name } => format!(
             "the '{hook_name}' hook was ignored because it is not executable (see `grit config set advice.ignoredHook false` to silence)"
         ),
@@ -203,6 +206,7 @@ fn warning_kind(w: &Warning) -> String {
         Warning::IndexVersionEnvInvalid { .. } => "index_version_env_invalid".into(),
         Warning::IndexVersionConfigInvalid { .. } => "index_version_config_invalid".into(),
         Warning::MailmapUnreadable { .. } => "mailmap_unreadable".into(),
+        Warning::ReflogNotWritten { .. } => "reflog_not_written".into(),
         Warning::NonExecutableHookIgnored { .. } => "non_executable_hook_ignored".into(),
         Warning::MidxChecksumMismatch => "midx_checksum_mismatch".into(),
         Warning::MidxIgnoringExistingChecksumMismatch => {
