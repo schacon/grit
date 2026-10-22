@@ -18,6 +18,40 @@ fn force_and_force_with_lease_conflict() {
 }
 
 #[test]
+fn force_with_lease_delete_stale_preserves_remote() {
+    let fx = CliFixture::new().with_upstream();
+    let bare = fx.upstream_path();
+    let client = fx.git_clone_client("client");
+    git(&client, &["push", "-q", "origin", "main"]);
+    git(&client, &["fetch", "-q", "origin"]);
+    let on_remote = git(bare, &["rev-parse", "refs/heads/main"])
+        .trim()
+        .to_string();
+    let tree = git(bare, &["rev-parse", &format!("{on_remote}^{{tree}}")])
+        .trim()
+        .to_string();
+    let other = git(
+        bare,
+        &["commit-tree", &tree, "-p", &on_remote, "-m", "other"],
+    )
+    .trim()
+    .to_string();
+    git(bare, &["update-ref", "refs/heads/main", &other]);
+    let out = grit_cmd(&["push", "--force-with-lease", "--delete", "main", "--json"])
+        .in_dir(&client)
+        .exec();
+    assert!(!out.ok(), "stale lease delete should fail: {}", out.stderr);
+    assert_eq!(git(bare, &["rev-parse", "refs/heads/main"]).trim(), other);
+    let value: serde_json::Value = serde_json::from_str(out.stdout.trim()).expect("json");
+    assert!(
+        value["results"]
+            .as_array()
+            .is_some_and(|r| r.iter().any(|x| x["reason"] == "stale")),
+        "{value}"
+    );
+}
+
+#[test]
 fn force_with_lease_stale_json_reason() {
     let fx = CliFixture::new().with_upstream();
     let bare = fx.upstream_path();
@@ -34,27 +68,14 @@ fn force_with_lease_stale_json_reason() {
     std::fs::write(client.join("t2.txt"), "2\n").unwrap();
     git(&client, &["add", "t2.txt"]);
     git(&client, &["commit", "-q", "--amend", "--no-edit"]);
-    let tree = git(
-        bare,
-        &["rev-parse", &format!("{on_remote}^{{tree}}")],
-    )
-    .trim()
-    .to_string();
+    let tree = git(bare, &["rev-parse", &format!("{on_remote}^{{tree}}")])
+        .trim()
+        .to_string();
     let other = git(
         bare,
-        &[
-            "commit-tree",
-            &tree,
-            "-p",
-            &on_remote,
-            "-m",
-            "other",
-        ],
+        &["commit-tree", &tree, "-p", &on_remote, "-m", "other"],
     );
-    git(
-        bare,
-        &["update-ref", "refs/heads/topic", other.trim()],
-    );
+    git(bare, &["update-ref", "refs/heads/topic", other.trim()]);
     let out = grit_cmd(&["push", "--force-with-lease", "--json", "origin", "topic"])
         .in_dir(&client)
         .exec();

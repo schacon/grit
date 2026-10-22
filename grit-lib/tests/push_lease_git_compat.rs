@@ -6,7 +6,6 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use grit_test_support::git;
 use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::config::ConfigSet;
 use grit_lib::objects::ObjectId;
@@ -19,6 +18,7 @@ use grit_lib::remote::push_report::PushRefStatus;
 use grit_lib::remote::transfer::{PushOptions, PushOutcome};
 use grit_lib::remote::Remote;
 use grit_lib::repo::Repository;
+use grit_test_support::git;
 
 fn git_try(dir: &Path, args: &[&str]) -> bool {
     Command::new("git")
@@ -130,17 +130,11 @@ impl Fixture {
     }
 }
 
-fn grit_push(work: &Path, bare: &Path, force: ForceMode, refspecs: &[&str]) -> PushOutcome {
+fn grit_push_request(work: &Path, bare: &Path, request: PushRequest) -> PushOutcome {
     let repo = open_repo(work);
     let config = load_config(&repo);
     let ctx = PushPlanContext {
         remote_ref_names: remote_names(bare),
-    };
-    let request = PushRequest {
-        remote: Some("origin".into()),
-        refspecs: refspecs.iter().map(|s| (*s).to_owned()).collect(),
-        force,
-        ..Default::default()
     };
     let plan = resolve_push(&repo, &config, &request, &ctx).expect("plan");
     Remote::from_config(&config, "origin")
@@ -158,15 +152,45 @@ fn grit_push(work: &Path, bare: &Path, force: ForceMode, refspecs: &[&str]) -> P
         .expect("push")
 }
 
+fn grit_push(work: &Path, bare: &Path, force: ForceMode, refspecs: &[&str]) -> PushOutcome {
+    grit_push_request(
+        work,
+        bare,
+        PushRequest {
+            remote: Some("origin".into()),
+            refspecs: refspecs.iter().map(|s| (*s).to_owned()).collect(),
+            force,
+            ..Default::default()
+        },
+    )
+}
+
 fn git_push_lease(work: &Path, lease: Option<&str>) -> bool {
     match lease {
-        None => git_try(work, &["push", "--force-with-lease", "-q", "origin", "main"]),
+        None => git_try(
+            work,
+            &["push", "--force-with-lease", "-q", "origin", "main"],
+        ),
         Some(flag) => git_try(work, &["push", flag, "-q", "origin", "main"]),
     }
 }
 
 fn git_push_force(work: &Path) -> bool {
     git_try(work, &["push", "--force", "-q", "origin", "main"])
+}
+
+fn git_push_lease_delete(work: &Path) -> bool {
+    git_try(
+        work,
+        &[
+            "push",
+            "--force-with-lease",
+            "-q",
+            "--delete",
+            "origin",
+            "main",
+        ],
+    )
 }
 
 fn remote_tip(bare: &Path) -> ObjectId {
@@ -308,6 +332,45 @@ fn file_force_overwrites_unconditionally() {
     assert!(grit_out.results[0].forced);
     assert!(git_push_force(&fx.git_client));
     assert_eq!(remote_tip(&fx.bare), rev_parse(&fx.grit_client, "HEAD"));
+    fsck_clean(&fx.bare);
+}
+
+#[test]
+fn file_lease_delete_stale_when_remote_advanced() {
+    let fx = Fixture::new();
+    fx.seed_commits();
+    let stale = rev_parse(&fx.bare, "refs/heads/main");
+    let tree = Command::new("git")
+        .current_dir(&fx.bare)
+        .args(["rev-parse", "HEAD^{tree}"])
+        .output()
+        .unwrap();
+    let tree = String::from_utf8_lossy(&tree.stdout).trim().to_string();
+    let other = Command::new("git")
+        .current_dir(&fx.bare)
+        .args(["commit-tree", &tree, "-p", &stale.to_hex(), "-m", "other"])
+        .env("GIT_AUTHOR_NAME", "T")
+        .env("GIT_AUTHOR_EMAIL", "t@example.com")
+        .output()
+        .unwrap();
+    let other_oid = String::from_utf8_lossy(&other.stdout).trim().to_string();
+    git(&fx.bare, &["update-ref", "refs/heads/main", &other_oid]);
+    let grit_out = grit_push_request(
+        &fx.grit_client,
+        &fx.bare,
+        PushRequest {
+            remote: Some("origin".into()),
+            delete: vec!["main".into()],
+            force: ForceMode::Lease(LeaseExpectation::Tracking),
+            ..Default::default()
+        },
+    );
+    assert_eq!(grit_out.results[0].status, PushRefStatus::RejectStale);
+    assert!(!git_push_lease_delete(&fx.git_client));
+    assert_eq!(
+        remote_tip(&fx.bare),
+        ObjectId::from_hex(&other_oid).unwrap()
+    );
     fsck_clean(&fx.bare);
 }
 

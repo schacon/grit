@@ -165,11 +165,8 @@ pub fn parse_force_mode(
     match flag {
         None => Ok(ForceMode::Lease(LeaseExpectation::Tracking)),
         Some(rev) => {
-            let oid = crate::rev_parse::resolve_revision_for_verify(repo, &rev).map_err(|_| {
-                PushPlanError::UnknownRevision {
-                    spec: rev.clone(),
-                }
-            })?;
+            let oid = crate::rev_parse::resolve_revision_for_verify(repo, &rev)
+                .map_err(|_| PushPlanError::UnknownRevision { spec: rev.clone() })?;
             Ok(ForceMode::Lease(LeaseExpectation::Value(oid)))
         }
     }
@@ -833,9 +830,6 @@ fn apply_force_mode(
         ForceMode::None => {}
         ForceMode::Force => {
             for spec in specs.iter_mut() {
-                if spec.delete {
-                    continue;
-                }
                 spec.force = true;
                 spec.expected_old = None;
                 spec.expect_absent = false;
@@ -843,33 +837,14 @@ fn apply_force_mode(
         }
         ForceMode::Lease(LeaseExpectation::Tracking) => {
             for spec in specs.iter_mut() {
-                if spec.delete {
-                    continue;
-                }
-                spec.force = true;
-                spec.expected_old = None;
-                spec.expect_absent = false;
-                if let Some(tracking) =
-                    remote_tracking_ref_for_remote_ref(config, remote, &spec.dst)
-                {
-                    match refs::resolve_ref(repo.git_dir(), &tracking) {
-                        Ok(oid) => spec.expected_old = Some(oid),
-                        Err(_) => spec.expect_absent = true,
-                    }
-                } else {
-                    spec.expect_absent = true;
-                }
+                apply_tracking_lease(repo, config, remote, spec);
             }
         }
         ForceMode::Lease(LeaseExpectation::Value(expected)) => {
-            let push_count = specs.iter().filter(|s| !s.delete).count();
-            if push_count != 1 {
+            if specs.len() != 1 {
                 return Err(PushPlanError::LeaseValueRequiresSingleRef);
             }
             for spec in specs.iter_mut() {
-                if spec.delete {
-                    continue;
-                }
                 spec.force = true;
                 spec.expected_old = Some(*expected);
                 spec.expect_absent = false;
@@ -877,6 +852,25 @@ fn apply_force_mode(
         }
     }
     Ok(())
+}
+
+fn apply_tracking_lease(
+    repo: &Repository,
+    config: &ConfigSet,
+    remote: &str,
+    spec: &mut PushRefSpec,
+) {
+    spec.force = true;
+    spec.expected_old = None;
+    spec.expect_absent = false;
+    if let Some(tracking) = remote_tracking_ref_for_remote_ref(config, remote, &spec.dst) {
+        match refs::resolve_ref(repo.git_dir(), &tracking) {
+            Ok(oid) => spec.expected_old = Some(oid),
+            Err(_) => spec.expect_absent = true,
+        }
+    } else {
+        spec.expect_absent = true;
+    }
 }
 
 fn push_spec(
