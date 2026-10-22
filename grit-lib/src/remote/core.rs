@@ -320,7 +320,7 @@ impl Remote {
         if opts.remote_name.is_none() {
             opts.remote_name = self.name.clone();
         }
-        if self.name.is_none() && opts.fetch_source.is_none() {
+        if opts.fetch_source.is_none() {
             opts.fetch_source = Some(self.fetch_url.to_url_string());
         }
         if opts.diagnostics.is_none() {

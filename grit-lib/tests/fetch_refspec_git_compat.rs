@@ -3,10 +3,14 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::resolve_ref;
+use grit_lib::remote::fetch::NoProgress;
 use grit_lib::remote::transfer::{fetch_local, FetchOptions, TagMode};
+use grit_lib::remote::Remote;
+use grit_lib::repo::Repository;
 
 fn run_git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
@@ -201,6 +205,52 @@ fn explicit_main_short_name_file() {
     git_fetch(&git_c, &remote.path(), &specs);
 
     assert_fetch_parity(&grit_c, &git_c, "refs/remotes/origin/main");
+}
+
+#[test]
+fn named_remote_explicit_refspec_writes_fetch_head_via_remote_fetch() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let remote = BareRemote::new(tmp.path(), "remote");
+    remote.commit_empty("one");
+
+    let grit_c = clone_consumer(tmp.path(), &remote, "grit-c");
+    let git_dir = grit_c.join(".git");
+    let _ = std::fs::remove_file(git_dir.join("FETCH_HEAD"));
+
+    remote.commit_empty("two");
+
+    let repo = Repository::open(
+        &git_dir,
+        &RepositoryOptions::empty().with_work_tree(&grit_c),
+    )
+    .expect("open repo");
+    let config = repo.config().expect("config");
+    let origin = Remote::from_config(&config, "origin").expect("origin remote");
+    origin
+        .fetch(
+            &repo,
+            FetchOptions {
+                refspecs: vec!["main".into()],
+                tags: TagMode::None,
+                ..Default::default()
+            },
+            &mut NoProgress,
+            None,
+        )
+        .expect("Remote::fetch explicit main");
+
+    let fetch_head = read_fetch_head(&git_dir);
+    let expected = resolve_ref(&remote.git_dir(), "refs/heads/main").expect("remote main");
+    let got_oid = fetch_head
+        .lines()
+        .next()
+        .and_then(|l| l.split('\t').next())
+        .expect("FETCH_HEAD oid");
+    assert_eq!(got_oid, expected.to_hex());
+    assert!(
+        fetch_head.contains("branch 'main' of"),
+        "expected branch description in FETCH_HEAD: {fetch_head}"
+    );
 }
 
 #[test]
