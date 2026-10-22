@@ -117,7 +117,15 @@ fn list_sort_and_filters_match_git() {
     );
     assert_eq!(
         grit_names(dir, &["annotated", "--contains", "HEAD~1"]),
-        git_names(dir, &["annotated", "--contains", "HEAD~1", "--sort=version:refname"])
+        git_names(
+            dir,
+            &[
+                "annotated",
+                "--contains",
+                "HEAD~1",
+                "--sort=version:refname"
+            ]
+        )
     );
     let limited = grit_names(dir, &["-n", "2", "--sort=name"]);
     assert_eq!(limited.len(), 2);

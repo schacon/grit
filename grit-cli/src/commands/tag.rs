@@ -360,8 +360,9 @@ pub fn run(opts: TagRunOptions) -> Result<TagOutcome> {
 
     let mut patterns: Vec<String> = opts
         .list
-        .into_iter()
+        .iter()
         .filter(|p| !p.is_empty())
+        .cloned()
         .collect();
     let list_by_flags = tag_list_requested(
         &patterns,
@@ -371,7 +372,7 @@ pub fn run(opts: TagRunOptions) -> Result<TagOutcome> {
         opts.reverse,
     );
 
-    match (&opts.name, opts.delete) {
+    match (opts.name.as_ref(), opts.delete) {
         (_, true) => {
             let name = opts
                 .name
@@ -380,10 +381,17 @@ pub fn run(opts: TagRunOptions) -> Result<TagOutcome> {
             validate_delete_options(&opts)?;
             remove(&repo, name, opts.dry_run)
         }
-        (None, false) | (Some(_), false) if list_by_flags || opts.name.is_none() => {
-            if let Some(n) = &opts.name {
-                patterns.push(n.clone());
-            }
+        (None, false) => list(
+            &repo,
+            patterns,
+            opts.sort,
+            opts.reverse,
+            opts.contains,
+            opts.points_at,
+            opts.limit,
+        ),
+        (Some(name), false) if list_by_flags => {
+            patterns.push(name.clone());
             list(
                 &repo,
                 patterns,
