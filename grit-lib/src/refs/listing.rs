@@ -196,14 +196,17 @@ pub fn short_name_in_namespace(full_name: &str, namespace: &RefNamespace) -> Str
 #[must_use]
 pub fn pattern_matches_ls_remote_refname(refname: &str, pattern: &str) -> bool {
     if pattern.is_empty() {
-        return true;
+        return false;
     }
     let path = format!("/{refname}");
     let full = format!("*/{pattern}");
     ls_remote_glob_match(&full, &path)
 }
 
-/// Returns `true` when `refname` matches one of `patterns`, or when `patterns` is empty.
+/// Returns `true` when `refname` matches one of `patterns`.
+///
+/// An empty `patterns` slice means no pattern filter (all ref names pass). An explicit
+/// empty-string pattern (`patterns == [""]`) matches nothing, like `git ls-remote`.
 #[must_use]
 pub fn patterns_match_ls_remote(refname: &str, patterns: &[String]) -> bool {
     if patterns.is_empty() {
@@ -703,6 +706,16 @@ mod tests {
     #[test]
     fn ignore_case_prefix_does_not_panic_on_utf8_short_names() {
         assert!(!pattern_matches_short_name("€x", "a", true));
+    }
+
+    #[test]
+    fn ls_remote_empty_string_pattern_matches_nothing() {
+        assert!(!pattern_matches_ls_remote_refname("refs/heads/main", ""));
+        assert!(!patterns_match_ls_remote(
+            "refs/heads/main",
+            &[String::new()]
+        ));
+        assert!(patterns_match_ls_remote("refs/heads/main", &[]));
     }
 
     #[test]

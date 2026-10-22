@@ -181,6 +181,32 @@ fn grit_http_server_bin() -> PathBuf {
 }
 
 #[test]
+fn remote_refs_empty_pattern_matches_git_ls_remote_nothing() {
+    let (_tmp, bare) = bare_fixture_with_annotated_tag();
+    let url = bare.to_str().unwrap();
+    let git_map = parse_git_ls_remote(&git(None, &["ls-remote", url, ""]));
+    assert!(
+        git_map.is_empty(),
+        "git ls-remote with empty pattern is empty"
+    );
+    let out = Command::new(GRIT)
+        .args(["remote", "refs", url, ""])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("grit");
+    assert!(
+        out.status.success(),
+        "grit: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        parse_git_ls_remote(&String::from_utf8(out.stdout).unwrap()),
+        git_map
+    );
+}
+
+#[test]
 fn remote_refs_patterns_match_git_ls_remote_sets() {
     let (_tmp, bare) = bare_fixture_with_version_tags();
     let url = bare.to_str().unwrap();

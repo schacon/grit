@@ -1233,6 +1233,28 @@ mod tests {
     }
 
     #[test]
+    fn query_remote_refs_in_memory_empty_pattern_matches_nothing() {
+        let entries = vec![
+            RemoteRef {
+                name: "refs/heads/main".into(),
+                oid: ObjectId::from_hex("1".repeat(40).as_str()).unwrap(),
+                symref_target: None,
+            },
+            RemoteRef {
+                name: "refs/tags/v1".into(),
+                oid: ObjectId::from_hex("2".repeat(40).as_str()).unwrap(),
+                symref_target: None,
+            },
+        ];
+        let opts = ListRefsOptions {
+            prefixes: vec![String::new()],
+            ..Default::default()
+        };
+        let out = query_remote_refs_in_memory(entries, &opts, &RefQueryOptions::default());
+        assert!(out.is_empty());
+    }
+
+    #[test]
     fn query_remote_refs_in_memory_version_sort_and_limit() {
         let entries = vec![
             RemoteRef {
