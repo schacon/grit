@@ -8,12 +8,10 @@ use crate::commit::signing::{self, GpgConfig, SignatureCheck, TrustLevel};
 use crate::error::{Error, Result};
 use crate::objects::{ObjectId, ObjectKind};
 use crate::repo::Repository;
-use crate::tree_sha256::{tree_sha256, TreeSha256, TreeSha256Options, TreeSha256Report};
-
-/// Tag header carrying the digest (`tree-sha256 <64 hex chars>`).
-pub const TREE_SHA256_HEADER: &str = "tree-sha256";
-/// Tag header naming one excluded submodule path (`tree-sha256-excluded <path>`).
-pub const TREE_SHA256_EXCLUDED_HEADER: &str = "tree-sha256-excluded";
+use crate::tree_sha256::{
+    tree_sha256, TreeSha256, TreeSha256Options, TreeSha256Report, TREE_SHA256_EXCLUDED_HEADER,
+    TREE_SHA256_HEADER,
+};
 
 /// Options for [`verify_tag`].
 #[derive(Debug, Clone)]
