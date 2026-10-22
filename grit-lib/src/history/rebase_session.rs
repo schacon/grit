@@ -23,8 +23,8 @@ use super::error::HistoryError;
 use super::plan::{plan_rewrite_with_order_resumable_seeded, ResumablePlanOutcome};
 use super::rebase::{plan_rebase_resumable, RebaseOntoOptions, RebasePlan, RebaseRequest};
 use super::types::{
-    AppliedRewrite, ApplyOptions, CommitEdit, HistoryEdits, RefScope, RewriteOptions, RewritePlan,
-    RewrittenCommit,
+    AppliedRewrite, ApplyOptions, CommitEdit, HistoryEdits, PlannedRefUpdate, RewriteOptions,
+    RewritePlan, RewrittenCommit,
 };
 use crate::operation::Conflict;
 
@@ -188,7 +188,7 @@ pub fn continue_rebase(
             tree: Some(new_tree),
             message: None,
             author: None,
-            parents: None,
+            parents: Some(vec![head_oid]),
         },
     );
 
@@ -201,6 +201,7 @@ pub fn continue_rebase(
         Some(&state.replay_order),
         state.flatten_leaf_merges,
         Some(seed),
+        Some(state.scoped_refs.clone()),
     )?;
     advance_after_plan(repo, &state, &opts.apply, outcome, edits)
 }
@@ -238,6 +239,7 @@ pub fn skip_rebase(
         Some(&state.replay_order),
         state.flatten_leaf_merges,
         Some((mapping, rewritten)),
+        Some(state.scoped_refs.clone()),
     )?;
     advance_after_plan(repo, &state, &opts.apply, outcome, state.edits.clone())
 }
@@ -468,6 +470,7 @@ struct LoadedState {
     upstream: ObjectId,
     branch_tip: ObjectId,
     flatten_leaf_merges: bool,
+    scoped_refs: Vec<(String, ObjectId)>,
 }
 
 fn load_persisted_state(git_dir: &Path) -> Result<LoadedState, RebaseSessionError> {
@@ -508,6 +511,11 @@ fn load_persisted_state(git_dir: &Path) -> Result<LoadedState, RebaseSessionErro
         upstream: parse_oid(&parsed.upstream)?,
         branch_tip: parse_oid(&parsed.branch_tip)?,
         flatten_leaf_merges: parsed.flatten_leaf_merges,
+        scoped_refs: parsed
+            .scoped_refs
+            .iter()
+            .map(|(name, hex)| parse_oid(hex).map(|oid| (name.clone(), oid)))
+            .collect::<Result<_, _>>()?,
     })
 }
 
@@ -594,9 +602,22 @@ fn advance_after_plan(
     edits: HistoryEdits,
 ) -> Result<RebaseOutcome, RebaseSessionError> {
     match outcome {
-        ResumablePlanOutcome::Complete(plan) => {
+        ResumablePlanOutcome::Complete(mut plan) => {
+            if let Some(new_tip) = plan.mapped_tip(prev.orig_head) {
+                if !plan.ref_updates.iter().any(|u| u.name == prev.head_ref) {
+                    plan.ref_updates.push(PlannedRefUpdate {
+                        name: prev.head_ref.clone(),
+                        old: prev.orig_head,
+                        new: new_tip,
+                    });
+                }
+            }
+            let mut applied = apply_rewrite(repo, &plan, apply)?;
+            refs::write_symbolic_ref(repo.git_dir(), "HEAD", &prev.head_ref).map_err(map_lib)?;
+            let branch_tip = refs::resolve_ref(repo.git_dir(), &prev.head_ref).map_err(map_lib)?;
+            reset_index_worktree_to_head(repo, branch_tip)?;
+            applied.head = branch_tip;
             clear_rebase_state(repo.git_dir())?;
-            let applied = apply_rewrite(repo, &plan, apply)?;
             Ok(RebaseOutcome::Done { applied, plan })
         }
         ResumablePlanOutcome::Partial(partial) => {
@@ -634,8 +655,16 @@ fn write_git_rebase_merge_files(
     fs::write(dir.join("head-name"), format!("{head_ref}\n")).map_err(map_lib)?;
     fs::write(dir.join("onto"), format!("{}\n", onto.to_hex())).map_err(map_lib)?;
     fs::write(dir.join("orig-head"), format!("{}\n", orig_head.to_hex())).map_err(map_lib)?;
-    fs::write(dir.join("interactive"), b"").map_err(map_lib)?;
-    fs::write(dir.join("git-rebase-todo"), todo_lines(repo, remaining)?).map_err(map_lib)?;
+    let todo_remaining: Vec<ObjectId> = if remaining.first() == Some(current) {
+        remaining.iter().skip(1).copied().collect()
+    } else {
+        remaining.to_vec()
+    };
+    fs::write(
+        dir.join("git-rebase-todo"),
+        todo_lines(repo, &todo_remaining)?,
+    )
+    .map_err(map_lib)?;
     fs::write(dir.join("done"), todo_lines(repo, done)?).map_err(map_lib)?;
     let msgnum = done.len() + 1;
     let end = done.len() + remaining.len();
@@ -749,9 +778,7 @@ fn map_lib<E: Into<crate::error::Error>>(err: E) -> RebaseSessionError {
 }
 
 fn replan_rewrite_options(state: &LoadedState) -> RewriteOptions {
-    let mut rewrite = state.rewrite.clone();
-    rewrite.scope = RefScope::Branches;
-    rewrite
+    state.rewrite.clone()
 }
 
 fn map_json(err: serde_json::Error) -> RebaseSessionError {
