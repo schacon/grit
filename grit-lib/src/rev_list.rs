@@ -24,8 +24,8 @@ use crate::merge_base::{
     commits_reachable_excluding_ancestors_of_cutoffs, ReachableWalkCommitterCutoffs,
 };
 use crate::objects::{
-    oid_hash_map, parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind, OidHashMap,
-    OidHashSet, TreeRefIter,
+    oid_hash_map, oid_hash_set, parse_commit, parse_tag, parse_tree, CommitData, ObjectId,
+    ObjectKind, OidHashMap, OidHashSet, TreeRefIter,
 };
 use crate::odb::store::ObjectStore;
 use crate::pack_bitmap::BitmapIndex;
@@ -583,6 +583,9 @@ pub struct RevListOptions {
     pub commit_filter: Option<Arc<CommitFilter>>,
     /// Pickaxe filter (`-S` / `-G`) applied after cheap commit filters.
     pub pickaxe: Option<Arc<crate::diff::Pickaxe>>,
+    /// Keep the commits a walk parses anyway in [`RevListResult::commit_data`], so callers that
+    /// render the listed commits do not read and inflate them a second time.
+    pub retain_commit_data: bool,
 }
 
 impl RevListOptions {
@@ -672,6 +675,7 @@ impl Default for RevListOptions {
             paths_resolved_from_argv: false,
             commit_filter: None,
             pickaxe: None,
+            retain_commit_data: false,
         }
     }
 }
@@ -725,6 +729,12 @@ pub struct RevListResult {
     pub tip_annotated_tag_by_commit: HashMap<ObjectId, ObjectId>,
     /// Populated by bounded topological walks for `log --graph` (avoids a second linkage pass).
     pub log_graph_linkage: Option<LogGraphLinkage>,
+    /// Parsed listed commits, keyed by id, when [`RevListOptions::retain_commit_data`] is set.
+    ///
+    /// Only walks that parse commit objects fill this, and only for commits they parsed (a
+    /// commit-graph walk reads parents and dates without parsing), so it may cover some, all,
+    /// or none of [`Self::commits`].
+    pub commit_data: OidHashMap<CommitData>,
 }
 
 impl RevListResult {
@@ -985,6 +995,7 @@ pub fn rev_list(
                 reachable_non_commit_object_count: None,
                 tip_annotated_tag_by_commit: HashMap::new(),
                 log_graph_linkage: None,
+                commit_data: OidHashMap::default(),
             });
         }
         return Err(Error::InvalidRef("no revisions specified".to_owned()));
@@ -1018,8 +1029,8 @@ pub fn rev_list(
         return Ok(rev_list_result_from_commits(ordered));
     }
 
-    if let Some(ordered) = try_bounded_limit_list(repo, &include, &exclude, options)? {
-        return Ok(rev_list_result_from_commits(ordered));
+    if let Some(result) = try_bounded_limit_list(repo, &include, &exclude, options)? {
+        return Ok(result);
     }
 
     if let Some((ordered, linkage)) =
@@ -1272,6 +1283,7 @@ pub fn rev_list(
             reachable_non_commit_object_count: None,
             tip_annotated_tag_by_commit: HashMap::new(),
             log_graph_linkage: None,
+            commit_data: OidHashMap::default(),
         });
     }
 
@@ -1810,6 +1822,7 @@ pub fn rev_list(
         reachable_non_commit_object_count: None,
         tip_annotated_tag_by_commit,
         log_graph_linkage: None,
+        commit_data: OidHashMap::default(),
     })
 }
 
@@ -5902,6 +5915,7 @@ fn rev_list_result_from_commits_with_linkage(
         reachable_non_commit_object_count: None,
         tip_annotated_tag_by_commit: HashMap::new(),
         log_graph_linkage,
+        commit_data: OidHashMap::default(),
     }
 }
 
@@ -6029,6 +6043,7 @@ fn try_commit_graph_count_only(
         reachable_non_commit_object_count: None,
         tip_annotated_tag_by_commit: HashMap::new(),
         log_graph_linkage: None,
+        commit_data: OidHashMap::default(),
     }))
 }
 
@@ -6151,6 +6166,7 @@ fn try_rev_list_accelerated(
             .then_some(non_commit_count),
         tip_annotated_tag_by_commit: HashMap::new(),
         log_graph_linkage: None,
+        commit_data: OidHashMap::default(),
     }))
 }
 
@@ -6319,12 +6335,84 @@ pub(crate) fn try_bitmap_reachable_commit_set_for_specs(
 
 /// When `--max-count` (plus `--skip`) is at least this large, prefer the commit-graph
 /// rev-list path and truncate after ordering instead of the per-commit bounded walk.
+///
+/// The bounded walks that test exclusions per commit get slower than one up-front closure
+/// as the limit grows. [`can_stream_default_order`] walks are exempt: they stop early at any
+/// limit and cost no more per commit than the full path.
 const BOUNDED_LIMIT_LIST_EARLY_STOP_MAX: usize = 4096;
 
 fn bounded_limit_list_need(options: &RevListOptions) -> usize {
     options
         .skip
         .saturating_add(options.max_count.unwrap_or(usize::MAX))
+}
+
+fn within_bounded_limit_list_cap(options: &RevListOptions) -> bool {
+    bounded_limit_list_need(options) < BOUNDED_LIMIT_LIST_EARLY_STOP_MAX
+}
+
+/// Whether [`try_bounded_limit_list`] can use [`streaming_date_walk`] directly: Git's
+/// default order with no excluded tips and no date cutoffs.
+fn can_stream_default_order(exclude: &[ObjectId], options: &RevListOptions) -> bool {
+    exclude.is_empty()
+        && options.ordering == OrderingMode::Default
+        && options.since_cutoff.is_none()
+        && options.until_cutoff.is_none()
+}
+
+/// Whether a [`streaming_date_walk`] visitor wants more commits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WalkControl {
+    Continue,
+    Stop,
+}
+
+/// Visit commits reachable from `include` in Git's default `rev-list` order, until `visit`
+/// returns [`WalkControl::Stop`].
+///
+/// This is the order Git produces when nothing forces a full `limit_list` pass: each commit
+/// is queued once, when first discovered, and the queue pops the newest date first with ties
+/// going to the earlier discovery. Nothing waits for a commit's other children, so under
+/// clock skew or equal timestamps a parent can come out before one of its children, as in
+/// Git. Commits in `excluded` are neither visited nor traversed.
+fn streaming_date_walk<'r>(
+    graph: &mut CommitGraph<'r>,
+    include: &[ObjectId],
+    excluded: &HashSet<ObjectId>,
+    author_dates: bool,
+    mut visit: impl FnMut(&mut CommitGraph<'r>, ObjectId) -> Result<WalkControl>,
+) -> Result<()> {
+    let mut heap = BinaryHeap::new();
+    let mut queued = oid_hash_set();
+    let mut next_seq = 0u64;
+    for &tip in include {
+        if excluded.contains(&tip) || !queued.insert(tip) {
+            continue;
+        }
+        heap.push(CommitDateKey {
+            oid: tip,
+            date: graph.sort_key(tip, author_dates),
+            seq: next_seq,
+        });
+        next_seq += 1;
+    }
+    while let Some(CommitDateKey { oid, .. }) = heap.pop() {
+        if visit(graph, oid)? == WalkControl::Stop {
+            break;
+        }
+        for parent in graph.parents_of(oid)? {
+            if excluded.contains(&parent) || !queued.insert(parent) {
+                continue;
+            }
+            heap.push(CommitDateKey {
+                oid: parent,
+                date: graph.sort_key(parent, author_dates),
+                seq: next_seq,
+            });
+            next_seq += 1;
+        }
+    }
+    Ok(())
 }
 
 fn can_use_bounded_commit_filter_list(options: &RevListOptions) -> bool {
@@ -6335,7 +6423,7 @@ fn can_use_bounded_commit_filter_list(options: &RevListOptions) -> bool {
         || options.pickaxe.is_some();
     output_filter
         && (options.max_count.is_some() || options.skip > 0)
-        && bounded_limit_list_need(options) < BOUNDED_LIMIT_LIST_EARLY_STOP_MAX
+        && within_bounded_limit_list_cap(options)
         && can_use_bounded_limit_list(&RevListOptions {
             commit_filter: None,
             pickaxe: None,
@@ -6376,81 +6464,57 @@ fn try_bounded_commit_filter_limit_list(
             };
 
             let author_dates = options.ordering == OrderingMode::AuthorDateWalk;
-            let mut heap = BinaryHeap::new();
-            let mut queued = HashSet::new();
-            let mut next_seq = 0u64;
-            for &tip in include {
-                if excluded.contains(&tip) || !queued.insert(tip) {
-                    continue;
-                }
-                heap.push(CommitDateKey {
-                    oid: tip,
-                    date: graph.sort_key(tip, author_dates),
-                    seq: next_seq,
-                });
-                next_seq += 1;
-            }
-
             let mut matched_seen = 0usize;
             let mut ordered = Vec::with_capacity(max_count.min(64));
             let mut pickaxe_blob_cache = HashMap::new();
             let since = options.since_cutoff;
             let until = options.until_cutoff;
-            while let Some(item) = heap.pop() {
-                let oid = item.oid;
-                if excluded.contains(&oid) {
-                    continue;
-                }
-
-                let mut consider = true;
-                if since.is_some() || until.is_some() {
-                    let ts = graph.committer_time(oid);
-                    if until.is_some_and(|u| ts > u) || since.is_some_and(|s| ts < s) {
-                        consider = false;
-                    }
-                }
-
-                if consider {
-                    let mut passes = true;
-                    if let Some(filter) = filter {
-                        passes = filter.matches(repo, oid)?;
-                    }
-                    if passes {
-                        if let Some(px) = pickaxe {
-                            passes = pickaxe_matches_commit_with_graph(
-                                repo,
-                                &mut graph,
-                                px,
-                                oid,
-                                &options.paths,
-                                Some(&mut pickaxe_blob_cache),
-                            )?;
+            streaming_date_walk(
+                &mut graph,
+                include,
+                &excluded,
+                author_dates,
+                |graph, oid| {
+                    let mut consider = true;
+                    if since.is_some() || until.is_some() {
+                        let ts = graph.committer_time(oid);
+                        if until.is_some_and(|u| ts > u) || since.is_some_and(|s| ts < s) {
+                            consider = false;
                         }
                     }
-                    if passes {
-                        matched_seen += 1;
-                        if matched_seen > options.skip && ordered.len() < max_count {
-                            ordered.push(oid);
+
+                    if consider {
+                        let mut passes = true;
+                        if let Some(filter) = filter {
+                            passes = filter.matches(repo, oid)?;
+                        }
+                        if passes {
+                            if let Some(px) = pickaxe {
+                                passes = pickaxe_matches_commit_with_graph(
+                                    repo,
+                                    graph,
+                                    px,
+                                    oid,
+                                    &options.paths,
+                                    Some(&mut pickaxe_blob_cache),
+                                )?;
+                            }
+                        }
+                        if passes {
+                            matched_seen += 1;
+                            if matched_seen > options.skip && ordered.len() < max_count {
+                                ordered.push(oid);
+                            }
                         }
                     }
-                }
 
-                if ordered.len() >= max_count {
-                    break;
-                }
-
-                for parent in graph.parents_of(oid)? {
-                    if excluded.contains(&parent) || !queued.insert(parent) {
-                        continue;
-                    }
-                    heap.push(CommitDateKey {
-                        oid: parent,
-                        date: graph.sort_key(parent, author_dates),
-                        seq: next_seq,
-                    });
-                    next_seq += 1;
-                }
-            }
+                    Ok(if ordered.len() >= max_count {
+                        WalkControl::Stop
+                    } else {
+                        WalkControl::Continue
+                    })
+                },
+            )?;
 
             Ok(ordered)
         })?;
@@ -6474,6 +6538,7 @@ fn can_use_bounded_topo_limit_list(options: &RevListOptions) -> bool {
     // match Git's `limit_list` skip semantics (see `rev_list_broad_ordering_and_limit_flags_match_git`).
     options.ordering == OrderingMode::Topo
         && options.skip == 0
+        && within_bounded_limit_list_cap(options)
         && bounded_limit_list_common_inner(options, true)
 }
 
@@ -6483,7 +6548,6 @@ fn bounded_limit_list_common(options: &RevListOptions) -> bool {
 
 fn bounded_limit_list_common_inner(options: &RevListOptions, graph_topo: bool) -> bool {
     (options.max_count.is_some() || options.skip > 0)
-        && bounded_limit_list_need(options) < BOUNDED_LIMIT_LIST_EARLY_STOP_MAX
         && options
             .commit_filter
             .as_ref()
@@ -6647,8 +6711,14 @@ fn try_bounded_limit_list(
     include: &[ObjectId],
     exclude: &[ObjectId],
     options: &RevListOptions,
-) -> Result<Option<Vec<ObjectId>>> {
+) -> Result<Option<RevListResult>> {
     if include.is_empty() || !can_use_bounded_limit_list(options) {
+        return Ok(None);
+    }
+    if can_stream_default_order(exclude, options) {
+        return streaming_default_order_list(repo, include, options).map(Some);
+    }
+    if !within_bounded_limit_list_cap(options) {
         return Ok(None);
     }
 
@@ -6694,7 +6764,46 @@ fn try_bounded_limit_list(
     if options.reverse {
         ordered.reverse();
     }
-    Ok(Some(ordered))
+    Ok(Some(rev_list_result_from_commits(ordered)))
+}
+
+/// `--max-count` / `--skip` list in Git's default order, stopping as soon as the page is full.
+fn streaming_default_order_list(
+    repo: &Repository,
+    include: &[ObjectId],
+    options: &RevListOptions,
+) -> Result<RevListResult> {
+    let max_count = options.max_count.unwrap_or(usize::MAX);
+    let mut ordered = Vec::with_capacity(max_count.min(4096));
+    let mut commit_data = OidHashMap::default();
+    if max_count > 0 {
+        repo.odb().with_pack_read_context(|| -> Result<()> {
+            let mut graph = CommitGraph::with_commit_graph(repo, false, options.use_commit_graph);
+            if options.retain_commit_data {
+                graph.retain_parsed_commits();
+            }
+            let mut seen = 0usize;
+            streaming_date_walk(&mut graph, include, &HashSet::new(), false, |_, oid| {
+                seen += 1;
+                if seen > options.skip {
+                    ordered.push(oid);
+                }
+                Ok(if ordered.len() >= max_count {
+                    WalkControl::Stop
+                } else {
+                    WalkControl::Continue
+                })
+            })?;
+            commit_data = graph.take_retained_commits(&ordered);
+            Ok(())
+        })?;
+    }
+    if options.reverse {
+        ordered.reverse();
+    }
+    let mut result = rev_list_result_from_commits(ordered);
+    result.commit_data = commit_data;
+    Ok(result)
 }
 
 fn can_use_bounded_path_limit_list(options: &RevListOptions) -> bool {
@@ -6705,6 +6814,7 @@ fn can_use_bounded_path_limit_list(options: &RevListOptions) -> bool {
         && !options.simplify_merges
         && !options.sparse
         && !options.count
+        && within_bounded_limit_list_cap(options)
         && can_use_bounded_limit_list(&RevListOptions {
             paths: Vec::new(),
             ..options.clone()
@@ -7226,6 +7336,8 @@ pub(crate) struct CommitGraph<'r> {
     shallow_boundaries: OidHashSet,
     graft_parents: OidHashMap<Vec<ObjectId>>,
     subjects: HashMap<ObjectId, String>,
+    /// Parsed commits kept for the caller once [`Self::retain_parsed_commits`] is called.
+    retained: Option<OidHashMap<CommitData>>,
 }
 
 impl<'r> CommitGraph<'r> {
@@ -7263,7 +7375,26 @@ impl<'r> CommitGraph<'r> {
             shallow_boundaries,
             graft_parents,
             subjects: HashMap::new(),
+            retained: None,
         }
+    }
+
+    /// Keep every commit object parsed from here on, for [`Self::take_retained_commits`].
+    ///
+    /// Retained commits stand in for the per-commit subject cache, so [`Self::subject_of`] is
+    /// `None` for them.
+    pub(crate) fn retain_parsed_commits(&mut self) {
+        self.retained.get_or_insert_with(oid_hash_map);
+    }
+
+    /// Parsed commits among `listed`, moved out of the retained set.
+    pub(crate) fn take_retained_commits(&mut self, listed: &[ObjectId]) -> OidHashMap<CommitData> {
+        let Some(mut retained) = self.retained.take() else {
+            return OidHashMap::default();
+        };
+        let listed: OidHashSet = listed.iter().copied().collect();
+        retained.retain(|oid, _| listed.contains(oid));
+        retained
     }
 
     pub(crate) fn subject_of(&self, oid: ObjectId) -> Option<&str> {
@@ -7373,12 +7504,14 @@ impl<'r> CommitGraph<'r> {
                 return Ok(());
             }
         }
-        let commit = load_commit(self.repo, oid)?;
+        let mut commit = load_commit(self.repo, oid)?;
         // Shallow boundaries: treat commit as having no parents
         let mut parents = if self.shallow_boundaries.contains(&oid) {
             Vec::new()
+        } else if self.retained.is_some() {
+            commit.parents.clone()
         } else {
-            commit.parents
+            std::mem::take(&mut commit.parents)
         };
         if let Some(graft_parents) = self.graft_parents.get(&oid) {
             parents = graft_parents.clone();
@@ -7392,8 +7525,15 @@ impl<'r> CommitGraph<'r> {
             .insert(oid, committer_unix_seconds_for_ordering(&commit.author));
         self.commit_trees.insert(oid, commit.tree);
         self.parents.insert(oid, parents);
-        self.subjects
-            .insert(oid, subject_line_from_commit_message(&commit.message));
+        match self.retained.as_mut() {
+            Some(retained) => {
+                retained.insert(oid, commit);
+            }
+            None => {
+                self.subjects
+                    .insert(oid, subject_line_from_commit_message(&commit.message));
+            }
+        }
         Ok(())
     }
 }
