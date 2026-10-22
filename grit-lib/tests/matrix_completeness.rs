@@ -272,7 +272,7 @@ fn fetch_v0_sideband_band3_fatal_is_typed_error_not_hang() {
     let local_git_for_thread = local_git.clone();
     let err = with_watchdog(10, "fetch band-3", move || {
         let mut conn = conn;
-        fetch_remote(&local_git_for_thread, &mut conn, &mut opts, &mut NoProgress)
+        fetch_remote(&local_git_for_thread, &mut conn, &opts, &mut NoProgress)
             .expect_err("a band-3 fatal must surface as an error")
     });
     let msg = format!("{err}");
@@ -314,7 +314,7 @@ fn fetch_v0_err_after_done_is_typed_remote_error() {
     let local_git_for_thread = local_git.clone();
     let err = with_watchdog(10, "fetch ERR-after-done", move || {
         let mut conn = conn;
-        fetch_remote(&local_git_for_thread, &mut conn, &mut opts, &mut NoProgress)
+        fetch_remote(&local_git_for_thread, &mut conn, &opts, &mut NoProgress)
             .expect_err("an ERR after done must surface as an error")
     });
     let msg = format!("{err}");
@@ -850,7 +850,7 @@ fn shallow_depth1_with_all_tags_over_git_daemon() {
         depth: Some(1),
         ..Default::default()
     };
-    let outcome = fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
+    let outcome = fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress)
         .expect("shallow+tags fetch over git daemon");
     drop(conn);
 

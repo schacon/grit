@@ -257,8 +257,7 @@ fn pull_request_ref_short_destination_file() {
         tracking_tip(&grit_c.join(".git"), "refs/heads/pr-123"),
         tracking_tip(&git_c.join(".git"), "refs/heads/pr-123")
     );
-    fsck(&grit_c);
-    fsck(&git_c);
+    assert_fetch_parity(&grit_c, &git_c, "refs/heads/pr-123");
 }
 
 #[test]
@@ -284,6 +283,28 @@ fn tag_by_short_name_file() {
         tracking_tip(&grit_c.join(".git"), "refs/tags/v1"),
         tracking_tip(&git_c.join(".git"), "refs/tags/v1")
     );
+    assert_fetch_parity(&grit_c, &git_c, "refs/tags/v1");
+}
+
+#[test]
+fn explicit_head_resolves_file() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let remote = BareRemote::new(tmp.path(), "remote");
+    remote.commit_empty("head-tip");
+
+    let grit_c = clone_consumer(tmp.path(), &remote, "grit-c");
+    let git_c = clone_consumer(tmp.path(), &remote, "git-c");
+
+    let spec = ["HEAD:refs/heads/from-head"];
+    let cfg = ["+refs/heads/*:refs/remotes/origin/*"];
+    grit_fetch_file(&grit_c, &remote.git_dir(), &spec, &cfg);
+    git_fetch(&git_c, &remote.path(), &spec);
+
+    assert_eq!(
+        tracking_tip(&grit_c.join(".git"), "refs/heads/from-head"),
+        tracking_tip(&git_c.join(".git"), "refs/heads/from-head")
+    );
+    assert_fetch_parity(&grit_c, &git_c, "refs/heads/from-head");
 }
 
 #[test]
@@ -332,7 +353,6 @@ fn non_fast_forward_local_branch_rejected_file() {
             configured_refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".into()],
             tags: TagMode::None,
             remote_name: Some("origin".into()),
-            explicit_refspec_fetch: true,
             ..Default::default()
         },
     )
@@ -402,26 +422,28 @@ mod http {
     use grit_lib::remote::transport::http::ureq_client::UreqHttpClient;
     use grit_lib::remote::transport::http::{http_client_arc, http_fetch};
     use std::net::{TcpListener, TcpStream};
-    use std::process::{Child, Stdio};
+    use std::process::{Child, Command, Stdio};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    fn free_port() -> Option<u16> {
+    fn free_port() -> u16 {
         TcpListener::bind(("127.0.0.1", 0))
-            .ok()
-            .and_then(|l| l.local_addr().ok().map(|a| a.port()))
+            .expect("bind ephemeral port")
+            .local_addr()
+            .expect("local addr")
+            .port()
     }
 
-    fn wait_port(port: u16) -> bool {
+    fn wait_port(port: u16) {
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
         let deadline = Instant::now() + Duration::from_secs(15);
         while Instant::now() < deadline {
             if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
-                return true;
+                return;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        false
+        panic!("grit-http-server did not accept connections on port {port}");
     }
 
     fn find_binary(name: &str) -> Option<PathBuf> {
@@ -433,46 +455,94 @@ mod http {
             .find(|p| p.is_file())
     }
 
+    fn require_http_server_bin() -> PathBuf {
+        if let Some(p) = find_binary("grit-http-server") {
+            return p;
+        }
+        let status = Command::new("cargo")
+            .args(["build", "-q", "-p", "grit-http-server"])
+            .status()
+            .expect("cargo build grit-http-server");
+        assert!(status.success(), "failed to build grit-http-server");
+        find_binary("grit-http-server").expect("grit-http-server binary after build")
+    }
+
     struct HttpServer {
         _child: Child,
-        base: PathBuf,
         url: String,
     }
 
-    fn start_http_server(bare: &Path) -> Option<HttpServer> {
-        let port = free_port()?;
-        let base = bare.parent()?.join("http-serve");
-        std::fs::create_dir_all(&base).ok()?;
-        let served = base.join("repo.git");
-        Command::new("git")
-            .args(["clone", "-q", "--bare", bare.to_str()?, served.to_str()?])
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .status()
-            .ok()?;
-        let bin = find_binary("grit-http-server")?;
-        let child = Command::new(bin)
-            .args(["--port", &port.to_string(), "--repo", served.to_str()?])
+    fn start_http_server(bare: &Path) -> HttpServer {
+        let port = free_port();
+        let root = bare.parent().expect("parent").join("http-root");
+        std::fs::create_dir_all(&root).expect("http root");
+        let served = root.join("repo.git");
+        run_git(
+            bare.parent().expect("parent"),
+            &[
+                "clone",
+                "-q",
+                "--bare",
+                bare.to_str().unwrap(),
+                served.to_str().unwrap(),
+            ],
+        );
+        // `git clone --bare` only mirrors heads/tags; sync the rest (e.g. refs/pull/*).
+        run_git(
+            served.parent().expect("parent"),
+            &[
+                "-C",
+                served.to_str().unwrap(),
+                "remote",
+                "add",
+                "sync-src",
+                bare.to_str().unwrap(),
+            ],
+        );
+        run_git(
+            served.parent().expect("parent"),
+            &[
+                "-C",
+                served.to_str().unwrap(),
+                "fetch",
+                "-q",
+                "sync-src",
+                "+refs/*:refs/*",
+            ],
+        );
+        run_git(
+            served.parent().expect("parent"),
+            &[
+                "-C",
+                served.to_str().unwrap(),
+                "remote",
+                "remove",
+                "sync-src",
+            ],
+        );
+        let bin = require_http_server_bin();
+        let child = Command::new(&bin)
+            .arg("--root")
+            .arg(&root)
+            .arg("--bind")
+            .arg(format!("127.0.0.1:{port}"))
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .ok()?;
-        if !wait_port(port) {
-            return None;
-        }
-        Some(HttpServer {
+            .expect("spawn grit-http-server");
+        wait_port(port);
+        HttpServer {
             _child: child,
-            base,
             url: format!("http://127.0.0.1:{port}/repo.git"),
-        })
+        }
     }
 
-    fn grit_fetch_http(local: &Path, url: &str, refspecs: &[&str]) {
+    fn grit_fetch_http(local: &Path, url: &str, refspecs: &[&str], configured: &[&str]) {
         let client =
             Arc::new(UreqHttpClient::from_config(&Default::default()).expect("ureq client"));
         let mut opts = FetchOptions {
             refspecs: refspecs.iter().map(|s| (*s).to_owned()).collect(),
-            configured_refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".into()],
+            configured_refspecs: configured.iter().map(|s| (*s).to_owned()).collect(),
             tags: TagMode::None,
             remote_name: Some("origin".into()),
             fetch_source: Some(url.to_owned()),
@@ -488,26 +558,128 @@ mod http {
         .expect("http fetch");
     }
 
+    fn setup_http_consumers(
+        tmp: &Path,
+        remote: &BareRemote,
+        server: &HttpServer,
+        grit_label: &str,
+        git_label: &str,
+    ) -> (PathBuf, PathBuf) {
+        let grit_c = clone_consumer(tmp, remote, grit_label);
+        let git_c = clone_consumer(tmp, remote, git_label);
+        run_git(&grit_c, &["remote", "set-url", "origin", &server.url]);
+        run_git(&git_c, &["remote", "set-url", "origin", &server.url]);
+        (grit_c, git_c)
+    }
+
     #[test]
-    fn explicit_main_over_http() {
+    fn explicit_main_short_name_http() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let remote = BareRemote::new(tmp.path(), "remote");
         remote.commit_empty("one");
         remote.commit_empty("two");
-        let Some(server) = start_http_server(&remote.path()) else {
-            eprintln!("skip: grit-http-server unavailable");
-            return;
-        };
-
-        let grit_c = clone_consumer(tmp.path(), &remote, "grit-c");
-        let git_c = clone_consumer(tmp.path(), &remote, "git-c");
-        run_git(&grit_c, &["remote", "set-url", "origin", &server.url]);
-        run_git(&git_c, &["remote", "set-url", "origin", &server.url]);
-
-        grit_fetch_http(&grit_c, &server.url, &["main"]);
+        let server = start_http_server(remote.path());
+        let cfg = ["+refs/heads/*:refs/remotes/origin/*"];
+        let (grit_c, git_c) = setup_http_consumers(tmp.path(), &remote, &server, "grit-c", "git-c");
+        grit_fetch_http(&grit_c, &server.url, &["main"], &cfg);
         git_fetch(&git_c, &PathBuf::from(&server.url), &["main"]);
-
         assert_fetch_parity(&grit_c, &git_c, "refs/remotes/origin/main");
-        let _ = server;
+    }
+
+    #[test]
+    fn pull_request_ref_http() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let remote = BareRemote::new(tmp.path(), "remote");
+        remote.commit_empty("base");
+        let pr_tip = git_out(remote.path(), &["rev-parse", "refs/heads/main"]);
+        run_git(
+            remote.path(),
+            &[
+                "update-ref",
+                "refs/pull/123/head",
+                &pr_tip,
+                "0000000000000000000000000000000000000000",
+            ],
+        );
+        let server = start_http_server(remote.path());
+        let ls = git_out(
+            tmp.path(),
+            &["ls-remote", server.url.as_str()],
+        );
+        assert!(
+            ls.lines().any(|l| l.ends_with("\trefs/pull/123/head")),
+            "HTTP remote must advertise pull ref:\n{ls}"
+        );
+        let cfg = ["+refs/heads/*:refs/remotes/origin/*"];
+        let (grit_c, git_c) = setup_http_consumers(tmp.path(), &remote, &server, "grit-c", "git-c");
+        let spec = ["pull/123/head:pr-123"];
+        grit_fetch_http(&grit_c, &server.url, &spec, &cfg);
+        git_fetch(&git_c, &PathBuf::from(&server.url), &spec);
+        assert_fetch_parity(&grit_c, &git_c, "refs/heads/pr-123");
+    }
+
+    #[test]
+    fn tag_by_short_name_http() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let remote = BareRemote::new(tmp.path(), "remote");
+        remote.commit_empty("tagged");
+        run_git(&remote.work, &["tag", "v1"]);
+        run_git(
+            &remote.work,
+            &["push", "-q", remote.bare.to_str().unwrap(), "refs/tags/v1"],
+        );
+        let server = start_http_server(remote.path());
+        let cfg = ["+refs/heads/*:refs/remotes/origin/*"];
+        let (grit_c, git_c) = setup_http_consumers(tmp.path(), &remote, &server, "grit-c", "git-c");
+        let spec = ["v1:refs/tags/v1"];
+        grit_fetch_http(&grit_c, &server.url, &spec, &cfg);
+        git_fetch(&git_c, &PathBuf::from(&server.url), &spec);
+        assert_fetch_parity(&grit_c, &git_c, "refs/tags/v1");
+    }
+
+    #[test]
+    fn explicit_head_http() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let remote = BareRemote::new(tmp.path(), "remote");
+        remote.commit_empty("tip");
+        let server = start_http_server(remote.path());
+        let cfg = ["+refs/heads/*:refs/remotes/origin/*"];
+        let (grit_c, git_c) = setup_http_consumers(tmp.path(), &remote, &server, "grit-c", "git-c");
+        let spec = ["HEAD:refs/heads/from-head"];
+        grit_fetch_http(&grit_c, &server.url, &spec, &cfg);
+        git_fetch(&git_c, &PathBuf::from(&server.url), &spec);
+        assert_fetch_parity(&grit_c, &git_c, "refs/heads/from-head");
+    }
+
+    #[test]
+    fn missing_source_typed_error_http() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let remote = BareRemote::new(tmp.path(), "remote");
+        remote.commit_empty("only");
+        let server = start_http_server(remote.path());
+        let grit_c = clone_consumer(tmp.path(), &remote, "grit-c");
+        run_git(&grit_c, &["remote", "set-url", "origin", &server.url]);
+        let client =
+            Arc::new(UreqHttpClient::from_config(&Default::default()).expect("ureq client"));
+        let mut opts = FetchOptions {
+            refspecs: vec!["no-such-branch".into()],
+            configured_refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".into()],
+            tags: TagMode::None,
+            remote_name: Some("origin".into()),
+            fetch_source: Some(server.url.clone()),
+            ..Default::default()
+        };
+        let err = http_fetch(
+            http_client_arc(client),
+            &grit_c.join(".git"),
+            &server.url,
+            &mut opts,
+            &mut NoProgress,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, Error::FetchRefspec(_)),
+            "expected FetchRefspec, got {err:?}"
+        );
     }
 }

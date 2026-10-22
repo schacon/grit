@@ -22,6 +22,7 @@ type LsRefsAdvertised = (
     Vec<(String, ObjectId)>,
     Option<String>,
     std::collections::HashMap<String, ObjectId>,
+    Option<ObjectId>,
 );
 use crate::progress::ProgressSink;
 use crate::transfer::{
@@ -617,6 +618,7 @@ pub(crate) fn parse_v2_ls_refs_response(reader: &mut dyn Read) -> Result<LsRefsA
     // Response: `<oid> <refname>[ symref-target:…][ peeled:…]` lines, flush-terminated.
     let mut advertised: Vec<(String, ObjectId)> = Vec::new();
     let mut head_symref: Option<String> = None;
+    let mut head_oid: Option<ObjectId> = None;
     let mut advertised_peel: std::collections::HashMap<String, ObjectId> =
         std::collections::HashMap::new();
     let mut reader = reader;
@@ -640,6 +642,7 @@ pub(crate) fn parse_v2_ls_refs_response(reader: &mut dyn Read) -> Result<LsRefsA
                     continue;
                 }
                 if name == "HEAD" {
+                    head_oid = Some(oid);
                     if let Some(t) =
                         symref_target.filter(|t| crate::refs::is_valid_advertised_symref_target(t))
                     {
@@ -657,7 +660,7 @@ pub(crate) fn parse_v2_ls_refs_response(reader: &mut dyn Read) -> Result<LsRefsA
             }
         }
     }
-    Ok((advertised, head_symref, advertised_peel))
+    Ok((advertised, head_symref, advertised_peel, head_oid))
 }
 
 /// Build the ordered `have` candidate list for a v2 fetch from the local ref
@@ -1175,7 +1178,7 @@ fn skip_v2_section_until_boundary(reader: &mut dyn Read, sideband_all: bool) -> 
 pub fn fetch_remote(
     local_git_dir: &Path,
     conn: &mut dyn Connection,
-    opts: &mut FetchOptions,
+    opts: &FetchOptions,
     progress: &mut dyn Progress,
 ) -> Result<FetchOutcome> {
     use crate::net_trace::net_trace;
@@ -1199,18 +1202,23 @@ pub fn fetch_remote(
     // capability block); we obtain them now with an `ls-refs` command, derived
     // from the fetch refspecs. For v0/v1 they come from the connect-time
     // advertisement directly.
-    let (remote_refs, default_branch, v2_caps, advertised_peel) = if conn.protocol_version() >= 2 {
+    let (remote_refs, default_branch, v2_caps, advertised_peel, remote_head_oid) = if conn
+        .protocol_version()
+        >= 2
+    {
         let caps: Vec<String> = conn.capabilities().to_vec();
-        let (refs, head_symref, peel) =
+        let (refs, head_symref, peel, head_oid) =
             v2_ls_refs(conn, &caps, &local_odb, opts.tags, &opts.refspecs)?;
         let default_branch =
             head_symref.map(|t| t.strip_prefix("refs/heads/").unwrap_or(&t).to_owned());
-        (refs, default_branch, Some(caps), peel)
+        (refs, default_branch, Some(caps), peel, head_oid)
     } else {
         let default_branch = conn
             .head_symref()
             .map(|t| t.strip_prefix("refs/heads/").unwrap_or(t).to_owned());
         let advertised_peel = conn.advertised_tag_peel().cloned().unwrap_or_default();
+        let remote_head_oid =
+            crate::transfer::remote_head_oid_from_advertised(conn.advertised_refs());
         let remote_refs: Vec<(String, ObjectId)> = conn
             .advertised_refs()
             .iter()
@@ -1219,7 +1227,13 @@ pub fn fetch_remote(
             })
             .cloned()
             .collect();
-        (remote_refs, default_branch, None, advertised_peel)
+        (
+            remote_refs,
+            default_branch,
+            None,
+            advertised_peel,
+            remote_head_oid,
+        )
     };
     net_trace!(
         opts.network_trace,
@@ -1239,8 +1253,12 @@ pub fn fetch_remote(
         return Err(Error::RemoteReadFailed);
     }
 
-    let (mut matched, positive, negatives) =
-        crate::transfer::build_fetch_matched_set(opts, &remote_refs)?;
+    let crate::transfer::FetchMatchSet {
+        mut matched,
+        positive,
+        negatives,
+        explicit_refspec_fetch,
+    } = crate::transfer::build_fetch_matched_set(opts, &remote_refs, remote_head_oid)?;
     let mut matched_oids: HashSet<ObjectId> = matched.iter().map(|m| m.oid).collect();
     let mut seen_remote_ref: HashSet<String> =
         matched.iter().map(|m| m.remote_ref.clone()).collect();
@@ -1544,6 +1562,7 @@ pub fn fetch_remote(
             m.oid,
             mode,
             opts,
+            explicit_refspec_fetch,
             local_repo.as_ref(),
         )?;
         if write && !opts.dry_run {
@@ -1623,6 +1642,7 @@ pub fn fetch_remote(
     crate::transfer::finish_anonymous_url_fetch(
         local_git_dir,
         opts,
+        explicit_refspec_fetch,
         default_branch.as_deref(),
         &remote_refs,
         &matched,
@@ -2148,7 +2168,7 @@ mod fetch_advertised_ref_tests {
             .unwrap();
         crate::pkt_line::write_flush(&mut body).unwrap();
 
-        let (_, head, _) = parse_v2_ls_refs_response(&mut Cursor::new(body)).unwrap();
+        let (_, head, _, _) = parse_v2_ls_refs_response(&mut Cursor::new(body)).unwrap();
         assert_eq!(head.as_deref(), Some("refs/heads/trunk"));
     }
 
@@ -2160,7 +2180,7 @@ mod fetch_advertised_ref_tests {
         crate::pkt_line::write_line(&mut body, &line).unwrap();
         crate::pkt_line::write_flush(&mut body).unwrap();
 
-        let (refs, _, _) = parse_v2_ls_refs_response(&mut Cursor::new(body)).unwrap();
+        let (refs, _, _, _) = parse_v2_ls_refs_response(&mut Cursor::new(body)).unwrap();
         assert!(refs.is_empty());
     }
 

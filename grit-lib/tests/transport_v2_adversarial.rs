@@ -404,7 +404,7 @@ fn v2_clone_from_scratch_no_haves_and_not_v0() {
         tags: TagMode::None,
         ..Default::default()
     };
-    fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress).expect("v2 clone");
+    fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress).expect("v2 clone");
     drop(conn);
 
     assert_eq!(
@@ -491,7 +491,7 @@ fn v2_incremental_offers_haves_and_pack_is_minimal() {
             tags: TagMode::None,
             ..Default::default()
         };
-        fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress).expect("seed fetch");
+        fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress).expect("seed fetch");
     }
     // Local branch at the seeded tip so the negotiator has a real head (main's
     // full deep history) to offer as `have`s.
@@ -541,7 +541,7 @@ fn v2_incremental_offers_haves_and_pack_is_minimal() {
         tags: TagMode::None,
         ..Default::default()
     };
-    fetch_remote(&local_git, &mut conn, &mut opts, &mut NoProgress).expect("incremental fetch");
+    fetch_remote(&local_git, &mut conn, &opts, &mut NoProgress).expect("incremental fetch");
     drop(conn);
 
     assert_eq!(
@@ -649,7 +649,7 @@ fn v2_unborn_remote_is_empty_and_does_not_hang() {
     });
 
     let outcome =
-        fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress).expect("v2 empty fetch");
+        fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress).expect("v2 empty fetch");
     done.store(true, std::sync::atomic::Ordering::SeqCst);
     let _ = watchdog.join();
     drop(conn);
@@ -722,7 +722,7 @@ fn v2_tag_modes_all_and_following() {
             tags: TagMode::All,
             ..Default::default()
         };
-        fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress).expect("v2 tags=all");
+        fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress).expect("v2 tags=all");
         drop(conn);
 
         assert_eq!(
@@ -754,8 +754,7 @@ fn v2_tag_modes_all_and_following() {
             tags: TagMode::Following,
             ..Default::default()
         };
-        fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
-            .expect("v2 tags=following");
+        fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress).expect("v2 tags=following");
         drop(conn);
 
         // v1 points at main's tip's history -> kept.
@@ -817,8 +816,8 @@ fn v2_ref_prefix_filtering_excludes_tags() {
         tags: TagMode::None,
         ..Default::default()
     };
-    let outcome = fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
-        .expect("v2 heads-only fetch");
+    let outcome =
+        fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress).expect("v2 heads-only fetch");
     drop(conn);
 
     // No tag ref was written.
@@ -949,7 +948,7 @@ fn v2_sha256_fetch_lands_refs_and_objects() {
         tags: TagMode::All,
         ..Default::default()
     };
-    let outcome = fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
+    let outcome = fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress)
         .expect("v2 sha256 fetch_remote");
     drop(conn);
 

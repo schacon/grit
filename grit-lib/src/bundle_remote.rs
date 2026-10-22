@@ -226,6 +226,7 @@ fn complete_bundle_fetch(
     pack_oids: HashSet<ObjectId>,
     transfer: TransferStats,
 ) -> Result<FetchOutcome> {
+    let remote_head_oid = crate::transfer::remote_head_oid_from_advertised(remote_refs);
     let filtered_remote_refs: Vec<(String, ObjectId)> = remote_refs
         .iter()
         .filter(|(name, _)| {
@@ -236,8 +237,12 @@ fn complete_bundle_fetch(
         .cloned()
         .collect();
 
-    let (mut matched, positive, negatives) =
-        crate::transfer::build_fetch_matched_set(opts, &filtered_remote_refs)?;
+    let crate::transfer::FetchMatchSet {
+        mut matched,
+        positive,
+        negatives,
+        explicit_refspec_fetch,
+    } = crate::transfer::build_fetch_matched_set(opts, &filtered_remote_refs, remote_head_oid)?;
     let mut matched_oids: HashSet<ObjectId> = matched.iter().map(|m| m.oid).collect();
     let mut seen_remote_ref: HashSet<String> =
         matched.iter().map(|m| m.remote_ref.clone()).collect();
@@ -320,6 +325,7 @@ fn complete_bundle_fetch(
             m.oid,
             mode,
             opts,
+            explicit_refspec_fetch,
             local_repo.as_ref(),
         )?;
         if write && !opts.dry_run {
@@ -365,6 +371,7 @@ fn complete_bundle_fetch(
     crate::transfer::finish_anonymous_url_fetch(
         local_git_dir,
         opts,
+        explicit_refspec_fetch,
         default_branch.as_deref(),
         remote_refs,
         &matched,

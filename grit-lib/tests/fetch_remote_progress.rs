@@ -214,7 +214,7 @@ fn run_case(protocol_v2: bool, remote_progress: bool) -> (Vec<u8>, Vec<u8>) {
         remote_progress,
         ..Default::default()
     };
-    fetch_remote(&local_git, &mut conn, &mut opts, &mut cap).expect("fetch");
+    fetch_remote(&local_git, &mut conn, &opts, &mut cap).expect("fetch");
 
     let got = resolve_ref(&local_git, "refs/remotes/origin/main").expect("origin/main");
     assert_eq!(got, main_oid);

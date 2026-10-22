@@ -208,7 +208,7 @@ fn fetch_over_git_daemon_lands_refs_and_objects() {
         tags: TagMode::All,
         ..Default::default()
     };
-    let outcome = fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
+    let outcome = fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress)
         .expect("fetch_remote over git daemon");
 
     // Tracking refs written.
@@ -344,7 +344,7 @@ fn fetch_following_lightweight_tag_at_branch_tip_downloads_branch() {
         tags: TagMode::Following,
         ..Default::default()
     };
-    fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
+    fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress)
         .expect("fetch with TagMode::Following");
 
     let got_rel = resolve_ref(&local_git, "refs/remotes/origin/rel").expect("origin/rel");
@@ -427,7 +427,7 @@ fn fetch_remote_following_imports_annotated_tag_on_existing_tip() {
         tags: TagMode::Following,
         ..Default::default()
     };
-    fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress).expect("initial fetch");
+    fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress).expect("initial fetch");
 
     git(
         &source,
@@ -437,7 +437,7 @@ fn fetch_remote_following_imports_annotated_tag_on_existing_tip() {
     let mut conn = transport
         .connect(&url, Service::UploadPack, &ConnectOptions::default())
         .expect("reconnect");
-    let outcome = fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
+    let outcome = fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress)
         .expect("incremental fetch with new annotated tag");
 
     let tag_update = outcome
@@ -515,7 +515,7 @@ fn push_annotated_tag_on_existing_commit_over_git_daemon() {
         tags: TagMode::None,
         ..Default::default()
     };
-    fetch_remote(&local_git, &mut *conn, &mut fetch_opts, &mut NoProgress).expect("fetch main");
+    fetch_remote(&local_git, &mut *conn, &fetch_opts, &mut NoProgress).expect("fetch main");
 
     let repo = Repository::open(&local_git, &RepositoryOptions::empty()).expect("open local repo");
     let head = resolve_ref(&local_git, "refs/remotes/origin/main").expect("origin/main");
