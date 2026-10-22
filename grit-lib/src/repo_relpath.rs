@@ -5,9 +5,11 @@
 //! ASCII encoding for non-UTF-8 bytes so staging and diff can round-trip without loss.
 //!
 //! ```rust
-//! use grit_lib::repo_relpath::parent_dir;
-//!
+//! use grit_lib::repo_relpath::{file_name, parent_dir};
+//! # fn main() {
 //! assert_eq!(parent_dir(b"src/lib.rs"), b"src");
+//! assert_eq!(file_name(b"src/lib.rs"), b"lib.rs");
+//! # }
 //! ```
 
 use std::borrow::Cow;
