@@ -335,11 +335,6 @@ pub(crate) fn validate_fetch_depth_server(
         if !crate::protocol_v2::fetch_supports_feature(caps, "shallow") {
             return Err(Error::FetchShallowUnsupported);
         }
-        if opts.wire_deepen().is_some_and(|(_, rel)| rel)
-            && !crate::protocol_v2::fetch_supports_feature(caps, "deepen-relative")
-        {
-            return Err(Error::FetchDeepenRelativeUnsupported);
-        }
     }
     Ok(())
 }
@@ -1614,12 +1609,7 @@ pub fn fetch_local_with_progress(
         shallow_new = resp.shallow;
         shallow_unshallow = resp.unshallow;
         copy_source_shallow = resp.pack_shallow_grafts;
-        for oid in resp
-            .extra_wants
-            .iter()
-            .chain(shallow_new.iter())
-            .copied()
-        {
+        for oid in resp.extra_wants.iter().chain(shallow_new.iter()).copied() {
             if !wants.contains(&oid) {
                 wants.push(oid);
             }

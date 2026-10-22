@@ -2,6 +2,28 @@
   "$id": "https://grit-scm.com/schemas/fetch/v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "definitions": {
+    "FetchShallowDelta": {
+      "description": "Shallow boundaries added or removed by this fetch (`--json` only).",
+      "properties": {
+        "added": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "removed": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "added",
+        "removed"
+      ],
+      "type": "object"
+    },
     "FetchUpdate": {
       "description": "One updated tracking ref. `old_oid`/`new_oid` are full hex, or `null` for a newly-created (`old_oid`) or deleted (`new_oid`) ref.",
       "properties": {
@@ -41,28 +63,6 @@
       ],
       "type": "object"
     },
-    "FetchShallowDelta": {
-      "description": "Shallow boundaries added or removed by a depth/deepen/unshallow fetch.",
-      "properties": {
-        "added": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "removed": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "added",
-        "removed"
-      ],
-      "type": "object"
-    },
     "FetchUpdateStatus": {
       "description": "Per-ref fetch status in JSON.",
       "enum": [
@@ -90,7 +90,15 @@
       "type": "string"
     },
     "shallow": {
-      "$ref": "#/definitions/FetchShallowDelta"
+      "anyOf": [
+        {
+          "$ref": "#/definitions/FetchShallowDelta"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Shallow boundary changes when a depth/deepen/unshallow fetch ran."
     },
     "updated": {
       "format": "uint",

@@ -7,8 +7,9 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use grit_lib::error::Error;
-use grit_lib::remote::fetch::NoProgress;
+use grit_lib::remote::fetch::{fetch_remote, NoProgress};
 use grit_lib::remote::transfer::{fetch_local, FetchDepth, FetchOptions, TagMode};
+use grit_lib::remote::transport::{ConnectOptions, GitDaemonTransport, Service, Transport};
 fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
         .current_dir(dir)
@@ -204,6 +205,138 @@ fn unshallow_on_complete_repo_errors_typed() {
     assert!(matches!(err, Error::FetchUnshallowNotShallow));
 }
 
+fn daemon_free_port() -> u16 {
+    TcpListener::bind(("127.0.0.1", 0))
+        .expect("bind ephemeral port")
+        .local_addr()
+        .expect("local_addr")
+        .port()
+}
+
+fn spawn_git_daemon(base_path: &Path, port: u16) -> Child {
+    Command::new("git")
+        .arg("daemon")
+        .arg("--listen=127.0.0.1")
+        .arg(format!("--port={port}"))
+        .arg("--reuseaddr")
+        .arg("--export-all")
+        .arg(format!("--base-path={}", base_path.display()))
+        .arg(base_path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn git daemon")
+}
+
+fn wait_daemon_ready(port: u16) {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("git daemon not ready on port {port}");
+}
+
+struct DaemonGuard(Child);
+impl Drop for DaemonGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn grit_fetch_daemon(
+    work: &Path,
+    url: &str,
+    fetch_depth: Option<FetchDepth>,
+    protocol_version: u8,
+) {
+    let git_dir = work.join(".git");
+    let transport = GitDaemonTransport::new();
+    let connect_opts = ConnectOptions {
+        protocol_version,
+        ..Default::default()
+    };
+    let mut conn = transport
+        .connect(url, Service::UploadPack, &connect_opts)
+        .expect("connect git daemon");
+    let mut opts = FetchOptions {
+        refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
+        tags: TagMode::Following,
+        fetch_depth,
+        ..Default::default()
+    };
+    fetch_remote(&git_dir, &mut *conn, &opts, &mut NoProgress).expect("fetch_remote");
+}
+
+fn init_shallow_client_from_daemon(tmp: &Path, url: &str, name: &str) -> PathBuf {
+    let dest = tmp.join(name);
+    std::fs::create_dir_all(dest.parent().unwrap_or(tmp)).unwrap();
+    git(
+        tmp,
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            url,
+            dest.to_str().unwrap(),
+        ],
+    );
+    dest
+}
+
+/// Full depth-1 → deepen-3 → unshallow against system `git upload-pack` (protocol v2).
+#[test]
+fn deepen_unshallow_over_system_git_daemon_v2_matches_git() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bare = build_linear_bare(tmp.path(), 12);
+    let base = tmp.path().join("srv");
+    std::fs::create_dir_all(&base).unwrap();
+    let served = base.join("repo.git");
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            bare.to_str().unwrap(),
+            served.to_str().unwrap(),
+        ],
+    );
+    let port = daemon_free_port();
+    let child = spawn_git_daemon(&base, port);
+    let _guard = DaemonGuard(child);
+    wait_daemon_ready(port);
+    let url = format!("git://127.0.0.1:{port}/repo.git");
+
+    let git_client = init_shallow_client_from_daemon(tmp.path(), &url, "git-wire");
+    let grit_client = init_shallow_client_from_daemon(tmp.path(), &url, "grit-wire");
+    assert_twin_matches(&git_client, &grit_client);
+
+    git_fetch(&git_client, &["fetch", "--deepen", "3", "origin"]);
+    grit_fetch_daemon(
+        &grit_client,
+        &url,
+        FetchDepth::deepen(3),
+        2,
+    );
+    assert_twin_matches(&git_client, &grit_client);
+
+    git_fetch(&git_client, &["fetch", "--unshallow", "origin"]);
+    grit_fetch_daemon(
+        &grit_client,
+        &url,
+        Some(FetchDepth::Unshallow),
+        2,
+    );
+    assert_twin_matches(&git_client, &grit_client);
+    assert!(read_shallow_set(&git_client.join(".git")).is_empty());
+}
+
 #[cfg(feature = "http-ureq")]
 mod http {
     use super::*;
@@ -213,7 +346,7 @@ mod http {
     fn free_port() -> Option<u16> {
         TcpListener::bind(("127.0.0.1", 0))
             .ok()
-            .map(|l| l.local_addr().ok()?.port())
+            .and_then(|l| l.local_addr().ok().map(|a| a.port()))
     }
 
     fn find_binary(name: &str) -> Option<PathBuf> {

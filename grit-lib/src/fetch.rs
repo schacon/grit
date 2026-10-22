@@ -191,9 +191,6 @@ fn append_shallow_request_v0(
             return Err(Error::FetchDeepenRelativeUnsupported);
         }
         pkt_line::write_line_to_vec(req, &format!("deepen {depth}"))?;
-        if relative {
-            pkt_line::write_line_to_vec(req, "deepen-relative")?;
-        }
     }
     if let Some(since) = opts
         .deepen_since
@@ -251,13 +248,6 @@ fn negotiate_pack(
     // offering `have`s. Mirrors `fetch-pack.c`'s shallow handling.
     let shallow_request = opts.has_deepen_request() || !local_shallow.is_empty();
 
-    // Capability set matching `git fetch-pack`'s first `want` line for v0/v1.
-    let caps = if opts.remote_progress {
-        " multi_ack_detailed side-band-64k thin-pack include-tag ofs-delta agent=grit"
-    } else {
-        " multi_ack_detailed side-band-64k thin-pack no-progress include-tag ofs-delta agent=grit"
-    };
-
     // Capture the advertised refs before borrowing the writer (avoids aliasing
     // the connection's reader/writer with its accessors). v0/v1 shallow servers
     // append `shallow <oid>` trailer lines to the advertisement; the capability
@@ -265,6 +255,21 @@ fn negotiate_pack(
     let advertised: Vec<(String, ObjectId)> = conn.advertised_refs().to_vec();
     let server_caps: String = conn.capabilities().join(" ");
     validate_fetch_depth_server(opts, Some(&server_caps), None)?;
+
+    // Capability set matching `git fetch-pack`'s first `want` line for v0/v1.
+    let mut caps = if opts.remote_progress {
+        String::from(" multi_ack_detailed side-band-64k thin-pack include-tag ofs-delta agent=grit")
+    } else {
+        String::from(
+            " multi_ack_detailed side-band-64k thin-pack no-progress include-tag ofs-delta agent=grit",
+        )
+    };
+    if opts.wire_deepen().is_some_and(|(_, relative)| relative) {
+        if !server_caps.contains("deepen-relative") {
+            return Err(Error::FetchDeepenRelativeUnsupported);
+        }
+        caps.push_str(" deepen-relative");
+    }
 
     let mut req: Vec<u8> = Vec::new();
     let w0 = format!("want {}{}", first_want.to_hex(), caps);
@@ -1507,8 +1512,12 @@ pub fn fetch_remote(
     // objects). All/None already handled; Following kept only when reachable.
     if opts.tags == crate::transfer::TagMode::Following {
         let t = std::time::Instant::now();
+        let tag_odb = dry_run_quarantine
+            .as_ref()
+            .map(|q| q.odb())
+            .unwrap_or_else(|| local_odb.clone());
         retain_following_tags(
-            &local_odb,
+            &tag_odb,
             &mut matched,
             &pack_oids,
             &crate::shallow::load_shallow_boundaries(local_git_dir),

@@ -317,7 +317,7 @@ fn complete_bundle_fetch(
             old.as_ref(),
             &m.oid,
             m.force,
-            m.is_tag,
+            m.dest_is_tag,
             local_repo.as_ref(),
             None,
         );
