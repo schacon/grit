@@ -21,6 +21,7 @@ use grit_lib::porcelain::replay_sequence::{
 use grit_lib::porcelain::revert::{committer_timestamp, revision_range_apply_order};
 use grit_lib::revwalk::parse_rev_walk_tokens;
 use grit_lib::revwalk::rev_list::resolve_revision_specs_to_commits;
+use grit_lib::revwalk::rev_parse::resolve_revision_as_commit;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
@@ -303,7 +304,11 @@ fn resolve_revert_commits(
     if range_syntax {
         return revision_range_apply_order(repo, &include, &exclude).map_err(anyhow::Error::new);
     }
-    order_commits_newest_first(repo, &include)
+    let commits: Vec<ObjectId> = tokens
+        .iter()
+        .map(|token| resolve_revision_as_commit(repo, token).map_err(map_revert_committish_error))
+        .collect::<Result<_>>()?;
+    order_commits_newest_first(repo, &commits)
 }
 
 fn order_commits_newest_first(

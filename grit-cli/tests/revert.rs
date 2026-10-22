@@ -505,3 +505,39 @@ fn revert_json_schema() -> TestResult {
     assert!(v.get("oid").is_some());
     Ok(())
 }
+
+#[test]
+fn revert_mixed_valid_and_tree_ish_fails_without_mutating_repo() -> TestResult {
+    let scratch = Scratch::new("mixed-tree-ish")?;
+    let repo = scratch.path();
+    init_repo(repo)?;
+    commit_file(repo, "a.txt", "v1\n", "first")?;
+    commit_file(repo, "a.txt", "v2\n", "second")?;
+
+    let head_before = fs::read_to_string(repo.join(".git/HEAD"))?;
+    let count_before = Command::new("git")
+        .args(["rev-list", "--count", "HEAD"])
+        .current_dir(repo)
+        .output()?
+        .stdout;
+    let worktree_before = fs::read_to_string(repo.join("a.txt"))?;
+
+    let out = gs(repo, ["revert", "HEAD", "HEAD^{tree}"])?;
+    assert_ne!(out.status, Some(0), "{}", out.dump());
+    let stderr = format!("{}{}", out.stderr, out.stdout);
+    assert!(
+        stderr.contains("does not name a commit"),
+        "expected commit-ish error, got: {}",
+        out.dump()
+    );
+
+    assert_eq!(fs::read_to_string(repo.join(".git/HEAD"))?, head_before);
+    let count_after = Command::new("git")
+        .args(["rev-list", "--count", "HEAD"])
+        .current_dir(repo)
+        .output()?
+        .stdout;
+    assert_eq!(count_before, count_after);
+    assert_eq!(fs::read_to_string(repo.join("a.txt"))?, worktree_before);
+    Ok(())
+}
