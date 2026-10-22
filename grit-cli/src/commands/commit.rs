@@ -164,7 +164,7 @@ pub fn run(
         amend,
         reuse_message_from.is_some(),
     )?;
-    if message.is_none() && !amend && !reuse_message_from.is_some() {
+    if message.is_none() && !amend && reuse_message_from.is_none() {
         if matches!(scope, CommitScope::AutoStage) {
             stage_for_commit(&repo, &mut NullProgress).map_err(|e| anyhow::anyhow!("{e}"))?;
         }
