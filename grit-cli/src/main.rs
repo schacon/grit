@@ -918,11 +918,14 @@ enum Command {
     /// Fetch from the remote and integrate it into the current branch.
     Pull {
         /// Refuse when a merge would be required (exit 1 when diverged).
-        #[arg(long = "ff-only")]
+        #[arg(long = "ff-only", conflicts_with_all = ["no_rebase", "rebase"])]
         ff_only: bool,
         /// Merge instead of rebasing, overriding `pull.rebase`.
-        #[arg(long = "no-rebase")]
+        #[arg(long = "no-rebase", conflicts_with_all = ["ff_only", "rebase"])]
         no_rebase: bool,
+        /// Rebase local commits onto the fetched upstream, overriding `pull.rebase=false`.
+        #[arg(long = "rebase", conflicts_with_all = ["ff_only", "no_rebase"])]
+        rebase: bool,
     },
     /// Publish refs to a remote.
     Push {
@@ -1958,8 +1961,12 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             opts,
             ctx,
         ),
-        Command::Pull { ff_only, no_rebase } => {
-            let outcome = commands::pull::run(ff_only, no_rebase, opts.mode)?;
+        Command::Pull {
+            ff_only,
+            no_rebase,
+            rebase,
+        } => {
+            let outcome = commands::pull::run(ff_only, no_rebase, rebase, opts.mode)?;
             emit(&outcome, opts, ctx)?;
             if matches!(
                 outcome.result,
