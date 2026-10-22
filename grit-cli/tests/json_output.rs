@@ -2233,7 +2233,15 @@ fn schema_top_level_keys_are_stable() -> TestResult {
     let added = gs_json(&seed, &["add"]);
     assert_eq!(
         keys(&added),
-        ["added", "count", "dry_run", "modified", "removed", "staged",]
+        [
+            "added",
+            "count",
+            "dry_run",
+            "intent_to_add",
+            "modified",
+            "removed",
+            "staged",
+        ]
     );
 
     write_file(&seed.join("drop.txt"), "bye\n");
