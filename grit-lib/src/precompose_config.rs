@@ -106,6 +106,15 @@ pub fn locate_git_dir_from_cwd(cwd: PathBuf) -> Option<PathBuf> {
 
 /// Like [`locate_git_dir_from_cwd`] but honours discovery variables in `environment`.
 pub fn locate_git_dir_from_environment(environment: &Environment) -> Option<PathBuf> {
+    if let Some(dir) = environment.git_dir.as_deref() {
+        let cwd = environment.discovery_cwd();
+        let mut git_dir = PathBuf::from(dir);
+        if git_dir.is_relative() {
+            git_dir = cwd.join(git_dir);
+        }
+        return crate::repo::resolve_git_directory_arg(&git_dir).ok();
+    }
+
     let start_canon = environment.discovery_cwd();
     let ceilings: Vec<String> = parse_ceiling_directories_paths(environment)
         .into_iter()

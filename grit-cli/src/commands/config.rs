@@ -149,10 +149,10 @@ pub fn run(
 
     if default_repo_hot_path(global, local, file.as_ref(), mode) {
         if unset {
-            return hot_unset_in_repo(&key);
+            return hot_unset_in_repo(process_env, &key);
         }
         if let Some(value) = value {
-            return hot_set_in_repo(&key, &value);
+            return hot_set_in_repo(process_env, &key, &value);
         }
         return hot_get_in_repo(process_env, &key);
     }
@@ -206,8 +206,8 @@ fn hot_get_in_repo(env: &Environment, key: &str) -> Result<ConfigOutcome> {
     }
 }
 
-fn hot_set_in_repo(key: &str, value: &str) -> Result<ConfigOutcome> {
-    let path = local_config_path_for_hot_write()?;
+fn hot_set_in_repo(env: &Environment, key: &str, value: &str) -> Result<ConfigOutcome> {
+    let path = local_config_path_for_hot_write(env)?;
     let content = fs::read_to_string(&path).unwrap_or_default();
     let mut cfg = ConfigFile::parse(&path, &content, ConfigScope::Local)
         .with_context(|| format!("could not parse {}", path.display()))?;
@@ -221,8 +221,8 @@ fn hot_set_in_repo(key: &str, value: &str) -> Result<ConfigOutcome> {
     })
 }
 
-fn hot_unset_in_repo(key: &str) -> Result<ConfigOutcome> {
-    let path = local_config_path_for_hot_write()?;
+fn hot_unset_in_repo(env: &Environment, key: &str) -> Result<ConfigOutcome> {
+    let path = local_config_path_for_hot_write(env)?;
     let Ok(content) = fs::read_to_string(&path) else {
         bail!("key '{key}' is not set");
     };
@@ -249,11 +249,9 @@ fn read_merged_config(env: &Environment) -> Result<ConfigSet> {
     }
 }
 
-fn local_config_path_for_hot_write() -> Result<PathBuf> {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let git_dir = grit_lib::config::precompose_config::locate_git_dir_from_cwd(cwd)
-        .context("not in a repository")?;
-    Ok(git_dir.join("config"))
+fn local_config_path_for_hot_write(env: &Environment) -> Result<PathBuf> {
+    let git_dir = locate_git_dir_from_environment(env).context("not in a repository")?;
+    Ok(grit_lib::repo::local_config_write_path(&git_dir))
 }
 
 /// Set `key` to `value` in the global config (used by `grit auth` to wire up the
