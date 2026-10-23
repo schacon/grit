@@ -128,7 +128,7 @@ Each commit gets a stable **`change-id`** header (on by default) that survives `
 
 | Task | Command |
 | --- | --- |
-| Copy a repository | `grit clone <url> [<dir>]` |
+| Copy a repository | `grit clone <url> [<dir>]` (`--depth N`, `-b` / `--branch` for a branch or tag; hidden `--shallow` = `--depth 1`) |
 | List or add remotes | `grit remote`, `grit remote add <name> <url>`, `grit remote -v` |
 | Fix a remote URL | `grit remote set-url <name> <url>` (fetch URL); `grit remote set-url --push <name> <url>` for push only; `--dry-run` to preview |
 | Download without changing your branch | `grit fetch [<remote>]` |
