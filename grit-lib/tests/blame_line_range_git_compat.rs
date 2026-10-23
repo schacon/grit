@@ -209,6 +209,36 @@ fn blame_line_range_regex_forms() {
 }
 
 #[test]
+fn blame_line_range_bre_plus_is_literal() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    git_run(root, &["init", "-q"]);
+    git_run(root, &["config", "user.email", "blame-range@example.com"]);
+    std::fs::write(root.join("bre.txt"), "aaa\na+\n").unwrap();
+    git_run(root, &["add", "bre.txt"]);
+    git_run(root, &["commit", "-m", "add", "-q"]);
+
+    let repo = open_repo(root);
+    let head = head_oid(root);
+    assert_range_matches_git(&repo, root, "bre.txt", head, "/a+/");
+}
+
+#[test]
+fn blame_line_range_bre_escaped_plus_is_one_or_more() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    git_run(root, &["init", "-q"]);
+    git_run(root, &["config", "user.email", "blame-range@example.com"]);
+    std::fs::write(root.join("bre.txt"), "aaa\na+\n").unwrap();
+    git_run(root, &["add", "bre.txt"]);
+    git_run(root, &["commit", "-m", "add", "-q"]);
+
+    let repo = open_repo(root);
+    let head = head_oid(root);
+    assert_range_matches_git(&repo, root, "bre.txt", head, "/a\\+/");
+}
+
+#[test]
 fn blame_line_range_funcname_c_and_rust() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path();
@@ -240,13 +270,10 @@ fn blame_line_range_custom_xfuncname_driver() {
     git_run(root, &["init", "-q"]);
     git_run(root, &["config", "user.email", "blame-range@example.com"]);
     std::fs::write(root.join(".gitattributes"), "probe.txt diff=probe\n").unwrap();
-    git_run(
-        root,
-        &["config", "diff.probe.xfuncname", "^PROBE[[:space:]]+"],
-    );
+    git_run(root, &["config", "diff.probe.xfuncname", "^FUNC .*:$"]);
     std::fs::write(
         root.join("probe.txt"),
-        "noise\nPROBE one\nline\nPROBE two\n",
+        "noise\nFUNC alpha:\n  body\nFUNC beta:\n",
     )
     .unwrap();
     git_run(root, &["add", "."]);
@@ -254,7 +281,7 @@ fn blame_line_range_custom_xfuncname_driver() {
 
     let repo = open_repo(root);
     let head = head_oid(root);
-    assert_range_matches_git(&repo, root, "probe.txt", head, ":one");
+    assert_range_matches_git(&repo, root, "probe.txt", head, ":alpha");
 }
 
 #[test]

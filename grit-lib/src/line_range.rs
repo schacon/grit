@@ -1,12 +1,13 @@
-//! Git-compatible `-L` line range parsing and resolution (blame, future log `-L`).
+//! Resolve Git-style `-L` line ranges for blame (and future log `-L`).
 //!
-//! Follows upstream `line-range.c` / `parse_range_arg` semantics: numeric ranges,
-//! `/regex/` anchors, relative `,+N` / `,-N` ends, and `:funcname` spans.
+//! Behavior matches [git-scm.com line-range documentation](https://git-scm.com/docs/git-blame#Documentation/git-blame.txt--Lltstartgtltendgt):
+//! numeric endpoints, `/search/` (POSIX basic regex), relative `,+N` / `,-N` tails,
+//! and `:symbol` spans using the same funcname rules as diff hunk headers.
 
 use std::ops::RangeInclusive;
 
 use crate::config::ConfigSet;
-use crate::diff::{is_func_line, PosixEre};
+use crate::diff::{is_func_line, PosixBre};
 use crate::userdiff::FuncnameMatcher;
 use thiserror::Error;
 
@@ -97,9 +98,11 @@ pub fn split_content_lines(content: &str) -> Vec<&str> {
     out
 }
 
-/// Resolve one `-L` spec against `content` at `path` using Git funcname rules.
+/// Resolve one `-L` spec against `content` using Git funcname rules when `matcher` is set.
 ///
-/// `anchor` is the 1-based line where relative searches start (always `1` for a single `-L`).
+/// `anchor` is the 1-based line where chained `-L` ranges would continue (always `1` for a single `-L`).
+///
+/// `path` and `config` are accepted for API stability; resolution uses `matcher` and `content` only.
 ///
 /// # Errors
 ///
@@ -107,8 +110,8 @@ pub fn split_content_lines(content: &str) -> Vec<&str> {
 pub fn resolve_line_range(
     spec: &str,
     content: &str,
-    path: &str,
-    config: &ConfigSet,
+    _path: &str,
+    _config: &ConfigSet,
     funcname_matcher: Option<&FuncnameMatcher>,
     anchor: usize,
 ) -> Result<RangeInclusive<usize>, LineRangeError> {
@@ -120,256 +123,299 @@ pub fn resolve_line_range(
         anchor = line_count + 1;
     }
 
-    let (mut begin, mut end) = parse_range_arg(
-        spec,
+    let view = TextView::new(content, &lines);
+    let draft = decode_range_spec(
+        spec.trim(),
         &spec_owned,
-        content,
-        &lines,
+        &view,
         line_count,
         anchor,
-        path,
-        config,
         funcname_matcher,
     )?;
-
-    if begin == 0 {
-        begin = 1;
-    }
-    if end == 0 || end > line_count {
-        end = line_count;
-    }
-    if begin > line_count && line_count > 0 {
-        return Err(LineRangeError::OutOfRange {
-            spec: spec_owned,
-            lines: line_count,
-        });
-    }
-    if line_count == 0 && (begin > 0 || end > 0) {
-        return Err(LineRangeError::OutOfRange {
-            spec: spec_owned,
-            lines: 0,
-        });
-    }
-    if begin > end {
-        std::mem::swap(&mut begin, &mut end);
-    }
-    Ok(begin..=end)
+    finalize_inclusive_range(draft, line_count, &spec_owned)
 }
 
-#[expect(clippy::too_many_arguments)]
-fn parse_range_arg(
+/// Parsed but not yet clamped 1-based endpoints (`0` means “unset”).
+struct DraftRange {
+    start: usize,
+    end: usize,
+}
+
+struct TextView<'a> {
+    raw: &'a str,
+    lines: &'a [&'a str],
+}
+
+impl<'a> TextView<'a> {
+    fn new(raw: &'a str, lines: &'a [&'a str]) -> Self {
+        Self { raw, lines }
+    }
+
+    fn line_count(&self) -> usize {
+        self.lines.len()
+    }
+
+    fn line_byte_range(&self, index_0: usize) -> (usize, usize) {
+        let start = byte_offset_of_line(self.raw, index_0);
+        let end = if index_0 + 1 < self.line_count() {
+            byte_offset_of_line(self.raw, index_0 + 1)
+        } else {
+            self.raw.len()
+        };
+        let end = if end > start && self.raw.as_bytes()[end - 1] == b'\n' {
+            end - 1
+        } else {
+            end
+        };
+        (start, end)
+    }
+
+    fn line_text(&self, index_0: usize) -> &str {
+        let (start, end) = self.line_byte_range(index_0);
+        &self.raw[start..end]
+    }
+}
+
+fn decode_range_spec(
     spec: &str,
     spec_owned: &str,
-    content: &str,
-    line_slices: &[&str],
+    view: &TextView<'_>,
     line_count: usize,
-    anchor: usize,
-    path: &str,
-    config: &ConfigSet,
-    funcname_matcher: Option<&FuncnameMatcher>,
-) -> Result<(usize, usize), LineRangeError> {
-    let mut arg = spec.trim();
-    let mut begin = 0usize;
-    let mut end = 0usize;
-
-    if arg.starts_with(':')
-        || (arg.starts_with('^') && arg.get(1..).is_some_and(|r| r.starts_with(':')))
-    {
-        let rest = parse_range_funcname(
-            arg,
-            spec_owned,
-            content,
-            line_slices,
-            line_count,
-            anchor,
-            path,
-            config,
-            funcname_matcher,
-            &mut begin,
-            &mut end,
-        )?;
-        if !rest.is_empty() {
-            return Err(LineRangeError::InvalidSpec {
-                spec: spec_owned.to_owned(),
-                detail: format!("unexpected trailing text `{rest}`"),
-            });
-        }
-        return Ok((begin, end));
+    anchor_1: usize,
+    matcher: Option<&FuncnameMatcher>,
+) -> Result<DraftRange, LineRangeError> {
+    if spec.starts_with(':') || spec.starts_with("^:") {
+        return decode_symbol_range(spec, spec_owned, view, line_count, anchor_1, matcher);
     }
 
-    let (rest, b) = parse_loc(arg, spec_owned, content, line_count, -(anchor as i64))?;
-    begin = b;
-    arg = rest.trim_start();
-    if arg.starts_with(',') {
-        let (rest, e) = parse_loc(
-            arg[1..].trim_start(),
+    let (start_token, tail) = split_first_comma(spec);
+    let start = resolve_endpoint(
+        start_token,
+        spec_owned,
+        view,
+        EndpointContext {
+            role: EndpointRole::Start,
+            anchor_1,
+            pivot_1: 0,
+        },
+    )?;
+    let mut draft = DraftRange { start, end: 0 };
+    if let Some(end_token) = tail {
+        let end = resolve_endpoint(
+            end_token.trim_start(),
             spec_owned,
-            content,
-            line_count,
-            begin.saturating_add(1) as i64,
+            view,
+            EndpointContext {
+                role: EndpointRole::End,
+                anchor_1,
+                pivot_1: draft.start,
+            },
         )?;
-        end = e;
-        arg = rest;
+        draft.end = end;
     }
-    if !arg.is_empty() {
-        return Err(LineRangeError::InvalidSpec {
-            spec: spec_owned.to_owned(),
-            detail: format!("unexpected trailing text `{arg}`"),
-        });
-    }
-    Ok((begin, end))
+    Ok(draft)
 }
 
-fn parse_loc<'a>(
-    spec: &'a str,
+enum EndpointRole {
+    Start,
+    End,
+}
+
+struct EndpointContext {
+    role: EndpointRole,
+    anchor_1: usize,
+    pivot_1: usize,
+}
+
+fn resolve_endpoint(
+    token: &str,
     spec_owned: &str,
-    content: &str,
-    _line_count: usize,
-    begin_anchor: i64,
-) -> Result<(&'a str, usize), LineRangeError> {
-    let mut spec = spec.trim();
-    if spec.is_empty() {
+    view: &TextView<'_>,
+    ctx: EndpointContext,
+) -> Result<usize, LineRangeError> {
+    let token = token.trim();
+    if token.is_empty() {
         return Err(LineRangeError::InvalidSpec {
             spec: spec_owned.to_owned(),
             detail: "empty range component".into(),
         });
     }
 
-    let mut begin = begin_anchor;
+    let (token, scan_from_line_one) = if let Some(rest) = token.strip_prefix('^') {
+        (rest.trim_start(), true)
+    } else {
+        (token, false)
+    };
 
-    if begin >= 1 && (spec.starts_with('+') || spec.starts_with('-')) {
-        let (num, rest) = parse_signed_number(&spec[1..])?;
-        if rest.len() == spec.len().saturating_sub(1) && rest == &spec[1..] {
-            return Ok((spec, 0));
-        }
-        if num == 0 {
-            return Err(LineRangeError::EmptyRange {
-                spec: spec_owned.to_owned(),
-            });
-        }
-        let mut num = num;
-        if spec.starts_with('-') {
-            num = -num;
-        }
-        let resolved = if num > 0 {
-            (begin as usize)
-                .saturating_add(num as usize)
-                .saturating_sub(2)
-        } else if num == 0 {
-            begin as usize
-        } else {
-            let shifted = begin + num;
-            if shifted > 0 {
-                shifted as usize
-            } else {
-                1
-            }
-        };
-        return Ok((rest, resolved));
+    let relative_base = match ctx.role {
+        EndpointRole::Start => -(ctx.anchor_1 as i64),
+        EndpointRole::End => (ctx.pivot_1.saturating_add(1)) as i64,
+    };
+
+    if relative_base >= 1 && (token.starts_with('+') || token.starts_with('-')) {
+        return relative_offset_line(token, spec_owned, relative_base);
     }
 
-    if let Some((num, rest)) = parse_optional_number(spec) {
+    if let Some((num, rest)) = leading_decimal(token) {
         if num <= 0 {
             return Err(LineRangeError::InvalidLineNumber {
                 spec: spec_owned.to_owned(),
                 line: num,
             });
         }
-        return Ok((rest, num as usize));
+        if !rest.is_empty() {
+            return Err(LineRangeError::InvalidSpec {
+                spec: spec_owned.to_owned(),
+                detail: format!("unexpected trailing text `{rest}`"),
+            });
+        }
+        return Ok(num as usize);
     }
 
-    let mut search_from_bof = false;
-    if begin < 0 {
-        if !spec.starts_with('^') {
-            begin = -begin;
+    if token.starts_with('/') {
+        let scan_anchor = if scan_from_line_one { 1 } else { relative_base };
+        return slash_search_line(token, spec_owned, view, scan_anchor);
+    }
+
+    Err(LineRangeError::InvalidSpec {
+        spec: spec_owned.to_owned(),
+        detail: format!("could not parse `{token}`"),
+    })
+}
+
+fn relative_offset_line(
+    token: &str,
+    spec_owned: &str,
+    base_1: i64,
+) -> Result<usize, LineRangeError> {
+    let (num, rest) = leading_decimal(&token[1..]).ok_or_else(|| LineRangeError::InvalidSpec {
+        spec: spec_owned.to_owned(),
+        detail: format!(
+            "expected relative offset after `{}`",
+            token.chars().next().unwrap_or('?')
+        ),
+    })?;
+    if !rest.is_empty() {
+        return Err(LineRangeError::InvalidSpec {
+            spec: spec_owned.to_owned(),
+            detail: format!("unexpected trailing text `{rest}`"),
+        });
+    }
+    if num == 0 {
+        return Err(LineRangeError::EmptyRange {
+            spec: spec_owned.to_owned(),
+        });
+    }
+    let signed = if token.starts_with('-') { -num } else { num };
+    let resolved = if signed > 0 {
+        (base_1 as usize)
+            .saturating_add(signed as usize)
+            .saturating_sub(2)
+    } else if signed == 0 {
+        base_1 as usize
+    } else {
+        let shifted = base_1 + signed;
+        if shifted > 0 {
+            shifted as usize
         } else {
-            begin = 1;
-            search_from_bof = true;
-            spec = spec.trim_start_matches('^').trim_start();
+            1
+        }
+    };
+    Ok(resolved)
+}
+
+fn slash_search_line(
+    token: &str,
+    spec_owned: &str,
+    view: &TextView<'_>,
+    scan_anchor: i64,
+) -> Result<usize, LineRangeError> {
+    let mut body = token;
+    let mut scan_line_1 = scan_anchor;
+    if scan_line_1 < 0 {
+        if body.starts_with('^') {
+            scan_line_1 = 1;
+            body = body.trim_start_matches('^').trim_start();
+        } else {
+            scan_line_1 = -scan_line_1;
         }
     }
-
-    if !spec.starts_with('/') {
-        return Ok((spec, 0));
-    }
-
-    let (pattern, rest) = parse_slash_regex(spec).ok_or_else(|| LineRangeError::InvalidSpec {
+    let (pattern, rest) = delimited_slashes(body).ok_or_else(|| LineRangeError::InvalidSpec {
         spec: spec_owned.to_owned(),
-        detail: "expected /regex/".into(),
+        detail: "expected /pattern/".into(),
     })?;
-
-    let mut line_index = begin.saturating_sub(1) as usize;
-    if search_from_bof {
-        line_index = 0;
+    if !rest.is_empty() {
+        return Err(LineRangeError::InvalidSpec {
+            spec: spec_owned.to_owned(),
+            detail: format!("unexpected trailing text `{rest}`"),
+        });
     }
-    let start_byte = line_start_byte(content, line_index);
-    let haystack = &content.as_bytes()[start_byte..];
-    let re = PosixEre::compile(&pattern, false).map_err(|detail| LineRangeError::InvalidRegex {
+    let line_index_0 = scan_line_1.saturating_sub(1) as usize;
+    let start_byte = byte_offset_of_line(view.raw, line_index_0);
+    let haystack = &view.raw.as_bytes()[start_byte..];
+    let re = PosixBre::compile(&pattern).map_err(|detail| LineRangeError::InvalidRegex {
         pattern: pattern.clone(),
         detail,
     })?;
-    let Some((rel_start, _)) = re.find_from(haystack, 0) else {
-        return Err(LineRangeError::RegexNoMatch {
+    let (rel_start, _) = re
+        .find_from(haystack, 0)
+        .ok_or_else(|| LineRangeError::RegexNoMatch {
             pattern,
-            start_line: line_index.saturating_add(1),
-        });
-    };
-    let match_byte = start_byte + rel_start;
-    let line_1based = line_number_for_byte(content, match_byte);
-    Ok((rest, line_1based))
+            start_line: line_index_0.saturating_add(1),
+        })?;
+    Ok(one_based_line_at_byte(view.raw, start_byte + rel_start))
 }
 
-#[expect(clippy::too_many_arguments)]
-fn parse_range_funcname<'a>(
-    mut arg: &'a str,
+fn decode_symbol_range(
+    spec: &str,
     spec_owned: &str,
-    content: &str,
-    line_slices: &[&str],
+    view: &TextView<'_>,
     line_count: usize,
-    mut anchor: usize,
-    _path: &str,
-    _config: &ConfigSet,
-    funcname_matcher: Option<&FuncnameMatcher>,
-    begin: &mut usize,
-    end: &mut usize,
-) -> Result<&'a str, LineRangeError> {
-    if arg.starts_with('^') {
+    anchor_1: usize,
+    matcher: Option<&FuncnameMatcher>,
+) -> Result<DraftRange, LineRangeError> {
+    let mut body = spec;
+    let mut anchor = anchor_1;
+    if body.starts_with('^') {
         anchor = 1;
-        arg = &arg[1..];
+        body = &body[1..];
     }
-    if !arg.starts_with(':') {
+    if !body.starts_with(':') {
         return Err(LineRangeError::InvalidSpec {
             spec: spec_owned.to_owned(),
-            detail: "expected :funcname".into(),
+            detail: "expected :symbol".into(),
         });
     }
-    let pattern = parse_funcname_pattern(&arg[1..]).ok_or_else(|| LineRangeError::InvalidSpec {
-        spec: spec_owned.to_owned(),
-        detail: "expected :funcname".into(),
-    })?;
-    let (pattern, rest) = pattern;
+    let (pattern, rest) =
+        delimited_colon_pattern(&body[1..]).ok_or_else(|| LineRangeError::InvalidSpec {
+            spec: spec_owned.to_owned(),
+            detail: "expected :symbol".into(),
+        })?;
+    if !rest.is_empty() {
+        return Err(LineRangeError::InvalidSpec {
+            spec: spec_owned.to_owned(),
+            detail: format!("unexpected trailing text `{rest}`"),
+        });
+    }
 
-    let matcher = funcname_matcher;
-
-    anchor = anchor.saturating_sub(1);
-    let start_byte = line_start_byte(content, anchor.min(line_count.saturating_sub(1)));
-    let re = PosixEre::compile(&pattern, false).map_err(|detail| {
-        LineRangeError::FuncnameInvalidPattern {
+    let re =
+        PosixBre::compile(&pattern).map_err(|detail| LineRangeError::FuncnameInvalidPattern {
             pattern: pattern.clone(),
             detail,
-        }
-    })?;
+        })?;
 
-    let Some(func_start_byte) = find_funcname_matching_regexp(content, start_byte, &re, matcher)
-    else {
-        return Err(LineRangeError::FuncnameNoMatch {
-            pattern,
-            start_line: anchor.saturating_add(1),
-        });
-    };
+    let start_index_0 = anchor.saturating_sub(1);
+    let start_byte = byte_offset_of_line(view.raw, start_index_0.min(line_count.saturating_sub(1)));
+    let header_byte =
+        locate_func_header_after(view, start_byte, &re, matcher).ok_or_else(|| {
+            LineRangeError::FuncnameNoMatch {
+                pattern: pattern.clone(),
+                start_line: anchor,
+            }
+        })?;
 
     let mut begin_idx = 0usize;
-    while func_start_byte > line_start_byte(content, begin_idx) && begin_idx + 1 < line_count {
+    while header_byte > byte_offset_of_line(view.raw, begin_idx) && begin_idx + 1 < line_count {
         begin_idx += 1;
     }
     if begin_idx >= line_count {
@@ -378,89 +424,102 @@ fn parse_range_funcname<'a>(
 
     let mut end_idx = begin_idx + 1;
     while end_idx < line_count {
-        if is_func_line(line_slices[end_idx], matcher) {
+        if is_func_line(view.line_text(end_idx), matcher) {
             break;
         }
         end_idx += 1;
     }
 
-    *begin = begin_idx + 1;
-    *end = end_idx;
-    Ok(rest)
+    Ok(DraftRange {
+        start: begin_idx + 1,
+        end: end_idx,
+    })
 }
 
-fn find_funcname_matching_regexp(
-    content: &str,
+fn locate_func_header_after(
+    view: &TextView<'_>,
     start_byte: usize,
-    re: &PosixEre,
+    re: &PosixBre,
     matcher: Option<&FuncnameMatcher>,
 ) -> Option<usize> {
-    let bytes = content.as_bytes();
+    let bytes = view.raw.as_bytes();
     let mut pos = start_byte;
     while pos <= bytes.len() {
         let haystack = &bytes[pos..];
-        let (rel_start, rel_end) = re.find_from(haystack, 0)?;
+        let (rel_start, _) = re.find_from(haystack, 0)?;
         let match_start = pos + rel_start;
-        let match_end = pos + rel_end.max(rel_start + 1);
-        let bol = line_start_byte(content, line_number_for_byte(content, match_start) - 1);
-        let eol = if match_end >= bytes.len() {
-            bytes.len()
-        } else {
-            bytes[..match_end.min(bytes.len())]
-                .iter()
-                .rposition(|&b| b == b'\n')
-                .map(|n| n + 1)
-                .unwrap_or(bol)
-                .max(match_end)
-        };
-        let line_text = std::str::from_utf8(&bytes[bol..eol.min(bytes.len())]).unwrap_or("");
-        if is_func_line(line_text, matcher) {
+        let line_0 = one_based_line_at_byte(view.raw, match_start).saturating_sub(1);
+        let (bol, _) = view.line_byte_range(line_0);
+        if is_func_line(view.line_text(line_0), matcher) {
             return Some(bol);
         }
-        pos = if eol > pos { eol } else { pos + 1 };
+        pos = if line_0 + 1 < view.line_count() {
+            byte_offset_of_line(view.raw, line_0 + 1)
+        } else {
+            bytes.len()
+        };
     }
     None
 }
 
-fn parse_funcname_pattern(arg: &str) -> Option<(String, &str)> {
-    let mut term = 0usize;
-    let bytes = arg.as_bytes();
-    while term < bytes.len() && bytes[term] != b':' {
-        if bytes[term] == b'\\' && term + 1 < bytes.len() {
-            term += 2;
-        } else {
-            term += 1;
-        }
+fn finalize_inclusive_range(
+    mut draft: DraftRange,
+    line_count: usize,
+    spec_owned: &str,
+) -> Result<RangeInclusive<usize>, LineRangeError> {
+    if draft.start == 0 {
+        draft.start = 1;
     }
-    if term == 0 {
-        return None;
+    if draft.end == 0 || draft.end > line_count {
+        draft.end = line_count;
     }
-    let raw = &arg[..term];
-    let pattern = unescape_funcname_pattern(raw);
-    Some((pattern, &arg[term..]))
+    if draft.start > line_count && line_count > 0 {
+        return Err(LineRangeError::OutOfRange {
+            spec: spec_owned.to_owned(),
+            lines: line_count,
+        });
+    }
+    if line_count == 0 && (draft.start > 0 || draft.end > 0) {
+        return Err(LineRangeError::OutOfRange {
+            spec: spec_owned.to_owned(),
+            lines: 0,
+        });
+    }
+    if draft.start > draft.end {
+        std::mem::swap(&mut draft.start, &mut draft.end);
+    }
+    Ok(draft.start..=draft.end)
 }
 
-fn unescape_funcname_pattern(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    let mut chars = raw.chars();
-    while let Some(c) = chars.next() {
+fn split_first_comma(spec: &str) -> (&str, Option<&str>) {
+    let mut in_slashes = false;
+    let mut escaped = false;
+    for (idx, c) in spec.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
         if c == '\\' {
-            if let Some(next) = chars.next() {
-                out.push(next);
-            }
-        } else {
-            out.push(c);
+            escaped = true;
+            continue;
+        }
+        if c == '/' {
+            in_slashes = !in_slashes;
+            continue;
+        }
+        if c == ',' && !in_slashes {
+            return (&spec[..idx], Some(&spec[idx + 1..]));
         }
     }
-    out
+    (spec, None)
 }
 
-fn parse_slash_regex(spec: &str) -> Option<(String, &str)> {
-    if !spec.starts_with('/') {
+fn delimited_slashes(token: &str) -> Option<(String, &str)> {
+    if !token.starts_with('/') {
         return None;
     }
     let mut term = 1usize;
-    let bytes = spec.as_bytes();
+    let bytes = token.as_bytes();
     while term < bytes.len() && bytes[term] != b'/' {
         if bytes[term] == b'\\' && term + 1 < bytes.len() {
             term += 2;
@@ -471,14 +530,30 @@ fn parse_slash_regex(spec: &str) -> Option<(String, &str)> {
     if term >= bytes.len() {
         return None;
     }
-    let pattern = unescape_funcname_pattern(&spec[1..term]);
-    Some((pattern, &spec[term + 1..]))
+    let pattern = token[1..term].to_owned();
+    Some((pattern, &token[term + 1..]))
 }
 
-fn parse_optional_number(spec: &str) -> Option<(i64, &str)> {
-    let spec = spec.trim_start();
+fn delimited_colon_pattern(token: &str) -> Option<(String, &str)> {
+    let mut term = 0usize;
+    let bytes = token.as_bytes();
+    while term < bytes.len() && bytes[term] != b':' {
+        if bytes[term] == b'\\' && term + 1 < bytes.len() {
+            term += 2;
+        } else {
+            term += 1;
+        }
+    }
+    if term == 0 {
+        return None;
+    }
+    Some((token[..term].to_owned(), &token[term..]))
+}
+
+fn leading_decimal(token: &str) -> Option<(i64, &str)> {
+    let token = token.trim_start();
     let mut end = 0usize;
-    for (i, c) in spec.char_indices() {
+    for (i, c) in token.char_indices() {
         if c.is_ascii_digit() {
             end = i + c.len_utf8();
         } else {
@@ -488,26 +563,19 @@ fn parse_optional_number(spec: &str) -> Option<(i64, &str)> {
     if end == 0 {
         return None;
     }
-    let num: i64 = spec[..end].parse().ok()?;
-    Some((num, &spec[end..]))
+    let num: i64 = token[..end].parse().ok()?;
+    Some((num, &token[end..]))
 }
 
-fn parse_signed_number(spec: &str) -> Result<(i64, &str), LineRangeError> {
-    let Some((num, rest)) = parse_optional_number(spec) else {
-        return Ok((0, spec));
-    };
-    Ok((num, rest))
-}
-
-fn line_start_byte(content: &str, line_index: usize) -> usize {
-    if line_index == 0 {
+fn byte_offset_of_line(content: &str, line_index_0: usize) -> usize {
+    if line_index_0 == 0 {
         return 0;
     }
     let mut line = 0usize;
     for (idx, b) in content.bytes().enumerate() {
         if b == b'\n' {
             line += 1;
-            if line == line_index {
+            if line == line_index_0 {
                 return idx + 1;
             }
         }
@@ -515,7 +583,7 @@ fn line_start_byte(content: &str, line_index: usize) -> usize {
     content.len()
 }
 
-fn line_number_for_byte(content: &str, byte: usize) -> usize {
+fn one_based_line_at_byte(content: &str, byte: usize) -> usize {
     content[..byte.min(content.len())]
         .bytes()
         .filter(|&b| b == b'\n')
@@ -556,6 +624,22 @@ mod tests {
         let r =
             resolve_line_range("4,-2", content, "f.txt", &ConfigSet::default(), None, 1).unwrap();
         assert_eq!(r, 3..=4);
+    }
+
+    #[test]
+    fn bre_slash_pattern_treats_plus_as_literal() {
+        let content = "aaa\na+\n";
+        let r =
+            resolve_line_range("/a+/", content, "f.txt", &ConfigSet::default(), None, 1).unwrap();
+        assert_eq!(r, 2..=2);
+    }
+
+    #[test]
+    fn bre_slash_pattern_preserves_backslash_before_plus() {
+        let content = "aaa\na+\n";
+        let r =
+            resolve_line_range("/a\\+/", content, "f.txt", &ConfigSet::default(), None, 1).unwrap();
+        assert_eq!(r, 1..=2);
     }
 
     #[test]

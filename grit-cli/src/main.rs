@@ -852,8 +852,8 @@ enum Command {
         /// File to blame (repository-relative).
         #[arg(value_name = "FILE", last = true, allow_hyphen_values = true)]
         file: Option<String>,
-        /// Blame at this revision instead of `HEAD` (cannot combine with a positional revision).
-        #[arg(long, conflicts_with = "rev_pos")]
+        /// Blame at this revision instead of `HEAD`.
+        #[arg(long)]
         rev: Option<String>,
         /// Limit output with a Git-style line range (`-L` / `--lines`).
         #[arg(

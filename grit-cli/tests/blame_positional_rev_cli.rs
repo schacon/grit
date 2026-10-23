@@ -16,6 +16,19 @@ fn blame_positional_rev_before_separator() {
 }
 
 #[test]
+fn blame_rev_flag_with_file_operand() {
+    let fx = CliFixture::empty();
+    fx.write_repo_file("tracked.txt", "hello\n");
+    fx.run_ok(&["add", "tracked.txt"]);
+    fx.run_ok(&["commit", "-m", "add file"]);
+
+    let out = fx.run_ok(&["--json", "blame", "--rev=HEAD", "tracked.txt"]);
+    let json: serde_json::Value = serde_json::from_str(&out.stdout).expect("json blame output");
+    assert_eq!(json["file"], "tracked.txt");
+    assert!(json["lines"].as_array().is_some_and(|a| !a.is_empty()));
+}
+
+#[test]
 fn blame_file_only_without_rev() {
     let fx = CliFixture::empty();
     fx.write_repo_file("solo.txt", "x\n");

@@ -14,6 +14,12 @@ mod imp {
         REG_NOMATCH,
     };
 
+    /// Compiled POSIX BRE (`REG_NEWLINE` only), as Git uses for `blame -L` / line-range.
+    #[derive(Debug, Clone)]
+    pub(crate) struct PosixBre {
+        inner: Arc<CompiledRegex>,
+    }
+
     /// Compiled POSIX ERE (`REG_EXTENDED | REG_NEWLINE`).
     #[derive(Debug, Clone)]
     pub(crate) struct PosixEre {
@@ -33,6 +39,28 @@ mod imp {
             unsafe {
                 regfree(&mut self.re);
             }
+        }
+    }
+
+    impl PosixBre {
+        pub(crate) fn compile(pattern: &str) -> Result<Self, String> {
+            let c_pat = CString::new(pattern)
+                .map_err(|_| "pattern contains an interior NUL byte".to_owned())?;
+            let mut re: regex_t = unsafe { std::mem::zeroed() };
+            let rc = unsafe { regcomp(&mut re, c_pat.as_ptr(), REG_NEWLINE) };
+            if rc != 0 {
+                return Err(regcomp_error_message(&re, rc));
+            }
+            Ok(Self {
+                inner: Arc::new(CompiledRegex { re }),
+            })
+        }
+
+        pub(crate) fn find_from(&self, haystack: &[u8], from: usize) -> Option<(usize, usize)> {
+            if from > haystack.len() {
+                return None;
+            }
+            regexec_from(&self.inner.re, haystack, from)
         }
     }
 
@@ -204,6 +232,29 @@ mod imp {
 mod imp {
     use regex::RegexBuilder;
 
+    /// BRE fallback: literal-oriented search (libc `REG_NEWLINE` unavailable on this target).
+    #[derive(Debug, Clone)]
+    pub(crate) struct PosixBre {
+        re: regex::Regex,
+    }
+
+    impl PosixBre {
+        pub(crate) fn compile(pattern: &str) -> Result<Self, String> {
+            RegexBuilder::new(pattern)
+                .build()
+                .map(|re| Self { re })
+                .map_err(|e| e.to_string())
+        }
+
+        pub(crate) fn find_from(&self, haystack: &[u8], from: usize) -> Option<(usize, usize)> {
+            if from > haystack.len() {
+                return None;
+            }
+            let text = String::from_utf8_lossy(haystack);
+            self.re.find_at(&text, from).map(|m| (m.start(), m.end()))
+        }
+    }
+
     /// Compiled POSIX ERE (Rust `regex` fallback when libc is unavailable).
     #[derive(Debug, Clone)]
     pub(crate) struct PosixEre {
@@ -244,4 +295,4 @@ mod imp {
     }
 }
 
-pub(crate) use imp::PosixEre;
+pub(crate) use imp::{PosixBre, PosixEre};
