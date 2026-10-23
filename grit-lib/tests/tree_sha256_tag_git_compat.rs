@@ -7,6 +7,7 @@ use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::objects::{extra_header_values, parse_tag, ObjectId};
 use grit_lib::porcelain::tag::{create_tag, list_tags, CreateTagRequest};
+use grit_lib::refs::listing::RefQuery;
 use grit_lib::repo::Repository;
 use grit_lib::tree_sha256::{TreeSha256Claim, TreeSha256Options, TREE_SHA256_EXCLUDED_HEADER};
 use grit_test_support::git;
@@ -263,7 +264,9 @@ fn missing_submodule_fails_before_writing_tag() {
         matches!(err, Error::TreeSha256MissingSubmodules(_)),
         "{err:?}"
     );
-    assert!(list_tags(&repo).expect("list").is_empty());
+    assert!(list_tags(&repo, &RefQuery::default())
+        .expect("list")
+        .is_empty());
 }
 
 #[test]

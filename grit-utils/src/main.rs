@@ -52,6 +52,10 @@ use grit_utils::scenarios::{
 };
 use grit_utils::schema::BenchReport;
 use grit_utils::synth::{generate_synth_repo, SynthReport, SynthTier};
+use grit_utils::tag_tree_sha256_suite::{
+    run_prepare_tag_tree_sha256_digest, run_prepare_tag_tree_sha256_signed,
+    run_tag_tree_sha256_suite,
+};
 use grit_utils::worktree_fixture::{
     prepare_add as prepare_worktree_add, prepare_add_hunks_large as prepare_worktree_add_hunks,
     prepare_add_lines_large as prepare_worktree_add_lines,
@@ -178,6 +182,14 @@ enum Cmd {
     Hash {
         #[arg(long)]
         smoke: bool,
+    },
+    /// tree-sha256 tag sign/verify vs git and reference tools on real-shaped fixtures
+    TagTreeSha256 {
+        #[arg(long)]
+        smoke: bool,
+        /// Include pinned linux kernel worktree (or set `GRIT_BENCH_LINUX=1`).
+        #[arg(long)]
+        with_linux: bool,
     },
     /// `grit gc`, repack, and commit-graph vs git on deep-history fixture
     Maintenance {
@@ -640,6 +652,20 @@ enum Cmd {
         git: PathBuf,
         #[arg(long)]
         repo: PathBuf,
+    },
+    #[command(hide = true)]
+    PrepareTagTreeSha256Digest {
+        #[arg(long)]
+        git: PathBuf,
+        #[arg(long)]
+        grit: PathBuf,
+    },
+    #[command(hide = true)]
+    PrepareTagTreeSha256Signed {
+        #[arg(long)]
+        git: PathBuf,
+        #[arg(long)]
+        grit: PathBuf,
     },
 }
 
@@ -1541,6 +1567,14 @@ fn main() -> Result<()> {
             let git = resolve_binary("git", Some(git))?;
             return prepare_hash_object(&git, repo.as_path());
         }
+        Cmd::PrepareTagTreeSha256Digest { git: _, grit } => {
+            let grit = resolve_binary("grit", Some(grit))?;
+            return run_prepare_tag_tree_sha256_digest(&grit);
+        }
+        Cmd::PrepareTagTreeSha256Signed { git: _, grit } => {
+            let grit = resolve_binary("grit", Some(grit))?;
+            return run_prepare_tag_tree_sha256_signed(&grit);
+        }
         _ => {}
     }
 
@@ -1797,6 +1831,19 @@ fn main() -> Result<()> {
                     .unwrap_or_else(|_| PathBuf::from("grit-bench")),
             };
             run_hash_suite(&hyperfine, &git, &grit, &cfg, *smoke, timestamp)?
+        }
+        Cmd::TagTreeSha256 { smoke, with_linux } => {
+            eprintln!("Running tree-sha256 tag benchmarks...");
+            let cfg = run_config(&cli, true);
+            run_tag_tree_sha256_suite(
+                &hyperfine,
+                &git,
+                &grit,
+                &cfg,
+                *smoke,
+                *with_linux,
+                timestamp,
+            )?
         }
         Cmd::Maintenance { smoke } => {
             eprintln!("Running maintenance (gc) benchmarks...");
@@ -2067,6 +2114,8 @@ fn main() -> Result<()> {
         | Cmd::PrepareParallelClone { .. }
         | Cmd::PrepareParallelIndexPack { .. }
         | Cmd::PrepareHashObject { .. }
+        | Cmd::PrepareTagTreeSha256Digest { .. }
+        | Cmd::PrepareTagTreeSha256Signed { .. }
         | Cmd::RefsDriver { .. }
         | Cmd::LibOp { .. }
         | Cmd::Fixture { .. }
