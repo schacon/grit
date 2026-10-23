@@ -3087,6 +3087,10 @@ impl core::fmt::Debug for grit_lib::diff::merge_file::MergeFavor
 pub fn grit_lib::diff::merge_file::MergeFavor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for grit_lib::diff::merge_file::MergeFavor
 impl core::marker::StructuralPartialEq for grit_lib::diff::merge_file::MergeFavor
+impl serde_core::ser::Serialize for grit_lib::diff::merge_file::MergeFavor
+pub fn grit_lib::diff::merge_file::MergeFavor::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for grit_lib::diff::merge_file::MergeFavor
+pub fn grit_lib::diff::merge_file::MergeFavor::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 impl core::marker::Freeze for grit_lib::diff::merge_file::MergeFavor
 impl core::marker::Send for grit_lib::diff::merge_file::MergeFavor
 impl core::marker::Sync for grit_lib::diff::merge_file::MergeFavor
@@ -19678,6 +19682,28 @@ impl core::marker::Unpin for grit_lib::revwalk::history::Placement
 impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::Placement
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::Placement
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::Placement
+pub enum grit_lib::revwalk::history::RebaseCheckPlan
+pub grit_lib::revwalk::history::RebaseCheckPlan::Clean
+pub grit_lib::revwalk::history::RebaseCheckPlan::Clean::commits: alloc::vec::Vec<grit_lib::objects::ObjectId>
+pub grit_lib::revwalk::history::RebaseCheckPlan::Conflict
+pub grit_lib::revwalk::history::RebaseCheckPlan::Conflict::commit: grit_lib::objects::ObjectId
+pub grit_lib::revwalk::history::RebaseCheckPlan::Conflict::paths: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::revwalk::history::RebaseCheckPlan::UpToDate
+impl core::clone::Clone for grit_lib::revwalk::history::RebaseCheckPlan
+pub fn grit_lib::revwalk::history::RebaseCheckPlan::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::history::RebaseCheckPlan
+impl core::cmp::PartialEq for grit_lib::revwalk::history::RebaseCheckPlan
+pub fn grit_lib::revwalk::history::RebaseCheckPlan::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::revwalk::history::RebaseCheckPlan
+pub fn grit_lib::revwalk::history::RebaseCheckPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::history::RebaseCheckPlan
+impl core::marker::Freeze for grit_lib::revwalk::history::RebaseCheckPlan
+impl core::marker::Send for grit_lib::revwalk::history::RebaseCheckPlan
+impl core::marker::Sync for grit_lib::revwalk::history::RebaseCheckPlan
+impl core::marker::Unpin for grit_lib::revwalk::history::RebaseCheckPlan
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::RebaseCheckPlan
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::RebaseCheckPlan
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::RebaseCheckPlan
 pub enum grit_lib::revwalk::history::RebaseOutcome
 pub grit_lib::revwalk::history::RebaseOutcome::Done
 pub grit_lib::revwalk::history::RebaseOutcome::Done::applied: grit_lib::revwalk::history::AppliedRewrite
@@ -20040,6 +20066,7 @@ impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::PlannedRefUpdate
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::PlannedRefUpdate
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::PlannedRefUpdate
 pub struct grit_lib::revwalk::history::RebaseOntoOptions
+pub grit_lib::revwalk::history::RebaseOntoOptions::favor: grit_lib::diff::merge_file::MergeFavor
 pub grit_lib::revwalk::history::RebaseOntoOptions::flatten_leaf_merges: bool
 pub grit_lib::revwalk::history::RebaseOntoOptions::rewrite: grit_lib::revwalk::history::RewriteOptions
 pub grit_lib::revwalk::history::RebaseOntoOptions::skip_applied: bool
@@ -20304,6 +20331,7 @@ pub fn grit_lib::revwalk::history::format_hunk_range_header(&grit_lib::revwalk::
 pub fn grit_lib::revwalk::history::move_commit(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::revwalk::history::Placement, &grit_lib::revwalk::history::RewriteOptions) -> core::result::Result<grit_lib::revwalk::history::RewritePlan, grit_lib::revwalk::history::HistoryError>
 pub fn grit_lib::revwalk::history::normalize_rewrite_message(&str) -> core::result::Result<alloc::string::String, grit_lib::revwalk::history::HistoryError>
 pub fn grit_lib::revwalk::history::plan_rebase(&grit_lib::repo::Repository, &grit_lib::revwalk::history::RebaseRequest, &grit_lib::revwalk::history::RebaseOntoOptions) -> core::result::Result<grit_lib::revwalk::history::RebasePlan, grit_lib::revwalk::history::HistoryError>
+pub fn grit_lib::revwalk::history::plan_rebase_check(&grit_lib::repo::Repository, &grit_lib::revwalk::history::RebaseRequest, &grit_lib::revwalk::history::RebaseOntoOptions) -> core::result::Result<grit_lib::revwalk::history::RebaseCheckPlan, grit_lib::revwalk::history::HistoryError>
 pub fn grit_lib::revwalk::history::plan_rewrite(&grit_lib::repo::Repository, &grit_lib::revwalk::history::HistoryEdits, &grit_lib::revwalk::history::RewriteOptions) -> core::result::Result<grit_lib::revwalk::history::RewritePlan, grit_lib::revwalk::history::HistoryError>
 pub fn grit_lib::revwalk::history::read_history_last(&grit_lib::repo::Repository) -> core::result::Result<core::option::Option<grit_lib::revwalk::history::HistoryLastRecord>, grit_lib::revwalk::history::HistoryError>
 pub fn grit_lib::revwalk::history::rebase_onto(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, &[grit_lib::objects::ObjectId], &grit_lib::revwalk::history::RebaseOntoOptions) -> core::result::Result<grit_lib::revwalk::history::RewritePlan, grit_lib::revwalk::history::HistoryError>

@@ -354,6 +354,30 @@ fn init_rebase_conflict_fixture(dir: &Path) -> Result<(String, String), Box<dyn 
 }
 
 #[test]
+#[test]
+fn rebase_check_succeeds_when_gpgsign_enabled() -> TestResult {
+    let scratch = Scratch::new("check-gpgsign")?;
+    let dir = scratch.path();
+    let (upstream, onto) = init_rebase_conflict_fixture(dir)?;
+    gs(dir, ["config", "grit.changeIds", "false"])?;
+    gs(dir, ["config", "commit.gpgsign", "true"])?;
+    let out = gs(
+        dir,
+        ["rebase", "--check", "--onto", &onto, &upstream, "--json"],
+    )?;
+    assert_eq!(
+        out.status,
+        Some(1),
+        "expected conflict prediction, not signing failure: {}\n{}",
+        out.stdout,
+        out.stderr
+    );
+    let json = parse_json(&out.stdout)?;
+    assert_eq!(json["result"], "conflicts");
+    Ok(())
+}
+
+#[test]
 fn rebase_check_exit_codes() -> TestResult {
     let scratch = Scratch::new("check")?;
     let dir = scratch.path();

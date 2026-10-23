@@ -832,6 +832,10 @@ pub fn run_rebase(
         branch_tip,
     };
     let mut opts = RebaseOntoOptions::new(rewrite.options.clone());
+    if flags.check {
+        // Match `--dry-run`: prediction must not invoke commit signing.
+        opts.rewrite.sign = false;
+    }
     if let Some(strategy) = flags.strategy {
         opts.favor = strategy.into();
     }
