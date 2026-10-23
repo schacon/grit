@@ -185,8 +185,7 @@ fn grit_bin() -> Option<std::path::PathBuf> {
     if let Ok(p) = std::env::var("GRIT_BIN") {
         return Some(std::path::PathBuf::from(p));
     }
-    let debug = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../target/debug/grit");
+    let debug = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/debug/grit");
     debug.is_file().then_some(debug)
 }
 
