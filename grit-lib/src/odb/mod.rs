@@ -739,7 +739,9 @@ impl Odb {
     pub fn enable_mem_overlay(&self) {
         self.mem_overlay_active.store(true, Ordering::Release);
         if let Ok(mut guard) = self.mem_overlay.write() {
-            *guard = Some(Arc::new(MemoryStore::new(self.hash_algo())));
+            if guard.is_none() {
+                *guard = Some(Arc::new(MemoryStore::new(self.hash_algo())));
+            }
         }
     }
 
