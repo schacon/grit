@@ -872,6 +872,47 @@ mod tests {
         assert_eq!(out, vec![oid]);
     }
 
+    fn temp_store() -> (tempfile::TempDir, LooseStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LooseStore::new(
+            dir.path().join("objects"),
+            HashAlgo::Sha1,
+            Compression::default(),
+        );
+        fs::create_dir_all(store.objects_dir()).unwrap();
+        (dir, store)
+    }
+
+    #[test]
+    fn read_info_and_read_agree_for_object_spanning_read_chunks() {
+        let (_dir, store) = temp_store();
+        let data: Vec<u8> = (0..3 * READ_CHUNK as u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+            .collect();
+        let oid =
+            WritableObjectStore::write(&store, ObjectKind::Blob, &data, WriteOptions::default())
+                .unwrap();
+        let info = ObjectStore::read_info(&store, &oid).unwrap().expect("info");
+        assert_eq!(info.kind, ObjectKind::Blob);
+        assert_eq!(info.size, data.len() as u64);
+        let obj = ObjectStore::read(&store, &oid).unwrap().expect("object");
+        assert_eq!(obj.kind, ObjectKind::Blob);
+        assert_eq!(obj.data, data);
+        let mut buf = Vec::new();
+        let kind = ObjectStore::read_into(&store, &oid, &mut buf).unwrap();
+        assert_eq!(kind, Some(ObjectKind::Blob));
+        assert_eq!(buf, data);
+    }
+
+    #[test]
+    fn read_info_is_none_for_missing_object_or_directory_at_its_path() {
+        let (_dir, store) = temp_store();
+        let missing = ObjectId::from_hex("1234567890123456789012345678901234567890").unwrap();
+        assert!(ObjectStore::read_info(&store, &missing).unwrap().is_none());
+        fs::create_dir_all(store.object_path(&missing)).unwrap();
+        assert!(ObjectStore::read_info(&store, &missing).unwrap().is_none());
+    }
+
     #[test]
     fn lookup_prefix_one_hex_char_does_not_overflow() {
         let dir = tempfile::tempdir().unwrap();

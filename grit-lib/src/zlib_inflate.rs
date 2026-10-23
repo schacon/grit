@@ -684,7 +684,7 @@ mod tests {
     }
 
     #[test]
-    fn decompress_loose_payload_reads_from_file() {
+    fn inflate_loose_file_reads_from_file() {
         use std::io::Write;
         let plain = b"blob 5\0hello";
         let zlib = deflate(plain);
@@ -728,7 +728,7 @@ mod tests {
     }
 
     #[test]
-    fn decompress_loose_payload_preset_dictionary_from_file() {
+    fn inflate_loose_file_preset_dictionary_from_file() {
         let mut file = tempfile::NamedTempFile::new().expect("temp");
         file.write_all(&[0x78, 0x20, 0, 0, 0, 0, 0x03, 0x00])
             .expect("write");
@@ -740,5 +740,158 @@ mod tests {
             Error::Zlib(msg) if msg == "needs dictionary" => {}
             other => panic!("expected needs dictionary, got {other:?}"),
         }
+    }
+
+    /// Incompressible bytes, so the deflated stream is about as large as the input.
+    fn noise(len: usize) -> Vec<u8> {
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state.to_le_bytes()[0]
+            })
+            .collect()
+    }
+
+    fn loose_file(plain: &[u8]) -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().expect("temp");
+        file.write_all(&deflate(plain)).expect("write");
+        file
+    }
+
+    fn loose_bytes(kind: &str, payload: &[u8]) -> Vec<u8> {
+        let mut plain = format!("{kind} {}\0", payload.len()).into_bytes();
+        plain.extend_from_slice(payload);
+        plain
+    }
+
+    #[test]
+    fn inflate_loose_file_spans_several_read_chunks() {
+        let plain = loose_bytes("blob", &noise(3 * READ_CHUNK + 123));
+        let file = loose_file(&plain);
+        assert!(file.as_file().metadata().expect("meta").len() > 2 * READ_CHUNK as u64);
+        let mut out = Vec::new();
+        ZlibInflateScratch::default()
+            .inflate_loose_file(&mut file.reopen().expect("reopen"), &mut out)
+            .expect("inflate");
+        assert_eq!(out, plain);
+    }
+
+    #[test]
+    fn inflate_loose_file_sizes_output_from_header() {
+        let plain = loose_bytes("blob", &vec![b'a'; 200_000]);
+        let file = loose_file(&plain);
+        let mut out = Vec::new();
+        ZlibInflateScratch::default()
+            .inflate_loose_file(&mut file.reopen().expect("reopen"), &mut out)
+            .expect("inflate");
+        assert_eq!(out, plain);
+        assert_eq!(out.capacity(), plain.len());
+    }
+
+    #[test]
+    fn inflate_loose_file_bounds_reservation_for_lying_header() {
+        let plain = b"blob 99999999999999\0tiny".to_vec();
+        let file = loose_file(&plain);
+        let mut out = Vec::new();
+        ZlibInflateScratch::default()
+            .inflate_loose_file(&mut file.reopen().expect("reopen"), &mut out)
+            .expect("inflate");
+        assert_eq!(out, plain);
+        assert!(out.capacity() <= MAX_HEADER_SIZE_RESERVE);
+    }
+
+    #[test]
+    fn inflate_loose_file_truncated_stream_is_zlib_error() {
+        let zlib = deflate(&loose_bytes("blob", &noise(5000)));
+        let mut file = tempfile::NamedTempFile::new().expect("temp");
+        file.write_all(&zlib[..zlib.len() / 2]).expect("write");
+        let err = ZlibInflateScratch::default()
+            .inflate_loose_file(&mut file.reopen().expect("reopen"), &mut Vec::new())
+            .unwrap_err();
+        assert!(matches!(err, Error::Zlib(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn inflate_loose_file_shorter_than_zlib_header_is_eof() {
+        for bytes in [&[][..], &[0x78][..]] {
+            let mut file = tempfile::NamedTempFile::new().expect("temp");
+            file.write_all(bytes).expect("write");
+            let err = ZlibInflateScratch::default()
+                .inflate_loose_file(&mut file.reopen().expect("reopen"), &mut Vec::new())
+                .unwrap_err();
+            match err {
+                Error::Io(e) => assert_eq!(e.kind(), std::io::ErrorKind::UnexpectedEof),
+                other => panic!("expected unexpected EOF, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn inflate_loose_file_ignores_bytes_after_stream_end() {
+        let plain = loose_bytes("blob", b"payload");
+        let mut file = tempfile::NamedTempFile::new().expect("temp");
+        file.write_all(&deflate(&plain)).expect("write");
+        file.write_all(b"trailing junk").expect("write");
+        let mut out = Vec::new();
+        ZlibInflateScratch::default()
+            .inflate_loose_file(&mut file.reopen().expect("reopen"), &mut out)
+            .expect("inflate");
+        assert_eq!(out, plain);
+    }
+
+    #[test]
+    fn reused_scratch_decodes_consecutive_loose_files() {
+        let first = loose_bytes("blob", &noise(2 * READ_CHUNK));
+        let second = loose_bytes("tree", b"");
+        let mut scratch = ZlibInflateScratch::default();
+        for plain in [&first, &second, &first] {
+            let mut out = vec![0xAA; 7];
+            scratch
+                .inflate_loose_file(&mut loose_file(plain).reopen().expect("reopen"), &mut out)
+                .expect("inflate");
+            assert_eq!(&out, plain);
+        }
+        let header = with_loose_scratch(|s| {
+            s.inflate_loose_header(&mut loose_file(&second).reopen().expect("reopen"))
+        })
+        .expect("header");
+        assert_eq!(header, b"tree 0\0");
+    }
+
+    #[test]
+    fn inflate_loose_header_stops_at_header() {
+        let plain = loose_bytes("blob", &noise(4 * READ_CHUNK));
+        let header = ZlibInflateScratch::default()
+            .inflate_loose_header(&mut loose_file(&plain).reopen().expect("reopen"))
+            .expect("header");
+        let nul = header.iter().position(|&b| b == 0).expect("nul");
+        assert_eq!(
+            &header[..=nul],
+            format!("blob {}\0", 4 * READ_CHUNK).as_bytes()
+        );
+        assert!(header.len() <= LOOSE_HEADER_MAX);
+    }
+
+    #[test]
+    fn inflate_loose_header_on_corrupt_file_is_zlib_error() {
+        let mut file = tempfile::NamedTempFile::new().expect("temp");
+        file.write_all(b"definitely not zlib").expect("write");
+        let err = ZlibInflateScratch::default()
+            .inflate_loose_header(&mut file.reopen().expect("reopen"))
+            .unwrap_err();
+        assert!(matches!(err, Error::Zlib(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn declared_loose_object_len_parses_only_complete_headers() {
+        assert_eq!(declared_loose_object_len(b"blob 5\0hello"), Some(12));
+        assert_eq!(declared_loose_object_len(b"commit 0\0"), Some(9));
+        assert_eq!(declared_loose_object_len(b"blob 12"), None);
+        assert_eq!(declared_loose_object_len(b"blob \0"), None);
+        assert_eq!(declared_loose_object_len(b"blob x1\0"), None);
+        assert_eq!(declared_loose_object_len(b"blob\0"), None);
     }
 }
