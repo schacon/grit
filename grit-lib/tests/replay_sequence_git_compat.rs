@@ -746,6 +746,65 @@ fn continue_after_range_conflict_pairs_all_created_sources() {
 }
 
 #[test]
+fn continue_omits_conflict_comment_lines_from_merge_msg() {
+    let root = tempfile::tempdir().expect("tempdir");
+    init_repo(root.path());
+    commit_file(root.path(), "f", "base\n", "base");
+    git(root.path(), &["switch", "-c", "topic"]);
+    fs::write(root.path().join("f"), "topic\n").unwrap();
+    git(root.path(), &["commit", "-qam", "topic-f"]);
+    let pick = oid_from_rev(root.path(), "HEAD");
+    git(root.path(), &["switch", "main"]);
+    fs::write(root.path().join("f"), "main\n").unwrap();
+    git(root.path(), &["commit", "-qam", "main"]);
+
+    let repo = open_repo(root.path());
+    start_replay_sequence(&repo, &pick_req(vec![pick], ReplayOptions::default())).expect("pick");
+    fs::write(root.path().join("f"), "resolved\n").unwrap();
+    git(root.path(), &["add", "f"]);
+    fs::write(
+        root.path().join(".git/MERGE_MSG"),
+        "topic-f\n\n# Conflicts:\n# f\n",
+    )
+    .unwrap();
+    continue_replay_sequence(&repo, IDENT).expect("continue");
+    let msg = git(root.path(), &["log", "-1", "--format=%B"]);
+    assert!(!msg.contains("# Conflicts:"));
+    assert!(msg.contains("topic-f"));
+    git_fsck_strict(root.path());
+}
+
+#[test]
+fn skip_after_partial_range_returns_earlier_created_records() {
+    let root = tempfile::tempdir().expect("tempdir");
+    init_repo(root.path());
+    commit_file(root.path(), "shared.txt", "base\n", "base");
+    git(root.path(), &["switch", "-c", "topic"]);
+    commit_file(root.path(), "clean.txt", "clean\n", "t1 clean");
+    let c1 = oid_from_rev(root.path(), "HEAD");
+    fs::write(root.path().join("shared.txt"), "topic\n").unwrap();
+    git(root.path(), &["add", "shared.txt"]);
+    git(root.path(), &["commit", "-qm", "t2 conflict"]);
+    let c2 = oid_from_rev(root.path(), "HEAD");
+    git(root.path(), &["switch", "main"]);
+    fs::write(root.path().join("shared.txt"), "main\n").unwrap();
+    git(root.path(), &["add", "shared.txt"]);
+    git(root.path(), &["commit", "-qm", "main"]);
+
+    let repo = open_repo(root.path());
+    start_replay_sequence(&repo, &pick_req(vec![c1, c2], ReplayOptions::default())).expect("pick");
+    let out = skip_replay_step(&repo, IDENT).expect("skip");
+    match out {
+        SequenceOutcome::Completed { created, .. } => {
+            assert_eq!(created.len(), 1);
+            assert_eq!(created[0].source, c1);
+        }
+        _ => panic!("expected completed after skip"),
+    }
+    git_fsck_strict(root.path());
+}
+
+#[test]
 fn continue_honours_persisted_no_commit() {
     let root = tempfile::tempdir().expect("tempdir");
     init_repo(root.path());

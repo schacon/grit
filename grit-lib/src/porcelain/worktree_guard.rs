@@ -41,23 +41,55 @@ pub struct WorktreeSnapshot {
 ///
 /// Returns errors from index I/O, ODB reads, or when the repository has no work tree.
 pub fn load_worktree_snapshot(repo: &Repository) -> Result<WorktreeSnapshot> {
+    load_worktree_snapshot_with_options(repo, false)
+}
+
+pub(crate) fn load_worktree_snapshot_for_replay(repo: &Repository) -> Result<WorktreeSnapshot> {
+    load_worktree_snapshot_with_options(repo, true)
+}
+
+fn load_worktree_snapshot_with_options(
+    repo: &Repository,
+    for_replay: bool,
+) -> Result<WorktreeSnapshot> {
     let _work_tree = repo
         .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
 
     let head = resolve_head(repo.git_dir())?;
     let head_tree = head_tree_from_head_commit(repo, head.oid())?;
-    let index = load_worktree_index(repo)?;
+    let index = if for_replay {
+        load_worktree_index_for_replay(repo)?
+    } else {
+        load_worktree_index(repo)?
+    };
     Ok(WorktreeSnapshot { index, head_tree })
 }
 
 /// Load the index for worktree guards without resolving `HEAD`.
 pub(crate) fn load_worktree_index(repo: &Repository) -> Result<Index> {
+    load_worktree_index_with_options(repo, false)
+}
+
+/// Load the worktree index, optionally skipping the cache-tree extension (replay hot path).
+pub(crate) fn load_worktree_index_for_replay(repo: &Repository) -> Result<Index> {
+    load_worktree_index_with_options(repo, true)
+}
+
+fn load_worktree_index_with_options(repo: &Repository, skip_cache_tree: bool) -> Result<Index> {
     let _work_tree = repo
         .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
     let index_path = repo.index_path_for_env()?;
-    let mut index = repo.load_index_at(&index_path)?;
+    let parse_context = if skip_cache_tree {
+        crate::index::IndexParseContext {
+            thread_policy: crate::parallel::ThreadPolicy::with_threads_override(Some(1)),
+            skip_cache_tree: true,
+        }
+    } else {
+        crate::index::IndexParseContext::from_policy(repo.thread_policy())
+    };
+    let mut index = repo.load_index_at_with_context(&index_path, parse_context)?;
     if index.has_sparse_directory_placeholders() {
         let protect = crate::path_validate::ProtectOptions::from_config(&*repo.config()?);
         index.expand_sparse_directory_placeholders(repo.odb(), protect)?;
@@ -1292,6 +1324,17 @@ fn ensure_worktree_clean_with_message(
     persist_index_stat_refresh: bool,
 ) -> Result<()> {
     let mut snapshot = load_worktree_snapshot(repo)?;
+    ensure_worktree_clean_from_snapshot(repo, &mut snapshot, message, persist_index_stat_refresh)?;
+    Ok(())
+}
+
+/// Refuse when staged or unstaged changes exist, reusing an already-loaded snapshot.
+pub(crate) fn ensure_worktree_clean_from_snapshot(
+    repo: &Repository,
+    snapshot: &mut WorktreeSnapshot,
+    message: &str,
+    persist_index_stat_refresh: bool,
+) -> Result<()> {
     let index_path = repo.index_path_for_env()?;
     let (staged, unstaged, index_changed) =
         local_change_diffs(repo, &mut snapshot.index, snapshot.head_tree)?;
@@ -1304,6 +1347,21 @@ fn ensure_worktree_clean_with_message(
     if !staged.is_empty() || !unstaged.is_empty() {
         return Err(Error::Message(message.into()));
     }
+    Ok(())
+}
+
+/// Cleanliness check for pick/revert with a reusable worktree snapshot when a work tree exists.
+pub(crate) fn prepare_worktree_for_pick(repo: &Repository) -> Result<()> {
+    if repo.work_tree().is_none() {
+        return Ok(());
+    }
+    let mut snapshot = load_worktree_snapshot_for_replay(repo)?;
+    ensure_worktree_clean_from_snapshot(
+        repo,
+        &mut snapshot,
+        "you have uncommitted changes — commit them before picking",
+        false,
+    )?;
     Ok(())
 }
 

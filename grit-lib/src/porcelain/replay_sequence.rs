@@ -33,7 +33,7 @@ use crate::porcelain::tree_merge_checkout::{
     apply_clean_tree_merge_to_worktree, apply_clean_tree_merge_to_worktree_with_snapshot,
 };
 use crate::porcelain::worktree_guard::{
-    ensure_worktree_clean_for_pick, load_worktree_snapshot, WorktreeSnapshot,
+    load_worktree_snapshot_for_replay, prepare_worktree_for_pick, WorktreeSnapshot,
 };
 use crate::refs::{update_branch_for_commit_with_config, BranchCommitRefUpdate};
 use crate::repo::Repository;
@@ -43,6 +43,7 @@ use crate::state::{
     read_cherry_pick_head, read_merge_msg, read_orig_head, read_revert_head, resolve_head,
     HeadState,
 };
+use crate::stripspace::{process as stripspace_process, Mode as StripspaceMode};
 use crate::write_tree::{write_tree_update_index, WriteTreeFlags};
 
 /// How to handle a replay step whose merged tree matches `HEAD` (empty patch).
@@ -266,7 +267,7 @@ pub fn start_replay_sequence(
             "cherry-pick or revert is already in progress".into(),
         ));
     }
-    ensure_worktree_clean_for_pick(repo)?;
+    prepare_worktree_for_pick(repo)?;
     let (refname, head_oid) = branch_head(repo)?;
     if req.commits.is_empty() {
         return Ok(SequenceOutcome::Completed {
@@ -297,6 +298,7 @@ pub fn start_replay_sequence(
         Vec::new(),
         Vec::new(),
         &mut Vec::new(),
+        None,
     )
 }
 
@@ -314,7 +316,7 @@ pub fn continue_replay_sequence(repo: &Repository, identity: &str) -> Result<Seq
     }
     let (refname, head_oid) = branch_head(repo)?;
     let source = active.current_source()?.ok_or(Error::NoReplayInProgress)?;
-    let message = read_merge_msg(repo.git_dir())?.ok_or(Error::NoReplayInProgress)?;
+    let message = resolve_continue_replay_message(repo.git_dir())?;
     let new_tree = write_tree_update_index(
         repo.odb(),
         &mut index,
@@ -378,6 +380,7 @@ pub fn continue_replay_sequence(repo: &Repository, identity: &str) -> Result<Seq
         &active.opts,
         active.direction,
         identity,
+        &created_records,
     )?;
     run_sequence(
         repo,
@@ -392,6 +395,7 @@ pub fn continue_replay_sequence(repo: &Repository, identity: &str) -> Result<Seq
         created_so_far,
         Vec::new(),
         &mut created_records,
+        None,
     )
 }
 
@@ -414,16 +418,16 @@ pub fn skip_replay_step(repo: &Repository, identity: &str) -> Result<SequenceOut
         Some(todo.remove(0).oid)
     };
     write_sequencer_todo(repo.git_dir(), &todo)?;
+    let mut created_records = read_created_records(repo.git_dir())?;
     if todo.is_empty() {
         clear_replay_state(repo.git_dir())?;
         return Ok(SequenceOutcome::Completed {
-            created: Vec::new(),
+            created: created_records,
             dropped: dropped.into_iter().collect(),
         });
     }
     let dropped: Vec<ObjectId> = dropped.into_iter().collect();
     let sequence_start = read_sequencer_head(repo.git_dir()).unwrap_or(active.abort_safety);
-    let mut created_records = read_created_records(repo.git_dir())?;
     match run_sequence(
         repo,
         &refname,
@@ -437,6 +441,7 @@ pub fn skip_replay_step(repo: &Repository, identity: &str) -> Result<SequenceOut
         created_records.iter().map(|r| r.new_oid).collect(),
         dropped,
         &mut created_records,
+        None,
     )? {
         SequenceOutcome::Completed { created, dropped } => {
             Ok(SequenceOutcome::Completed { created, dropped })
@@ -555,6 +560,7 @@ fn run_sequence(
     mut created_so_far: Vec<ObjectId>,
     mut dropped: Vec<ObjectId>,
     created_records: &mut Vec<ReplayCreated>,
+    initial_worktree: Option<WorktreeSnapshot>,
 ) -> Result<SequenceOutcome> {
     let mut head = head_oid;
     let _ = abort_safety;
@@ -562,11 +568,14 @@ fn run_sequence(
     let change_id_policy = ChangeIdPolicy::from_config(&config);
     let mut merge_cache = MergeTreeCache::default();
     let mut cached_head_tree = commit_tree(repo, &head)?;
-    let mut worktree_snapshot = repo
-        .work_tree()
-        .is_some()
-        .then(|| load_worktree_snapshot(repo))
-        .transpose()?;
+    let mut worktree_snapshot = match initial_worktree {
+        Some(snapshot) => Some(snapshot),
+        None => repo
+            .work_tree()
+            .is_some()
+            .then(|| load_worktree_snapshot_for_replay(repo))
+            .transpose()?,
+    };
     while let Some(entry) = todo.first().cloned() {
         let step = match apply_one_step(
             repo,
@@ -594,6 +603,7 @@ fn run_sequence(
                         opts,
                         direction,
                         committer,
+                        created_records,
                     );
                 } else {
                     clear_replay_state(repo.git_dir())?;
@@ -606,7 +616,6 @@ fn run_sequence(
                 todo.remove(0);
                 created_so_far.push(oid);
                 created_records.push(replay_created_record(repo, entry.oid, oid)?);
-                write_created_records(repo.git_dir(), created_records)?;
                 cached_head_tree = tree;
                 merge_cache.clear_retained();
                 if todo.is_empty() {
@@ -616,6 +625,16 @@ fn run_sequence(
                         dropped,
                     });
                 }
+                persist_sequence_checkpoint(
+                    repo,
+                    sequence_start,
+                    head,
+                    todo,
+                    opts,
+                    direction,
+                    committer,
+                    created_records,
+                )?;
             }
             StepResult::AppliedNoCommit { tree } => {
                 todo.remove(0);
@@ -628,6 +647,16 @@ fn run_sequence(
                         dropped,
                     });
                 }
+                persist_sequence_checkpoint(
+                    repo,
+                    sequence_start,
+                    head,
+                    todo,
+                    opts,
+                    direction,
+                    committer,
+                    created_records,
+                )?;
             }
             StepResult::DroppedEmpty => {
                 todo.remove(0);
@@ -655,6 +684,7 @@ fn run_sequence(
                     opts,
                     committer,
                 )?;
+                write_created_records(repo.git_dir(), created_records)?;
                 return Ok(SequenceOutcome::Conflicts {
                     current: entry.oid,
                     conflicts,
@@ -683,6 +713,7 @@ fn run_sequence(
                     opts,
                     committer,
                 )?;
+                write_created_records(repo.git_dir(), created_records)?;
                 return Ok(SequenceOutcome::Empty {
                     current: entry.oid,
                     created_so_far: created_records.clone(),
@@ -922,13 +953,14 @@ fn apply_one_step(
             ReplayEmptyPolicy::Keep => {
                 let message =
                     replay_message(config, opts, direction, &source, source_oid, committer)?;
-                let new_oid = write_replay_commit(
+                let new_oid = write_replay_commit_with_head_tree(
                     repo,
                     refname,
                     *head,
+                    head_tree,
                     committer,
                     &message,
-                    &source_oid,
+                    &source,
                     direction,
                     head_tree,
                     true,
@@ -974,7 +1006,8 @@ fn apply_one_step(
     }
 
     let new_tree = merged.result_tree;
-    if new_tree == head_tree {
+    let empty_compare_tree = if opts.no_commit { ours_tree } else { head_tree };
+    if new_tree == empty_compare_tree {
         return match opts.empty {
             ReplayEmptyPolicy::Stop => Ok(StepResult::EmptyStop),
             ReplayEmptyPolicy::Drop => Ok(StepResult::DroppedEmpty),
@@ -982,13 +1015,14 @@ fn apply_one_step(
             ReplayEmptyPolicy::Keep => {
                 let message =
                     replay_message(config, opts, direction, &source, source_oid, committer)?;
-                let new_oid = write_replay_commit(
+                let new_oid = write_replay_commit_with_head_tree(
                     repo,
                     refname,
                     *head,
+                    head_tree,
                     committer,
                     &message,
-                    &source_oid,
+                    &source,
                     direction,
                     head_tree,
                     true,
@@ -1018,7 +1052,7 @@ fn apply_one_step(
         head_tree,
         committer,
         &message,
-        &source_oid,
+        &source,
         direction,
         new_tree,
         false,
@@ -1039,7 +1073,7 @@ fn apply_clean_merge_worktree(
     worktree_snapshot: &mut Option<WorktreeSnapshot>,
 ) -> Result<()> {
     if worktree_snapshot.is_none() {
-        *worktree_snapshot = Some(load_worktree_snapshot(repo)?);
+        *worktree_snapshot = Some(load_worktree_snapshot_for_replay(repo)?);
     }
     match worktree_snapshot.as_mut() {
         Some(snapshot) => {
@@ -1186,6 +1220,8 @@ fn write_replay_commit(
     change_id_policy: &ChangeIdPolicy,
 ) -> Result<ObjectId> {
     let head_tree = commit_tree(repo, &head_oid)?;
+    let source_obj = repo.odb().read(source)?;
+    let source_commit = parse_commit(&source_obj.data)?;
     write_replay_commit_with_head_tree(
         repo,
         refname,
@@ -1193,7 +1229,7 @@ fn write_replay_commit(
         head_tree,
         committer,
         message,
-        source,
+        &source_commit,
         direction,
         tree,
         allow_empty,
@@ -1210,7 +1246,7 @@ fn write_replay_commit_with_head_tree(
     head_tree: ObjectId,
     committer: &str,
     message: &str,
-    _source: &ObjectId,
+    source: &CommitData,
     direction: ReplayDirection,
     tree: ObjectId,
     allow_empty: bool,
@@ -1220,8 +1256,6 @@ fn write_replay_commit_with_head_tree(
     if !allow_empty && tree == head_tree {
         return Err(Error::NothingToCommit);
     }
-    let source_obj = repo.odb().read(_source)?;
-    let source = parse_commit(&source_obj.data)?;
     let author = match direction {
         ReplayDirection::Pick => source.author.clone(),
         ReplayDirection::Revert => committer.to_owned(),
@@ -1585,6 +1619,25 @@ fn clear_step_heads(git_dir: &Path, direction: ReplayDirection) -> Result<()> {
     Ok(())
 }
 
+fn resolve_continue_replay_message(git_dir: &Path) -> Result<String> {
+    let Some(raw) = read_merge_msg(git_dir)? else {
+        return Err(Error::NoReplayInProgress);
+    };
+    let processed = stripspace_process(
+        raw.as_bytes(),
+        &StripspaceMode::StripComments("#".to_owned()),
+    );
+    let message = String::from_utf8(processed).map_err(|_| Error::NothingToCommit)?;
+    if message.trim().is_empty() {
+        return Err(Error::NothingToCommit);
+    }
+    let mut message = message;
+    if !message.ends_with('\n') {
+        message.push('\n');
+    }
+    Ok(message)
+}
+
 fn write_orig_head_if_absent(git_dir: &Path, oid: ObjectId) -> Result<()> {
     let path = git_dir.join("ORIG_HEAD");
     if path.exists() {
@@ -1593,6 +1646,7 @@ fn write_orig_head_if_absent(git_dir: &Path, oid: ObjectId) -> Result<()> {
     fs::write(path, format!("{}\n", oid.to_hex())).map_err(Error::Io)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn persist_sequence_checkpoint(
     repo: &Repository,
     sequence_start: ObjectId,
@@ -1601,6 +1655,7 @@ fn persist_sequence_checkpoint(
     opts: &ReplayOptions,
     direction: ReplayDirection,
     committer: &str,
+    created_records: &[ReplayCreated],
 ) -> Result<()> {
     write_sequencer_state(
         repo,
@@ -1611,7 +1666,8 @@ fn persist_sequence_checkpoint(
         direction,
         committer,
         false,
-    )
+    )?;
+    write_created_records(repo.git_dir(), created_records)
 }
 
 /// Fail fast on the first replay step before writing sequencer bootstrap state.

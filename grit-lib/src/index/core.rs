@@ -1344,16 +1344,28 @@ impl Index {
             } else {
                 parse_entries_serial(body, version, count, hash_len, 12)?.0
             };
-            let ext_fields =
-                parse_index_extensions(body, ext_off, extensions_end, hash_algo, None)?;
+            let ext_fields = parse_index_extensions(
+                body,
+                ext_off,
+                extensions_end,
+                hash_algo,
+                None,
+                parse_context.skip_cache_tree,
+            )?;
             if let Some(dirty) = ext_fields.fsmonitor_dirty.as_ref() {
                 apply_fsmonitor_dirty_to_entries(&mut loaded_entries, dirty);
             }
             (loaded_entries, ext_fields)
         } else {
             let (mut entries, pos) = parse_entries_serial(body, version, count, hash_len, 12)?;
-            let ext_fields =
-                parse_index_extensions(body, pos, body.len(), hash_algo, Some(&mut entries))?;
+            let ext_fields = parse_index_extensions(
+                body,
+                pos,
+                body.len(),
+                hash_algo,
+                Some(&mut entries),
+                parse_context.skip_cache_tree,
+            )?;
             (entries, ext_fields)
         };
 

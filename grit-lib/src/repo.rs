@@ -1538,12 +1538,22 @@ impl Repository {
     /// Like [`Repository::load_index`], but reads from an explicit index file path
     /// (e.g. `GIT_INDEX_FILE` or a worktree-specific index).
     pub(crate) fn load_index_at(&self, path: &std::path::Path) -> Result<Index> {
+        self.load_index_at_with_context(
+            path,
+            crate::index::IndexParseContext::from_policy(self.thread_policy()),
+        )
+    }
+
+    pub(crate) fn load_index_at_with_context(
+        &self,
+        path: &std::path::Path,
+        parse_ctx: crate::index::IndexParseContext,
+    ) -> Result<Index> {
         crate::trace::trace_span!("grit.index.read");
         let cfg = self.config().unwrap_or_else(|_| Arc::new(ConfigSet::new()));
         if let Some(res) = cfg.as_ref().get_bool("index.sparse") {
             res.map_err(|s| Error::Config(s.into()))?;
         }
-        let parse_ctx = crate::index::IndexParseContext::from_policy(self.thread_policy());
         let mut idx = Index::load_expand_sparse_optional_with_context(
             path,
             &self.odb,
