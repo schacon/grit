@@ -19,12 +19,16 @@
       "format": "uint",
       "minimum": 0.0,
       "type": "integer"
+    },
+    "index_restored": {
+      "type": "boolean"
     }
   },
   "required": [
     "conflicts",
     "dropped",
-    "index"
+    "index",
+    "index_restored"
   ],
   "title": "StashPopOutcome",
   "type": "object"

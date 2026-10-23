@@ -242,6 +242,8 @@ enum StashAction {
         /// Preview partial stash without updating refs, index, or worktree.
         #[arg(long = "dry-run")]
         dry_run: bool,
+        #[command(flatten)]
+        pathspecs: crate::pathspec_args::TrailingPathspecArgs,
     },
     /// List stash entries.
     List,
@@ -257,11 +259,17 @@ enum StashAction {
     Apply {
         /// Stash index (`0` is newest) or `stash@{n}`.
         index: Option<String>,
+        /// Restore the stashed index as well as the worktree.
+        #[arg(long = "index")]
+        restore_index: bool,
     },
     /// Apply a stash entry and remove it when there are no conflicts.
     Pop {
         /// Stash index (`0` is newest) or `stash@{n}`.
         index: Option<String>,
+        /// Restore the stashed index as well as the worktree.
+        #[arg(long = "index")]
+        restore_index: bool,
     },
     /// Remove a stash entry without applying it.
     Drop {
@@ -1262,6 +1270,8 @@ enum Command {
         /// Preview partial stash without updating refs, index, or worktree.
         #[arg(long = "dry-run", global = true)]
         dry_run: bool,
+        #[command(flatten)]
+        pathspecs: crate::pathspec_args::TrailingPathspecArgs,
         #[command(subcommand)]
         action: Option<StashAction>,
     },
@@ -2739,10 +2749,17 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             hunks,
             lines,
             dry_run,
+            pathspecs,
         } => match action {
             None => {
-                let outcome =
-                    commands::stash::run_push(message, include_untracked, &hunks, &lines, dry_run);
+                let outcome = commands::stash::run_push(
+                    message,
+                    include_untracked,
+                    &hunks,
+                    &lines,
+                    dry_run,
+                    &pathspecs,
+                );
                 match outcome {
                     Ok(o) => emit(&o, opts, ctx),
                     Err(err) => {
@@ -2762,6 +2779,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 hunks: push_hunks,
                 lines: push_lines,
                 dry_run: push_dry_run,
+                pathspecs: push_pathspecs,
             }) => {
                 let merged_hunks = if push_hunks.is_empty() {
                     hunks
@@ -2773,12 +2791,20 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 } else {
                     push_lines
                 };
+                let merged_pathspecs = if push_pathspecs.paths.is_empty()
+                    && push_pathspecs.pathspec_from_file.is_none()
+                {
+                    pathspecs
+                } else {
+                    push_pathspecs
+                };
                 let outcome = commands::stash::run_push(
                     push_message.or(message),
                     include_untracked || push_untracked,
                     &merged_hunks,
                     &merged_lines,
                     dry_run || push_dry_run,
+                    &merged_pathspecs,
                 );
                 match outcome {
                     Ok(o) => emit(&o, opts, ctx),
@@ -2797,16 +2823,22 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             Some(StashAction::Show { index, patch }) => {
                 emit(&commands::stash::run_show(index, patch)?, opts, ctx)
             }
-            Some(StashAction::Apply { index }) => {
-                let outcome = commands::stash::run_apply(index)?;
+            Some(StashAction::Apply {
+                index,
+                restore_index,
+            }) => {
+                let outcome = commands::stash::run_apply(index, restore_index)?;
                 emit(&outcome, opts, ctx)?;
                 if outcome.conflicts {
                     std::process::exit(1);
                 }
                 Ok(())
             }
-            Some(StashAction::Pop { index }) => {
-                let outcome = commands::stash::run_pop(index)?;
+            Some(StashAction::Pop {
+                index,
+                restore_index,
+            }) => {
+                let outcome = commands::stash::run_pop(index, restore_index)?;
                 emit(&outcome, opts, ctx)?;
                 if outcome.conflicts {
                     std::process::exit(1);
