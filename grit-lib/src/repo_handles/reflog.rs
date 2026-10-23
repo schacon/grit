@@ -442,7 +442,9 @@ fn reflog_ref_known(git_dir: &Path, user_ref: &str) -> Result<bool> {
 
 fn expire_target_refs(git_dir: &Path, all: bool) -> Result<Vec<String>> {
     if !all {
-        return list_reflog_refs(git_dir);
+        let mut names = list_reflog_refs(git_dir)?;
+        names.sort();
+        return Ok(names);
     }
     let mut names: Vec<String> = crate::refs::list_refs(git_dir, "refs/")?
         .into_iter()
@@ -578,5 +580,32 @@ mod tests {
             }
             other => panic!("expected ReflogIndexOutOfRange, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn expire_outcome_refs_are_sorted() {
+        let (_dir, repo) = init_repo();
+        let git_dir = repo.git_dir();
+        let zero = crate::objects::ObjectId::zero();
+        let identity = "T <t@example.com> 1700000000 +0000";
+        for refname in ["refs/heads/zebra", "refs/heads/alpha"] {
+            append_reflog(git_dir, refname, &zero, &zero, identity, "seed", true).expect("append");
+        }
+        let outcome = repo
+            .reflogs()
+            .expire(&ExpireOptions {
+                now: 1_700_000_000,
+                expire: Some("never".into()),
+                expire_unreachable: Some("never".into()),
+                all: false,
+                dry_run: true,
+            })
+            .expect("expire");
+        let names: Vec<_> = outcome.refs.iter().map(|r| r.ref_name.as_str()).collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted);
+        assert!(names.iter().any(|n| *n == "refs/heads/alpha"));
+        assert!(names.iter().any(|n| *n == "refs/heads/zebra"));
     }
 }

@@ -47,7 +47,13 @@ The target branch is the first that exists of: the `target.branch` config value,
 | Commits on this branch not on the target | `grit shortlog` or `grit ahead`; add `--target <REF>` to pick the base |
 | Who last touched each line of a file | `grit blame <path> --json` (author dates live under `commits.<oid>.author.date`; use **`--group`** for smaller `hunks[]` on large files) |
 | Skip formatting commits in blame | `grit blame --ignore-rev <OID>` or `grit blame --ignore-revs-file .git-blame-ignore-revs` (set `blame.ignoreRevsFile` in config for a default list) |
+| Refs that have a reflog | `grit reflog list` (optional `-n` / `--limit`; `--json` → `{ "refs": [{ "ref": "…" }] }`) |
+| Reflog entries for one ref | `grit reflog [REF] --limit N` (default `HEAD`; branch short names OK) |
 | What happened to this branch recently | `grit reflog [REF] -n 20 --json` (`--since` / `--until` / `--grep`; `old_oid`, `new_oid`, `date`, `committer`, optional `action`; indices match Git `ref@{n}`) |
+| Preview reflog expiry | `grit reflog expire --dry-run --json` (no log files written; `dry_run` and per-ref `refs[].pruned`) |
+| Drop old reflog entries | `grit reflog expire` (gc rules; `--expire`, `--expire-unreachable`, `--all`) |
+
+A branch literally named `list` is not the `list` subcommand — use **`grit reflog refs/heads/list`** to show that branch's entries.
 
 `grit diff --json` on **`--staged`** or **`--unstaged`** patch output includes stable **`hunks[].id`** (12 lowercase hex chars) and **`hunks[].index`** (0-based within the file). Ids hash side, path, and line bodies (not line numbers), so they stay valid when earlier hunks are staged. Use **`grit add --hunks <id,...>`** or **`grit add --lines path:start-end`** (new-side **`lines[].new`**, 1-based inclusive); commit-range diffs omit `id` for now.
 

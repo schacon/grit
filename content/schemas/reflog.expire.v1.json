@@ -1,10 +1,28 @@
 {
   "$id": "https://grit-scm.com/schemas/reflog.expire/v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "definitions": {
+    "ReflogExpireRefOutcome": {
+      "properties": {
+        "pruned": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pruned",
+        "ref"
+      ],
+      "type": "object"
+    }
+  },
   "description": "Result of `grit reflog expire`.",
   "properties": {
     "dry_run": {
-      "default": false,
       "type": "boolean"
     },
     "entries_pruned": {
@@ -13,29 +31,16 @@
       "type": "integer"
     },
     "refs": {
-      "default": [],
       "items": {
-        "properties": {
-          "pruned": {
-            "format": "uint",
-            "minimum": 0.0,
-            "type": "integer"
-          },
-          "ref": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "ref",
-          "pruned"
-        ],
-        "type": "object"
+        "$ref": "#/definitions/ReflogExpireRefOutcome"
       },
       "type": "array"
     }
   },
   "required": [
-    "entries_pruned"
+    "dry_run",
+    "entries_pruned",
+    "refs"
   ],
   "title": "ReflogExpireOutcome",
   "type": "object"
