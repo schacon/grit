@@ -4924,6 +4924,8 @@ pub grit_lib::error::Error::MoveBadSource::src: alloc::string::String
 pub grit_lib::error::Error::MoveDestinationExists
 pub grit_lib::error::Error::MoveDestinationExists::destination: alloc::string::String
 pub grit_lib::error::Error::MoveDestinationExists::src: alloc::string::String
+pub grit_lib::error::Error::MoveDuplicateDestination
+pub grit_lib::error::Error::MoveDuplicateDestination::destination: alloc::string::String
 pub grit_lib::error::Error::MoveIntoSelf
 pub grit_lib::error::Error::MoveIntoSelf::destination: alloc::string::String
 pub grit_lib::error::Error::MoveIntoSelf::src: alloc::string::String
@@ -13917,6 +13919,8 @@ pub grit_lib::prelude::Error::MoveBadSource::src: alloc::string::String
 pub grit_lib::prelude::Error::MoveDestinationExists
 pub grit_lib::prelude::Error::MoveDestinationExists::destination: alloc::string::String
 pub grit_lib::prelude::Error::MoveDestinationExists::src: alloc::string::String
+pub grit_lib::prelude::Error::MoveDuplicateDestination
+pub grit_lib::prelude::Error::MoveDuplicateDestination::destination: alloc::string::String
 pub grit_lib::prelude::Error::MoveIntoSelf
 pub grit_lib::prelude::Error::MoveIntoSelf::destination: alloc::string::String
 pub grit_lib::prelude::Error::MoveIntoSelf::src: alloc::string::String
