@@ -134,6 +134,7 @@ Pass `--json` for stable, scripting-friendly output. The object's `action` field
 | `action` | string | `list`, `create`, `delete`, `rename`, `set_upstream`, or `unset_upstream`. |
 | `current` | string or null | For `list`, the current branch, or `null` when detached. |
 | `branches` | array | For `list`, each branch (see below). |
+| `truncated` | boolean | For `list`: `true` when more branches matched than returned (`-n` / `--limit`). |
 | `branches[].name` | string | Short name (`main`, `origin/main`, `remotes/origin/main` with `-a`, …). |
 | `branches[].current` | boolean | Whether this is the checked-out local branch. |
 | `branches[].is_remote` | boolean | True for remote-tracking refs. |

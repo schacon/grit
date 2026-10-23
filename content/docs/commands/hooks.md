@@ -61,6 +61,7 @@ Schema: [v1](/schemas/hooks/v1.json). Subcommands: [hooks.list](/schemas/hooks.l
 | ----- | ---- | ------- |
 | `action` | string | `list` or `run`. |
 | `hooks` | array | For `list`: each entry has `name`, `path`, `executable`, and `source` (`hooks_dir` or `core_hooks_path`). |
+| `truncated` | boolean | For `list`: `true` when more hook scripts existed than returned (`-n` / `--limit`). |
 | `name` | string | For `run`: hook basename. |
 | `exit_code` | number | For `run`: subprocess exit code (`0` when the hook was missing). |
 | `executed` | boolean | For `run`: whether any hook script ran. |

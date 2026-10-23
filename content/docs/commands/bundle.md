@@ -101,6 +101,7 @@ Schema: [v1](/schemas/bundle.create/v1.json) · [bundle.list v1](/schemas/bundle
 | ----- | ---- | ------- |
 | `path` | string | Bundle file path. |
 | `references` | array | Refs from the bundle header (`name`, `oid`). |
+| `truncated` | boolean | `true` when the header held more refs than returned (`-n` / `--limit`). |
 
 ```json
 {

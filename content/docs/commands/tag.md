@@ -111,6 +111,7 @@ Pass `--json` for stable, scripting-friendly output. The object's `action` field
 | ----- | ---- | ------- |
 | `action` | string | `list`, `create`, `delete`, or `verify`. |
 | `tags` | array | For `list`, each tag with `name`, `oid`, `kind`, `target_kind`, optional `peeled`, and optional `annotation` (`subject`, `message`, `tagger`, `date`). |
+| `truncated` | boolean | For `list`: `true` when more tags matched than returned (`-n` / `--limit`). |
 | `name` | string | For `create` or `delete`, the tag name. |
 | `oid` | string | For `create`, full id the tag ref points at (tag object or commit). |
 | `kind` | string | For `create` or list entries: `lightweight` or `annotated`. |
