@@ -196,6 +196,7 @@ fn blame_compacted_line_ops(
             ws,
         );
     }
+    // Align on normalized slices; compact with raw lines for indent heuristic and ws-aware sliding.
     let diff = TextDiff::configure()
         .algorithm(diff_algorithm.to_similar())
         .diff_slices(&old_cmp, &new_cmp);

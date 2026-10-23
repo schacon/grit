@@ -192,10 +192,7 @@ fn ignore_whitespace_tab_space_swap() {
     assert_blame_matches(&repo, root, "f.txt");
 }
 
-#[test]
-fn ignore_whitespace_mixed_edit_duplicate_b_line() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let root = dir.path();
+fn setup_mixed_edit_duplicate_b_line(root: &Path) {
     git_run(root, &["init"]);
     std::fs::write(root.join("f"), "a\na\nb\na\n").unwrap();
     git_run(root, &["add", "f"]);
@@ -203,6 +200,33 @@ fn ignore_whitespace_mixed_edit_duplicate_b_line() {
     std::fs::write(root.join("f"), "c\nc\nb\nb \n").unwrap();
     git_run(root, &["add", "f"]);
     git_run(root, &["commit", "-m", "mixed"]);
+}
+
+#[test]
+fn ignore_whitespace_mixed_edit_duplicate_b_line() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    setup_mixed_edit_duplicate_b_line(root);
+    let repo = open_repo(root);
+    assert_blame_matches(&repo, root, "f");
+}
+
+#[test]
+fn ignore_whitespace_mixed_edit_duplicate_b_line_patience() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    setup_mixed_edit_duplicate_b_line(root);
+    git_run(root, &["config", "diff.algorithm", "patience"]);
+    let repo = open_repo(root);
+    assert_blame_matches(&repo, root, "f");
+}
+
+#[test]
+fn ignore_whitespace_mixed_edit_duplicate_b_line_histogram() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    setup_mixed_edit_duplicate_b_line(root);
+    git_run(root, &["config", "diff.algorithm", "histogram"]);
     let repo = open_repo(root);
     assert_blame_matches(&repo, root, "f");
 }
