@@ -1,6 +1,6 @@
 ---
 title: grit remote
-summary: List remotes, add one, show one, set URLs, remove one, or list refs on a remote.
+summary: List remotes, add one, show one, set URLs, rename or remove one, or list refs on a remote.
 group: Remotes
 order: 1
 ---
@@ -13,6 +13,7 @@ grit remote add <name> <url>
 grit remote set-url <name> <url> [--push] [--dry-run]
 grit remote remove <name> [--dry-run]
 grit remote show <name> [--no-query] [-n N]
+grit remote rename <old> <new> [--dry-run]
 grit remote refs <remote-or-url> [--heads] [--tags] [--sort name|version] [--reverse] [-n N] [<prefix>…]
 ```
 
@@ -30,6 +31,8 @@ A remote is another copy of the repository that you fetch from and push to, usua
 
 `grit remote show` summarizes one configured remote: fetch and push URLs, the remote `HEAD` branch, each remote branch classified as tracked, new, or stale (when the remote is queried), and local branches whose `branch.<name>.remote` points at this remote. By default it contacts the remote (same transports as [`grit fetch`](../fetch/)). With `--no-query`, branch rows come from local remote-tracking refs only and every branch is reported as tracked.
 
+`grit remote rename` renames a configured remote. When the remote uses the default fetch refspec into `refs/remotes/<name>/`, every remote-tracking ref is renamed in one transaction (reflogs preserved), then the config section is renamed, default fetch refspecs are updated, and `branch.*.remote`, `branch.*.pushRemote`, and `remote.pushDefault` entries that pointed at the old name are retargeted. Custom fetch refspecs that do not map into `refs/remotes/<old>/` are left unchanged. `--dry-run` reports counts without changing the repository.
+
 `grit remote refs` lists references on a configured remote name or a literal URL, scp-style `host:path` or path (same transports as [`grit clone`](../clone/)), matching `git ls-remote` ordering. An argument that is none of these fails with `unknown remote`. SSH URLs use the same `GIT_SSH_COMMAND`, `GIT_SSH`, and `core.sshCommand` resolution as [`grit clone`](../clone/) and [`grit fetch`](../fetch/).
 
 ## Options
@@ -43,6 +46,8 @@ A remote is another copy of the repository that you fetch from and push to, usua
 | `remove <name>` | Remove remote `<name>` and its tracking refs. `--dry-run` previews without writing. |
 | `show <name>` | Summarize `<name>` (URLs, HEAD branch, remote branches, pull config). |
 | `--no-query` | With `show`, use local remote-tracking refs only; do not contact the remote. |
+| `--dry-run` | With `set-url`, `remove`, or `rename`, show the change without writing. |
+| `rename <old> <new>` | Rename remote `<old>` to `<new>`. Fails when `<new>` exists or is not a valid remote name. |
 | `refs <remote-or-url>` | List refs on the remote (or URL). |
 | `--heads` | With `refs`, only `refs/heads/`. |
 | `--tags` | With `refs`, only `refs/tags/`. |
@@ -78,19 +83,22 @@ $ grit remote show origin
   Local branches configured for pull:
     main merges with remote main
 
-$ grit remote refs origin
+$ grit remote rename origin upstream
+Renamed remote origin → upstream (3 tracking refs updated)
+
+$ grit remote refs upstream
 a1b2c3d4e5f6789012345678901234567890abcd	refs/heads/main
 ```
 
 ## JSON output
 
-Schema: [v1](/schemas/remote/v1.json) · [remote.add v1](/schemas/remote.add/v1.json) · [remote.remove v1](/schemas/remote.remove/v1.json) · [remote.show v1](/schemas/remote.show/v1.json) · [remote.refs v1](/schemas/remote.refs/v1.json) (set-url uses the main remote schema)
+Schema: [v1](/schemas/remote/v1.json) · [remote.add v1](/schemas/remote.add/v1.json) · [remote.remove v1](/schemas/remote.remove/v1.json) · [remote.show v1](/schemas/remote.show/v1.json) · [remote.rename v1](/schemas/remote.rename/v1.json) · [remote.refs v1](/schemas/remote.refs/v1.json) (set-url uses the main remote schema)
 
 Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `action` | string | `list`, `add`, `set_url`, `remove`, `show`, or `refs`. |
+| `action` | string | `list`, `add`, `set_url`, `remove`, `show`, `rename`, or `refs`. |
 | `remotes` | array | For `list`, each remote with `name` and `url`; with `-v`, also `fetch_url`, `push_url`, and `refspecs`. |
 | `name` | string | For `add`, `set_url`, `remove`, or `show`, the remote name. |
 | `url` | string | For `add` or `set_url`, the remote URL or path. |
@@ -98,12 +106,17 @@ Pass `--json` for stable, scripting-friendly output:
 | `old_url` | string or null | For `set_url`, previous URL for that kind, if any. |
 | `refs_deleted` | array | For `remove`, deleted remote-tracking ref names. |
 | `branches_untracked` | array | For `remove`, local branch short names whose upstream keys were cleared. |
-| `dry_run` | boolean | For `set_url` or `remove`, whether changes were only reported. |
+| `dry_run` | boolean | For `set_url`, `remove`, or `rename`, whether changes were only reported. |
 | `fetch_url` | string | For `show`, fetch URL after config rewrite. |
 | `push_url` | string | For `show`, push URL (`pushurl` when set). |
 | `head_branch` | string or null | For `show`, remote default branch when known. |
 | `branches` | array | For `show`, each `{ name, state }` with `state` `tracked`, `new`, or `stale`. |
 | `pull` | array | For `show`, each `{ local, merges }` from `branch.*` config. |
+| `old` | string | For `rename`, the previous remote name. |
+| `new` | string | For `rename`, the new remote name. |
+| `refs_renamed` | number | For `rename`, remote-tracking refs renamed. |
+| `refspecs_updated` | array | For `rename`, fetch refspec strings rewritten for the new name. |
+| `branches_updated` | array | For `rename`, branch short names whose upstream remote was retargeted. |
 | `refs` | array | For `refs`, each entry with `name`, `oid`, optional `peeled`, optional `symref_target`. |
 
 Listing remotes:
@@ -180,6 +193,20 @@ Removing a remote:
   "name": "origin",
   "refs_deleted": ["refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
   "branches_untracked": ["main"],
+  "dry_run": false
+}
+```
+
+Renaming a remote:
+
+```json
+{
+  "action": "rename",
+  "old": "origin",
+  "new": "upstream",
+  "refs_renamed": 3,
+  "refspecs_updated": ["+refs/heads/*:refs/remotes/upstream/*"],
+  "branches_updated": ["main"],
   "dry_run": false
 }
 ```

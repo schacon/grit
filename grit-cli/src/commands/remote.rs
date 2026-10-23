@@ -47,6 +47,14 @@ pub enum RemoteOutcome {
         branches_untracked: Vec<String>,
         dry_run: bool,
     },
+    Rename {
+        old: String,
+        new: String,
+        refs_renamed: usize,
+        refspecs_updated: Vec<String>,
+        branches_updated: Vec<String>,
+        dry_run: bool,
+    },
     Refs {
         refs: Vec<RemoteRefEntry>,
         #[serde(skip)]
@@ -204,6 +212,19 @@ impl HumanRender for RemoteOutcome {
                     outln!(w, "  branches untracked: {}", branches_untracked.join(", "));
                 }
             }
+            RemoteOutcome::Rename {
+                old,
+                new,
+                refs_renamed,
+                dry_run,
+                ..
+            } => {
+                let prefix = if *dry_run { "[dry-run] " } else { "" };
+                outln!(
+                    w,
+                    "{prefix}Renamed remote {old} → {new} ({refs_renamed} tracking refs updated)"
+                );
+            }
             RemoteOutcome::Refs { lines, .. } => {
                 for line in lines {
                     if line.symref {
@@ -266,6 +287,33 @@ impl MarkdownRender for RemoteOutcome {
                         w,
                         "\n**Branches untracked:** {}.\n",
                         branches_untracked.join(", ")
+                    );
+                }
+            }
+            RemoteOutcome::Rename {
+                old,
+                new,
+                refs_renamed,
+                refspecs_updated,
+                branches_updated,
+                dry_run,
+            } => {
+                let dry = if *dry_run { " (dry-run)" } else { "" };
+                outln!(
+                    w,
+                    "Renamed remote `{old}` → `{new}`{dry} ({refs_renamed} tracking refs)."
+                );
+                if !refspecs_updated.is_empty() {
+                    outln!(w, "\nUpdated fetch refspecs:");
+                    for spec in refspecs_updated {
+                        outln!(w, "- `{spec}`");
+                    }
+                }
+                if !branches_updated.is_empty() {
+                    outln!(
+                        w,
+                        "\nUpdated branch upstream: `{}`.",
+                        branches_updated.join("`, `")
                     );
                 }
             }
@@ -515,7 +563,6 @@ fn add_remote(repo: &Repository, name: &str, url: &str) -> Result<RemoteOutcome>
         url: url.to_owned(),
     })
 }
-
 /// Marker for usage errors (exit 2) from remote commands.
 #[derive(Debug)]
 pub struct RemoteUsageError;
@@ -674,4 +721,21 @@ fn render_show_markdown(w: &mut dyn Write, summary: &RemoteShowJson) -> Result<(
         outln!(w);
     }
     Ok(())
+}
+
+/// Rename a configured remote (`grit remote rename <old> <new>`).
+pub fn run_rename(old: &str, new: &str, dry_run: bool) -> Result<RemoteOutcome> {
+    let repo = context::discover()?;
+    let out = repo
+        .remotes()
+        .rename(old, new, dry_run)
+        .map_err(map_remote_error)?;
+    Ok(RemoteOutcome::Rename {
+        old: out.old,
+        new: out.new,
+        refs_renamed: out.refs_renamed,
+        refspecs_updated: out.refspecs_updated,
+        branches_updated: out.branches_updated,
+        dry_run: out.dry_run,
+    })
 }

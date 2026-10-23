@@ -21,6 +21,7 @@ mod hooks;
 mod notes;
 mod reflog;
 mod remote;
+mod remote_rename;
 mod stash;
 mod worktree;
 
@@ -44,5 +45,6 @@ pub use remote::{
     remote_skip_fetch_all, ConfiguredRemote, RemoteRemoval, RemoteUrlKind, RemoveOptions,
     RepositoryRemotes, UrlChange,
 };
+pub use remote_rename::RemoteRename;
 pub use stash::{RepositoryStash, StashApplyOptions, StashPushOptions};
 pub use worktree::{LockWorktreeOptions, RepositoryWorktrees};

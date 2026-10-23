@@ -136,6 +136,16 @@ enum RemoteAction {
         #[arg(short = 'n', long = "limit", value_name = "N")]
         limit: Option<usize>,
     },
+    /// Rename an existing remote.
+    Rename {
+        /// Current remote name.
+        old: String,
+        /// New remote name.
+        new: String,
+        /// Show what would change without writing the repository.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// List references on a remote (like `git ls-remote`).
     Refs {
         /// Configured remote name or a literal URL/path.
@@ -2109,6 +2119,11 @@ fn dispatch(
                         limit,
                     },
                 )?,
+                opts,
+                ctx,
+            ),
+            Some(RemoteAction::Rename { old, new, dry_run }) => emit_success(
+                &commands::remote::run_rename(&old, &new, dry_run)?,
                 opts,
                 ctx,
             ),

@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
+use crate::check_ref_format::{check_refname_format, RefNameOptions};
 use crate::config::{ConfigFile, ConfigScope, ConfigSet};
 use crate::error::Result;
 use crate::fetch::Progress;
@@ -749,6 +750,28 @@ pub fn has_remote_section(config: &ConfigSet, name: &str) -> bool {
             .and_then(|rest| rest.rsplit_once('.'))
             .is_some_and(|(section, _key)| section == name)
     })
+}
+
+/// Whether the repository-local config defines `remote.<name>.*`.
+pub(crate) fn has_local_remote_section(config: &ConfigSet, name: &str) -> bool {
+    config.entries().iter().any(|entry| {
+        entry.scope == ConfigScope::Local
+            && entry
+                .key
+                .strip_prefix("remote.")
+                .and_then(|rest| rest.rsplit_once('.'))
+                .is_some_and(|(section, _key)| section == name)
+    })
+}
+
+/// Whether `name` can name a remote: its tracking refs `refs/remotes/<name>/…` must be valid.
+pub(crate) fn is_valid_remote_name(name: &str) -> bool {
+    !name.is_empty()
+        && check_refname_format(
+            &format!("refs/remotes/{name}/test"),
+            &RefNameOptions::default(),
+        )
+        .is_ok()
 }
 
 /// Collect remote subsection names that declare a `url` key.

@@ -1,19 +1,20 @@
 //! Remote headline and matrix scenarios (fetch, pull, push, clone, ls-remote).
 
 use super::super::helpers::{headline_spec, matrix_spec, prepare_none, sh_devnull, sh_script};
+use super::super::matrix_helpers::{prepare_remote_rename_reset, remote_rename_bench};
 use super::super::plan::{DailyHeadlineContext, DailyHeadlinePlan, DailyPrepare};
 use super::super::remote_fixture::{
     clone_bench_script, clone_bench_script_grit, clone_bench_script_grit_shallow,
     clone_bench_script_shallow, clone_shallow_bench_script_git, clone_shallow_bench_script_grit,
     setup_git_git_file_remote, setup_git_git_grit_http_fetch_remote,
     setup_git_git_grit_http_push_remote, setup_many_refs_file_remote, setup_many_refs_remote_show,
-    setup_remote_remove_many_refs, setup_synth10k_file_remote, setup_synth10k_grit_http_remote,
-    setup_synth10k_pull_rebase_remote, verify_clone_http, verify_clone_local, verify_clone_shallow,
-    verify_clone_shallow_http, verify_fetch_deepen, verify_fetch_dry_run, verify_fetch_incremental,
-    verify_fetch_incremental_http, verify_fetch_noop, verify_fetch_one_branch,
-    verify_ls_remote_all, verify_pull_check, verify_pull_fast_forward, verify_pull_rebase,
-    verify_push_force_with_lease, verify_push_incremental, verify_push_incremental_http,
-    verify_push_refspec,
+    setup_remote_remove_many_refs, setup_remote_rename_many_refs, setup_synth10k_file_remote,
+    setup_synth10k_grit_http_remote, setup_synth10k_pull_rebase_remote, verify_clone_http,
+    verify_clone_local, verify_clone_shallow, verify_clone_shallow_http, verify_fetch_deepen,
+    verify_fetch_dry_run, verify_fetch_incremental, verify_fetch_incremental_http,
+    verify_fetch_noop, verify_fetch_one_branch, verify_ls_remote_all, verify_pull_check,
+    verify_pull_fast_forward, verify_pull_rebase, verify_push_force_with_lease,
+    verify_push_incremental, verify_push_incremental_http, verify_push_refspec,
 };
 use super::super::runner::BenchArgv;
 use crate::shell::shell_quote;
@@ -435,6 +436,15 @@ fn matrix_plans() -> Vec<DailyHeadlinePlan> {
             prepare: prepare_none,
             build_git: remote_show_git,
             build_grit: remote_show_grit,
+            correctness: None,
+        },
+        DailyHeadlinePlan {
+            spec: matrix_spec("remote/rename@many-refs"),
+            pending: false,
+            setup: setup_remote_rename_many_refs,
+            prepare: prepare_remote_rename_reset,
+            build_git: |c| remote_rename_bench(c).1,
+            build_grit: |c| remote_rename_bench(c).0,
             correctness: None,
         },
         DailyHeadlinePlan {
