@@ -5,7 +5,6 @@ use std::io::{self, Read, Write};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
-use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use flate2::{Decompress, FlushDecompress, Status};
@@ -15,7 +14,7 @@ use crate::error::{Error, Result};
 use crate::hash;
 use crate::objects::{HashAlgo, Object, ObjectId, ObjectInfo, ObjectKind};
 use crate::odb::WriteOptions;
-use crate::zlib_inflate::ZlibInflateScratch;
+use crate::zlib_inflate::with_loose_scratch;
 
 const READ_CHUNK: usize = 64 * 1024;
 
@@ -198,10 +197,15 @@ impl ObjectStore for LooseStore {
 
     fn read_info(&self, oid: &ObjectId) -> Result<Option<ObjectInfo>> {
         let path = self.object_path(oid);
-        if !path.is_file() {
-            return Ok(None);
+        let mut file = match fs::File::open(&path) {
+            Ok(f) => f,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(Error::Io(err)),
+        };
+        match loose_object_info_from_file(&mut file) {
+            Err(Error::Io(err)) if err.kind() == io::ErrorKind::IsADirectory => Ok(None),
+            other => other.map(Some),
         }
-        Ok(Some(read_loose_object_info(&path)?))
     }
 
     fn open_stream(&self, oid: &ObjectId) -> Result<Option<ObjectStream<'_>>> {
@@ -379,26 +383,14 @@ pub fn for_each_loose_object_id(
 
 /// Decompress a zlib-wrapped loose object payload from an open file.
 pub fn read_zlib_loose_payload(file: File) -> Result<Vec<u8>> {
-    let mut hdr = [0u8; 2];
-    let mut read_file = file;
-    read_file.read_exact(&mut hdr).map_err(Error::Io)?;
-    let cmf_flg = u16::from(hdr[0]) << 8 | u16::from(hdr[1]);
-    let looks_like_zlib_header = cmf_flg != 0 && cmf_flg % 31 == 0;
-    let preset_dictionary = looks_like_zlib_header && (hdr[1] & 0x20) != 0;
-    let mut scratch = ZlibInflateScratch::default();
-    scratch.decompress_loose_payload(&hdr, read_file, preset_dictionary)
+    let mut out = Vec::new();
+    read_zlib_loose_payload_into(file, &mut out)?;
+    Ok(out)
 }
 
 /// Decompress a loose object into `buf`, reusing its capacity.
-pub(crate) fn read_zlib_loose_payload_into(file: File, buf: &mut Vec<u8>) -> Result<()> {
-    let mut hdr = [0u8; 2];
-    let mut read_file = file;
-    read_file.read_exact(&mut hdr).map_err(Error::Io)?;
-    let cmf_flg = u16::from(hdr[0]) << 8 | u16::from(hdr[1]);
-    let looks_like_zlib_header = cmf_flg != 0 && cmf_flg % 31 == 0;
-    let preset_dictionary = looks_like_zlib_header && (hdr[1] & 0x20) != 0;
-    let mut scratch = ZlibInflateScratch::default();
-    scratch.decompress_loose_payload_into(&hdr, read_file, preset_dictionary, buf)
+pub(crate) fn read_zlib_loose_payload_into(mut file: File, buf: &mut Vec<u8>) -> Result<()> {
+    with_loose_scratch(|scratch| scratch.inflate_loose_file(&mut file, buf))
 }
 
 /// Remove the Git object header from decompressed bytes in `buf`, leaving only the payload.
@@ -432,22 +424,12 @@ pub(crate) fn strip_decompressed_object_header(
 
 /// Read kind and size from a loose object file without loading the full payload.
 pub fn read_loose_object_info(path: &Path) -> Result<ObjectInfo> {
-    let file = fs::File::open(path).map_err(Error::Io)?;
-    let mut decoder = ZlibDecoder::new(file);
-    let mut prefix = Vec::with_capacity(64);
-    let mut buf = [0u8; 256];
-    loop {
-        let n = decoder
-            .read(&mut buf)
-            .map_err(|e| Error::Zlib(e.to_string()))?;
-        if n == 0 {
-            break;
-        }
-        prefix.extend_from_slice(&buf[..n]);
-        if prefix.contains(&0) || prefix.len() >= 128 {
-            break;
-        }
-    }
+    let mut file = fs::File::open(path).map_err(Error::Io)?;
+    loose_object_info_from_file(&mut file)
+}
+
+fn loose_object_info_from_file(file: &mut File) -> Result<ObjectInfo> {
+    let prefix = with_loose_scratch(|scratch| scratch.inflate_loose_header(file))?;
     let (kind, size) = parse_object_header_prefix(&prefix)?;
     Ok(ObjectInfo { kind, size })
 }
@@ -888,6 +870,47 @@ mod tests {
         let mut out = Vec::new();
         ObjectStore::lookup_prefix(&store, &oid.to_hex()[..4], 0, &mut out).unwrap();
         assert_eq!(out, vec![oid]);
+    }
+
+    fn temp_store() -> (tempfile::TempDir, LooseStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LooseStore::new(
+            dir.path().join("objects"),
+            HashAlgo::Sha1,
+            Compression::default(),
+        );
+        fs::create_dir_all(store.objects_dir()).unwrap();
+        (dir, store)
+    }
+
+    #[test]
+    fn read_info_and_read_agree_for_object_spanning_read_chunks() {
+        let (_dir, store) = temp_store();
+        let data: Vec<u8> = (0..3 * READ_CHUNK as u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+            .collect();
+        let oid =
+            WritableObjectStore::write(&store, ObjectKind::Blob, &data, WriteOptions::default())
+                .unwrap();
+        let info = ObjectStore::read_info(&store, &oid).unwrap().expect("info");
+        assert_eq!(info.kind, ObjectKind::Blob);
+        assert_eq!(info.size, data.len() as u64);
+        let obj = ObjectStore::read(&store, &oid).unwrap().expect("object");
+        assert_eq!(obj.kind, ObjectKind::Blob);
+        assert_eq!(obj.data, data);
+        let mut buf = Vec::new();
+        let kind = ObjectStore::read_into(&store, &oid, &mut buf).unwrap();
+        assert_eq!(kind, Some(ObjectKind::Blob));
+        assert_eq!(buf, data);
+    }
+
+    #[test]
+    fn read_info_is_none_for_missing_object_or_directory_at_its_path() {
+        let (_dir, store) = temp_store();
+        let missing = ObjectId::from_hex("1234567890123456789012345678901234567890").unwrap();
+        assert!(ObjectStore::read_info(&store, &missing).unwrap().is_none());
+        fs::create_dir_all(store.object_path(&missing)).unwrap();
+        assert!(ObjectStore::read_info(&store, &missing).unwrap().is_none());
     }
 
     #[test]

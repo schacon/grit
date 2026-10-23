@@ -3638,6 +3638,14 @@ impl PackLookupOptions {
         skip_midx_covered_packs: false,
         only_midx_covered_packs: true,
     };
+
+    /// Whether the single-pack and last-hit-pack shortcuts may run before the full scan.
+    ///
+    /// Those shortcuts probe a pack without consulting the MIDX filter, so a filtered pass
+    /// would re-probe packs the other pass owns (every loose-object read pays both passes).
+    fn allows_pack_shortcuts(self) -> bool {
+        !self.skip_midx_covered_packs && !self.only_midx_covered_packs
+    }
 }
 
 /// Pick one pack index for monotonic commit reads (single pack, or commit pack + blob promisor).
@@ -4120,8 +4128,10 @@ pub(crate) fn try_read_object_info_from_packs_with_options(
     if crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
         pack_cache::sync_thread_local_with_store(&crate::pack_store::PackStore::active_for_reads());
     }
-    if let Some(info) = pack_cache::try_read_info_from_hinted_pack(objects_dir, oid)? {
-        return Ok(info);
+    if opts.allows_pack_shortcuts() {
+        if let Some(info) = pack_cache::try_read_info_from_hinted_pack(objects_dir, oid)? {
+            return Ok(info);
+        }
     }
     let indexes = pack_indexes_for_lookup(objects_dir, opts)?;
     let mut last_err: Option<Error> = None;
@@ -4150,11 +4160,13 @@ pub(crate) fn try_read_object_from_packs_with_options(
     if crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
         pack_cache::sync_thread_local_with_store(&crate::pack_store::PackStore::active_for_reads());
     }
-    if let Some(obj) = pack_cache::try_read_object_via_single_pack_reader(objects_dir, oid)? {
-        return Ok(obj);
-    }
-    if let Some(obj) = pack_cache::try_read_from_hinted_pack(objects_dir, oid)? {
-        return Ok(obj);
+    if opts.allows_pack_shortcuts() {
+        if let Some(obj) = pack_cache::try_read_object_via_single_pack_reader(objects_dir, oid)? {
+            return Ok(obj);
+        }
+        if let Some(obj) = pack_cache::try_read_from_hinted_pack(objects_dir, oid)? {
+            return Ok(obj);
+        }
     }
     let indexes = pack_indexes_for_lookup(objects_dir, opts)?;
     let mut last_err: Option<Error> = None;
@@ -4189,13 +4201,15 @@ pub(crate) fn try_read_object_from_packs_with_options_into(
     if crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
         pack_cache::sync_thread_local_with_store(&crate::pack_store::PackStore::active_for_reads());
     }
-    if let Some(kind) =
-        pack_cache::try_read_object_via_single_pack_reader_into(objects_dir, oid, buf)?
-    {
-        return Ok(kind);
-    }
-    if let Some(kind) = pack_cache::try_read_from_hinted_pack_into(objects_dir, oid, buf)? {
-        return Ok(kind);
+    if opts.allows_pack_shortcuts() {
+        if let Some(kind) =
+            pack_cache::try_read_object_via_single_pack_reader_into(objects_dir, oid, buf)?
+        {
+            return Ok(kind);
+        }
+        if let Some(kind) = pack_cache::try_read_from_hinted_pack_into(objects_dir, oid, buf)? {
+            return Ok(kind);
+        }
     }
     let indexes = pack_indexes_for_lookup(objects_dir, opts)?;
     let mut last_err: Option<Error> = None;

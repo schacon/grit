@@ -35,9 +35,9 @@ use crate::error::Error;
 use crate::ident::committer_unix_seconds_for_ordering_bytes;
 use crate::objects::{ObjectId, ObjectKind};
 use crate::odb::Odb;
-use crate::refs::query_reachability;
 use crate::refs::store::{RefEntry, RefStore};
 use crate::refs::version_sort::compare_refname_versions;
+use crate::refs::{query_reachability, PackedRefPeels};
 use crate::repo::Repository;
 use crate::wildmatch::{wildmatch, WM_CASEFOLD};
 
@@ -449,7 +449,7 @@ pub fn query_listings_on_store(
     odb: Option<&Odb>,
 ) -> QueryResult<Vec<RefListing>> {
     let namespaces = effective_namespaces(query);
-    let mut collected = BTreeMap::new();
+    let mut collected = Vec::new();
     for ns in &namespaces {
         let prefix = ns.prefix();
         store.for_each_ref(prefix, &mut |entry: &RefEntry| {
@@ -457,7 +457,7 @@ pub fn query_listings_on_store(
             ControlFlow::Continue(())
         })?;
     }
-    finish_query(collected.into_values().collect(), query, options, odb, None)
+    finish_query(dedup_collected(collected), query, options, odb, None)
 }
 
 /// Query refs on `repo` (respects linked-worktree visibility and injected ref stores).
@@ -473,11 +473,12 @@ pub fn query_refs(
     let git_dir = repo.git_dir();
     let store = repo.refs();
     let namespaces = effective_namespaces(query);
-    let mut collected = BTreeMap::new();
+    let linked_worktree = crate::worktree_ref::is_linked_worktree_git_dir(git_dir);
+    let mut collected = Vec::new();
     for ns in &namespaces {
         let prefix = ns.prefix();
         store.for_each_ref(prefix, &mut |entry: &RefEntry| {
-            if crate::worktree_ref::is_linked_worktree_git_dir(git_dir)
+            if linked_worktree
                 && !crate::worktree_ref::ref_visible_from_worktree(git_dir, &entry.name)
             {
                 return ControlFlow::Continue(());
@@ -487,7 +488,7 @@ pub fn query_refs(
         })?;
     }
     finish_query(
-        collected.into_values().collect(),
+        dedup_collected(collected),
         query,
         options,
         Some(repo.odb()),
@@ -495,8 +496,17 @@ pub fn query_refs(
     )
 }
 
+/// Sort `collected` by full name and keep the first entry for each name.
+///
+/// Stores list each prefix in name order, so for a single namespace this is a linear pass.
+fn dedup_collected(mut collected: Vec<CollectedRef>) -> Vec<CollectedRef> {
+    collected.sort_by(|a, b| a.full_name.cmp(&b.full_name));
+    collected.dedup_by(|later, first| later.full_name == first.full_name);
+    collected
+}
+
 fn insert_collected_ref(
-    collected: &mut BTreeMap<String, CollectedRef>,
+    collected: &mut Vec<CollectedRef>,
     entry: &RefEntry,
     store: &dyn RefStore,
     namespaces: &[RefNamespace],
@@ -526,7 +536,7 @@ fn insert_collected_ref(
         crate::refs::store::RawRef::Symbolic(_) => None,
     };
     let kind = ref_kind_from_name(&entry.name);
-    collected.entry(entry.name.clone()).or_insert(CollectedRef {
+    collected.push(CollectedRef {
         full_name: entry.name.clone(),
         short_name,
         oid: direct_oid,
@@ -594,8 +604,13 @@ fn finish_query(
     repo: Option<&Repository>,
 ) -> QueryResult<Vec<RefListing>> {
     if let Some(odb) = odb {
+        // A malformed `packed-refs` only loses the shortcut; peeling falls back to the objects.
+        let to_peel = collected.iter().filter(|c| c.peeled.is_none()).count();
+        let packed = repo
+            .filter(|_| to_peel >= PACKED_PEELS_MIN_REFS)
+            .and_then(|r| PackedRefPeels::load(r.git_dir(), r.refs().format()).ok());
         for entry in &mut collected {
-            fill_peeled_from_odb(odb, entry);
+            fill_peeled(odb, packed.as_ref(), entry);
         }
     }
     if query_has_reachability(query) {
@@ -643,8 +658,20 @@ fn finish_query(
         .collect())
 }
 
-fn fill_peeled_from_odb(odb: &Odb, entry: &mut CollectedRef) {
+/// Fewest refs to peel for which indexing `packed-refs` beats reading each object header.
+///
+/// Loading the peel lines indexes the whole file, which in a repository with many packed
+/// refs costs more than a handful of object-header reads.
+const PACKED_PEELS_MIN_REFS: usize = 64;
+
+/// Set `entry.peeled` for annotated tags, preferring `packed-refs` peel lines over
+/// reading the tag object.
+fn fill_peeled(odb: &Odb, packed: Option<&PackedRefPeels>, entry: &mut CollectedRef) {
     if entry.peeled.is_some() {
+        return;
+    }
+    if let Some(known) = packed.and_then(|p| p.peeled(&entry.full_name, &entry.oid)) {
+        entry.peeled = known;
         return;
     }
     entry.peeled = odb.peel_tag_target(entry.oid).ok().flatten();
