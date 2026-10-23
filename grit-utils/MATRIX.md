@@ -115,6 +115,7 @@ Overview of **grit-lib** coverage, **`grit` commands**, common workflows, and **
 | `revs/count-path@git-git` | Literal path count without commit-graph: grit revs --count 7e34d81 -- Documentation/git-log.txt vs git rev-list |
 | `log/limit-path@git-git` | Bounded path log without commit-graph: grit log -n 200 -- Documentation vs git log |
 | `shortlog/ahead@git-git` | Ahead-of-target commits: grit shortlog vs git log <target>..HEAD --oneline |
+| `shortlog/behind@git-git` | Behind-target listing: grit shortlog --behind -n 20 vs git rev-list --left-right --count and git log -n 20 HEAD..target |
 | `show/head@big-blobs` | Show HEAD on big-blobs: grit show vs git show |
 | `show/head@git-git` | Show HEAD commit vs git show |
 | `show/head@synth-10k` | Show HEAD commit: grit show vs git show |

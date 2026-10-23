@@ -8,7 +8,7 @@ use super::super::helpers::{
     resolve_head_bench, revs_count_bench, revs_count_literal_path_git_git_bench, scenario_spec,
     setup_big_blobs, setup_git_git_history, setup_git_git_no_commit_graph, setup_git_git_worktree,
     setup_registry_worktree, setup_shape_worktree, setup_synth100k, shortlog_ahead_bench,
-    show_head_bench, synth10k_kind,
+    shortlog_behind_bench, show_head_bench, synth10k_kind,
 };
 use super::super::matrix_helpers::{
     prepare_rebase_git_git_reset, rebase_onto_bench, rebase_onto_git_git_bench,
@@ -248,6 +248,15 @@ pub fn plans() -> Vec<DailyHeadlinePlan> {
             correctness: None,
             build_git: |c| shortlog_ahead_bench(c).1,
             build_grit: |c| shortlog_ahead_bench(c).0,
+        },
+        DailyHeadlinePlan {
+            spec: scenario_spec("shortlog/behind@git-git"),
+            pending: false,
+            setup: setup_git_git_history,
+            prepare: prepare_none,
+            correctness: None,
+            build_git: |c| shortlog_behind_bench(c).1,
+            build_grit: |c| shortlog_behind_bench(c).0,
         },
         DailyHeadlinePlan {
             spec: scenario_spec("patch-id/commit@git-git"),

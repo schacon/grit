@@ -794,10 +794,22 @@ enum ContractRule {
 /// Known violations tracked until a follow-up plan step lands.
 const EXCEPTIONS: &[(&str, ContractRule, &str, &str)] = &[
     (
+        "branch",
+        ContractRule::Limit,
+        "s4 limit",
+        "branch list uses `-n` / `--max-count` today; step 4 unifies on `--limit`",
+    ),
+    (
         "shortlog",
         ContractRule::Limit,
+        "s4 limit",
+        "shortlog uses `-n` / `--max-count` (default 100) per target comparison lists",
+    ),
+    (
+        "reflog",
+        ContractRule::Limit,
         "inspection-extras",
-        "shortlog caps in the library without a `-n` / `--limit` flag yet",
+        "reflog list uses `--limit` without `-n` today",
     ),
     (
         "remote",

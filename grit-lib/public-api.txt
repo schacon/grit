@@ -15854,8 +15854,10 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::branch_tracking::S
 pub struct grit_lib::refs::branch_tracking::TargetComparison
 pub grit_lib::refs::branch_tracking::TargetComparison::ahead: usize
 pub grit_lib::refs::branch_tracking::TargetComparison::base: grit_lib::refs::branch_tracking::ComparisonBase
+pub grit_lib::refs::branch_tracking::TargetComparison::behind: usize
 pub grit_lib::refs::branch_tracking::TargetComparison::branch: alloc::string::String
 pub grit_lib::refs::branch_tracking::TargetComparison::newest_ahead: alloc::vec::Vec<grit_lib::objects::ObjectId>
+pub grit_lib::refs::branch_tracking::TargetComparison::newest_behind: alloc::vec::Vec<grit_lib::objects::ObjectId>
 impl core::clone::Clone for grit_lib::refs::branch_tracking::TargetComparison
 pub fn grit_lib::refs::branch_tracking::TargetComparison::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::refs::branch_tracking::TargetComparison
@@ -15872,6 +15874,7 @@ impl core::marker::UnsafeUnpin for grit_lib::refs::branch_tracking::TargetCompar
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::branch_tracking::TargetComparison
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::branch_tracking::TargetComparison
 pub struct grit_lib::refs::branch_tracking::TargetComparisonOptions
+pub grit_lib::refs::branch_tracking::TargetComparisonOptions::include_behind: bool
 pub grit_lib::refs::branch_tracking::TargetComparisonOptions::list_limit: usize
 pub grit_lib::refs::branch_tracking::TargetComparisonOptions::target: core::option::Option<grit_lib::refs::branch_tracking::TargetSpec>
 impl core::clone::Clone for grit_lib::refs::branch_tracking::TargetComparisonOptions
@@ -15905,6 +15908,49 @@ impl core::marker::Unpin for grit_lib::refs::branch_tracking::TargetSpec
 impl core::marker::UnsafeUnpin for grit_lib::refs::branch_tracking::TargetSpec
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::branch_tracking::TargetSpec
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::branch_tracking::TargetSpec
+pub struct grit_lib::refs::branch_tracking::TargetTipListOptions
+pub grit_lib::refs::branch_tracking::TargetTipListOptions::include_behind: bool
+pub grit_lib::refs::branch_tracking::TargetTipListOptions::list_limit: usize
+impl core::clone::Clone for grit_lib::refs::branch_tracking::TargetTipListOptions
+pub fn grit_lib::refs::branch_tracking::TargetTipListOptions::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::refs::branch_tracking::TargetTipListOptions
+impl core::cmp::PartialEq for grit_lib::refs::branch_tracking::TargetTipListOptions
+pub fn grit_lib::refs::branch_tracking::TargetTipListOptions::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::refs::branch_tracking::TargetTipListOptions
+pub fn grit_lib::refs::branch_tracking::TargetTipListOptions::default() -> Self
+impl core::fmt::Debug for grit_lib::refs::branch_tracking::TargetTipListOptions
+pub fn grit_lib::refs::branch_tracking::TargetTipListOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::refs::branch_tracking::TargetTipListOptions
+impl core::marker::Copy for grit_lib::refs::branch_tracking::TargetTipListOptions
+impl core::marker::Freeze for grit_lib::refs::branch_tracking::TargetTipListOptions
+impl core::marker::Send for grit_lib::refs::branch_tracking::TargetTipListOptions
+impl core::marker::Sync for grit_lib::refs::branch_tracking::TargetTipListOptions
+impl core::marker::Unpin for grit_lib::refs::branch_tracking::TargetTipListOptions
+impl core::marker::UnsafeUnpin for grit_lib::refs::branch_tracking::TargetTipListOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::branch_tracking::TargetTipListOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::branch_tracking::TargetTipListOptions
+pub struct grit_lib::refs::branch_tracking::TargetTipLists
+pub grit_lib::refs::branch_tracking::TargetTipLists::ahead: usize
+pub grit_lib::refs::branch_tracking::TargetTipLists::ahead_oids: alloc::vec::Vec<grit_lib::objects::ObjectId>
+pub grit_lib::refs::branch_tracking::TargetTipLists::behind: usize
+pub grit_lib::refs::branch_tracking::TargetTipLists::behind_oids: alloc::vec::Vec<grit_lib::objects::ObjectId>
+impl grit_lib::refs::branch_tracking::TargetTipLists
+pub fn grit_lib::refs::branch_tracking::TargetTipLists::compute(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, grit_lib::refs::branch_tracking::TargetTipListOptions) -> grit_lib::error::Result<Self>
+impl core::clone::Clone for grit_lib::refs::branch_tracking::TargetTipLists
+pub fn grit_lib::refs::branch_tracking::TargetTipLists::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::refs::branch_tracking::TargetTipLists
+impl core::cmp::PartialEq for grit_lib::refs::branch_tracking::TargetTipLists
+pub fn grit_lib::refs::branch_tracking::TargetTipLists::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::refs::branch_tracking::TargetTipLists
+pub fn grit_lib::refs::branch_tracking::TargetTipLists::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::refs::branch_tracking::TargetTipLists
+impl core::marker::Freeze for grit_lib::refs::branch_tracking::TargetTipLists
+impl core::marker::Send for grit_lib::refs::branch_tracking::TargetTipLists
+impl core::marker::Sync for grit_lib::refs::branch_tracking::TargetTipLists
+impl core::marker::Unpin for grit_lib::refs::branch_tracking::TargetTipLists
+impl core::marker::UnsafeUnpin for grit_lib::refs::branch_tracking::TargetTipLists
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::branch_tracking::TargetTipLists
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::branch_tracking::TargetTipLists
 pub struct grit_lib::refs::branch_tracking::TipComparison
 pub grit_lib::refs::branch_tracking::TipComparison::ahead: usize
 pub grit_lib::refs::branch_tracking::TipComparison::behind: usize
@@ -22337,7 +22383,7 @@ impl core::marker::Unpin for grit_lib::revwalk::merge_base::ReachableWalkState
 impl core::marker::UnsafeUnpin for grit_lib::revwalk::merge_base::ReachableWalkState
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::merge_base::ReachableWalkState
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::merge_base::ReachableWalkState
-pub fn grit_lib::revwalk::merge_base::ahead_behind_of_target_commits(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, usize) -> grit_lib::error::Result<(usize, usize, alloc::vec::Vec<grit_lib::objects::ObjectId>)>
+pub fn grit_lib::revwalk::merge_base::ahead_behind_of_target_commits(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, usize, usize) -> grit_lib::error::Result<(usize, usize, alloc::vec::Vec<grit_lib::objects::ObjectId>, alloc::vec::Vec<grit_lib::objects::ObjectId>)>
 pub fn grit_lib::revwalk::merge_base::ahead_of_target_commits(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, usize) -> grit_lib::error::Result<(usize, alloc::vec::Vec<grit_lib::objects::ObjectId>)>
 pub fn grit_lib::revwalk::merge_base::ancestor_closure(&grit_lib::repo::Repository, grit_lib::objects::ObjectId) -> grit_lib::error::Result<std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>>
 pub fn grit_lib::revwalk::merge_base::branch_base_for_tip(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, &[grit_lib::objects::ObjectId]) -> grit_lib::error::Result<core::option::Option<usize>>

@@ -7,7 +7,7 @@ use crate::config::{parse_git_config_maybe_bool, ConfigSet};
 use crate::environment::Environment;
 use crate::error::Result;
 use crate::fetch_head::merge_object_ids_hex;
-use crate::merge_base::{ahead_behind_of_target_commits, ahead_of_target_commits};
+use crate::merge_base::ahead_behind_of_target_commits;
 use crate::objects::ObjectId;
 use crate::push_report::{PushRefResult, PushRefStatus};
 use crate::refs;
@@ -290,6 +290,8 @@ pub struct TargetComparisonOptions {
     pub target: Option<TargetSpec>,
     /// Maximum number of newest ahead commit oids to retain.
     pub list_limit: usize,
+    /// When true, retain up to [`Self::list_limit`] newest behind commits as well as ahead.
+    pub include_behind: bool,
 }
 
 /// Ahead-of-target view of the current branch (`grit shortlog` / `grit ahead`).
@@ -301,8 +303,12 @@ pub struct TargetComparison {
     pub base: ComparisonBase,
     /// Commits reachable from the branch tip but not from the base (full count).
     pub ahead: usize,
+    /// Commits reachable from the base but not from the branch tip (full count).
+    pub behind: usize,
     /// Newest commits in the ahead set (newest first), up to the requested limit.
     pub newest_ahead: Vec<ObjectId>,
+    /// Newest commits in the behind set when [`TargetComparisonOptions::include_behind`] is set.
+    pub newest_behind: Vec<ObjectId>,
 }
 
 /// Resolve `refname` through the repository's ref store; refs that are missing or cannot be
@@ -431,12 +437,20 @@ pub fn compare_with_target(
             .ok_or_else(|| crate::error::Error::InvalidRef("no target branch".into()))?,
     };
 
-    let (ahead, newest_ahead) = ahead_of_target_commits(repo, head_oid, base.oid, opts.list_limit)?;
+    let retain_behind = if opts.include_behind {
+        opts.list_limit
+    } else {
+        0
+    };
+    let (ahead, behind, newest_ahead, newest_behind) =
+        ahead_behind_of_target_commits(repo, head_oid, base.oid, opts.list_limit, retain_behind)?;
     Ok(TargetComparison {
         branch: branch_name,
         base,
         ahead,
+        behind,
         newest_ahead,
+        newest_behind,
     })
 }
 
@@ -466,12 +480,20 @@ pub fn compare_with_target_optional(
         return Ok(None);
     };
 
-    let (ahead, newest_ahead) = ahead_of_target_commits(repo, head_oid, base.oid, opts.list_limit)?;
+    let retain_behind = if opts.include_behind {
+        opts.list_limit
+    } else {
+        0
+    };
+    let (ahead, behind, newest_ahead, newest_behind) =
+        ahead_behind_of_target_commits(repo, head_oid, base.oid, opts.list_limit, retain_behind)?;
     Ok(Some(TargetComparison {
         branch: branch_name,
         base,
         ahead,
+        behind,
         newest_ahead,
+        newest_behind,
     }))
 }
 
@@ -993,6 +1015,65 @@ impl Standing {
     }
 }
 
+/// Options for [`TargetTipLists::compute`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TargetTipListOptions {
+    /// Maximum commits to retain on each listed side (`-n` / `--max-count`; default 100).
+    pub list_limit: usize,
+    /// When true, retain up to [`Self::list_limit`] newest behind commits as well as ahead.
+    pub include_behind: bool,
+}
+
+impl Default for TargetTipListOptions {
+    fn default() -> Self {
+        Self {
+            list_limit: 100,
+            include_behind: false,
+        }
+    }
+}
+
+/// Symmetric comparison of two commit tips (counts plus bounded OID lists).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TargetTipLists {
+    /// Commits reachable from the tip but not from the target.
+    pub ahead: usize,
+    /// Commits reachable from the target but not from the tip.
+    pub behind: usize,
+    /// Newest ahead commits (newest first), at most [`TargetTipListOptions::list_limit`].
+    pub ahead_oids: Vec<ObjectId>,
+    /// Newest behind commits when [`TargetTipListOptions::include_behind`] is set.
+    pub behind_oids: Vec<ObjectId>,
+}
+
+impl TargetTipLists {
+    /// Compare `tip` with `target`, matching `git rev-list --left-right --count tip...target`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates object read and parse errors from the commit walk.
+    pub fn compute(
+        repo: &Repository,
+        tip: ObjectId,
+        target: ObjectId,
+        opts: TargetTipListOptions,
+    ) -> Result<Self> {
+        let retain_behind = if opts.include_behind {
+            opts.list_limit
+        } else {
+            0
+        };
+        let (ahead, behind, ahead_oids, behind_oids) =
+            ahead_behind_of_target_commits(repo, tip, target, opts.list_limit, retain_behind)?;
+        Ok(Self {
+            ahead,
+            behind,
+            ahead_oids,
+            behind_oids,
+        })
+    }
+}
+
 /// Symmetric comparison of a branch tip with a base commit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TipComparison {
@@ -1027,8 +1108,8 @@ impl TipComparison {
         base: ObjectId,
         retain_newest_ahead: usize,
     ) -> Result<Self> {
-        let (ahead, behind, newest_ahead) =
-            ahead_behind_of_target_commits(repo, tip, base, retain_newest_ahead)?;
+        let (ahead, behind, newest_ahead, _) =
+            ahead_behind_of_target_commits(repo, tip, base, retain_newest_ahead, 0)?;
         Ok(Self {
             ahead,
             behind,

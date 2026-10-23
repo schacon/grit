@@ -63,6 +63,7 @@ fn assert_matches_git(dir: &Path, target: &str, limit: usize) {
     let opts = TargetComparisonOptions {
         target: Some(TargetSpec(target.to_owned())),
         list_limit: limit,
+        include_behind: false,
     };
     let cmp = compare_with_target(&repo, &opts).expect("compare");
     assert_eq!(cmp.ahead, git_ahead_count(dir, target));
@@ -126,6 +127,7 @@ fn compare_with_target_unknown_errors() {
     let opts = TargetComparisonOptions {
         target: Some(TargetSpec("no-such-ref".into())),
         list_limit: 100,
+        include_behind: false,
     };
     let err = compare_with_target(&repo, &opts).unwrap_err();
     assert!(
@@ -158,6 +160,7 @@ fn compare_with_target_optional_none_without_candidates() {
     let opts = TargetComparisonOptions {
         target: None,
         list_limit: 100,
+        include_behind: false,
     };
     assert!(compare_with_target_optional(&repo, &opts)
         .expect("optional")
