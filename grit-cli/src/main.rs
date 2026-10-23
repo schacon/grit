@@ -2332,15 +2332,16 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 rebase_flags,
                 shared,
             } => {
-                let outcome = commands::history::run_rebase(&commands::history::RebaseRunOptions {
-                    upstream,
-                    onto,
-                    continue_rebase,
-                    abort,
-                    skip,
-                    flags: &rebase_flags,
-                    shared: &shared,
-                })?;
+                let outcome =
+                    commands::history::run_rebase(&commands::history::RebaseRunOptions {
+                        upstream,
+                        onto,
+                        continue_rebase,
+                        abort,
+                        skip,
+                        flags: &rebase_flags,
+                        shared: &shared,
+                    })?;
                 emit_rebase_outcome(&outcome, opts, ctx)
             }
             HistoryAction::Absorb { base, shared } => emit(
