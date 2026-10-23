@@ -508,6 +508,14 @@ const COMMAND_CONTRACTS: &[(&str, CommandContract)] = &[
         },
     ),
     (
+        "remote.show",
+        CommandContract {
+            kind: CommandKind::List,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
         "remote.set-url",
         CommandContract {
             kind: CommandKind::Mutation,

@@ -536,6 +536,17 @@ fn snapshot_remote_remove() {
 }
 
 #[test]
+fn snapshot_remote_show() {
+    let upstream = CliFixture::new().with_upstream();
+    let fixture = upstream.seed();
+    fixture.snapshot_all_modes(
+        "remote_show",
+        &["remote", "show", "origin", "--no-query"],
+        snapshot_dir(),
+    );
+}
+
+#[test]
 fn snapshot_bundle_create() {
     let fixture = CliFixture::new();
     fixture.snapshot_all_modes(

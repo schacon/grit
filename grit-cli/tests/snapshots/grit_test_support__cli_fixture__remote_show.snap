@@ -1,0 +1,21 @@
+---
+source: grit-test-support/src/cli_fixture.rs
+expression: payload
+---
+{
+  "human": {
+    "exit": 0,
+    "stdout": "* remote origin\n  Fetch URL: /tmp/.tmpYJuWjH\n  Push  URL: /tmp/.tmpYJuWjH\n  Remote branches:\n    feature tracked\n    main tracked\n  Local branches configured for pull:\n    main merges with remote main\n",
+    "stderr": ""
+  },
+  "json": {
+    "exit": 0,
+    "stdout": "{\"action\":\"show\",\"name\":\"origin\",\"fetch_url\":\"/tmp/.tmpYJuWjH\",\"push_url\":\"/tmp/.tmpYJuWjH\",\"branches\":[{\"name\":\"feature\",\"state\":\"tracked\"},{\"name\":\"main\",\"state\":\"tracked\"}],\"pull\":[{\"local\":\"main\",\"merges\":\"refs/heads/main\"}]}\n",
+    "stderr": ""
+  },
+  "markdown": {
+    "exit": 0,
+    "stdout": "## Remote `origin`\n\n| | |\n| --- | --- |\n| Fetch URL | /tmp/.tmpYJuWjH |\n| Push URL | /tmp/.tmpYJuWjH |\n\n### Remote branches\n\n| Branch | State |\n| --- | --- |\n| `feature` | tracked |\n| `main` | tracked |\n\n### Pull configuration\n\n| Local branch | Merges |\n| --- | --- |\n| `main` | `refs/heads/main` |\n\n",
+    "stderr": ""
+  }
+}
