@@ -2026,6 +2026,22 @@ fn tables_list_cache_key(reftable_dir: &Path) -> Result<StackCacheKey> {
     }
 }
 
+fn build_cached_stack_tables(
+    reftable_dir: &Path,
+    table_names: &[String],
+) -> Result<CachedStackTables> {
+    let mut readers = Vec::with_capacity(table_names.len());
+    for name in table_names {
+        let path = reftable_dir.join(name);
+        let data = fs::read(&path).map_err(Error::Io)?;
+        readers.push(ReftableReader::from_arc(Arc::from(data))?);
+    }
+    Ok(CachedStackTables {
+        table_names: table_names.to_owned(),
+        readers,
+    })
+}
+
 fn load_cached_stack_tables(reftable_dir: &Path) -> Result<Arc<CachedStackTables>> {
     let key = tables_list_cache_key(reftable_dir)?;
     if let Ok(guard) = stack_table_cache().lock() {
@@ -2044,20 +2060,37 @@ fn load_cached_stack_tables(reftable_dir: &Path) -> Result<Arc<CachedStackTables
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(e) => return Err(Error::Io(e)),
     };
-    let mut readers = Vec::with_capacity(table_names.len());
-    for name in &table_names {
-        let path = reftable_dir.join(name);
-        let data = fs::read(&path).map_err(Error::Io)?;
-        readers.push(ReftableReader::from_arc(Arc::from(data))?);
-    }
-    let cached = Arc::new(CachedStackTables {
-        table_names,
-        readers,
-    });
+    let cached = Arc::new(build_cached_stack_tables(reftable_dir, &table_names)?);
     if let Ok(mut guard) = stack_table_cache().lock() {
         guard.insert(key, Arc::clone(&cached));
     }
     Ok(cached)
+}
+
+/// Cached table bytes for the authoritative on-disk `tables.list` stack.
+///
+/// When another process (for example system `git`) appends or compacts reftables, the
+/// process-wide cache can still hit on a stale `(mtime, len)` key while `tables.list`
+/// names different files — reload or rebuild when the name list does not match.
+fn cached_stack_tables_for_names(
+    reftable_dir: &Path,
+    table_names: &[String],
+) -> Result<Arc<CachedStackTables>> {
+    let cached = load_cached_stack_tables(reftable_dir)?;
+    if cached.table_names.as_slice() == table_names {
+        return Ok(cached);
+    }
+    invalidate_stack_table_cache(reftable_dir);
+    let cached = load_cached_stack_tables(reftable_dir)?;
+    if cached.table_names.as_slice() == table_names {
+        return Ok(cached);
+    }
+    let key = tables_list_cache_key(reftable_dir)?;
+    let rebuilt = Arc::new(build_cached_stack_tables(reftable_dir, table_names)?);
+    if let Ok(mut guard) = stack_table_cache().lock() {
+        guard.insert(key, Arc::clone(&rebuilt));
+    }
+    Ok(rebuilt)
 }
 
 fn cached_reader_for_name<'a>(
@@ -2177,8 +2210,8 @@ impl ReftableStack {
 
     /// First ref name under `prefix` (child path), if any.
     fn first_ref_name_with_prefix(&self, prefix: &str) -> Result<Option<String>> {
-        let cached = load_cached_stack_tables(&self.reftable_dir)?;
         let names = self.table_names_for_read()?;
+        let cached = cached_stack_tables_for_names(&self.reftable_dir, &names)?;
         let readers = self.stack_readers(&cached, &names)?;
         let upper = prefix_upper_exclusive(prefix.trim_end_matches('/'));
         let mut merged: BTreeMap<String, RefRecord> = BTreeMap::new();
@@ -2282,8 +2315,8 @@ impl ReftableStack {
     /// Later tables override earlier ones. Deletion records cause the
     /// ref to be omitted from the result.
     pub fn read_refs(&self) -> Result<Vec<RefRecord>> {
-        let cached = load_cached_stack_tables(&self.reftable_dir)?;
         let names = self.table_names_for_read()?;
+        let cached = cached_stack_tables_for_names(&self.reftable_dir, &names)?;
         let readers = self.stack_readers(&cached, &names)?;
         let mut merged: BTreeMap<String, RefRecord> = BTreeMap::new();
         for reader in readers {
@@ -2309,8 +2342,8 @@ impl ReftableStack {
         git_dir: &Path,
         prefix: &str,
     ) -> Result<Vec<(String, ObjectId)>> {
-        let cached = load_cached_stack_tables(&self.reftable_dir)?;
         let names = self.table_names_for_read()?;
+        let cached = cached_stack_tables_for_names(&self.reftable_dir, &names)?;
         let readers = self.stack_readers(&cached, &names)?;
         let lower = prefix;
         let upper = prefix_upper_exclusive(prefix);
@@ -2354,8 +2387,8 @@ impl ReftableStack {
     }
 
     fn table_payload_sizes(&self) -> Result<Vec<u64>> {
-        let cached = load_cached_stack_tables(&self.reftable_dir)?;
         let names = self.table_names_for_read()?;
+        let cached = cached_stack_tables_for_names(&self.reftable_dir, &names)?;
         Ok(self
             .stack_readers(&cached, &names)?
             .into_iter()
@@ -2444,8 +2477,8 @@ impl ReftableStack {
 
     /// Look up a single ref across all tables (most recent wins).
     pub fn lookup_ref(&self, name: &str) -> Result<Option<RefRecord>> {
-        let cached = load_cached_stack_tables(&self.reftable_dir)?;
         let names = self.table_names_for_read()?;
+        let cached = cached_stack_tables_for_names(&self.reftable_dir, &names)?;
         for reader in self.stack_readers(&cached, &names)?.into_iter().rev() {
             if let Some(rec) = reader.lookup_ref(name)? {
                 return match rec.value {
@@ -2902,8 +2935,8 @@ impl ReftableStack {
         if want.is_empty() {
             return Ok(found);
         }
-        let cached = load_cached_stack_tables(&self.reftable_dir)?;
         let table_names = self.table_names_for_read()?;
+        let cached = cached_stack_tables_for_names(&self.reftable_dir, &table_names)?;
         let readers = self.stack_readers(&cached, &table_names)?;
         for reader in readers.iter().rev() {
             reader.for_each_ref(|rec| {

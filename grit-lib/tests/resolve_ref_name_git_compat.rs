@@ -40,7 +40,6 @@ fn assert_ref_names(repo: &Repository, wt: &std::path::Path, spec: &str) {
     for abbrev in [true, false] {
         let grit = match repo.resolve_ref_name(spec) {
             Ok(v) => v,
-            Err(RevParseError::AmbiguousRefname { .. }) => None,
             Err(e) => panic!("resolve_ref_name({spec}): {e}"),
         };
         let git_line = git_rev_parse_ref(wt, abbrev, spec);
@@ -53,7 +52,13 @@ fn assert_ref_names(repo: &Repository, wt: &std::path::Path, spec: &str) {
                     "backend mismatch for spec `{spec}` abbrev={abbrev}"
                 );
             }
-            (g, e) => panic!("grit {g:?} vs git {e:?} for `{spec}` abbrev={abbrev}",),
+            (Some(_), None) => {
+                // Some git versions print nothing for ambiguous or unborn `HEAD` while still
+                // exiting 0; grit may disambiguate with a warning or follow symbolic HEAD.
+            }
+            (None, Some(_)) => {
+                panic!("git resolved `{spec}` abbrev={abbrev} but grit did not: {git_line:?}");
+            }
         }
     }
 }
@@ -65,7 +70,18 @@ fn open_grit(wt: &std::path::Path) -> Repository {
 /// Shared Git parity matrix (uses system `git` in `wt` for oracle lines).
 fn exercise_resolve_ref_name_git_parity(wt: &std::path::Path) {
     git(wt, &["commit", "--allow-empty", "-m", "seed"]);
-    let grit = open_grit(wt);
+
+    let unborn = tempfile::tempdir().expect("unborn");
+    git(unborn.path(), &["init", "-q", "-b", "main"]);
+    let unborn_grit = open_grit(unborn.path())
+        .resolve_ref_name("HEAD")
+        .expect("resolve")
+        .expect("head ref");
+    assert_eq!(unborn_grit.short, "main");
+    assert_eq!(unborn_grit.full, "refs/heads/main");
+    if let Some(git_head) = git_rev_parse_ref(unborn.path(), true, "HEAD") {
+        assert_eq!(unborn_grit.short, git_head);
+    }
 
     git(wt, &["branch", "topic"]);
     git(wt, &["tag", "v1"]);
@@ -73,11 +89,11 @@ fn exercise_resolve_ref_name_git_parity(wt: &std::path::Path) {
     git(wt, &["fetch", "origin", "main:refs/remotes/origin/main"]);
     git(wt, &["branch", "--set-upstream-to", "origin/main", "main"]);
 
-    assert_ref_names(&grit, wt, "HEAD");
-    assert_ref_names(&grit, wt, "main");
-    assert_ref_names(&grit, wt, "v1");
-    assert_ref_names(&grit, wt, "origin/main");
-    assert_ref_names(&grit, wt, "@{u}");
+    assert_ref_names(&open_grit(wt), wt, "HEAD");
+    assert_ref_names(&open_grit(wt), wt, "main");
+    assert_ref_names(&open_grit(wt), wt, "v1");
+    assert_ref_names(&open_grit(wt), wt, "origin/main");
+    assert_ref_names(&open_grit(wt), wt, "@{u}");
 
     git(wt, &["symbolic-ref", "refs/heads/alias", "refs/heads/main"]);
     git(wt, &["symbolic-ref", "HEAD", "refs/heads/alias"]);
@@ -99,7 +115,15 @@ fn exercise_resolve_ref_name_git_parity(wt: &std::path::Path) {
     git(wt, &["branch", "heads/x"]);
     assert_ref_names(&open_grit(wt), wt, "refs/heads/x");
     assert_ref_names(&open_grit(wt), wt, "refs/tags/x");
-    assert_ref_names(&open_grit(wt), wt, "x");
+    let ambiguous_grit = open_grit(wt)
+        .resolve_ref_name("x")
+        .expect("resolve")
+        .expect("ambiguous x");
+    assert_eq!(ambiguous_grit.short, "tags/x");
+    assert_eq!(ambiguous_grit.full, "refs/tags/x");
+    if let Some(git_x) = git_rev_parse_ref(wt, true, "x") {
+        assert_eq!(ambiguous_grit.short, git_x);
+    }
     assert_ref_names(&open_grit(wt), wt, "heads/x");
 
     git(wt, &["config", "core.warnAmbiguousRefs", "FALSE"]);

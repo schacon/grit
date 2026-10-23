@@ -20,13 +20,16 @@
 
 use thiserror::Error;
 
+use crate::diagnostics::Warning;
 use crate::error::{Error, Result};
 use crate::objects::{
     parse_commit, parse_tag, parse_tree, CommitData, Object, ObjectId, ObjectKind, TagData,
     TreeEntry,
 };
+use crate::refs::store::RawRef;
 use crate::refs::{
-    expand_ref_dwim_full_name, shorten_unambiguous, warn_ambiguous_refs_from_config,
+    expand_ref_dwim_full_name, peel_symref_to_terminal_ref, shorten_unambiguous,
+    warn_ambiguous_refs_from_config,
 };
 use crate::repo::Repository;
 use crate::rev_parse::{
@@ -222,16 +225,18 @@ impl Repository {
         let (count, full) = expand_ref_dwim_full_name(self, spec).map_err(map_resolve_ref_error)?;
         if count == 0 {
             if spec == "HEAD" {
-                if let Ok(Some(_)) = self.refs().read_raw("HEAD") {
-                    return Err(RevParseError::InvalidObjectName {
-                        name: "HEAD".to_owned(),
-                    });
+                if let Ok(Some(RawRef::Symbolic(target))) = self.refs().read_raw("HEAD") {
+                    let full = peel_symref_to_terminal_ref(self, &target)
+                        .map_err(map_resolve_ref_error)?;
+                    let short =
+                        shorten_unambiguous(self, &full, strict).map_err(map_resolve_ref_error)?;
+                    return Ok(Some(ResolvedRefName { full, short }));
                 }
             }
             return Ok(None);
         }
         if count > 1 && strict {
-            return Err(RevParseError::AmbiguousRefname {
+            self.warn(Warning::AmbiguousRefname {
                 spec: spec.to_owned(),
             });
         }

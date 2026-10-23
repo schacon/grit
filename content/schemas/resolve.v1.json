@@ -2,8 +2,8 @@
   "$id": "https://grit-scm.com/schemas/resolve/v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "definitions": {
-    "ResolveEntry": {
-      "description": "One resolved spec (`--json` row).",
+    "ResolveEntryObjectId": {
+      "description": "One resolved spec in default oid mode (`--json` without ref-name flags).",
       "properties": {
         "full_ref": {
           "type": [
@@ -12,22 +12,10 @@
           ]
         },
         "kind": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string"
         },
         "oid": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "ref_display": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string"
         },
         "ref_name": {
           "type": [
@@ -38,19 +26,53 @@
         "size": {
           "format": "uint64",
           "minimum": 0.0,
-          "type": [
-            "integer",
-            "null"
-          ]
+          "type": "integer"
         },
         "spec": {
           "type": "string"
         }
       },
       "required": [
-        "spec"
+        "spec",
+        "oid",
+        "kind",
+        "size"
       ],
       "type": "object"
+    },
+    "ResolveEntryRefName": {
+      "description": "One resolved spec in `--abbrev-ref` / `--symbolic-full-name` mode.",
+      "properties": {
+        "full_ref": {
+          "type": "string"
+        },
+        "ref_display": {
+          "type": "string"
+        },
+        "ref_name": {
+          "type": "string"
+        },
+        "spec": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "spec",
+        "ref_name",
+        "full_ref",
+        "ref_display"
+      ],
+      "type": "object"
+    },
+    "ResolveEntry": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/ResolveEntryObjectId"
+        },
+        {
+          "$ref": "#/definitions/ResolveEntryRefName"
+        }
+      ]
     },
     "WarningRecord": {
       "properties": {

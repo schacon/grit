@@ -125,16 +125,12 @@ pub fn run(specs: Vec<String>, short: bool, ref_output: RefNameOutput) -> Result
                             oid: None,
                             kind: None,
                             size: None,
-                            ref_name: Some(names.short),
+                            ref_name: Some(display.clone()),
                             full_ref: Some(names.full),
                             ref_display: Some(display),
                         });
                     }
                     Ok(None) => {}
-                    Err(RevParseError::AmbiguousRefname { spec: amb }) => {
-                        eprintln!("warning: refname '{amb}' is ambiguous.");
-                        eprintln!("error: refname '{amb}' is ambiguous");
-                    }
                     Err(e) => {
                         return Err(map_rev_parse_ref_error(&spec, e));
                     }

@@ -58,10 +58,10 @@ Pass `--json` for stable, scripting-friendly output:
 | `results[].oid` | string | Resolved object id (abbreviated when `--short` is set). |
 | `results[].kind` | string | `blob`, `tree`, `commit`, or `tag`. |
 | `results[].size` | number | Uncompressed object size in bytes. |
-| `results[].ref_name` | string | Short ref name when the spec named a ref. |
-| `results[].full_ref` | string | Full ref name (for example `refs/heads/main`). |
-| `results[].ref_display` | string | Human/markdown line for `--abbrev-ref` / `--symbolic-full-name` mode. |
-| `results[].oid` / `kind` / `size` | | Omitted in ref-name modes; present for default oid resolution. |
+| `results[].ref_name` | string | In oid mode: short ref name when the spec named a ref (for example `main` for `HEAD`). In ref-name modes: the printed ref line (abbrev or full, matching the active flag). |
+| `results[].full_ref` | string | Full symbolic ref when the spec named a ref (for example `refs/heads/main`). |
+| `results[].ref_display` | string | Same as `ref_name` in ref-name modes (stable alias for scripts). |
+| `results[].oid` / `kind` / `size` | | Required in default oid mode; omitted in ref-name modes. |
 
 Example:
 
@@ -73,7 +73,8 @@ Example:
       "oid": "92501f188ae0815af09a0cef6e121eddda4113cf",
       "kind": "commit",
       "size": 234,
-      "ref_name": null
+      "ref_name": "main",
+      "full_ref": "refs/heads/main"
     }
   ]
 }

@@ -42,7 +42,7 @@ fn ref_exists(repo: &Repository, name: &str) -> Result<bool> {
 }
 
 /// Follow symbolic refs from `start` to the terminal ref name Git uses for DWIM output.
-fn peel_symref_to_terminal_ref(repo: &Repository, start: &str) -> Result<String> {
+pub fn peel_symref_to_terminal_ref(repo: &Repository, start: &str) -> Result<String> {
     let refname_opts = RefNameOptions::default();
     let mut name = start.to_owned();
     for _ in 0..SYMREF_MAXDEPTH {
@@ -59,7 +59,9 @@ fn peel_symref_to_terminal_ref(repo: &Repository, start: &str) -> Result<String>
             }
         }
     }
-    Err(Error::RefStore(crate::refs::store::RefStoreError::SymrefLoop))
+    Err(Error::RefStore(
+        crate::refs::store::RefStoreError::SymrefLoop,
+    ))
 }
 
 fn symref_target_resolves(repo: &Repository, start: &str) -> Result<bool> {
@@ -216,9 +218,24 @@ mod tests {
         )
         .expect("reopen");
         assert!(!warn_ambiguous_refs_from_config(&repo));
-        let tag = shorten_unambiguous(&repo, "refs/tags/x", false)
-        .expect("tag");
+        let tag = shorten_unambiguous(&repo, "refs/tags/x", false).expect("tag");
         assert_eq!(tag, "x");
+    }
+
+    #[test]
+    fn unborn_head_abbrev_ref_matches_symbolic_branch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = Repository::init(
+            dir.path(),
+            &InitOptions::new().with_initial_branch("main".to_owned()),
+        )
+        .expect("init");
+        let names = repo
+            .resolve_ref_name("HEAD")
+            .expect("resolve")
+            .expect("head");
+        assert_eq!(names.full, "refs/heads/main");
+        assert_eq!(names.short, "main");
     }
 
     #[test]

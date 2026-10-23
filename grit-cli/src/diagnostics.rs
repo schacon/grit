@@ -74,9 +74,7 @@ impl DiagnosticSink for CliDiagnosticSink {
 #[must_use]
 pub fn format_warning_message(w: &Warning) -> String {
     match w {
-        Warning::AmbiguousRefname { spec } => {
-            format!("'{spec}' matches more than one ref or object id")
-        }
+        Warning::AmbiguousRefname { spec } => format!("refname '{spec}' is ambiguous"),
         Warning::DanglingSymref { name } => {
             format!("symbolic ref `{name}` has no valid target; skipping")
         }

@@ -55,4 +55,13 @@ fn resolve_abbrev_and_symbolic_full_name_match_git() {
     assert!(stdout.contains("\"full_ref\""));
     assert!(stdout.contains("\"ref_name\""));
     assert!(stdout.contains("\"ref_display\""));
+
+    git(dir.path(), &["branch", "dup"]);
+    git(dir.path(), &["tag", "dup"]);
+    let (_, grit_out, grit_err) = grit(dir.path(), &["resolve", "--abbrev-ref", "dup"]);
+    assert_eq!(grit_out.trim(), "tags/dup");
+    assert!(
+        grit_err.contains("ambiguous"),
+        "stderr should carry ambiguous ref warning: {grit_err}"
+    );
 }
