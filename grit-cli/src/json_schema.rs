@@ -958,6 +958,10 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
             &["remote", "set-url", "origin", "https://example.com/new.git"],
         ),
         (
+            "remote_remove",
+            &["remote", "remove", "origin", "--dry-run"],
+        ),
+        (
             "bundle_create",
             &["bundle", "create", "snap.bundle", "HEAD"],
         ),
