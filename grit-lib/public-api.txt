@@ -19550,47 +19550,6 @@ impl core::marker::Unpin for grit_lib::repo_handles::ConfiguredRemote
 impl core::marker::UnsafeUnpin for grit_lib::repo_handles::ConfiguredRemote
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::ConfiguredRemote
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::ConfiguredRemote
-pub struct grit_lib::repo_handles::RemoteRemoval
-pub grit_lib::repo_handles::RemoteRemoval::branches_untracked: alloc::vec::Vec<alloc::string::String>
-pub grit_lib::repo_handles::RemoteRemoval::config_keys_removed: alloc::vec::Vec<alloc::string::String>
-pub grit_lib::repo_handles::RemoteRemoval::dry_run: bool
-pub grit_lib::repo_handles::RemoteRemoval::name: alloc::string::String
-pub grit_lib::repo_handles::RemoteRemoval::refs_deleted: alloc::vec::Vec<alloc::string::String>
-impl core::clone::Clone for grit_lib::repo_handles::RemoteRemoval
-pub fn grit_lib::repo_handles::RemoteRemoval::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::repo_handles::RemoteRemoval
-impl core::cmp::PartialEq for grit_lib::repo_handles::RemoteRemoval
-pub fn grit_lib::repo_handles::RemoteRemoval::eq(&self, &Self) -> bool
-impl core::fmt::Debug for grit_lib::repo_handles::RemoteRemoval
-pub fn grit_lib::repo_handles::RemoteRemoval::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for grit_lib::repo_handles::RemoteRemoval
-impl core::marker::Freeze for grit_lib::repo_handles::RemoteRemoval
-impl core::marker::Send for grit_lib::repo_handles::RemoteRemoval
-impl core::marker::Sync for grit_lib::repo_handles::RemoteRemoval
-impl core::marker::Unpin for grit_lib::repo_handles::RemoteRemoval
-impl core::marker::UnsafeUnpin for grit_lib::repo_handles::RemoteRemoval
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::RemoteRemoval
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::RemoteRemoval
-pub struct grit_lib::repo_handles::RemoveOptions
-pub grit_lib::repo_handles::RemoveOptions::dry_run: bool
-impl core::clone::Clone for grit_lib::repo_handles::RemoveOptions
-pub fn grit_lib::repo_handles::RemoveOptions::clone(&self) -> Self
-impl core::default::Default for grit_lib::repo_handles::RemoveOptions
-pub fn grit_lib::repo_handles::RemoveOptions::default() -> Self
-impl core::cmp::Eq for grit_lib::repo_handles::RemoveOptions
-impl core::cmp::PartialEq for grit_lib::repo_handles::RemoveOptions
-pub fn grit_lib::repo_handles::RemoveOptions::eq(&self, &Self) -> bool
-impl core::fmt::Debug for grit_lib::repo_handles::RemoveOptions
-pub fn grit_lib::repo_handles::RemoveOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for grit_lib::repo_handles::RemoveOptions
-impl core::marker::StructuralPartialEq for grit_lib::repo_handles::RemoveOptions
-impl core::marker::Freeze for grit_lib::repo_handles::RemoveOptions
-impl core::marker::Send for grit_lib::repo_handles::RemoveOptions
-impl core::marker::Sync for grit_lib::repo_handles::RemoveOptions
-impl core::marker::Unpin for grit_lib::repo_handles::RemoveOptions
-impl core::marker::UnsafeUnpin for grit_lib::repo_handles::RemoveOptions
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::RemoveOptions
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::RemoveOptions
 pub struct grit_lib::repo_handles::ExpireOptions
 pub grit_lib::repo_handles::ExpireOptions::all: bool
 pub grit_lib::repo_handles::ExpireOptions::expire: core::option::Option<alloc::string::String>
@@ -19729,6 +19688,47 @@ impl core::marker::Unpin for grit_lib::repo_handles::ReflogExpireOutcome
 impl core::marker::UnsafeUnpin for grit_lib::repo_handles::ReflogExpireOutcome
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::ReflogExpireOutcome
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::ReflogExpireOutcome
+pub struct grit_lib::repo_handles::RemoteRemoval
+pub grit_lib::repo_handles::RemoteRemoval::branches_untracked: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::repo_handles::RemoteRemoval::config_keys_removed: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::repo_handles::RemoteRemoval::dry_run: bool
+pub grit_lib::repo_handles::RemoteRemoval::name: alloc::string::String
+pub grit_lib::repo_handles::RemoteRemoval::refs_deleted: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for grit_lib::repo_handles::RemoteRemoval
+pub fn grit_lib::repo_handles::RemoteRemoval::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::repo_handles::RemoteRemoval
+impl core::cmp::PartialEq for grit_lib::repo_handles::RemoteRemoval
+pub fn grit_lib::repo_handles::RemoteRemoval::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::repo_handles::RemoteRemoval
+pub fn grit_lib::repo_handles::RemoteRemoval::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::repo_handles::RemoteRemoval
+impl core::marker::Freeze for grit_lib::repo_handles::RemoteRemoval
+impl core::marker::Send for grit_lib::repo_handles::RemoteRemoval
+impl core::marker::Sync for grit_lib::repo_handles::RemoteRemoval
+impl core::marker::Unpin for grit_lib::repo_handles::RemoteRemoval
+impl core::marker::UnsafeUnpin for grit_lib::repo_handles::RemoteRemoval
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::RemoteRemoval
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::RemoteRemoval
+pub struct grit_lib::repo_handles::RemoveOptions
+pub grit_lib::repo_handles::RemoveOptions::dry_run: bool
+impl core::clone::Clone for grit_lib::repo_handles::RemoveOptions
+pub fn grit_lib::repo_handles::RemoveOptions::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::repo_handles::RemoveOptions
+impl core::cmp::PartialEq for grit_lib::repo_handles::RemoveOptions
+pub fn grit_lib::repo_handles::RemoveOptions::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::repo_handles::RemoveOptions
+pub fn grit_lib::repo_handles::RemoveOptions::default() -> Self
+impl core::fmt::Debug for grit_lib::repo_handles::RemoveOptions
+pub fn grit_lib::repo_handles::RemoveOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::repo_handles::RemoveOptions
+impl core::marker::StructuralPartialEq for grit_lib::repo_handles::RemoveOptions
+impl core::marker::Freeze for grit_lib::repo_handles::RemoveOptions
+impl core::marker::Send for grit_lib::repo_handles::RemoveOptions
+impl core::marker::Sync for grit_lib::repo_handles::RemoveOptions
+impl core::marker::Unpin for grit_lib::repo_handles::RemoveOptions
+impl core::marker::UnsafeUnpin for grit_lib::repo_handles::RemoveOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::RemoveOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::RemoveOptions
 pub struct grit_lib::repo_handles::RepositoryBundles<'repo>
 impl<'repo> grit_lib::repo_handles::RepositoryBundles<'repo>
 pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::create(&self, &grit_lib::bundle::BundleSpec, &std::path::Path) -> core::result::Result<(), grit_lib::bundle::BundleError>
