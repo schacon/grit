@@ -312,4 +312,11 @@ pub const REMOTE_MATRIX_SCENARIOS: [ScenarioSpec; 11] = [
         name: None,
         description: "Shallow clone (`--depth 1`) over file:// vs git clone --depth 1",
     },
+    ScenarioSpec {
+        id: "remote/remove@many-refs",
+        area: Area::Remotes,
+        headline: false,
+        name: None,
+        description: "Remove origin with 10k packed tracking refs vs git remote remove",
+    },
 ];

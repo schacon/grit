@@ -113,6 +113,14 @@ enum RemoteAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Remove a remote and its remote-tracking refs.
+    Remove {
+        /// Remote name to remove.
+        name: String,
+        /// Report changes without writing config or refs.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// List references on a remote (like `git ls-remote`).
     Refs {
         /// Configured remote name or a literal URL/path.
@@ -1766,6 +1774,7 @@ fn main() {
         {
             crate::json_error::INVALID_COMMIT_FILTER_EXIT
         } else if commands::branch::is_branch_usage_error(&err)
+            || commands::remote::is_remote_usage_error(&err)
             || crate::json_error::structured_json_payload(&err)
                 .is_some_and(|payload| payload.kind == "usage")
         {
@@ -1929,6 +1938,9 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 opts,
                 ctx,
             ),
+            Some(RemoteAction::Remove { name, dry_run }) => {
+                emit(&commands::remote::run_remove(&name, dry_run)?, opts, ctx)
+            }
             Some(RemoteAction::Refs {
                 remote_or_url,
                 heads,

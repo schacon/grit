@@ -4,9 +4,11 @@ use anyhow::{Context, Result};
 use grit_lib::config::ConfigSet;
 use grit_lib::refs::listing::{RefSort, SortKey};
 use grit_lib::remote::fetch_request::resolve_remote_argument;
-use grit_lib::remote::{fold_peeled_refs, DefaultHttpClientFactory, ListRefsOptions, RemoteRef};
+use grit_lib::remote::{
+    fold_peeled_refs, DefaultHttpClientFactory, ListRefsOptions, RemoteError, RemoteRef,
+};
 use grit_lib::repo::Repository;
-use grit_lib::repo_handles::{RemoteUrlKind, UrlChange};
+use grit_lib::repo_handles::{RemoteUrlKind, RemoveOptions, UrlChange};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
@@ -36,6 +38,12 @@ pub enum RemoteOutcome {
         kind: String,
         old_url: Option<String>,
         url: String,
+        dry_run: bool,
+    },
+    Remove {
+        name: String,
+        refs_deleted: Vec<String>,
+        branches_untracked: Vec<String>,
         dry_run: bool,
     },
     Refs {
@@ -137,6 +145,24 @@ impl HumanRender for RemoteOutcome {
                     outln!(w, "{prefix}Set remote {name} {kind} URL to {url}");
                 }
             }
+            RemoteOutcome::Remove {
+                name,
+                refs_deleted,
+                branches_untracked,
+                dry_run,
+            } => {
+                if *dry_run {
+                    outln!(w, "Would remove remote {name}");
+                } else {
+                    outln!(w, "Removed remote {name}");
+                }
+                if !refs_deleted.is_empty() {
+                    outln!(w, "  refs deleted: {}", refs_deleted.len());
+                }
+                if !branches_untracked.is_empty() {
+                    outln!(w, "  branches untracked: {}", branches_untracked.join(", "));
+                }
+            }
             RemoteOutcome::Refs { lines, .. } => {
                 for line in lines {
                     if line.symref {
@@ -174,6 +200,31 @@ impl MarkdownRender for RemoteOutcome {
                     );
                 } else {
                     outln!(w, "Set remote `{name}` {kind} URL{dry} to {url}.");
+                }
+            }
+            RemoteOutcome::Remove {
+                name,
+                refs_deleted,
+                branches_untracked,
+                dry_run,
+            } => {
+                if *dry_run {
+                    outln!(w, "Would remove remote `{name}`.");
+                } else {
+                    outln!(w, "Removed remote `{name}`.");
+                }
+                if !refs_deleted.is_empty() {
+                    outln!(w, "\n**Refs deleted:** {}\n", refs_deleted.len());
+                    for r in refs_deleted {
+                        outln!(w, "- `{r}`");
+                    }
+                }
+                if !branches_untracked.is_empty() {
+                    outln!(
+                        w,
+                        "\n**Branches untracked:** {}.\n",
+                        branches_untracked.join(", ")
+                    );
                 }
             }
             RemoteOutcome::Refs { refs, .. } => {
@@ -419,5 +470,41 @@ fn add_remote(repo: &Repository, name: &str, url: &str) -> Result<RemoteOutcome>
     Ok(RemoteOutcome::Add {
         name: name.to_owned(),
         url: url.to_owned(),
+    })
+}
+
+/// Marker for usage errors (exit 2) from remote commands.
+#[derive(Debug)]
+pub struct RemoteUsageError;
+
+impl std::fmt::Display for RemoteUsageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("remote usage error")
+    }
+}
+
+impl std::error::Error for RemoteUsageError {}
+
+pub(crate) fn is_remote_usage_error(err: &anyhow::Error) -> bool {
+    err.chain()
+        .any(|cause| cause.downcast_ref::<RemoteUsageError>().is_some())
+}
+
+pub fn run_remove(name: &str, dry_run: bool) -> Result<RemoteOutcome> {
+    let repo = context::discover()?;
+    let removal = repo
+        .remotes()
+        .remove(name, RemoveOptions { dry_run })
+        .map_err(|e| match e {
+            RemoteError::UnknownRemote(_) => {
+                anyhow::Error::from(RemoteUsageError).context(map_remote_error(e))
+            }
+            other => map_remote_error(other),
+        })?;
+    Ok(RemoteOutcome::Remove {
+        name: removal.name,
+        refs_deleted: removal.refs_deleted,
+        branches_untracked: removal.branches_untracked,
+        dry_run: removal.dry_run,
     })
 }

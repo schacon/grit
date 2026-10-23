@@ -11,6 +11,7 @@ order: 1
 grit remote [-v]
 grit remote add <name> <url>
 grit remote set-url <name> <url> [--push] [--dry-run]
+grit remote remove <name> [--dry-run]
 grit remote refs <remote-or-url> [--heads] [--tags] [--sort name|version] [--reverse] [-n N] [<prefix>…]
 ```
 
@@ -24,6 +25,8 @@ A remote is another copy of the repository that you fetch from and push to, usua
 
 `grit remote set-url` changes the fetch URL (`remote.<name>.url`) or, with `--push`, replaces every `remote.<name>.pushurl` with a single new push URL. It fails when the remote is not configured. `--dry-run` reports the change without writing config.
 
+`grit remote remove` deletes a configured remote: it removes the `remote.<name>` section from the shared config, deletes every remote-tracking ref this remote's fetch refspecs map to (including `refs/remotes/<name>/HEAD`), and clears `branch.<b>.remote`, `branch.<b>.merge`, and matching `branch.<b>.pushRemote` / `remote.pushDefault` keys. Tracking refs that another remote's fetch refspec also maps to are kept. `--dry-run` reports what would change without writing config or refs. There is no `rm` alias.
+
 `grit remote refs` lists references on a configured remote name or a literal URL, scp-style `host:path` or path (same transports as [`grit clone`](../clone/)), matching `git ls-remote` ordering. An argument that is none of these fails with `unknown remote`. SSH URLs use the same `GIT_SSH_COMMAND`, `GIT_SSH`, and `core.sshCommand` resolution as [`grit clone`](../clone/) and [`grit fetch`](../fetch/).
 
 ## Options
@@ -34,7 +37,7 @@ A remote is another copy of the repository that you fetch from and push to, usua
 | `add <name> <url>` | Add a remote called `<name>` at `<url>`. Fails if a remote with that name exists or the name is not valid in a ref. |
 | `set-url <name> <url>` | Set the fetch URL for `<name>`. Use `--push` for `pushurl`. |
 | `--push` | With `set-url`, update push URL(s) instead of fetch. |
-| `--dry-run` | With `set-url`, show the change without writing config. |
+| `remove <name>` | Remove remote `<name>` and its tracking refs. `--dry-run` previews without writing. |
 | `refs <remote-or-url>` | List refs on the remote (or URL). |
 | `--heads` | With `refs`, only `refs/heads/`. |
 | `--tags` | With `refs`, only `refs/tags/`. |
@@ -65,19 +68,21 @@ a1b2c3d4e5f6789012345678901234567890abcd	refs/heads/main
 
 ## JSON output
 
-Schema: [v1](/schemas/remote/v1.json) · [remote.add v1](/schemas/remote.add/v1.json) · [remote.refs v1](/schemas/remote.refs/v1.json) (set-url uses the main remote schema)
+Schema: [v1](/schemas/remote/v1.json) · [remote.add v1](/schemas/remote.add/v1.json) · [remote.remove v1](/schemas/remote.remove/v1.json) · [remote.refs v1](/schemas/remote.refs/v1.json) (set-url uses the main remote schema)
 
 Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `action` | string | `list`, `add`, `set_url`, or `refs`. |
+| `action` | string | `list`, `add`, `set_url`, `remove`, or `refs`. |
 | `remotes` | array | For `list`, each remote with `name` and `url`; with `-v`, also `fetch_url`, `push_url`, and `refspecs`. |
-| `name` | string | For `add` or `set_url`, the remote name. |
+| `name` | string | For `add`, `set_url`, or `remove`, the remote name. |
 | `url` | string | For `add` or `set_url`, the remote URL or path. |
 | `kind` | string | For `set_url`, `fetch` or `push`. |
 | `old_url` | string or null | For `set_url`, previous URL for that kind, if any. |
-| `dry_run` | boolean | For `set_url`, whether config was left unchanged. |
+| `refs_deleted` | array | For `remove`, deleted remote-tracking ref names. |
+| `branches_untracked` | array | For `remove`, local branch short names whose upstream keys were cleared. |
+| `dry_run` | boolean | For `set_url` or `remove`, whether changes were only reported. |
 | `refs` | array | For `refs`, each entry with `name`, `oid`, optional `peeled`, optional `symref_target`. |
 
 Listing remotes:
@@ -113,6 +118,18 @@ Setting a URL:
   "kind": "fetch",
   "old_url": "https://github.com/ada/old.git",
   "url": "https://github.com/ada/project.git",
+  "dry_run": false
+}
+```
+
+Removing a remote:
+
+```json
+{
+  "action": "remove",
+  "name": "origin",
+  "refs_deleted": ["refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
+  "branches_untracked": ["main"],
   "dry_run": false
 }
 ```
