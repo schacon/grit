@@ -198,6 +198,7 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<RemoteOutcome>("remote.add"),
         entry::<RemoteOutcome>("remote.set-url"),
         entry::<RemoteOutcome>("remote.refs"),
+        entry::<RemoteOutcome>("remote.remove"),
         entry::<LogOutcome>("log"),
         entry::<RevsOutcome>("revs"),
         entry::<MergeBaseOutcome>("merge-base"),
@@ -321,6 +322,7 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
             Some("add") => "remote.add",
             Some("set-url") => "remote.set-url",
             Some("refs") => "remote.refs",
+            Some("remove") => "remote.remove",
             _ => "remote",
         },
         "reflog" => match positional.get(1).copied() {

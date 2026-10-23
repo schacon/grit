@@ -57,14 +57,7 @@ fn init_repo(dir: &Path) {
         let out = isolated(cmd, dir);
         String::from_utf8(out.stdout).unwrap().trim().to_owned()
     };
-    git(
-        dir,
-        &[
-            "update-ref",
-            "refs/remotes/origin/main",
-            &head,
-        ],
-    );
+    git(dir, &["update-ref", "refs/remotes/origin/main", &head]);
 }
 
 #[test]

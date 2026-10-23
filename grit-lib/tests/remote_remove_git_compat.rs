@@ -4,6 +4,7 @@
 mod support;
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
@@ -28,19 +29,17 @@ fn open(dir: &Path) -> Repository {
     Repository::discover(Some(dir), &RepositoryOptions::empty()).expect("discover")
 }
 
-fn clone_seed(seed: &Path, label: &str) -> (tempfile::TempDir, PathBuf) {
+fn copy_seed(seed: &Path, label: &str) -> (tempfile::TempDir, PathBuf) {
     let root = tempfile::tempdir().expect("tempdir");
     let dest = root.path().join(label);
     let seed_abs = seed.canonicalize().unwrap_or_else(|_| seed.to_path_buf());
-    git(
-        root.path(),
-        &[
-            "clone",
-            "-q",
-            seed_abs.to_str().expect("utf8"),
-            label,
-        ],
-    );
+    let status = Command::new("cp")
+        .arg("-a")
+        .arg(&seed_abs)
+        .arg(&dest)
+        .status()
+        .expect("cp");
+    assert!(status.success(), "cp -a seed to {label}");
     (root, dest)
 }
 
@@ -48,10 +47,7 @@ fn build_seed(reftable: bool) -> tempfile::TempDir {
     let root = tempfile::tempdir().expect("tempdir");
     let repo = root.path();
     if reftable {
-        git(
-            repo,
-            &["init", "-q", "-b", "main", "--ref-format=reftable"],
-        );
+        git(repo, &["init", "-q", "-b", "main", "--ref-format=reftable"]);
     } else {
         git(repo, &["init", "-q", "-b", "main"]);
     }
@@ -69,35 +65,35 @@ fn build_seed(reftable: bool) -> tempfile::TempDir {
             "c1",
         ],
     );
-    git(&repo, &["remote", "add", "origin", "/tmp/unused.git"]);
-    git(&repo, &["remote", "add", "upstream", "/tmp/up.git"]);
-    let head: ObjectId = git(&repo, &["rev-parse", "HEAD"]).trim().parse().unwrap();
+    git(repo, &["remote", "add", "origin", "/tmp/unused.git"]);
+    git(repo, &["remote", "add", "upstream", "/tmp/up.git"]);
+    let head: ObjectId = git(repo, &["rev-parse", "HEAD"]).trim().parse().unwrap();
     git(
-        &repo,
+        repo,
         &["update-ref", "refs/remotes/origin/main", &head.to_hex()],
     );
     git(
-        &repo,
+        repo,
         &["update-ref", "refs/remotes/origin/shared", &head.to_hex()],
     );
     git(
-        &repo,
+        repo,
         &["update-ref", "refs/remotes/upstream/shared", &head.to_hex()],
     );
     git(
-        &repo,
+        repo,
         &[
             "symbolic-ref",
             "refs/remotes/origin/HEAD",
             "refs/remotes/origin/main",
         ],
     );
-    git(&repo, &["config", "branch.main.remote", "origin"]);
-    git(&repo, &["config", "branch.main.merge", "refs/heads/main"]);
-    git(&repo, &["config", "branch.topic.remote", "origin"]);
-    git(&repo, &["config", "branch.topic.merge", "refs/heads/topic"]);
-    git(&repo, &["config", "branch.topic.pushRemote", "origin"]);
-    git(&repo, &["config", "remote.pushDefault", "origin"]);
+    git(repo, &["config", "branch.main.remote", "origin"]);
+    git(repo, &["config", "branch.main.merge", "refs/heads/main"]);
+    git(repo, &["config", "branch.topic.remote", "origin"]);
+    git(repo, &["config", "branch.topic.merge", "refs/heads/topic"]);
+    git(repo, &["config", "branch.topic.pushRemote", "origin"]);
+    git(repo, &["config", "remote.pushDefault", "origin"]);
     if !reftable {
         git(repo, &["pack-refs", "--all"]);
     }
@@ -105,8 +101,8 @@ fn build_seed(reftable: bool) -> tempfile::TempDir {
 }
 
 fn assert_twin_parity(seed: &Path) {
-    let (_grit_root, grit_dir) = clone_seed(seed, "grit");
-    let (_git_root, git_dir) = clone_seed(seed, "git");
+    let (_grit_root, grit_dir) = copy_seed(seed, "grit");
+    let (_git_root, git_dir) = copy_seed(seed, "git");
 
     open(&grit_dir)
         .remotes()
@@ -148,6 +144,92 @@ fn remove_matches_git_twin_repo_reftable_backend() {
     }
     let seed = build_seed(true);
     assert_twin_parity(seed.path());
+}
+
+#[test]
+fn remove_honors_negative_fetch_refspec_twin() {
+    let seed = build_seed(false);
+    let repo = seed.path();
+    git(
+        repo,
+        &[
+            "config",
+            "--add",
+            "remote.origin.fetch",
+            "^refs/heads/private",
+        ],
+    );
+    let head: ObjectId = git(repo, &["rev-parse", "HEAD"]).trim().parse().unwrap();
+    git(
+        repo,
+        &["update-ref", "refs/remotes/origin/private", &head.to_hex()],
+    );
+    assert_twin_parity(repo);
+}
+
+#[test]
+fn remove_does_not_delete_non_remote_tracking_destinations() {
+    let seed = build_seed(false);
+    let repo = seed.path();
+    git(
+        repo,
+        &[
+            "config",
+            "--replace-all",
+            "remote.origin.fetch",
+            "+refs/heads/main:refs/heads/local-danger",
+        ],
+    );
+    let head: ObjectId = git(repo, &["rev-parse", "HEAD"]).trim().parse().unwrap();
+    git(
+        repo,
+        &["update-ref", "refs/heads/local-danger", &head.to_hex()],
+    );
+
+    let (_grit_root, grit_dir) = copy_seed(repo, "grit");
+    let (_git_root, git_dir) = copy_seed(repo, "git");
+
+    open(&grit_dir)
+        .remotes()
+        .remove("origin", RemoveOptions { dry_run: false })
+        .expect("grit remove");
+    git(&git_dir, &["remote", "remove", "origin"]);
+
+    assert!(
+        git_cmd(&["show-ref", "--verify", "-q", "refs/heads/local-danger"])
+            .in_dir(&grit_dir)
+            .exec()
+            .ok(),
+        "grit must keep local branch ref outside refs/remotes/"
+    );
+    assert_eq!(
+        git_for_each_ref(&grit_dir, "refs/"),
+        git_for_each_ref(&git_dir, "refs/"),
+        "refs must match git"
+    );
+}
+
+#[test]
+fn remove_clears_pushremote_branch_config() {
+    let seed = build_seed(false);
+    let repo = seed.path();
+    let (_grit_root, grit_dir) = copy_seed(repo, "grit");
+    let (_git_root, git_dir) = copy_seed(repo, "git");
+
+    open(&grit_dir)
+        .remotes()
+        .remove("origin", RemoveOptions { dry_run: false })
+        .expect("grit remove");
+    git(&git_dir, &["remote", "remove", "origin"]);
+
+    assert!(
+        !git_cmd(&["config", "--get", "branch.topic.pushRemote"])
+            .in_dir(&grit_dir)
+            .exec()
+            .ok(),
+        "branch.topic.pushRemote must be unset"
+    );
+    assert_eq!(git_config_local(&grit_dir), git_config_local(&git_dir));
 }
 
 #[test]
@@ -215,5 +297,56 @@ fn remove_clears_push_default() {
             .exec()
             .ok(),
         "remote.pushDefault must be unset"
+    );
+}
+
+#[test]
+fn remove_with_only_negative_fetch_does_not_invent_default_refspec() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let repo = root.path();
+    git(repo, &["init", "-q", "-b", "main"]);
+    git(
+        repo,
+        &[
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "c1",
+        ],
+    );
+    git(repo, &["remote", "add", "origin", "/tmp/unused.git"]);
+    git(
+        repo,
+        &[
+            "config",
+            "--replace-all",
+            "remote.origin.fetch",
+            "^refs/heads/unused",
+        ],
+    );
+    let head: ObjectId = git(repo, &["rev-parse", "HEAD"]).trim().parse().unwrap();
+    git(
+        repo,
+        &["update-ref", "refs/remotes/origin/main", &head.to_hex()],
+    );
+
+    let (_grit_root, grit_dir) = copy_seed(repo, "grit");
+    let (_git_root, git_dir) = copy_seed(repo, "git");
+
+    open(&grit_dir)
+        .remotes()
+        .remove("origin", RemoveOptions { dry_run: false })
+        .expect("grit remove");
+    git(&git_dir, &["remote", "remove", "origin"]);
+
+    assert_eq!(
+        git_for_each_ref(&grit_dir, "refs/"),
+        git_for_each_ref(&git_dir, "refs/"),
+        "negative-only fetch must not apply default +refs/heads/* refspec"
     );
 }

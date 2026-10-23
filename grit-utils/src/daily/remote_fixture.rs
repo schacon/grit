@@ -319,6 +319,8 @@ pub fn setup_remote_remove_many_refs(setup: &DailySetup<'_>) -> Result<DailyHead
     configure_client_remote(setup.git, &client, remote)?;
     run_git(setup.git, &client, &["fetch", "-q", "origin"])?;
     run_git(setup.git, &client, &["pack-refs", "--all"])?;
+    crate::worktree_fixture::set_worktree_bench_cwd(&client)?;
+    crate::worktree_fixture::record_worktree_bench_base(setup.git, &client)?;
     ctx.repo = client;
     Ok(ctx)
 }

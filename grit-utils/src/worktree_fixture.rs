@@ -76,6 +76,13 @@ pub fn read_fixture_base_oid() -> Result<String> {
     Ok(oid)
 }
 
+/// Record `repo`'s current `HEAD` as the daily-reset base commit for benchmark prepare hooks.
+pub fn record_worktree_bench_base(git: &Path, repo: &Path) -> Result<()> {
+    let head = fixture_registry::git_head_oid(git, repo)?;
+    write_base_oid(&head)?;
+    Ok(())
+}
+
 /// Pin config knobs that would otherwise differ between git and grit runs.
 pub fn pin_worktree_bench_config(git: &Path, repo: &Path) -> Result<()> {
     for (key, value) in [

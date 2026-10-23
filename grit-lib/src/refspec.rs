@@ -243,136 +243,89 @@ pub fn valid_push_refspec(refspec: &str) -> bool {
     parse_refspec(refspec, false).is_ok()
 }
 
-/// Map `refname` through a single `*` glob in `pattern`, producing `replacement` with its `*`.
-fn match_refname_with_pattern(pattern: &str, refname: &str, replacement: &str) -> Option<String> {
-    match (pattern.find('*'), replacement.find('*')) {
-        (Some(pstar), Some(vstar)) => {
-            let kprefix = &pattern[..pstar];
-            let ksuffix = &pattern[pstar + 1..];
-            if !refname.starts_with(kprefix) || !refname.ends_with(ksuffix) {
-                return None;
-            }
-            if refname.len() < kprefix.len() + ksuffix.len() {
-                return None;
-            }
-            let middle = &refname[kprefix.len()..refname.len() - ksuffix.len()];
-            Some(format!(
-                "{}{}{}",
-                &replacement[..vstar],
-                middle,
-                &replacement[vstar + 1..]
-            ))
-        }
-        (None, None) if pattern == refname => Some(replacement.to_owned()),
-        _ => None,
+/// When a refspec side contains exactly one `*`, map `from_ref` through that glob into `into_template`.
+fn translate_single_star(
+    from_template: &str,
+    into_template: &str,
+    from_ref: &str,
+) -> Option<String> {
+    let (from_pre, from_post) = split_one_star(from_template)?;
+    let (into_pre, into_post) = split_one_star(into_template)?;
+    if !from_ref.starts_with(from_pre) || !from_ref.ends_with(from_post) {
+        return None;
     }
+    let middle_len = from_ref
+        .len()
+        .checked_sub(from_pre.len() + from_post.len())?;
+    let middle = &from_ref[from_pre.len()..from_ref.len() - from_post.len()];
+    Some(format!("{into_pre}{middle}{into_post}"))
 }
 
-fn refspec_match(item: &RefspecItem, refname: &str) -> bool {
-    let Some(src) = item.src.as_deref() else {
-        return false;
-    };
-    if item.pattern {
-        match_refname_with_pattern(src, refname, src).is_some()
+fn split_one_star(template: &str) -> Option<(&str, &str)> {
+    let star = template.find('*')?;
+    if template[star + 1..].contains('*') {
+        return None;
+    }
+    Some((&template[..star], &template[star + 1..]))
+}
+
+fn refname_matches_template(template: &str, is_pattern: bool, refname: &str) -> bool {
+    if is_pattern {
+        translate_single_star(template, template, refname).is_some()
     } else {
-        src == refname
+        template == refname
     }
 }
 
-fn refname_matches_negative_refspec_item(refname: &str, items: &[RefspecItem]) -> bool {
-    items
-        .iter()
-        .any(|item| item.negative && refspec_match(item, refname))
+/// Binding from a local ref to the upstream ref name implied by fetch refspecs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FetchLocalBinding {
+    pub force: bool,
+    pub upstream_ref: String,
 }
 
-fn refspec_find_negative_match(items: &[RefspecItem], query: &RefspecItem) -> bool {
-    let find_src = query.src.is_none();
-    let needle = if find_src {
-        query.dst.as_deref()
+fn positive_local_binding(spec: &RefspecItem, local_ref: &str) -> Option<FetchLocalBinding> {
+    if spec.negative {
+        return None;
+    }
+    let dst = spec.dst.as_deref()?;
+    let src = spec.src.as_deref().unwrap_or("");
+    let upstream_ref = if spec.pattern {
+        translate_single_star(dst, src, local_ref)?
+    } else if dst == local_ref {
+        src.to_owned()
     } else {
-        query.src.as_deref()
+        return None;
     };
-    let Some(needle) = needle else {
-        return false;
-    };
-    let mut reversed = Vec::new();
-    for item in items {
-        if item.negative {
-            continue;
-        }
-        if item.pattern {
-            let key = item.dst.as_deref().or(item.src.as_deref()).unwrap_or("");
-            let value = item.src.as_deref().unwrap_or("");
-            if let Some(expanded) = match_refname_with_pattern(key, needle, value) {
-                reversed.push(expanded);
-            }
-        } else if item.matching {
-            reversed.push(needle.to_owned());
-        } else if let Some(src) = item.src.as_deref() {
-            if needle == src {
-                reversed.push(src.to_owned());
-            }
-        }
-    }
-    reversed
-        .iter()
-        .any(|src| refname_matches_negative_refspec_item(src, items))
+    Some(FetchLocalBinding {
+        force: spec.force,
+        upstream_ref,
+    })
 }
 
-/// Find a positive refspec match, filling in the missing side of `query`.
-///
-/// When `query.src` is set, matches against refspec sources and sets `query.dst`.
-/// When `query.dst` is set, matches against refspec destinations and sets `query.src`.
-/// Returns `true` on match (and updates `query.force` from the matched refspec).
+fn excluded_by_negative_specs(specs: &[RefspecItem], upstream_ref: &str) -> bool {
+    specs.iter().any(|spec| {
+        spec.negative
+            && spec
+                .src
+                .as_deref()
+                .is_some_and(|src| refname_matches_template(src, spec.pattern, upstream_ref))
+    })
+}
+
+/// Whether `local_ref` is a destination of these fetch refspecs and not ruled out by `^` lines.
 #[must_use]
-pub(crate) fn refspec_find_match(items: &[RefspecItem], query: &mut RefspecItem) -> bool {
-    let find_src = query.src.is_none();
-    if find_src && query.dst.is_none() {
-        return false;
+pub(crate) fn fetch_specs_bind_local_ref(
+    specs: &[RefspecItem],
+    local_ref: &str,
+) -> Option<FetchLocalBinding> {
+    let binding = specs
+        .iter()
+        .find_map(|spec| positive_local_binding(spec, local_ref))?;
+    if excluded_by_negative_specs(specs, &binding.upstream_ref) {
+        return None;
     }
-    if refspec_find_negative_match(items, query) {
-        return false;
-    }
-    let needle = if find_src {
-        query.dst.as_deref().unwrap_or("")
-    } else {
-        query.src.as_deref().unwrap_or("")
-    };
-    for item in items {
-        if item.negative || item.dst.is_none() {
-            continue;
-        }
-        let key = if find_src {
-            item.dst.as_deref().unwrap_or("")
-        } else {
-            item.src.as_deref().unwrap_or("")
-        };
-        let value = if find_src {
-            item.src.as_deref().unwrap_or("")
-        } else {
-            item.dst.as_deref().unwrap_or("")
-        };
-        if item.pattern {
-            if let Some(mapped) = match_refname_with_pattern(key, needle, value) {
-                if find_src {
-                    query.src = Some(mapped);
-                } else {
-                    query.dst = Some(mapped);
-                }
-                query.force = item.force;
-                return true;
-            }
-        } else if needle == key {
-            if find_src {
-                query.src = Some(value.to_owned());
-            } else {
-                query.dst = Some(value.to_owned());
-            }
-            query.force = item.force;
-            return true;
-        }
-    }
-    false
+    Some(binding)
 }
 
 #[cfg(test)]
@@ -479,13 +432,19 @@ mod tests {
     }
 
     #[test]
-    fn find_match_maps_tracking_ref_to_remote_head() {
-        let items = vec![parse_fetch_refspec("+refs/heads/*:refs/remotes/origin/*").unwrap()];
-        let mut query = RefspecItem {
-            dst: Some("refs/remotes/origin/main".to_owned()),
-            ..RefspecItem::default()
-        };
-        assert!(refspec_find_match(&items, &mut query));
-        assert_eq!(query.src.as_deref(), Some("refs/heads/main"));
+    fn fetch_specs_bind_local_ref_maps_tracking_branch() {
+        let specs = vec![parse_fetch_refspec("+refs/heads/*:refs/remotes/origin/*").unwrap()];
+        let binding = fetch_specs_bind_local_ref(&specs, "refs/remotes/origin/main").unwrap();
+        assert_eq!(binding.upstream_ref, "refs/heads/main");
+    }
+
+    #[test]
+    fn fetch_specs_bind_local_ref_honors_negative_line() {
+        let specs = vec![
+            parse_fetch_refspec("+refs/heads/*:refs/remotes/origin/*").unwrap(),
+            parse_fetch_refspec("^refs/heads/private").unwrap(),
+        ];
+        assert!(fetch_specs_bind_local_ref(&specs, "refs/remotes/origin/main").is_some());
+        assert!(fetch_specs_bind_local_ref(&specs, "refs/remotes/origin/private").is_none());
     }
 }
