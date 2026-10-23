@@ -81,10 +81,6 @@ fn merge_dry_run_plan_merge() {
     git(dir.path(), &["checkout", "-b", "topic"]);
     std::fs::write(dir.path().join("a.txt"), "side\n").expect("write");
     git(dir.path(), &["commit", "-am", "side"]);
-    let topic = git(dir.path(), &["rev-parse", "HEAD"])
-        .trim()
-        .parse()
-        .expect("topic");
     git(dir.path(), &["checkout", "main"]);
     std::fs::write(dir.path().join("b.txt"), "main\n").expect("write");
     git(dir.path(), &["add", "b.txt"]);
@@ -115,10 +111,6 @@ fn merge_dry_run_plan_conflict() {
     git(dir.path(), &["checkout", "-b", "topic"]);
     std::fs::write(dir.path().join("a.txt"), "side\n").expect("write");
     git(dir.path(), &["commit", "-am", "side"]);
-    let topic = git(dir.path(), &["rev-parse", "HEAD"])
-        .trim()
-        .parse()
-        .expect("topic");
     git(dir.path(), &["checkout", "main"]);
     std::fs::write(dir.path().join("a.txt"), "main\n").expect("write");
     git(dir.path(), &["commit", "-am", "main"]);
