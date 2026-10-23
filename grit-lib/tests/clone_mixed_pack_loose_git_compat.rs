@@ -99,6 +99,8 @@ fn clone_local_mixed_packed_tree_and_loose_blob() {
             depth: None,
             filter: None,
             branch: None,
+            single_branch: None,
+            tags: None,
         },
         &mut NoProgress,
         None,

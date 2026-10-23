@@ -7,8 +7,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use grit_lib::porcelain::checkout::checkout_between_trees_with_progress;
 use grit_lib::remote::clone::{
-    cleanup_failed_clone, clone as clone_repo, derive_clone_dir, dest_preexisted_empty,
-    CloneCheckout, CloneError, CloneHead, CloneOptions, CloneOutcome as LibCloneOutcome,
+    cleanup_failed_clone, clone as clone_repo, clone_effective_single_branch, derive_clone_dir,
+    dest_preexisted_empty, CloneCheckout, CloneError, CloneHead, CloneOptions,
+    CloneOutcome as LibCloneOutcome, CloneTags,
 };
 use grit_lib::remote::DefaultHttpClientFactory;
 use schemars::JsonSchema;
@@ -45,12 +46,31 @@ pub struct ClonePhase {
     pub seconds: f64,
 }
 
+/// Options for [`run`].
+pub struct CloneRunOptions {
+    pub url: String,
+    pub dir: Option<String>,
+    pub depth: Option<u32>,
+    pub branch: Option<String>,
+    pub shallow: bool,
+    pub single_branch: Option<bool>,
+    pub no_tags: bool,
+    pub origin: Option<String>,
+    pub mode: OutputMode,
+}
+
 /// Result of `grit clone`.
 #[derive(Serialize, JsonSchema)]
 pub struct CloneOutcome {
     pub url: String,
     /// Destination directory.
     pub path: String,
+    /// Remote name configured for the source (`origin` by default).
+    pub remote: String,
+    /// Whether only one branch was fetched (`git clone --single-branch` semantics).
+    pub single_branch: bool,
+    /// Tag fetch mode used for the initial fetch: `all`, `following`, or `none`.
+    pub tag_fetch: String,
     /// Branch checked out, or `null` when detached at a tag.
     pub branch: Option<String>,
     /// True when `HEAD` is detached (tag checkout).
@@ -436,20 +456,39 @@ fn emit_no_checkout_note(mode: OutputMode, outcome: &LibCloneOutcome) {
     }
 }
 
-pub fn run(
-    url: &str,
-    dir: Option<String>,
-    depth: Option<u32>,
-    branch: Option<String>,
-    shallow: bool,
-    mode: OutputMode,
-) -> Result<CloneOutcome> {
-    let depth = depth.or_else(|| shallow.then_some(1));
-    if matches!(depth, Some(0)) {
+fn tag_fetch_mode_label(mode: CloneTags) -> &'static str {
+    match mode {
+        CloneTags::All => "all",
+        CloneTags::Following => "following",
+        CloneTags::None => "none",
+    }
+}
+
+fn resolved_clone_tags(opts: &CloneRunOptions) -> Option<CloneTags> {
+    if opts.no_tags {
+        Some(CloneTags::None)
+    } else {
+        None
+    }
+}
+
+fn effective_tag_fetch_mode(opts: &CloneRunOptions) -> CloneTags {
+    resolved_clone_tags(opts).unwrap_or(if opts.shallow || opts.depth.is_some() {
+        CloneTags::Following
+    } else {
+        CloneTags::All
+    })
+}
+
+pub fn run(mut opts: CloneRunOptions) -> Result<CloneOutcome> {
+    let url = &opts.url;
+    let mode = opts.mode;
+    opts.depth = opts.depth.or_else(|| opts.shallow.then_some(1));
+    if matches!(opts.depth, Some(0)) {
         return Err(anyhow::anyhow!("depth 0 is not a positive number"));
     }
-    let dir = match dir {
-        Some(d) => d,
+    let dir = match &opts.dir {
+        Some(d) => d.clone(),
         None => derive_clone_dir(url).map_err(|e| anyhow::anyhow!("{e}"))?,
     };
     let path = PathBuf::from(&dir);
@@ -470,21 +509,12 @@ pub fn run(
     } else {
         progress(mode, &format!("Cloning into '{dir}' ..."));
     }
-    match clone_into(
-        url,
-        &path,
-        &dir,
-        depth,
-        branch,
-        mode,
-        started,
-        &mut term_progress,
-    ) {
+    match clone_into(&opts, &path, &dir, started, &mut term_progress) {
         Ok(outcome) => Ok(outcome),
         Err(err) => {
             let skip_cleanup = matches!(
                 err.downcast_ref::<CloneError>(),
-                Some(CloneError::DestNotEmpty(_))
+                Some(e) if !e.should_cleanup_failed_clone()
             );
             if !skip_cleanup {
                 cleanup_failed_clone(&path, dest_preexisted_empty);
@@ -494,29 +524,33 @@ pub fn run(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn clone_into(
-    url: &str,
+    run: &CloneRunOptions,
     path: &Path,
     dir: &str,
-    depth: Option<u32>,
-    branch: Option<String>,
-    mode: OutputMode,
     started: Instant,
     term_progress: &mut TerminalProgress,
 ) -> Result<CloneOutcome> {
     let factory = DefaultHttpClientFactory;
+    let remote_name = run
+        .origin
+        .clone()
+        .unwrap_or_else(|| grit_lib::remote::DEFAULT_REMOTE.to_owned());
+    let tag_mode = effective_tag_fetch_mode(run);
     let clone_opts = CloneOptions {
-        url: url.to_owned(),
+        url: run.url.clone(),
         dest: path.to_path_buf(),
         environment: crate::context::environment(),
-        remote_name: grit_lib::remote::DEFAULT_REMOTE.to_owned(),
+        remote_name: remote_name.clone(),
         initial_branch: "main".to_owned(),
         thread_policy: crate::context::thread_policy_for_repo(),
-        depth,
-        branch,
+        depth: run.depth,
+        branch: run.branch.clone(),
         filter: None,
+        single_branch: run.single_branch,
+        tags: resolved_clone_tags(run),
     };
+    let single_branch = clone_effective_single_branch(&clone_opts);
     let outcome = clone_repo(clone_opts, &mut *term_progress, Some(&factory))?;
 
     let (files, worktree_bytes, no_checkout_reason, branches_with_commits) =
@@ -537,7 +571,7 @@ fn clone_into(
                 None,
             )
         } else {
-            emit_no_checkout_note(mode, &outcome);
+            emit_no_checkout_note(run.mode, &outcome);
             let reason = match outcome.checkout {
                 CloneCheckout::EmptyRemote => Some("empty_remote".to_owned()),
                 CloneCheckout::UnbornDefaultBranch => Some("unborn_default_branch".to_owned()),
@@ -556,12 +590,15 @@ fn clone_into(
     };
 
     Ok(CloneOutcome {
-        url: url.to_owned(),
+        url: run.url.clone(),
         path: dir.to_owned(),
+        remote: remote_name,
+        single_branch,
+        tag_fetch: tag_fetch_mode_label(tag_mode).to_owned(),
         branch,
         detached,
         tag,
-        depth,
+        depth: run.depth,
         objects: outcome.transfer.objects,
         bytes: outcome.transfer.bytes,
         branches: outcome.branches,
@@ -617,6 +654,9 @@ mod tests {
         CloneOutcome {
             url: "https://example.com/r.git".to_owned(),
             path: "r".to_owned(),
+            remote: "origin".to_owned(),
+            single_branch: false,
+            tag_fetch: "all".to_owned(),
             branch: Some("main".to_owned()),
             detached: false,
             tag: None,

@@ -77,6 +77,8 @@ fn clone_local_repacked_source_links_pack_and_reports_index_stats() {
             depth: None,
             filter: None,
             branch: None,
+            single_branch: None,
+            tags: None,
         },
         &mut NoProgress,
         None,

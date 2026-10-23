@@ -252,6 +252,8 @@ fn non_utf8_tracked_status_diff_add_clone_and_restore() {
             depth: None,
             branch: None,
             filter: None,
+            single_branch: None,
+            tags: None,
         },
         &mut NoProgress,
         None,

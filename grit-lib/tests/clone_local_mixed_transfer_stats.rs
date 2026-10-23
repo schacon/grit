@@ -87,6 +87,8 @@ fn clone_local_repacked_plus_loose_reports_full_transfer_stats() {
             depth: None,
             filter: None,
             branch: None,
+            single_branch: None,
+            tags: None,
         },
         &mut NoProgress,
         None,

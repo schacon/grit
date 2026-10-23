@@ -16,7 +16,9 @@ use crate::objects::ObjectId;
 use crate::partial_clone::{ObjectFilterSpec, PartialCloneConfig};
 use crate::ref_storage::RefStorageFormat;
 use crate::refs;
-use crate::remote::{fold_peeled_refs, HttpClientFactory, ListRefsOptions, Remote, DEFAULT_REMOTE};
+use crate::remote::{
+    fold_peeled_refs, HttpClientFactory, ListRefsOptions, Remote, RemoteError, DEFAULT_REMOTE,
+};
 use crate::repo::{init_repository, Repository};
 use crate::transfer::{CloneReflog, FetchOptions, TagMode, TransferStats};
 use crate::transport_path::{
@@ -50,11 +52,14 @@ pub enum CloneError {
 impl CloneError {
     /// Whether [`cleanup_failed_clone`] may run after this failure.
     ///
-    /// Returns `false` for [`CloneError::DestNotEmpty`], which rejects the destination before
-    /// any repository is initialized.
+    /// Returns `false` when the destination must be left unchanged.
     #[must_use]
     pub fn should_cleanup_failed_clone(&self) -> bool {
-        !matches!(self, Self::DestNotEmpty(_))
+        match self {
+            Self::DestNotEmpty(_) | Self::InvalidCloneDepth | Self::RemoteRefNotFound(_) => false,
+            Self::Remote(RemoteError::InvalidRemoteName(_)) => false,
+            Self::Library(_) | Self::Remote(_) => true,
+        }
     }
 
     /// Whether the failure is a missing `-b` / `--branch` ref (destination may be removed).
@@ -75,6 +80,29 @@ impl CloneError {
             | Self::RemoteRefNotFound(_)
             | Self::InvalidCloneDepth
             | Self::Remote(_) => false,
+        }
+    }
+}
+
+/// Which tags to fetch during [`clone`], matching `git clone` tag behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloneTags {
+    /// Fetch every tag on the remote (`git fetch --tags` during clone).
+    All,
+    /// Fetch tags reachable from fetched commits (default for shallow clones).
+    Following,
+    /// Do not fetch tags; writes `remote.<name>.tagOpt=--no-tags`.
+    None,
+}
+
+impl CloneTags {
+    /// Maps to [`TagMode`] for the initial fetch.
+    #[must_use]
+    pub const fn tag_mode(self) -> TagMode {
+        match self {
+            Self::All => TagMode::All,
+            Self::Following => TagMode::Following,
+            Self::None => TagMode::None,
         }
     }
 }
@@ -100,6 +128,12 @@ pub struct CloneOptions {
     pub filter: Option<ObjectFilterSpec>,
     /// Remote branch or tag to check out (`git clone -b` / `--branch`).
     pub branch: Option<String>,
+    /// Single-branch fetch (`git clone --single-branch` / `--no-single-branch`).
+    ///
+    /// `None` matches Git: depth implies single-branch unless explicitly disabled.
+    pub single_branch: Option<bool>,
+    /// Tag fetch mode. `None` uses Git defaults (all tags for full clones, following for shallow).
+    pub tags: Option<CloneTags>,
 }
 
 impl CloneOptions {
@@ -116,6 +150,8 @@ impl CloneOptions {
             depth: None,
             filter: None,
             branch: None,
+            single_branch: None,
+            tags: None,
         }
     }
 }
@@ -266,6 +302,11 @@ pub fn clone(
     if opts.depth == Some(0) {
         return Err(CloneError::InvalidCloneDepth);
     }
+    if !crate::remote::is_valid_remote_name(&opts.remote_name) {
+        return Err(CloneError::Remote(RemoteError::InvalidRemoteName(
+            opts.remote_name.clone(),
+        )));
+    }
 
     init_repository(
         &opts.dest,
@@ -303,12 +344,22 @@ pub fn clone(
     };
     let fetch_refspec =
         clone_initial_fetch_refspec(&opts, &requested, &remote, &repo, http_factory)?;
+    let mut remote_config_entries = vec![(
+        format!("remote.{}.fetch", opts.remote_name),
+        fetch_refspec.clone(),
+    )];
+    if matches!(opts.tags, Some(CloneTags::None)) {
+        remote_config_entries.push((
+            format!("remote.{}.tagOpt", opts.remote_name),
+            "--no-tags".to_owned(),
+        ));
+    }
     set_local_config(
         &repo,
-        &[(
-            &format!("remote.{}.fetch", opts.remote_name),
-            fetch_refspec.clone(),
-        )],
+        &remote_config_entries
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.clone()))
+            .collect::<Vec<_>>(),
     )?;
 
     let clone_message = format!("clone: from {}", opts.url);
@@ -318,14 +369,9 @@ pub fn clone(
         identity: identity.clone(),
         message: clone_message.clone(),
     };
-    let shallow_clone = opts.depth.is_some();
     let mut fetch_opts = FetchOptions {
         refspecs: vec![fetch_refspec],
-        tags: if shallow_clone {
-            TagMode::Following
-        } else {
-            TagMode::All
-        },
+        tags: resolve_clone_tag_mode(&opts),
         initial_remote_fetch: true,
         remote_name: Some(opts.remote_name.clone()),
         clone_reflog: Some(clone_reflog),
@@ -465,8 +511,7 @@ fn clone_initial_fetch_refspec(
     repo: &Repository,
     http_factory: Option<&dyn HttpClientFactory>,
 ) -> std::result::Result<String, CloneError> {
-    if let Some(depth) = opts.depth.filter(|d| *d > 0) {
-        let _ = depth;
+    if clone_effective_single_branch(opts) {
         return match requested {
             CloneRequestedRef::Tag { name, .. } => {
                 Ok(format!("+refs/tags/{name}:refs/tags/{name}"))
@@ -491,6 +536,28 @@ fn clone_initial_fetch_refspec(
         };
     }
     Ok(format!("+refs/heads/*:refs/remotes/{}/*", opts.remote_name))
+}
+
+/// Whether the clone fetches only one branch (`git clone --single-branch` semantics).
+#[must_use]
+pub fn clone_effective_single_branch(opts: &CloneOptions) -> bool {
+    match opts.single_branch {
+        Some(true) => true,
+        Some(false) => false,
+        None => opts.depth.is_some_and(|d| d > 0),
+    }
+}
+
+fn resolve_clone_tag_mode(opts: &CloneOptions) -> TagMode {
+    opts.tags
+        .map(CloneTags::tag_mode)
+        .unwrap_or_else(|| {
+            if opts.depth.is_some() {
+                TagMode::Following
+            } else {
+                TagMode::All
+            }
+        })
 }
 
 fn setup_clone_head(
@@ -789,6 +856,8 @@ mod tests {
     #[test]
     fn dest_not_empty_skips_failed_clone_cleanup() {
         assert!(!CloneError::DestNotEmpty("x".into()).should_cleanup_failed_clone());
+        assert!(!CloneError::Remote(RemoteError::InvalidRemoteName("bad".into()))
+            .should_cleanup_failed_clone());
         assert!(CloneError::Library(Error::Message("x".into())).should_cleanup_failed_clone());
     }
 

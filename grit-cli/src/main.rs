@@ -713,6 +713,18 @@ enum Command {
         /// Shallow clone of the fetched ref (`git clone --depth=1`; hidden alias).
         #[arg(long, hide = true, conflicts_with = "depth")]
         shallow: bool,
+        /// Fetch only the branch checked out (same as `git clone --single-branch`).
+        #[arg(long, overrides_with = "no_single_branch")]
+        single_branch: bool,
+        /// Fetch all branch tips even when `--shallow` is set (`git clone --no-single-branch`).
+        #[arg(long, overrides_with = "single_branch")]
+        no_single_branch: bool,
+        /// Do not fetch any tags from the remote.
+        #[arg(long)]
+        no_tags: bool,
+        /// Name for the remote (default `origin`).
+        #[arg(short = 'o', long, value_name = "NAME")]
+        origin: Option<String>,
     },
     /// List remotes, or add one.
     Remote {
@@ -2058,11 +2070,34 @@ fn dispatch(
             depth,
             branch,
             shallow,
-        } => emit_success(
-            &commands::clone::run(&url, dir, depth, branch, shallow, opts.mode)?,
-            opts,
-            ctx,
-        ),
+            single_branch,
+            no_single_branch,
+            no_tags,
+            origin,
+        } => {
+            let single_branch = if single_branch {
+                Some(true)
+            } else if no_single_branch {
+                Some(false)
+            } else {
+                None
+            };
+            emit_success(
+                &commands::clone::run(commands::clone::CloneRunOptions {
+                    url,
+                    dir,
+                    depth,
+                    branch,
+                    shallow,
+                    single_branch,
+                    no_tags,
+                    origin,
+                    mode: opts.mode,
+                })?,
+                opts,
+                ctx,
+            )
+        }
         Command::Remote { verbose, action } => match action {
             None => emit_success(
                 &commands::remote::run_list_or_add(None, verbose)?,

@@ -290,6 +290,8 @@ fn library_clone_api_passes_fsck_and_status() {
             depth: None,
             filter: None,
             branch: None,
+            single_branch: None,
+            tags: None,
         },
         &mut NoProgress,
         None,

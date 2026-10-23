@@ -8,7 +8,7 @@ order: 2
 ## Synopsis
 
 ```text
-grit clone <url> [<dir>] [--depth <N>] [-b|--branch <NAME>] [--shallow]
+grit clone <url> [<dir>] [--depth <N>] [-b|--branch <NAME>] [--shallow] [--single-branch | --no-single-branch] [--no-tags] [-o <name>]
 ```
 
 ## Description
@@ -57,6 +57,10 @@ Working-tree materialization after fetch uses the same parallel checkout path as
 | `--depth <N>` | Shallow clone: fetch at most `N` commits on the selected ref (`git clone --depth`). |
 | `-b`, `--branch <NAME>` | Branch or tag to check out instead of the remote default. |
 | `--shallow` | Hidden alias for `--depth 1` (conflicts with `--depth`). |
+| `--single-branch` | Fetch only the branch that is checked out (`git clone --single-branch`). |
+| `--no-single-branch` | With `--depth`, fetch every branch tip (`git clone --no-single-branch --depth=1`). |
+| `--no-tags` | Do not fetch tags; sets `remote.<name>.tagOpt=--no-tags` like Git. |
+| `-o`, `--origin <name>` | Name of the remote (default `origin`). |
 
 ## Examples
 
