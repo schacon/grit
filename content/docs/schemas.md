@@ -53,7 +53,7 @@ Plain command failures with `--json` validate against the shared [error schema](
 | `log` | [v1](/schemas/log/v1.json) |
 | `merge` | [v2](/schemas/merge/v2.json), [v1](/schemas/merge/v1.json) |
 | `merge-base` | [v1](/schemas/merge-base/v1.json) |
-| `mv` | [v1](/schemas/mv/v1.json) |
+| `mv` | [v2](/schemas/mv/v2.json), [v1](/schemas/mv/v1.json) |
 | `notes` | [v1](/schemas/notes/v1.json) |
 | `notes.add` | [v1](/schemas/notes.add/v1.json) |
 | `notes.list` | [v1](/schemas/notes.list/v1.json) |
