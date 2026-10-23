@@ -219,6 +219,50 @@ fn rename_invalid_name_typed_error() {
 }
 
 #[test]
+fn rename_rejects_remote_only_in_global_config_leaves_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bare = bare_upstream(tmp.path());
+    let global = tmp.path().join("global-config");
+    std::fs::write(
+        &global,
+        format!(
+            "[remote \"origin\"]\n\turl = {}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n",
+            bare.display()
+        ),
+    )
+    .unwrap();
+    let repo = tmp.path().join("r");
+    std::fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+    git_with_global(&repo, &global, &["fetch", "-q", "origin"]);
+    let refs_before = for_each_ref(&repo);
+    let cfg_before = config_list_local(&repo);
+    std::env::set_var("GIT_CONFIG_GLOBAL", &global);
+    std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
+    let mut env = Environment::capture_process();
+    env.git_config_global = Some(global.to_string_lossy().into_owned());
+    env.git_config_nosystem = Some("1".into());
+    assert!(matches!(
+        open_with_environment(&repo, env).remotes().rename("origin", "upstream", false),
+        Err(RemoteError::UnknownRemote(name)) if name == "origin"
+    ));
+    assert_eq!(for_each_ref(&repo), refs_before);
+    assert_eq!(config_list_local(&repo), cfg_before);
+    let git_err = git_cmd(&["remote", "rename", "origin", "upstream"])
+        .env("GIT_CONFIG_GLOBAL", &global)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .in_dir(&repo)
+        .with_status(2);
+    assert!(
+        git_err.stderr.contains("No such remote"),
+        "git stderr: {}",
+        git_err.stderr
+    );
+    std::env::remove_var("GIT_CONFIG_GLOBAL");
+    std::env::remove_var("GIT_CONFIG_NOSYSTEM");
+}
+
+#[test]
 fn rename_retargets_branch_remote_from_global_config() {
     let tmp = tempfile::tempdir().unwrap();
     let global = tmp.path().join("global-config");

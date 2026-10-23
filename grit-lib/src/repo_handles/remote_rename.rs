@@ -11,7 +11,9 @@ use crate::refs::store::{
 use crate::remote::RemoteError;
 use crate::repo::Repository;
 
-use super::remote::{has_remote_section, is_valid_remote_name, RepositoryRemotes};
+use super::remote::{
+    has_local_remote_section, has_remote_section, is_valid_remote_name, RepositoryRemotes,
+};
 
 /// Result of [`RepositoryRemotes::rename`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,7 +44,7 @@ impl<'repo> RepositoryRemotes<'repo> {
     ///
     /// # Errors
     ///
-    /// - [`RemoteError::UnknownRemote`] when `old` has no `remote.<old>.*` section.
+    /// - [`RemoteError::UnknownRemote`] when `old` has no local `remote.<old>.*` section.
     /// - [`RemoteError::RemoteExists`] when `new` is already configured.
     /// - [`RemoteError::InvalidRemoteName`] when `new` is not a valid remote name.
     /// - [`RemoteError::Library`] for config, ref, or I/O failures.
@@ -57,7 +59,7 @@ impl<'repo> RepositoryRemotes<'repo> {
         }
         let repo = self.repository();
         let config = repo.config().map_err(RemoteError::Library)?;
-        if !has_remote_section(config.as_ref(), old) {
+        if !has_local_remote_section(config.as_ref(), old) {
             return Err(RemoteError::UnknownRemote(old.to_owned()));
         }
         if old == new {

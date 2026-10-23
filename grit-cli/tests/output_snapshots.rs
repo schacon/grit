@@ -560,6 +560,25 @@ fn snapshot_remote_show() {
 }
 
 #[test]
+fn snapshot_remote_rename() {
+    let fixture = CliFixture::new();
+    let bare = fixture.path().join("upstream.git");
+    fixture.run_ok(&["init", "--bare", bare.to_str().expect("utf8 bare path")]);
+    fixture.run_ok(&[
+        "remote",
+        "add",
+        "origin",
+        bare.to_str().expect("utf8 bare path"),
+    ]);
+    fixture.run_ok(&["fetch", "-q", "origin"]);
+    fixture.snapshot_all_modes(
+        "remote_rename",
+        &["remote", "rename", "origin", "upstream"],
+        snapshot_dir(),
+    );
+}
+
+#[test]
 fn snapshot_bundle_create() {
     let fixture = CliFixture::new();
     fixture.snapshot_all_modes(

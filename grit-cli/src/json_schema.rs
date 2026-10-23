@@ -1024,6 +1024,7 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
             "remote_set_url",
             &["remote", "set-url", "origin", "https://example.com/new.git"],
         ),
+        ("remote_rename", &["remote", "rename", "origin", "upstream"]),
         (
             "remote_remove",
             &["remote", "remove", "origin", "--dry-run"],
@@ -1378,7 +1379,13 @@ mod tests {
             "schema index must list every committed schema document exactly"
         );
         let file_count: usize = on_disk.values().map(|v| v.len()).sum();
+<<<<<<< New base: fix: remote rename review — config cascade, schemas, bench prepare
         assert_eq!(file_count, 100, "expected 100 schema files indexed");
+||||||| Common ancestor
+        assert_eq!(file_count, 95, "expected 95 schema files indexed");
+=======
+        assert_eq!(file_count, 96, "expected 96 schema files indexed");
+>>>>>>> Current commit: fix: require local remote section; schema index and rename snapshot
     }
 
     fn load_snapshot_json_stdout(name: &str, snapshot_dir: &Path) -> Value {

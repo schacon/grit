@@ -1,0 +1,21 @@
+---
+source: grit-test-support/src/cli_fixture.rs
+expression: payload
+---
+{
+  "human": {
+    "exit": 0,
+    "stdout": "Renamed remote origin → upstream (0 tracking refs updated)\n",
+    "stderr": ""
+  },
+  "json": {
+    "exit": 0,
+    "stdout": "{\"action\":\"rename\",\"old\":\"origin\",\"new\":\"upstream\",\"refs_renamed\":0,\"refspecs_updated\":[\"+refs/heads/*:refs/remotes/upstream/*\"],\"branches_updated\":[],\"dry_run\":false}\n",
+    "stderr": ""
+  },
+  "markdown": {
+    "exit": 0,
+    "stdout": "Renamed remote `origin` → `upstream` (0 tracking refs).\n\nUpdated fetch refspecs:\n- `+refs/heads/*:refs/remotes/upstream/*`\n",
+    "stderr": ""
+  }
+}
