@@ -54,7 +54,7 @@ impl ConfigLocation {
                 let gd = git_dir.ok_or_else(|| {
                     Error::Config(ConfigError::Other("not in a git repository".into()))
                 })?;
-                Ok(crate::repo::common_git_dir_for_config(gd).join("config"))
+                Ok(crate::repo::local_config_write_path(gd))
             }
             Self::File(path) => {
                 let s = path.to_string_lossy();
@@ -97,7 +97,7 @@ impl ConfigLocation {
                 let gd = git_dir.ok_or_else(|| {
                     Error::Config(ConfigError::Other("not in a git repository".into()))
                 })?;
-                let local_path = crate::repo::common_git_dir_for_config(gd).join("config");
+                let local_path = crate::repo::local_config_write_path(gd);
                 if let Some(f) = ConfigFile::from_path(&local_path, ConfigScope::Local)? {
                     set.merge_file_with_includes(&f, true, &ctx)?;
                 }

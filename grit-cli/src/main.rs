@@ -3170,7 +3170,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
             if code != 0 {
                 std::process::exit(code);
             }
-            Ok(())
+            Ok(ExitStatus::Success)
         }
         // `manager` speaks Git's credential protocol on stdout; it has no JSON form.
         Command::Manager { operation } => {

@@ -102,6 +102,8 @@ fn config_file_flag_reads_and_writes_outside_repo() -> TestResult {
     let v: serde_json::Value = serde_json::from_slice(&got.stdout)?;
     assert_eq!(v["value"], "42");
     assert_eq!(v["scope"], "command");
+    assert!(v["file"].as_str().unwrap().ends_with("alone.cfg"));
+    assert!(v["line"].as_u64().unwrap() >= 1);
     Ok(())
 }
 

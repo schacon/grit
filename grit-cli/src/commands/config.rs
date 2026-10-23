@@ -4,11 +4,15 @@
 //! everything, or unset a key. By default writes go to the repository's local
 //! config (`.git/config`); `--global` and `-f` select other files.
 
+use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
-use grit_lib::config::{set_config_value, unset_config_value, ConfigLocation, ConfigSet};
+use grit_lib::config::{
+    canonical_key, set_config_value, unset_config_value, ConfigFile, ConfigLocation, ConfigScope,
+    ConfigSet,
+};
 use grit_lib::error::ConfigError;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -129,20 +133,33 @@ pub fn run(
     value: Option<String>,
     mode: OutputMode,
 ) -> Result<ConfigOutcome> {
-    let write_location = resolve_location(global, local, file.clone(), true)?;
-    let read_location = resolve_location(global, local, file, false)?;
-    let env = context::environment();
-
     if list {
         if key.is_some() || value.is_some() {
             bail!("--list does not take a key or value");
         }
+        let env = context::environment();
+        let read_location = resolve_location(global, local, file, false)?;
         return list_values(read_location, &env);
     }
 
     let Some(key) = key else {
         bail!("specify a config key (e.g. user.name), or pass --list to see everything");
     };
+
+    if default_repo_hot_path(global, local, file.as_ref(), mode) {
+        let env = context::environment();
+        if unset {
+            return hot_unset_in_repo(&key);
+        }
+        if let Some(value) = value {
+            return hot_set_in_repo(&key, &value);
+        }
+        return hot_get_in_repo(&env, &key);
+    }
+
+    let write_location = resolve_location(global, local, file.clone(), true)?;
+    let read_location = resolve_location(global, local, file, false)?;
+    let env = context::environment();
 
     if unset {
         if value.is_some() {
@@ -154,6 +171,87 @@ pub fn run(
     match value {
         Some(value) => set_value(write_location, &env, &key, &value),
         None => get_value(read_location, &env, &key, mode),
+    }
+}
+
+/// Default in-repo get/set/unset with human output (matches pre-scope CLI hot path).
+fn default_repo_hot_path(
+    global: bool,
+    local: bool,
+    file: Option<&PathBuf>,
+    mode: OutputMode,
+) -> bool {
+    !global && !local && file.is_none() && matches!(mode, OutputMode::Human)
+}
+
+fn hot_get_in_repo(
+    env: &grit_lib::config::environment::Environment,
+    key: &str,
+) -> Result<ConfigOutcome> {
+    let config = read_merged_config(env)?;
+    match config.get(key) {
+        Some(value) => Ok(ConfigOutcome::Get {
+            key: key.to_owned(),
+            value: Some(value),
+            scope: None,
+            file: None,
+            line: None,
+        }),
+        None => {
+            canonical_key(key).context(format!("invalid config key {key}"))?;
+            Ok(ConfigOutcome::Get {
+                key: key.to_owned(),
+                value: None,
+                scope: None,
+                file: None,
+                line: None,
+            })
+        }
+    }
+}
+
+fn hot_set_in_repo(key: &str, value: &str) -> Result<ConfigOutcome> {
+    let repo = context::discover()?;
+    let path = repo.git_dir().join("config");
+    let content = fs::read_to_string(&path).unwrap_or_default();
+    let mut cfg = ConfigFile::parse(&path, &content, ConfigScope::Local)
+        .with_context(|| format!("could not parse {}", path.display()))?;
+    cfg.set(key, value)
+        .with_context(|| format!("could not set {key}"))?;
+    cfg.write()
+        .with_context(|| format!("could not write {}", path.display()))?;
+    Ok(ConfigOutcome::Set {
+        key: key.to_owned(),
+        value: value.to_owned(),
+    })
+}
+
+fn hot_unset_in_repo(key: &str) -> Result<ConfigOutcome> {
+    let repo = context::discover()?;
+    let path = repo.git_dir().join("config");
+    let Ok(content) = fs::read_to_string(&path) else {
+        bail!("key '{key}' is not set");
+    };
+    let mut cfg = ConfigFile::parse(&path, &content, ConfigScope::Local)
+        .with_context(|| format!("could not parse {}", path.display()))?;
+    let removed = cfg
+        .unset(key)
+        .with_context(|| format!("could not unset {key}"))?;
+    if removed == 0 {
+        bail!("key '{key}' is not set");
+    }
+    cfg.write()
+        .with_context(|| format!("could not write {}", path.display()))?;
+    Ok(ConfigOutcome::Unset {
+        key: key.to_owned(),
+    })
+}
+
+fn read_merged_config(env: &grit_lib::config::environment::Environment) -> Result<ConfigSet> {
+    if let Ok(repo) = context::discover() {
+        ConfigSet::load(env, Some(repo.git_dir()), true).context("could not load config")
+    } else {
+        ConfigSet::load(env, None, true).context("could not load config")
     }
 }
 
@@ -189,9 +287,7 @@ fn get_value(
                 });
             }
             None => {
-                config
-                    .get_with_origin(key)
-                    .with_context(|| format!("invalid config key {key}"))?;
+                canonical_key(key).context(format!("invalid config key {key}"))?;
                 return Ok(ConfigOutcome::Get {
                     key: key.to_owned(),
                     value: None,
@@ -236,10 +332,7 @@ fn list_values(
             key: entry.key.clone(),
             value: entry.value.clone(),
             scope: entry.scope.to_string(),
-            file: entry
-                .file
-                .as_ref()
-                .filter(|_| entry.scope != grit_lib::config::ConfigScope::Command)
+            file: grit_lib::config::config_entry_origin_file(entry)
                 .map(|p| p.display().to_string()),
         })
         .collect();
@@ -295,11 +388,7 @@ fn load_for_read(
             .load_single(env, git_dir.as_deref())
             .context("could not load config");
     }
-    if let Ok(repo) = context::discover() {
-        ConfigSet::load(env, Some(repo.git_dir()), true).context("could not load config")
-    } else {
-        ConfigSet::load(env, None, true).context("could not load config")
-    }
+    read_merged_config(env)
 }
 
 fn git_dir_for_location(location: &ConfigLocation) -> Result<Option<PathBuf>> {

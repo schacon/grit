@@ -49,7 +49,7 @@ fn git_config_get_origin(
     Some((scope, file, value))
 }
 
-fn git_config_file_get_origin(cfg: &Path, key: &str) -> Option<(String, String)> {
+fn git_config_file_get_origin(cfg: &Path, key: &str) -> Option<(String, String, String)> {
     let out = Command::new("git")
         .args([
             "config",
@@ -69,9 +69,9 @@ fn git_config_file_get_origin(cfg: &Path, key: &str) -> Option<(String, String)>
     let line = line.lines().next()?.trim();
     let mut parts = line.split('\t');
     let scope = parts.next()?.to_owned();
-    let _file = parts.next()?;
+    let file = parts.next()?.strip_prefix("file:")?.to_owned();
     let value = parts.next()?.to_owned();
-    Some((scope, value))
+    Some((scope, file, value))
 }
 
 #[test]
@@ -164,10 +164,12 @@ fn config_get_with_origin_matches_git_show_origin_show_scope() {
         .expect("valid")
         .expect("file value");
     assert_eq!(f_origin.scope, ConfigScope::Command);
-    assert!(f_origin.file.is_none());
+    assert_eq!(f_origin.file.as_deref(), Some(file_cfg.as_path()));
+    assert!(f_origin.line.is_some());
     let git_file = git_config_file_get_origin(&file_cfg, "demo.value").expect("git file get");
     assert_eq!(git_file.0, "command");
-    assert_eq!(git_file.1, "from-file");
+    assert_eq!(git_file.1, file_cfg.display().to_string());
+    assert_eq!(git_file.2, "from-file");
 }
 
 #[test]

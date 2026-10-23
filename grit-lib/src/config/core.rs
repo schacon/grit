@@ -279,6 +279,29 @@ impl Default for LoadConfigOptions {
     }
 }
 
+/// Source file for `--show-origin` style output.
+///
+/// `-f` / `--file` reads use `command` scope but keep a real file path; synthetic
+/// `GIT_CONFIG_PARAMETERS` / `-c` entries have no file.
+#[must_use]
+pub fn config_entry_origin_file(entry: &ConfigEntry) -> Option<&Path> {
+    if entry.scope == ConfigScope::Command && entry.file.is_none() {
+        None
+    } else {
+        entry.file.as_deref()
+    }
+}
+
+/// One-based source line for `--show-origin` output, when applicable.
+#[must_use]
+pub fn config_entry_origin_line(entry: &ConfigEntry) -> Option<usize> {
+    if entry.scope == ConfigScope::Command && entry.file.is_none() {
+        None
+    } else {
+        (entry.line > 0).then_some(entry.line)
+    }
+}
+
 // ── Canonical key helpers ────────────────────────────────────────────
 
 /// Normalise a config key to canonical form.
@@ -1875,18 +1898,11 @@ impl ConfigSet {
     /// Returns [`Error::Config`] when `key` is not a valid Git config key.
     pub fn get_with_origin(&self, key: &str) -> Result<Option<ConfigValueOrigin>> {
         let _canon = canonical_key(key)?;
-        Ok(self.get_last_entry(key).map(|e| {
-            let (file, line) = if e.scope == ConfigScope::Command {
-                (None, None)
-            } else {
-                (e.file.clone(), (e.line > 0).then_some(e.line))
-            };
-            ConfigValueOrigin {
-                value: e.value.clone().or_else(|| Some("true".to_owned())),
-                scope: e.scope,
-                file,
-                line,
-            }
+        Ok(self.get_last_entry(key).map(|e| ConfigValueOrigin {
+            value: e.value.clone().or_else(|| Some("true".to_owned())),
+            scope: e.scope,
+            file: config_entry_origin_file(&e).map(Path::to_path_buf),
+            line: config_entry_origin_line(&e),
         }))
     }
 
