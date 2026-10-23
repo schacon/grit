@@ -839,6 +839,9 @@ fn lookup_lone_blob_in_directory(
             continue;
         }
         if dir_entry_name_matches(index_file_name, &entry) {
+            #[cfg(windows)]
+            return blob_lookup_from_dir_entry_or_path(Some(&entry), || target_abs.to_path_buf());
+            #[cfg(not(windows))]
             return match dir_entry_metadata(&entry) {
                 Ok(m) => BlobDiskLookup::Present(BlobDiskStat::from_metadata(&m)),
                 Err(e) => BlobDiskLookup::Io(e),
@@ -1129,13 +1132,60 @@ fn dir_entry_name_matches(index_file_name: &[u8], entry: &fs::DirEntry) -> bool 
     false
 }
 
-/// `target_abs` builds the entry's absolute path; it is only called when the directory
-/// listing has no matching name.
+/// Resolve a directory listing entry for `index_file_name`, including case-insensitive matches.
+#[cfg(windows)]
+fn matching_dir_entry<'a>(
+    on_disk: &'a DirectoryMap,
+    index_file_name: &[u8],
+) -> Option<&'a fs::DirEntry> {
+    if let Some(entry) = on_disk.get(index_file_name) {
+        return Some(entry);
+    }
+    on_disk
+        .values()
+        .find(|entry| dir_entry_name_matches(index_file_name, entry))
+}
+
+/// Prefer path metadata on Windows (Git/mingw semantics); fall back to the matched `DirEntry`
+/// when the path probe fails even though `read_dir` listed the name (#1518).
+#[cfg(windows)]
+fn blob_lookup_from_dir_entry_or_path(
+    dir_entry: Option<&fs::DirEntry>,
+    target_abs: impl FnOnce() -> PathBuf,
+) -> BlobDiskLookup {
+    match symlink_metadata_path(&target_abs()) {
+        Ok(meta) => BlobDiskLookup::Present(BlobDiskStat::from_metadata(&meta)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(20) => {
+            if let Some(entry) = dir_entry {
+                match dir_entry_metadata(entry) {
+                    Ok(m) => BlobDiskLookup::Present(BlobDiskStat::from_metadata(&m)),
+                    Err(e2)
+                        if e2.kind() == io::ErrorKind::NotFound
+                            || e2.raw_os_error() == Some(20) =>
+                    {
+                        BlobDiskLookup::Missing
+                    }
+                    Err(e2) => BlobDiskLookup::Io(e2),
+                }
+            } else {
+                BlobDiskLookup::Missing
+            }
+        }
+        Err(e) => BlobDiskLookup::Io(e),
+    }
+}
+
+/// `target_abs` builds the indexed absolute path for a fallback stat when the name is absent
+/// from the directory listing.
 fn lookup_blob_in_directory(
     on_disk: &DirectoryMap,
     index_file_name: &[u8],
     target_abs: impl FnOnce() -> PathBuf,
 ) -> BlobDiskLookup {
+    #[cfg(windows)]
+    if let Some(entry) = matching_dir_entry(on_disk, index_file_name) {
+        return blob_lookup_from_dir_entry_or_path(Some(entry), target_abs);
+    }
     if let Some(entry) = on_disk.get(index_file_name) {
         return match dir_entry_metadata(entry) {
             Ok(m) => BlobDiskLookup::Present(BlobDiskStat::from_metadata(&m)),
@@ -1425,6 +1475,23 @@ mod tests {
             worktree_metadata_probe_count() <= tracked + DIRS + 8,
             "metadata probes {} exceeded budget for grouped scan",
             worktree_metadata_probe_count()
+        );
+    }
+
+    #[test]
+    fn lookup_blob_present_when_read_dir_lists_file_but_path_probe_misses() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("leaf");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("tracked.txt"), b"payload\n").unwrap();
+        let (readable, map) = read_directory_map(&dir, 1).unwrap();
+        assert!(readable);
+        let lookup = lookup_blob_in_directory(&map, b"tracked.txt", || {
+            dir.join("wrong-parent/tracked.txt")
+        });
+        assert!(
+            matches!(lookup, BlobDiskLookup::Present(_)),
+            "read_dir listing must win over a failed path stat (issue #1518 / Bugbot)"
         );
     }
 
