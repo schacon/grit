@@ -808,6 +808,18 @@ const EXCEPTIONS: &[(&str, ContractRule, &str, &str)] = &[
         "shortlog caps in the library without a `-n` / `--limit` flag yet",
     ),
     (
+        "hooks",
+        ContractRule::Limit,
+        "s4 limit",
+        "hooks list has no `-n` / `--limit` yet",
+    ),
+    (
+        "notes.list",
+        ContractRule::Limit,
+        "s4 limit",
+        "notes list has no `-n` / `--limit` yet",
+    ),
+    (
         "remote",
         ContractRule::Limit,
         "clone-remote",
