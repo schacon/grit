@@ -245,11 +245,12 @@ fn handle_worktree_add_matches_git_porcelain() {
     repo.worktrees()
         .add(&grit_lib::worktree::AddLinkedWorktreeOptions {
             path: wt_path.clone(),
-            branch: Some("feat".into()),
-            new_branch: true,
-            detach: false,
+            branch: Some(WorktreeBranch::Create("feat".into())),
             start_point: None,
             force: false,
+            lock: None,
+            no_checkout: false,
+            track: false,
         })
         .expect("add");
 
@@ -273,11 +274,12 @@ fn handle_worktree_lock_visible_to_git() {
     repo.worktrees()
         .add(&grit_lib::worktree::AddLinkedWorktreeOptions {
             path: wt_path.clone(),
-            branch: Some("side".into()),
-            new_branch: true,
-            detach: false,
+            branch: Some(WorktreeBranch::Create("side".into())),
             start_point: None,
             force: false,
+            lock: None,
+            no_checkout: false,
+            track: false,
         })
         .expect("add");
     repo.worktrees()
@@ -307,11 +309,12 @@ fn handle_worktree_unlock_visible_to_git() {
     repo.worktrees()
         .add(&grit_lib::worktree::AddLinkedWorktreeOptions {
             path: wt_path.clone(),
-            branch: Some("side".into()),
-            new_branch: true,
-            detach: false,
+            branch: Some(WorktreeBranch::Create("side".into())),
             start_point: None,
             force: false,
+            lock: None,
+            no_checkout: false,
+            track: false,
         })
         .expect("add");
     repo.worktrees()

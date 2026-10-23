@@ -962,12 +962,6 @@ const EXCEPTIONS: &[(&str, ContractRule, &str, &str)] = &[
         "worktree remove has no `--dry-run` yet",
     ),
     (
-        "worktree.prune",
-        ContractRule::DryRun,
-        "workspace-extras",
-        "worktree prune has no `--dry-run` yet",
-    ),
-    (
         "worktree.lock",
         ContractRule::DryRun,
         "workspace-extras",

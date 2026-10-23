@@ -7,6 +7,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::branch_tracking::write_branch_upstream_config;
 use crate::check_ref_format::validate_branch_short_name;
 use crate::config::ConfigSet;
 #[cfg(test)]
@@ -14,7 +15,12 @@ use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::git_path::{absolute_path_for_gitfile_stored_path, path_for_disk_compare};
 use crate::objects::{parse_commit, ObjectKind};
+use crate::porcelain::branch::{resolve_create_tracking, TrackMode};
+use crate::porcelain::branch_error::BranchError;
 use crate::porcelain::checkout::checkout_between_trees;
+use crate::porcelain::checkout_reflog::{
+    create_branch_ref_with_reflog, reset_branch_ref_with_reflog,
+};
 use crate::porcelain::status::{status, StatusOptions};
 use crate::progress::NullProgress;
 use crate::refs;
@@ -468,21 +474,59 @@ fn strip_worktree_config_keys(path: &Path, keys: &[&str]) -> Result<()> {
     fs::write(path, out).map_err(Error::Io)
 }
 
+/// How [`add_linked_worktree`] attaches `HEAD` to a branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorktreeBranch {
+    /// Check out an existing local branch (its tip must match the start commit).
+    Existing(String),
+    /// Create `refs/heads/<name>` at the start commit (fails when the branch exists).
+    Create(String),
+    /// Create or reset `refs/heads/<name>` to the start commit (`git worktree add -B`).
+    CreateOrReset(String),
+    /// Detached HEAD at the start commit.
+    Detach,
+}
+
 /// Options for [`add_linked_worktree`].
 #[derive(Debug, Clone)]
 pub struct AddLinkedWorktreeOptions {
     /// Directory for the new working tree (created when missing).
     pub path: PathBuf,
-    /// Branch to check out. With [`Self::new_branch`], create this branch at the start commit.
-    pub branch: Option<String>,
-    /// Create [`Self::branch`] before checkout.
-    pub new_branch: bool,
-    /// Detached HEAD at the resolved start commit.
-    pub detach: bool,
+    /// Branch mode. When `None`, a new branch named after the path basename is created.
+    pub branch: Option<WorktreeBranch>,
     /// Start commit (revision spec). Defaults to the current `HEAD` commit.
     pub start_point: Option<String>,
     /// Replace a stale registration when the working tree directory is missing.
     pub force: bool,
+    /// When set, write `locked` before checkout finishes (same order as Git).
+    pub lock: Option<LockWorktreeOptions>,
+    /// Register the worktree and set `HEAD` without populating the working tree or index.
+    pub no_checkout: bool,
+    /// When the start point is a remote-tracking branch, configure upstream for the new branch.
+    pub track: bool,
+}
+
+/// Options for locking during [`add_linked_worktree`] or [`RepositoryWorktrees::lock`].
+#[derive(Debug, Clone, Default)]
+pub struct LockWorktreeOptions {
+    /// Optional reason stored in the `locked` file (shown by `git worktree list`).
+    pub reason: Option<String>,
+}
+
+/// Options for [`prune_linked_worktrees`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PruneWorktreesOptions {
+    /// List prunable worktrees without removing admin directories.
+    pub dry_run: bool,
+}
+
+/// One linked worktree removed or that would be removed by [`prune_linked_worktrees`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrunedWorktreeEntry {
+    /// Working tree path from the registry.
+    pub path: PathBuf,
+    /// Why the entry is prunable (matches `git worktree prune` messaging).
+    pub reason: String,
 }
 
 /// Register and populate a linked worktree (Git `worktree add` layout).
@@ -510,8 +554,7 @@ pub fn add_linked_worktree(
     let admin_plan = plan_admin_dir_for_add(&common, &wt_path, opts.force)?;
     ensure_empty_or_missing(&wt_path)?;
 
-    let start_spec = opts.start_point.as_deref().unwrap_or("HEAD");
-    let start_oid = resolve_revision(repo, start_spec)?;
+    let (start_spec, start_oid) = resolve_worktree_start_commit(repo, opts)?;
     let start_obj = repo.odb().read(&start_oid)?;
     if start_obj.kind != ObjectKind::Commit {
         return Err(Error::Message(format!(
@@ -520,46 +563,10 @@ pub fn add_linked_worktree(
     }
     let tree_oid = parse_commit(&start_obj.data)?.tree;
 
-    let head_ref = if opts.detach {
-        None
-    } else if let Some(branch) = opts.branch.as_deref() {
-        validate_branch_short_name(branch).map_err(|e| Error::Message(e.to_string()))?;
-        let branch_ref = format!("refs/heads/{branch}");
-        if opts.new_branch {
-            if refs::resolve_ref(repo.git_dir(), &branch_ref).is_ok() {
-                return Err(Error::Message(format!("branch '{branch}' already exists")));
-            }
-            refs::write_ref(repo.git_dir(), &branch_ref, &start_oid)?;
-        } else if refs::resolve_ref(repo.git_dir(), &branch_ref).is_err() {
-            return Err(Error::Message(format!("no branch named '{branch}'")));
-        } else {
-            let tip = refs::resolve_ref(repo.git_dir(), &branch_ref)?;
-            if tip != start_oid {
-                return Err(Error::Message(format!(
-                    "branch '{branch}' does not match start commit"
-                )));
-            }
-        }
-        branch_checked_out_elsewhere(repo, &branch_ref)?;
-        Some(branch_ref)
-    } else if let Some(start) = opts.start_point.as_deref() {
-        if let Some(branch_ref) = resolve_existing_branch(repo, start) {
-            branch_checked_out_elsewhere(repo, &branch_ref)?;
-            Some(branch_ref)
-        } else {
-            None
-        }
-    } else {
-        let branch = worktree_path_basename(&wt_path);
-        validate_branch_short_name(&branch).map_err(|e| Error::Message(e.to_string()))?;
-        let branch_ref = format!("refs/heads/{branch}");
-        if refs::resolve_ref(repo.git_dir(), &branch_ref).is_ok() {
-            return Err(Error::Message(format!("branch '{branch}' already exists")));
-        }
-        refs::write_ref(repo.git_dir(), &branch_ref, &start_oid)?;
-        branch_checked_out_elsewhere(repo, &branch_ref)?;
-        Some(branch_ref)
-    };
+    let plan = plan_worktree_head(repo, opts, &wt_path, &start_spec, start_oid)?;
+    if let Some(ref branch_ref) = plan.head_ref {
+        branch_checked_out_elsewhere(repo, branch_ref)?;
+    }
 
     let admin = admin_plan.admin_dir;
     let worktree_absent_before = !wt_path.exists();
@@ -568,7 +575,29 @@ pub fn add_linked_worktree(
         .map(StaleWorktreeAdminBackup::remove_and_backup)
         .transpose()?;
 
+    let mut branch_rollback = None;
     let finish = (|| -> Result<WorktreeEntry> {
+        if let Some(ref bw) = plan.branch_write {
+            let branch_ref = format!("refs/heads/{}", bw.branch_short);
+            let previous_tip = refs::resolve_ref(repo.git_dir(), &branch_ref).ok();
+            branch_rollback = Some(BranchRefRollback {
+                git_dir: repo.git_dir(),
+                branch_ref: branch_ref.clone(),
+                previous_tip,
+                committed: false,
+            });
+            create_worktree_branch(
+                repo,
+                &bw.branch_short,
+                &bw.start_spec,
+                bw.start_oid,
+                bw.force_reset,
+            )?;
+        }
+        if let Some(ref branch_short) = plan.track_branch {
+            maybe_track_new_branch(repo, opts, branch_short, &start_spec, start_oid)?;
+        }
+
         fs::create_dir_all(&admin).map_err(Error::Io)?;
         if let Some(guard) = stale_guard.as_mut() {
             guard.set_new_admin(&admin);
@@ -591,7 +620,7 @@ pub fn add_linked_worktree(
         fs::write(admin.join("commondir"), "../..\n").map_err(Error::Io)?;
         fs::write(admin.join("gitdir"), format!("{wt_git_abs}\n")).map_err(Error::Io)?;
 
-        if let Some(ref branch_ref) = head_ref {
+        if let Some(ref branch_ref) = plan.head_ref {
             fs::write(admin.join("HEAD"), format!("ref: {branch_ref}\n")).map_err(Error::Io)?;
         } else {
             fs::write(admin.join("HEAD"), format!("{start_oid}\n")).map_err(Error::Io)?;
@@ -599,11 +628,17 @@ pub fn add_linked_worktree(
 
         copy_filtered_worktree_config(&common, &admin)?;
 
-        let linked = Repository::discover(
-            Some(wt_path.as_path()),
-            &repo.linked_worktree_discover_options(),
-        )?;
-        checkout_between_trees(&linked, None, &tree_oid)?;
+        if let Some(lock) = &opts.lock {
+            write_admin_lock_file(&admin, lock.reason.as_deref())?;
+        }
+
+        if !opts.no_checkout {
+            let linked = Repository::discover(
+                Some(wt_path.as_path()),
+                &repo.linked_worktree_discover_options(),
+            )?;
+            checkout_between_trees(&linked, None, &tree_oid)?;
+        }
 
         linked_worktree_entry(&admin, &common, &worktree_admin_dir(repo))
     })();
@@ -612,6 +647,9 @@ pub fn add_linked_worktree(
         Ok(entry) => {
             if let Some(guard) = stale_guard.take() {
                 guard.commit();
+            }
+            if let Some(mut rollback) = branch_rollback {
+                rollback.commit();
             }
             Ok(entry)
         }
@@ -626,7 +664,10 @@ pub fn add_linked_worktree(
 /// # Errors
 ///
 /// Propagates I/O failures while reading or removing admin directories.
-pub fn prune_linked_worktrees(repo: &Repository) -> Result<Vec<PathBuf>> {
+pub fn prune_linked_worktrees(
+    repo: &Repository,
+    opts: &PruneWorktreesOptions,
+) -> Result<Vec<PrunedWorktreeEntry>> {
     let common = common_git_dir(repo.git_dir());
     let worktrees_dir = common.join("worktrees");
     if !worktrees_dir.is_dir() {
@@ -638,9 +679,14 @@ pub fn prune_linked_worktrees(repo: &Repository) -> Result<Vec<PathBuf>> {
         if entry.admin_dir == common || entry.is_locked || !entry.is_prunable {
             continue;
         }
-        let wt_path = entry.path.clone();
-        fs::remove_dir_all(&entry.admin_dir).map_err(Error::Io)?;
-        pruned.push(wt_path);
+        let reason = prune_reason(&entry.admin_dir, &entry.path);
+        pruned.push(PrunedWorktreeEntry {
+            path: entry.path.clone(),
+            reason,
+        });
+        if !opts.dry_run {
+            fs::remove_dir_all(&entry.admin_dir).map_err(Error::Io)?;
+        }
     }
     Ok(pruned)
 }
@@ -1125,11 +1171,12 @@ mod tests {
             &repo,
             &AddLinkedWorktreeOptions {
                 path: linked.clone(),
-                branch: Some("wt".into()),
-                new_branch: true,
-                detach: false,
+                branch: Some(WorktreeBranch::Create("wt".into())),
                 start_point: Some("HEAD".into()),
                 force: false,
+                lock: None,
+                no_checkout: false,
+                track: false,
             },
         )
         .unwrap();
@@ -1254,11 +1301,12 @@ mod tests {
             &repo,
             &AddLinkedWorktreeOptions {
                 path: tmp.path().join("wt"),
-                branch: Some("wt".into()),
-                new_branch: true,
-                detach: false,
+                branch: Some(WorktreeBranch::Create("wt".into())),
                 start_point: None,
                 force: false,
+                lock: None,
+                no_checkout: false,
+                track: false,
             },
         )
         .unwrap_err();
@@ -1295,11 +1343,12 @@ mod tests {
             &repo,
             &AddLinkedWorktreeOptions {
                 path: linked.clone(),
-                branch: Some("wt".into()),
-                new_branch: true,
-                detach: false,
+                branch: Some(WorktreeBranch::Create("wt".into())),
                 start_point: Some("HEAD".into()),
                 force: false,
+                lock: None,
+                no_checkout: false,
+                track: false,
             },
         )
         .unwrap();
@@ -1350,11 +1399,12 @@ mod tests {
             &repo,
             &AddLinkedWorktreeOptions {
                 path: linked.clone(),
-                branch: Some("feature".into()),
-                new_branch: true,
-                detach: false,
+                branch: Some(WorktreeBranch::Create("feature".into())),
                 start_point: Some("HEAD".into()),
                 force: false,
+                lock: None,
+                no_checkout: false,
+                track: false,
             },
         )
         .unwrap();
@@ -1405,11 +1455,12 @@ mod tests {
             &repo,
             &AddLinkedWorktreeOptions {
                 path: linked.clone(),
-                branch: Some("a".into()),
-                new_branch: true,
-                detach: false,
+                branch: Some(WorktreeBranch::Create("a".into())),
                 start_point: Some("HEAD".into()),
                 force: false,
+                lock: None,
+                no_checkout: false,
+                track: false,
             },
         )
         .unwrap();
@@ -1419,11 +1470,12 @@ mod tests {
                 &repo,
                 &AddLinkedWorktreeOptions {
                     path: linked.clone(),
-                    branch: Some("b".into()),
-                    new_branch: true,
-                    detach: false,
+                    branch: Some(WorktreeBranch::Create("b".into())),
                     start_point: Some("HEAD".into()),
                     force: false,
+                    lock: None,
+                    no_checkout: false,
+                    track: false,
                 },
             )
             .unwrap_err(),
@@ -1463,11 +1515,12 @@ mod tests {
             &repo,
             &AddLinkedWorktreeOptions {
                 path: linked.clone(),
-                branch: Some("wt".into()),
-                new_branch: true,
-                detach: false,
+                branch: Some(WorktreeBranch::Create("wt".into())),
                 start_point: Some("HEAD".into()),
                 force: false,
+                lock: None,
+                no_checkout: false,
+                track: false,
             },
         )
         .unwrap();
