@@ -5,7 +5,6 @@ use std::io::{self, Read, Write};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
-use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use flate2::{Decompress, FlushDecompress, Status};
@@ -15,7 +14,7 @@ use crate::error::{Error, Result};
 use crate::hash;
 use crate::objects::{HashAlgo, Object, ObjectId, ObjectInfo, ObjectKind};
 use crate::odb::WriteOptions;
-use crate::zlib_inflate::ZlibInflateScratch;
+use crate::zlib_inflate::with_loose_scratch;
 
 const READ_CHUNK: usize = 64 * 1024;
 
@@ -198,10 +197,15 @@ impl ObjectStore for LooseStore {
 
     fn read_info(&self, oid: &ObjectId) -> Result<Option<ObjectInfo>> {
         let path = self.object_path(oid);
-        if !path.is_file() {
-            return Ok(None);
+        let mut file = match fs::File::open(&path) {
+            Ok(f) => f,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(Error::Io(err)),
+        };
+        match loose_object_info_from_file(&mut file) {
+            Err(Error::Io(err)) if err.kind() == io::ErrorKind::IsADirectory => Ok(None),
+            other => other.map(Some),
         }
-        Ok(Some(read_loose_object_info(&path)?))
     }
 
     fn open_stream(&self, oid: &ObjectId) -> Result<Option<ObjectStream<'_>>> {
@@ -385,8 +389,9 @@ pub fn read_zlib_loose_payload(file: File) -> Result<Vec<u8>> {
     let cmf_flg = u16::from(hdr[0]) << 8 | u16::from(hdr[1]);
     let looks_like_zlib_header = cmf_flg != 0 && cmf_flg % 31 == 0;
     let preset_dictionary = looks_like_zlib_header && (hdr[1] & 0x20) != 0;
-    let mut scratch = ZlibInflateScratch::default();
-    scratch.decompress_loose_payload(&hdr, read_file, preset_dictionary)
+    with_loose_scratch(|scratch| {
+        scratch.decompress_loose_payload(&hdr, read_file, preset_dictionary)
+    })
 }
 
 /// Decompress a loose object into `buf`, reusing its capacity.
@@ -397,8 +402,9 @@ pub(crate) fn read_zlib_loose_payload_into(file: File, buf: &mut Vec<u8>) -> Res
     let cmf_flg = u16::from(hdr[0]) << 8 | u16::from(hdr[1]);
     let looks_like_zlib_header = cmf_flg != 0 && cmf_flg % 31 == 0;
     let preset_dictionary = looks_like_zlib_header && (hdr[1] & 0x20) != 0;
-    let mut scratch = ZlibInflateScratch::default();
-    scratch.decompress_loose_payload_into(&hdr, read_file, preset_dictionary, buf)
+    with_loose_scratch(|scratch| {
+        scratch.decompress_loose_payload_into(&hdr, read_file, preset_dictionary, buf)
+    })
 }
 
 /// Remove the Git object header from decompressed bytes in `buf`, leaving only the payload.
@@ -432,22 +438,12 @@ pub(crate) fn strip_decompressed_object_header(
 
 /// Read kind and size from a loose object file without loading the full payload.
 pub fn read_loose_object_info(path: &Path) -> Result<ObjectInfo> {
-    let file = fs::File::open(path).map_err(Error::Io)?;
-    let mut decoder = ZlibDecoder::new(file);
-    let mut prefix = Vec::with_capacity(64);
-    let mut buf = [0u8; 256];
-    loop {
-        let n = decoder
-            .read(&mut buf)
-            .map_err(|e| Error::Zlib(e.to_string()))?;
-        if n == 0 {
-            break;
-        }
-        prefix.extend_from_slice(&buf[..n]);
-        if prefix.contains(&0) || prefix.len() >= 128 {
-            break;
-        }
-    }
+    let mut file = fs::File::open(path).map_err(Error::Io)?;
+    loose_object_info_from_file(&mut file)
+}
+
+fn loose_object_info_from_file(file: &mut File) -> Result<ObjectInfo> {
+    let prefix = with_loose_scratch(|scratch| scratch.inflate_loose_header(file))?;
     let (kind, size) = parse_object_header_prefix(&prefix)?;
     Ok(ObjectInfo { kind, size })
 }
