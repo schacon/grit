@@ -2387,7 +2387,6 @@ pub fn grit_lib::config::ConfigSet::pack_object_window(&self) -> usize
 pub fn grit_lib::config::ConfigSet::pack_objects_zlib_level(&self) -> grit_lib::error::Result<i32>
 pub fn grit_lib::config::ConfigSet::pack_prefer_bitmap_tips(&self) -> alloc::vec::Vec<alloc::string::String>
 pub fn grit_lib::config::ConfigSet::pack_read_reverse_index_default(&self) -> bool
-pub fn grit_lib::config::ConfigSet::pack_use_bitmaps(&self) -> bool
 pub fn grit_lib::config::ConfigSet::pack_window_memory_bytes(&self) -> u64
 pub fn grit_lib::config::ConfigSet::pack_write_bitmap_hash_cache(&self) -> bool
 pub fn grit_lib::config::ConfigSet::pack_write_bitmap_lookup_table(&self) -> bool
@@ -2396,7 +2395,6 @@ pub fn grit_lib::config::ConfigSet::quote_path_fully(&self) -> bool
 pub fn grit_lib::config::ConfigSet::read_early_config(&grit_lib::config::environment::Environment, core::option::Option<&std::path::Path>, &str) -> grit_lib::error::Result<alloc::vec::Vec<alloc::string::String>>
 pub fn grit_lib::config::ConfigSet::try_pack_index_parallelism(&self) -> core::result::Result<grit_lib::parallel::Parallelism, grit_lib::error::ConfigError>
 pub fn grit_lib::config::ConfigSet::try_pack_index_parallelism_for_git_dir(&grit_lib::config::environment::Environment, core::option::Option<&std::path::Path>) -> grit_lib::error::Result<grit_lib::parallel::Parallelism>
-pub fn grit_lib::config::ConfigSet::uploadpack_allow_bitmaps(&self) -> bool
 impl core::clone::Clone for grit_lib::config::ConfigSet
 pub fn grit_lib::config::ConfigSet::clone(&self) -> Self
 impl core::default::Default for grit_lib::config::ConfigSet
@@ -7484,10 +7482,8 @@ pub mod grit_lib::objects::delta_islands
 pub struct grit_lib::objects::delta_islands::DeltaIslands
 impl grit_lib::objects::delta_islands::DeltaIslands
 pub fn grit_lib::objects::delta_islands::DeltaIslands::delta_cmp(&self, &grit_lib::objects::ObjectId, &grit_lib::objects::ObjectId) -> i32
-pub fn grit_lib::objects::delta_islands::DeltaIslands::has_core(&self) -> bool
 pub fn grit_lib::objects::delta_islands::DeltaIslands::in_same_island(&self, &grit_lib::objects::ObjectId, &grit_lib::objects::ObjectId) -> bool
 pub fn grit_lib::objects::delta_islands::DeltaIslands::is_active(&self) -> bool
-pub fn grit_lib::objects::delta_islands::DeltaIslands::is_core_object(&self, &grit_lib::objects::ObjectId) -> bool
 impl core::default::Default for grit_lib::objects::delta_islands::DeltaIslands
 pub fn grit_lib::objects::delta_islands::DeltaIslands::default() -> Self
 impl core::fmt::Debug for grit_lib::objects::delta_islands::DeltaIslands
@@ -7695,7 +7691,6 @@ pub const grit_lib::objects::hash::PAR_HASH_MIN_TOTAL_BYTES: usize
 pub fn grit_lib::objects::hash::backend(grit_lib::objects::HashAlgo) -> grit_lib::objects::hash::Backend
 pub fn grit_lib::objects::hash::hash_object(grit_lib::objects::HashAlgo, grit_lib::objects::ObjectKind, &[u8]) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::hash::hash_objects_parallel(grit_lib::objects::HashAlgo, &[(grit_lib::objects::ObjectKind, &[u8])], core::num::nonzero::NonZeroUsize) -> core::result::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>, grit_lib::parallel::ParallelHashError<grit_lib::error::Error>>
-pub fn grit_lib::objects::hash::hmac_sha1(&[u8], &[u8]) -> [u8; 20]
 pub fn grit_lib::objects::hash::index_parallelism_from_config(&grit_lib::config::ConfigSet) -> grit_lib::parallel::Parallelism
 pub fn grit_lib::objects::hash::par_hash_with<T, R, F>(&[T], core::num::nonzero::NonZeroUsize, usize, F) -> alloc::vec::Vec<R> where T: core::marker::Sync, R: core::marker::Send, F: core::ops::function::Fn(&T) -> R + core::marker::Sync
 pub fn grit_lib::objects::hash::parallel_hash_worthwhile(usize, usize, usize) -> bool
@@ -9366,8 +9361,6 @@ impl grit_lib::objects::pack_objects::PackBuildOptions
 pub fn grit_lib::objects::pack_objects::PackBuildOptions::for_local_copy(core::option::Option<&grit_lib::config::ConfigSet>) -> Self
 pub fn grit_lib::objects::pack_objects::PackBuildOptions::for_local_push(core::option::Option<&grit_lib::config::ConfigSet>) -> Self
 pub fn grit_lib::objects::pack_objects::PackBuildOptions::for_repack_rewrite(core::option::Option<&grit_lib::config::ConfigSet>) -> Self
-pub fn grit_lib::objects::pack_objects::PackBuildOptions::use_bitmaps_for_upload_pack(core::option::Option<&grit_lib::config::ConfigSet>) -> bool
-pub fn grit_lib::objects::pack_objects::PackBuildOptions::use_bitmaps_from_config(core::option::Option<&grit_lib::config::ConfigSet>) -> bool
 pub fn grit_lib::objects::pack_objects::PackBuildOptions::window_and_depth_from_config(core::option::Option<&grit_lib::config::ConfigSet>) -> (usize, usize)
 impl core::clone::Clone for grit_lib::objects::pack_objects::PackBuildOptions
 pub fn grit_lib::objects::pack_objects::PackBuildOptions::clone(&self) -> Self
@@ -14090,7 +14083,6 @@ pub fn grit_lib::config::ConfigSet::pack_object_window(&self) -> usize
 pub fn grit_lib::config::ConfigSet::pack_objects_zlib_level(&self) -> grit_lib::error::Result<i32>
 pub fn grit_lib::config::ConfigSet::pack_prefer_bitmap_tips(&self) -> alloc::vec::Vec<alloc::string::String>
 pub fn grit_lib::config::ConfigSet::pack_read_reverse_index_default(&self) -> bool
-pub fn grit_lib::config::ConfigSet::pack_use_bitmaps(&self) -> bool
 pub fn grit_lib::config::ConfigSet::pack_window_memory_bytes(&self) -> u64
 pub fn grit_lib::config::ConfigSet::pack_write_bitmap_hash_cache(&self) -> bool
 pub fn grit_lib::config::ConfigSet::pack_write_bitmap_lookup_table(&self) -> bool
@@ -14099,7 +14091,6 @@ pub fn grit_lib::config::ConfigSet::quote_path_fully(&self) -> bool
 pub fn grit_lib::config::ConfigSet::read_early_config(&grit_lib::config::environment::Environment, core::option::Option<&std::path::Path>, &str) -> grit_lib::error::Result<alloc::vec::Vec<alloc::string::String>>
 pub fn grit_lib::config::ConfigSet::try_pack_index_parallelism(&self) -> core::result::Result<grit_lib::parallel::Parallelism, grit_lib::error::ConfigError>
 pub fn grit_lib::config::ConfigSet::try_pack_index_parallelism_for_git_dir(&grit_lib::config::environment::Environment, core::option::Option<&std::path::Path>) -> grit_lib::error::Result<grit_lib::parallel::Parallelism>
-pub fn grit_lib::config::ConfigSet::uploadpack_allow_bitmaps(&self) -> bool
 impl core::clone::Clone for grit_lib::config::ConfigSet
 pub fn grit_lib::config::ConfigSet::clone(&self) -> Self
 impl core::default::Default for grit_lib::config::ConfigSet
@@ -17455,39 +17446,6 @@ pub fn grit_lib::remote::protocol_v2::server_advertises_bundle_uri(&[alloc::stri
 pub mod grit_lib::remote::push
 pub fn grit_lib::remote::push::push_http(alloc::rcs::arc::Arc<dyn grit_lib::remote::transport::http::HttpClient>, &std::path::Path, &str, &[grit_lib::remote::transfer::PushRefSpec], &grit_lib::remote::transfer::PushOptions, &mut dyn grit_lib::remote::fetch::Progress) -> grit_lib::error::Result<grit_lib::remote::transfer::PushOutcome>
 pub fn grit_lib::remote::push::push_remote(&std::path::Path, &mut dyn grit_lib::remote::transport::Connection, &[grit_lib::remote::transfer::PushRefSpec], &grit_lib::remote::transfer::PushOptions, &mut dyn grit_lib::remote::fetch::Progress) -> grit_lib::error::Result<grit_lib::remote::transfer::PushOutcome>
-pub mod grit_lib::remote::push_cert
-pub struct grit_lib::remote::push_cert::CertRefUpdate
-pub grit_lib::remote::push_cert::CertRefUpdate::new_oid: alloc::string::String
-pub grit_lib::remote::push_cert::CertRefUpdate::old_oid: alloc::string::String
-pub grit_lib::remote::push_cert::CertRefUpdate::refname: alloc::string::String
-impl core::marker::Freeze for grit_lib::remote::push_cert::CertRefUpdate
-impl core::marker::Send for grit_lib::remote::push_cert::CertRefUpdate
-impl core::marker::Sync for grit_lib::remote::push_cert::CertRefUpdate
-impl core::marker::Unpin for grit_lib::remote::push_cert::CertRefUpdate
-impl core::marker::UnsafeUnpin for grit_lib::remote::push_cert::CertRefUpdate
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::push_cert::CertRefUpdate
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::push_cert::CertRefUpdate
-pub struct grit_lib::remote::push_cert::PushCertEnv
-pub grit_lib::remote::push_cert::PushCertEnv::cert_oid: alloc::string::String
-pub grit_lib::remote::push_cert::PushCertEnv::key: alloc::string::String
-pub grit_lib::remote::push_cert::PushCertEnv::nonce: core::option::Option<alloc::string::String>
-pub grit_lib::remote::push_cert::PushCertEnv::nonce_status: core::option::Option<alloc::string::String>
-pub grit_lib::remote::push_cert::PushCertEnv::signer: alloc::string::String
-pub grit_lib::remote::push_cert::PushCertEnv::status: char
-impl grit_lib::remote::push_cert::PushCertEnv
-pub fn grit_lib::remote::push_cert::PushCertEnv::to_env_pairs(&self) -> alloc::vec::Vec<(alloc::string::String, alloc::string::String)>
-impl core::marker::Freeze for grit_lib::remote::push_cert::PushCertEnv
-impl core::marker::Send for grit_lib::remote::push_cert::PushCertEnv
-impl core::marker::Sync for grit_lib::remote::push_cert::PushCertEnv
-impl core::marker::Unpin for grit_lib::remote::push_cert::PushCertEnv
-impl core::marker::UnsafeUnpin for grit_lib::remote::push_cert::PushCertEnv
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::push_cert::PushCertEnv
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::push_cert::PushCertEnv
-pub const grit_lib::remote::push_cert::NONCE_OK: &str
-pub fn grit_lib::remote::push_cert::build_push_cert_payload(&str, &str, core::option::Option<&str>, core::option::Option<&str>, &[alloc::string::String], &[grit_lib::remote::push_cert::CertRefUpdate]) -> core::option::Option<alloc::vec::Vec<u8>>
-pub fn grit_lib::remote::push_cert::cert_env_from_check(&grit_lib::commit::signing::SignatureCheck, alloc::string::String, core::option::Option<alloc::string::String>) -> grit_lib::remote::push_cert::PushCertEnv
-pub fn grit_lib::remote::push_cert::prepare_push_cert_nonce(&str, i64, &str) -> alloc::string::String
-pub fn grit_lib::remote::push_cert::verify_push_cert(&grit_lib::commit::signing::GpgConfig, &[u8]) -> grit_lib::error::Result<grit_lib::commit::signing::SignatureCheck>
 pub mod grit_lib::remote::push_plan
 pub enum grit_lib::remote::push_plan::ForceMode
 pub grit_lib::remote::push_plan::ForceMode::Force
@@ -18114,8 +18072,6 @@ impl grit_lib::objects::pack_objects::PackBuildOptions
 pub fn grit_lib::objects::pack_objects::PackBuildOptions::for_local_copy(core::option::Option<&grit_lib::config::ConfigSet>) -> Self
 pub fn grit_lib::objects::pack_objects::PackBuildOptions::for_local_push(core::option::Option<&grit_lib::config::ConfigSet>) -> Self
 pub fn grit_lib::objects::pack_objects::PackBuildOptions::for_repack_rewrite(core::option::Option<&grit_lib::config::ConfigSet>) -> Self
-pub fn grit_lib::objects::pack_objects::PackBuildOptions::use_bitmaps_for_upload_pack(core::option::Option<&grit_lib::config::ConfigSet>) -> bool
-pub fn grit_lib::objects::pack_objects::PackBuildOptions::use_bitmaps_from_config(core::option::Option<&grit_lib::config::ConfigSet>) -> bool
 pub fn grit_lib::objects::pack_objects::PackBuildOptions::window_and_depth_from_config(core::option::Option<&grit_lib::config::ConfigSet>) -> (usize, usize)
 impl core::clone::Clone for grit_lib::objects::pack_objects::PackBuildOptions
 pub fn grit_lib::objects::pack_objects::PackBuildOptions::clone(&self) -> Self
