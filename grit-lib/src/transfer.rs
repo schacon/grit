@@ -514,29 +514,6 @@ fn transfer_stats_from_ingested(
     })
 }
 
-fn transfer_stats_from_pack_dir(pack_dir: &Path) -> Result<TransferStats> {
-    let mut stats = TransferStats::default();
-    if !pack_dir.is_dir() {
-        return Ok(stats);
-    }
-    for entry in fs::read_dir(pack_dir).map_err(Error::Io)? {
-        let path = entry.map_err(Error::Io)?.path();
-        if path.extension().is_none_or(|e| e != "pack") {
-            continue;
-        }
-        stats.bytes += fs::metadata(&path).map_err(Error::Io)?.len();
-        let idx = path.with_extension("idx");
-        if idx.is_file() {
-            // Linked or copied packfiles are already valid on disk; reading the
-            // index entry count is enough for transfer stats (Git's local clone
-            // path does not re-verify every object hash).
-            let index = crate::pack::read_pack_index_no_verify(&idx)?;
-            stats.objects += u64::try_from(index.len()).unwrap_or(u64::MAX);
-        }
-    }
-    Ok(stats)
-}
-
 fn object_kind_counts_for_oids(
     odb: &Odb,
     oids: &HashSet<ObjectId>,
@@ -562,19 +539,72 @@ fn loose_transfer_stats(objects_dir: &Path, oids: &HashSet<ObjectId>) -> Result<
     Ok((objects, bytes))
 }
 
-/// Aggregate object/byte/kind stats for objects installed under `local_git_dir`.
-fn transfer_stats_after_local_install(
+fn pack_file_basenames(pack_dir: &Path) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let Ok(entries) = fs::read_dir(pack_dir) else {
+        return names;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "pack") {
+            if let Some(name) = path.file_name() {
+                names.insert(name.to_string_lossy().into_owned());
+            }
+        }
+    }
+    names
+}
+
+/// Per-fetch transfer stats for objects installed during one local copy operation.
+fn transfer_stats_for_local_operation(
     local_git_dir: &Path,
     local_odb: &Odb,
     installed: &HashSet<ObjectId>,
+    pack_dir_before: &HashSet<String>,
 ) -> Result<TransferStats> {
     let objects_dir = local_git_dir.join("objects");
-    let mut transfer = transfer_stats_from_pack_dir(&local_objects_pack_dir(local_git_dir))?;
+    let pack_dir = local_objects_pack_dir(local_git_dir);
+    let mut bytes = 0u64;
+    let mut objects_from_new_packs = 0u64;
+    if pack_dir.is_dir() {
+        for entry in fs::read_dir(&pack_dir).map_err(Error::Io)? {
+            let path = entry.map_err(Error::Io)?.path();
+            if path.extension().is_none_or(|e| e != "pack") {
+                continue;
+            }
+            let Some(name) = path.file_name() else {
+                continue;
+            };
+            let name = name.to_string_lossy();
+            if pack_dir_before.contains(name.as_ref()) {
+                continue;
+            }
+            bytes += fs::metadata(&path).map_err(Error::Io)?.len();
+            let idx = path.with_extension("idx");
+            if idx.is_file() {
+                let index = crate::pack::read_pack_index_no_verify(&idx)?;
+                objects_from_new_packs += u64::try_from(index.len()).unwrap_or(u64::MAX);
+            }
+        }
+    }
     let (loose_objects, loose_bytes) = loose_transfer_stats(&objects_dir, installed)?;
-    transfer.objects = transfer.objects.saturating_add(loose_objects);
-    transfer.bytes = transfer.bytes.saturating_add(loose_bytes);
-    transfer.kinds = Some(object_kind_counts_for_oids(local_odb, installed)?);
-    Ok(transfer)
+    bytes = bytes.saturating_add(loose_bytes);
+    let installed_count = u64::try_from(installed.len()).unwrap_or(u64::MAX);
+    let objects = if objects_from_new_packs > 0 {
+        objects_from_new_packs.saturating_add(loose_objects)
+    } else {
+        installed_count
+    };
+    let kinds = if objects == installed_count {
+        Some(object_kind_counts_for_oids(local_odb, installed)?)
+    } else {
+        None
+    };
+    Ok(TransferStats {
+        objects,
+        bytes,
+        kinds,
+    })
 }
 
 fn local_objects_pack_dir(git_dir: &Path) -> PathBuf {
@@ -870,6 +900,7 @@ fn copy_objects_for_local_fetch(
 
     let remote_objects = remote_git_dir.join("objects");
     let local_objects = local_git_dir.join("objects");
+    let pack_dir_before = pack_file_basenames(&local_objects_pack_dir(local_git_dir));
 
     if !pack_build.thin
         && try_pack_link
@@ -882,7 +913,12 @@ fn copy_objects_for_local_fetch(
             progress.set(wants.len() as u64);
             progress.finish();
             let oids = linked_object_set(local_odb, wants);
-            let transfer = transfer_stats_after_local_install(local_git_dir, local_odb, &oids)?;
+            let transfer = transfer_stats_for_local_operation(
+                local_git_dir,
+                local_odb,
+                &oids,
+                &pack_dir_before,
+            )?;
             return Ok((oids, transfer));
         }
         progress.finish();
@@ -905,7 +941,12 @@ fn copy_objects_for_local_fetch(
             progress.set(send.len() as u64);
             progress.finish();
             let oids = linked_object_set(local_odb, send);
-            let transfer = transfer_stats_after_local_install(local_git_dir, local_odb, &oids)?;
+            let transfer = transfer_stats_for_local_operation(
+                local_git_dir,
+                local_odb,
+                &oids,
+                &pack_dir_before,
+            )?;
             return Ok((oids, transfer));
         }
         progress.finish();
@@ -914,7 +955,8 @@ fn copy_objects_for_local_fetch(
     let mut still_missing = objects_missing_from_peer(local_odb, send);
     if still_missing.is_empty() {
         let oids = linked_object_set(local_odb, send);
-        let transfer = transfer_stats_after_local_install(local_git_dir, local_odb, &oids)?;
+        let transfer =
+            transfer_stats_for_local_operation(local_git_dir, local_odb, &oids, &pack_dir_before)?;
         return Ok((oids, transfer));
     }
 
@@ -932,7 +974,12 @@ fn copy_objects_for_local_fetch(
         progress.finish();
         if still_missing.is_empty() {
             let oids = linked_object_set(local_odb, send);
-            let transfer = transfer_stats_after_local_install(local_git_dir, local_odb, &oids)?;
+            let transfer = transfer_stats_for_local_operation(
+                local_git_dir,
+                local_odb,
+                &oids,
+                &pack_dir_before,
+            )?;
             return Ok((oids, transfer));
         }
     }
@@ -959,7 +1006,8 @@ fn copy_objects_for_local_fetch(
     refresh_local_odb_after_link(local_odb);
     let mut out = linked_object_set(local_odb, send);
     out.extend(ingested.object_ids);
-    let transfer = transfer_stats_after_local_install(local_git_dir, local_odb, &out)?;
+    let transfer =
+        transfer_stats_for_local_operation(local_git_dir, local_odb, &out, &pack_dir_before)?;
     Ok((out, transfer))
 }
 
@@ -3049,7 +3097,7 @@ mod tests {
     }
 
     #[test]
-    fn transfer_stats_from_pack_dir_reads_index_without_verify() {
+    fn transfer_stats_for_local_operation_counts_new_pack_index() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let repo = tmp.path().join("repo");
         std::fs::create_dir_all(&repo).unwrap();
@@ -3059,8 +3107,12 @@ mod tests {
         assert!(git_ok(&repo, &["commit", "-qm", "c"]));
         assert!(git_ok(&repo, &["repack", "-a", "-d", "-f"]));
 
-        let pack_dir = repo.join(".git/objects/pack");
-        let stats = transfer_stats_from_pack_dir(&pack_dir).expect("stats");
+        let git_dir = repo.join(".git");
+        let pack_dir = git_dir.join("objects/pack");
+        let odb = Odb::new(&git_dir.join("objects")).with_config_git_dir(git_dir.clone());
+        let stats =
+            transfer_stats_for_local_operation(&git_dir, &odb, &HashSet::new(), &HashSet::new())
+                .expect("stats");
         assert!(stats.bytes > 0);
         assert!(stats.objects > 0);
 

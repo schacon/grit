@@ -109,6 +109,16 @@ fn fetch_local_copies_refs_and_objects_then_fast_forwards() {
         assert_eq!(u.mode, UpdateMode::New, "ref {} not New", u.remote_ref);
     }
 
+    assert_eq!(
+        outcome.transfer.objects, 7,
+        "first fetch installs seven objects"
+    );
+    let kinds = outcome
+        .transfer
+        .kinds
+        .expect("first fetch reports object types");
+    assert_eq!(kinds.total(), outcome.transfer.objects);
+
     // --- Advance the remote, fetch again: FastForward. ---
     std::fs::write(remote.join("c.txt"), "three\n").unwrap();
     git(&remote, &["add", "c.txt"]);
@@ -146,6 +156,16 @@ fn fetch_local_copies_refs_and_objects_then_fast_forwards() {
     if let Some(u) = tag_update2 {
         assert_eq!(u.mode, UpdateMode::UpToDate);
     }
+
+    assert_eq!(
+        outcome2.transfer.objects, 3,
+        "second fetch installs only the new commit, tree, and blob"
+    );
+    let kinds2 = outcome2
+        .transfer
+        .kinds
+        .expect("incremental fetch reports object types");
+    assert_eq!(kinds2.total(), outcome2.transfer.objects);
 }
 
 #[test]
