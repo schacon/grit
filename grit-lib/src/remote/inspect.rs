@@ -9,6 +9,7 @@ use crate::refs;
 use crate::refspec::{parse_fetch_refspec, RefspecItem};
 use crate::remote::{HttpClientFactory, ListRefsOptions, Remote, RemoteError, RemoteRef};
 use crate::repo::Repository;
+use crate::branch_tracking::remote_tracking_ref_for_remote_ref;
 use crate::repo_handles::has_remote_section;
 use crate::transfer::{match_positive, ref_excluded, tracking_refs_gone_on_remote};
 
@@ -83,11 +84,18 @@ struct FetchRefspecs {
 
 impl FetchRefspecs {
     fn load(config: &ConfigSet, remote_name: &str) -> Self {
-        let (negative, positive) = config
+        let (negative, mut positive): (Vec<RefspecItem>, Vec<RefspecItem>) = config
             .get_all(&format!("remote.{remote_name}.fetch"))
             .iter()
             .filter_map(|spec| parse_fetch_refspec(spec).ok())
             .partition(|item| item.negative);
+        if positive.is_empty() {
+            if let Ok(default) =
+                parse_fetch_refspec(&format!("+refs/heads/*:refs/remotes/{remote_name}/*"))
+            {
+                positive.push(default);
+            }
+        }
         Self { positive, negative }
     }
 }
@@ -115,8 +123,8 @@ pub fn inspect_remote(
     let git_dir = repo.git_dir();
 
     let (head_branch, branches) = if options.query {
+        let refspecs = FetchRefspecs::load(config.as_ref(), name);
         let list_opts = ListRefsOptions {
-            heads: true,
             symrefs: true,
             ..Default::default()
         };
@@ -124,14 +132,16 @@ pub fn inspect_remote(
         let head_branch = head_branch_from_advertisement(&advertised);
         let branches = branch_states_from_query(
             git_dir,
+            config.as_ref(),
             name,
-            &FetchRefspecs::load(config.as_ref(), name),
+            &refspecs,
             &advertised,
         )?;
         (head_branch, branches)
     } else {
+        let refspecs = FetchRefspecs::load(config.as_ref(), name);
         let head_branch = local_remote_head_branch(git_dir, name)?;
-        let branches = local_tracking_branch_states(git_dir, name);
+        let branches = local_tracking_branch_states(git_dir, name, &refspecs);
         (head_branch, branches)
     };
 
@@ -172,8 +182,9 @@ fn local_remote_head_branch(
 fn local_tracking_branch_states(
     git_dir: &std::path::Path,
     remote_name: &str,
+    refspecs: &FetchRefspecs,
 ) -> Vec<RemoteBranchState> {
-    local_remote_branch_names(git_dir, remote_name)
+    local_tracked_head_short_names(git_dir, remote_name, refspecs)
         .into_iter()
         .map(|name| RemoteBranchState {
             name,
@@ -182,22 +193,63 @@ fn local_tracking_branch_states(
         .collect()
 }
 
-fn local_remote_branch_names(git_dir: &std::path::Path, remote_name: &str) -> Vec<String> {
-    let prefix = format!("refs/remotes/{remote_name}/");
-    let Ok(entries) = refs::list_refs(git_dir, &prefix) else {
-        return Vec::new();
-    };
-    let mut names: Vec<String> = entries
-        .into_iter()
-        .filter_map(|(refname, _)| {
-            if refname == format!("{prefix}HEAD") {
-                return None;
+/// Short branch names (`refs/heads/<name>`) with a local tracking ref under fetch refspec destinations.
+fn local_tracked_head_short_names(
+    git_dir: &std::path::Path,
+    remote_name: &str,
+    refspecs: &FetchRefspecs,
+) -> Vec<String> {
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    for item in &refspecs.positive {
+        let Some(dst) = item.dst.as_deref() else {
+            continue;
+        };
+        if let Some(star) = dst.find('*') {
+            let prefix = &dst[..star];
+            let Ok(entries) = refs::list_refs(git_dir, prefix) else {
+                continue;
+            };
+            for (refname, _) in entries {
+                if refname.ends_with("/HEAD") {
+                    continue;
+                }
+                if let Some(suffix) = refname.strip_prefix(prefix) {
+                    names.insert(suffix.to_owned());
+                }
             }
-            refname.strip_prefix(&prefix).map(str::to_owned)
-        })
-        .collect();
-    names.sort();
-    names
+        } else if refs::resolve_ref(git_dir, dst).is_ok() {
+            if let Some(src) = item.src.as_deref() {
+                if let Some(short) = src.strip_prefix("refs/heads/") {
+                    names.insert(short.to_owned());
+                }
+            }
+        }
+    }
+    if names.is_empty() {
+        let prefix = format!("refs/remotes/{remote_name}/");
+        if let Ok(entries) = refs::list_refs(git_dir, &prefix) {
+            for (refname, _) in entries {
+                if refname == format!("{prefix}HEAD") {
+                    continue;
+                }
+                if let Some(short) = refname.strip_prefix(&prefix) {
+                    names.insert(short.to_owned());
+                }
+            }
+        }
+    }
+    names.into_iter().collect()
+}
+
+fn remote_head_is_tracked(
+    git_dir: &std::path::Path,
+    config: &ConfigSet,
+    remote_name: &str,
+    head_short: &str,
+) -> bool {
+    let remote_ref = format!("refs/heads/{head_short}");
+    remote_tracking_ref_for_remote_ref(config, remote_name, &remote_ref)
+        .is_some_and(|tracking| refs::resolve_ref(git_dir, &tracking).is_ok())
 }
 
 fn remote_head_branch_names(
@@ -223,26 +275,26 @@ fn remote_head_branch_names(
 
 fn branch_states_from_query(
     git_dir: &std::path::Path,
+    config: &ConfigSet,
     remote_name: &str,
     refspecs: &FetchRefspecs,
     advertised: &[RemoteRef],
 ) -> Result<Vec<RemoteBranchState>> {
     let remote_heads: BTreeSet<String> = remote_head_branch_names(refspecs, advertised);
-    let local_names: BTreeSet<String> = local_remote_branch_names(git_dir, remote_name)
-        .into_iter()
-        .collect();
 
     let remote_pairs: Vec<(String, ObjectId)> =
         advertised.iter().map(|r| (r.name.clone(), r.oid)).collect();
     let stale_full = tracking_refs_gone_on_remote(git_dir, &refspecs.positive, &remote_pairs)?;
     let stale_names: BTreeSet<String> = stale_full
         .into_iter()
-        .filter_map(|(full, _)| tracking_ref_to_branch(&full, remote_name))
+        .filter_map(|(full, _)| {
+            head_short_name_for_tracking_ref(refspecs, remote_name, &full)
+        })
         .collect();
 
     let mut by_name: BTreeMap<String, RemoteBranchStateKind> = BTreeMap::new();
     for name in &remote_heads {
-        let state = if local_names.contains(name) {
+        let state = if remote_head_is_tracked(git_dir, config, remote_name, name) {
             RemoteBranchStateKind::Tracked
         } else {
             RemoteBranchStateKind::New
@@ -260,9 +312,34 @@ fn branch_states_from_query(
         .collect())
 }
 
-fn tracking_ref_to_branch(full_ref: &str, remote_name: &str) -> Option<String> {
+fn head_short_name_for_tracking_ref(
+    refspecs: &FetchRefspecs,
+    remote_name: &str,
+    tracking_ref: &str,
+) -> Option<String> {
+    for item in &refspecs.positive {
+        let Some(dst) = item.dst.as_deref() else {
+            continue;
+        };
+        if let Some(star) = dst.find('*') {
+            let prefix = &dst[..star];
+            if tracking_ref.starts_with(prefix) {
+                let suffix = tracking_ref.strip_prefix(prefix)?;
+                if suffix.is_empty() || suffix.ends_with("/HEAD") {
+                    continue;
+                }
+                return Some(suffix.to_owned());
+            }
+        } else if dst == tracking_ref {
+            return item
+                .src
+                .as_deref()
+                .and_then(|s| s.strip_prefix("refs/heads/"))
+                .map(str::to_owned);
+        }
+    }
     let prefix = format!("refs/remotes/{remote_name}/");
-    full_ref.strip_prefix(&prefix).map(str::to_owned)
+    tracking_ref.strip_prefix(&prefix).map(str::to_owned)
 }
 
 fn apply_branch_limit(

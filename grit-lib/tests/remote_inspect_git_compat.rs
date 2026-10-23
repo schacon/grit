@@ -60,22 +60,21 @@ fn parse_git_remote_show(text: &str) -> GitRemoteShowParsed {
     let mut branches = BTreeSet::new();
     let mut in_branches = false;
     for line in text.lines() {
-        let line = line.trim_end();
-        if let Some(rest) = line.strip_prefix("HEAD branch:") {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("HEAD branch:") {
             head_branch = Some(rest.trim().to_owned());
             in_branches = false;
             continue;
         }
-        if line.trim() == "Remote branches:" {
+        if trimmed == "Remote branches:" {
             in_branches = true;
             continue;
         }
         if in_branches {
-            if line.trim().is_empty() || line.contains("Local branch") {
+            if trimmed.is_empty() || trimmed.contains("Local branch") {
                 in_branches = false;
                 continue;
             }
-            let trimmed = line.trim();
             let (name_part, state) = if let Some(idx) = trimmed.find(" stale") {
                 (&trimmed[..idx], RemoteBranchStateKind::Stale)
             } else if let Some(idx) = trimmed.find(" new") {
@@ -135,8 +134,59 @@ fn inspect_reports_head_and_states_like_git() {
         .inspect("origin", &InspectOptions::default(), None)
         .expect("inspect");
 
-    assert_eq!(summary.head_branch, expected.head_branch);
+    assert_eq!(
+        expected.head_branch.as_deref(),
+        Some("main"),
+        "git remote show must report HEAD branch main: {git_text}"
+    );
+    assert_eq!(
+        summary.head_branch.as_deref(),
+        Some("main"),
+        "grit inspect must report HEAD branch from advertisement"
+    );
     assert_eq!(grit_branch_set(&summary), expected.branches);
+}
+
+#[test]
+fn inspect_tracked_uses_fetch_refspec_destination() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let upstream = tmp.path().join("upstream");
+    std::fs::create_dir_all(&upstream).expect("upstream");
+    git(&upstream, &["init", "-q", "-b", "main"]);
+    git(&upstream, &["commit", "--allow-empty", "-q", "-m", "init"]);
+    git(&upstream, &["branch", "topic"]);
+    git(
+        tmp.path(),
+        &["clone", "-q", upstream.to_str().unwrap(), "client"],
+    );
+    let client = tmp.path().join("client");
+    git(
+        &client,
+        &[
+            "config",
+            "--replace-all",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/custom/*",
+        ],
+    );
+    git(&client, &["fetch", "-q", "origin"]);
+
+    let git_text = git(&client, &["remote", "show", "origin"]);
+    let expected = parse_git_remote_show(&git_text);
+    let repo = open_repo(&client);
+    let summary = repo
+        .remotes()
+        .inspect("origin", &InspectOptions::default(), None)
+        .expect("inspect");
+    assert_eq!(grit_branch_set(&summary), expected.branches);
+    assert!(
+        summary
+            .branches
+            .iter()
+            .all(|b| b.state == RemoteBranchStateKind::Tracked),
+        "expected all branches tracked with custom refspec: {:?}",
+        summary.branches
+    );
 }
 
 #[test]

@@ -2,18 +2,58 @@
   "$id": "https://grit-scm.com/schemas/remote.show/v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "definitions": {
+    "RemoteEntry": {
+      "description": "One remote in a `list` outcome.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "url"
+      ],
+      "type": "object"
+    },
+    "RemoteRefEntry": {
+      "description": "One ref in a `refs` JSON outcome (annotated tags carry `peeled`; no separate `^{}` row).",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "oid": {
+          "type": "string"
+        },
+        "peeled": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "symref_target": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "oid"
+      ],
+      "type": "object"
+    },
     "RemoteShowBranchJson": {
+      "description": "One branch row in a `show` JSON outcome.",
       "properties": {
         "name": {
           "type": "string"
         },
         "state": {
-          "enum": [
-            "tracked",
-            "new",
-            "stale"
-          ],
-          "type": "string"
+          "$ref": "#/definitions/RemoteShowBranchStateJson"
         }
       },
       "required": [
@@ -22,7 +62,17 @@
       ],
       "type": "object"
     },
+    "RemoteShowBranchStateJson": {
+      "description": "Branch tracking state in JSON (`tracked` / `new` / `stale`).",
+      "enum": [
+        "tracked",
+        "new",
+        "stale"
+      ],
+      "type": "string"
+    },
     "RemoteShowPullJson": {
+      "description": "One pull-config row in a `show` JSON outcome.",
       "properties": {
         "local": {
           "type": "string"
@@ -38,50 +88,119 @@
       "type": "object"
     }
   },
-  "description": "Result of `grit remote show`.",
-  "properties": {
-    "action": {
-      "enum": [
-        "show"
+  "description": "Result of `grit remote`, tagged by `action` (`list` / `add` / `refs`).",
+  "oneOf": [
+    {
+      "properties": {
+        "action": {
+          "enum": [
+            "list"
+          ],
+          "type": "string"
+        },
+        "remotes": {
+          "items": {
+            "$ref": "#/definitions/RemoteEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "action",
+        "remotes"
       ],
-      "type": "string"
+      "type": "object"
     },
-    "branches": {
-      "items": {
-        "$ref": "#/definitions/RemoteShowBranchJson"
+    {
+      "properties": {
+        "action": {
+          "enum": [
+            "add"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
       },
-      "type": "array"
+      "required": [
+        "action",
+        "name",
+        "url"
+      ],
+      "type": "object"
     },
-    "fetch_url": {
-      "type": "string"
-    },
-    "head_branch": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "name": {
-      "type": "string"
-    },
-    "pull": {
-      "items": {
-        "$ref": "#/definitions/RemoteShowPullJson"
+    {
+      "properties": {
+        "action": {
+          "enum": [
+            "refs"
+          ],
+          "type": "string"
+        },
+        "refs": {
+          "items": {
+            "$ref": "#/definitions/RemoteRefEntry"
+          },
+          "type": "array"
+        }
       },
-      "type": "array"
+      "required": [
+        "action",
+        "refs"
+      ],
+      "type": "object"
     },
-    "push_url": {
-      "type": "string"
+    {
+      "description": "JSON view of [`RemoteSummary`] for `grit remote show --json`.",
+      "properties": {
+        "action": {
+          "enum": [
+            "show"
+          ],
+          "type": "string"
+        },
+        "branches": {
+          "items": {
+            "$ref": "#/definitions/RemoteShowBranchJson"
+          },
+          "type": "array"
+        },
+        "fetch_url": {
+          "type": "string"
+        },
+        "head_branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "pull": {
+          "items": {
+            "$ref": "#/definitions/RemoteShowPullJson"
+          },
+          "type": "array"
+        },
+        "push_url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "branches",
+        "fetch_url",
+        "name",
+        "pull",
+        "push_url"
+      ],
+      "type": "object"
     }
-  },
-  "required": [
-    "action",
-    "name",
-    "fetch_url",
-    "push_url",
-    "branches",
-    "pull"
   ],
-  "title": "RemoteShowOutcome",
-  "type": "object"
+  "title": "RemoteOutcome"
 }
