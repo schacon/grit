@@ -165,7 +165,7 @@ pub fn run(
         reuse_message_from.is_some(),
     )?;
     if message.is_none() && !amend && reuse_message_from.is_none() {
-        if matches!(scope, CommitScope::AutoStage) {
+        if !dry_run && matches!(scope, CommitScope::AutoStage) {
             stage_for_commit(&repo, &mut NullProgress).map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         bail!("provide a commit message, e.g. grit commit \"what changed\"");
@@ -301,7 +301,7 @@ fn resolve_commit_message(
 ) -> Result<Option<String>> {
     if amend || reuse_message {
         return match (message, message_file) {
-            (Some(m), None) => Ok(m.filter(|m| !m.trim().is_empty())),
+            (Some(m), None) => Ok(if m.trim().is_empty() { None } else { Some(m) }),
             (None, Some(path)) => {
                 let contents = read_message_file(&path)?;
                 Ok(if contents.trim().is_empty() {

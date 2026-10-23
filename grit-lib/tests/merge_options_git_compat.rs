@@ -57,12 +57,7 @@ fn empty_commit_req() -> CommitRequest {
         message: String::new(),
         author: id.clone(),
         committer: id,
-        allow_empty: false,
-        sign_override: None,
-        amend: false,
-        assume_worktree_synced: false,
-        skip_pre_commit_tree_match: false,
-        staged_change_count: None,
+        ..Default::default()
     }
 }
 

@@ -16,10 +16,9 @@ use grit_lib::error::Error;
 use grit_lib::objects::ObjectId;
 use grit_lib::operation::{Conflict, ConflictKind};
 use grit_lib::porcelain::merge::{
-    abort_branch_merge, continue_merge, integrate_branch, integrate_branch_with, predict_merge,
-    ContinueMergeError, ContinueOptions, FastForwardPolicy, IntegrateBranchOutcome,
-    MergeCommitMode, MergeConflictDetail, MergeConflictKind, MergeOptions, MergePrediction,
-    MergePredictionOptions,
+    abort_branch_merge, continue_merge, integrate_branch_with, predict_merge, ContinueMergeError,
+    ContinueOptions, FastForwardPolicy, IntegrateBranchOutcome, MergeCommitMode,
+    MergeConflictDetail, MergeConflictKind, MergeOptions, MergePrediction, MergePredictionOptions,
 };
 use grit_lib::progress::NullProgress;
 use grit_lib::refs;
@@ -280,10 +279,7 @@ impl MergeOutcome {
             change_id: None,
             upstream: None,
             conflicts: None,
-            next_steps: Some(vec![
-                "grit commit".into(),
-                "grit merge --abort".into(),
-            ]),
+            next_steps: Some(vec!["grit commit".into(), "grit merge --abort".into()]),
             alternatives: None,
             check: false,
         }
@@ -432,10 +428,7 @@ pub fn run(
             bail!("cannot merge a branch while finishing a merge with --continue");
         }
         let continue_message = read_message_input(&options.message)?;
-        return run_continue(
-            &repo,
-            continue_message.as_deref(),
-        );
+        return run_continue(&repo, continue_message.as_deref());
     }
 
     let branch = branch.context("branch name required unless using --abort or --continue")?;

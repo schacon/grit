@@ -34,6 +34,9 @@
             "merged",
             "conflicts",
             "aborted",
+            "squashed",
+            "stopped",
+            "refused_not_ff",
             "set_upstream"
           ],
           "type": "string"

@@ -36,9 +36,7 @@ use crate::repo::Repository;
 use crate::signing::{
     extra_headers_without_commit_signatures, should_sign_commit, sign_serialized_commit, GpgConfig,
 };
-use crate::state::{
-    finish_merge_state, read_merge_heads, read_merge_msg, resolve_head, HeadState,
-};
+use crate::state::{finish_merge_state, read_merge_heads, read_merge_msg, resolve_head, HeadState};
 use crate::stripspace::{process, Mode};
 use crate::worktree_rules::WorktreeRules;
 use crate::write_tree::{
