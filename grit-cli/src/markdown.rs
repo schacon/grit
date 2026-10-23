@@ -1472,19 +1472,23 @@ mod tests {
     fn branch_list_table_escapes_pipe_in_subject() {
         use crate::commands::branch::BranchEntry;
 
+        use crate::commands::branch::BranchListScope;
+
         let branches = vec![BranchEntry {
             name: "main".into(),
             current: true,
-            full_ref: "refs/heads/main".into(),
+            is_remote: false,
+            full_ref: Some("refs/heads/main".into()),
             remote: None,
-            oid: "b5ea30de417ac84c09b8cfc0acf5f2c39efc611f".into(),
+            oid: Some("b5ea30de417ac84c09b8cfc0acf5f2c39efc611f".into()),
+            short_oid: Some("b5ea30de".into()),
             subject: Some("fix|widget".into()),
             date: None,
             upstream: None,
             worktree: None,
         }];
         let mut buf = Vec::new();
-        super::print_branch_list(&mut buf, &branches).expect("markdown");
+        super::print_branch_list(&mut buf, &branches, BranchListScope::Local).expect("markdown");
         let rendered = String::from_utf8(buf).expect("utf-8");
         let row = rendered
             .lines()
