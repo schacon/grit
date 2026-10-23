@@ -479,6 +479,9 @@ fn root_schema_to_document(command: &str, root: RootSchema) -> serde_json::Value
         );
         obj.insert("$id".into(), schema_id(command).into());
     }
+    if command.starts_with("worktree.") {
+        ensure_worktree_row_required_nullable_lock_reason(&mut value);
+    }
     if command == "history.reword"
         || command == "history.drop"
         || command == "history.move"
@@ -496,15 +499,14 @@ fn root_schema_to_document(command: &str, root: RootSchema) -> serde_json::Value
     value
 }
 
-/// `schemars` omits `Option` fields from `required`; stable `--json` always emits `head`.
-fn ensure_required_nullable_head(schema: &mut serde_json::Value) {
+fn ensure_required_nullable_field(schema: &mut serde_json::Value, field: &str) {
     let Some(obj) = schema.as_object_mut() else {
         return;
     };
     let Some(props) = obj.get("properties").and_then(|p| p.as_object()) else {
         return;
     };
-    if !props.contains_key("head") {
+    if !props.contains_key(field) {
         return;
     }
     let required = obj
@@ -513,9 +515,36 @@ fn ensure_required_nullable_head(schema: &mut serde_json::Value) {
     let Some(arr) = required.as_array_mut() else {
         return;
     };
-    if !arr.iter().any(|v| v.as_str() == Some("head")) {
-        arr.push(serde_json::Value::String("head".into()));
+    if !arr.iter().any(|v| v.as_str() == Some(field)) {
+        arr.push(serde_json::Value::String(field.into()));
         arr.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+    }
+}
+
+/// `WorktreeRow.lock_reason` is always present in list JSON (null when absent).
+fn ensure_worktree_row_required_nullable_lock_reason(schema: &mut serde_json::Value) {
+    let Some(defs) = schema
+        .get_mut("definitions")
+        .and_then(|d| d.as_object_mut())
+    else {
+        return;
+    };
+    let Some(row) = defs.get_mut("WorktreeRow") else {
+        return;
+    };
+    ensure_required_nullable_field(row, "lock_reason");
+}
+
+/// `schemars` omits `Option` fields from `required`; stable `--json` always emits `head`.
+fn ensure_required_nullable_head(schema: &mut serde_json::Value) {
+    let Some(obj) = schema.as_object_mut() else {
+        return;
+    };
+    let Some(props) = obj.get("properties").and_then(|p| p.as_object()) else {
+        return;
+    };
+    if props.contains_key("head") {
+        ensure_required_nullable_field(schema, "head");
     }
 }
 

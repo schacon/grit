@@ -19,6 +19,9 @@
         "head": {
           "type": "string"
         },
+        "is_current": {
+          "type": "boolean"
+        },
         "lock_reason": {
           "type": [
             "string",
@@ -33,12 +36,20 @@
         },
         "prunable": {
           "type": "boolean"
+        },
+        "prunable_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "bare",
         "detached",
         "head",
+        "is_current",
+        "lock_reason",
         "locked",
         "path",
         "prunable"
