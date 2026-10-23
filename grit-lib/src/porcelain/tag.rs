@@ -343,53 +343,78 @@ fn ref_query_to_error(err: RefQueryError) -> Error {
     }
 }
 
+/// Build the [`TagSummary`] for one listed tag ref.
+///
+/// The listing's peeled value is only ever set for annotated tags (from `packed-refs` peel
+/// lines or by peeling the tag object), so those go straight to a single read of the tag
+/// object; every other ref costs one object-header lookup.
 fn summarize_listing(repo: &Repository, listing: &RefListing) -> Result<TagSummary> {
     let name = listing.short_name.clone();
     let oid = listing.oid;
-    let peeled = listing.peeled.or_else(|| {
-        repo.odb().peel_to_commit(oid).ok().flatten().or_else(|| {
-            match repo.odb().read_info(&oid).ok()?.kind {
-                ObjectKind::Commit => Some(oid),
-                _ => None,
+    let odb = repo.odb();
+    if let Some(peeled) = listing.peeled {
+        match odb.read(&oid) {
+            Ok(obj) if obj.kind == ObjectKind::Tag => {
+                return annotated_summary(name, oid, Some(peeled), &obj.data);
             }
-        })
-    });
-    let Ok(info) = repo.odb().read_info(&oid) else {
-        return Ok(TagSummary {
-            name,
-            oid,
-            kind: TagKind::Lightweight,
-            peeled,
-            target_kind: ObjectKind::Blob,
-            annotation: None,
-        });
+            Ok(obj) => return Ok(direct_summary(name, oid, obj.kind)),
+            Err(err) => {
+                if odb.read_info(&oid).is_ok() {
+                    return Err(err);
+                }
+                return Ok(missing_summary(name, oid, Some(peeled)));
+            }
+        }
+    }
+    let Ok(info) = odb.read_info(&oid) else {
+        return Ok(missing_summary(name, oid, None));
     };
-    match info.kind {
-        ObjectKind::Tag => {
-            let obj = repo.odb().read(&oid)?;
-            let tag = parse_tag(&obj.data)?;
-            let annotation = tag_annotation_from_data(&tag);
-            let target_kind = object_kind_from_type_name(&tag.object_type);
-            Ok(TagSummary {
-                name,
-                oid,
-                kind: TagKind::Annotated,
-                peeled,
-                target_kind,
-                annotation,
-            })
-        }
-        other => {
-            let (kind, peeled) = tag_ref_metadata(repo, &oid);
-            Ok(TagSummary {
-                name,
-                oid,
-                kind,
-                peeled,
-                target_kind: other,
-                annotation: None,
-            })
-        }
+    if info.kind != ObjectKind::Tag {
+        return Ok(direct_summary(name, oid, info.kind));
+    }
+    let obj = odb.read(&oid)?;
+    let peeled = odb.peel_to_commit(oid).ok().flatten();
+    annotated_summary(name, oid, peeled, &obj.data)
+}
+
+fn annotated_summary(
+    name: String,
+    oid: ObjectId,
+    peeled: Option<ObjectId>,
+    data: &[u8],
+) -> Result<TagSummary> {
+    let tag = parse_tag(data)?;
+    Ok(TagSummary {
+        name,
+        oid,
+        kind: TagKind::Annotated,
+        peeled,
+        target_kind: object_kind_from_type_name(&tag.object_type),
+        annotation: tag_annotation_from_data(&tag),
+    })
+}
+
+/// Summary for a ref that names a non-tag object directly (a lightweight tag).
+fn direct_summary(name: String, oid: ObjectId, kind: ObjectKind) -> TagSummary {
+    TagSummary {
+        name,
+        oid,
+        kind: TagKind::Lightweight,
+        peeled: (kind == ObjectKind::Commit).then_some(oid),
+        target_kind: kind,
+        annotation: None,
+    }
+}
+
+/// Summary for a ref whose object cannot be read.
+fn missing_summary(name: String, oid: ObjectId, peeled: Option<ObjectId>) -> TagSummary {
+    TagSummary {
+        name,
+        oid,
+        kind: TagKind::Lightweight,
+        peeled,
+        target_kind: ObjectKind::Blob,
+        annotation: None,
     }
 }
 

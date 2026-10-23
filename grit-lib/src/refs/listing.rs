@@ -35,9 +35,9 @@ use crate::error::Error;
 use crate::ident::committer_unix_seconds_for_ordering_bytes;
 use crate::objects::{ObjectId, ObjectKind};
 use crate::odb::Odb;
-use crate::refs::query_reachability;
 use crate::refs::store::{RefEntry, RefStore};
 use crate::refs::version_sort::compare_refname_versions;
+use crate::refs::{query_reachability, PackedRefPeels};
 use crate::repo::Repository;
 use crate::wildmatch::{wildmatch, WM_CASEFOLD};
 
@@ -473,11 +473,12 @@ pub fn query_refs(
     let git_dir = repo.git_dir();
     let store = repo.refs();
     let namespaces = effective_namespaces(query);
+    let linked_worktree = crate::worktree_ref::is_linked_worktree_git_dir(git_dir);
     let mut collected = BTreeMap::new();
     for ns in &namespaces {
         let prefix = ns.prefix();
         store.for_each_ref(prefix, &mut |entry: &RefEntry| {
-            if crate::worktree_ref::is_linked_worktree_git_dir(git_dir)
+            if linked_worktree
                 && !crate::worktree_ref::ref_visible_from_worktree(git_dir, &entry.name)
             {
                 return ControlFlow::Continue(());
@@ -594,8 +595,12 @@ fn finish_query(
     repo: Option<&Repository>,
 ) -> QueryResult<Vec<RefListing>> {
     if let Some(odb) = odb {
+        // A malformed `packed-refs` only loses the shortcut; peeling falls back to the objects.
+        let packed = repo
+            .filter(|_| collected.iter().any(|c| c.peeled.is_none()))
+            .and_then(|r| PackedRefPeels::load(r.git_dir(), r.refs().format()).ok());
         for entry in &mut collected {
-            fill_peeled_from_odb(odb, entry);
+            fill_peeled(odb, packed.as_ref(), entry);
         }
     }
     if query_has_reachability(query) {
@@ -643,8 +648,14 @@ fn finish_query(
         .collect())
 }
 
-fn fill_peeled_from_odb(odb: &Odb, entry: &mut CollectedRef) {
+/// Set `entry.peeled` for annotated tags, preferring `packed-refs` peel lines over
+/// reading the tag object.
+fn fill_peeled(odb: &Odb, packed: Option<&PackedRefPeels>, entry: &mut CollectedRef) {
     if entry.peeled.is_some() {
+        return;
+    }
+    if let Some(known) = packed.and_then(|p| p.peeled(&entry.full_name, &entry.oid)) {
+        entry.peeled = known;
         return;
     }
     entry.peeled = odb.peel_tag_target(entry.oid).ok().flatten();
