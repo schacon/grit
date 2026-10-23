@@ -15,7 +15,7 @@ expression: payload
   },
   "markdown": {
     "exit": 1,
-    "stdout": "## Merge\n\n- Merge **`side`** stopped with conflicts\n\n- **content** — `f.txt`\n\n→ `grit diff`, then `grit add .`\n→ or `grit merge --abort`\n\n- `grit diff`\n- `grit add .`\n",
+    "stdout": "## Merge\n\n- Merge **`side`** stopped with conflicts\n\n- **content** — `f.txt`\n\n→ `grit diff`, then `grit add .`\n→ or `grit merge --abort`\n",
     "stderr": ""
   }
 }
