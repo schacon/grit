@@ -250,8 +250,18 @@ pub fn operation_next_steps(
                 vec![NextStep::Continue(kind)]
             }
         }
-        InProgressOperation::Rebase
-        | InProgressOperation::RebaseInteractive
+        InProgressOperation::Rebase => {
+            if has_unmerged_conflicts {
+                vec![
+                    NextStep::ResolveConflicts,
+                    NextStep::StageResolved,
+                    NextStep::Continue(InProgressOperation::Rebase),
+                ]
+            } else {
+                vec![NextStep::Continue(InProgressOperation::Rebase)]
+            }
+        }
+        InProgressOperation::RebaseInteractive
         | InProgressOperation::Am
         | InProgressOperation::Bisect => vec![],
     }
@@ -270,8 +280,11 @@ pub fn operation_alternatives(kind: InProgressOperation) -> Vec<NextStep> {
             NextStep::Abort(InProgressOperation::Revert),
             NextStep::Skip(InProgressOperation::Revert),
         ],
-        InProgressOperation::Rebase
-        | InProgressOperation::RebaseInteractive
+        InProgressOperation::Rebase => vec![
+            NextStep::Abort(InProgressOperation::Rebase),
+            NextStep::Skip(InProgressOperation::Rebase),
+        ],
+        InProgressOperation::RebaseInteractive
         | InProgressOperation::Am
         | InProgressOperation::Bisect => vec![],
     }

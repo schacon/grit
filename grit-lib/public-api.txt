@@ -507,16 +507,34 @@ pub fn grit_lib::blame::read_object_for_blame(&grit_lib::objects::odb::Odb, &gri
 pub type grit_lib::blame::PromisorHydrateHook = fn(&grit_lib::repo::Repository, grit_lib::objects::ObjectId)
 pub mod grit_lib::bundle
 pub mod grit_lib::bundle::bundle_remote
+pub struct grit_lib::bundle::bundle_remote::BundleCreateOptions
+pub grit_lib::bundle::bundle_remote::BundleCreateOptions::all_refs: bool
+pub grit_lib::bundle::bundle_remote::BundleCreateOptions::rev_tokens: alloc::vec::Vec<alloc::string::String>
+impl grit_lib::bundle::bundle_remote::BundleCreateOptions
+pub fn grit_lib::bundle::bundle_remote::BundleCreateOptions::from_rev_tokens(alloc::vec::Vec<alloc::string::String>) -> Self
+impl core::clone::Clone for grit_lib::bundle::bundle_remote::BundleCreateOptions
+pub fn grit_lib::bundle::bundle_remote::BundleCreateOptions::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::bundle::bundle_remote::BundleCreateOptions
+impl core::cmp::PartialEq for grit_lib::bundle::bundle_remote::BundleCreateOptions
+pub fn grit_lib::bundle::bundle_remote::BundleCreateOptions::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::bundle::bundle_remote::BundleCreateOptions
+pub fn grit_lib::bundle::bundle_remote::BundleCreateOptions::default() -> Self
+impl core::fmt::Debug for grit_lib::bundle::bundle_remote::BundleCreateOptions
+pub fn grit_lib::bundle::bundle_remote::BundleCreateOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::bundle::bundle_remote::BundleCreateOptions
+impl core::marker::Freeze for grit_lib::bundle::bundle_remote::BundleCreateOptions
+impl core::marker::Send for grit_lib::bundle::bundle_remote::BundleCreateOptions
+impl core::marker::Sync for grit_lib::bundle::bundle_remote::BundleCreateOptions
+impl core::marker::Unpin for grit_lib::bundle::bundle_remote::BundleCreateOptions
+impl core::marker::UnsafeUnpin for grit_lib::bundle::bundle_remote::BundleCreateOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::bundle::bundle_remote::BundleCreateOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::bundle::bundle_remote::BundleCreateOptions
 pub fn grit_lib::bundle::bundle_remote::fetch_from_bundle(&std::path::Path, &std::path::Path, &grit_lib::remote::transfer::FetchOptions) -> grit_lib::error::Result<grit_lib::remote::transfer::FetchOutcome>
 pub fn grit_lib::bundle::bundle_remote::fetch_from_bundle_with_progress(&std::path::Path, &std::path::Path, &grit_lib::remote::transfer::FetchOptions, &mut dyn grit_lib::remote::fetch::Progress) -> grit_lib::error::Result<grit_lib::remote::transfer::FetchOutcome>
 pub fn grit_lib::bundle::bundle_remote::is_bundle_path(&std::path::Path) -> bool
 pub fn grit_lib::bundle::bundle_remote::split_revision_specs_for_bundle(&[alloc::string::String]) -> (alloc::vec::Vec<alloc::string::String>, alloc::vec::Vec<alloc::string::String>)
 pub fn grit_lib::bundle::bundle_remote::write_bundle_from_rev_specs(&grit_lib::repo::Repository, &std::path::Path, &[alloc::string::String]) -> grit_lib::error::Result<usize>
 pub fn grit_lib::bundle::bundle_remote::write_bundle_with_options(&grit_lib::repo::Repository, &std::path::Path, &grit_lib::bundle::bundle_remote::BundleCreateOptions) -> grit_lib::error::Result<usize>
-pub struct grit_lib::bundle::bundle_remote::BundleCreateOptions
-pub grit_lib::bundle::bundle_remote::BundleCreateOptions::from_rev_tokens(alloc::vec::Vec<alloc::string::String>) -> grit_lib::bundle::bundle_remote::BundleCreateOptions
-pub grit_lib::bundle::bundle_remote::BundleCreateOptions::all_refs: bool
-pub grit_lib::bundle::bundle_remote::BundleCreateOptions::rev_tokens: alloc::vec::Vec<alloc::string::String>
 #[non_exhaustive] pub enum grit_lib::bundle::BundleError
 pub grit_lib::bundle::BundleError::BadSignature
 pub grit_lib::bundle::BundleError::EmptyRefs
@@ -11704,25 +11722,6 @@ impl core::marker::Unpin for grit_lib::porcelain::hunk_select::HunkSelectError
 impl core::marker::UnsafeUnpin for grit_lib::porcelain::hunk_select::HunkSelectError
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::hunk_select::HunkSelectError
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::hunk_select::HunkSelectError
-pub struct grit_lib::porcelain::hunk_select::LineRange
-pub grit_lib::porcelain::hunk_select::LineRange::end: usize
-pub grit_lib::porcelain::hunk_select::LineRange::path: alloc::string::String
-pub grit_lib::porcelain::hunk_select::LineRange::start: usize
-impl core::clone::Clone for grit_lib::porcelain::hunk_select::LineRange
-pub fn grit_lib::porcelain::hunk_select::LineRange::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::porcelain::hunk_select::LineRange
-impl core::cmp::PartialEq for grit_lib::porcelain::hunk_select::LineRange
-pub fn grit_lib::porcelain::hunk_select::LineRange::eq(&self, &Self) -> bool
-impl core::fmt::Debug for grit_lib::porcelain::hunk_select::LineRange
-pub fn grit_lib::porcelain::hunk_select::LineRange::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for grit_lib::porcelain::hunk_select::LineRange
-impl core::marker::Freeze for grit_lib::porcelain::hunk_select::LineRange
-impl core::marker::Send for grit_lib::porcelain::hunk_select::LineRange
-impl core::marker::Sync for grit_lib::porcelain::hunk_select::LineRange
-impl core::marker::Unpin for grit_lib::porcelain::hunk_select::LineRange
-impl core::marker::UnsafeUnpin for grit_lib::porcelain::hunk_select::LineRange
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::hunk_select::LineRange
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::hunk_select::LineRange
 pub struct grit_lib::porcelain::hunk_select::HunkSelection
 pub grit_lib::porcelain::hunk_select::HunkSelection::ids: alloc::vec::Vec<grit_lib::diff::hunk_id::HunkId>
 pub grit_lib::porcelain::hunk_select::HunkSelection::ranges: alloc::vec::Vec<grit_lib::porcelain::hunk_select::LineRange>
@@ -11743,6 +11742,25 @@ impl core::marker::Unpin for grit_lib::porcelain::hunk_select::HunkSelection
 impl core::marker::UnsafeUnpin for grit_lib::porcelain::hunk_select::HunkSelection
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::hunk_select::HunkSelection
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::hunk_select::HunkSelection
+pub struct grit_lib::porcelain::hunk_select::LineRange
+pub grit_lib::porcelain::hunk_select::LineRange::end: usize
+pub grit_lib::porcelain::hunk_select::LineRange::path: alloc::string::String
+pub grit_lib::porcelain::hunk_select::LineRange::start: usize
+impl core::clone::Clone for grit_lib::porcelain::hunk_select::LineRange
+pub fn grit_lib::porcelain::hunk_select::LineRange::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::porcelain::hunk_select::LineRange
+impl core::cmp::PartialEq for grit_lib::porcelain::hunk_select::LineRange
+pub fn grit_lib::porcelain::hunk_select::LineRange::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::porcelain::hunk_select::LineRange
+pub fn grit_lib::porcelain::hunk_select::LineRange::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::porcelain::hunk_select::LineRange
+impl core::marker::Freeze for grit_lib::porcelain::hunk_select::LineRange
+impl core::marker::Send for grit_lib::porcelain::hunk_select::LineRange
+impl core::marker::Sync for grit_lib::porcelain::hunk_select::LineRange
+impl core::marker::Unpin for grit_lib::porcelain::hunk_select::LineRange
+impl core::marker::UnsafeUnpin for grit_lib::porcelain::hunk_select::LineRange
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::hunk_select::LineRange
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::hunk_select::LineRange
 pub struct grit_lib::porcelain::hunk_select::StageHunksOutcome
 pub grit_lib::porcelain::hunk_select::StageHunksOutcome::added: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::porcelain::hunk_select::StageHunksOutcome::dry_run: bool
@@ -21988,6 +22006,7 @@ pub grit_lib::state::WtStatusState::cherry_pick_head_oid: core::option::Option<g
 pub grit_lib::state::WtStatusState::cherry_pick_in_progress: bool
 pub grit_lib::state::WtStatusState::detached_at: bool
 pub grit_lib::state::WtStatusState::detached_from: core::option::Option<alloc::string::String>
+pub grit_lib::state::WtStatusState::grit_rebase_in_progress: bool
 pub grit_lib::state::WtStatusState::grit_replay_sequencer: bool
 pub grit_lib::state::WtStatusState::merge_in_progress: bool
 pub grit_lib::state::WtStatusState::rebase_branch: core::option::Option<alloc::string::String>
