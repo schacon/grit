@@ -856,12 +856,6 @@ const EXCEPTIONS: &[(&str, ContractRule, &str, &str)] = &[
         "init has no `--dry-run` yet",
     ),
     (
-        "config",
-        ContractRule::DryRun,
-        "workspace-extras",
-        "config set/unset has no `--dry-run` yet",
-    ),
-    (
         "auth",
         ContractRule::DryRun,
         "s6 dry-run",

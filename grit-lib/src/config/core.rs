@@ -1378,12 +1378,6 @@ impl ConfigFile {
     /// Returns the number of entries removed (0 or 1).
     pub fn unset_last(&mut self, key: &str) -> Result<usize> {
         let canon = canonical_key(key)?;
-        let matches: Vec<_> = self.entries.iter().filter(|e| e.key == canon).collect();
-        if matches.len() > 1 {
-            return Err(Error::Config(ConfigError::MultipleValues {
-                key: key.to_owned(),
-            }));
-        }
         let last_idx = self.entries.iter().rposition(|e| e.key == canon);
 
         if let Some(idx) = last_idx {
@@ -1904,6 +1898,26 @@ impl ConfigSet {
             file: config_entry_origin_file(&e).map(Path::to_path_buf),
             line: config_entry_origin_line(&e),
         }))
+    }
+
+    /// Every value for `key` in load order, with origin metadata (Git `--get-all`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] when `key` is not a valid Git config key.
+    pub fn get_all_with_origin(&self, key: &str) -> Result<Vec<ConfigValueOrigin>> {
+        let canon = canonical_key(key)?;
+        Ok(self
+            .entries
+            .iter()
+            .filter(|e| e.key == canon)
+            .map(|e| ConfigValueOrigin {
+                value: e.value.clone().or_else(|| Some("true".to_owned())),
+                scope: e.scope,
+                file: config_entry_origin_file(e).map(Path::to_path_buf),
+                line: config_entry_origin_line(e),
+            })
+            .collect())
     }
 
     /// Get all values for a key (multi-valued; in load order).
@@ -4064,7 +4078,7 @@ fn global_config_paths(env: &Environment) -> Vec<PathBuf> {
 /// Honors `GIT_CONFIG_SYSTEM`. On Windows, falls back to Git for Windows'
 /// `etc/gitconfig` when `/etc/gitconfig` is absent (stock shells, not MSYS).
 #[must_use]
-pub(crate) fn system_config_path(env: &Environment) -> PathBuf {
+pub fn system_config_path(env: &Environment) -> PathBuf {
     if let Some(p) = env.git_config_system.as_deref() {
         return resolve_config_override_path(env, p);
     }

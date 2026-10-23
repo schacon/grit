@@ -1729,21 +1729,167 @@ enum Command {
     /// Read, set, or list configuration values.
     Config {
         /// Use the global (per-user) config file instead of this repository's.
-        #[arg(long, conflicts_with_all = ["local", "file"])]
+        #[arg(long, conflicts_with_all = ["local", "system", "worktree", "file"])]
         global: bool,
         /// Read or write only this repository's config file (`.git/config`).
-        #[arg(long, conflicts_with_all = ["global", "file"])]
+        #[arg(long, conflicts_with_all = ["global", "system", "worktree", "file"])]
         local: bool,
+        /// Read or write the system config file (`/etc/gitconfig` or `GIT_CONFIG_SYSTEM`).
+        #[arg(long, conflicts_with_all = ["global", "local", "worktree", "file"])]
+        system: bool,
+        /// Read or write this worktree's `config.worktree` (requires `extensions.worktreeConfig`).
+        #[arg(long, conflicts_with_all = ["global", "local", "system", "file"])]
+        worktree: bool,
         /// Read or write only the given config file (no repository required).
-        #[arg(short = 'f', long = "file", value_name = "PATH", conflicts_with_all = ["global", "local"])]
+        #[arg(
+            short = 'f',
+            long = "file",
+            value_name = "PATH",
+            conflicts_with_all = ["global", "local", "system", "worktree"]
+        )]
         file: Option<std::path::PathBuf>,
-        /// List all configuration values.
-        #[arg(short = 'l', long = "list")]
+        /// List configuration values (optional `<prefix>` filters keys).
+        #[arg(
+            short = 'l',
+            long = "list",
+            conflicts_with_all = [
+                "all",
+                "add",
+                "unset",
+                "unset_all",
+                "rename_section",
+                "rename_section_new",
+                "remove_section",
+                "dry_run"
+            ]
+        )]
         list: bool,
+        /// Return every value for a multi-valued key.
+        #[arg(
+            long,
+            conflicts_with_all = [
+                "list",
+                "add",
+                "unset",
+                "unset_all",
+                "rename_section",
+                "rename_section_new",
+                "remove_section",
+                "dry_run"
+            ]
+        )]
+        all: bool,
+        /// Append a value without replacing existing entries.
+        #[arg(
+            long,
+            conflicts_with_all = [
+                "list",
+                "unset",
+                "unset_all",
+                "all",
+                "rename_section",
+                "rename_section_new",
+                "remove_section"
+            ]
+        )]
+        add: bool,
         /// Remove the key instead of reading or setting it.
-        #[arg(long)]
+        #[arg(
+            long,
+            conflicts_with_all = [
+                "list",
+                "add",
+                "unset_all",
+                "all",
+                "rename_section",
+                "rename_section_new",
+                "remove_section"
+            ]
+        )]
         unset: bool,
-        /// The configuration key, e.g. user.name. Omit only with --list.
+        /// Remove every occurrence of a multi-valued key.
+        #[arg(
+            long = "unset-all",
+            conflicts_with_all = [
+                "list",
+                "add",
+                "unset",
+                "all",
+                "rename_section",
+                "rename_section_new",
+                "remove_section"
+            ]
+        )]
+        unset_all: bool,
+        /// Current section name for `--rename-section`.
+        #[arg(
+            long = "rename-section",
+            value_name = "OLD",
+            requires = "rename_section_new",
+            conflicts_with_all = ["list", "all", "add", "unset", "unset_all", "remove_section"]
+        )]
+        rename_section: Option<String>,
+        /// New section name for `--rename-section`.
+        #[arg(
+            long = "rename-section-new",
+            value_name = "NEW",
+            requires = "rename_section",
+            conflicts_with_all = ["list", "all", "add", "unset", "unset_all", "remove_section"]
+        )]
+        rename_section_new: Option<String>,
+        /// Remove an entire section.
+        #[arg(
+            long = "remove-section",
+            value_name = "SECTION",
+            conflicts_with_all = [
+                "list",
+                "all",
+                "add",
+                "unset",
+                "unset_all",
+                "rename_section",
+                "rename_section_new"
+            ]
+        )]
+        remove_section: Option<String>,
+        /// Coerce values as bool, int, or path (canonical on write).
+        #[arg(
+            long = "type",
+            value_name = "TYPE",
+            value_enum,
+            conflicts_with_all = [
+                "list",
+                "unset",
+                "unset_all",
+                "rename_section",
+                "rename_section_new",
+                "remove_section"
+            ]
+        )]
+        value_type: Option<commands::config::ConfigTypeArg>,
+        /// When reading, use this value if the key is unset.
+        #[arg(
+            long = "default",
+            value_name = "VALUE",
+            conflicts_with_all = [
+                "list",
+                "add",
+                "unset",
+                "unset_all",
+                "rename_section",
+                "rename_section_new",
+                "remove_section",
+                "dry_run"
+            ]
+        )]
+        default_value: Option<String>,
+        /// Show what would change without writing the config file.
+        #[arg(
+            long,
+            conflicts_with_all = ["list", "all", "default_value"]
+        )]
+        dry_run: bool,
+        /// The configuration key, e.g. user.name. Optional prefix with `--list`.
         key: Option<String>,
         /// The value to set. Omit to read the current value.
         value: Option<String>,
@@ -3367,19 +3513,47 @@ fn dispatch(
         Command::Config {
             global,
             local,
+            system,
+            worktree,
             file,
             list,
+            all,
+            add,
             unset,
+            unset_all,
+            rename_section,
+            rename_section_new,
+            remove_section,
+            value_type,
+            default_value,
+            dry_run,
             key,
             value,
         } => {
+            let rename_pair = match (rename_section, rename_section_new) {
+                (Some(old), Some(new)) => Some((old, new)),
+                (None, None) => None,
+                _ => {
+                    bail!("--rename-section requires both OLD and --rename-section-new NEW");
+                }
+            };
             let outcome = commands::config::run(
                 process_env,
                 global,
                 local,
+                system,
+                worktree,
                 file,
                 list,
                 unset,
+                unset_all,
+                add,
+                all,
+                value_type,
+                default_value,
+                rename_pair,
+                remove_section,
+                dry_run,
                 key,
                 value,
                 opts.mode,

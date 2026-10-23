@@ -204,6 +204,7 @@ fn config_set_file_location_then_git_reads_it() {
         None,
         "grit.testKey",
         "hello",
+        false,
     )
     .expect("set");
 
@@ -228,8 +229,14 @@ fn config_unset_missing_key_is_typed_error() {
     fs::write(&cfg_path, "[section]\n").expect("write");
     let env = Environment::empty();
 
-    let err = unset_config_value(ConfigLocation::File(cfg_path), &env, None, "missing.key")
-        .expect_err("missing key");
+    let err = unset_config_value(
+        ConfigLocation::File(cfg_path),
+        &env,
+        None,
+        "missing.key",
+        false,
+    )
+    .expect_err("missing key");
     match err {
         Error::Config(ConfigError::KeyNotSet { key }) => assert_eq!(key, "missing.key"),
         other => panic!("expected KeyNotSet, got {other:?}"),
