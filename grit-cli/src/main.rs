@@ -575,7 +575,10 @@ enum BundleAction {
 #[derive(Debug, Subcommand)]
 enum HooksAction {
     /// List hook scripts in the resolved hooks directory.
-    List,
+    List {
+        #[command(flatten)]
+        limit: limit_args::LimitArgs,
+    },
     /// Run a hook by name (passes `--` arguments through to the script).
     Run {
         /// Hook basename (e.g. `pre-commit`).
@@ -916,8 +919,6 @@ enum Command {
     },
     /// List hook scripts or run one by name.
     Hooks {
-        #[command(flatten)]
-        limit: limit_args::LimitArgs,
         #[command(subcommand)]
         action: Option<HooksAction>,
     },
@@ -2493,13 +2494,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
                 Some(NotesAction::Remove { revs }) => Remove { revs },
             };
             emit_success(
-                &commands::notes::run(
-                    notes_ref,
-                    run_action,
-                    dry_run,
-                    limit.get(),
-                    ctx.now,
-                )?,
+                &commands::notes::run(notes_ref, run_action, dry_run, limit.get(), ctx.now)?,
                 opts,
                 ctx,
             )

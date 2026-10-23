@@ -71,6 +71,62 @@ fn notes_list_limit_stops_early() {
 }
 
 #[test]
+fn notes_list_limit_ignores_non_object_tree_leaves() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    let commit = seed_commit(dir.path(), "f.txt", "1\n", "only");
+    git(
+        dir.path(),
+        &["notes", "add", "-m", "body", &commit.to_hex()],
+    );
+    let git_line = git(dir.path(), &["notes", "list"]);
+    let (blob, object) = git_line.split_once(' ').expect("git notes list line");
+    assert_eq!(object, commit.to_hex());
+    let mut mktree = std::process::Command::new("git")
+        .current_dir(dir.path())
+        .args(["mktree", "--missing"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("mktree");
+    {
+        use std::io::Write;
+        let stdin = mktree.stdin.as_mut().expect("stdin");
+        let missing = "1111111111111111111111111111111111111111";
+        writeln!(stdin, "100644 blob {missing}\t!").expect("!");
+        writeln!(stdin, "100644 blob {missing}\t!!").expect("!!");
+        writeln!(stdin, "100644 blob {blob}\t{}", commit.to_hex()).expect("note");
+    }
+    let tree = String::from_utf8(mktree.wait_with_output().expect("mktree").stdout)
+        .expect("utf8")
+        .trim()
+        .to_owned();
+    let notes_commit = git(dir.path(), &["commit-tree", "-m", "fanout", &tree]);
+    git(
+        dir.path(),
+        &["update-ref", "refs/notes/commits", notes_commit.trim()],
+    );
+
+    assert_eq!(git(dir.path(), &["notes", "list"]).lines().count(), 1);
+
+    let repo = Repository::discover(
+        Some(dir.path()),
+        &grit_lib::config::environment::RepositoryOptions::empty(),
+    )
+    .expect("open");
+    let limited = repo
+        .notes()
+        .list(&NotesRef::commits(), Some(1))
+        .expect("list");
+    assert_eq!(limited.items.len(), 1);
+    assert_eq!(limited.items[0].object, commit);
+    assert!(
+        !limited.truncated,
+        "only one listable note exists despite fanout markers"
+    );
+}
+
+#[test]
 fn bundle_list_heads_limit() {
     let dir = tempfile::tempdir().expect("tempdir");
     init_repo(dir.path());

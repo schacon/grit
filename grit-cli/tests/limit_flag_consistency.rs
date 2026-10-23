@@ -115,7 +115,7 @@ fn limit_flag_consistency() -> TestResult {
         (vec!["branch"], true),
         (vec!["tag", "-l"], false),
         (vec!["notes"], false),
-        (vec!["hooks"], false),
+        (vec!["hooks", "list"], false),
     ] {
         for flag in ["-n", "--limit"] {
             let mut args = cmd.clone();

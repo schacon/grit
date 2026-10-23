@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Result};
 use grit_lib::bundle::bundle_remote::{self, BundleCreateOptions};
 use grit_lib::bundle::{Bundle, BundleError, BundleVerifyReport};
+use grit_lib::list_limit::Limited;
 use grit_lib::objects::ObjectId;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -247,21 +248,17 @@ pub fn run_unbundle(path: PathBuf) -> Result<BundleUnbundleOutcome> {
 
 /// List refs contained in a bundle.
 pub fn run_list(path: PathBuf, limit: Option<usize>) -> Result<BundleListOutcome> {
-    let repo = context::discover()?;
-    let listed = repo
-        .bundles()
-        .list_heads(&path, limit)
-        .map_err(map_bundle_error)?;
+    let bundle = Bundle::open(&path).map_err(map_bundle_error)?;
+    let refs: Vec<BundleRefJson> = bundle
+        .header()
+        .refs
+        .iter()
+        .map(|(name, oid)| BundleRefJson::from((name.as_str(), *oid)))
+        .collect();
+    let listed = Limited::from_vec(refs, limit);
     Ok(BundleListOutcome {
         path: path.display().to_string(),
-        references: listed
-            .items
-            .iter()
-            .map(|head| BundleRefJson {
-                name: head.name.clone(),
-                oid: head.oid.to_hex(),
-            })
-            .collect(),
+        references: listed.items,
         truncated: listed.truncated,
     })
 }

@@ -78,10 +78,11 @@ fn collect_notes_tree_entries(
     tree_oid: &ObjectId,
     prefix: &[u8],
     out: &mut Vec<NotesTreeEntry>,
-    max_entries: Option<usize>,
+    max_listable_notes: Option<usize>,
+    listable_seen: &mut usize,
     truncated: &mut bool,
 ) -> Result<()> {
-    if max_entries.is_some_and(|max| out.len() >= max) {
+    if max_listable_notes.is_some_and(|max| *listable_seen >= max) {
         *truncated = true;
         return Ok(());
     }
@@ -95,7 +96,7 @@ fn collect_notes_tree_entries(
     }
 
     for entry in parse_tree(&tree_obj.data)? {
-        if max_entries.is_some_and(|max| out.len() >= max) {
+        if max_listable_notes.is_some_and(|max| *listable_seen >= max) {
             *truncated = true;
             return Ok(());
         }
@@ -106,16 +107,34 @@ fn collect_notes_tree_entries(
         path.extend_from_slice(&entry.name);
 
         if entry.mode == 0o040000 {
-            collect_notes_tree_entries(repo, &entry.oid, &path, out, max_entries, truncated)?;
+            collect_notes_tree_entries(
+                repo,
+                &entry.oid,
+                &path,
+                out,
+                max_listable_notes,
+                listable_seen,
+                truncated,
+            )?;
             if *truncated {
                 return Ok(());
             }
         } else {
-            out.push(NotesTreeEntry {
-                mode: entry.mode,
-                path,
-                oid: entry.oid,
-            });
+            let counts = note_object_name(&path).is_some();
+            if max_listable_notes.is_none() || counts {
+                out.push(NotesTreeEntry {
+                    mode: entry.mode,
+                    path,
+                    oid: entry.oid,
+                });
+            }
+            if counts {
+                *listable_seen += 1;
+                if max_listable_notes.is_some_and(|max| *listable_seen >= max) {
+                    *truncated = true;
+                    return Ok(());
+                }
+            }
         }
     }
 
@@ -184,8 +203,17 @@ pub(crate) fn read_notes_snapshot(repo: &Repository, notes_ref: &str) -> Result<
         }
     };
     let mut entries = Vec::new();
+    let mut listable_seen = 0usize;
     let mut truncated = false;
-    collect_notes_tree_entries(repo, &tree_oid, b"", &mut entries, None, &mut truncated)?;
+    collect_notes_tree_entries(
+        repo,
+        &tree_oid,
+        b"",
+        &mut entries,
+        None,
+        &mut listable_seen,
+        &mut truncated,
+    )?;
     debug_assert!(!truncated, "unlimited notes collect must not truncate");
     Ok(NotesSnapshot {
         tip: ref_tip,
@@ -193,10 +221,12 @@ pub(crate) fn read_notes_snapshot(repo: &Repository, notes_ref: &str) -> Result<
     })
 }
 
-/// Read note tree entries, stopping after `max_entries` when set.
+/// Read note tree entries, stopping after `max_listable_notes` **listable** notes when set.
 ///
-/// Returns `(entries, truncated)` where `truncated` is true when the tree held more entries
-/// than returned.
+/// Non-object path segments (for example fanout `!` markers) do not count toward the cap.
+///
+/// Returns `(entries, truncated)` where `truncated` is true when the tree held more listable
+/// notes than returned.
 pub fn read_notes_tree_limited(
     repo: &Repository,
     notes_ref: &str,
@@ -222,6 +252,7 @@ pub fn read_notes_tree_limited(
         }
     };
     let mut entries = Vec::new();
+    let mut listable_seen = 0usize;
     let mut truncated = false;
     collect_notes_tree_entries(
         repo,
@@ -229,6 +260,7 @@ pub fn read_notes_tree_limited(
         b"",
         &mut entries,
         max_entries,
+        &mut listable_seen,
         &mut truncated,
     )?;
     Ok((entries, truncated))
@@ -704,8 +736,17 @@ fn notes_tree_blob_by_object(
     tree_oid: &ObjectId,
 ) -> Result<HashMap<ObjectId, ObjectId>> {
     let mut flat = Vec::new();
+    let mut listable_seen = 0usize;
     let mut truncated = false;
-    collect_notes_tree_entries(repo, tree_oid, b"", &mut flat, None, &mut truncated)?;
+    collect_notes_tree_entries(
+        repo,
+        tree_oid,
+        b"",
+        &mut flat,
+        None,
+        &mut listable_seen,
+        &mut truncated,
+    )?;
     debug_assert!(!truncated);
     let mut map = HashMap::new();
     for entry in flat {
@@ -1198,8 +1239,17 @@ pub fn notes_merge_inner(
             let mut commit_msg = format!("Merged notes from {remote_ref} into {local_ref}\n\n");
             let pairs = build_merge_pairs(base_tree, local_tree, remote_tree, repo)?;
             let mut entries = Vec::new();
+            let mut listable_seen = 0usize;
             let mut truncated = false;
-            collect_notes_tree_entries(repo, &local_tree, b"", &mut entries, None, &mut truncated)?;
+            collect_notes_tree_entries(
+                repo,
+                &local_tree,
+                b"",
+                &mut entries,
+                None,
+                &mut listable_seen,
+                &mut truncated,
+            )?;
             debug_assert!(!truncated);
             let worktree = notes_merge_worktree_path(repo);
             let conflicts = merge_changes_into_entries(

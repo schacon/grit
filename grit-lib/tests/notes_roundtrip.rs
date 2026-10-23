@@ -525,5 +525,5 @@ fn notes_on_reftable_repository_use_the_ref_store() {
         .expect("parse")
         .parents;
     assert_eq!(parents, vec![tip]);
-    assert!(notes.list(&notes_ref).expect("list").is_empty());
+    assert!(notes.list(&notes_ref, None).expect("list").items.is_empty());
 }
