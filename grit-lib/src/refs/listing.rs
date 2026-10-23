@@ -449,7 +449,7 @@ pub fn query_listings_on_store(
     odb: Option<&Odb>,
 ) -> QueryResult<Vec<RefListing>> {
     let namespaces = effective_namespaces(query);
-    let mut collected = BTreeMap::new();
+    let mut collected = Vec::new();
     for ns in &namespaces {
         let prefix = ns.prefix();
         store.for_each_ref(prefix, &mut |entry: &RefEntry| {
@@ -457,7 +457,7 @@ pub fn query_listings_on_store(
             ControlFlow::Continue(())
         })?;
     }
-    finish_query(collected.into_values().collect(), query, options, odb, None)
+    finish_query(dedup_collected(collected), query, options, odb, None)
 }
 
 /// Query refs on `repo` (respects linked-worktree visibility and injected ref stores).
@@ -474,7 +474,7 @@ pub fn query_refs(
     let store = repo.refs();
     let namespaces = effective_namespaces(query);
     let linked_worktree = crate::worktree_ref::is_linked_worktree_git_dir(git_dir);
-    let mut collected = BTreeMap::new();
+    let mut collected = Vec::new();
     for ns in &namespaces {
         let prefix = ns.prefix();
         store.for_each_ref(prefix, &mut |entry: &RefEntry| {
@@ -488,7 +488,7 @@ pub fn query_refs(
         })?;
     }
     finish_query(
-        collected.into_values().collect(),
+        dedup_collected(collected),
         query,
         options,
         Some(repo.odb()),
@@ -496,8 +496,17 @@ pub fn query_refs(
     )
 }
 
+/// Sort `collected` by full name and keep the first entry for each name.
+///
+/// Stores list each prefix in name order, so for a single namespace this is a linear pass.
+fn dedup_collected(mut collected: Vec<CollectedRef>) -> Vec<CollectedRef> {
+    collected.sort_by(|a, b| a.full_name.cmp(&b.full_name));
+    collected.dedup_by(|later, first| later.full_name == first.full_name);
+    collected
+}
+
 fn insert_collected_ref(
-    collected: &mut BTreeMap<String, CollectedRef>,
+    collected: &mut Vec<CollectedRef>,
     entry: &RefEntry,
     store: &dyn RefStore,
     namespaces: &[RefNamespace],
@@ -527,7 +536,7 @@ fn insert_collected_ref(
         crate::refs::store::RawRef::Symbolic(_) => None,
     };
     let kind = ref_kind_from_name(&entry.name);
-    collected.entry(entry.name.clone()).or_insert(CollectedRef {
+    collected.push(CollectedRef {
         full_name: entry.name.clone(),
         short_name,
         oid: direct_oid,
