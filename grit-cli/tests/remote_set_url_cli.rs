@@ -117,6 +117,37 @@ fn remote_verbose_json_fields() {
 }
 
 #[test]
+fn remote_verbose_human_shows_effective_push_url() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_repo(tmp.path());
+    git(
+        tmp.path(),
+        &["remote", "add", "origin", "short:org/repo.git"],
+    );
+    git(
+        tmp.path(),
+        &["config", "url.ssh://push.example/.pushInsteadOf", "short:"],
+    );
+
+    let out = grit(tmp.path(), &["remote", "-v"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let human = String::from_utf8(out.stdout).unwrap();
+    assert!(human.contains("ssh://push.example/org/repo.git (push)"));
+    assert!(!human.contains("short:org/repo.git (push)"));
+
+    let json_out = grit(tmp.path(), &["remote", "-v", "--json"]);
+    let json: serde_json::Value = serde_json::from_slice(&json_out.stdout).unwrap();
+    assert_eq!(
+        json["remotes"][0]["push_url"],
+        "ssh://push.example/org/repo.git"
+    );
+}
+
+#[test]
 fn remote_verbose_human_matches_git_layout() {
     let tmp = tempfile::tempdir().unwrap();
     init_repo(tmp.path());

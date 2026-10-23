@@ -107,7 +107,11 @@ impl<'repo> RepositoryRemotes<'repo> {
         };
         match kind {
             RemoteUrlKind::Fetch => {
-                file.set(&format!("remote.{name}.url"), url)?;
+                let key = format!("remote.{name}.url");
+                if file.count(&key)? > 1 {
+                    file.unset(&key)?;
+                }
+                file.set(&key, url)?;
             }
             RemoteUrlKind::Push => {
                 file.unset(&format!("remote.{name}.pushurl"))?;
@@ -409,6 +413,8 @@ pub struct ConfiguredRemote {
     pub effective_fetch_url: Option<String>,
     /// Push URL after `pushInsteadOf` / `insteadOf`; equals [`Self::effective_fetch_url`] when no push URL is configured.
     pub effective_push_url: Option<String>,
+    /// Each [`Self::push_urls`] entry after `pushInsteadOf` / `insteadOf` (empty when there are no push URLs).
+    pub effective_push_urls: Vec<String>,
 }
 
 fn configured_remote_from_config(config: &ConfigSet, name: String) -> ConfiguredRemote {
@@ -420,6 +426,10 @@ fn configured_remote_from_config(config: &ConfigSet, name: String) -> Configured
         .into_iter()
         .filter(|s| !s.trim().is_empty())
         .collect();
+    let effective_push_urls: Vec<String> = push_urls
+        .iter()
+        .map(|raw| url_rewrite::rewrite_push_url(config, raw.as_str()))
+        .collect();
     let (effective_fetch_url, effective_push_url) = match url.as_deref().filter(|u| !u.is_empty()) {
         Some(raw) => {
             let effective_fetch_url = url_rewrite::rewrite_fetch_url(config, raw);
@@ -430,7 +440,12 @@ fn configured_remote_from_config(config: &ConfigSet, name: String) -> Configured
             let effective_push_url = url_rewrite::rewrite_push_url(config, push_source.as_str());
             (Some(effective_fetch_url), Some(effective_push_url))
         }
-        None => (None, None),
+        None => {
+            let effective_push_url = push_urls
+                .first()
+                .map(|raw| url_rewrite::rewrite_push_url(config, raw.as_str()));
+            (None, effective_push_url)
+        }
     };
     ConfiguredRemote {
         name,
@@ -439,6 +454,7 @@ fn configured_remote_from_config(config: &ConfigSet, name: String) -> Configured
         fetch_refspecs,
         effective_fetch_url,
         effective_push_url,
+        effective_push_urls,
     }
 }
 
@@ -535,6 +551,7 @@ mod tests {
                     fetch_refspecs: vec!["+refs/heads/*:refs/remotes/team.prod/*".to_owned()],
                     effective_fetch_url: None,
                     effective_push_url: None,
+                    effective_push_urls: vec![],
                 },
                 ConfiguredRemote {
                     name: "zeta".to_owned(),
@@ -543,6 +560,7 @@ mod tests {
                     fetch_refspecs: vec![],
                     effective_fetch_url: Some("/tmp/z2.git".to_owned()),
                     effective_push_url: Some("/tmp/z2.git".to_owned()),
+                    effective_push_urls: vec![],
                 },
             ]
         );

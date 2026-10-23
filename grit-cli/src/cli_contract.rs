@@ -500,6 +500,14 @@ const COMMAND_CONTRACTS: &[(&str, CommandContract)] = &[
         },
     ),
     (
+        "remote.set-url",
+        CommandContract {
+            kind: CommandKind::Mutation,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
         "remote.refs",
         CommandContract {
             kind: CommandKind::List,

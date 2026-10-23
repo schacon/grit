@@ -137,6 +137,65 @@ fn set_url_dry_run_noop() {
 }
 
 #[test]
+fn set_url_fetch_replaces_multiple_urls() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    init_repo(tmp.path());
+    git(
+        tmp.path(),
+        &["config", "--add", "remote.origin.url", "/a.git"],
+    );
+    git(
+        tmp.path(),
+        &["config", "--add", "remote.origin.url", "/b.git"],
+    );
+    open(tmp.path())
+        .remotes()
+        .set_url("origin", "/c.git", RemoteUrlKind::Fetch, false)
+        .expect("set_url replaces multiples");
+    assert_eq!(
+        git(tmp.path(), &["config", "--get-all", "remote.origin.url"]).trim(),
+        "/c.git"
+    );
+}
+
+#[test]
+fn configured_remotes_effective_push_without_fetch_url() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    init_repo(tmp.path());
+    git(
+        tmp.path(),
+        &["config", "remote.origin.pushurl", "short:org/push.git"],
+    );
+    git(
+        tmp.path(),
+        &["config", "url.ssh://push.example/.pushInsteadOf", "short:"],
+    );
+    git(
+        tmp.path(),
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    );
+
+    let configured = open(tmp.path())
+        .remotes()
+        .configured()
+        .expect("configured")
+        .into_iter()
+        .find(|r| r.name == "origin")
+        .expect("origin");
+    assert!(configured.url.is_none());
+    assert_eq!(configured.push_urls, vec!["short:org/push.git".to_owned()]);
+    assert_eq!(
+        configured.effective_push_url.as_deref(),
+        Some("ssh://push.example/org/push.git")
+    );
+    assert!(configured.effective_fetch_url.is_none());
+}
+
+#[test]
 fn configured_remotes_reports_push_urls_and_refspecs() {
     let tmp = tempfile::tempdir().expect("tempdir");
     init_repo(tmp.path());

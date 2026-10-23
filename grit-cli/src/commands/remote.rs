@@ -364,26 +364,29 @@ fn list(repo: &Repository, verbose: bool) -> Result<RemoteOutcome> {
         .map(|remote| {
             let display_url = remote.url.clone().unwrap_or_else(|| "(no url)".to_owned());
             if verbose {
-                if let Some(fetch) = remote.url.as_deref() {
+                if let Some(fetch) = remote.effective_fetch_url.as_deref() {
                     verbose_lines.push(RemoteVerboseLine {
                         name: remote.name.clone(),
                         url: fetch.to_owned(),
                         kind: RemoteVerboseKind::Fetch,
                     });
-                    if remote.push_urls.is_empty() {
+                }
+                if remote.push_urls.is_empty() {
+                    if let Some(push) = remote.effective_push_url.as_deref() {
                         verbose_lines.push(RemoteVerboseLine {
                             name: remote.name.clone(),
-                            url: fetch.to_owned(),
+                            url: push.to_owned(),
                             kind: RemoteVerboseKind::Push,
                         });
                     }
-                }
-                for push in &remote.push_urls {
-                    verbose_lines.push(RemoteVerboseLine {
-                        name: remote.name.clone(),
-                        url: push.clone(),
-                        kind: RemoteVerboseKind::Push,
-                    });
+                } else {
+                    for push in &remote.effective_push_urls {
+                        verbose_lines.push(RemoteVerboseLine {
+                            name: remote.name.clone(),
+                            url: push.clone(),
+                            kind: RemoteVerboseKind::Push,
+                        });
+                    }
                 }
             }
             RemoteEntry {
