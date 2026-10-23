@@ -1188,7 +1188,9 @@ fn stash_clear_removes_ref_without_reflog_like_git() {
     std::fs::write(dir.path().join("a"), "v\n").expect("write");
     git_cmd(dir.path(), &["add", "a"]);
     git_cmd(dir.path(), &["commit", "-qm", "init"]);
-    let head = git_cmd(dir.path(), &["rev-parse", "HEAD"]).trim().to_owned();
+    let head = git_cmd(dir.path(), &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
     git_cmd(dir.path(), &["update-ref", "refs/stash", &head]);
     assert!(
         git_cmd(dir.path(), &["rev-parse", "--verify", "refs/stash"]).trim() == head,

@@ -1619,10 +1619,7 @@ fn append_stash_untracked_show_entries(
     let head_entries = flatten_tree_full_for_repo(repo, head_tree, "")?;
     let ut_entries = flatten_tree_full_for_repo(repo, &ut_commit.tree, "")?;
     for entry in ut_entries {
-        if let Some(idx) = diffs
-            .iter()
-            .position(|d| d.path() == entry.path.as_str())
-        {
+        if let Some(idx) = diffs.iter().position(|d| d.path() == entry.path.as_str()) {
             if diffs[idx].status == DiffStatus::Deleted {
                 let head_entry = flat_tree_lookup(&head_entries, &entry.path);
                 let (old_oid, old_mode) = if let Some(h) = head_entry {

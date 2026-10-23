@@ -826,7 +826,11 @@ fn snapshot_stash_drop() {
 
 #[test]
 fn snapshot_stash_branch() {
-    snapshot_fresh("stash_branch", &["stash", "branch", "from-stash"], prepare_stash);
+    snapshot_fresh(
+        "stash_branch",
+        &["stash", "branch", "from-stash"],
+        prepare_stash,
+    );
 }
 
 #[test]
