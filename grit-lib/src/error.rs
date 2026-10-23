@@ -553,6 +553,10 @@ pub enum Error {
     #[error("cannot change object format in an existing repository")]
     InitObjectFormatChange,
 
+    /// [`crate::repo::Repository::init_with_outcome`] with incompatible `--bare` and separate git dir.
+    #[error("cannot combine bare repository with separate git directory")]
+    InitBareWithSeparateGitDir,
+
     /// A supplied object ID string was not valid hex or the wrong length.
     #[error("invalid object id '{0}'")]
     InvalidObjectId(String),

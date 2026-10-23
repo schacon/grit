@@ -161,6 +161,72 @@ fn init_sha256_then_commit_git_fsck_clean() {
 }
 
 #[test]
+fn init_reinit_preserves_sha256_when_object_format_omitted() {
+    let td = TempDir::new().expect("tempdir");
+    Repository::init(
+        td.path(),
+        &InitOptions::new()
+            .with_initial_branch("main")
+            .with_object_format(HashAlgo::Sha256),
+    )
+    .expect("init sha256");
+    let (_, outcome) = Repository::init_with_outcome(td.path(), &InitOptions::new())
+        .expect("reinit without object format");
+    assert!(outcome.reinitialized);
+    let repo = Repository::init(td.path(), &InitOptions::new()).expect("open");
+    assert_eq!(repo.odb().hash_algo(), HashAlgo::Sha256);
+}
+
+#[test]
+fn init_rejects_bare_with_separate_git_dir() {
+    let wt = TempDir::new().expect("tempdir");
+    let separate = TempDir::new().expect("tempdir");
+    let err = Repository::init_with_outcome(
+        wt.path(),
+        &InitOptions::new()
+            .with_bare(true)
+            .with_separate_git_dir(Some(separate.path().to_path_buf())),
+    )
+    .unwrap_err();
+    assert!(matches!(err, Error::InitBareWithSeparateGitDir));
+}
+
+#[test]
+fn init_reinit_rediscovers_gitfile_without_separate_flag() {
+    let wt = TempDir::new().expect("tempdir");
+    let separate = TempDir::new().expect("tempdir");
+    Repository::init(
+        wt.path(),
+        &InitOptions::new()
+            .with_initial_branch("main")
+            .with_separate_git_dir(Some(separate.path().to_path_buf())),
+    )
+    .expect("init separate");
+    let (_, outcome) =
+        Repository::init_with_outcome(wt.path(), &InitOptions::new()).expect("reinit via gitfile");
+    assert!(outcome.reinitialized);
+    assert_eq!(outcome.initial_branch, "main");
+    let gitfile = fs::read_to_string(wt.path().join(".git")).expect("gitfile");
+    assert!(gitfile.starts_with("gitdir:"));
+}
+
+#[test]
+fn reinit_allows_detached_head() {
+    let td = TempDir::new().expect("tempdir");
+    let repo =
+        Repository::init(td.path(), &InitOptions::new().with_initial_branch("main")).expect("init");
+    fs::write(
+        repo.git_dir().join("HEAD"),
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n",
+    )
+    .expect("write detached HEAD");
+    let (_, outcome) =
+        Repository::init_with_outcome(td.path(), &InitOptions::new()).expect("reinit detached");
+    assert!(outcome.reinitialized);
+    assert_eq!(outcome.initial_branch, "deadbee");
+}
+
+#[test]
 fn grit_opens_git_init_sha256_repo() {
     let td = TempDir::new().expect("tempdir");
     let status = Command::new("git")

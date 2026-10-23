@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use grit_lib::config::git_path::user_display_path;
-use grit_lib::prelude::Environment;
 use grit_lib::objects::HashAlgo;
+use grit_lib::prelude::Environment;
 use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::repo::{InitOptions, Repository};
 use schemars::JsonSchema;
@@ -92,16 +92,18 @@ pub fn run(
     ref_format: RefStorageFormat,
     initial_branch: Option<String>,
     separate_git_dir: Option<PathBuf>,
-    object_format: HashAlgo,
+    object_format: Option<HashAlgo>,
 ) -> Result<InitOutcome> {
     let path = PathBuf::from(path.unwrap_or_else(|| ".".to_owned()));
     let mut init_options = InitOptions::new()
         .with_bare(bare)
         .with_ref_storage(ref_format)
-        .with_object_format(object_format)
         .with_environment(Environment::capture_process());
     if let Some(branch) = initial_branch {
         init_options = init_options.with_initial_branch(branch);
+    }
+    if let Some(format) = object_format {
+        init_options = init_options.with_object_format(format);
     }
     let separate_git_dir_for_json = separate_git_dir.clone();
     if let Some(separate) = separate_git_dir {
@@ -118,7 +120,7 @@ pub fn run(
         bare,
         branch: outcome.initial_branch,
         ref_format: ref_format.to_string(),
-        object_format: object_format.name().to_owned(),
+        object_format: repo.odb().hash_algo().name().to_owned(),
         git_dir: separate_git_dir_for_json.map(|p| user_display_path(&p)),
     })
 }

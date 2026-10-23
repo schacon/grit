@@ -230,7 +230,7 @@ fn init_object_format_sha256_json() -> TestResult {
     let scratch = Scratch::new("init-sha256")?;
     let v = gs_json(scratch.path(), &["init", "--object-format", "sha256", "."]);
     assert_eq!(v["object_format"], "sha256");
-    let again = gs_json(scratch.path(), &["init", "--object-format", "sha256", "."]);
+    let again = gs_json(scratch.path(), &["init", "."]);
     assert_eq!(again["reinitialized"], Value::Bool(true));
     assert_eq!(again["object_format"], "sha256");
     Ok(())

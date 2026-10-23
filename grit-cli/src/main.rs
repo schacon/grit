@@ -579,7 +579,7 @@ enum Command {
         /// Where to create the repository (defaults to the current directory).
         path: Option<String>,
         /// Create a bare repository (no working tree).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "separate_git_dir")]
         bare: bool,
         /// Ref storage backend for the new repository.
         #[arg(long, value_name = "FORMAT", default_value = "files")]
@@ -588,16 +588,15 @@ enum Command {
         #[arg(short = 'b', long = "initial-branch", value_name = "NAME")]
         initial_branch: Option<String>,
         /// Place the git directory here and link from the work tree via a gitfile.
-        #[arg(long = "separate-git-dir", value_name = "DIR")]
+        #[arg(long = "separate-git-dir", value_name = "DIR", conflicts_with = "bare")]
         separate_git_dir: Option<std::path::PathBuf>,
-        /// Object hash algorithm for the new repository.
+        /// Object hash algorithm for the new repository (default SHA-1; omitted on reinit preserves format).
         #[arg(
             long = "object-format",
             value_name = "ALGO",
-            default_value = "sha1",
             value_parser = parse_init_object_format
         )]
-        object_format: grit_lib::objects::HashAlgo,
+        object_format: Option<grit_lib::objects::HashAlgo>,
     },
     /// Copy a remote repository into a new directory.
     Clone {

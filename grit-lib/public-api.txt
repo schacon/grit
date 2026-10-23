@@ -4842,6 +4842,7 @@ pub grit_lib::error::Error::IndexPathPrefixConflict
 pub grit_lib::error::Error::IndexPathPrefixConflict::directory: std::path::PathBuf
 pub grit_lib::error::Error::IndexPathPrefixConflict::file: std::path::PathBuf
 pub grit_lib::error::Error::IndexUnmerged
+pub grit_lib::error::Error::InitBareWithSeparateGitDir
 pub grit_lib::error::Error::InitObjectFormatChange
 pub grit_lib::error::Error::InvalidNotesRef(alloc::string::String)
 pub grit_lib::error::Error::InvalidObjectId(alloc::string::String)
@@ -13667,6 +13668,7 @@ pub grit_lib::prelude::Error::IndexPathPrefixConflict
 pub grit_lib::prelude::Error::IndexPathPrefixConflict::directory: std::path::PathBuf
 pub grit_lib::prelude::Error::IndexPathPrefixConflict::file: std::path::PathBuf
 pub grit_lib::prelude::Error::IndexUnmerged
+pub grit_lib::prelude::Error::InitBareWithSeparateGitDir
 pub grit_lib::prelude::Error::InitObjectFormatChange
 pub grit_lib::prelude::Error::InvalidNotesRef(alloc::string::String)
 pub grit_lib::prelude::Error::InvalidObjectId(alloc::string::String)
@@ -14335,7 +14337,7 @@ pub grit_lib::prelude::InitOptions::bare: bool
 pub grit_lib::prelude::InitOptions::bare_with_worktree_at_path: bool
 pub grit_lib::prelude::InitOptions::environment: core::option::Option<grit_lib::config::environment::Environment>
 pub grit_lib::prelude::InitOptions::initial_branch: core::option::Option<alloc::string::String>
-pub grit_lib::prelude::InitOptions::object_format: grit_lib::objects::HashAlgo
+pub grit_lib::prelude::InitOptions::object_format: core::option::Option<grit_lib::objects::HashAlgo>
 pub grit_lib::prelude::InitOptions::ref_storage: grit_lib::refs::ref_storage::RefStorageFormat
 pub grit_lib::prelude::InitOptions::separate_git_dir: core::option::Option<std::path::PathBuf>
 pub grit_lib::prelude::InitOptions::template_dir: core::option::Option<std::path::PathBuf>
@@ -19048,7 +19050,7 @@ pub grit_lib::repo::InitOptions::bare: bool
 pub grit_lib::repo::InitOptions::bare_with_worktree_at_path: bool
 pub grit_lib::repo::InitOptions::environment: core::option::Option<grit_lib::config::environment::Environment>
 pub grit_lib::repo::InitOptions::initial_branch: core::option::Option<alloc::string::String>
-pub grit_lib::repo::InitOptions::object_format: grit_lib::objects::HashAlgo
+pub grit_lib::repo::InitOptions::object_format: core::option::Option<grit_lib::objects::HashAlgo>
 pub grit_lib::repo::InitOptions::ref_storage: grit_lib::refs::ref_storage::RefStorageFormat
 pub grit_lib::repo::InitOptions::separate_git_dir: core::option::Option<std::path::PathBuf>
 pub grit_lib::repo::InitOptions::template_dir: core::option::Option<std::path::PathBuf>

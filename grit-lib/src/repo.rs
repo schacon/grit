@@ -127,7 +127,9 @@ pub struct InitOptions {
     /// Bare git directory with `core.worktree` pointing at `path` (`GIT_WORK_TREE` clone layout).
     pub bare_with_worktree_at_path: bool,
     /// Object hash algorithm for a new repository (`extensions.objectformat`).
-    pub object_format: HashAlgo,
+    ///
+    /// When `None`, new repositories default to SHA-1; reinit preserves the existing format.
+    pub object_format: Option<HashAlgo>,
     /// Environment used to resolve `init.defaultBranch` (and other init-time config).
     pub environment: Option<Environment>,
 }
@@ -141,7 +143,7 @@ impl Default for InitOptions {
             ref_storage: crate::ref_storage::RefStorageFormat::Files,
             separate_git_dir: None,
             bare_with_worktree_at_path: false,
-            object_format: HashAlgo::Sha1,
+            object_format: None,
             environment: None,
         }
     }
@@ -171,7 +173,7 @@ impl InitOptions {
     /// Set [`Self::object_format`].
     #[must_use]
     pub fn with_object_format(mut self, object_format: HashAlgo) -> Self {
-        self.object_format = object_format;
+        self.object_format = Some(object_format);
         self
     }
 
@@ -1151,23 +1153,35 @@ impl Repository {
     ///
     /// Propagates filesystem and layout errors from the underlying init helpers.
     pub fn init_with_outcome(path: &Path, options: &InitOptions) -> Result<(Self, InitOutcome)> {
+        if options.bare && options.separate_git_dir.is_some() {
+            return Err(Error::InitBareWithSeparateGitDir);
+        }
         let env = options
             .environment
             .clone()
             .unwrap_or_else(Environment::empty);
-        let git_dir = init_git_dir_path(path, options);
+        let git_dir = resolve_git_dir_for_init(path, options)?;
         let reinitialized = git_dir.join("config").is_file() && git_dir.join("HEAD").is_file();
-        if reinitialized {
-            let existing = hash_algo_from_git_dir(&git_dir)?;
-            if existing != options.object_format {
+        let existing_format = hash_algo_from_git_dir(&git_dir)?;
+        let object_format = match (reinitialized, options.object_format) {
+            (true, None) => existing_format,
+            (true, Some(requested)) if requested != existing_format => {
                 return Err(Error::InitObjectFormatChange);
             }
-        }
+            (true, Some(requested)) => requested,
+            (false, None) => HashAlgo::Sha1,
+            (false, Some(requested)) => requested,
+        };
         let initial_branch = if reinitialized {
-            branch_short_name_from_head(&git_dir)?
+            head_branch_name_for_outcome(&git_dir)?
         } else {
             resolve_initial_branch(&env, options.initial_branch.as_deref())?
         };
+
+        let separate_layout = options.separate_git_dir.is_some()
+            || (!options.bare
+                && !options.bare_with_worktree_at_path
+                && path.join(".git").is_file());
 
         let repo = if options.bare_with_worktree_at_path {
             init_bare_with_env_worktree(
@@ -1176,16 +1190,16 @@ impl Repository {
                 &initial_branch,
                 options.template_dir.as_deref(),
                 options.ref_storage,
-                options.object_format,
+                object_format,
             )?
-        } else if let Some(separate) = &options.separate_git_dir {
+        } else if separate_layout {
             init_repository_separate_git_dir(
                 path,
-                separate,
+                &git_dir,
                 &initial_branch,
                 options.template_dir.as_deref(),
                 options.ref_storage,
-                options.object_format,
+                object_format,
             )?
         } else {
             init_repository_with_object_format(
@@ -1194,7 +1208,7 @@ impl Repository {
                 &initial_branch,
                 options.template_dir.as_deref(),
                 options.ref_storage,
-                options.object_format,
+                object_format,
             )?
         };
         Ok((
@@ -3734,24 +3748,40 @@ pub fn resolve_initial_branch(env: &Environment, explicit: Option<&str>) -> Resu
     Ok(name)
 }
 
-fn init_git_dir_path(path: &Path, options: &InitOptions) -> PathBuf {
+fn resolve_git_dir_for_init(path: &Path, options: &InitOptions) -> Result<PathBuf> {
     if options.bare_with_worktree_at_path || options.bare {
-        path.to_path_buf()
-    } else if let Some(separate) = &options.separate_git_dir {
-        separate.clone()
-    } else {
-        path.join(".git")
+        return Ok(path.to_path_buf());
     }
+    if let Some(separate) = &options.separate_git_dir {
+        return Ok(separate.clone());
+    }
+    let dot_git = path.join(".git");
+    if dot_git.is_file() {
+        let content = fs::read_to_string(&dot_git)?;
+        return parse_gitfile(&content, path);
+    }
+    Ok(dot_git)
 }
 
-fn branch_short_name_from_head(git_dir: &Path) -> Result<String> {
-    let target = crate::refs::read_symbolic_ref(git_dir, "HEAD")?
-        .ok_or_else(|| Error::InvalidRef("HEAD is not a symbolic ref".to_owned()))?;
-    let prefix = "refs/heads/";
-    target
-        .strip_prefix(prefix)
-        .map(str::to_owned)
-        .ok_or_else(|| Error::InvalidRef(format!("unexpected HEAD target: {target}")))
+/// Branch short name for init outcome reporting; tolerates detached `HEAD` on reinit.
+fn head_branch_name_for_outcome(git_dir: &Path) -> Result<String> {
+    if let Some(target) = crate::refs::read_symbolic_ref(git_dir, "HEAD")? {
+        if let Some(short) = target.strip_prefix("refs/heads/") {
+            return Ok(short.to_owned());
+        }
+        return Ok(target
+            .rsplit('/')
+            .next()
+            .unwrap_or(target.as_str())
+            .to_owned());
+    }
+    let head_text = fs::read_to_string(git_dir.join("HEAD"))?;
+    let oid = head_text.trim();
+    if crate::objects::ObjectId::from_hex(oid).is_ok() {
+        let end = oid.len().min(7);
+        return Ok(oid[..end].to_owned());
+    }
+    Ok("HEAD".to_owned())
 }
 
 fn hash_algo_from_git_dir(git_dir: &Path) -> Result<HashAlgo> {
