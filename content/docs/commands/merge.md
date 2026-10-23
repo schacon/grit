@@ -12,6 +12,7 @@ grit merge <branch>
 grit merge --check <branch>
 grit merge --continue [-m <message>]
 grit merge --abort
+grit merge [--ff-only | --no-ff] [--squash | --no-commit] [-m <message> | --message-file <path|->] <branch>
 ```
 
 ## Description
@@ -28,6 +29,15 @@ Brings the commits from `<branch>` into the current branch:
 
 Local edits are allowed when they only touch paths the merge does not change, or when a changed path already matches the post-merge tree in the index (same scoped rule as [`grit switch`](../switch/)). Grit refuses when your changes would be overwritten by files the merge updates, when an untracked file would be replaced by a path the merge would check out, on a branch with no commits, or with a detached HEAD; the branch and file are left unchanged.
 
+### Merge modes
+
+- **`--ff-only`** — Refuse when a fast-forward is not possible (histories diverged). Nothing changes. Exit code **128** (same as Git's `merge --ff-only`).
+- **`--no-ff`** — Always record a merge commit with two parents when a real merge is needed, even if a fast-forward was possible.
+- **`--squash`** — Apply the merged tree to the index and worktree, write a Git-compatible `SQUASH_MSG`, and do not update the branch ref or write `MERGE_HEAD`. Finish with [`grit commit`](../commit/) (which uses `SQUASH_MSG` as the default message when you omit `-m`).
+- **`--no-commit`** — Perform the merge but stop before committing: writes `MERGE_HEAD`, `ORIG_HEAD`, and `MERGE_MSG` (and `MERGE_MODE` when `--no-ff` applies). Finish with [`grit commit`](../commit/) or `grit merge --continue` (when implemented).
+
+`-m` / `--message-file` override the default merge commit message and the text stored in `MERGE_MSG` on conflicts or `--no-commit`.
+
 ## Options
 
 | Option | Description |
@@ -37,6 +47,12 @@ Local edits are allowed when they only touch paths the merge does not change, or
 | `--continue` | Finish an in-progress merge after conflicts are resolved (or after `--no-commit`). Conflicts with `<branch>`, `--check`, and `--abort`. |
 | `-m`, `--message` | Commit message for `--continue` only (overrides `MERGE_MSG`). |
 | `--abort` | Cancel an in-progress merge and restore the state recorded in `ORIG_HEAD`. |
+| `--ff-only` | Refuse when a fast-forward is not possible (exit code 128). Mutually exclusive with `--no-ff`. |
+| `--no-ff` | Create a merge commit even when a fast-forward is possible. Mutually exclusive with `--ff-only`. |
+| `--squash` | Squash merged commits into the index; write `SQUASH_MSG` (no `MERGE_HEAD`). Mutually exclusive with `--no-commit`. |
+| `--no-commit` | Apply the merge but do not commit yet (Git-compatible merge state). Mutually exclusive with `--squash`. |
+| `-m`, `--message` | Merge commit / `MERGE_MSG` message (conflicts with `--message-file`). |
+| `--message-file` | Read the message from a path, or `-` for stdin (conflicts with `-m`). |
 
 ## Examples
 
@@ -46,6 +62,15 @@ Fast-forwarded feature → cf18394
 
 $ grit merge origin/main
 Merged origin/main into the current branch (acd1d4b)
+
+$ grit merge --no-ff topic
+Merged topic into the current branch (1a2b3c4)
+
+$ grit merge --squash topic
+Squash merge applied from topic — run `grit commit` to record the squashed commit
+
+$ grit merge --no-commit topic
+Merge from topic applied — run `grit commit` to finish, or `grit merge --abort` to cancel
 ```
 
 When both branches change the same lines:
@@ -87,6 +112,15 @@ $ grit merge feature
 error: untracked file 'notes.txt' would be overwritten — move or remove it first
 ```
 
+When `--ff-only` cannot fast-forward:
+
+```console
+$ grit merge --ff-only topic
+Cannot fast-forward topic — histories have diverged (use merge without --ff-only)
+```
+
+(Exit code 128.)
+
 ## JSON output
 
 Schema: [v2](/schemas/merge/v2.json) · [v1](/schemas/merge/v1.json)
@@ -95,14 +129,14 @@ Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `result` | string | `up_to_date`, `fast_forward`, `clean` (`--check` only), `merged`, `conflicts`, `aborted`, or `set_upstream`. |
+| `result` | string | `up_to_date`, `fast_forward`, `clean` (`--check` only), `merged`, `squashed`, `stopped`, `conflicts`, `refused_not_ff`, `aborted`, or `set_upstream`. |
 | `check` | boolean | `true` when this outcome is from `--check` (nothing was merged). Omitted for real merges. |
 | `branch` | string | The branch that was merged in (or set as upstream). |
 | `oid` | string or null | Resulting commit after a real merge or fast-forward; for `--check` with `result: clean`, the predicted merge tree OID. |
 | `change_id` | string or null | Stored `change-id` on `oid` when present (merge commit or fast-forward tip). |
 | `upstream` | string or null | For `set_upstream`, the remote-tracking branch that was adopted. |
 | `conflicts` | array or null | When `result` is `conflicts`, each item has `path`, `kind` (`content`, `add_add`, or `modify_delete`), and optional `summary` text. |
-| `next_steps` | array or null | Ordered follow-up commands when `result` is `conflicts` (for example `grit diff`, `grit add .`). |
+| `next_steps` | array or null | Ordered follow-up commands when `result` is `conflicts` (for example `grit diff`, `grit add .`), or suggested commands when `result` is `squashed` or `stopped`. |
 | `alternatives` | array or null | Mutually exclusive options such as `grit merge --abort` (not part of the ordered sequence). |
 
 Example:
@@ -122,6 +156,19 @@ Dry-run prediction with `--check` (exit code 0):
   "check": true,
   "branch": "topic",
   "oid": "4b825dc642cb6eb9a06054e089d91b5929f0d0a"
+}
+```
+
+Squash merge:
+
+```json
+{
+  "result": "squashed",
+  "branch": "topic",
+  "next_steps": [
+    "grit commit",
+    "Review SQUASH_MSG or pass -m / --message-file"
+  ]
 }
 ```
 

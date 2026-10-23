@@ -36,7 +36,7 @@ use crate::repo::Repository;
 use crate::signing::{
     extra_headers_without_commit_signatures, should_sign_commit, sign_serialized_commit, GpgConfig,
 };
-use crate::state::{finish_merge_state, read_merge_heads, resolve_head, HeadState};
+use crate::state::{finish_merge_state, read_merge_heads, read_merge_msg, resolve_head, HeadState};
 use crate::stripspace::{process, Mode};
 use crate::worktree_rules::WorktreeRules;
 use crate::write_tree::{
@@ -170,6 +170,42 @@ pub fn default_commit_scope_from_config(config: &ConfigSet) -> CommitScope {
     } else {
         CommitScope::Staged
     }
+}
+
+/// Remove squash merge sentinel files after a successful commit (Git removes `SQUASH_MSG` on commit).
+///
+/// # Errors
+///
+/// Returns [`Error::Io`] if a present file cannot be removed.
+pub(crate) fn clear_squash_commit_state(git_dir: &std::path::Path) -> Result<()> {
+    let squash = git_dir.join("SQUASH_MSG");
+    if !squash.is_file() {
+        return Ok(());
+    }
+    fs::remove_file(&squash).map_err(Error::Io)?;
+    if !git_dir.join("MERGE_HEAD").is_file() {
+        let merge_msg = git_dir.join("MERGE_MSG");
+        if merge_msg.is_file() {
+            fs::remove_file(&merge_msg).map_err(Error::Io)?;
+        }
+    }
+    Ok(())
+}
+
+/// Default message for the next commit when `SQUASH_MSG` or merge `MERGE_MSG` is present.
+///
+/// # Errors
+///
+/// Propagates I/O and merge-state read failures.
+pub fn pending_commit_message(repo: &Repository) -> Result<Option<String>> {
+    let squash = repo.git_dir().join("SQUASH_MSG");
+    if squash.is_file() {
+        return fs::read_to_string(squash).map_err(Error::Io).map(Some);
+    }
+    if !read_merge_heads(repo.git_dir())?.is_empty() {
+        return read_merge_msg(repo.git_dir());
+    }
+    Ok(None)
 }
 
 /// Record a commit using `scope` to decide how the index is prepared.
@@ -956,6 +992,8 @@ fn create_commit_with_index(
         reuse_msg
     } else if req.amend {
         amend_default_message.unwrap_or_default()
+    } else if let Some(pending) = pending_commit_message(repo)? {
+        pending
     } else {
         return Err(Error::Message("empty commit message".into()));
     };
@@ -1147,6 +1185,7 @@ fn create_commit_with_index(
     if concluding_merge {
         let _ = finish_merge_state(repo)?;
     }
+    clear_squash_commit_state(repo.git_dir())?;
 
     if let Some(persist) = persist_index {
         if !req.assume_worktree_synced {

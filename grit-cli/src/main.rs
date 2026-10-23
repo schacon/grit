@@ -25,6 +25,7 @@ mod json_filter;
 mod json_schema;
 mod log_display;
 mod markdown;
+mod message_input;
 mod operation_output;
 mod output;
 mod pathspec_args;
@@ -991,17 +992,35 @@ enum Command {
         /// Finish an in-progress merge after resolving conflicts (or after `--no-commit`).
         #[arg(long = "continue", conflicts_with_all = ["abort", "check"])]
         continue_merge: bool,
-        /// Commit message (only with `--continue`; overrides `MERGE_MSG`).
-        #[arg(
-            short = 'm',
-            long = "message",
-            requires = "continue_merge",
-            allow_hyphen_values = true
-        )]
-        message: Option<String>,
         /// Predict whether the merge would succeed without changing refs, index, or worktree.
         #[arg(long = "check", conflicts_with_all = ["abort", "continue_merge"])]
         check: bool,
+        /// Refuse when a fast-forward is not possible (exit code 128).
+        #[arg(
+            long = "ff-only",
+            conflicts_with_all = ["no_ff", "continue_merge", "check"]
+        )]
+        ff_only: bool,
+        /// Record a merge commit even when a fast-forward is possible.
+        #[arg(
+            long = "no-ff",
+            conflicts_with_all = ["ff_only", "continue_merge", "check"]
+        )]
+        no_ff: bool,
+        /// Apply the merge to the index and worktree but do not commit yet.
+        #[arg(
+            long = "no-commit",
+            conflicts_with_all = ["squash", "continue_merge", "check"]
+        )]
+        no_commit: bool,
+        /// Squash merged commits into staged changes and write `SQUASH_MSG`.
+        #[arg(
+            long = "squash",
+            conflicts_with_all = ["no_commit", "continue_merge", "check"]
+        )]
+        squash: bool,
+        #[command(flatten)]
+        message: message_input::MessageInputArgs,
     },
     /// Cherry-pick commits onto the current branch.
     Pick {
@@ -2206,19 +2225,31 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             branch,
             abort,
             continue_merge,
-            message,
             check,
+            ff_only,
+            no_ff,
+            no_commit,
+            squash,
+            message,
         } => {
             let outcome = commands::merge::run(
                 branch.as_deref(),
                 abort,
                 continue_merge,
-                message.as_deref(),
                 check,
+                commands::merge::MergeRunOptions {
+                    ff_only,
+                    no_ff,
+                    no_commit,
+                    squash,
+                    message,
+                },
             )?;
             emit(&outcome, opts, ctx)?;
-            if outcome.result == commands::merge::MergeResult::Conflicts {
-                std::process::exit(1);
+            match outcome.result {
+                commands::merge::MergeResult::Conflicts => std::process::exit(1),
+                commands::merge::MergeResult::RefusedNotFf => std::process::exit(128),
+                _ => {}
             }
             Ok(())
         }
