@@ -47,6 +47,7 @@ The target branch is the first that exists of: the `target.branch` config value,
 | Commits on this branch not on the target | `grit shortlog` or `grit ahead` (`-n` / `--max-count`, `--behind`, `--stat`, `--name-only`; add `--target <REF>` to pick the base) |
 | Who last touched each line | `grit blame [<rev>] [--] <file>`; slice with `-L` (`10,25`, `10,+20`, `/pattern/`, `:funcname`); **`--group`** for smaller `hunks[]` in `--json` on large files |
 | Skip formatting commits in blame | `grit blame --ignore-rev <OID>` or `grit blame --ignore-revs-file .git-blame-ignore-revs` (set `blame.ignoreRevsFile` in config for a default list) |
+| Ignore whitespace-only edits in blame | `grit blame -w` / `--ignore-all-space` (same spelling as `grit diff -w`) |
 | Refs that have a reflog | `grit reflog list` (optional `-n` / `--limit`; `--json` → `{ "refs": [{ "ref": "…" }] }`) |
 | Reflog entries for one ref | `grit reflog [REF] --limit N` (default `HEAD`; branch short names OK) |
 | What happened to this branch recently | `grit reflog [REF] -n 20 --json` (`--since` / `--until` / `--grep`; `old_oid`, `new_oid`, `date`, `committer`, optional `action`; indices match Git `ref@{n}`) |
