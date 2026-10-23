@@ -5,8 +5,8 @@ use super::super::plan::{DailyHeadlineContext, DailyHeadlinePlan, DailyPrepare};
 use super::super::remote_fixture::{
     clone_bench_script, clone_bench_script_grit, clone_bench_script_grit_shallow,
     clone_bench_script_shallow, setup_git_git_file_remote, setup_git_git_grit_http_fetch_remote,
-    setup_git_git_grit_http_push_remote, setup_many_refs_file_remote,
-    setup_remote_remove_many_refs, setup_many_refs_remote_show, setup_synth10k_file_remote, setup_synth10k_grit_http_remote,
+    setup_git_git_grit_http_push_remote, setup_many_refs_file_remote, setup_many_refs_remote_show,
+    setup_remote_remove_many_refs, setup_synth10k_file_remote, setup_synth10k_grit_http_remote,
     setup_synth10k_pull_rebase_remote, verify_clone_http, verify_clone_local, verify_clone_shallow,
     verify_fetch_deepen, verify_fetch_dry_run, verify_fetch_incremental,
     verify_fetch_incremental_http, verify_fetch_noop, verify_fetch_one_branch,

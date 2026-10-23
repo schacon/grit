@@ -1984,7 +1984,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
                 )?,
                 opts,
                 ctx,
-            )
+            ),
             Some(RemoteAction::Refs {
                 remote_or_url,
                 heads,

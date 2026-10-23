@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::branch_tracking::remote_tracking_ref_for_remote_ref;
 use crate::config::ConfigSet;
 use crate::error::Result;
 use crate::objects::ObjectId;
@@ -9,7 +10,6 @@ use crate::refs;
 use crate::refspec::{parse_fetch_refspec, RefspecItem};
 use crate::remote::{HttpClientFactory, ListRefsOptions, Remote, RemoteError, RemoteRef};
 use crate::repo::Repository;
-use crate::branch_tracking::remote_tracking_ref_for_remote_ref;
 use crate::repo_handles::has_remote_section;
 use crate::transfer::{match_positive, ref_excluded, tracking_refs_gone_on_remote};
 
@@ -130,13 +130,8 @@ pub fn inspect_remote(
         };
         let advertised = remote.list_refs(Some(repo), &list_opts, http_factory)?;
         let head_branch = head_branch_from_advertisement(&advertised);
-        let branches = branch_states_from_query(
-            git_dir,
-            config.as_ref(),
-            name,
-            &refspecs,
-            &advertised,
-        )?;
+        let branches =
+            branch_states_from_query(git_dir, config.as_ref(), name, &refspecs, &advertised)?;
         (head_branch, branches)
     } else {
         let refspecs = FetchRefspecs::load(config.as_ref(), name);
@@ -287,9 +282,7 @@ fn branch_states_from_query(
     let stale_full = tracking_refs_gone_on_remote(git_dir, &refspecs.positive, &remote_pairs)?;
     let stale_names: BTreeSet<String> = stale_full
         .into_iter()
-        .filter_map(|(full, _)| {
-            head_short_name_for_tracking_ref(refspecs, remote_name, &full)
-        })
+        .filter_map(|(full, _)| head_short_name_for_tracking_ref(refspecs, remote_name, &full))
         .collect();
 
     let mut by_name: BTreeMap<String, RemoteBranchStateKind> = BTreeMap::new();
@@ -302,9 +295,7 @@ fn branch_states_from_query(
         by_name.insert(name.clone(), state);
     }
     for name in stale_names {
-        by_name
-            .entry(name)
-            .or_insert(RemoteBranchStateKind::Stale);
+        by_name.entry(name).or_insert(RemoteBranchStateKind::Stale);
     }
     Ok(by_name
         .into_iter()

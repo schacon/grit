@@ -5,8 +5,8 @@ use grit_lib::config::ConfigSet;
 use grit_lib::refs::listing::{RefSort, SortKey};
 use grit_lib::remote::fetch_request::resolve_remote_argument;
 use grit_lib::remote::{
-    fold_peeled_refs, DefaultHttpClientFactory, InspectOptions, ListRefsOptions, RemoteError,
-    RemoteBranchStateKind, RemoteRef, RemoteSummary,
+    fold_peeled_refs, DefaultHttpClientFactory, InspectOptions, ListRefsOptions,
+    RemoteBranchStateKind, RemoteError, RemoteRef, RemoteSummary,
 };
 use grit_lib::repo::Repository;
 use grit_lib::repo_handles::{RemoteUrlKind, RemoveOptions, UrlChange};
