@@ -101,7 +101,29 @@ fn config_file_flag_reads_and_writes_outside_repo() -> TestResult {
     assert!(got.status.success());
     let v: serde_json::Value = serde_json::from_slice(&got.stdout)?;
     assert_eq!(v["value"], "42");
-    assert_eq!(v["scope"], "local");
+    assert_eq!(v["scope"], "command");
+    Ok(())
+}
+
+#[test]
+fn config_get_git_config_parameters_has_command_scope_no_file() -> TestResult {
+    let scratch = Scratch::new("config-cmd-env")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    grit_ok(&repo, &["init", "."]);
+
+    let mut cmd = Command::new(GRIT);
+    cmd.env("GIT_CONFIG_PARAMETERS", "'demo.value=42'")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .args(["config", "--json", "demo.value"])
+        .current_dir(&repo);
+    let out = cmd.output()?;
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(v["value"], "42");
+    assert_eq!(v["scope"], "command");
+    assert!(v["file"].is_null());
+    assert!(v["line"].is_null());
     Ok(())
 }
 

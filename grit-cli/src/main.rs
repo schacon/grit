@@ -3163,7 +3163,8 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
             key,
             value,
         } => {
-            let outcome = commands::config::run(global, local, file, list, unset, key, value)?;
+            let outcome =
+                commands::config::run(global, local, file, list, unset, key, value, opts.mode)?;
             let code = commands::config::exit_code(&outcome);
             emit(&outcome, opts, ctx)?;
             if code != 0 {

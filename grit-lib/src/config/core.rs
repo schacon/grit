@@ -138,8 +138,8 @@ pub struct ConfigValueOrigin {
     pub scope: ConfigScope,
     /// Source file when file-backed; absent for command-line overrides.
     pub file: Option<PathBuf>,
-    /// One-based line number in `file`.
-    pub line: usize,
+    /// One-based line number in `file`; `None` for command-line / `-f` scope (Git has no file line).
+    pub line: Option<usize>,
 }
 
 /// A single configuration entry with its origin metadata.
@@ -1082,7 +1082,6 @@ impl ConfigFile {
     /// headers, matching how Git injects command-line configuration.
     pub fn from_git_config_parameters(path: &Path, raw: &str) -> Result<Self> {
         let mut entries = Vec::new();
-        let pseudo_path = path.to_path_buf();
         for entry in parse_config_parameters_strict(raw)? {
             match entry {
                 ConfigParameter::Pair { key, value } => {
@@ -1091,7 +1090,7 @@ impl ConfigFile {
                         key: canon,
                         value,
                         scope: ConfigScope::Command,
-                        file: Some(pseudo_path.clone()),
+                        file: None,
                         line: 0,
                     });
                 }
@@ -1102,7 +1101,7 @@ impl ConfigFile {
                             key: canon,
                             value: Some(val.to_owned()),
                             scope: ConfigScope::Command,
-                            file: Some(pseudo_path.clone()),
+                            file: None,
                             line: 0,
                         });
                     } else {
@@ -1111,7 +1110,7 @@ impl ConfigFile {
                             key: canon,
                             value: None,
                             scope: ConfigScope::Command,
-                            file: Some(pseudo_path.clone()),
+                            file: None,
                             line: 0,
                         });
                     }
@@ -1876,11 +1875,18 @@ impl ConfigSet {
     /// Returns [`Error::Config`] when `key` is not a valid Git config key.
     pub fn get_with_origin(&self, key: &str) -> Result<Option<ConfigValueOrigin>> {
         let _canon = canonical_key(key)?;
-        Ok(self.get_last_entry(key).map(|e| ConfigValueOrigin {
-            value: e.value.clone().or_else(|| Some("true".to_owned())),
-            scope: e.scope,
-            file: e.file.clone(),
-            line: e.line,
+        Ok(self.get_last_entry(key).map(|e| {
+            let (file, line) = if e.scope == ConfigScope::Command {
+                (None, None)
+            } else {
+                (e.file.clone(), (e.line > 0).then_some(e.line))
+            };
+            ConfigValueOrigin {
+                value: e.value.clone().or_else(|| Some("true".to_owned())),
+                scope: e.scope,
+                file,
+                line,
+            }
         }))
     }
 

@@ -4,12 +4,12 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::config::{
-    global_config_write_path, set_config_value, unset_config_value, ConfigLocation, ConfigSet,
+    global_config_write_path, set_config_value, unset_config_value, ConfigLocation, ConfigScope,
+    ConfigSet,
 };
-use grit_lib::config::environment::Environment;
 use grit_lib::error::{ConfigError, Error};
-use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use tempfile::TempDir;
 
@@ -17,7 +17,7 @@ fn git_config_get_origin(
     repo: &Path,
     key: &str,
     env: &[(&str, &str)],
-) -> Option<(String, String, String, usize)> {
+) -> Option<(String, String, String)> {
     let mut cmd = Command::new("git");
     cmd.args([
         "-C",
@@ -39,9 +39,39 @@ fn git_config_get_origin(
     let line = text.lines().next()?.trim();
     let mut parts = line.split('\t');
     let scope = parts.next()?.to_owned();
-    let file = parts.next()?.strip_prefix("file:")?.to_owned();
+    let origin = parts.next()?.to_owned();
     let value = parts.next()?.to_owned();
-    Some((scope, file, value, 1))
+    let file = if scope == "command" {
+        String::new()
+    } else {
+        origin.strip_prefix("file:")?.to_owned()
+    };
+    Some((scope, file, value))
+}
+
+fn git_config_file_get_origin(cfg: &Path, key: &str) -> Option<(String, String)> {
+    let out = Command::new("git")
+        .args([
+            "config",
+            "-f",
+            cfg.to_str().unwrap(),
+            "--show-origin",
+            "--show-scope",
+            "--get",
+            key,
+        ])
+        .output()
+        .expect("git config");
+    if !out.status.success() {
+        return None;
+    }
+    let line = String::from_utf8(out.stdout).expect("utf8");
+    let line = line.lines().next()?.trim();
+    let mut parts = line.split('\t');
+    let scope = parts.next()?.to_owned();
+    let _file = parts.next()?;
+    let value = parts.next()?.to_owned();
+    Some((scope, value))
 }
 
 #[test]
@@ -56,9 +86,10 @@ fn config_get_with_origin_matches_git_show_origin_show_scope() {
         .expect("git init")
         .success());
 
+    let system_cfg = tmp.path().join("system.cfg");
+    fs::write(&system_cfg, "[user]\n\tname = System User\n").expect("write system");
     let global_cfg = tmp.path().join("global.cfg");
     fs::write(&global_cfg, "[user]\n\tname = Global Name\n").expect("write global");
-    let local_key = "user.email";
     fs::write(
         repo_path.join(".git/config"),
         "[user]\n\temail = local@example.com\n",
@@ -66,27 +97,42 @@ fn config_get_with_origin_matches_git_show_origin_show_scope() {
     .expect("write local");
 
     let mut env = Environment::empty();
+    env.git_config_system = Some(system_cfg.display().to_string());
     env.git_config_global = Some(global_cfg.display().to_string());
+    env.git_config_parameters = Some("'user.name=Command Name'".to_owned());
 
     let repo = Repository::discover(Some(&repo_path), &RepositoryOptions::empty()).expect("open");
     let git_dir = repo.git_dir();
 
     let merged = ConfigSet::load(&env, Some(git_dir), true).expect("load merged");
     let origin = merged
-        .get_with_origin(local_key)
+        .get_with_origin("user.name")
         .expect("valid key")
         .expect("set");
-    assert_eq!(origin.value.as_deref(), Some("local@example.com"));
-    assert_eq!(origin.scope.to_string(), "local");
+    assert_eq!(origin.value.as_deref(), Some("Command Name"));
+    assert_eq!(origin.scope, ConfigScope::Command);
+    assert!(origin.file.is_none());
+    assert!(origin.line.is_none());
 
     let git_origin = git_config_get_origin(
         &repo_path,
-        local_key,
-        &[("GIT_CONFIG_GLOBAL", global_cfg.to_str().unwrap())],
+        "user.name",
+        &[
+            ("GIT_CONFIG_SYSTEM", system_cfg.to_str().unwrap()),
+            ("GIT_CONFIG_GLOBAL", global_cfg.to_str().unwrap()),
+            ("GIT_CONFIG_PARAMETERS", "'user.name=Command Name'"),
+        ],
     )
     .expect("git has key");
-    assert_eq!(git_origin.0, "local");
-    assert_eq!(git_origin.2, "local@example.com");
+    assert_eq!(git_origin.0, "command");
+    assert_eq!(git_origin.2, "Command Name");
+
+    let email = merged
+        .get_with_origin("user.email")
+        .expect("valid")
+        .expect("local email");
+    assert_eq!(email.scope, ConfigScope::Local);
+    assert_eq!(email.value.as_deref(), Some("local@example.com"));
 
     let global_only = ConfigLocation::Global
         .load_single(&env, Some(git_dir))
@@ -96,7 +142,32 @@ fn config_get_with_origin_matches_git_show_origin_show_scope() {
         .expect("valid")
         .expect("global name");
     assert_eq!(g_origin.value.as_deref(), Some("Global Name"));
-    assert_eq!(g_origin.scope.to_string(), "global");
+    assert_eq!(g_origin.scope, ConfigScope::Global);
+
+    let system_only = ConfigLocation::System
+        .load_single(&env, None)
+        .expect("system load");
+    let s_origin = system_only
+        .get_with_origin("user.name")
+        .expect("valid")
+        .expect("system name");
+    assert_eq!(s_origin.value.as_deref(), Some("System User"));
+    assert_eq!(s_origin.scope, ConfigScope::System);
+
+    let file_cfg = tmp.path().join("file.cfg");
+    fs::write(&file_cfg, "[demo]\n\tvalue = from-file\n").expect("write file cfg");
+    let file_set = ConfigLocation::File(file_cfg.clone())
+        .load_single(&Environment::empty(), None)
+        .expect("file load");
+    let f_origin = file_set
+        .get_with_origin("demo.value")
+        .expect("valid")
+        .expect("file value");
+    assert_eq!(f_origin.scope, ConfigScope::Command);
+    assert!(f_origin.file.is_none());
+    let git_file = git_config_file_get_origin(&file_cfg, "demo.value").expect("git file get");
+    assert_eq!(git_file.0, "command");
+    assert_eq!(git_file.1, "from-file");
 }
 
 #[test]

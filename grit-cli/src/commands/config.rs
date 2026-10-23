@@ -15,7 +15,7 @@ use serde::Serialize;
 
 use crate::context;
 use crate::markdown;
-use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
+use crate::output::{outln, HumanRender, MarkdownRender, OutputMode, RenderContext};
 
 /// Result of `grit config`, tagged by `action`.
 #[derive(Serialize, JsonSchema)]
@@ -118,6 +118,7 @@ pub fn exit_code(outcome: &ConfigOutcome) -> i32 {
 }
 
 /// Run `grit config`.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     global: bool,
     local: bool,
@@ -126,15 +127,17 @@ pub fn run(
     unset: bool,
     key: Option<String>,
     value: Option<String>,
+    mode: OutputMode,
 ) -> Result<ConfigOutcome> {
     let write_location = resolve_location(global, local, file.clone(), true)?;
     let read_location = resolve_location(global, local, file, false)?;
+    let env = context::environment();
 
     if list {
         if key.is_some() || value.is_some() {
             bail!("--list does not take a key or value");
         }
-        return list_values(read_location);
+        return list_values(read_location, &env);
     }
 
     let Some(key) = key else {
@@ -145,12 +148,12 @@ pub fn run(
         if value.is_some() {
             bail!("--unset does not take a value");
         }
-        return unset_value(write_location, &key);
+        return unset_value(write_location, &env, &key);
     }
 
     match value {
-        Some(value) => set_value(write_location, &key, &value),
-        None => get_value(read_location, &key),
+        Some(value) => set_value(write_location, &env, &key, &value),
+        None => get_value(read_location, &env, &key, mode),
     }
 }
 
@@ -158,11 +161,48 @@ pub fn run(
 /// Windows credential helper).
 #[cfg(windows)]
 pub fn set_global(key: &str, value: &str) -> Result<()> {
-    set_value(Some(ConfigLocation::Global), key, value).map(|_| ())
+    set_value(
+        Some(ConfigLocation::Global),
+        &context::environment(),
+        key,
+        value,
+    )
+    .map(|_| ())
 }
 
-fn get_value(read_location: Option<ConfigLocation>, key: &str) -> Result<ConfigOutcome> {
-    let config = load_for_read(read_location)?;
+fn get_value(
+    read_location: Option<ConfigLocation>,
+    env: &grit_lib::config::environment::Environment,
+    key: &str,
+    mode: OutputMode,
+) -> Result<ConfigOutcome> {
+    let config = load_for_read(read_location, env)?;
+    if matches!(mode, OutputMode::Human) {
+        match config.get(key) {
+            Some(value) => {
+                return Ok(ConfigOutcome::Get {
+                    key: key.to_owned(),
+                    value: Some(value),
+                    scope: None,
+                    file: None,
+                    line: None,
+                });
+            }
+            None => {
+                config
+                    .get_with_origin(key)
+                    .with_context(|| format!("invalid config key {key}"))?;
+                return Ok(ConfigOutcome::Get {
+                    key: key.to_owned(),
+                    value: None,
+                    scope: None,
+                    file: None,
+                    line: None,
+                });
+            }
+        }
+    }
+
     let origin = config
         .get_with_origin(key)
         .with_context(|| format!("invalid config key {key}"))?;
@@ -172,7 +212,7 @@ fn get_value(read_location: Option<ConfigLocation>, key: &str) -> Result<ConfigO
             value: o.value,
             scope: Some(o.scope.to_string()),
             file: o.file.as_ref().map(|p| p.display().to_string()),
-            line: Some(o.line as u64),
+            line: o.line.map(|l| l as u64),
         },
         None => ConfigOutcome::Get {
             key: key.to_owned(),
@@ -184,8 +224,11 @@ fn get_value(read_location: Option<ConfigLocation>, key: &str) -> Result<ConfigO
     })
 }
 
-fn list_values(read_location: Option<ConfigLocation>) -> Result<ConfigOutcome> {
-    let config = load_for_read(read_location)?;
+fn list_values(
+    read_location: Option<ConfigLocation>,
+    env: &grit_lib::config::environment::Environment,
+) -> Result<ConfigOutcome> {
+    let config = load_for_read(read_location, env)?;
     let entries = config
         .entries()
         .iter()
@@ -193,7 +236,11 @@ fn list_values(read_location: Option<ConfigLocation>) -> Result<ConfigOutcome> {
             key: entry.key.clone(),
             value: entry.value.clone(),
             scope: entry.scope.to_string(),
-            file: entry.file.as_ref().map(|p| p.display().to_string()),
+            file: entry
+                .file
+                .as_ref()
+                .filter(|_| entry.scope != grit_lib::config::ConfigScope::Command)
+                .map(|p| p.display().to_string()),
         })
         .collect();
     Ok(ConfigOutcome::List { entries })
@@ -201,15 +248,15 @@ fn list_values(read_location: Option<ConfigLocation>) -> Result<ConfigOutcome> {
 
 fn set_value(
     write_location: Option<ConfigLocation>,
+    env: &grit_lib::config::environment::Environment,
     key: &str,
     value: &str,
 ) -> Result<ConfigOutcome> {
     let Some(location) = write_location else {
         bail!("internal error: write location missing");
     };
-    let env = context::environment();
-    let git_dir = context::discover().ok().map(|r| r.git_dir().to_path_buf());
-    set_config_value(location, &env, git_dir.as_deref(), key, value)
+    let git_dir = git_dir_for_location(&location)?;
+    set_config_value(location, env, git_dir.as_deref(), key, value)
         .with_context(|| format!("could not set {key}"))?;
     Ok(ConfigOutcome::Set {
         key: key.to_owned(),
@@ -217,13 +264,16 @@ fn set_value(
     })
 }
 
-fn unset_value(write_location: Option<ConfigLocation>, key: &str) -> Result<ConfigOutcome> {
+fn unset_value(
+    write_location: Option<ConfigLocation>,
+    env: &grit_lib::config::environment::Environment,
+    key: &str,
+) -> Result<ConfigOutcome> {
     let Some(location) = write_location else {
         bail!("internal error: write location missing");
     };
-    let env = context::environment();
-    let git_dir = context::discover().ok().map(|r| r.git_dir().to_path_buf());
-    match unset_config_value(location, &env, git_dir.as_deref(), key) {
+    let git_dir = git_dir_for_location(&location)?;
+    match unset_config_value(location, env, git_dir.as_deref(), key) {
         Ok(()) => Ok(ConfigOutcome::Unset {
             key: key.to_owned(),
         }),
@@ -235,18 +285,38 @@ fn unset_value(write_location: Option<ConfigLocation>, key: &str) -> Result<Conf
 }
 
 /// `None` means load the full merged cascade (system + global + local + command).
-fn load_for_read(read_location: Option<ConfigLocation>) -> Result<ConfigSet> {
-    let env = context::environment();
+fn load_for_read(
+    read_location: Option<ConfigLocation>,
+    env: &grit_lib::config::environment::Environment,
+) -> Result<ConfigSet> {
     if let Some(location) = read_location {
-        let git_dir = context::discover().ok().map(|r| r.git_dir().to_path_buf());
+        let git_dir = optional_git_dir_for_read(&location)?;
         return location
-            .load_single(&env, git_dir.as_deref())
+            .load_single(env, git_dir.as_deref())
             .context("could not load config");
     }
     if let Ok(repo) = context::discover() {
-        ConfigSet::load(&env, Some(repo.git_dir()), true).context("could not load config")
+        ConfigSet::load(env, Some(repo.git_dir()), true).context("could not load config")
     } else {
-        ConfigSet::load(&env, None, true).context("could not load config")
+        ConfigSet::load(env, None, true).context("could not load config")
+    }
+}
+
+fn git_dir_for_location(location: &ConfigLocation) -> Result<Option<PathBuf>> {
+    match location {
+        ConfigLocation::Local | ConfigLocation::Worktree => {
+            Ok(Some(context::discover()?.git_dir().to_path_buf()))
+        }
+        ConfigLocation::Global | ConfigLocation::System | ConfigLocation::File(_) => Ok(None),
+    }
+}
+
+fn optional_git_dir_for_read(location: &ConfigLocation) -> Result<Option<PathBuf>> {
+    match location {
+        ConfigLocation::Local | ConfigLocation::Worktree => git_dir_for_location(location),
+        ConfigLocation::Global | ConfigLocation::System | ConfigLocation::File(_) => {
+            Ok(context::discover().ok().map(|r| r.git_dir().to_path_buf()))
+        }
     }
 }
 

@@ -31,7 +31,8 @@ impl ConfigLocation {
     #[must_use]
     pub fn file_scope(&self) -> ConfigScope {
         match self {
-            Self::Local | Self::File(_) => ConfigScope::Local,
+            Self::Local => ConfigScope::Local,
+            Self::File(_) => ConfigScope::Local,
             Self::Global => ConfigScope::Global,
             Self::System => ConfigScope::System,
             Self::Worktree => ConfigScope::Worktree,
@@ -119,7 +120,7 @@ impl ConfigLocation {
             Self::File(path) => {
                 let s = path.to_string_lossy();
                 let path = resolve_config_override_path(env, s.as_ref());
-                if let Some(f) = ConfigFile::from_path(&path, ConfigScope::Local)? {
+                if let Some(f) = ConfigFile::from_path(&path, ConfigScope::Command)? {
                     set.merge_file_with_includes(&f, true, &ctx)?;
                 }
             }
