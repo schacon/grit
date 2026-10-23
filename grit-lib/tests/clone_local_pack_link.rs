@@ -76,6 +76,7 @@ fn clone_local_repacked_source_links_pack_and_reports_index_stats() {
             thread_policy: grit_lib::parallel::ThreadPolicy::default(),
             depth: None,
             filter: None,
+            branch: None,
         },
         &mut NoProgress,
         None,

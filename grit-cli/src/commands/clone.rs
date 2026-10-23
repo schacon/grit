@@ -445,6 +445,9 @@ pub fn run(
     mode: OutputMode,
 ) -> Result<CloneOutcome> {
     let depth = depth.or_else(|| shallow.then_some(1));
+    if matches!(depth, Some(0)) {
+        return Err(anyhow::anyhow!("depth 0 is not a positive number"));
+    }
     let dir = match dir {
         Some(d) => d,
         None => derive_clone_dir(url).map_err(|e| anyhow::anyhow!("{e}"))?,

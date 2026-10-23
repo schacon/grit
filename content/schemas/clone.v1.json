@@ -70,27 +70,7 @@
   "description": "Result of `grit clone`.",
   "properties": {
     "branch": {
-      "description": "Branch checked out, or null when detached at a tag.",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "depth": {
-      "description": "Shallow depth when `--depth` or `--shallow` was used.",
-      "format": "uint32",
-      "minimum": 0.0,
-      "type": [
-        "integer",
-        "null"
-      ]
-    },
-    "detached": {
-      "description": "True when HEAD is detached (tag checkout).",
-      "type": "boolean"
-    },
-    "tag": {
-      "description": "Tag name when `-b` named a tag.",
+      "description": "Branch checked out, or `null` when detached at a tag.",
       "type": [
         "string",
         "null"
@@ -117,6 +97,19 @@
       "format": "uint64",
       "minimum": 0.0,
       "type": "integer"
+    },
+    "depth": {
+      "description": "Shallow depth when `--depth` or `--shallow` was used.",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "detached": {
+      "description": "True when `HEAD` is detached (tag checkout).",
+      "type": "boolean"
     },
     "files": {
       "description": "Working-tree files checked out.",
@@ -164,6 +157,13 @@
       "format": "double",
       "type": "number"
     },
+    "tag": {
+      "description": "Tag name when `-b` named a tag; omitted on branch checkout.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "tags": {
       "description": "Remote tags fetched.",
       "format": "uint64",
@@ -181,10 +181,9 @@
     }
   },
   "required": [
-    "branch",
     "branches",
-    "detached",
     "bytes",
+    "detached",
     "files",
     "objects",
     "path",

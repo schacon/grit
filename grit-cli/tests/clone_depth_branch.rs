@@ -119,6 +119,33 @@ fn clone_shallow_hidden_alias_still_works() {
 }
 
 #[test]
+fn clone_depth_zero_rejected() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let bare = setup_bare(base.path());
+    let url = format!("file://{}", bare.to_string_lossy());
+    let out = Command::new(GRIT)
+        .args([
+            "clone",
+            "--depth",
+            "0",
+            url.as_str(),
+            base.path().join("dest").to_str().unwrap(),
+        ])
+        .output()
+        .expect("grit clone");
+    assert!(!out.status.success(), "depth 0 must fail");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("depth 0 is not a positive number"),
+        "stderr: {err}"
+    );
+    assert!(
+        !base.path().join("dest").join(".git").exists(),
+        "failed clone must not leave a repository"
+    );
+}
+
+#[test]
 fn clone_shallow_conflicts_with_depth() {
     let out = Command::new(GRIT)
         .args([

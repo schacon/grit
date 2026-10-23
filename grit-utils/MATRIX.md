@@ -153,6 +153,7 @@ Overview of **grit-lib** coverage, **`grit` commands**, common workflows, and **
 | --- | --- |
 | `clone/http@synth-10k` | Clone synth-10k over grit smart HTTP vs git clone |
 | `clone/local@synth-10k` | Clone over file:// (not git clone --local hardlink shortcut) vs git clone |
+| `clone/shallow@git-git` | Shallow clone (`--depth 1`) over file:// vs git clone --depth 1 |
 | `fetch/incremental-http@git-git` | Incremental fetch over grit smart HTTP (git-git bare remote) |
 | `fetch/incremental@git-git` | Incremental fetch vs git fetch |
 | `fetch/noop@git-git` | No-op fetch when client already matches remote (file:// git-git) |

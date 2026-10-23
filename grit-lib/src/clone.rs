@@ -36,6 +36,9 @@ pub enum CloneError {
     /// Named branch or tag from [`CloneOptions::branch`] was not advertised by the remote.
     #[error("remote ref '{0}' not found")]
     RemoteRefNotFound(String),
+    /// [`CloneOptions::depth`] was zero (`git clone --depth 0` is invalid).
+    #[error("depth 0 is not a positive number")]
+    InvalidCloneDepth,
     /// Underlying library failure.
     #[error(transparent)]
     Library(#[from] Error),
@@ -68,7 +71,10 @@ impl CloneError {
             Self::Remote(crate::remote::RemoteError::Library(e)) => {
                 matches!(e, Error::RemoteReadFailed)
             }
-            Self::DestNotEmpty(_) | Self::RemoteRefNotFound(_) | Self::Remote(_) => false,
+            Self::DestNotEmpty(_)
+            | Self::RemoteRefNotFound(_)
+            | Self::InvalidCloneDepth
+            | Self::Remote(_) => false,
         }
     }
 }
@@ -256,6 +262,9 @@ pub fn clone(
             .unwrap_or(false)
     {
         return Err(CloneError::DestNotEmpty(dir.to_owned()));
+    }
+    if opts.depth == Some(0) {
+        return Err(CloneError::InvalidCloneDepth);
     }
 
     init_repository(

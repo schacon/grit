@@ -16967,6 +16967,7 @@ pub grit_lib::remote::clone::CloneError::DestNotEmpty(alloc::string::String)
 pub grit_lib::remote::clone::CloneError::Library(grit_lib::error::Error)
 pub grit_lib::remote::clone::CloneError::Remote(grit_lib::remote::RemoteError)
 pub grit_lib::remote::clone::CloneError::RemoteRefNotFound(alloc::string::String)
+pub grit_lib::remote::clone::CloneError::InvalidCloneDepth
 impl grit_lib::remote::clone::CloneError
 pub fn grit_lib::remote::clone::CloneError::is_remote_read_failure(&self) -> bool
 pub fn grit_lib::remote::clone::CloneError::is_remote_ref_not_found(&self) -> bool
