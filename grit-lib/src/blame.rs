@@ -184,6 +184,23 @@ pub fn build_line_map(
     build_line_map_with_changed_flags(old, new, diff_algorithm, indent_heuristic, false).0
 }
 
+/// True when every focused child line index lies in the unchanged prefix or suffix
+/// after affix trimming (middle xdiff can be skipped for those lines).
+fn child_lines_only_in_affix(
+    focus: &[usize],
+    new_len: usize,
+    prefix: usize,
+    suffix: usize,
+) -> bool {
+    if focus.is_empty() {
+        return false;
+    }
+    let suffix_start = new_len.saturating_sub(suffix);
+    focus
+        .iter()
+        .all(|&idx| idx < prefix || (suffix > 0 && idx >= suffix_start))
+}
+
 /// Like [`build_line_map_with_changed_flags`], but reads line text from owned strings without
 /// building full-file `&str` slices (prefix/suffix mapping only touches unchanged ends).
 #[allow(clippy::too_many_arguments)]
@@ -193,6 +210,7 @@ fn build_line_map_with_changed_flags_owned(
     diff_algorithm: BlameDiffAlgorithm,
     indent_heuristic: bool,
     with_changed_flags: bool,
+    child_focus: Option<&[usize]>,
 ) -> (Vec<Option<usize>>, Vec<bool>) {
     let (prefix, suffix, old_lo, old_hi, new_lo, new_hi) = common_affix_trim_blob_lines(old, new);
     let mut map = vec![None; new.len()];
@@ -211,36 +229,50 @@ fn build_line_map_with_changed_flags_owned(
             (map, Vec::new())
         };
     }
+    if child_focus.is_some_and(|focus| child_lines_only_in_affix(focus, new.len(), prefix, suffix))
+    {
+        return if with_changed_flags {
+            (map, vec![false; new.len()])
+        } else {
+            (map, Vec::new())
+        };
+    }
     let mut flags = if with_changed_flags {
         vec![false; new.len()]
     } else {
         Vec::new()
     };
-    let old_mid_refs: Vec<&str> = (old_lo..old_hi).map(|i| old.line(i)).collect();
-    let new_mid_refs: Vec<&str> = (new_lo..new_hi).map(|i| new.line(i)).collect();
+
+    // When `child_focus` is set (-L blame), always diff the full affix-trimmed middle.
+    // Index-aligned sub-windows are unsafe when both sides have equal line counts but an
+    // insert on one side of the window and a delete on the other shift true correspondence.
+    let (old_w_lo, old_w_hi, new_w_lo, new_w_hi) = (old_lo, old_hi, new_lo, new_hi);
+
+    let old_mid_owned: Vec<&str> = (old_w_lo..old_w_hi).map(|i| old.line(i)).collect();
+    let new_mid_owned: Vec<&str> = (new_w_lo..new_w_hi).map(|i| new.line(i)).collect();
+    let old_mid = old_mid_owned.as_slice();
+    let new_mid = new_mid_owned.as_slice();
     let ops = if diff_algorithm == BlameDiffAlgorithm::Myers {
-        crate::diff::line_diff_ops_git_xdiff_compacted(
-            &old_mid_refs,
-            &new_mid_refs,
-            indent_heuristic,
-        )
+        crate::diff::line_diff_ops_git_xdiff_compacted(old_mid, new_mid, indent_heuristic)
     } else {
         crate::diff_indent_heuristic::diff_slice_ops_compacted(
-            &old_mid_refs,
-            &new_mid_refs,
+            old_mid,
+            new_mid,
             diff_algorithm.to_similar(),
             indent_heuristic,
         )
     };
-    let mid_map = crate::diff_indent_heuristic::map_new_to_old_from_ops(&ops, new_mid_refs.len());
+    let mid_map = crate::diff_indent_heuristic::map_new_to_old_from_ops(&ops, new_mid.len());
+    let old_base = old_w_lo;
+    let new_base = new_w_lo;
     for (j, parent) in mid_map.into_iter().enumerate() {
-        map[prefix + j] = parent.map(|idx| idx + prefix);
+        map[new_base + j] = parent.map(|idx| idx + old_base);
     }
     if with_changed_flags {
         let mid_flags =
-            crate::diff_indent_heuristic::new_line_changed_flags_from_ops(&ops, new_mid_refs.len());
+            crate::diff_indent_heuristic::new_line_changed_flags_from_ops(&ops, new_mid.len());
         for (j, flag) in mid_flags.into_iter().enumerate() {
-            flags[prefix + j] = flag;
+            flags[new_base + j] = flag;
         }
         (map, flags)
     } else {
@@ -1537,6 +1569,7 @@ impl<'a> BlameSession<'a> {
         indent_heuristic: bool,
         is_ignored: bool,
         include_stop_blame: bool,
+        child_focus: Option<&[usize]>,
     ) -> PairMapCacheValue {
         let key = PairMapCacheKey {
             parent: parent_oid,
@@ -1550,10 +1583,12 @@ impl<'a> BlameSession<'a> {
             fuzzy: is_ignored,
             include_stop_blame,
         };
-        if let Some(maps) = self.pair_maps.get(&key) {
-            return maps.clone();
+        let cacheable = child_focus.is_none();
+        if cacheable {
+            if let Some(maps) = self.pair_maps.get(&key) {
+                return maps.clone();
+            }
         }
-
         let identity_map = parent_oid == child_oid && par_lines.len() == cur_lines.len();
         let (diff_line_map, xdiff_changed) = if identity_map {
             (
@@ -1567,6 +1602,7 @@ impl<'a> BlameSession<'a> {
                 diff_algorithm,
                 indent_heuristic,
                 true,
+                child_focus,
             )
         } else {
             (
@@ -1576,6 +1612,7 @@ impl<'a> BlameSession<'a> {
                     diff_algorithm,
                     indent_heuristic,
                     false,
+                    child_focus,
                 )
                 .0,
                 Vec::new(),
@@ -1618,7 +1655,9 @@ impl<'a> BlameSession<'a> {
             line_map: Arc::new(line_map),
             stop_blame_on_current: Arc::new(stop_blame_on_current),
         };
-        self.pair_maps.insert(key, value.clone());
+        if cacheable {
+            self.pair_maps.insert(key, value.clone());
+        }
         value
     }
 }
@@ -1741,11 +1780,13 @@ pub fn compute_blame(
 }
 
 /// Advance `start_oid` along first parents while `path` resolves to `blob_oid`.
+#[allow(clippy::too_many_arguments)]
 fn fast_forward_same_blob(
     odb: &Odb,
     session: &mut BlameSession<'_>,
     mut oid: ObjectId,
     blob_oid: ObjectId,
+    blob_mode: u32,
     path: &str,
     grafts: &HashMap<ObjectId, Vec<ObjectId>>,
     commit_cache: &mut BlameCommitCache,
@@ -1783,6 +1824,9 @@ fn fast_forward_same_blob(
                 true,
             )?
         {
+            session
+                .commit_path_blob
+                .insert((parent_oid, path.to_owned()), Some((blob_oid, blob_mode)));
             oid = parent_oid;
             continue;
         }
@@ -1937,6 +1981,36 @@ fn compute_blame_with_session(
 
         // git/blame.c `pass_whole_blame`: run before loading every parent tree for coalesce.
         if merge_aware && !is_ignored && parents.len() >= 2 {
+            if let Some(first_parent) = parents.first().copied() {
+                if session.commit_graph.is_some()
+                    && bloom_may_skip_to_first_parent(
+                        session,
+                        odb,
+                        current_oid,
+                        first_parent,
+                        &current_path,
+                        grafts,
+                        &mut commit_cache,
+                        true,
+                    )?
+                {
+                    session.commit_path_blob.insert(
+                        (first_parent, current_path.clone()),
+                        Some((current_blob_oid, current_blob_mode)),
+                    );
+                    current_oid = fast_forward_same_blob(
+                        odb,
+                        session,
+                        first_parent,
+                        current_blob_oid,
+                        current_blob_mode,
+                        &current_path,
+                        grafts,
+                        &mut commit_cache,
+                    )?;
+                    continue 'blame_loop;
+                }
+            }
             for parent_oid in &parents {
                 if let Some((blob, mode)) = session.resolve_blob_at_commit(
                     odb,
@@ -1950,6 +2024,7 @@ fn compute_blame_with_session(
                             session,
                             *parent_oid,
                             current_blob_oid,
+                            current_blob_mode,
                             &current_path,
                             grafts,
                             &mut commit_cache,
@@ -2210,6 +2285,7 @@ fn compute_blame_with_session(
                     indent_heuristic,
                     false,
                     false,
+                    None,
                 );
                 par_lines_vec[i] = Some(pl_arc);
                 maps[i] = Some(pair.diff_line_map);
@@ -2503,6 +2579,7 @@ fn compute_blame_with_session(
                     session,
                     parent_oid,
                     current_blob_oid,
+                    p_blob_mode,
                     &current_path,
                     grafts,
                     &mut commit_cache,
@@ -2550,6 +2627,12 @@ fn compute_blame_with_session(
                     pending = need_diff;
                     affix_mapped
                 };
+                let focus_storage: Option<Vec<usize>> = if line_range.is_some() {
+                    Some(pending.iter().map(|t| t.current_idx).collect())
+                } else {
+                    None
+                };
+                let child_focus = focus_storage.as_deref();
                 let maps = session.parent_child_line_maps(
                     p_blob_oid,
                     &parent_blob_path,
@@ -2563,6 +2646,7 @@ fn compute_blame_with_session(
                     indent_heuristic,
                     is_ignored,
                     true,
+                    child_focus,
                 );
                 let line_map = maps.line_map.as_slice();
                 let stop_blame_on_current = maps.stop_blame_on_current.as_slice();
@@ -3008,6 +3092,9 @@ fn advance_across_unchanged_first_parents(
                 true,
             )?
         {
+            session
+                .commit_path_blob
+                .insert((parent_oid, path.to_owned()), Some((blob_oid, blob_mode)));
             current_oid = parent_oid;
             continue;
         }
@@ -3020,6 +3107,7 @@ fn advance_across_unchanged_first_parents(
                     session,
                     parent_oid,
                     blob_oid,
+                    p_mode,
                     path,
                     grafts,
                     commit_cache,

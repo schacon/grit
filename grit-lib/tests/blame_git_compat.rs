@@ -575,6 +575,49 @@ fn blame_matches_git_adcb_permutation_on_padded_file() {
     assert_blame_matches(&repo, dir, file, None, None);
 }
 
+/// Equal-length middle edit: insert at the low end and delete at the high end of the changed
+/// run (beyond the old 48-line window padding). `-L` must still match git.
+#[test]
+fn blame_matches_git_equal_length_shift_beyond_pad_line_range() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_run(root, &["init", "-q", "-b", "main"]);
+    git_run(root, &["config", "user.name", "Blame Test"]);
+    git_run(root, &["config", "user.email", "blame@example.com"]);
+
+    let file = "f.txt";
+    let mut old_tail = vec![
+        "lineA\n".to_string(),
+        "lineB\n".to_string(),
+        "lineC\n".to_string(),
+        "lineD\n".to_string(),
+        "lineE\n".to_string(),
+    ];
+    let mut lines: Vec<String> = (0..60).map(|i| format!("pad {i}\n")).collect();
+    lines.append(&mut old_tail);
+    std::fs::write(root.join(file), lines.join("")).unwrap();
+    git_run(root, &["add", file]);
+    git_run(root, &["commit", "-m", "init"]);
+
+    let mut new_tail = vec![
+        "lineX\n".to_string(),
+        "lineB\n".to_string(),
+        "lineC\n".to_string(),
+        "lineD\n".to_string(),
+        "lineY\n".to_string(),
+    ];
+    let mut lines: Vec<String> = (0..60).map(|i| format!("pad {i}\n")).collect();
+    lines.append(&mut new_tail);
+    std::fs::write(root.join(file), lines.join("")).unwrap();
+    git_run(root, &["add", file]);
+    git_run(root, &["commit", "-m", "shift"]);
+
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let dir = repo.work_tree().expect("worktree");
+    // Final line 62 is "lineB" (1-based); focus stays inside the edited tail, far from pads.
+    assert_blame_matches(&repo, dir, file, None, Some((62, 62)));
+}
+
 #[test]
 fn blame_matches_git_adcb_permutation_line_range() {
     let tmp = tempfile::tempdir().expect("tempdir");

@@ -2135,6 +2135,141 @@ mod tests {
     }
 
     #[test]
+    fn bloom_skips_most_steps_when_tracked_path_unchanged_in_linear_history() {
+        use crate::bloom::bloom_keyvec_for_path;
+        use crate::commit_graph_write::{build_commit_graph_bytes, load_commit_graph_commit_info};
+        use crate::index::{Index, IndexEntry, MODE_REGULAR};
+        use crate::objects::{serialize_commit, CommitData, ObjectKind};
+        use crate::pathspec::bloom_lookup_prefix_with_cwd;
+        use crate::repo::init_repository;
+        use crate::write_tree::write_tree_from_index;
+        use crate::RefStorageFormat;
+        use std::fs;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)
+            .expect("init");
+        let path = "tracked.txt";
+        let stable = b"stable payload\n";
+        let blob = repo.odb().write(ObjectKind::Blob, stable).expect("blob");
+        let mut parent: Option<ObjectId> = None;
+        let mut oids = Vec::new();
+        for i in 0..24usize {
+            let mut index = Index::new();
+            index.hash_algo = repo.odb().hash_algo();
+            index.add_or_replace(IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: MODE_REGULAR,
+                uid: 0,
+                gid: 0,
+                size: stable.len() as u32,
+                oid: blob,
+                flags: 4,
+                flags_extended: None,
+                path: path.as_bytes().to_vec(),
+                base_index_pos: 0,
+            });
+            if i % 5 == 3 {
+                let noise = repo
+                    .odb()
+                    .write(ObjectKind::Blob, format!("noise {i}\n").as_bytes())
+                    .expect("noise blob");
+                index.add_or_replace(IndexEntry {
+                    ctime_sec: 0,
+                    ctime_nsec: 0,
+                    mtime_sec: 0,
+                    mtime_nsec: 0,
+                    dev: 0,
+                    ino: 0,
+                    mode: MODE_REGULAR,
+                    uid: 0,
+                    gid: 0,
+                    size: 8,
+                    oid: noise,
+                    flags: 4,
+                    flags_extended: None,
+                    path: format!("other{i}.txt").into_bytes(),
+                    base_index_pos: 0,
+                });
+            }
+            let tree = write_tree_from_index(&repo.odb(), &index, "").expect("tree");
+            let mut parents = Vec::new();
+            if let Some(p) = parent {
+                parents.push(p);
+            }
+            let raw = serialize_commit(&CommitData {
+                tree,
+                parents,
+                author: "T <t@example.com> 100 +0000".into(),
+                committer: "T <t@example.com> 100 +0000".into(),
+                author_raw: Vec::new(),
+                committer_raw: Vec::new(),
+                encoding: None,
+                message: format!("c{i}\n"),
+                raw_message: None,
+                extra_headers: Vec::new(),
+            });
+            let commit = repo.odb().write(ObjectKind::Commit, &raw).expect("commit");
+            oids.push(commit);
+            parent = Some(commit);
+        }
+        let head = *oids.last().expect("head");
+        let mut infos = crate::objects::oid_hash_map();
+        for oid in &oids {
+            infos.insert(
+                *oid,
+                load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
+            );
+        }
+        let bloom = BloomFilterSettings::default();
+        let (bytes, _) = build_commit_graph_bytes(
+            &oids,
+            &infos_std(&infos),
+            &repo.odb(),
+            true,
+            &bloom,
+            None,
+            &[],
+            None,
+            &empty_byte_filters(),
+            &empty_byte_filters(),
+            true,
+        )
+        .expect("graph bytes");
+        fs::write(repo.odb().objects_dir().join("info/commit-graph"), bytes).expect("write graph");
+        let chain = super::CommitGraphChain::load(repo.odb().objects_dir()).expect("chain");
+        let settings = chain.top_layer_bloom_settings().expect("bloom");
+        let norm = bloom_lookup_prefix_with_cwd(path, None).expect("prefix");
+        let keys = bloom_keyvec_for_path(norm.as_str(), &settings);
+        let mut current = head;
+        let mut bloom_yes = 0usize;
+        let mut bloom_no = 0usize;
+        while bloom_yes + bloom_no < 10_000 {
+            let Some((parents, _)) = chain.graph_commit(&current) else {
+                break;
+            };
+            let Some(parent) = parents.first().copied() else {
+                break;
+            };
+            if chain.bloom_definitely_not_for_keys(current, keys.as_slice()) {
+                bloom_yes += 1;
+            } else {
+                bloom_no += 1;
+            }
+            current = parent;
+        }
+        assert!(
+            bloom_yes > bloom_no,
+            "expected bloom to skip unchanged tracked path (yes={bloom_yes} no={bloom_no})"
+        );
+    }
+
+    #[test]
     #[ignore = "local git.git worktree; GRIT_BLAME_BENCH_REPO"]
     fn first_parent_makefile_bloom_skip_rate_on_git_dot_git() {
         use crate::bloom::bloom_keyvec_for_path;
