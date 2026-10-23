@@ -201,8 +201,9 @@ pub fn create_tag(repo: &Repository, req: &CreateTagRequest) -> Result<CreateTag
         })
     })?;
     let tag_ref = format!("refs/tags/{}", req.name);
-    let replaced = match refs::resolve_ref(repo.git_dir(), &tag_ref) {
-        Ok(existing) => {
+    // An unreadable or dangling tag ref counts as absent, so it is overwritten.
+    let replaced = match repo.references().resolve_if_exists(&tag_ref) {
+        Ok(Some(existing)) => {
             if req.force {
                 Some(existing)
             } else {
@@ -211,7 +212,7 @@ pub fn create_tag(repo: &Repository, req: &CreateTagRequest) -> Result<CreateTag
                 }));
             }
         }
-        Err(_) => None,
+        Ok(None) | Err(_) => None,
     };
 
     if let Some(ref raw) = req.message {
@@ -302,7 +303,7 @@ pub fn create_tag(repo: &Repository, req: &CreateTagRequest) -> Result<CreateTag
     };
 
     if !req.dry_run {
-        refs::write_ref(repo.git_dir(), &tag_ref, &ref_oid)?;
+        refs::update_direct_ref_on_store(repo.refs(), repo.git_dir(), &tag_ref, &ref_oid)?;
     }
 
     Ok(CreateTagOutcome {
