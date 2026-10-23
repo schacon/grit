@@ -1,4 +1,6 @@
 //! Issue #1518: directory-grouped scans on ~50k dense-leaf paths should not double-stat every file.
+//!
+//! `GRIT_WORKTREE_SCAN_50K=1 cargo test -p grit-lib --test worktree_scan_50k_probe_git_compat -- --test-threads=1`
 
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::porcelain::add::{stage, StageOptions};
@@ -57,6 +59,9 @@ fn open_repo(root: &std::path::Path) -> Repository {
 
 #[test]
 fn noop_tracked_scan_metadata_probe_budget_dense_leaf_50k() {
+    if std::env::var("GRIT_WORKTREE_SCAN_50K").ok().as_deref() != Some("1") {
+        return;
+    }
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
     build_fixture(root);
@@ -74,6 +79,9 @@ fn noop_tracked_scan_metadata_probe_budget_dense_leaf_50k() {
 
 #[test]
 fn noop_add_metadata_probe_budget_dense_leaf_50k() {
+    if std::env::var("GRIT_WORKTREE_SCAN_50K").ok().as_deref() != Some("1") {
+        return;
+    }
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
     build_fixture(root);

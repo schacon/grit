@@ -35,10 +35,33 @@ fn grit_binary() -> std::path::PathBuf {
     let target_dir = std::env::var("CARGO_TARGET_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| workspace.join("target"));
+    #[cfg(windows)]
+    let release = target_dir.join("release/grit.exe");
+    #[cfg(not(windows))]
     let release = target_dir.join("release/grit");
+    if release.is_file() {
+        return release;
+    }
+    #[cfg(windows)]
+    {
+        let unix_name = target_dir.join("release/grit");
+        if unix_name.is_file() {
+            return unix_name;
+        }
+    }
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_grit") {
+        let path = std::path::PathBuf::from(&p);
+        if path.is_absolute() && path.is_file() {
+            return path;
+        }
+        let from_workspace = workspace.join(&path);
+        if from_workspace.is_file() {
+            return from_workspace;
+        }
+    }
     assert!(
         release.is_file(),
-        "grit binary not found at {} — run `cargo build --release -p grit-cli`",
+        "grit binary not found at {} — run `cargo build --release -p grit-cli` or set GRIT_BIN",
         release.display()
     );
     release
