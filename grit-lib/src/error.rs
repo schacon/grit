@@ -1114,6 +1114,10 @@ pub enum Error {
     #[error("conflicts in index while applying stash with --index")]
     StashIndexConflict,
 
+    /// Incompatible [`StashCreateOptions`](crate::porcelain::stash::StashCreateOptions) flags.
+    #[error("{0}")]
+    StashOptionConflict(String),
+
     /// Partial [`push_stash`](crate::porcelain::stash::push_stash) hunk selection failed.
     #[error(transparent)]
     HunkSelection(#[from] crate::porcelain::hunk_select::HunkSelectError),

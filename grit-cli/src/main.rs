@@ -262,9 +262,23 @@ enum StashAction {
             conflicts_with = "include_untracked"
         )]
         lines: Vec<String>,
-        /// Preview partial stash without updating refs, index, or worktree.
+        /// Preview stash without updating refs, index, or worktree.
         #[arg(long = "dry-run")]
         dry_run: bool,
+        /// Stash only index changes vs `HEAD`.
+        #[arg(
+            short = 'S',
+            long = "staged",
+            conflicts_with_all = ["keep_index", "hunks", "lines", "include_untracked"]
+        )]
+        staged: bool,
+        /// Leave staged content in the index and worktree after stashing.
+        #[arg(
+            short = 'k',
+            long = "keep-index",
+            conflicts_with_all = ["staged", "hunks", "lines"]
+        )]
+        keep_index: bool,
         #[command(flatten)]
         pathspecs: crate::pathspec_args::TrailingPathspecArgs,
     },
@@ -1343,9 +1357,28 @@ enum Command {
             conflicts_with = "include_untracked"
         )]
         lines: Vec<String>,
-        /// Preview partial stash without updating refs, index, or worktree.
+        /// Preview stash without updating refs, index, or worktree.
         #[arg(long = "dry-run", global = true)]
         dry_run: bool,
+        /// Stash only index changes vs `HEAD` (unstaged edits on other paths remain).
+        #[arg(
+            short = 'S',
+            long = "staged",
+            global = true,
+            conflicts_with_all = ["keep_index", "hunks", "lines", "include_untracked"]
+        )]
+        staged: bool,
+        /// After stashing, leave the index and worktree matching staged content.
+        #[arg(
+            short = 'k',
+            long = "keep-index",
+            global = true,
+            conflicts_with_all = ["staged", "hunks", "lines"]
+        )]
+        keep_index: bool,
+        /// Cap path lists in `--dry-run` preview output.
+        #[arg(short = 'n', long = "limit", global = true, value_name = "N")]
+        stash_limit: Option<usize>,
         #[command(flatten)]
         pathspecs: crate::pathspec_args::TrailingPathspecArgs,
         #[command(subcommand)]
@@ -2324,8 +2357,9 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
                 Ok(ExitStatus::from_ignore_check(&outcome))
             }
         },
-        Command::Hooks { limit, action } => match action {
-            None | Some(HooksAction::List) => {
+        Command::Hooks { action } => match action {
+            None => emit_success(&commands::hooks::run_list(None)?, opts, ctx),
+            Some(HooksAction::List { limit }) => {
                 emit_success(&commands::hooks::run_list(limit.get())?, opts, ctx)
             }
             Some(HooksAction::Run { name, hook_args }) => {
@@ -2860,17 +2894,23 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
             hunks,
             lines,
             dry_run,
+            staged,
+            keep_index,
+            stash_limit,
             pathspecs,
         } => match action {
             None => {
-                let outcome = commands::stash::run_push(
+                let outcome = commands::stash::run_push(commands::stash::StashPushRunArgs {
                     message,
                     include_untracked,
-                    &hunks,
-                    &lines,
+                    staged,
+                    keep_index,
+                    hunks: &hunks,
+                    lines: &lines,
                     dry_run,
-                    &pathspecs,
-                );
+                    limit: stash_limit,
+                    pathspec_args: &pathspecs,
+                });
                 match outcome {
                     Ok(o) => emit_success(&o, opts, ctx),
                     Err(err) => Ok(finish_hunk_error(
@@ -2886,6 +2926,8 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
                 hunks: push_hunks,
                 lines: push_lines,
                 dry_run: push_dry_run,
+                staged: push_staged,
+                keep_index: push_keep_index,
                 pathspecs: push_pathspecs,
             }) => {
                 let merged_hunks = if push_hunks.is_empty() {
@@ -2905,14 +2947,17 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
                 } else {
                     push_pathspecs
                 };
-                let outcome = commands::stash::run_push(
-                    push_message.or(message),
-                    include_untracked || push_untracked,
-                    &merged_hunks,
-                    &merged_lines,
-                    dry_run || push_dry_run,
-                    &merged_pathspecs,
-                );
+                let outcome = commands::stash::run_push(commands::stash::StashPushRunArgs {
+                    message: push_message.or(message),
+                    include_untracked: include_untracked || push_untracked,
+                    staged: staged || push_staged,
+                    keep_index: keep_index || push_keep_index,
+                    hunks: &merged_hunks,
+                    lines: &merged_lines,
+                    dry_run: dry_run || push_dry_run,
+                    limit: stash_limit,
+                    pathspec_args: &merged_pathspecs,
+                });
                 match outcome {
                     Ok(o) => emit_success(&o, opts, ctx),
                     Err(err) => Ok(finish_hunk_error(

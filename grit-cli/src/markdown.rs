@@ -1210,6 +1210,20 @@ pub fn print_stash_push_outcome(
                 outln!(w, "- {verb} **{message}** · `{short}`");
             }
         }
+        StashPushOutcome::Preview {
+            paths, untracked, ..
+        } => {
+            outln!(w, "- Would stash **{}** tracked path(s)", paths.len());
+            for path in paths {
+                outln!(w, "  - `{path}`");
+            }
+            if !untracked.is_empty() {
+                outln!(w, "- Would stash **{}** untracked path(s)", untracked.len());
+                for path in untracked {
+                    outln!(w, "  - `{path}`");
+                }
+            }
+        }
     }
     Ok(())
 }

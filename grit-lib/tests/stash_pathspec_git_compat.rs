@@ -4,6 +4,7 @@ use grit_lib::error::Error;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::porcelain::stash::{
     apply_stash_entry, pop_stash_entry, push_stash, StashApplyOptions, StashCreateOptions,
+    StashMode,
 };
 use grit_lib::repo::Repository;
 use grit_test_support::git;
@@ -36,6 +37,7 @@ fn stash_opts(include_untracked: bool, pathspecs: Vec<String>) -> StashCreateOpt
         selection: None,
         pathspecs,
         dry_run: false,
+        mode: StashMode::All,
     }
 }
 

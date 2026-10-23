@@ -11,6 +11,9 @@
         "message": {
           "type": "string"
         },
+        "mode": {
+          "$ref": "#/definitions/StashPushMode"
+        },
         "oid": {
           "type": "string"
         },
@@ -46,6 +49,52 @@
       "type": "object"
     },
     {
+      "description": "`--dry-run` preview of what would be stashed.",
+      "properties": {
+        "dry_run": {
+          "default": true,
+          "type": "boolean"
+        },
+        "mode": {
+          "$ref": "#/definitions/StashPushMode"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "stashed_hunks": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        },
+        "stashed_lines": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        },
+        "untracked": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "paths"
+      ],
+      "type": "object"
+    },
+    {
       "description": "Working tree and index already matched `HEAD`; nothing was saved.",
       "properties": {
         "stashed": {
@@ -58,6 +107,16 @@
       "type": "object"
     }
   ],
+  "definitions": {
+    "StashPushMode": {
+      "enum": [
+        "all",
+        "staged_only",
+        "keep_index"
+      ],
+      "type": "string"
+    }
+  },
   "description": "Result of `grit stash push` (or bare `grit stash`).",
   "title": "StashPushOutcome"
 }
