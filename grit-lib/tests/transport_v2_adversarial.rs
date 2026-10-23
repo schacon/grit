@@ -754,7 +754,8 @@ fn v2_tag_modes_all_and_following() {
             tags: TagMode::Following,
             ..Default::default()
         };
-        fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress).expect("v2 tags=following");
+        fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
+            .expect("v2 tags=following");
         drop(conn);
 
         // v1 points at main's tip's history -> kept.
@@ -816,8 +817,8 @@ fn v2_ref_prefix_filtering_excludes_tags() {
         tags: TagMode::None,
         ..Default::default()
     };
-    let outcome =
-        fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress).expect("v2 heads-only fetch");
+    let outcome = fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
+        .expect("v2 heads-only fetch");
     drop(conn);
 
     // No tag ref was written.

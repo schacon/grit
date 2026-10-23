@@ -638,8 +638,7 @@ fn fetch_remote_dry_run_explicit_fast_forward_classifies_without_writing() {
         tags: TagMode::None,
         ..Default::default()
     };
-    fetch_remote(&local_git, &mut *conn, &mut seed_opts, &mut NoProgress)
-        .expect("seed fetch");
+    fetch_remote(&local_git, &mut *conn, &mut seed_opts, &mut NoProgress).expect("seed fetch");
 
     git(&local, &["branch", "probe", &c1_oid.to_hex()]);
     let probe_before = resolve_ref(&local_git, "refs/heads/probe").expect("probe");
@@ -663,13 +662,8 @@ fn fetch_remote_dry_run_explicit_fast_forward_classifies_without_writing() {
         tags: TagMode::None,
         ..Default::default()
     };
-    let outcome = fetch_remote(
-        &local_git,
-        &mut *conn,
-        &mut dry_run_opts,
-        &mut NoProgress,
-    )
-    .expect("dry-run fetch");
+    let outcome = fetch_remote(&local_git, &mut *conn, &mut dry_run_opts, &mut NoProgress)
+        .expect("dry-run fetch");
 
     let probe_update = outcome
         .updates
