@@ -221,7 +221,7 @@ pub fn run(
 
     let subject = if dry_run && amend && message.as_ref().is_none_or(|m| m.trim().is_empty()) {
         let head = resolve_head(repo.git_dir()).context("resolve HEAD")?;
-        if let HeadState::Branch { oid: Some(tip), .. } = head {
+        if let HeadState::Branch { oid: Some(tip), .. } | HeadState::Detached { oid: tip } = head {
             let obj = repo.odb().read(&tip).context("read HEAD commit")?;
             subject_line(
                 &parse_commit(&obj.data)
