@@ -1840,7 +1840,7 @@ fn run() -> Result<ExitStatus, anyhow::Error> {
     let render_ctx = RenderContext {
         now: context::wall_clock_now(&env),
     };
-    match dispatch(cli, &opts, &render_ctx) {
+    match dispatch(cli, &opts, &render_ctx, &env) {
         Ok(status) => Ok(status),
         Err(err) => {
             let err = json_error::ensure_structured(err);
@@ -1951,7 +1951,12 @@ fn emit_rebase_outcome(
     Ok(ExitStatus::from_rebase_run(outcome))
 }
 
-fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitStatus> {
+fn dispatch(
+    cli: Cli,
+    opts: &OutputOptions,
+    ctx: &RenderContext,
+    process_env: &grit_lib::config::environment::Environment,
+) -> Result<ExitStatus> {
     match cli.command.unwrap_or(Command::Status {
         status: commands::status::StatusCliArgs::default(),
     }) {
@@ -3163,8 +3168,17 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
             key,
             value,
         } => {
-            let outcome =
-                commands::config::run(global, local, file, list, unset, key, value, opts.mode)?;
+            let outcome = commands::config::run(
+                process_env,
+                global,
+                local,
+                file,
+                list,
+                unset,
+                key,
+                value,
+                opts.mode,
+            )?;
             let code = commands::config::exit_code(&outcome);
             emit(&outcome, opts, ctx)?;
             if code != 0 {
