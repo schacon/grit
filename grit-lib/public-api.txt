@@ -4957,6 +4957,7 @@ pub grit_lib::error::Error::TreeSha256InvalidHex
 pub grit_lib::error::Error::TreeSha256InvalidRevision
 pub grit_lib::error::Error::TreeSha256InvalidRevision::found: grit_lib::objects::ObjectKind
 pub grit_lib::error::Error::TreeSha256MissingSubmodules(alloc::vec::Vec<grit_lib::tree_sha256::MissingSubmodule>)
+pub grit_lib::error::Error::TreeSha256RequiresSigning
 pub grit_lib::error::Error::UnbornHead
 pub grit_lib::error::Error::UnknownObjectType(alloc::string::String)
 pub grit_lib::error::Error::UnsupportedObjectStore
@@ -12138,8 +12139,11 @@ impl core::marker::UnsafeUnpin for grit_lib::operation::Conflict
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::operation::Conflict
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::operation::Conflict
 pub struct grit_lib::porcelain::merge::MergeOptions
+pub grit_lib::porcelain::merge::MergeOptions::allow_unrelated: bool
 pub grit_lib::porcelain::merge::MergeOptions::commit: grit_lib::porcelain::merge::MergeCommitMode
+pub grit_lib::porcelain::merge::MergeOptions::conflict_style: core::option::Option<grit_lib::diff::merge_file::ConflictStyle>
 pub grit_lib::porcelain::merge::MergeOptions::fast_forward: grit_lib::porcelain::merge::FastForwardPolicy
+pub grit_lib::porcelain::merge::MergeOptions::favor: grit_lib::diff::merge_file::MergeFavor
 pub grit_lib::porcelain::merge::MergeOptions::message: core::option::Option<alloc::string::String>
 impl core::clone::Clone for grit_lib::porcelain::merge::MergeOptions
 pub fn grit_lib::porcelain::merge::MergeOptions::clone(&self) -> Self
@@ -12189,6 +12193,7 @@ pub fn grit_lib::porcelain::merge::integrate_branch_with(&grit_lib::repo::Reposi
 pub fn grit_lib::porcelain::merge::integrate_branch_with_options(&grit_lib::repo::Repository, &str, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, &str, grit_lib::porcelain::merge::IntegrateBranchOptions) -> grit_lib::error::Result<grit_lib::porcelain::merge::IntegrateBranchOutcome>
 pub fn grit_lib::porcelain::merge::predict_merge(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, &grit_lib::porcelain::merge::MergePredictionOptions) -> grit_lib::error::Result<grit_lib::porcelain::merge::MergePrediction>
 pub fn grit_lib::porcelain::merge::reduce_octopus_merge_heads(&grit_lib::repo::Repository, &[grit_lib::objects::ObjectId], &[alloc::string::String]) -> grit_lib::error::Result<(alloc::vec::Vec<grit_lib::objects::ObjectId>, alloc::vec::Vec<alloc::string::String>)>
+pub fn grit_lib::porcelain::merge::resolve_merge_conflict_style(&grit_lib::repo::Repository, core::option::Option<grit_lib::diff::merge_file::ConflictStyle>) -> grit_lib::diff::merge_file::ConflictStyle
 pub fn grit_lib::porcelain::merge::tree_merge_has_conflicts(&grit_lib::diff::merge_trees::TreeMergeOutput) -> bool
 pub fn grit_lib::porcelain::merge::tree_to_index_entries(&grit_lib::repo::Repository, &grit_lib::objects::ObjectId, &str) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::index::IndexEntry>>
 pub fn grit_lib::porcelain::merge::tree_to_map(alloc::vec::Vec<grit_lib::index::IndexEntry>) -> std::collections::hash::map::HashMap<alloc::vec::Vec<u8>, grit_lib::index::IndexEntry>
@@ -13289,14 +13294,11 @@ pub grit_lib::porcelain::tag::CreateTagOutcome::oid: grit_lib::objects::ObjectId
 pub grit_lib::porcelain::tag::CreateTagOutcome::peeled: core::option::Option<grit_lib::objects::ObjectId>
 pub grit_lib::porcelain::tag::CreateTagOutcome::replaced: core::option::Option<grit_lib::objects::ObjectId>
 pub grit_lib::porcelain::tag::CreateTagOutcome::signed: bool
+pub grit_lib::porcelain::tag::CreateTagOutcome::tree_sha256: core::option::Option<grit_lib::tree_sha256::TagTreeSha256Outcome>
 impl core::clone::Clone for grit_lib::porcelain::tag::CreateTagOutcome
 pub fn grit_lib::porcelain::tag::CreateTagOutcome::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::porcelain::tag::CreateTagOutcome
-impl core::cmp::PartialEq for grit_lib::porcelain::tag::CreateTagOutcome
-pub fn grit_lib::porcelain::tag::CreateTagOutcome::eq(&self, &Self) -> bool
 impl core::fmt::Debug for grit_lib::porcelain::tag::CreateTagOutcome
 pub fn grit_lib::porcelain::tag::CreateTagOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for grit_lib::porcelain::tag::CreateTagOutcome
 impl core::marker::Freeze for grit_lib::porcelain::tag::CreateTagOutcome
 impl core::marker::Send for grit_lib::porcelain::tag::CreateTagOutcome
 impl core::marker::Sync for grit_lib::porcelain::tag::CreateTagOutcome
@@ -13313,6 +13315,7 @@ pub grit_lib::porcelain::tag::CreateTagRequest::sign: core::option::Option<bool>
 pub grit_lib::porcelain::tag::CreateTagRequest::signing_key: core::option::Option<alloc::string::String>
 pub grit_lib::porcelain::tag::CreateTagRequest::tagger: core::option::Option<alloc::string::String>
 pub grit_lib::porcelain::tag::CreateTagRequest::target: grit_lib::objects::ObjectId
+pub grit_lib::porcelain::tag::CreateTagRequest::tree_sha256: core::option::Option<grit_lib::tree_sha256::TreeSha256Options>
 impl core::clone::Clone for grit_lib::porcelain::tag::CreateTagRequest
 pub fn grit_lib::porcelain::tag::CreateTagRequest::clone(&self) -> Self
 impl core::fmt::Debug for grit_lib::porcelain::tag::CreateTagRequest
@@ -13583,6 +13586,7 @@ pub grit_lib::prelude::Error::TreeSha256InvalidHex
 pub grit_lib::prelude::Error::TreeSha256InvalidRevision
 pub grit_lib::prelude::Error::TreeSha256InvalidRevision::found: grit_lib::objects::ObjectKind
 pub grit_lib::prelude::Error::TreeSha256MissingSubmodules(alloc::vec::Vec<grit_lib::tree_sha256::MissingSubmodule>)
+pub grit_lib::prelude::Error::TreeSha256RequiresSigning
 pub grit_lib::prelude::Error::UnbornHead
 pub grit_lib::prelude::Error::UnknownObjectType(alloc::string::String)
 pub grit_lib::prelude::Error::UnsupportedObjectStore
@@ -22254,6 +22258,24 @@ impl core::marker::Unpin for grit_lib::tree_sha256::MissingSubmodule
 impl core::marker::UnsafeUnpin for grit_lib::tree_sha256::MissingSubmodule
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::tree_sha256::MissingSubmodule
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::tree_sha256::MissingSubmodule
+pub struct grit_lib::tree_sha256::TagTreeSha256Outcome
+pub grit_lib::tree_sha256::TagTreeSha256Outcome::claim: grit_lib::tree_sha256::TreeSha256Claim
+pub grit_lib::tree_sha256::TagTreeSha256Outcome::hash_elapsed: core::time::Duration
+pub grit_lib::tree_sha256::TagTreeSha256Outcome::report: grit_lib::tree_sha256::TreeSha256Report
+impl core::clone::Clone for grit_lib::tree_sha256::TagTreeSha256Outcome
+pub fn grit_lib::tree_sha256::TagTreeSha256Outcome::clone(&self) -> Self
+impl core::cmp::PartialEq for grit_lib::tree_sha256::TagTreeSha256Outcome
+pub fn grit_lib::tree_sha256::TagTreeSha256Outcome::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::tree_sha256::TagTreeSha256Outcome
+pub fn grit_lib::tree_sha256::TagTreeSha256Outcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::tree_sha256::TagTreeSha256Outcome
+impl core::marker::Freeze for grit_lib::tree_sha256::TagTreeSha256Outcome
+impl core::marker::Send for grit_lib::tree_sha256::TagTreeSha256Outcome
+impl core::marker::Sync for grit_lib::tree_sha256::TagTreeSha256Outcome
+impl core::marker::Unpin for grit_lib::tree_sha256::TagTreeSha256Outcome
+impl core::marker::UnsafeUnpin for grit_lib::tree_sha256::TagTreeSha256Outcome
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::tree_sha256::TagTreeSha256Outcome
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::tree_sha256::TagTreeSha256Outcome
 pub struct grit_lib::tree_sha256::TagVerification
 pub grit_lib::tree_sha256::TagVerification::missing_submodules: alloc::vec::Vec<grit_lib::tree_sha256::MissingSubmodule>
 pub grit_lib::tree_sha256::TagVerification::signature: grit_lib::tree_sha256::SignatureVerdict
@@ -22321,6 +22343,7 @@ pub grit_lib::tree_sha256::TreeSha256Claim::digest: grit_lib::tree_sha256::TreeS
 pub grit_lib::tree_sha256::TreeSha256Claim::excluded: alloc::vec::Vec<alloc::string::String>
 impl grit_lib::tree_sha256::TreeSha256Claim
 pub fn grit_lib::tree_sha256::TreeSha256Claim::apply_to_tag(&self, &mut grit_lib::objects::TagData)
+pub fn grit_lib::tree_sha256::TreeSha256Claim::from_report(&grit_lib::tree_sha256::TreeSha256Report) -> Self
 pub fn grit_lib::tree_sha256::TreeSha256Claim::from_tag(&grit_lib::objects::TagData) -> grit_lib::error::Result<core::option::Option<Self>>
 impl core::clone::Clone for grit_lib::tree_sha256::TreeSha256Claim
 pub fn grit_lib::tree_sha256::TreeSha256Claim::clone(&self) -> Self
