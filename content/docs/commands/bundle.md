@@ -8,10 +8,10 @@ order: 6
 ## Synopsis
 
 ```text
-grit bundle create <file> [--all] [<rev>…]
+grit bundle create <file> [--all] [--dry-run] [<rev>…]
 grit bundle verify <file>
 grit bundle list <file>
-grit bundle unbundle <file>
+grit bundle unbundle <file> [--dry-run]
 ```
 
 ## Description
@@ -37,6 +37,7 @@ You can also treat a bundle path like a remote: [`grit fetch`](../fetch/) and [`
 | `<file>` | Output bundle path. |
 | `--all` | Include `HEAD`, every branch, and every tag in the bundle header (same idea as `git bundle create --all`). Omit `<rev>…` when using this flag. |
 | `<rev>…` | One or more positive revision specs (commits, branches, ranges). Not used together with `--all`. |
+| `--dry-run` | List refs, prerequisites, and pack object count without writing `<file>`. |
 
 `verify` / `list` / `unbundle`:
 
@@ -44,6 +45,12 @@ You can also treat a bundle path like a remote: [`grit fetch`](../fetch/) and [`
 | --- | --- |
 | `<file>` | Existing bundle file. |
 | `-n`, `--limit <N>` | For `list`: print at most `N` header refs (`truncated` in JSON when more exist). |
+
+`unbundle`:
+
+| Option | Description |
+| --- | --- |
+| `--dry-run` | Verify the bundle and list ref updates that would apply; do not ingest objects or write refs. |
 
 ## Examples
 
@@ -121,6 +128,10 @@ Schema: [v1](/schemas/bundle.create/v1.json) · [bundle.list v1](/schemas/bundle
 | ----- | ---- | ------- |
 | `path` | string | Output bundle path. |
 | `refs` | number | Count of refs written to the header. |
+| `dry_run` | boolean | `true` when `--dry-run` was used (omitted when false). |
+| `object_count` | number | With `--dry-run`, objects that would be packed. |
+| `references` | array | With `--dry-run`, planned header refs (`name`, `oid`). |
+| `prerequisites` | array of strings | With `--dry-run`, prerequisite commit ids. |
 
 `grit bundle unbundle --json`:
 
@@ -128,8 +139,13 @@ Schema: [v1](/schemas/bundle.create/v1.json) · [bundle.list v1](/schemas/bundle
 | ----- | ---- | ------- |
 | `path` | string | Bundle file path. |
 | `references` | array | Ref tips from the bundle header (`name`, `oid`). |
-| `objects` | number | Objects installed from the pack. |
-| `bytes` | number | Pack size in bytes. |
+| `objects` | number | Objects installed from the pack (omitted on `--dry-run`). |
+| `bytes` | number | Pack size in bytes (omitted on `--dry-run`). |
+| `dry_run` | boolean | `true` when `--dry-run` was used. |
+| `object_count` | number | With `--dry-run`, objects in the embedded pack. |
+| `ref_updates` | array | With `--dry-run`, refs that differ from local tips (`name`, `old_oid`, `new_oid`). |
+| `ok` | boolean | With `--dry-run`, whether verification succeeded. |
+| `missing_prerequisites` | array of strings | With `--dry-run`, prerequisite ids absent locally. |
 
 ```json
 {
