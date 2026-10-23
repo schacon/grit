@@ -524,6 +524,12 @@ pub fn schema_key_for_doc_example(
         if instance.is_array() {
             return Some("stash.list".into());
         }
+        if instance.get("cleared").is_some() {
+            return Some("stash.clear".into());
+        }
+        if instance.get("branch").is_some() {
+            return Some("stash.branch".into());
+        }
         if instance.get("dropped").is_some() {
             return Some("stash.pop".into());
         }
