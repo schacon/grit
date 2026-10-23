@@ -2219,7 +2219,6 @@ fn log_rejects_before_with_paths() -> TestResult {
     gs_ok(&repo, &["init", "."]);
     write_file(&repo.join("a.txt"), "x\n");
     gs_ok(&repo, &["commit", "one"]);
-    let v = gs_json(&repo, &["log"]);
     let out = gs(&repo, &["log", "--before=lw1.fake", "--", "a.txt"]);
     assert_eq!(out.status, Some(2), "stderr: {}", out.stderr);
     Ok(())

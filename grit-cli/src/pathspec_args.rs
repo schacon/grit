@@ -2,6 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args;
+use grit_lib::pathspec::parse_pathspecs_from_source;
 use grit_lib::repo::Repository;
 use grit_lib::worktree::pathspec::{PathspecInput, PathspecResolveError, ResolvedPathspecs};
 use std::io::Read;
@@ -68,12 +69,44 @@ impl TrailingPathspecArgs {
         !self.paths.is_empty() || self.pathspec_from_file.is_some()
     }
 
+    /// Unresolved pathspec tokens: `--pathspec-from-file` entries first, then argv paths.
+    ///
+    /// `extra_argv_paths` supplies disambiguated path operands (for example diff revision/path
+    /// parsing). When non-empty, they replace trailing `paths` so operands are not duplicated.
+    pub fn pathspec_source_tokens(&self, extra_argv_paths: &[String]) -> Result<Vec<String>> {
+        let mut sources = Vec::new();
+        if let Some(path) = self.pathspec_from_file.as_deref() {
+            let data = read_pathspec_source(path)?;
+            let parsed = parse_pathspecs_from_source(&data, self.pathspec_file_nul)
+                .map_err(map_pathspec_from_file_parse)?;
+            sources.extend(parsed);
+        }
+        if !extra_argv_paths.is_empty() {
+            sources.extend(extra_argv_paths.iter().cloned());
+        } else {
+            sources.extend(self.paths.iter().cloned());
+        }
+        if self.has_any() {
+            if sources.is_empty() {
+                return Err(map_pathspec_resolve(PathspecResolveError::EmptyPathspec));
+            }
+            for sel in &sources {
+                if sel.is_empty() {
+                    return Err(map_pathspec_resolve(PathspecResolveError::EmptyPathspec));
+                }
+            }
+        }
+        Ok(sources)
+    }
+
     /// Pathspec tokens for rev walks (`RevWalkListOptions::paths`): argv plus file lines.
     pub fn rev_walk_tokens(&self, repo: &Repository) -> Result<Vec<String>> {
         if !self.has_any() {
             return Ok(Vec::new());
         }
-        Ok(self.resolve(repo)?.sources)
+        let tokens = self.pathspec_source_tokens(&[])?;
+        repo.resolve_rev_walk_pathspecs(&tokens)
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     /// Resolve argv and optional from-file pathspecs against `repo` and the process cwd.
@@ -121,6 +154,10 @@ fn read_pathspec_source(path: &str) -> Result<Vec<u8>> {
         return Ok(buf);
     }
     std::fs::read(path).with_context(|| format!("could not read '{path}'"))
+}
+
+fn map_pathspec_from_file_parse(err: grit_lib::error::PathspecFromFileParseError) -> anyhow::Error {
+    anyhow::anyhow!("{err}")
 }
 
 fn map_pathspec_resolve(err: PathspecResolveError) -> anyhow::Error {

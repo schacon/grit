@@ -319,7 +319,7 @@ fn show_commit(spec: &str, opts: &ShowRunOptions) -> Result<ShowOutcome> {
     let paths = crate::commands::diff::resolve_cli_diff_pathspecs(
         &repo,
         &opts.pathspecs,
-        &opts.pathspecs.paths,
+        &[],
         crate::commands::diff::DiffPathspecMode::Commit,
     )?;
     let diff_opts = CommitDiffOptions {

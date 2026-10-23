@@ -412,3 +412,181 @@ fn diff_pathspec_from_file_matches_git() {
         .collect();
     assert_eq!(grit_names, git_names);
 }
+
+fn init_bare_two_commit_repo(grit: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    init_repo(grit, &dir);
+    commit_all(grit, dir.path(), "second");
+    let bare = dir.path().join("bare.git");
+    assert!(run_git(
+        dir.path(),
+        &[
+            "clone",
+            "--bare",
+            ".",
+            bare.file_name().unwrap().to_str().unwrap()
+        ]
+    )
+    .status
+    .success());
+    (dir, bare)
+}
+
+fn log_oids_in_bare(dir: &std::path::Path, extra: &[&str]) -> Vec<String> {
+    let mut args = vec!["--git-dir", dir.to_str().unwrap(), "log", "--format=%H"];
+    args.extend_from_slice(extra);
+    let out = Command::new("git")
+        .args(&args)
+        .env("GIT_CONFIG_GLOBAL", null_config())
+        .env("GIT_CONFIG_SYSTEM", null_config())
+        .output()
+        .expect("git log bare");
+    assert!(
+        out.status.success(),
+        "git log bare: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn run_grit_bare(grit: &str, git_dir: &std::path::Path, args: &[&str]) -> std::process::Output {
+    Command::new(grit)
+        .current_dir(git_dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", null_config())
+        .env("GIT_CONFIG_SYSTEM", null_config())
+        .output()
+        .expect("run grit bare")
+}
+
+#[test]
+fn log_trailing_path_in_bare_repo_matches_git() {
+    let grit = env!("CARGO_BIN_EXE_grit");
+    let (_wt, bare) = init_bare_two_commit_repo(grit);
+    let git = log_oids_in_bare(&bare, &["--", "a.txt"]);
+    let out = run_grit_bare(grit, &bare, &["log", "--json", "--", "a.txt"]);
+    assert!(
+        out.status.success(),
+        "grit log bare: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    let grit_oids: Vec<String> = v["commits"]
+        .as_array()
+        .expect("commits")
+        .iter()
+        .map(|c| c["oid"].as_str().expect("oid").to_string())
+        .collect();
+    assert_eq!(grit_oids, git);
+}
+
+#[test]
+fn log_pathspec_from_file_in_bare_repo_matches_git() {
+    let grit = env!("CARGO_BIN_EXE_grit");
+    let (_wt, bare) = init_bare_two_commit_repo(grit);
+    let list = bare.join("paths.txt");
+    fs::write(&list, b"a.txt\n").expect("write list");
+    let list_arg = list.to_str().unwrap();
+    let git = log_oids_in_bare(&bare, &["--", "a.txt"]);
+    let out = run_grit_bare(
+        grit,
+        &bare,
+        &["log", "--json", "--pathspec-from-file", list_arg],
+    );
+    assert!(
+        out.status.success(),
+        "grit log bare from-file: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    let grit_oids: Vec<String> = v["commits"]
+        .as_array()
+        .expect("commits")
+        .iter()
+        .map(|c| c["oid"].as_str().expect("oid").to_string())
+        .collect();
+    assert_eq!(grit_oids, git);
+}
+
+#[test]
+fn diff_pathspec_from_file_in_bare_repo_matches_git() {
+    let grit = env!("CARGO_BIN_EXE_grit");
+    let (_wt, bare) = init_bare_two_commit_repo(grit);
+    let list = bare.join("paths.txt");
+    fs::write(&list, b"a.txt\n").expect("write list");
+    let list_arg = list.to_str().unwrap();
+
+    let git_out = Command::new("git")
+        .args([
+            "--git-dir",
+            bare.to_str().unwrap(),
+            "diff",
+            "--name-only",
+            "HEAD~1",
+            "HEAD",
+            "--",
+            "a.txt",
+        ])
+        .env("GIT_CONFIG_GLOBAL", null_config())
+        .env("GIT_CONFIG_SYSTEM", null_config())
+        .output()
+        .expect("git diff bare");
+    assert!(git_out.status.success());
+    let git_names: Vec<String> = String::from_utf8_lossy(&git_out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+
+    let grit_out = run_grit_bare(
+        grit,
+        &bare,
+        &[
+            "diff",
+            "--name-only",
+            "HEAD~1",
+            "HEAD",
+            "--pathspec-from-file",
+            list_arg,
+        ],
+    );
+    assert!(
+        grit_out.status.success(),
+        "grit diff bare: {}",
+        String::from_utf8_lossy(&grit_out.stderr)
+    );
+    let grit_names: Vec<String> = String::from_utf8_lossy(&grit_out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(grit_names, git_names);
+}
+
+#[test]
+fn show_pathspec_from_file_in_bare_repo_succeeds() {
+    let grit = env!("CARGO_BIN_EXE_grit");
+    let (_wt, bare) = init_bare_two_commit_repo(grit);
+    let list = bare.join("paths.txt");
+    fs::write(&list, b"a.txt\n").expect("write list");
+    let list_arg = list.to_str().unwrap();
+    let out = run_grit_bare(
+        grit,
+        &bare,
+        &[
+            "show",
+            "HEAD",
+            "--name-only",
+            "--pathspec-from-file",
+            list_arg,
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "grit show bare: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("a.txt"));
+}

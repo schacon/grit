@@ -929,8 +929,12 @@ fn run_patch_text(opts: DiffRunOptions) -> Result<DiffOutcome> {
         2 => {
             if let Some((base, tip)) = parse_commit_range(&repo, &commits[0])? {
                 if token_is_known_worktree_pathspec(&repo, &commits[1]) {
-                    let pathspecs =
-                        resolve_commit_diff_pathspecs(&repo, std::slice::from_ref(&commits[1]))?;
+                    let pathspecs = resolve_cli_diff_pathspecs(
+                        &repo,
+                        &opts.pathspecs,
+                        std::slice::from_ref(&commits[1]),
+                        DiffPathspecMode::Commit,
+                    )?;
                     let entries = filter_diff_entries(
                         tree_commit_entries(
                             &repo,
@@ -1182,8 +1186,12 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
         2 => {
             if let Some((base, tip)) = parse_commit_range(&repo, &commits[0])? {
                 if token_is_known_worktree_pathspec(&repo, &commits[1]) {
-                    let pathspecs =
-                        resolve_commit_diff_pathspecs(&repo, std::slice::from_ref(&commits[1]))?;
+                    let pathspecs = resolve_cli_diff_pathspecs(
+                        &repo,
+                        &opts.pathspecs,
+                        std::slice::from_ref(&commits[1]),
+                        DiffPathspecMode::Commit,
+                    )?;
                     let entries = filter_diff_entries(
                         tree_commit_entries(
                             &repo,
@@ -1757,14 +1765,24 @@ pub(crate) fn resolve_cli_diff_pathspecs(
     argv_paths: &[String],
     mode: DiffPathspecMode,
 ) -> Result<Vec<String>> {
-    if trailing.pathspec_from_file.is_some() {
-        let mut merged = trailing.clone();
-        merged.paths = argv_paths.to_vec();
-        return Ok(merged.resolve(repo)?.specs);
+    let raw = trailing.pathspec_source_tokens(argv_paths)?;
+    if raw.is_empty() {
+        return Ok(Vec::new());
     }
     match mode {
-        DiffPathspecMode::Worktree => resolve_worktree_diff_pathspecs(repo, argv_paths),
-        DiffPathspecMode::Commit => resolve_commit_diff_pathspecs(repo, argv_paths),
+        DiffPathspecMode::Worktree => {
+            if trailing.pathspec_from_file.is_some() {
+                let mut merged = trailing.clone();
+                merged.paths = if argv_paths.is_empty() {
+                    trailing.paths.clone()
+                } else {
+                    argv_paths.to_vec()
+                };
+                return Ok(merged.resolve(repo)?.specs);
+            }
+            resolve_worktree_diff_pathspecs(repo, &raw)
+        }
+        DiffPathspecMode::Commit => resolve_commit_diff_pathspecs(repo, &raw),
     }
 }
 
