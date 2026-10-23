@@ -60,6 +60,70 @@ fn git_untracked_paths_normal_mode(root: &Path) -> Vec<String> {
     .collect()
 }
 
+fn find_uc_dir<'a>(
+    dir: &'a grit_lib::index::untracked_cache::UntrackedCacheDir,
+    name: &str,
+) -> Option<&'a grit_lib::index::untracked_cache::UntrackedCacheDir> {
+    dir.dirs.iter().find(|d| d.name == name)
+}
+
+/// Regression: UNTR refresh probe must enumerate nested files when building check-only subtrees
+/// (Bugbot PR #1522 — forwarding `show_all` into the probe dropped paths).
+#[test]
+fn normal_refresh_check_only_subtree_records_nested_files() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_repo(root);
+    fs::create_dir_all(root.join("collapse")).expect("mkdir");
+    fs::write(root.join("collapse/u1.txt"), "1\n").expect("write");
+    fs::write(root.join("collapse/u2.txt"), "2\n").expect("write");
+    fs::write(root.join("tracked.txt"), "t\n").expect("write");
+    git(root, &["add", "tracked.txt"]);
+    git(root, &["commit", "-qm", "c"]);
+
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let idx = repo.index_handle().load().expect("load");
+    let wt = repo.work_tree().expect("wt");
+    let cfg = repo.config().expect("config");
+    let mut uc = UntrackedCache::new_shell(
+        DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
+        untracked_cache_ident(wt),
+    );
+    refresh_untracked_cache_for_status(
+        &repo,
+        &idx,
+        wt,
+        cfg.as_ref(),
+        &mut uc,
+        false,
+        UntrackedIgnoredMode::No,
+    )
+    .expect("refresh normal");
+
+    let collapse = find_uc_dir(uc.root.as_ref().expect("root"), "collapse").expect("collapse node");
+    assert!(
+        collapse.check_only,
+        "collapsed untracked-only dir should be check_only, got recurse={} untracked={:?}",
+        collapse.recurse, collapse.untracked
+    );
+    assert!(
+        collapse.untracked.iter().any(|p| p == "u1.txt"),
+        "check_only subtree must record nested files, got {:?}",
+        collapse.untracked
+    );
+    assert!(
+        collapse.untracked.iter().any(|p| p == "u2.txt"),
+        "check_only subtree must record nested files, got {:?}",
+        collapse.untracked
+    );
+
+    let collapsed_status = grit_untracked_paths_normal(&repo);
+    assert!(
+        collapsed_status.iter().any(|p| p == "collapse/"),
+        "status output should still collapse to collapse/, got {collapsed_status:?}"
+    );
+}
+
 #[test]
 fn issue_1227_new_file_in_git_warmed_check_only_collapsed_dir() {
     let tmp = tempfile::tempdir().expect("tempdir");

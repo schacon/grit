@@ -1432,6 +1432,8 @@ fn visit_untracked_directory_uc(
 
     let mut sub_untracked = Vec::new();
     let mut sub_ignored = Vec::new();
+    // Always enumerate files here: `populate_check_only_subtree` needs concrete paths, not
+    // collapsed `dir/` markers from normal untracked mode (see issue #1515 / Bugbot PR #1522).
     visit_untracked_node_full(
         repo,
         index,
@@ -1440,7 +1442,7 @@ fn visit_untracked_directory_uc(
         gitlinks,
         matcher,
         ignored_mode,
-        show_all,
+        true,
         rel,
         abs,
         &mut sub_untracked,
