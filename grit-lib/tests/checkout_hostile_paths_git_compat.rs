@@ -14,7 +14,7 @@ use grit_lib::porcelain::merge::tree_to_index_entries;
 use grit_lib::porcelain::reset::{reset_to_commit, ResetMode, ResetOptions};
 use grit_lib::porcelain::restore::{restore_paths, RestoreOptions, RestoreSource};
 use grit_lib::porcelain::switch::{resolve_switch_target, switch_repository, SwitchOptions};
-use grit_lib::remote::clone::{clone as clone_repo, CloneOptions};
+use grit_lib::remote::clone::{clone as clone_repo, CloneError, CloneOptions};
 use grit_lib::remote::fetch::NoProgress;
 use grit_lib::repo::{InitOptions, Repository};
 use grit_test_support::{git, git_hash_object_literally, HashAlgo};
@@ -220,7 +220,7 @@ fn assert_invalid_path_component(err: Error) {
     );
 }
 
-fn grit_lib_clone_then_checkout_evil(
+fn grit_lib_clone_hostile_path_rejected(
     upstream: &Path,
     dest: &Path,
     evil_tree: &str,
@@ -228,24 +228,41 @@ fn grit_lib_clone_then_checkout_evil(
     local_config: &str,
 ) -> Error {
     git(upstream, &["symbolic-ref", "HEAD", "refs/heads/evil"]);
-    let opts = CloneOptions {
-        url: upstream.to_string_lossy().into_owned(),
+    let url = upstream.to_string_lossy().into_owned();
+    let mut opts = CloneOptions {
+        url: url.clone(),
         dest: dest.to_path_buf(),
         environment: Environment::empty(),
-        ..CloneOptions::new(upstream.to_string_lossy(), dest.to_path_buf())
+        ..CloneOptions::new(url, dest.to_path_buf())
     };
-    let outcome = clone_repo(opts, &mut NoProgress, None).expect("clone fetch");
-    if !local_config.is_empty() {
-        append_local_config(outcome.repo.git_dir(), local_config);
-        outcome.repo.reload_config().expect("reload config");
+    // HFS alias names are enforced at explicit checkout on this platform; system git
+    // also skips clone-failure assertions for this case (see below).
+    if case_label == "hfs dotgit" {
+        opts.checkout = false;
+        let outcome = clone_repo(opts, &mut NoProgress, None)
+            .unwrap_or_else(|e| panic!("{case_label}: clone fetch: {e:?}"));
+        if !local_config.is_empty() {
+            append_local_config(outcome.repo.git_dir(), local_config);
+            outcome.repo.reload_config().expect("reload config");
+        }
+        let tree_oid: ObjectId = evil_tree.parse().expect("tree oid");
+        let checkout_result = checkout_between_trees(&outcome.repo, None, &tree_oid);
+        assert!(
+            checkout_result.is_err(),
+            "{case_label}: checkout should fail for hostile tree {evil_tree}: {checkout_result:?}"
+        );
+        return checkout_result.unwrap_err();
     }
-    let tree_oid: ObjectId = evil_tree.parse().expect("tree oid");
-    let checkout_result = checkout_between_trees(&outcome.repo, None, &tree_oid);
-    assert!(
-        checkout_result.is_err(),
-        "{case_label}: checkout should fail for hostile tree {evil_tree}: {checkout_result:?}"
-    );
-    checkout_result.unwrap_err()
+    match clone_repo(opts, &mut NoProgress, None) {
+        Ok(outcome) => panic!(
+            "{case_label}: clone should not succeed with hostile default branch (checked out {} files)",
+            outcome.files
+        ),
+        Err(CloneError::Library(err)) => err,
+        Err(other) => {
+            panic!("{case_label}: expected InvalidPathComponent via Library error, got {other:?}")
+        }
+    }
 }
 
 fn grit_cli_clone_fails(upstream: &Path, dest: &Path) -> bool {
@@ -364,7 +381,7 @@ fn hostile_paths_rejected_on_clone_switch_reset_restore() {
 
         let slug = case.label.replace(' ', "-");
         let clone_dest = parent.path().join(format!("clone-{slug}"));
-        let err = grit_lib_clone_then_checkout_evil(
+        let err = grit_lib_clone_hostile_path_rejected(
             &upstream,
             &clone_dest,
             &evil_tree,

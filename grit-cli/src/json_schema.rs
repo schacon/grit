@@ -124,12 +124,14 @@ pub struct CommandSchemaVersions {
 /// Returns the version table row for `command`.
 pub fn command_schema_versions(command: &str) -> CommandSchemaVersions {
     match command {
-        "clone" | "config" | "merge" | "pull" | "pick" | "mv" | "worktree.prune" => {
-            CommandSchemaVersions {
-                current: 2,
-                frozen: &[1],
-            }
-        }
+        "clone" => CommandSchemaVersions {
+            current: 3,
+            frozen: &[1, 2],
+        },
+        "config" | "merge" | "pull" | "pick" | "mv" | "worktree.prune" => CommandSchemaVersions {
+            current: 2,
+            frozen: &[1],
+        },
         _ => CommandSchemaVersions {
             current: 1,
             frozen: &[],
@@ -1264,8 +1266,8 @@ mod tests {
             );
         }
         assert_eq!(
-            checked, 101,
-            "expected 101 committed schema files under content/schemas"
+            checked, 102,
+            "expected 102 committed schema files under content/schemas"
         );
     }
 

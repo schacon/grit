@@ -8,7 +8,7 @@ order: 2
 ## Synopsis
 
 ```text
-grit clone <url> [<dir>] [--depth <N>] [-b|--branch <NAME>] [--shallow] [--single-branch | --no-single-branch] [--no-tags] [-o <name>]
+grit clone <url> [<dir>] [--depth <N>] [-b|--branch <NAME>] [--shallow] [--single-branch | --no-single-branch] [--no-tags] [-o <name>] [--bare] [--no-checkout]
 ```
 
 ## Description
@@ -44,6 +44,8 @@ Pass `--depth <N>` for the same result as `git clone --depth`: only one ref is f
 
 `--shallow` is a hidden alias for `--depth 1` and cannot be combined with `--depth`.
 
+`--bare` creates a bare repository at the destination (the directory itself is the git directory, named with a `.git` suffix when the URL is derived automatically), fetches `refs/heads/*` and tags directly, and configures only `remote.<name>.url` — matching `git clone --bare`. `--no-checkout` fetches and sets `HEAD` to the default branch without writing the index or work tree files, matching `git clone --no-checkout`.
+
 You can also clone from a shallow repository (including one created with `git clone --depth`); grit copies the shallow boundary into the new repository so history matches the source.
 
 Working-tree materialization after fetch uses the same parallel checkout path as [`grit switch`](../switch/). Configure [`checkout.workers`](../../library/parallelism.md) and `checkout.thresholdForParallelism` in the repository config, or pass global [`--threads`](../global-options.md) to override worker count for this process.
@@ -61,6 +63,8 @@ Working-tree materialization after fetch uses the same parallel checkout path as
 | `--no-single-branch` | With `--depth`, fetch every branch tip (`git clone --no-single-branch --depth=1`). |
 | `--no-tags` | Do not fetch tags; sets `remote.<name>.tagOpt=--no-tags` like Git. |
 | `-o`, `--origin <name>` | Name of the remote (default `origin`). |
+| `--bare` | Bare repository; no working tree (`git clone --bare`). |
+| `--no-checkout` | Fetch refs but do not check out files (`git clone --no-checkout`). |
 
 ## Examples
 
@@ -122,7 +126,7 @@ $ grit clone -b v1.0.0 https://github.com/BurntSushi/ripgrep.git
 
 ## JSON output
 
-Schema: [v2](/schemas/clone/v2.json)
+Schema: [v3](/schemas/clone/v3.json)
 
 Pass `--json` for stable, scripting-friendly output:
 
@@ -146,7 +150,8 @@ Pass `--json` for stable, scripting-friendly output:
 | `worktree_bytes` | integer | Total size of the checked-out files. |
 | `seconds` | number | Wall-clock seconds for the whole clone. |
 | `phases` | array | Time spent in each step, in order: `phase` (`receiving`, `indexing`, `resolving_deltas`, `copying` or `checkout`), `unit` (`bytes`, `objects` or `files`), `count` and `seconds`. Steps that processed nothing are left out. |
-| `no_checkout_reason` | string or omitted | When no files were checked out: `empty_remote` (nothing on the remote) or `unborn_default_branch` (default branch unborn but other refs may exist). Omitted when checkout succeeded. |
+| `bare` | boolean | `true` when `--bare` was used. |
+| `no_checkout_reason` | string or omitted | When no files were checked out: `empty_remote`, `unborn_default_branch`, `bare`, or `no_checkout`. Omitted when checkout succeeded. |
 | `branches_with_commits` | array of strings | Remote branch names that have commits when `no_checkout_reason` is `unborn_default_branch`. Omitted when empty. |
 
 Example (repository with commits):
@@ -155,8 +160,12 @@ Example (repository with commits):
 {
   "url": "/srv/git/project.git",
   "path": "project",
+  "remote": "origin",
+  "single_branch": false,
+  "tag_fetch": "all",
   "branch": "main",
   "detached": false,
+  "bare": false,
   "objects": 42,
   "bytes": 8192,
   "branches": 1,
@@ -183,8 +192,12 @@ Empty remote (no branch tips yet):
 {
   "url": "/tmp/origin.git",
   "path": "project",
+  "remote": "origin",
+  "single_branch": false,
+  "tag_fetch": "all",
   "branch": "main",
   "detached": false,
+  "bare": false,
   "objects": 0,
   "bytes": 0,
   "branches": 0,
@@ -204,8 +217,12 @@ Unborn remote default branch (`HEAD` on the server points at a branch with no co
 {
   "url": "/tmp/remote.git",
   "path": "clone2",
+  "remote": "origin",
+  "single_branch": false,
+  "tag_fetch": "all",
   "branch": "master",
   "detached": false,
+  "bare": false,
   "objects": 3,
   "bytes": 458,
   "branches": 1,
@@ -231,7 +248,7 @@ Unborn remote default branch (`HEAD` on the server points at a branch with no co
 
 Pass [`--markdown`](../global-options/) for agent-friendly output.
 
-Schema: [v2](/schemas/clone/v2.json)
+Schema: [v3](/schemas/clone/v3.json)
 
 Markdown uses headings, bullet lists, and fenced blocks; pipe characters inside table cells are escaped. See the JSON output section for the stable field contract.
 

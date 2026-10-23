@@ -107,18 +107,10 @@ fn clone_fetches_tags_on_unreachable_commits() {
     let grit_dest = tempfile::tempdir().expect("grit clone");
     clone_repo(
         CloneOptions {
-            url: upstream.path().to_string_lossy().into_owned(),
-            dest: grit_dest.path().to_path_buf(),
-            environment: Environment::capture_process(),
-            remote_name: grit_lib::remote::DEFAULT_REMOTE.to_owned(),
-            initial_branch: "main".to_owned(),
-            thread_policy: grit_lib::parallel::ThreadPolicy::default(),
-            depth: None,
-            filter: None,
-            branch: None,
-            single_branch: None,
-            tags: None,
-            promisor_fetcher: None,
+            ..CloneOptions::new(
+                upstream.path().to_string_lossy(),
+                grit_dest.path().to_path_buf(),
+            )
         },
         &mut NoProgress,
         None,
@@ -146,18 +138,7 @@ fn clone_file_url_fetches_unreachable_tags() {
     );
     clone_repo(
         CloneOptions {
-            url,
-            dest: grit_dest.path().to_path_buf(),
-            environment: Environment::capture_process(),
-            remote_name: grit_lib::remote::DEFAULT_REMOTE.to_owned(),
-            initial_branch: "main".to_owned(),
-            thread_policy: grit_lib::parallel::ThreadPolicy::default(),
-            depth: None,
-            filter: None,
-            branch: None,
-            single_branch: None,
-            tags: None,
-            promisor_fetcher: None,
+            ..CloneOptions::new(url, grit_dest.path().to_path_buf())
         },
         &mut NoProgress,
         None,
