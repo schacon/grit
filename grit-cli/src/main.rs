@@ -2603,11 +2603,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                     Ok(out) => emit(&out, opts, ctx),
                     Err(err) => {
                         let code = commands::add::hunks_exit_code(&err);
-                        if opts.mode == OutputMode::Json {
-                            output::emit_error(&err, opts);
-                        } else {
-                            eprintln!("error: {err:#}");
-                        }
+                        output::emit_error(&err, opts);
                         std::process::exit(code);
                     }
                 }

@@ -3,19 +3,15 @@
 use std::fs;
 
 use super::absorb::remaining_index_blob_for_path;
-use super::apply::apply_fixup_rewrite;
+use super::apply::{apply_fixup_rewrite, apply_index_to_worktree_delta};
 use super::error::HistoryError;
 use super::plan::plan_rewrite;
 use super::reword::normalize_rewrite_message;
 use super::types::{AppliedRewrite, ApplyOptions};
 use super::types::{CommitEdit, EmptyPolicy, HistoryEdits, RewriteOptions, RewritePlan};
-use crate::apply::{
-    apply_patch_to_blob, apply_patch_to_index, BlobApplyOptions, FilePatch, Hunk, HunkLine,
-    IndexApplyOptions,
-};
+use crate::apply::{apply_patch_to_blob, BlobApplyOptions};
 use crate::diff::diff_index_to_tree;
 use crate::diff::hunk_id::DiffSide;
-use crate::diff::structured::{StructuredHunk, StructuredLineKind};
 use crate::index::write_tree::write_tree_from_index;
 use crate::index::{Index, IndexEntry, MODE_REGULAR};
 use crate::merge_file::MergeFavor;
@@ -23,9 +19,7 @@ use crate::merge_trees::{
     merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
 };
 use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
-use crate::porcelain::hunk_select::{
-    remaining_unstaged_structured_hunks_for_path, resolve_selection, stage_hunks, HunkSelection,
-};
+use crate::porcelain::hunk_select::{resolve_selection, stage_hunks, HunkSelection};
 use crate::porcelain::index_from_tree::index_from_tree;
 use crate::repo::Repository;
 use crate::state::resolve_head;
@@ -183,7 +177,7 @@ pub fn apply_fixup_hunk_selection(
     pathspecs: &[String],
 ) -> Result<AppliedRewrite, HistoryError> {
     let paths = fixup_selection_paths(repo, selection, pathspecs)?;
-    let snapshot = capture_hunk_fixup_apply_snapshot(repo, &paths, selection, pathspecs)?;
+    let snapshot = capture_hunk_fixup_apply_snapshot(repo, &paths)?;
     if let Err(err) = stage_hunks(repo, DiffSide::Unstaged, selection, pathspecs, false) {
         return Err(err.into());
     }
@@ -208,8 +202,6 @@ struct HunkFixupPathSnapshot {
     pre_index_blob: Vec<u8>,
     pre_worktree_bytes: Option<Vec<u8>>,
     had_pre_staged: bool,
-    /// Unstaged hunks on this path that are not part of the fixup selection.
-    remaining_unstaged_hunks: Vec<StructuredHunk>,
 }
 
 #[derive(Debug, Clone)]
@@ -222,8 +214,6 @@ struct HunkFixupApplySnapshot {
 fn capture_hunk_fixup_apply_snapshot(
     repo: &Repository,
     paths: &[String],
-    selection: &HunkSelection,
-    pathspecs: &[String],
 ) -> Result<HunkFixupApplySnapshot, HistoryError> {
     let index_bytes = fs::read(repo.index_path()).map_err(|e| HistoryError::WorktreeApply {
         message: e.to_string(),
@@ -235,9 +225,6 @@ fn capture_hunk_fixup_apply_snapshot(
         let pre_head_blob = blob_at_path(repo, pre_head_tree, path).unwrap_or_default();
         let pre_index_blob = index_blob_at_path(repo, &index, path);
         let had_pre_staged = pre_index_blob != pre_head_blob;
-        let remaining_unstaged_hunks =
-            remaining_unstaged_structured_hunks_for_path(repo, path, selection, pathspecs)
-                .map_err(library_err)?;
         let pre_worktree_bytes = repo.work_tree().as_ref().and_then(|wt| {
             let abs = wt.join(path);
             abs.is_file().then(|| fs::read(&abs).ok()).flatten()
@@ -247,7 +234,6 @@ fn capture_hunk_fixup_apply_snapshot(
             pre_index_blob,
             pre_worktree_bytes,
             had_pre_staged,
-            remaining_unstaged_hunks,
         });
     }
     Ok(HunkFixupApplySnapshot {
@@ -318,19 +304,15 @@ fn restore_after_hunk_fixup_apply(
         upsert_index_blob(repo, &mut index, &path_state.path, &new_index_blob)?;
         index_changed = true;
         if let Some(wt) = worktree.as_ref() {
-            let new_worktree = if path_state.remaining_unstaged_hunks.is_empty() {
-                new_index_blob.clone()
-            } else {
-                let patch = file_patch_from_structured_hunks(
-                    &path_state.path,
-                    &path_state.remaining_unstaged_hunks,
-                );
-                apply_patch_to_blob(&new_index_blob, &patch, &BlobApplyOptions::default()).map_err(
-                    |e| HistoryError::WorktreeApply {
-                        message: e.to_string(),
-                    },
-                )?
-            };
+            let pre_worktree = path_state
+                .pre_worktree_bytes
+                .as_deref()
+                .unwrap_or(&path_state.pre_index_blob);
+            let new_worktree = apply_index_to_worktree_delta(
+                &path_state.pre_index_blob,
+                pre_worktree,
+                &new_index_blob,
+            );
             let abs = wt.join(&path_state.path);
             if let Some(parent) = abs.parent() {
                 fs::create_dir_all(parent).map_err(|e| HistoryError::WorktreeApply {
@@ -350,62 +332,6 @@ fn restore_after_hunk_fixup_apply(
             })?;
     }
     Ok(())
-}
-
-fn file_patch_from_structured_hunks(path: &str, hunks: &[StructuredHunk]) -> FilePatch {
-    let apply_hunks: Vec<Hunk> = hunks
-        .iter()
-        .enumerate()
-        .map(|(i, h)| structured_hunk_to_apply_hunk(h, i + 1))
-        .collect();
-    FilePatch {
-        diff_old_path: Some(path.to_string()),
-        diff_new_path: Some(path.to_string()),
-        old_path: Some(path.to_string()),
-        new_path: Some(path.to_string()),
-        saw_old_header: true,
-        saw_new_header: true,
-        old_mode: None,
-        new_mode: None,
-        old_mode_line: None,
-        new_mode_line: None,
-        is_new: false,
-        is_deleted: false,
-        is_rename: false,
-        is_copy: false,
-        similarity_index: None,
-        dissimilarity_index: None,
-        old_oid: None,
-        new_oid: None,
-        binary_patch: None,
-        is_binary: false,
-        hunks: apply_hunks,
-        ws_rule: 0,
-        is_toplevel_relative: true,
-    }
-}
-
-fn structured_hunk_to_apply_hunk(hunk: &StructuredHunk, first_body_line: usize) -> Hunk {
-    let mut lines = Vec::new();
-    for line in &hunk.lines {
-        let text: String = line.segments.iter().map(|s| s.text.as_str()).collect();
-        match line.kind {
-            StructuredLineKind::Context => lines.push(HunkLine::Context(text)),
-            StructuredLineKind::Add => lines.push(HunkLine::Add(text)),
-            StructuredLineKind::Del => lines.push(HunkLine::Remove(text)),
-        }
-        if line.no_newline_at_eof {
-            lines.push(HunkLine::NoNewline);
-        }
-    }
-    Hunk {
-        old_start: hunk.old_start,
-        old_count: hunk.old_lines,
-        new_start: hunk.new_start,
-        new_count: hunk.new_lines,
-        first_body_line,
-        lines,
-    }
 }
 
 fn index_blob_at_path(repo: &Repository, index: &Index, path: &str) -> Vec<u8> {
@@ -476,30 +402,51 @@ fn blob_at_path(repo: &Repository, tree: ObjectId, path: &str) -> Result<Vec<u8>
     })
 }
 
+/// Build the blob folded into the fixup target: `HEAD` plus selected unstaged edits only.
+///
+/// Selection patches are resolved against the index→worktree unstaged diff, applied to the
+/// live index blob, then replayed onto `HEAD` so pre-staged lines are not folded in.
+fn planning_blob_for_fixup_selection(
+    head_blob: &[u8],
+    index_blob: &[u8],
+    after_index_blob: &[u8],
+) -> Result<Vec<u8>, HistoryError> {
+    Ok(apply_index_to_worktree_delta(
+        index_blob,
+        after_index_blob,
+        head_blob,
+    ))
+}
+
 fn index_tree_for_fixup_selection(
     repo: &Repository,
     head_tree: ObjectId,
     selection: &HunkSelection,
     pathspecs: &[String],
 ) -> Result<ObjectId, HistoryError> {
-    let patches = resolve_selection(repo, DiffSide::Unstaged, selection, pathspecs)?;
+    let patches = resolve_selection(repo, DiffSide::Unstaged, selection, pathspecs)
+        .map_err(HistoryError::HunkSelect)?;
     if patches.is_empty() {
         return Err(HistoryError::NothingStaged);
     }
+    let disk_index = repo.load_index().map_err(library_err)?;
     let mut index = index_from_tree(repo, &head_tree).map_err(library_err)?;
-    apply_patch_to_index(
-        repo,
-        &mut index,
-        &patches,
-        &IndexApplyOptions {
-            dry_run: false,
-            reverse: false,
-            head_tree_oid: None,
-        },
-    )
-    .map_err(|e| HistoryError::Planning {
-        message: e.to_string(),
-    })?;
+    for patch in &patches {
+        let path = patch
+            .effective_path()
+            .ok_or_else(|| HistoryError::Planning {
+                message: "fixup selection patch missing path".into(),
+            })?;
+        let head_blob = blob_at_path(repo, head_tree, path)?;
+        let index_blob = index_blob_at_path(repo, &disk_index, path);
+        let after_index = apply_patch_to_blob(&index_blob, patch, &BlobApplyOptions::default())
+            .map_err(|e| HistoryError::Planning {
+                message: e.to_string(),
+            })?;
+        let planning_blob =
+            planning_blob_for_fixup_selection(&head_blob, &index_blob, &after_index)?;
+        upsert_index_blob(repo, &mut index, path, &planning_blob)?;
+    }
     write_tree_from_index(repo.odb(), &index, "").map_err(library_err)
 }
 
@@ -707,8 +654,7 @@ mod hunk_selection_restore_tests {
         };
         let plan = fixup(&grit, target, &opts).expect("plan");
         let paths = fixup_selection_paths(&grit, &selection, &[]).expect("paths");
-        let snapshot =
-            capture_hunk_fixup_apply_snapshot(&grit, &paths, &selection, &[]).expect("snap");
+        let snapshot = capture_hunk_fixup_apply_snapshot(&grit, &paths).expect("snap");
         stage_hunks(&grit, DiffSide::Unstaged, &selection, &[], false).expect("stage line-18");
         let apply_opts = ApplyOptions {
             identity: "Fixup <f@grit.test>".into(),

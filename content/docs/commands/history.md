@@ -191,7 +191,7 @@ Fixed up 2 commit(s)
   refs/heads/main f6a7b89 → c0ffee0
 ```
 
-Unknown or stale hunk ids exit **2** (same as `grit add --hunks`). Other unstaged hunks on the same paths stay in the worktree.
+Unknown or stale hunk ids exit **2** (same as `grit add --hunks`). Hunk ids and `--lines` ranges are resolved against the same index→worktree diff as [`grit diff --unstaged --json`](diff.md). Other unstaged hunks on the same paths stay in the worktree; pre-staged edits on those paths are preserved after apply, including when the selected hunk changes line count.
 
 Absorb staged fixes on a linear branch:
 

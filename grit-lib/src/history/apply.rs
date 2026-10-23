@@ -117,7 +117,7 @@ fn map_old_index_lines_to_new(old_index: &[Vec<u8>], new_index: &[Vec<u8>]) -> V
 }
 
 /// Reapply the unstaged worktree delta from `(old_index → old_worktree)` onto `new_index`.
-fn apply_index_to_worktree_delta(
+pub(crate) fn apply_index_to_worktree_delta(
     old_index: &[u8],
     old_worktree: &[u8],
     new_index: &[u8],

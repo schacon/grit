@@ -133,7 +133,10 @@ impl AddOutcome {
 
 /// Exit code for `--hunks` / `--lines` failures (unknown, stale, or wrong-side ids).
 pub fn hunks_exit_code(err: &anyhow::Error) -> i32 {
-    if err.downcast_ref::<HunkSelectError>().is_some() {
+    if err
+        .chain()
+        .any(|cause| cause.downcast_ref::<HunkSelectError>().is_some())
+    {
         2
     } else {
         1

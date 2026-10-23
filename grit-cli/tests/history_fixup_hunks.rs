@@ -79,3 +79,35 @@ fn history_fixup_hunks_json() {
     assert_eq!(out["dry_run"].as_bool(), Some(false));
     assert!(out["rewritten"].as_array().is_some_and(|a| !a.is_empty()));
 }
+
+#[test]
+fn history_fixup_stale_hunk_json_exit_code() {
+    let grit = env!("CARGO_BIN_EXE_grit");
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let root = dir.path();
+    assert!(run_grit(grit, root, &["init"]).status.success());
+    fs::write(root.join("f.txt"), "one\n").expect("write");
+    assert!(run_grit(grit, root, &["add", "f.txt"]).status.success());
+    assert!(run_grit(grit, root, &["commit", "-m", "init"])
+        .status
+        .success());
+    fs::write(root.join("f.txt"), "two\n").expect("write");
+    let fixup = run_grit(
+        grit,
+        root,
+        &[
+            "history",
+            "fixup",
+            "HEAD",
+            "--hunks",
+            "000000000001",
+            "--json",
+            "--",
+            "f.txt",
+        ],
+    );
+    assert_eq!(fixup.status.code(), Some(2));
+    let out: serde_json::Value =
+        serde_json::from_slice(&fixup.stdout).expect("structured error json on stdout");
+    assert!(out.get("error").is_some());
+}
