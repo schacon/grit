@@ -524,6 +524,22 @@ const COMMAND_CONTRACTS: &[(&str, CommandContract)] = &[
         },
     ),
     (
+        "remote.remove",
+        CommandContract {
+            kind: CommandKind::Mutation,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
+        "remote.show",
+        CommandContract {
+            kind: CommandKind::List,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
         "remote.refs",
         CommandContract {
             kind: CommandKind::List,
