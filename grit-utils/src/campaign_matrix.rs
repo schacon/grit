@@ -443,7 +443,6 @@ pub fn run_fixture_cli_matrix(
             &fixture.worktree,
             !smoke,
         )?);
-
         let grit_q = shell_quote(&grit.to_string_lossy());
         let ignore_script = format!(
             r#"set -eu
@@ -484,6 +483,41 @@ exec git blame --porcelain --ignore-revs-file "$list" "$path"
             &fixture.worktree,
             !smoke,
         )?);
+        if fixture.id == "git-dot-git" {
+            let func_path = "line-range.c";
+            let func_range = ":parse_range_arg";
+            out.push(run_matrix_scenario(
+                hyperfine,
+                git,
+                grit,
+                cfg,
+                &Scenario {
+                    id: sid(fixture.id, "blame-L-funcname"),
+                    group: "blame".into(),
+                    fixture: fixture.label.clone(),
+                    description: format!("blame -L {func_range} {func_path}"),
+                    grit_argv: vec![
+                        "blame".into(),
+                        "-L".into(),
+                        func_range.into(),
+                        func_path.into(),
+                    ],
+                    git_argv: vec![
+                        "blame".into(),
+                        "-L".into(),
+                        func_range.into(),
+                        "--porcelain".into(),
+                        func_path.into(),
+                    ],
+                    driver: Driver::Cli,
+                    prepare_kind: None,
+                    grit_via_shell: false,
+                    git_via_shell: false,
+                },
+                &fixture.worktree,
+                !smoke,
+            )?);
+        }
     }
 
     let meta = ensure_campaign_hot_path(git, &fixture.worktree)?;

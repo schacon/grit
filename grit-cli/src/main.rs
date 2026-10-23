@@ -846,13 +846,22 @@ enum Command {
     },
     /// Show who last modified each line of a file.
     Blame {
-        /// Path to the file (repository-relative).
-        file: String,
-        /// Blame at this revision instead of `HEAD`.
-        #[arg(long)]
+        /// Optional revision before the file (use `--` to disambiguate paths that look like refs).
+        #[arg(value_name = "REV")]
+        rev_pos: Option<String>,
+        /// File to blame (repository-relative).
+        #[arg(value_name = "FILE", last = true, allow_hyphen_values = true)]
+        file: Option<String>,
+        /// Blame at this revision instead of `HEAD` (cannot combine with a positional revision).
+        #[arg(long, conflicts_with = "rev_pos")]
         rev: Option<String>,
-        /// Limit to an inclusive 1-based line range (`START,END`).
-        #[arg(short = 'L', long = "lines", value_name = "START,END")]
+        /// Limit output with a Git-style line range (`-L` / `--lines`).
+        #[arg(
+            short = 'L',
+            long = "lines",
+            value_name = "RANGE",
+            allow_hyphen_values = true
+        )]
         line_range: Option<String>,
         /// At merge commits, follow only the first parent (Git's `--first-parent`).
         #[arg(long = "first-parent")]
@@ -2286,6 +2295,7 @@ fn dispatch(
             }
         },
         Command::Blame {
+            rev_pos,
             file,
             rev,
             line_range,
@@ -2295,6 +2305,7 @@ fn dispatch(
             group,
         } => emit_success(
             &commands::blame::run(
+                rev_pos,
                 file,
                 rev,
                 line_range,
