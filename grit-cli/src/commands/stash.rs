@@ -24,6 +24,7 @@ use crate::context;
 use crate::diff_render::{self, DiffStat};
 use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
+use crate::pathspec_args::TrailingPathspecArgs;
 
 /// Result of `grit stash push` (or bare `grit stash`).
 #[derive(Serialize, JsonSchema)]
@@ -46,7 +47,7 @@ pub enum StashPushOutcome {
     },
     /// `--dry-run` preview of what would be stashed.
     Preview {
-        #[serde(default, skip_serializing_if = "is_false")]
+        #[serde(default = "preview_dry_run")]
         dry_run: bool,
         #[serde(default, skip_serializing_if = "StashPushMode::is_default")]
         mode: StashPushMode,
@@ -102,6 +103,10 @@ fn stash_mode_from_flags(staged: bool, keep_index: bool) -> Result<StashMode> {
 
 fn is_false(v: &bool) -> bool {
     !*v
+}
+
+const fn preview_dry_run() -> bool {
+    true
 }
 
 impl HumanRender for StashPushOutcome {

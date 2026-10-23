@@ -2899,6 +2899,8 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
                 hunks: push_hunks,
                 lines: push_lines,
                 dry_run: push_dry_run,
+                staged: push_staged,
+                keep_index: push_keep_index,
                 pathspecs: push_pathspecs,
             }) => {
                 let merged_hunks = if push_hunks.is_empty() {
@@ -2921,8 +2923,8 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
                 let outcome = commands::stash::run_push(commands::stash::StashPushRunArgs {
                     message: push_message.or(message),
                     include_untracked: include_untracked || push_untracked,
-                    staged,
-                    keep_index,
+                    staged: staged || push_staged,
+                    keep_index: keep_index || push_keep_index,
                     hunks: &merged_hunks,
                     lines: &merged_lines,
                     dry_run: dry_run || push_dry_run,

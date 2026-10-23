@@ -244,6 +244,70 @@ fn stash_dry_run_writes_no_objects_or_refs() {
 }
 
 #[test]
+fn stash_staged_with_pathspec_matches_git() {
+    let (_g, grit_root, _gi, git_root) = twin_dirs("staged-path");
+    init_repo(&grit_root);
+    init_repo(&git_root);
+    for root in [&grit_root, &git_root] {
+        std::fs::write(root.join("a"), "a\n").expect("write");
+        std::fs::write(root.join("b"), "b\n").expect("write");
+        git_cmd(root, &["add", "."]);
+        git_cmd(root, &["commit", "-qm", "i"]);
+        std::fs::write(root.join("a"), "a2\n").expect("a");
+        std::fs::write(root.join("b"), "b2\n").expect("b");
+        git_cmd(root, &["add", "a", "b"]);
+    }
+
+    let repo = open_grit(&grit_root);
+    let mut opts = stash_opts(StashMode::StagedOnly, false);
+    opts.pathspecs = vec!["a".to_owned()];
+    push_stash(&repo, &opts).expect("push").expect("changes");
+    git_cmd(&git_root, &["stash", "push", "--staged", "--", "a"]);
+
+    assert_eq!(
+        read_repo_file(&grit_root, "a"),
+        read_repo_file(&git_root, "a")
+    );
+    assert_eq!(
+        read_repo_file(&grit_root, "b"),
+        read_repo_file(&git_root, "b")
+    );
+    assert_eq!(index_tree_oid(&grit_root), index_tree_oid(&git_root));
+    let git_show = git_cmd(&git_root, &["stash", "show", "-p", "stash@{0}"]);
+    let grit_show = git_cmd(&grit_root, &["stash", "show", "-p", "stash@{0}"]);
+    assert_eq!(grit_show.trim(), git_show.trim());
+}
+
+#[test]
+fn stash_staged_deletion_restores_head_like_git() {
+    let (_g, grit_root, _gi, git_root) = twin_dirs("staged-del");
+    for root in [&grit_root, &git_root] {
+        init_repo(root);
+        std::fs::write(root.join("f"), "x\n").expect("write");
+        git_cmd(root, &["add", "f"]);
+        git_cmd(root, &["commit", "-qm", "i"]);
+        git_cmd(root, &["rm", "f"]);
+    }
+
+    let repo = open_grit(&grit_root);
+    push_stash(&repo, &stash_opts(StashMode::StagedOnly, false))
+        .expect("push")
+        .expect("changes");
+    git_cmd(&git_root, &["stash", "push", "--staged"]);
+
+    assert_eq!(porcelain_v2(&grit_root), porcelain_v2(&git_root));
+    assert_eq!(
+        read_repo_file(&grit_root, "f"),
+        read_repo_file(&git_root, "f")
+    );
+    let show = git_cmd(&grit_root, &["stash", "show", "-p", "stash@{0}"]);
+    assert!(
+        show.contains("deleted file"),
+        "stash records deletion:\n{show}"
+    );
+}
+
+#[test]
 fn stash_staged_rejects_untracked_combo() {
     let dir = tempfile::tempdir().expect("tempdir");
     init_repo(dir.path());

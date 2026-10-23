@@ -9,7 +9,7 @@ order: 4
 
 ```text
 grit stash [-m <msg>] [-u] [-- path…]
-grit stash push [-m <msg>] [-u] [-S] [-k] [--hunks <id,...>] [--lines <path:start-end>] [--dry-run] [-- path…]
+grit stash push [-m <msg>] [-u] [-S] [-k] [--hunks <id,...>] [--lines <path:start-end>] [--dry-run] [--pathspec-from-file <file|->] [--pathspec-file-nul] [-- path…]
 grit stash list
 grit stash show [<n>] [-p]
 grit stash apply [<n>] [--index]
@@ -41,8 +41,9 @@ When a stash was created with `-u` / `--include-untracked`, `apply` and `pop` re
 | `--lines` | Stash only unstaged line ranges (`path:start-end`, same as `grit add --lines`). |
 | `--dry-run` | Preview what would be stashed; no objects, refs, index, or worktree updates. |
 | `-n`, `--limit` | Cap path lists in `--dry-run` preview output. |
-| `-- path…` | Limit push to these paths (same pathspec rules as `grit add`). |
-| `--pathspec-from-file` | Read pathspecs from a file (`-` for stdin); optional `--pathspec-file-nul`. |
+| `<path>…` | Limit what is stashed (after `--`); with `--staged`, only matching index changes are saved and reset. |
+| `--pathspec-from-file` | Read pathspecs from a file, or `-` for stdin (same rules as Git). |
+| `--pathspec-file-nul` | With `--pathspec-from-file`, entries are NUL-separated instead of line-based. |
 | `--index` | On `apply` / `pop`, restore the stashed index as well as the worktree. |
 | `<n>` | Stash index for `show`, `apply`, `pop`, or `drop` (default `0`). |
 | `-p`, `--patch` | Show the full patch in `grit stash show` instead of a diffstat. |
@@ -124,6 +125,7 @@ Partial stash (`--hunks` / `--lines`) also includes `stashed_hunks` and `stashed
 
 ```json
 {
+  "dry_run": true,
   "mode": "staged_only",
   "paths": ["staged_new.txt"],
   "untracked": []
@@ -143,6 +145,7 @@ When there was nothing to save:
 | `oid` | string | Full object id of the stash commit (success object only). |
 | `message` | string | Reflog message (for `-m`, `On <branch>: …`; otherwise Git-style `WIP on …`). |
 | `mode` | string | `all`, `staged_only`, or `keep_index`. Omitted when `all`. |
+| `dry_run` | boolean | Always `true` on the preview object; omitted on successful save (`false`). |
 | `paths` | array of strings | Tracked paths that would be stashed (`--dry-run` preview only). |
 | `untracked` | array of strings | Untracked paths in a dry-run preview when `-u` is set. |
 | `stashed_hunks` | object | Map of repository-relative path → hunk id strings stashed (partial `--hunks` only; same shape as `grit add --json`). Omitted when empty. |

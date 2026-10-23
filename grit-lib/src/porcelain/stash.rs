@@ -35,7 +35,9 @@ use crate::merge_trees::{
 };
 use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
 use crate::odb::Odb;
-use crate::pathspec::{has_glob_chars, pathspec_is_exclude, PathspecListMatcher};
+use crate::pathspec::{
+    has_glob_chars, matches_pathspec_list, pathspec_is_exclude, PathspecListMatcher,
+};
 use crate::porcelain::checkout::checkout_between_trees;
 use crate::porcelain::checkout::smudge_bytes_for_worktree_path;
 use crate::porcelain::clean::{is_nested_git_worktree, path_in_nested_git_worktree};
@@ -313,9 +315,10 @@ impl StashCreateOptions {
             return Ok(());
         }
         let mut index = repo.load_index()?;
-        let staged: HashSet<String> = staged_change_paths(repo, &index, head_tree)?
-            .into_iter()
-            .collect();
+        let staged: HashSet<String> =
+            staged_change_paths_for_options(repo, &index, head_tree, self)?
+                .into_iter()
+                .collect();
         if staged.is_empty() {
             return Ok(());
         }
@@ -409,6 +412,26 @@ fn staged_change_paths(
     Ok(staged.into_iter().map(|e| e.path().to_string()).collect())
 }
 
+fn filter_paths_by_pathspecs(paths: Vec<String>, pathspecs: &[String]) -> Vec<String> {
+    if pathspecs.is_empty() {
+        return paths;
+    }
+    paths
+        .into_iter()
+        .filter(|path| matches_pathspec_list(path, pathspecs))
+        .collect()
+}
+
+fn staged_change_paths_for_options(
+    repo: &Repository,
+    index: &Index,
+    head_tree: &ObjectId,
+    options: &StashCreateOptions,
+) -> Result<Vec<String>> {
+    let paths = staged_change_paths(repo, index, head_tree)?;
+    Ok(filter_paths_by_pathspecs(paths, &options.pathspecs))
+}
+
 fn has_stashable_changes(
     repo: &Repository,
     work_tree: &Path,
@@ -417,7 +440,7 @@ fn has_stashable_changes(
 ) -> Result<bool> {
     let mut index = repo.load_index()?;
     if options.mode == StashMode::StagedOnly {
-        return Ok(!staged_change_paths(repo, &index, head_tree)?.is_empty());
+        return Ok(!staged_change_paths_for_options(repo, &index, head_tree, options)?.is_empty());
     }
     if !diff_index_to_tree(repo.odb(), &index, Some(head_tree), true)?.is_empty() {
         return Ok(true);
@@ -754,6 +777,52 @@ fn selection_is_active(options: &StashCreateOptions) -> bool {
         .is_some_and(|sel| !sel.ids.is_empty() || !sel.ranges.is_empty())
 }
 
+fn refresh_index_stat_from_worktree(
+    index: &mut Index,
+    work_tree: &Path,
+    path: &str,
+    oid: ObjectId,
+    mode: u32,
+) -> Result<()> {
+    let abs = work_tree.join(path);
+    let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
+    let entry = crate::index::entry_from_metadata(&meta, path.as_bytes(), oid, mode);
+    index.add_or_replace(entry);
+    Ok(())
+}
+
+fn apply_staged_worktree_only_reset(
+    repo: &Repository,
+    work_tree: &Path,
+    head_tree: &ObjectId,
+    staged_paths: &[String],
+) -> Result<()> {
+    if staged_paths.is_empty() {
+        return Ok(());
+    }
+    let head_entries = flatten_tree_full_for_repo(repo, head_tree, "")?;
+    let index = repo.load_index()?;
+    let worktree_rules = WorktreeRules::from_repository(repo, &index)?;
+    for path in staged_paths {
+        if let Some(entry) = flat_tree_lookup(&head_entries, path) {
+            materialize_flat_entry_in_worktree(repo, work_tree, &worktree_rules, entry)?;
+        } else {
+            let file_path = work_tree.join(path);
+            if file_path.is_dir() {
+                if !is_nested_git_worktree(&file_path) {
+                    let _ = fs::remove_dir_all(&file_path);
+                }
+            } else if file_path.exists() || file_path.symlink_metadata().is_ok() {
+                let _ = fs::remove_file(&file_path);
+            }
+            if let Some(parent) = file_path.parent() {
+                remove_empty_dirs(parent, work_tree, repo.environment());
+            }
+        }
+    }
+    Ok(())
+}
+
 fn apply_staged_only_reset(
     repo: &Repository,
     work_tree: &Path,
@@ -769,12 +838,7 @@ fn apply_staged_only_reset(
     for path in staged_paths {
         if let Some(entry) = flat_tree_lookup(&head_entries, path) {
             materialize_flat_entry_in_worktree(repo, work_tree, &worktree_rules, entry)?;
-            if let Some(ie) = index.get(path.as_bytes(), 0).cloned() {
-                let mut updated = ie;
-                updated.oid = entry.oid;
-                updated.mode = entry.mode;
-                index.add_or_replace(updated);
-            }
+            refresh_index_stat_from_worktree(&mut index, work_tree, path, entry.oid, entry.mode)?;
         } else {
             index.remove(path.as_bytes());
             let file_path = work_tree.join(path);
@@ -820,7 +884,7 @@ fn tracked_stash_preview_paths(
             paths.insert(entry.path().to_string());
         }
     }
-    for path in staged_change_paths(repo, &index, head_tree)? {
+    for path in staged_change_paths_for_options(repo, &index, head_tree, options)? {
         paths.insert(path);
     }
     if let Some(ref patches) = resolve_partial_stash_patches(repo, options)? {
@@ -1165,7 +1229,7 @@ fn build_stash_commit(
     let context = stash_context_message(repo, &head, &head_oid)?;
     let mut index = repo.load_index()?;
     let staged_only_paths = if options.mode == StashMode::StagedOnly {
-        staged_change_paths(repo, &index, &head_tree)?
+        staged_change_paths_for_options(repo, &index, &head_tree, options)?
     } else {
         Vec::new()
     };
@@ -1313,14 +1377,14 @@ pub fn store_stash(repo: &Repository, oid: ObjectId, message: &str, identity: &s
     )
 }
 
-/// Result of a successful [`push_stash`] (including dry-run previews).
+/// Result of a successful [`push_stash`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StashPushResult {
-    /// The W commit object id (overlay-only when `dry_run` was set on options).
+    /// The W commit object id stored on `refs/stash`.
     pub oid: ObjectId,
-    /// Reflog-style message that would be or was stored on `refs/stash`.
+    /// Reflog-style message stored on `refs/stash`.
     pub message: String,
-    /// Tree recorded on the W commit (overlay-only when `dry_run` was set).
+    /// Tree recorded on the W commit.
     pub w_tree: ObjectId,
 }
 
@@ -1374,6 +1438,25 @@ pub fn push_stash(
         if !built.push_pathspecs.is_empty() {
             let reset_specs = pathspecs_for_push_reset(repo, &head_tree, &built.push_pathspecs)?;
             reset_stash_push_pathspecs_to_head(repo, &head_tree, &reset_specs)?;
+            if built.mode == StashMode::StagedOnly {
+                let index = repo.load_index()?;
+                let all_staged = staged_change_paths(repo, &index, &head_tree)?;
+                let stashed_set: HashSet<&str> = built
+                    .staged_only_paths
+                    .iter()
+                    .map(String::as_str)
+                    .collect();
+                let worktree_only: Vec<String> = all_staged
+                    .into_iter()
+                    .filter(|path| !stashed_set.contains(path.as_str()))
+                    .collect();
+                apply_staged_worktree_only_reset(
+                    repo,
+                    work_tree,
+                    &head_tree,
+                    &worktree_only,
+                )?;
+            }
         } else {
             match built.mode {
                 StashMode::StagedOnly => {
