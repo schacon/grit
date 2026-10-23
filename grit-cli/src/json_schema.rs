@@ -124,7 +124,7 @@ pub struct CommandSchemaVersions {
 /// Returns the version table row for `command`.
 pub fn command_schema_versions(command: &str) -> CommandSchemaVersions {
     match command {
-        "merge" | "pull" | "pick" | "mv" => CommandSchemaVersions {
+        "config" | "merge" | "pull" | "pick" | "mv" => CommandSchemaVersions {
             current: 2,
             frozen: &[1],
         },
@@ -1177,7 +1177,7 @@ mod tests {
             "schema index must list every committed schema document exactly"
         );
         let file_count: usize = on_disk.values().map(|v| v.len()).sum();
-        assert_eq!(file_count, 92, "expected 92 schema files indexed");
+        assert_eq!(file_count, 95, "expected 95 schema files indexed");
     }
 
     fn load_snapshot_json_stdout(name: &str, snapshot_dir: &Path) -> Value {

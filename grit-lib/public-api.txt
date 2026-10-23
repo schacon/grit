@@ -2295,6 +2295,31 @@ impl core::marker::Unpin for grit_lib::config::ConfigIncludeOrigin
 impl core::marker::UnsafeUnpin for grit_lib::config::ConfigIncludeOrigin
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::ConfigIncludeOrigin
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::config::ConfigIncludeOrigin
+pub enum grit_lib::config::ConfigLocation
+pub grit_lib::config::ConfigLocation::File(std::path::PathBuf)
+pub grit_lib::config::ConfigLocation::Global
+pub grit_lib::config::ConfigLocation::Local
+pub grit_lib::config::ConfigLocation::System
+pub grit_lib::config::ConfigLocation::Worktree
+impl grit_lib::config::ConfigLocation
+pub fn grit_lib::config::ConfigLocation::file_scope(&self) -> grit_lib::config::ConfigScope
+pub fn grit_lib::config::ConfigLocation::load_single(&self, &grit_lib::config::environment::Environment, core::option::Option<&std::path::Path>) -> grit_lib::error::Result<grit_lib::config::ConfigSet>
+pub fn grit_lib::config::ConfigLocation::write_path(&self, &grit_lib::config::environment::Environment, core::option::Option<&std::path::Path>) -> grit_lib::error::Result<std::path::PathBuf>
+impl core::clone::Clone for grit_lib::config::ConfigLocation
+pub fn grit_lib::config::ConfigLocation::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::config::ConfigLocation
+impl core::cmp::PartialEq for grit_lib::config::ConfigLocation
+pub fn grit_lib::config::ConfigLocation::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::config::ConfigLocation
+pub fn grit_lib::config::ConfigLocation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::config::ConfigLocation
+impl core::marker::Freeze for grit_lib::config::ConfigLocation
+impl core::marker::Send for grit_lib::config::ConfigLocation
+impl core::marker::Sync for grit_lib::config::ConfigLocation
+impl core::marker::Unpin for grit_lib::config::ConfigLocation
+impl core::marker::UnsafeUnpin for grit_lib::config::ConfigLocation
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::ConfigLocation
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::config::ConfigLocation
 pub enum grit_lib::config::ConfigScope
 pub grit_lib::config::ConfigScope::Command
 pub grit_lib::config::ConfigScope::Global
@@ -2435,6 +2460,7 @@ pub fn grit_lib::config::ConfigSet::get_bool(&self, &str) -> core::option::Optio
 pub fn grit_lib::config::ConfigSet::get_i64(&self, &str) -> core::option::Option<core::result::Result<i64, alloc::string::String>>
 pub fn grit_lib::config::ConfigSet::get_last_entry(&self, &str) -> core::option::Option<grit_lib::config::ConfigEntry>
 pub fn grit_lib::config::ConfigSet::get_regexp(&self, &str) -> core::result::Result<alloc::vec::Vec<&grit_lib::config::ConfigEntry>, alloc::string::String>
+pub fn grit_lib::config::ConfigSet::get_with_origin(&self, &str) -> grit_lib::error::Result<core::option::Option<grit_lib::config::ConfigValueOrigin>>
 pub fn grit_lib::config::ConfigSet::has_key(&self, &str) -> bool
 pub fn grit_lib::config::ConfigSet::load(&grit_lib::config::environment::Environment, core::option::Option<&std::path::Path>, bool) -> grit_lib::error::Result<Self>
 pub fn grit_lib::config::ConfigSet::load_protected(&grit_lib::config::environment::Environment, bool) -> grit_lib::error::Result<Self>
@@ -2475,6 +2501,26 @@ impl core::marker::Unpin for grit_lib::config::ConfigSet
 impl core::marker::UnsafeUnpin for grit_lib::config::ConfigSet
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::ConfigSet
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::config::ConfigSet
+pub struct grit_lib::config::ConfigValueOrigin
+pub grit_lib::config::ConfigValueOrigin::file: core::option::Option<std::path::PathBuf>
+pub grit_lib::config::ConfigValueOrigin::line: core::option::Option<usize>
+pub grit_lib::config::ConfigValueOrigin::scope: grit_lib::config::ConfigScope
+pub grit_lib::config::ConfigValueOrigin::value: core::option::Option<alloc::string::String>
+impl core::clone::Clone for grit_lib::config::ConfigValueOrigin
+pub fn grit_lib::config::ConfigValueOrigin::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::config::ConfigValueOrigin
+impl core::cmp::PartialEq for grit_lib::config::ConfigValueOrigin
+pub fn grit_lib::config::ConfigValueOrigin::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::config::ConfigValueOrigin
+pub fn grit_lib::config::ConfigValueOrigin::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::config::ConfigValueOrigin
+impl core::marker::Freeze for grit_lib::config::ConfigValueOrigin
+impl core::marker::Send for grit_lib::config::ConfigValueOrigin
+impl core::marker::Sync for grit_lib::config::ConfigValueOrigin
+impl core::marker::Unpin for grit_lib::config::ConfigValueOrigin
+impl core::marker::UnsafeUnpin for grit_lib::config::ConfigValueOrigin
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::ConfigValueOrigin
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::config::ConfigValueOrigin
 pub struct grit_lib::config::IncludeContext
 pub grit_lib::config::IncludeContext::command_line_relative_include_is_error: bool
 pub grit_lib::config::IncludeContext::cwd: std::path::PathBuf
@@ -2515,12 +2561,15 @@ impl core::marker::UnsafeUnpin for grit_lib::config::LoadConfigOptions
 impl !core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::LoadConfigOptions
 impl !core::panic::unwind_safe::UnwindSafe for grit_lib::config::LoadConfigOptions
 pub fn grit_lib::config::canonical_key(&str) -> grit_lib::error::Result<alloc::string::String>
+pub fn grit_lib::config::config_entry_origin_file(&grit_lib::config::ConfigEntry) -> core::option::Option<&std::path::Path>
+pub fn grit_lib::config::config_entry_origin_line(&grit_lib::config::ConfigEntry) -> core::option::Option<usize>
 pub fn grit_lib::config::config_file_display_for_error(&std::path::Path) -> alloc::string::String
 pub fn grit_lib::config::config_lock_path(&std::path::Path) -> std::path::PathBuf
 pub fn grit_lib::config::get_urlmatch_all_in_section(&[grit_lib::config::ConfigEntry], &str, &str) -> alloc::vec::Vec<(alloc::string::String, alloc::string::String, grit_lib::config::ConfigScope)>
 pub fn grit_lib::config::get_urlmatch_entries<'a>(&'a [grit_lib::config::ConfigEntry], &str, &str, &str) -> alloc::vec::Vec<&'a grit_lib::config::ConfigEntry>
 pub fn grit_lib::config::git_config_parameters_last_value(&str, &str) -> core::option::Option<alloc::string::String>
 pub fn grit_lib::config::global_config_paths_pub(&grit_lib::config::environment::Environment) -> alloc::vec::Vec<std::path::PathBuf>
+pub fn grit_lib::config::global_config_write_path(&grit_lib::config::environment::Environment) -> grit_lib::error::Result<std::path::PathBuf>
 pub fn grit_lib::config::parse_bool(&str) -> core::result::Result<bool, alloc::string::String>
 pub fn grit_lib::config::parse_color(&str) -> core::result::Result<alloc::string::String, alloc::string::String>
 pub fn grit_lib::config::parse_config_parameters(&str) -> alloc::vec::Vec<alloc::string::String>
@@ -2532,6 +2581,8 @@ pub fn grit_lib::config::parse_i64(&str) -> core::result::Result<i64, alloc::str
 pub fn grit_lib::config::parse_path(&grit_lib::config::environment::Environment, &str) -> alloc::string::String
 pub fn grit_lib::config::parse_path_optional(&grit_lib::config::environment::Environment, &str) -> core::option::Option<alloc::string::String>
 pub fn grit_lib::config::resolve_diff_context_lines(&grit_lib::config::ConfigSet) -> grit_lib::error::Result<core::option::Option<usize>>
+pub fn grit_lib::config::set_config_value(grit_lib::config::ConfigLocation, &grit_lib::config::environment::Environment, core::option::Option<&std::path::Path>, &str, &str) -> grit_lib::error::Result<()>
+pub fn grit_lib::config::unset_config_value(grit_lib::config::ConfigLocation, &grit_lib::config::environment::Environment, core::option::Option<&std::path::Path>, &str) -> grit_lib::error::Result<()>
 pub fn grit_lib::config::url_matches(&str, &str) -> bool
 pub mod grit_lib::diagnostics
 #[non_exhaustive] pub enum grit_lib::diagnostics::Trace
@@ -4781,6 +4832,8 @@ pub grit_lib::error::ConfigError::IncludeDepthExceeded::depth: usize
 pub grit_lib::error::ConfigError::IncludeDepthExceeded::limit: usize
 pub grit_lib::error::ConfigError::InvalidUntrackedFilesMode
 pub grit_lib::error::ConfigError::InvalidUntrackedFilesMode::value: alloc::string::String
+pub grit_lib::error::ConfigError::KeyNotSet
+pub grit_lib::error::ConfigError::KeyNotSet::key: alloc::string::String
 pub grit_lib::error::ConfigError::MissingValue
 pub grit_lib::error::ConfigError::MissingValue::key: alloc::string::String
 pub grit_lib::error::ConfigError::MultilineCommentNotAllowed
@@ -14462,6 +14515,7 @@ pub fn grit_lib::config::ConfigSet::get_bool(&self, &str) -> core::option::Optio
 pub fn grit_lib::config::ConfigSet::get_i64(&self, &str) -> core::option::Option<core::result::Result<i64, alloc::string::String>>
 pub fn grit_lib::config::ConfigSet::get_last_entry(&self, &str) -> core::option::Option<grit_lib::config::ConfigEntry>
 pub fn grit_lib::config::ConfigSet::get_regexp(&self, &str) -> core::result::Result<alloc::vec::Vec<&grit_lib::config::ConfigEntry>, alloc::string::String>
+pub fn grit_lib::config::ConfigSet::get_with_origin(&self, &str) -> grit_lib::error::Result<core::option::Option<grit_lib::config::ConfigValueOrigin>>
 pub fn grit_lib::config::ConfigSet::has_key(&self, &str) -> bool
 pub fn grit_lib::config::ConfigSet::load(&grit_lib::config::environment::Environment, core::option::Option<&std::path::Path>, bool) -> grit_lib::error::Result<Self>
 pub fn grit_lib::config::ConfigSet::load_protected(&grit_lib::config::environment::Environment, bool) -> grit_lib::error::Result<Self>
@@ -18830,6 +18884,7 @@ pub fn grit_lib::remote::transfer::reachable_closure(&grit_lib::objects::odb::Od
 pub fn grit_lib::remote::transfer::resolve_fetch_prune(&grit_lib::config::ConfigSet, &str, core::option::Option<bool>) -> grit_lib::error::Result<bool>
 pub fn grit_lib::remote::transfer::resolve_fetch_tags(&grit_lib::config::ConfigSet, &str, core::option::Option<bool>) -> grit_lib::remote::transfer::TagMode
 pub fn grit_lib::remote::transfer::resolve_push_delete_ref(&std::path::Path, &std::collections::hash::set::HashSet<alloc::string::String>, &str) -> alloc::string::String
+pub fn grit_lib::remote::transfer::tracking_refs_gone_on_remote(&std::path::Path, &[grit_lib::refs::refspec::RefspecItem], &[(alloc::string::String, grit_lib::objects::ObjectId)]) -> grit_lib::error::Result<alloc::vec::Vec<(alloc::string::String, grit_lib::objects::ObjectId)>>
 pub fn grit_lib::remote::transfer::validate_fetch_depth_local(&std::path::Path, &grit_lib::remote::transfer::FetchOptions) -> grit_lib::error::Result<()>
 pub mod grit_lib::remote::transport
 pub mod grit_lib::remote::transport::http
@@ -19249,6 +19304,30 @@ pub fn grit_lib::remote::transport_path::url_is_local_not_ssh(&str) -> bool
 pub mod grit_lib::remote::url_rewrite
 pub fn grit_lib::remote::url_rewrite::rewrite_fetch_url(&grit_lib::config::ConfigSet, &str) -> alloc::string::String
 pub fn grit_lib::remote::url_rewrite::rewrite_push_url(&grit_lib::config::ConfigSet, &str) -> alloc::string::String
+pub enum grit_lib::remote::RemoteBranchStateKind
+pub grit_lib::remote::RemoteBranchStateKind::New
+pub grit_lib::remote::RemoteBranchStateKind::Stale
+pub grit_lib::remote::RemoteBranchStateKind::Tracked
+impl core::clone::Clone for grit_lib::remote::RemoteBranchStateKind
+pub fn grit_lib::remote::RemoteBranchStateKind::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::remote::RemoteBranchStateKind
+impl core::cmp::Ord for grit_lib::remote::RemoteBranchStateKind
+pub fn grit_lib::remote::RemoteBranchStateKind::cmp(&self, &Self) -> core::cmp::Ordering
+impl core::cmp::PartialEq for grit_lib::remote::RemoteBranchStateKind
+pub fn grit_lib::remote::RemoteBranchStateKind::eq(&self, &Self) -> bool
+impl core::cmp::PartialOrd for grit_lib::remote::RemoteBranchStateKind
+pub fn grit_lib::remote::RemoteBranchStateKind::partial_cmp(&self, &Self) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for grit_lib::remote::RemoteBranchStateKind
+pub fn grit_lib::remote::RemoteBranchStateKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::remote::RemoteBranchStateKind
+impl core::marker::StructuralPartialEq for grit_lib::remote::RemoteBranchStateKind
+impl core::marker::Freeze for grit_lib::remote::RemoteBranchStateKind
+impl core::marker::Send for grit_lib::remote::RemoteBranchStateKind
+impl core::marker::Sync for grit_lib::remote::RemoteBranchStateKind
+impl core::marker::Unpin for grit_lib::remote::RemoteBranchStateKind
+impl core::marker::UnsafeUnpin for grit_lib::remote::RemoteBranchStateKind
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::RemoteBranchStateKind
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::RemoteBranchStateKind
 pub enum grit_lib::remote::RemoteError
 pub grit_lib::remote::RemoteError::HttpUnavailable
 pub grit_lib::remote::RemoteError::InvalidRemoteName(alloc::string::String)
@@ -19326,6 +19405,27 @@ impl core::marker::Unpin for grit_lib::remote::DefaultHttpClientFactory
 impl core::marker::UnsafeUnpin for grit_lib::remote::DefaultHttpClientFactory
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::DefaultHttpClientFactory
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::DefaultHttpClientFactory
+pub struct grit_lib::remote::InspectOptions
+pub grit_lib::remote::InspectOptions::limit: core::option::Option<usize>
+pub grit_lib::remote::InspectOptions::query: bool
+impl core::clone::Clone for grit_lib::remote::InspectOptions
+pub fn grit_lib::remote::InspectOptions::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::remote::InspectOptions
+impl core::cmp::PartialEq for grit_lib::remote::InspectOptions
+pub fn grit_lib::remote::InspectOptions::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::remote::InspectOptions
+pub fn grit_lib::remote::InspectOptions::default() -> Self
+impl core::fmt::Debug for grit_lib::remote::InspectOptions
+pub fn grit_lib::remote::InspectOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::remote::InspectOptions
+impl core::marker::StructuralPartialEq for grit_lib::remote::InspectOptions
+impl core::marker::Freeze for grit_lib::remote::InspectOptions
+impl core::marker::Send for grit_lib::remote::InspectOptions
+impl core::marker::Sync for grit_lib::remote::InspectOptions
+impl core::marker::Unpin for grit_lib::remote::InspectOptions
+impl core::marker::UnsafeUnpin for grit_lib::remote::InspectOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::InspectOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::InspectOptions
 pub struct grit_lib::remote::ListRefsOptions
 pub grit_lib::remote::ListRefsOptions::heads: bool
 pub grit_lib::remote::ListRefsOptions::limit: core::option::Option<usize>
@@ -19393,6 +19493,42 @@ impl core::marker::Unpin for grit_lib::remote::Remote
 impl core::marker::UnsafeUnpin for grit_lib::remote::Remote
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::Remote
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::Remote
+pub struct grit_lib::remote::RemoteBranchState
+pub grit_lib::remote::RemoteBranchState::name: alloc::string::String
+pub grit_lib::remote::RemoteBranchState::state: grit_lib::remote::RemoteBranchStateKind
+impl core::clone::Clone for grit_lib::remote::RemoteBranchState
+pub fn grit_lib::remote::RemoteBranchState::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::remote::RemoteBranchState
+impl core::cmp::PartialEq for grit_lib::remote::RemoteBranchState
+pub fn grit_lib::remote::RemoteBranchState::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::remote::RemoteBranchState
+pub fn grit_lib::remote::RemoteBranchState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::remote::RemoteBranchState
+impl core::marker::Freeze for grit_lib::remote::RemoteBranchState
+impl core::marker::Send for grit_lib::remote::RemoteBranchState
+impl core::marker::Sync for grit_lib::remote::RemoteBranchState
+impl core::marker::Unpin for grit_lib::remote::RemoteBranchState
+impl core::marker::UnsafeUnpin for grit_lib::remote::RemoteBranchState
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::RemoteBranchState
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::RemoteBranchState
+pub struct grit_lib::remote::RemotePullBranch
+pub grit_lib::remote::RemotePullBranch::local: alloc::string::String
+pub grit_lib::remote::RemotePullBranch::merges: alloc::string::String
+impl core::clone::Clone for grit_lib::remote::RemotePullBranch
+pub fn grit_lib::remote::RemotePullBranch::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::remote::RemotePullBranch
+impl core::cmp::PartialEq for grit_lib::remote::RemotePullBranch
+pub fn grit_lib::remote::RemotePullBranch::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::remote::RemotePullBranch
+pub fn grit_lib::remote::RemotePullBranch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::remote::RemotePullBranch
+impl core::marker::Freeze for grit_lib::remote::RemotePullBranch
+impl core::marker::Send for grit_lib::remote::RemotePullBranch
+impl core::marker::Sync for grit_lib::remote::RemotePullBranch
+impl core::marker::Unpin for grit_lib::remote::RemotePullBranch
+impl core::marker::UnsafeUnpin for grit_lib::remote::RemotePullBranch
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::RemotePullBranch
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::RemotePullBranch
 pub struct grit_lib::remote::RemoteRef
 pub grit_lib::remote::RemoteRef::name: alloc::string::String
 pub grit_lib::remote::RemoteRef::oid: grit_lib::objects::ObjectId
@@ -19414,12 +19550,35 @@ impl core::marker::Unpin for grit_lib::remote::RemoteRef
 impl core::marker::UnsafeUnpin for grit_lib::remote::RemoteRef
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::RemoteRef
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::RemoteRef
+pub struct grit_lib::remote::RemoteSummary
+pub grit_lib::remote::RemoteSummary::branches: alloc::vec::Vec<grit_lib::remote::RemoteBranchState>
+pub grit_lib::remote::RemoteSummary::fetch_url: alloc::string::String
+pub grit_lib::remote::RemoteSummary::head_branch: core::option::Option<alloc::string::String>
+pub grit_lib::remote::RemoteSummary::name: alloc::string::String
+pub grit_lib::remote::RemoteSummary::pull: alloc::vec::Vec<grit_lib::remote::RemotePullBranch>
+pub grit_lib::remote::RemoteSummary::push_url: alloc::string::String
+impl core::clone::Clone for grit_lib::remote::RemoteSummary
+pub fn grit_lib::remote::RemoteSummary::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::remote::RemoteSummary
+impl core::cmp::PartialEq for grit_lib::remote::RemoteSummary
+pub fn grit_lib::remote::RemoteSummary::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::remote::RemoteSummary
+pub fn grit_lib::remote::RemoteSummary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::remote::RemoteSummary
+impl core::marker::Freeze for grit_lib::remote::RemoteSummary
+impl core::marker::Send for grit_lib::remote::RemoteSummary
+impl core::marker::Sync for grit_lib::remote::RemoteSummary
+impl core::marker::Unpin for grit_lib::remote::RemoteSummary
+impl core::marker::UnsafeUnpin for grit_lib::remote::RemoteSummary
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::RemoteSummary
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::RemoteSummary
 pub const grit_lib::remote::DEFAULT_REMOTE: &str
 pub trait grit_lib::remote::HttpClientFactory: core::marker::Send + core::marker::Sync
 pub fn grit_lib::remote::HttpClientFactory::create(&self, &grit_lib::config::ConfigSet) -> core::result::Result<alloc::boxed::Box<dyn grit_lib::remote::transport::http::HttpClient>, grit_lib::remote::RemoteError>
 impl grit_lib::remote::HttpClientFactory for grit_lib::remote::DefaultHttpClientFactory
 pub fn grit_lib::remote::DefaultHttpClientFactory::create(&self, &grit_lib::config::ConfigSet) -> core::result::Result<alloc::boxed::Box<dyn grit_lib::remote::transport::http::HttpClient>, grit_lib::remote::RemoteError>
 pub fn grit_lib::remote::fold_peeled_refs(&[grit_lib::remote::RemoteRef]) -> alloc::vec::Vec<grit_lib::remote::PeeledRemoteRef>
+pub fn grit_lib::remote::inspect_remote(&grit_lib::repo::Repository, &str, &grit_lib::remote::InspectOptions, core::option::Option<&dyn grit_lib::remote::HttpClientFactory>) -> core::result::Result<grit_lib::remote::RemoteSummary, grit_lib::remote::RemoteError>
 pub fn grit_lib::remote::list_refs_from_git_dir(&std::path::Path, core::option::Option<&grit_lib::objects::odb::Odb>, &grit_lib::remote::ListRefsOptions) -> core::result::Result<alloc::vec::Vec<grit_lib::remote::RemoteRef>, grit_lib::remote::RemoteError>
 pub fn grit_lib::remote::parse_remote_url(&str) -> core::result::Result<grit_lib::remote::RemoteUrl, grit_lib::remote::RemoteError>
 pub fn grit_lib::remote::query_remote_refs_in_memory(alloc::vec::Vec<grit_lib::remote::RemoteRef>, &grit_lib::remote::ListRefsOptions, &grit_lib::refs::listing::RefQueryOptions) -> alloc::vec::Vec<grit_lib::remote::RemoteRef>
@@ -19617,6 +19776,7 @@ pub fn grit_lib::repo::early_config_ignore_repo_reason(&std::path::Path) -> core
 pub fn grit_lib::repo::early_config_ignore_repo_reason_for_text(core::option::Option<&str>) -> core::option::Option<alloc::string::String>
 pub fn grit_lib::repo::ensure_core_bare(&std::path::Path) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo::init_worktree_config(&std::path::Path) -> grit_lib::error::Result<()>
+pub fn grit_lib::repo::local_config_write_path(&std::path::Path) -> std::path::PathBuf
 pub fn grit_lib::repo::repository_format_warning(&std::path::Path) -> grit_lib::error::Result<core::option::Option<alloc::string::String>>
 pub fn grit_lib::repo::resolve_dot_git(&std::path::Path) -> grit_lib::error::Result<std::path::PathBuf>
 pub fn grit_lib::repo::resolve_git_directory_arg(&std::path::Path) -> grit_lib::error::Result<std::path::PathBuf>
@@ -19664,6 +19824,30 @@ impl core::marker::Unpin for grit_lib::repo_handles::NoteAddOutcome
 impl core::marker::UnsafeUnpin for grit_lib::repo_handles::NoteAddOutcome
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::NoteAddOutcome
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::NoteAddOutcome
+pub enum grit_lib::repo_handles::RemoteBranchStateKind
+pub grit_lib::repo_handles::RemoteBranchStateKind::New
+pub grit_lib::repo_handles::RemoteBranchStateKind::Stale
+pub grit_lib::repo_handles::RemoteBranchStateKind::Tracked
+impl core::clone::Clone for grit_lib::remote::RemoteBranchStateKind
+pub fn grit_lib::remote::RemoteBranchStateKind::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::remote::RemoteBranchStateKind
+impl core::cmp::Ord for grit_lib::remote::RemoteBranchStateKind
+pub fn grit_lib::remote::RemoteBranchStateKind::cmp(&self, &Self) -> core::cmp::Ordering
+impl core::cmp::PartialEq for grit_lib::remote::RemoteBranchStateKind
+pub fn grit_lib::remote::RemoteBranchStateKind::eq(&self, &Self) -> bool
+impl core::cmp::PartialOrd for grit_lib::remote::RemoteBranchStateKind
+pub fn grit_lib::remote::RemoteBranchStateKind::partial_cmp(&self, &Self) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for grit_lib::remote::RemoteBranchStateKind
+pub fn grit_lib::remote::RemoteBranchStateKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::remote::RemoteBranchStateKind
+impl core::marker::StructuralPartialEq for grit_lib::remote::RemoteBranchStateKind
+impl core::marker::Freeze for grit_lib::remote::RemoteBranchStateKind
+impl core::marker::Send for grit_lib::remote::RemoteBranchStateKind
+impl core::marker::Sync for grit_lib::remote::RemoteBranchStateKind
+impl core::marker::Unpin for grit_lib::remote::RemoteBranchStateKind
+impl core::marker::UnsafeUnpin for grit_lib::remote::RemoteBranchStateKind
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::RemoteBranchStateKind
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::RemoteBranchStateKind
 pub enum grit_lib::repo_handles::RemoteUrlKind
 pub grit_lib::repo_handles::RemoteUrlKind::Fetch
 pub grit_lib::repo_handles::RemoteUrlKind::Push
@@ -19760,6 +19944,27 @@ impl core::marker::Unpin for grit_lib::repo_handles::IndexedReflogEntry
 impl core::marker::UnsafeUnpin for grit_lib::repo_handles::IndexedReflogEntry
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::IndexedReflogEntry
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::IndexedReflogEntry
+pub struct grit_lib::repo_handles::InspectOptions
+pub grit_lib::repo_handles::InspectOptions::limit: core::option::Option<usize>
+pub grit_lib::repo_handles::InspectOptions::query: bool
+impl core::clone::Clone for grit_lib::remote::InspectOptions
+pub fn grit_lib::remote::InspectOptions::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::remote::InspectOptions
+impl core::cmp::PartialEq for grit_lib::remote::InspectOptions
+pub fn grit_lib::remote::InspectOptions::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::remote::InspectOptions
+pub fn grit_lib::remote::InspectOptions::default() -> Self
+impl core::fmt::Debug for grit_lib::remote::InspectOptions
+pub fn grit_lib::remote::InspectOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::remote::InspectOptions
+impl core::marker::StructuralPartialEq for grit_lib::remote::InspectOptions
+impl core::marker::Freeze for grit_lib::remote::InspectOptions
+impl core::marker::Send for grit_lib::remote::InspectOptions
+impl core::marker::Sync for grit_lib::remote::InspectOptions
+impl core::marker::Unpin for grit_lib::remote::InspectOptions
+impl core::marker::UnsafeUnpin for grit_lib::remote::InspectOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::InspectOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::InspectOptions
 pub struct grit_lib::repo_handles::LockWorktreeOptions
 pub grit_lib::repo_handles::LockWorktreeOptions::reason: core::option::Option<alloc::string::String>
 impl core::clone::Clone for grit_lib::repo_handles::LockWorktreeOptions
@@ -19885,6 +20090,42 @@ impl core::marker::Unpin for grit_lib::repo_handles::ReflogExpireOutcome
 impl core::marker::UnsafeUnpin for grit_lib::repo_handles::ReflogExpireOutcome
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::ReflogExpireOutcome
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::ReflogExpireOutcome
+pub struct grit_lib::repo_handles::RemoteBranchState
+pub grit_lib::repo_handles::RemoteBranchState::name: alloc::string::String
+pub grit_lib::repo_handles::RemoteBranchState::state: grit_lib::remote::RemoteBranchStateKind
+impl core::clone::Clone for grit_lib::remote::RemoteBranchState
+pub fn grit_lib::remote::RemoteBranchState::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::remote::RemoteBranchState
+impl core::cmp::PartialEq for grit_lib::remote::RemoteBranchState
+pub fn grit_lib::remote::RemoteBranchState::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::remote::RemoteBranchState
+pub fn grit_lib::remote::RemoteBranchState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::remote::RemoteBranchState
+impl core::marker::Freeze for grit_lib::remote::RemoteBranchState
+impl core::marker::Send for grit_lib::remote::RemoteBranchState
+impl core::marker::Sync for grit_lib::remote::RemoteBranchState
+impl core::marker::Unpin for grit_lib::remote::RemoteBranchState
+impl core::marker::UnsafeUnpin for grit_lib::remote::RemoteBranchState
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::RemoteBranchState
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::RemoteBranchState
+pub struct grit_lib::repo_handles::RemotePullBranch
+pub grit_lib::repo_handles::RemotePullBranch::local: alloc::string::String
+pub grit_lib::repo_handles::RemotePullBranch::merges: alloc::string::String
+impl core::clone::Clone for grit_lib::remote::RemotePullBranch
+pub fn grit_lib::remote::RemotePullBranch::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::remote::RemotePullBranch
+impl core::cmp::PartialEq for grit_lib::remote::RemotePullBranch
+pub fn grit_lib::remote::RemotePullBranch::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::remote::RemotePullBranch
+pub fn grit_lib::remote::RemotePullBranch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::remote::RemotePullBranch
+impl core::marker::Freeze for grit_lib::remote::RemotePullBranch
+impl core::marker::Send for grit_lib::remote::RemotePullBranch
+impl core::marker::Sync for grit_lib::remote::RemotePullBranch
+impl core::marker::Unpin for grit_lib::remote::RemotePullBranch
+impl core::marker::UnsafeUnpin for grit_lib::remote::RemotePullBranch
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::RemotePullBranch
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::RemotePullBranch
 pub struct grit_lib::repo_handles::RemoteRemoval
 pub grit_lib::repo_handles::RemoteRemoval::branches_untracked: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::repo_handles::RemoteRemoval::config_keys_removed: alloc::vec::Vec<alloc::string::String>
@@ -19906,6 +20147,28 @@ impl core::marker::Unpin for grit_lib::repo_handles::RemoteRemoval
 impl core::marker::UnsafeUnpin for grit_lib::repo_handles::RemoteRemoval
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::RemoteRemoval
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::RemoteRemoval
+pub struct grit_lib::repo_handles::RemoteSummary
+pub grit_lib::repo_handles::RemoteSummary::branches: alloc::vec::Vec<grit_lib::remote::RemoteBranchState>
+pub grit_lib::repo_handles::RemoteSummary::fetch_url: alloc::string::String
+pub grit_lib::repo_handles::RemoteSummary::head_branch: core::option::Option<alloc::string::String>
+pub grit_lib::repo_handles::RemoteSummary::name: alloc::string::String
+pub grit_lib::repo_handles::RemoteSummary::pull: alloc::vec::Vec<grit_lib::remote::RemotePullBranch>
+pub grit_lib::repo_handles::RemoteSummary::push_url: alloc::string::String
+impl core::clone::Clone for grit_lib::remote::RemoteSummary
+pub fn grit_lib::remote::RemoteSummary::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::remote::RemoteSummary
+impl core::cmp::PartialEq for grit_lib::remote::RemoteSummary
+pub fn grit_lib::remote::RemoteSummary::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::remote::RemoteSummary
+pub fn grit_lib::remote::RemoteSummary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::remote::RemoteSummary
+impl core::marker::Freeze for grit_lib::remote::RemoteSummary
+impl core::marker::Send for grit_lib::remote::RemoteSummary
+impl core::marker::Sync for grit_lib::remote::RemoteSummary
+impl core::marker::Unpin for grit_lib::remote::RemoteSummary
+impl core::marker::UnsafeUnpin for grit_lib::remote::RemoteSummary
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::RemoteSummary
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::RemoteSummary
 pub struct grit_lib::repo_handles::RemoveOptions
 pub grit_lib::repo_handles::RemoveOptions::dry_run: bool
 impl core::clone::Clone for grit_lib::repo_handles::RemoveOptions
@@ -20013,6 +20276,7 @@ pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::fetch(&self, &grit_lib:
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::fetch_all(&self, &grit_lib::config::ConfigSet, &grit_lib::remote::transfer::FetchOptions, core::option::Option<bool>, core::option::Option<bool>, &mut dyn grit_lib::remote::fetch::Progress, core::option::Option<&dyn grit_lib::remote::HttpClientFactory>) -> grit_lib::error::Result<alloc::vec::Vec<(alloc::string::String, core::result::Result<grit_lib::remote::transfer::FetchOutcome, grit_lib::remote::RemoteError>)>>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::get(&self, &str) -> core::result::Result<grit_lib::remote::Remote, grit_lib::remote::RemoteError>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::get_or_default(&self, &str) -> core::result::Result<grit_lib::remote::Remote, grit_lib::remote::RemoteError>
+pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::inspect(&self, &str, &grit_lib::remote::InspectOptions, core::option::Option<&dyn grit_lib::remote::HttpClientFactory>) -> core::result::Result<grit_lib::remote::RemoteSummary, grit_lib::remote::RemoteError>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::list(&self) -> grit_lib::error::Result<alloc::vec::Vec<alloc::string::String>>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::ls_remote(&self, &grit_lib::remote::Remote, &grit_lib::remote::ListRefsOptions, core::option::Option<&dyn grit_lib::remote::HttpClientFactory>) -> core::result::Result<alloc::vec::Vec<grit_lib::remote::RemoteRef>, grit_lib::remote::RemoteError>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::push(&self, &grit_lib::remote::Remote, &[grit_lib::remote::transfer::PushRefSpec], grit_lib::remote::transfer::PushOptions, &mut dyn grit_lib::remote::fetch::Progress, core::option::Option<&dyn grit_lib::remote::HttpClientFactory>) -> core::result::Result<grit_lib::remote::transfer::PushOutcome, grit_lib::remote::RemoteError>
@@ -20127,6 +20391,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::UrlChange
 pub fn grit_lib::repo_handles::configured_remote_names(&grit_lib::config::ConfigSet) -> alloc::vec::Vec<alloc::string::String>
 pub fn grit_lib::repo_handles::configured_remote_names_in_config_order(&grit_lib::config::ConfigSet) -> alloc::vec::Vec<alloc::string::String>
 pub fn grit_lib::repo_handles::configured_remotes(&grit_lib::config::ConfigSet) -> alloc::vec::Vec<grit_lib::repo_handles::ConfiguredRemote>
+pub fn grit_lib::repo_handles::has_remote_section(&grit_lib::config::ConfigSet, &str) -> bool
 pub fn grit_lib::repo_handles::remote_skip_fetch_all(&grit_lib::config::ConfigSet, &str) -> bool
 pub mod grit_lib::revwalk
 pub mod grit_lib::revwalk::commit_graph
