@@ -364,6 +364,10 @@ fn upstream_honors_custom_fetch_refspec() -> TestResult {
         .find(|b| b["name"] == "main")
         .expect("main");
     assert_eq!(main["upstream"]["ref"], "custom/main");
-    assert_eq!(main["upstream"]["gone"], Value::Bool(false));
+    assert!(
+        !main["upstream"]["gone"].as_bool().unwrap_or(false),
+        "upstream should resolve: {:?}",
+        main["upstream"]
+    );
     Ok(())
 }

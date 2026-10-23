@@ -76,7 +76,7 @@ pub struct ScenarioSpec {
 pub type HeadlineScenario = ScenarioSpec;
 
 /// Headline scenarios: ids and short names fixed by the performance census roadmap.
-pub const HEADLINE_SCENARIOS: [HeadlineScenario; 20] = [
+pub const HEADLINE_SCENARIOS: [HeadlineScenario; 22] = [
     ScenarioSpec {
         id: "status/clean@synth-10k",
         area: Area::Worktree,
