@@ -131,6 +131,33 @@ fn rm_ignore_unmatch_succeeds_on_missing() {
 }
 
 #[test]
+fn move_paths_multi_source_requires_existing_directory() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    fs::write(root.join("one.txt"), b"1\n").unwrap();
+    fs::write(root.join("two.txt"), b"2\n").unwrap();
+    git(root, &["add", "."]);
+    git(root, &["commit", "-q", "-m", "init"]);
+
+    let repo = grit_repo(root);
+    let err = move_paths(
+        &repo,
+        &MoveOptions {
+            sources: vec!["one.txt".into(), "two.txt".into()],
+            destination: "missing-dir".into(),
+            force: false,
+            dry_run: false,
+        },
+    )
+    .expect_err("multi-source into missing dir");
+    assert!(
+        err.to_string().contains("not a directory"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn move_paths_multi_source_into_dir_git_status_agrees() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
@@ -261,6 +288,58 @@ fn clean_only_ignored_matches_git_clean_X() {
         git_clean_preview(root, &["-X", "-d"]),
         "only-ignored preview must match git clean -nX"
     );
+}
+
+#[test]
+fn clean_nested_exclude_matches_git_clean_e() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    fs::write(root.join("keep.txt"), b"k\n").unwrap();
+    git(root, &["add", "keep.txt"]);
+    git(root, &["commit", "-q", "-m", "init"]);
+    fs::create_dir_all(root.join("dir")).unwrap();
+    fs::write(root.join("dir/keep.txt"), b"keep\n").unwrap();
+    fs::write(root.join("dir/drop.txt"), b"drop\n").unwrap();
+
+    let repo = grit_repo(root);
+    let preview = clean_untracked(
+        &repo,
+        &CleanOptions {
+            directories: true,
+            excludes: vec!["dir/keep.txt".into()],
+            dry_run: true,
+            ..Default::default()
+        },
+        &mut NullProgress,
+    )
+    .expect("clean nested exclude preview");
+    let grit_set: BTreeSet<String> = preview
+        .removed
+        .iter()
+        .map(|p| p.trim_end_matches('/').replace('\\', "/"))
+        .collect();
+    assert_eq!(
+        grit_set,
+        git_clean_preview(root, &["-e", "dir/keep.txt", "-d"]),
+        "nested exclude preview must match git clean -nde"
+    );
+    assert!(!grit_set.contains("dir/keep.txt"));
+
+    clean_untracked(
+        &repo,
+        &CleanOptions {
+            directories: true,
+            excludes: vec!["dir/keep.txt".into()],
+            dry_run: false,
+            ..Default::default()
+        },
+        &mut NullProgress,
+    )
+    .expect("clean nested exclude force");
+    git(root, &["clean", "-fd", "-e", "dir/keep.txt"]);
+    assert!(root.join("dir/keep.txt").is_file());
+    assert!(!root.join("dir/drop.txt").exists());
 }
 
 #[test]

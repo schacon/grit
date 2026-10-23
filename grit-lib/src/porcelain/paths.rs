@@ -313,9 +313,61 @@ fn validate_unique_move_destinations(moves: &[PathMove]) -> Result<()> {
     Ok(())
 }
 
+struct WorktreeRenameRollback {
+    /// Destination paths whose move was successfully reversed during rollback.
+    rolled_back_destinations: HashSet<String>,
+    /// Reverse-rename failures encountered while rolling back (newest first).
+    failures: Vec<(String, String, Error)>,
+}
+
+fn rollback_worktree_renames(
+    work_tree: &Path,
+    applied: &[(String, String)],
+    ignorecase: bool,
+) -> WorktreeRenameRollback {
+    let mut rolled_back_destinations = HashSet::new();
+    let mut failures = Vec::new();
+    for (from, to) in applied.iter().rev() {
+        match reverse_worktree_rename(work_tree, from, to, ignorecase) {
+            Ok(()) => {
+                rolled_back_destinations.insert(to.clone());
+            }
+            Err(err) => failures.push((from.clone(), to.clone(), err)),
+        }
+    }
+    WorktreeRenameRollback {
+        rolled_back_destinations,
+        failures,
+    }
+}
+
+fn reverse_worktree_rename(work_tree: &Path, from: &str, to: &str, ignorecase: bool) -> Result<()> {
+    let from_abs = work_tree.join(from);
+    let to_abs = work_tree.join(to);
+    if !to_abs.exists() {
+        return Err(Error::PathError(format!(
+            "rollback skipped missing destination '{to}'"
+        )));
+    }
+    if let Some(parent) = from_abs.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| Error::PathError(format!("creating parent for rollback '{from}': {e}")))?;
+    }
+    rename_worktree_entry(&to_abs, &from_abs, ignorecase)
+        .map_err(|e| Error::PathError(format!("rolling back rename '{to}' -> '{from}': {e}")))?;
+    remove_empty_parent_dirs(work_tree, &to_abs);
+    Ok(())
+}
+
+fn backup_path_preserves_moved_content(backup_rel: &str, preserve_roots: &HashSet<String>) -> bool {
+    preserve_roots
+        .iter()
+        .any(|root| backup_rel == root || backup_rel.starts_with(&format!("{root}/")))
+}
+
 /// Undo completed worktree renames, then restore force-cleared destination backups.
 ///
-/// Renames must be rolled back before restoring destination backups so moved source bytes
+/// Backups for destinations whose reverse rename failed are skipped so moved source bytes
 /// are not overwritten by pre-move destination snapshots.
 fn abort_failed_move_worktree(
     work_tree: &Path,
@@ -324,57 +376,39 @@ fn abort_failed_move_worktree(
     ignorecase: bool,
     original: Error,
 ) -> Error {
-    let mut rollback_notes = Vec::new();
-    if let Err(rollback) = rollback_worktree_renames(work_tree, completed_renames, ignorecase) {
-        rollback_notes.push(rollback.to_string());
-    }
-    if let Err(restore) = restore_worktree_backups(work_tree, force_backups) {
-        rollback_notes.push(restore.to_string());
-    }
-    if rollback_notes.is_empty() {
-        original
-    } else {
-        Error::Message(format!(
-            "{original}; incomplete move worktree rollback: {}",
-            rollback_notes.join("; ")
-        ))
-    }
-}
+    let rollback = rollback_worktree_renames(work_tree, completed_renames, ignorecase);
+    let moved_destinations: HashSet<String> =
+        completed_renames.iter().map(|(_, to)| to.clone()).collect();
+    let preserve_destination_content: HashSet<String> = moved_destinations
+        .difference(&rollback.rolled_back_destinations)
+        .cloned()
+        .collect();
+    let backups_to_restore: Vec<WorktreePathBackup> = force_backups
+        .iter()
+        .filter(|backup| {
+            !backup_path_preserves_moved_content(backup.rel(), &preserve_destination_content)
+        })
+        .cloned()
+        .collect();
+    let restore_err = restore_worktree_backups(work_tree, &backups_to_restore).err();
 
-fn rollback_worktree_renames(
-    work_tree: &Path,
-    renames: &[(String, String)],
-    ignorecase: bool,
-) -> Result<()> {
-    let mut failures = Vec::new();
-    for (from, to) in renames.iter().rev() {
-        let from_abs = work_tree.join(from);
-        let to_abs = work_tree.join(to);
-        if let Some(parent) = from_abs.parent() {
-            if let Err(e) = fs::create_dir_all(parent) {
-                failures.push(format!("creating parent for '{from}': {e}"));
-                continue;
-            }
-        }
-        match to_abs.symlink_metadata() {
-            Ok(_) => {
-                if let Err(e) = rename_worktree_entry(&to_abs, &from_abs, ignorecase) {
-                    failures.push(format!("renaming '{to}' -> '{from}': {e}"));
-                }
-            }
-            Err(e) => {
-                failures.push(format!("missing moved file at '{to}' during rollback: {e}"));
-            }
-        }
+    if rollback.failures.is_empty() && restore_err.is_none() {
+        return original;
     }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::Message(format!(
-            "incomplete worktree move rollback: {}",
-            failures.join("; ")
-        )))
+
+    let mut parts = vec![original.to_string()];
+    if !rollback.failures.is_empty() {
+        parts.push(format!(
+            "incomplete worktree rollback ({} rename(s) could not be reversed)",
+            rollback.failures.len()
+        ));
     }
+    if let Some(err) = restore_err {
+        parts.push(format!(
+            "restoring forced-destination backups failed: {err}"
+        ));
+    }
+    Error::Message(parts.join("; "))
 }
 
 struct SingleMovePlan {
@@ -416,10 +450,17 @@ fn plan_single_move(params: PlanSingleMoveParams<'_>) -> Result<SingleMovePlan> 
     let final_dst = normalize_and_validate_repo_relative(repo, work_tree, &final_dst)?;
 
     if multi_source && !dst_is_dir_target {
-        return Err(Error::MoveDestinationExists {
-            src: src.to_owned(),
-            destination: final_dst,
-        });
+        let dest_exists =
+            work_tree.join(&final_dst).exists() || index.get(final_dst.as_bytes(), 0).is_some();
+        if dest_exists {
+            return Err(Error::MoveDestinationExists {
+                src: src.to_owned(),
+                destination: final_dst,
+            });
+        }
+        return Err(Error::Message(format!(
+            "destination '{final_dst}' is not a directory"
+        )));
     }
 
     if is_subdirectory(&final_dst, src) {
@@ -1267,6 +1308,8 @@ mod destination_exists_tests {
 mod move_rollback_tests {
     use std::fs;
 
+    use crate::error::Error;
+
     use super::{
         abort_failed_move_worktree, restore_worktree_backups, rollback_worktree_renames,
         snapshot_worktree_path,
@@ -1307,7 +1350,7 @@ mod move_rollback_tests {
 
         fs::write(wt.join("dest/a.txt"), b"from-source\n").expect("post-move dest");
         restore_worktree_backups(wt, std::slice::from_ref(&backup)).expect("restore first");
-        rollback_worktree_renames(wt, &completed, false).expect("rollback second");
+        let _rollback = rollback_worktree_renames(wt, &completed, false);
         let wrong_source = fs::read(wt.join("src/a.txt")).expect("wrong-order source");
         assert_ne!(
             wrong_source, b"from-source\n",
@@ -1347,6 +1390,100 @@ mod move_rollback_tests {
         assert_eq!(fs::read(wt.join("src/f1.txt")).unwrap(), b"source1\n");
         assert_eq!(fs::read(wt.join("dest/f0.txt")).unwrap(), b"old0\n");
         assert_eq!(fs::read(wt.join("dest/f1.txt")).unwrap(), b"old1\n");
+    }
+
+    #[test]
+    fn abort_failed_move_preserves_destination_when_reverse_rename_fails() {
+        use super::backup_and_remove_worktree_paths;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wt = tmp.path();
+        fs::create_dir_all(wt.join("src")).expect("src dir");
+        fs::create_dir_all(wt.join("dest")).expect("dest dir");
+        fs::write(wt.join("src/f0000"), b"SOURCE-0\n").expect("source 0");
+        fs::write(wt.join("src/f0001"), b"SOURCE-1\n").expect("source 1");
+        fs::write(wt.join("dest/f0000"), b"OLDDEST-0\n").expect("old dest 0");
+        fs::write(wt.join("dest/f0001"), b"OLDDEST-1\n").expect("old dest 1");
+
+        let cleared = backup_and_remove_worktree_paths(
+            wt,
+            &["dest/f0000".to_owned(), "dest/f0001".to_owned()],
+        )
+        .expect("backup dest");
+        fs::create_dir_all(wt.join("dest")).expect("dest dir after clear");
+
+        fs::rename(wt.join("src/f0000"), wt.join("dest/f0000")).expect("move 0");
+        fs::rename(wt.join("src/f0001"), wt.join("dest/f0001")).expect("move 1");
+        fs::create_dir_all(wt.join("src/f0000")).expect("block rollback for f0000");
+
+        let applied = vec![
+            ("src/f0000".to_owned(), "dest/f0000".to_owned()),
+            ("src/f0001".to_owned(), "dest/f0001".to_owned()),
+        ];
+        let err = abort_failed_move_worktree(
+            wt,
+            &applied,
+            &cleared,
+            false,
+            Error::MoveBadSource {
+                src: "src/f0001".to_owned(),
+                destination: "dest/f0001".to_owned(),
+            },
+        );
+        assert!(
+            matches!(err, Error::Message(_)),
+            "expected aggregated incomplete rollback error, got {err:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(wt.join("dest/f0000")).expect("dest f0000"),
+            "SOURCE-0\n",
+            "must not overwrite moved bytes with forced-destination backup when rollback failed"
+        );
+        assert_eq!(
+            fs::read_to_string(wt.join("dest/f0001")).expect("dest f0001"),
+            "OLDDEST-1\n",
+            "successful rollback should restore cleared destination backup"
+        );
+    }
+
+    #[test]
+    fn abort_failed_move_preserves_directory_destination_descendants() {
+        use super::WorktreePathBackup;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wt = tmp.path();
+        fs::create_dir_all(wt.join("dest/srcdir")).expect("dest tree");
+        fs::write(wt.join("dest/srcdir/file"), b"SOURCE-DIR\n").expect("moved file");
+        fs::create_dir_all(wt.join("srcdir")).expect("srcdir");
+        fs::write(wt.join("srcdir/blocker"), b"x\n").expect("block directory rollback");
+
+        let cleared = vec![WorktreePathBackup::File {
+            rel: "dest/srcdir/file".to_owned(),
+            bytes: b"OLDDEST-DIR\n".to_vec(),
+            #[cfg(unix)]
+            mode: 0o100644,
+        }];
+
+        let applied = vec![("srcdir".to_owned(), "dest/srcdir".to_owned())];
+        let err = abort_failed_move_worktree(
+            wt,
+            &applied,
+            &cleared,
+            false,
+            Error::MoveBadSource {
+                src: "srcdir/missing".to_owned(),
+                destination: "dest/srcdir/missing".to_owned(),
+            },
+        );
+        assert!(
+            matches!(err, Error::Message(_)),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(wt.join("dest/srcdir/file")).expect("dest file"),
+            "SOURCE-DIR\n",
+            "must not restore descendant backup when directory rollback failed"
+        );
     }
 }
 

@@ -399,6 +399,9 @@ fn highest_empty_untracked_dir(
     if ignored && !clean_scope_includes_ignored(scope) {
         return Ok(None);
     }
+    if scope == CleanScope::OnlyIgnored && child_dirs.is_empty() {
+        return Ok(None);
+    }
 
     if child_dirs.is_empty() {
         return Ok(Some(format!("{rel}/")));
