@@ -605,8 +605,9 @@ fn finish_query(
 ) -> QueryResult<Vec<RefListing>> {
     if let Some(odb) = odb {
         // A malformed `packed-refs` only loses the shortcut; peeling falls back to the objects.
+        let to_peel = collected.iter().filter(|c| c.peeled.is_none()).count();
         let packed = repo
-            .filter(|_| collected.iter().any(|c| c.peeled.is_none()))
+            .filter(|_| to_peel >= PACKED_PEELS_MIN_REFS)
             .and_then(|r| PackedRefPeels::load(r.git_dir(), r.refs().format()).ok());
         for entry in &mut collected {
             fill_peeled(odb, packed.as_ref(), entry);
@@ -656,6 +657,12 @@ fn finish_query(
         })
         .collect())
 }
+
+/// Fewest refs to peel for which indexing `packed-refs` beats reading each object header.
+///
+/// Loading the peel lines indexes the whole file, which in a repository with many packed
+/// refs costs more than a handful of object-header reads.
+const PACKED_PEELS_MIN_REFS: usize = 64;
 
 /// Set `entry.peeled` for annotated tags, preferring `packed-refs` peel lines over
 /// reading the tag object.

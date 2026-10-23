@@ -234,6 +234,18 @@ fn packed_peel_lines_answer_without_reading_tag_objects() {
         &["tag", "-a", "gone", "-m", "object will be removed", "HEAD"],
     );
     git(&root, &["tag", "light", "HEAD"]);
+    // Enough refs that the listing indexes packed-refs instead of reading each object.
+    let filler: String = (0..70)
+        .map(|i| format!("create refs/tags/filler-{i:03} HEAD\n"))
+        .collect();
+    let mut child = Command::new("git")
+        .args(["update-ref", "--stdin"])
+        .current_dir(&root)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("git update-ref");
+    std::io::Write::write_all(child.stdin.as_mut().expect("stdin"), filler.as_bytes()).unwrap();
+    assert!(child.wait().expect("wait").success());
     git(&root, &["pack-refs", "--all"]);
     let tag_oid = oid(&git(&root, &["rev-parse", "refs/tags/gone"]));
     let commit = oid(&git(&root, &["rev-parse", "HEAD"]));
