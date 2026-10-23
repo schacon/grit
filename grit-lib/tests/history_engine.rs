@@ -761,6 +761,8 @@ fn plan_rewrite_reports_conflict_with_paths() {
         write_tree_with_blob(&grit, "conflict.txt", b"1\nbase\n3\n").expect("base tree");
     let tree_left =
         write_tree_with_blob(&grit, "conflict.txt", b"1\nleft\n3\n").expect("left tree");
+    let tree_middle =
+        write_tree_with_blob(&grit, "conflict.txt", b"1\nmiddle\n3\n").expect("middle tree");
     let tree_right =
         write_tree_with_blob(&grit, "conflict.txt", b"1\nright\n3\n").expect("right tree");
     let a = write_test_commit(&grit, tree_base, &[], "a", &ident).expect("a");
@@ -772,7 +774,9 @@ fn plan_rewrite_reports_conflict_with_paths() {
     edits.insert(
         b,
         CommitEdit::Rewrite {
-            tree: Some(tree_base),
+            // Match a parent tree and `b` becomes empty under `EmptyPolicy::Abort`.
+            // Use a distinct tree so replaying `c` hits a transplant conflict instead.
+            tree: Some(tree_middle),
             message: None,
             author: None,
             parents: None,
