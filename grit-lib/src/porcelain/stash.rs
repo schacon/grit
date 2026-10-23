@@ -1441,31 +1441,18 @@ pub fn push_stash(
             if built.mode == StashMode::StagedOnly {
                 let index = repo.load_index()?;
                 let all_staged = staged_change_paths(repo, &index, &head_tree)?;
-                let stashed_set: HashSet<&str> = built
-                    .staged_only_paths
-                    .iter()
-                    .map(String::as_str)
-                    .collect();
+                let stashed_set: HashSet<&str> =
+                    built.staged_only_paths.iter().map(String::as_str).collect();
                 let worktree_only: Vec<String> = all_staged
                     .into_iter()
                     .filter(|path| !stashed_set.contains(path.as_str()))
                     .collect();
-                apply_staged_worktree_only_reset(
-                    repo,
-                    work_tree,
-                    &head_tree,
-                    &worktree_only,
-                )?;
+                apply_staged_worktree_only_reset(repo, work_tree, &head_tree, &worktree_only)?;
             }
         } else {
             match built.mode {
                 StashMode::StagedOnly => {
-                    apply_staged_only_reset(
-                        repo,
-                        work_tree,
-                        &head_tree,
-                        &built.staged_only_paths,
-                    )?;
+                    apply_staged_only_reset(repo, work_tree, &head_tree, &built.staged_only_paths)?;
                 }
                 StashMode::KeepIndex => {
                     checkout_between_trees(repo, Some(&built.w_tree), &built.i_tree)?;

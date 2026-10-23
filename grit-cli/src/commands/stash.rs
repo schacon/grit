@@ -24,7 +24,6 @@ use crate::context;
 use crate::diff_render::{self, DiffStat};
 use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
-use crate::pathspec_args::TrailingPathspecArgs;
 
 /// Result of `grit stash push` (or bare `grit stash`).
 #[derive(Serialize, JsonSchema)]
