@@ -2664,3 +2664,34 @@ fn blame_json_group_is_smaller_than_per_line() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn blame_json_group_with_line_range_succeeds() -> TestResult {
+    let scratch = Scratch::new("blame-group-line-range")?;
+    let seed = scratch.child("repo");
+    fs::create_dir_all(&seed)?;
+    gs_ok(&seed, &["init", "."]);
+    let mut body = String::new();
+    for i in 1..=20 {
+        body.push_str(&format!("line {i}\n"));
+    }
+    write_file(&seed.join("wide.txt"), &body);
+    gs_ok(&seed, &["add", "wide.txt"]);
+    gs_ok(&seed, &["commit", "init wide"]);
+    let edited = body.replace("line 10\n", "LINE TEN\n");
+    write_file(&seed.join("wide.txt"), &edited);
+    gs_ok(&seed, &["add", "wide.txt"]);
+    gs_ok(&seed, &["commit", "edit line 10"]);
+
+    let grouped = gs_json(&seed, &["blame", "wide.txt", "-L", "8,12", "--group"]);
+    assert!(grouped.get("hunks").is_some());
+    assert!(grouped.get("lines").is_none());
+    let hunks = grouped["hunks"].as_array().expect("hunks array");
+    assert!(!hunks.is_empty());
+    for hunk in hunks {
+        let count = hunk["count"].as_u64().expect("count") as usize;
+        let lines = hunk["lines"].as_array().expect("hunk lines");
+        assert_eq!(lines.len(), count);
+    }
+    Ok(())
+}

@@ -33,7 +33,10 @@
           "type": "integer"
         },
         "ignored": {
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "lines": {
           "items": {
@@ -50,18 +53,19 @@
           "type": "integer"
         },
         "unblamable": {
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
         "commit",
         "count",
         "final_start",
-        "ignored",
         "lines",
         "original_path",
-        "original_start",
-        "unblamable"
+        "original_start"
       ],
       "type": "object"
     },

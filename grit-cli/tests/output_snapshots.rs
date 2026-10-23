@@ -355,6 +355,19 @@ fn snapshot_blame_tracked_line_range() {
 }
 
 #[test]
+fn snapshot_blame_tracked_group() {
+    snapshot_all_modes("blame_tracked_group", &["blame", "tracked.txt", "--group"]);
+}
+
+#[test]
+fn snapshot_blame_tracked_group_line_range() {
+    snapshot_all_modes(
+        "blame_tracked_group_line_range",
+        &["blame", "tracked.txt", "-L", "1,2", "--group"],
+    );
+}
+
+#[test]
 fn snapshot_branch_list() {
     snapshot_all_modes("branch_list", &["branch"]);
 }

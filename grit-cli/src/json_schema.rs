@@ -959,6 +959,11 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
             "blame_tracked_line_range",
             &["blame", "tracked.txt", "-L", "1,2"],
         ),
+        ("blame_tracked_group", &["blame", "tracked.txt", "--group"]),
+        (
+            "blame_tracked_group_line_range",
+            &["blame", "tracked.txt", "-L", "1,2", "--group"],
+        ),
         ("branch_list", &["branch"]),
         ("branch_create", &["branch", "wip"]),
         ("branch_delete", &["branch", "-d", "delete-me"]),
