@@ -44,7 +44,7 @@ The target branch is the first that exists of: the `target.branch` config value,
 | A commit's message and diffstat only | `grit show [<commit-or-branch-or-tag>] --stat` |
 | Recent history, ten at a time | `grit log`, then `grit log --before <next>` using the `next` value |
 | History with patches or file lists | `grit log -p`, `grit log --stat`, `grit log --name-status`, … (same format flags as `grit diff`) |
-| Commits on this branch not on the target | `grit shortlog` |
+| Commits on this branch not on the target | `grit shortlog` or `grit ahead`; add `--target <REF>` to pick the base |
 | Skip formatting commits in blame | `grit blame --ignore-rev <OID>` or `grit blame --ignore-revs-file .git-blame-ignore-revs` (set `blame.ignoreRevsFile` in config for a default list) |
 | What happened to this branch recently | `grit reflog [REF] --json` (`old_oid`, `new_oid`, `date`, `committer`, plus `oid` / `relative_date`) |
 
