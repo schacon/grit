@@ -1770,18 +1770,7 @@ pub(crate) fn resolve_cli_diff_pathspecs(
         return Ok(Vec::new());
     }
     match mode {
-        DiffPathspecMode::Worktree => {
-            if trailing.pathspec_from_file.is_some() {
-                let mut merged = trailing.clone();
-                merged.paths = if argv_paths.is_empty() {
-                    trailing.paths.clone()
-                } else {
-                    argv_paths.to_vec()
-                };
-                return Ok(merged.resolve(repo)?.specs);
-            }
-            resolve_worktree_diff_pathspecs(repo, &raw)
-        }
+        DiffPathspecMode::Worktree => resolve_worktree_diff_pathspecs(repo, &raw),
         DiffPathspecMode::Commit => resolve_commit_diff_pathspecs(repo, &raw),
     }
 }

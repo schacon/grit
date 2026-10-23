@@ -413,6 +413,53 @@ fn diff_pathspec_from_file_matches_git() {
     assert_eq!(grit_names, git_names);
 }
 
+#[test]
+fn diff_worktree_pathspec_from_stdin_filters_once() {
+    let grit = env!("CARGO_BIN_EXE_grit");
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    init_repo(grit, &dir);
+
+    let null = null_config();
+    let run_with_stdin = |cmd: &str, args: &[&str]| -> std::process::Output {
+        let mut child = Command::new(cmd)
+            .current_dir(dir.path())
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", &null)
+            .env("GIT_CONFIG_SYSTEM", &null)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        {
+            let stdin = child.stdin.as_mut().expect("stdin");
+            stdin.write_all(b"a.txt\n").expect("write stdin");
+        }
+        child.wait_with_output().expect("wait")
+    };
+
+    let expected = run_git(dir.path(), &["diff", "--name-only", "--", "a.txt"]);
+    assert!(expected.status.success());
+    let expected_names: Vec<String> = String::from_utf8_lossy(&expected.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+
+    let grit_out = run_with_stdin(grit, &["diff", "--name-only", "--pathspec-from-file", "-"]);
+    assert!(
+        grit_out.status.success(),
+        "grit diff stdin: {}",
+        String::from_utf8_lossy(&grit_out.stderr)
+    );
+    let grit_names: Vec<String> = String::from_utf8_lossy(&grit_out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+
+    assert_eq!(grit_names, expected_names);
+    assert_eq!(grit_names, vec!["a.txt".to_string()]);
+}
+
 fn init_bare_two_commit_repo(grit: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::TempDir::new().expect("tempdir");
     init_repo(grit, &dir);

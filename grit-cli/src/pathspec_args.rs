@@ -6,6 +6,9 @@ use grit_lib::pathspec::parse_pathspecs_from_source;
 use grit_lib::repo::Repository;
 use grit_lib::worktree::pathspec::{PathspecInput, PathspecResolveError, ResolvedPathspecs};
 use std::io::Read;
+use std::sync::OnceLock;
+
+static PATHSPEC_STDIN_BYTES: OnceLock<Vec<u8>> = OnceLock::new();
 /// Path arguments plus Git-compatible `--pathspec-from-file` / `--pathspec-file-nul`.
 #[derive(Debug, Clone, Default, Args)]
 pub struct PathspecArgs {
@@ -147,10 +150,14 @@ fn resolve_pathspec_args(
 
 fn read_pathspec_source(path: &str) -> Result<Vec<u8>> {
     if path == "-" {
+        if let Some(cached) = PATHSPEC_STDIN_BYTES.get() {
+            return Ok(cached.clone());
+        }
         let mut buf = Vec::new();
         std::io::stdin()
             .read_to_end(&mut buf)
             .context("could not read pathspecs from stdin")?;
+        let _ = PATHSPEC_STDIN_BYTES.set(buf.clone());
         return Ok(buf);
     }
     std::fs::read(path).with_context(|| format!("could not read '{path}'"))
