@@ -24,7 +24,10 @@ use grit_lib::repo::Repository;
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::commands::diff::{CommitDiffOptions, DiffOutcome, DiffTotalsJson, FileDiff};
+use crate::commands::diff::{
+    resolve_cli_diff_pathspecs, CommitDiffOptions, DiffOutcome, DiffPathspecMode, DiffTotalsJson,
+    FileDiff,
+};
 use crate::commits_json::CommitJsonLoader;
 use crate::context;
 use crate::diff_format::DiffFormatArgs;
@@ -316,12 +319,7 @@ fn show_commit(spec: &str, opts: &ShowRunOptions) -> Result<ShowOutcome> {
         change_id_stored: commit_json.change_id_stored,
     };
 
-    let paths = crate::commands::diff::resolve_cli_diff_pathspecs(
-        &repo,
-        &opts.pathspecs,
-        &[],
-        crate::commands::diff::DiffPathspecMode::Commit,
-    )?;
+    let paths = resolve_cli_diff_pathspecs(&repo, &opts.pathspecs, &[], DiffPathspecMode::Commit)?;
     let diff_opts = CommitDiffOptions {
         paths: paths.clone(),
         format: opts.format,

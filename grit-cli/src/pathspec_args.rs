@@ -2,9 +2,11 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args;
-use grit_lib::pathspec::parse_pathspecs_from_source;
+use grit_lib::error::PathspecFromFileParseError;
 use grit_lib::repo::Repository;
-use grit_lib::worktree::pathspec::{PathspecInput, PathspecResolveError, ResolvedPathspecs};
+use grit_lib::worktree::pathspec::{
+    parse_pathspecs_from_source, PathspecInput, PathspecResolveError, ResolvedPathspecs,
+};
 use std::io::Read;
 use std::sync::OnceLock;
 
@@ -163,7 +165,7 @@ fn read_pathspec_source(path: &str) -> Result<Vec<u8>> {
     std::fs::read(path).with_context(|| format!("could not read '{path}'"))
 }
 
-fn map_pathspec_from_file_parse(err: grit_lib::error::PathspecFromFileParseError) -> anyhow::Error {
+fn map_pathspec_from_file_parse(err: PathspecFromFileParseError) -> anyhow::Error {
     anyhow::anyhow!("{err}")
 }
 

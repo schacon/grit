@@ -62,6 +62,28 @@ fn diff_range_with_trailing_path() {
 }
 
 #[test]
+fn diff_range_with_pathspec_from_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo_with_two_files(dir.path());
+    let list = dir.path().join("paths.txt");
+    std::fs::write(&list, b"a.txt\n").unwrap();
+
+    let (code, stdout, stderr) = grit(
+        dir.path(),
+        &[
+            "diff",
+            "--name-only",
+            "main..feature/v1.2/x",
+            "--pathspec-from-file",
+            list.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(code, 0, "stderr={stderr}");
+    assert!(stdout.lines().any(|l| l == "a.txt"), "stdout={stdout}");
+    assert!(!stdout.lines().any(|l| l == "b.txt"), "stdout={stdout}");
+}
+
+#[test]
 fn diff_staged_with_path_limit() {
     let dir = tempfile::tempdir().expect("tempdir");
     init_repo_with_two_files(dir.path());
