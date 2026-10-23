@@ -84,3 +84,36 @@ fn add_hunks_unknown_id_exit_code() {
     let add = run_grit(grit, root, &["add", "--hunks", "000000000001", "--json"]);
     assert_eq!(add.status.code(), Some(2));
 }
+
+#[test]
+fn add_hunks_unknown_id_markdown_stdout() {
+    let grit = env!("CARGO_BIN_EXE_grit");
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let root = dir.path();
+    assert!(run_grit(grit, root, &["init"]).status.success());
+    fs::write(root.join("f.txt"), b"one\n").expect("write");
+    assert!(run_grit(grit, root, &["add", "f.txt"]).status.success());
+    assert!(run_grit(grit, root, &["commit", "-m", "init"])
+        .status
+        .success());
+    fs::write(root.join("f.txt"), b"two\n").expect("write");
+
+    let add = run_grit(
+        grit,
+        root,
+        &[
+            "add",
+            "--hunks",
+            "000000000001",
+            "--markdown",
+            "--",
+            "f.txt",
+        ],
+    );
+    assert_eq!(add.status.code(), Some(2));
+    let stdout = String::from_utf8_lossy(&add.stdout);
+    assert!(
+        stdout.starts_with("**Error:**"),
+        "markdown hunk errors must go to stdout: {stdout:?}"
+    );
+}

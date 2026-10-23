@@ -52,6 +52,12 @@ file = "cli-conventions.md"
 slug = "cli-conventions"
 label = "CLI conventions"
 
+
+[[section.page]]
+file = "exit-codes.md"
+slug = "exit-codes"
+label = "Exit codes"
+
 [[section.page]]
 file = "agents.md"
 slug = "agents"
