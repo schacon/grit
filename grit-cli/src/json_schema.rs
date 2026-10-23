@@ -636,6 +636,9 @@ fn root_schema_to_document(command: &str, root: RootSchema) -> serde_json::Value
     if command.starts_with("worktree.") {
         ensure_worktree_row_required_nullable_lock_reason(&mut value);
     }
+    if command == "reflog" {
+        optional_property_string_type_only(&mut value, "ReflogListEntry", "action");
+    }
     if command == "history.reword"
         || command == "history.drop"
         || command == "history.move"
@@ -651,6 +654,30 @@ fn root_schema_to_document(command: &str, root: RootSchema) -> serde_json::Value
     }
     canonicalize_json(&mut value);
     value
+}
+
+/// Optional JSON fields that use `skip_serializing_if` must not allow `"null"` in the schema.
+fn optional_property_string_type_only(
+    schema: &mut serde_json::Value,
+    definition: &str,
+    property: &str,
+) {
+    let Some(defs) = schema
+        .get_mut("definitions")
+        .and_then(|d| d.as_object_mut())
+    else {
+        return;
+    };
+    let Some(entry) = defs.get_mut(definition).and_then(|d| d.as_object_mut()) else {
+        return;
+    };
+    let Some(props) = entry.get_mut("properties").and_then(|p| p.as_object_mut()) else {
+        return;
+    };
+    let Some(prop) = props.get_mut(property).and_then(|p| p.as_object_mut()) else {
+        return;
+    };
+    prop.insert("type".into(), serde_json::Value::String("string".into()));
 }
 
 fn ensure_required_nullable_field(schema: &mut serde_json::Value, field: &str) {

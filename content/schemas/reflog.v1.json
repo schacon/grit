@@ -25,6 +25,10 @@
     },
     "ReflogListEntry": {
       "properties": {
+        "action": {
+          "description": "Best-effort action prefix from the message (before the first `\": \"`).",
+          "type": "string"
+        },
         "committer": {
           "anyOf": [
             {
@@ -83,11 +87,16 @@
     },
     "ref": {
       "type": "string"
+    },
+    "truncated": {
+      "description": "`true` when the query stopped before the oldest reflog entry (typically due to `-n`).",
+      "type": "boolean"
     }
   },
   "required": [
     "entries",
-    "ref"
+    "ref",
+    "truncated"
   ],
   "title": "ReflogListOutcome",
   "type": "object"

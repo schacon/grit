@@ -6,7 +6,8 @@ use std::path::Path;
 use crate::error::{Error, Result};
 use crate::reflog::{
     delete_reflog_entries, delete_reflog_entries_rechain, expire_reflog_git, list_reflog_refs,
-    load_gc_reflog_expire_config, parse_reflog_expire_spec, reflog_exists, ReflogEntry,
+    load_gc_reflog_expire_config, parse_reflog_expire_spec, parse_reflog_line_for_store,
+    reflog_exists, reflog_identity_timestamp, reflog_path, MessageMatcher, ReflogEntry,
     ReflogExpireParams, ReflogExpireResult,
 };
 use crate::refs::resolve_ref_dwim;
@@ -40,6 +41,30 @@ pub struct IndexedReflogEntry {
     pub index: usize,
     /// Parsed reflog fields.
     pub entry: ReflogEntry,
+}
+
+/// Filters for [`RepositoryReflogs::query`].
+#[derive(Debug, Clone, Default)]
+pub struct ReflogQuery {
+    /// Maximum matching entries to return (newest first).
+    pub limit: Option<usize>,
+    /// Exclude entries with identity timestamp strictly before this Unix second.
+    pub since: Option<i64>,
+    /// Exclude entries with identity timestamp strictly after this Unix second.
+    pub until: Option<i64>,
+    /// Optional message substring filter.
+    pub grep: Option<MessageMatcher>,
+    /// Wall-clock anchor passed by the caller (not read from the system clock here).
+    pub now: i64,
+}
+
+/// One page of reflog query results.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReflogPage {
+    /// Matching entries in newest-first order with global reflog indices.
+    pub entries: Vec<IndexedReflogEntry>,
+    /// `true` when scanning stopped before the oldest entry (typically because `limit` was reached).
+    pub truncated: bool,
 }
 
 /// Reflog read/write helpers scoped to an open repository.
@@ -91,9 +116,59 @@ impl<'repo> RepositoryReflogs<'repo> {
     ///
     /// Returns [`Error::ReflogUnknownRef`] when the ref cannot be resolved and has no reflog.
     pub fn entries(&self, ref_name: &RefName) -> Result<Vec<IndexedReflogEntry>> {
-        let (canonical, raw) = self.load_reflog(ref_name.as_str())?;
-        let _ = canonical;
-        Ok(index_entries_newest_first(&raw))
+        let page = self.query(ref_name, &ReflogQuery::default())?;
+        Ok(page.entries)
+    }
+
+    /// Reflog entries for `ref_name` matching `query`, newest first.
+    ///
+    /// Indices match Git's `ref@{{n}}` numbering on the full reflog (not renumbered after
+    /// filtering). Scanning stops once `limit` matches are collected.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ReflogUnknownRef`] when the ref cannot be resolved and has no reflog.
+    pub fn query(&self, ref_name: &RefName, query: &ReflogQuery) -> Result<ReflogPage> {
+        let canonical = self.resolve_reflog_canonical(ref_name.as_str())?;
+        if query.limit == Some(0) {
+            return Ok(ReflogPage {
+                entries: Vec::new(),
+                truncated: false,
+            });
+        }
+        let git_dir = self.repo.git_dir();
+        let mut state = QueryScanState {
+            query,
+            entries: Vec::new(),
+            stopped_at_limit: false,
+            more_older_lines_remain: false,
+        };
+        let storage_format = crate::refs::store::open_ref_store(git_dir)?.format();
+        if storage_format == crate::refs::store::RefStorageFormat::Files {
+            scan_loose_reflog_newest_first(git_dir, &canonical, &mut state)?;
+        } else {
+            scan_store_reflog_newest_first(self.repo, &canonical, &mut state)?;
+        }
+        let truncated = state.truncated();
+        Ok(ReflogPage {
+            entries: state.entries,
+            truncated,
+        })
+    }
+
+    fn resolve_reflog_canonical(&self, user_ref: &str) -> Result<String> {
+        let git_dir = self.repo.git_dir();
+        for candidate in dwim_reflog_candidates(user_ref) {
+            if crate::reflog::reflog_has_entries_for_dwim(git_dir, &candidate)? {
+                return Ok(candidate);
+            }
+        }
+        if !reflog_ref_known(git_dir, user_ref)? {
+            return Err(Error::ReflogUnknownRef {
+                refname: user_ref.to_owned(),
+            });
+        }
+        canonical_reflog_ref(git_dir, user_ref)
     }
 
     /// Delete reflog entries by newest-first `indices`.
@@ -201,16 +276,103 @@ fn read_reflog_via_store(repo: &Repository, refname: &str) -> Result<Vec<ReflogE
     Ok(entries)
 }
 
-fn index_entries_newest_first(entries: &[ReflogEntry]) -> Vec<IndexedReflogEntry> {
-    entries
-        .iter()
-        .rev()
-        .enumerate()
-        .map(|(index, entry)| IndexedReflogEntry {
+struct QueryScanState<'a> {
+    query: &'a ReflogQuery,
+    entries: Vec<IndexedReflogEntry>,
+    stopped_at_limit: bool,
+    more_older_lines_remain: bool,
+}
+
+impl QueryScanState<'_> {
+    fn truncated(&self) -> bool {
+        self.stopped_at_limit && self.more_older_lines_remain
+    }
+
+    fn visit(&mut self, index: usize, entry: &ReflogEntry) -> ControlFlow<()> {
+        if !entry_matches_query(entry, self.query) {
+            return ControlFlow::Continue(());
+        }
+        if self.query.limit == Some(0) {
+            self.stopped_at_limit = true;
+            return ControlFlow::Break(());
+        }
+        self.entries.push(IndexedReflogEntry {
             index,
             entry: entry.clone(),
-        })
-        .collect()
+        });
+        if self
+            .query
+            .limit
+            .is_some_and(|limit| limit > 0 && self.entries.len() >= limit)
+        {
+            self.stopped_at_limit = true;
+            return ControlFlow::Break(());
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+fn entry_matches_query(entry: &ReflogEntry, query: &ReflogQuery) -> bool {
+    if let Some(since) = query.since {
+        if reflog_identity_timestamp(&entry.identity).is_some_and(|ts| ts < since) {
+            return false;
+        }
+    }
+    if let Some(until) = query.until {
+        if reflog_identity_timestamp(&entry.identity).is_some_and(|ts| ts > until) {
+            return false;
+        }
+    }
+    if let Some(grep) = &query.grep {
+        if !grep.matches(&entry.message) {
+            return false;
+        }
+    }
+    let _ = query.now;
+    true
+}
+
+fn scan_loose_reflog_newest_first(
+    git_dir: &Path,
+    refname: &str,
+    state: &mut QueryScanState<'_>,
+) -> Result<()> {
+    let path = reflog_path(git_dir, refname);
+    let Some(mut reader) = crate::reflog::ReverseReflogLineReader::open(&path)? else {
+        return Ok(());
+    };
+    let mut index_from_newest = 0usize;
+    while let Some(line_bytes) = reader.next_nonempty_line()? {
+        let line = std::str::from_utf8(&line_bytes).unwrap_or("");
+        let Some(entry) = parse_reflog_line_for_store(line) else {
+            continue;
+        };
+        let index = index_from_newest;
+        index_from_newest += 1;
+        if state.visit(index, &entry).is_break() {
+            state.more_older_lines_remain = reader.has_older_bytes();
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn scan_store_reflog_newest_first(
+    repo: &Repository,
+    refname: &str,
+    state: &mut QueryScanState<'_>,
+) -> Result<()> {
+    let mut index = 0usize;
+    repo.refs()
+        .for_each_reflog_entry(refname, true, &mut |entry| {
+            let flow = state.visit(index, entry);
+            index += 1;
+            if flow.is_break() {
+                state.more_older_lines_remain = true;
+            }
+            flow
+        })?;
+    Ok(())
 }
 
 fn dwim_reflog_candidates(user_ref: &str) -> Vec<String> {
@@ -274,6 +436,8 @@ fn expire_target_refs(git_dir: &Path, all: bool) -> Result<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::refs::append_reflog;
     use crate::repo::{InitOptions, Repository};
@@ -282,6 +446,87 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
         (dir, repo)
+    }
+
+    #[test]
+    fn query_limit_zero_returns_empty_without_reading_entries() {
+        let (_dir, repo) = init_repo();
+        let git_dir = repo.git_dir().to_path_buf();
+        let refname = "refs/heads/main";
+        append_reflog(
+            &git_dir,
+            refname,
+            &crate::objects::ObjectId::zero(),
+            &crate::objects::ObjectId::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                .expect("oid"),
+            "T <t@example.com> 1000000000 +0000",
+            "commit: one",
+            true,
+        )
+        .expect("append");
+        let name = RefName::try_from(refname).expect("valid");
+        let page = repo
+            .reflogs()
+            .query(
+                &name,
+                &ReflogQuery {
+                    limit: Some(0),
+                    ..ReflogQuery::default()
+                },
+            )
+            .expect("query");
+        assert!(page.entries.is_empty());
+        assert!(!page.truncated);
+    }
+
+    #[test]
+    fn loose_scan_index_skips_unparseable_lines_without_renumbering() {
+        let (_dir, repo) = init_repo();
+        let git_dir = repo.git_dir().to_path_buf();
+        let refname = "refs/heads/x";
+        let oid = crate::objects::ObjectId::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+            .expect("oid");
+        let body = format!(
+            "not-a-valid-reflog-line\n0000000000000000000000000000000000000000 {oid} T <t@e.com> 2000 +0000\tcommit: newest\n"
+        );
+        // Newest line is valid (index 0); the unparseable line is older and does not consume an index.
+        let path = crate::reflog::reflog_path(&git_dir, refname);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("mkdir");
+        }
+        fs::write(&path, body).expect("write");
+        let name = RefName::try_from(refname).expect("valid");
+        let page = repo
+            .reflogs()
+            .query(&name, &ReflogQuery::default())
+            .expect("query");
+        assert_eq!(page.entries.len(), 1);
+        assert_eq!(page.entries[0].index, 0);
+    }
+
+    #[test]
+    fn loose_scan_index_skips_unparseable_newer_line_without_renumbering() {
+        let (_dir, repo) = init_repo();
+        let git_dir = repo.git_dir().to_path_buf();
+        let refname = "refs/heads/y";
+        let oid = crate::objects::ObjectId::from_hex("cccccccccccccccccccccccccccccccccccccccc")
+            .expect("oid");
+        // Newest line is unparseable; the valid entry is older and must stay at index 0.
+        let body = format!(
+            "0000000000000000000000000000000000000000 {oid} T <t@e.com> 2000 +0000\tcommit: older\nnot-a-valid-reflog-line\n"
+        );
+        let path = crate::reflog::reflog_path(&git_dir, refname);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("mkdir");
+        }
+        fs::write(&path, body).expect("write");
+        let name = RefName::try_from(refname).expect("valid");
+        let page = repo
+            .reflogs()
+            .query(&name, &ReflogQuery::default())
+            .expect("query");
+        assert_eq!(page.entries.len(), 1);
+        assert_eq!(page.entries[0].index, 0);
     }
 
     #[test]

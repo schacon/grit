@@ -24,6 +24,7 @@ mod remote;
 mod stash;
 mod worktree;
 
+pub use crate::reflog::MessageMatcher;
 pub use crate::remote::{
     InspectOptions, RemoteBranchState, RemoteBranchStateKind, RemotePullBranch, RemoteSummary,
 };
@@ -33,7 +34,10 @@ pub use notes::{
     Note, NoteAddOutcome, NoteAddPlan, NoteListing, NoteRemovePlan, NotesWriteOptions,
     RepositoryNotes,
 };
-pub use reflog::{ExpireOptions, IndexedReflogEntry, ReflogExpireOutcome, RepositoryReflogs};
+pub use reflog::{
+    ExpireOptions, IndexedReflogEntry, ReflogExpireOutcome, ReflogPage, ReflogQuery,
+    RepositoryReflogs,
+};
 pub use remote::has_remote_section;
 pub use remote::{
     configured_remote_names, configured_remote_names_in_config_order, configured_remotes,
