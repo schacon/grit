@@ -14,13 +14,13 @@ use crate::porcelain::checkout::checkout_hard_to_tree_from_head_tree;
 use crate::porcelain::index_from_tree::index_from_tree_with_worktree_stats;
 use crate::porcelain::switch::{
     checkout_tree_transition_allow_local_reset, prepare_tree_transition_allow_local,
-    TreeTransitionPrepareError,
+    untracked_block_paths_for_prepared_switch, TreeTransitionPrepareError,
 };
 use crate::porcelain::worktree_guard::{load_worktree_snapshot, local_change_diffs};
 use crate::refs::{self, append_reflog};
 use crate::repo::Repository;
 use crate::state::{resolve_head, HeadState};
-use crate::worktree::list_worktrees;
+use crate::worktree::{list_worktrees, WorktreeEntry};
 
 /// Default cap on [`ResetOptions::orphan_limit`] and orphaned commit listings.
 pub const DEFAULT_ORPHAN_LIMIT: usize = 20;
@@ -179,7 +179,7 @@ pub fn reset_to_commit(repo: &Repository, opts: &ResetOptions) -> Result<ResetOu
             mode: opts.mode,
             target: opts.target,
             previous,
-            ref_updated: ref_label,
+            ref_updated: ref_updated_label_after_reset(&head),
             dry_run: true,
             would_overwrite: preview.would_overwrite,
             would_block: preview.would_block,
@@ -228,19 +228,21 @@ fn plan_reset(
     let head = resolve_head(repo.git_dir())?;
     let previous = head.oid().copied().ok_or(Error::UnbornHead)?;
 
+    ensure_reset_worktree_mode(repo, opts.mode)?;
+    ensure_keep_index_merged(repo, opts.mode)?;
+
     let head_tree = commit_tree_oid(repo, &previous)?;
     let target_tree = commit_tree_oid(repo, &opts.target)?;
 
     let (would_overwrite, would_block) = match opts.mode {
-        ResetMode::Hard if repo.work_tree().is_some() => (
+        ResetMode::Hard => (
             hard_reset_would_discard_paths(repo, Some(head_tree))?,
             Vec::new(),
         ),
-        ResetMode::Keep if repo.work_tree().is_some() => (
+        ResetMode::Keep => (
             Vec::new(),
             keep_reset_would_block_paths(repo, &head_tree, &target_tree)?,
         ),
-        ResetMode::Hard | ResetMode::Keep => (Vec::new(), Vec::new()),
         _ => (Vec::new(), Vec::new()),
     };
 
@@ -308,42 +310,58 @@ fn orphan_hide_tips(
     repo: &Repository,
     head: &HeadState,
     target: ObjectId,
-    previous: ObjectId,
+    _previous: ObjectId,
 ) -> Result<Vec<ObjectId>> {
     let git_dir = repo.git_dir();
-    let updated_branch = match head {
+    let moving_branch = match head {
         HeadState::Branch { refname, .. } => Some(refname.as_str()),
         _ => None,
     };
     let mut hide = vec![target];
     for (refname, oid) in refs::list_refs(git_dir, "refs/")? {
-        if updated_branch == Some(refname.as_str()) {
+        if moving_branch == Some(refname.as_str()) {
             continue;
         }
-        if oid != previous {
-            hide.push(oid);
-        }
+        hide.push(oid);
     }
     if let Ok(oid) = refs::resolve_ref(git_dir, "refs/stash") {
         hide.push(oid);
     }
-    if matches!(head, HeadState::Detached { .. }) {
-        hide.push(previous);
-    }
     for wt in list_worktrees(repo)? {
+        if worktree_is_reset_moving_head(repo, head, &wt) {
+            continue;
+        }
         match &wt.head {
-            HeadState::Detached { oid } if *oid != previous => hide.push(*oid),
-            HeadState::Branch {
-                refname,
-                oid: Some(oid),
-                ..
-            } if updated_branch != Some(refname.as_str()) && *oid != previous => hide.push(*oid),
-            _ => {}
+            HeadState::Detached { oid } => hide.push(*oid),
+            HeadState::Branch { oid: Some(oid), .. } => hide.push(*oid),
+            HeadState::Branch { .. } | HeadState::Invalid => {}
         }
     }
     hide.sort_unstable();
     hide.dedup();
     Ok(hide)
+}
+
+/// True when this listed worktree is the one whose HEAD ref/file is being moved by the reset.
+fn worktree_is_reset_moving_head(repo: &Repository, head: &HeadState, wt: &WorktreeEntry) -> bool {
+    let Some(repo_wt) = repo.work_tree() else {
+        return false;
+    };
+    if wt.path != repo_wt {
+        return false;
+    }
+    match (head, &wt.head) {
+        (
+            HeadState::Branch { refname, oid, .. },
+            HeadState::Branch {
+                refname: wt_ref,
+                oid: wt_oid,
+                ..
+            },
+        ) => refname == wt_ref && oid == wt_oid,
+        (HeadState::Detached { oid }, HeadState::Detached { oid: wt_oid }) => oid == wt_oid,
+        _ => false,
+    }
 }
 
 fn orphan_commit_summary(repo: &Repository, oid: ObjectId) -> Result<OrphanedCommitSummary> {
@@ -367,23 +385,38 @@ fn apply_reset_worktree(repo: &Repository, opts: &ResetOptions, previous: Object
             repo.write_index(&mut index)?;
         }
         ResetMode::Hard => {
-            if repo.work_tree().is_none() {
-                return Err(Error::PathError(
-                    "cannot hard reset a bare repository's working tree".into(),
-                ));
-            }
+            ensure_reset_worktree_mode(repo, ResetMode::Hard)?;
             let head_tree = commit_tree_oid(repo, &previous)?;
             checkout_hard_to_tree_from_head_tree(repo, &head_tree, &target_tree)?;
         }
         ResetMode::Keep => {
-            if repo.work_tree().is_none() {
-                return Err(Error::PathError(
-                    "cannot keep-reset a bare repository's working tree".into(),
-                ));
-            }
+            ensure_reset_worktree_mode(repo, ResetMode::Keep)?;
+            ensure_keep_index_merged(repo, opts.mode)?;
             let head_tree = commit_tree_oid(repo, &previous)?;
             checkout_tree_transition_allow_local_reset(repo, Some(&head_tree), &target_tree)?;
         }
+    }
+    Ok(())
+}
+
+fn ensure_reset_worktree_mode(repo: &Repository, mode: ResetMode) -> Result<()> {
+    if repo.work_tree().is_some() {
+        return Ok(());
+    }
+    match mode {
+        ResetMode::Hard => Err(Error::PathError(
+            "cannot hard reset a bare repository's working tree".into(),
+        )),
+        ResetMode::Keep => Err(Error::PathError(
+            "cannot keep-reset a bare repository's working tree".into(),
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn ensure_keep_index_merged(repo: &Repository, mode: ResetMode) -> Result<()> {
+    if mode == ResetMode::Keep && repo.load_index()?.has_unmerged_entries() {
+        return Err(Error::IndexUnmerged);
     }
     Ok(())
 }
@@ -413,10 +446,26 @@ fn keep_reset_would_block_paths(
     head_tree: &ObjectId,
     target_tree: &ObjectId,
 ) -> Result<Vec<String>> {
-    match prepare_tree_transition_allow_local(repo, Some(head_tree), target_tree, &HashSet::new()) {
-        Ok(_) => Ok(Vec::new()),
-        Err(TreeTransitionPrepareError::OverwritePaths(paths)) => Ok(paths),
-        Err(TreeTransitionPrepareError::Failed(err)) => Err(err),
+    let prepared = match prepare_tree_transition_allow_local(
+        repo,
+        Some(head_tree),
+        target_tree,
+        &HashSet::new(),
+    ) {
+        Ok(prepared) => prepared,
+        Err(TreeTransitionPrepareError::OverwritePaths(paths)) => return Ok(paths),
+        Err(TreeTransitionPrepareError::Failed(err)) => return Err(err),
+    };
+    let mut paths = untracked_block_paths_for_prepared_switch(&prepared);
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+fn ref_updated_label_after_reset(head: &HeadState) -> String {
+    match head {
+        HeadState::Branch { refname, .. } => refname.clone(),
+        HeadState::Detached { .. } | HeadState::Invalid => "HEAD".to_owned(),
     }
 }
 
@@ -951,6 +1000,112 @@ mod tests {
     }
 
     #[test]
+    fn orphan_zero_when_other_ref_holds_previous_tip() {
+        let (_dir, repo) = init_repo();
+        let c1 = commit_file(&repo, "f", "1\n", None);
+        let c2 = commit_file(&repo, "f", "2\n", Some(c1));
+        let c3 = commit_file(&repo, "f", "3\n", Some(c2));
+        refs::write_ref(&repo.git_dir(), "refs/heads/hold", &c3).expect("hold");
+
+        let preview = preview_reset(&repo, &reset_opts(c1, ResetMode::Mixed)).expect("preview");
+        assert_eq!(
+            preview.orphaned_total, 0,
+            "tip still held by refs/heads/hold"
+        );
+        let _ = c3;
+    }
+
+    #[test]
+    fn orphan_lists_commits_for_detached_reset_back() {
+        let (_dir, repo) = init_repo();
+        let c1 = commit_file(&repo, "f", "1\n", None);
+        let c2 = commit_file(&repo, "f", "2\n", Some(c1));
+        let c3 = commit_file(&repo, "f", "3\n", Some(c2));
+        reset_to_commit(&repo, &reset_opts(c1, ResetMode::Soft)).expect("move main back");
+        refs::write_ref(&repo.git_dir(), "HEAD", &c3).expect("detach at c3");
+
+        let preview = preview_reset(&repo, &reset_opts(c1, ResetMode::Mixed)).expect("preview");
+        assert_eq!(preview.orphaned_total, 2);
+        assert_eq!(preview.orphaned_commits.len(), 2);
+        assert_eq!(preview.orphaned_commits[0].oid, c3);
+        assert_eq!(preview.orphaned_commits[1].oid, c2);
+    }
+
+    #[test]
+    fn keep_reset_rejects_unmerged_index() {
+        let (_dir, repo) = init_repo();
+        let c1 = commit_file(&repo, "f", "clean\n", None);
+        let wt = repo.work_tree().expect("wt");
+        let b1 = repo.odb().write(ObjectKind::Blob, b"base\n").expect("blob");
+        let b2 = repo.odb().write(ObjectKind::Blob, b"ours\n").expect("blob");
+        let b3 = repo
+            .odb()
+            .write(ObjectKind::Blob, b"theirs\n")
+            .expect("blob");
+        let mut index = Index::new();
+        for (stage, oid, size) in [(1u8, b1, 5u32), (2, b2, 5), (3, b3, 7)] {
+            let mut entry = crate::index::IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: crate::index::MODE_REGULAR,
+                uid: 0,
+                gid: 0,
+                size,
+                oid,
+                flags: 1,
+                flags_extended: None,
+                path: b"f".to_vec(),
+                base_index_pos: 0,
+            };
+            entry.set_stage(stage);
+            index.add_or_replace(entry);
+        }
+        index.sort();
+        std::fs::write(wt.join("f"), "ours\n").expect("wt");
+        repo.write_index(&mut index).expect("write index");
+
+        let err = reset_to_commit(&repo, &reset_opts(c1, ResetMode::Keep)).expect_err("keep");
+        assert!(matches!(err, Error::IndexUnmerged));
+    }
+
+    #[test]
+    fn bare_hard_reset_dry_run_fails_without_moving_head() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo =
+            init_repository(dir.path(), true, "main", None, RefStorageFormat::Files).expect("init");
+        let mut index = Index::new();
+        let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+            .expect("tree");
+        let commit = CommitData {
+            tree,
+            parents: vec![],
+            author: "T <t@t> 0 +0000".into(),
+            committer: "T <t@t> 0 +0000".into(),
+            author_raw: vec![],
+            committer_raw: vec![],
+            encoding: None,
+            message: "c\n".into(),
+            raw_message: None,
+            extra_headers: Vec::new(),
+        };
+        let c1 = repo
+            .odb()
+            .write(ObjectKind::Commit, &serialize_commit(&commit))
+            .expect("commit");
+        refs::write_ref(&repo.git_dir(), "refs/heads/main", &c1).expect("branch");
+        refs::write_symbolic_ref(&repo.git_dir(), "HEAD", "refs/heads/main").expect("symhead");
+
+        let mut opts = reset_opts(c1, ResetMode::Hard);
+        opts.dry_run = true;
+        let err = reset_to_commit(&repo, &opts).expect_err("bare dry-run hard");
+        assert!(matches!(err, Error::PathError(_)));
+    }
+
+    #[test]
     fn orphan_walk_lists_commit_not_held_by_other_ref() {
         let (_dir, repo) = init_repo();
         let c1 = commit_file(&repo, "f", "1\n", None);
@@ -958,12 +1113,11 @@ mod tests {
         let c3 = commit_file(&repo, "f", "3\n", Some(c2));
         refs::write_ref(&repo.git_dir(), "refs/heads/keep", &c2).expect("keep");
 
-        let preview = preview_reset(
-            &repo,
-            &reset_opts(c1, ResetMode::Mixed),
-        )
-        .expect("preview");
-        assert_eq!(preview.orphaned_total, 1, "c3 should orphan when keep stops at c2");
+        let preview = preview_reset(&repo, &reset_opts(c1, ResetMode::Mixed)).expect("preview");
+        assert_eq!(
+            preview.orphaned_total, 1,
+            "c3 should orphan when keep stops at c2"
+        );
         assert_eq!(preview.orphaned_commits[0].oid, c3);
     }
 

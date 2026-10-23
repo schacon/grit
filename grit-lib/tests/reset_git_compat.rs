@@ -22,7 +22,12 @@ fn identity() -> String {
     "T <t@t> 0 +0000".into()
 }
 
-fn commit_file(repo: &Repository, path: &str, contents: &str, parent: Option<ObjectId>) -> ObjectId {
+fn commit_file(
+    repo: &Repository,
+    path: &str,
+    contents: &str,
+    parent: Option<ObjectId>,
+) -> ObjectId {
     let wt = repo.work_tree().expect("wt");
     std::fs::write(wt.join(path), contents).expect("write");
     let mut index = repo.index_handle().load().expect("index");
@@ -128,8 +133,7 @@ fn reset_keep_preserves_unrelated_local_changes_like_git() {
     two_commit_history(dir2.path());
     std::fs::write(dir2.path().join("b"), "local\n").expect("local b");
     let repo = open_grit_repo(dir2.path());
-    let parent =
-        resolve_revision_as_commit_without_index_dwim(&repo, "HEAD~1").expect("parent");
+    let parent = resolve_revision_as_commit_without_index_dwim(&repo, "HEAD~1").expect("parent");
     reset_to_commit(
         &repo,
         &ResetOptions::new(parent, ResetMode::Keep, "T <t@t.com> 0 +0000", "reset"),
@@ -156,16 +160,10 @@ fn reset_keep_refuses_when_changed_file_has_local_edits() {
     std::fs::write(dir2.path().join("a"), "edited\n").expect("edit a");
     let repo = open_grit_repo(dir2.path());
     let head_before = refs::resolve_ref(repo.git_dir(), "HEAD").expect("head");
-    let parent =
-        resolve_revision_as_commit_without_index_dwim(&repo, "HEAD~1").expect("parent");
+    let parent = resolve_revision_as_commit_without_index_dwim(&repo, "HEAD~1").expect("parent");
     let err = reset_to_commit(
         &repo,
-        &ResetOptions::new(
-            parent,
-            ResetMode::Keep,
-            "T <t@t.com> 0 +0000",
-            "reset",
-        ),
+        &ResetOptions::new(parent, ResetMode::Keep, "T <t@t.com> 0 +0000", "reset"),
     )
     .expect_err("grit should refuse");
     assert!(
@@ -236,6 +234,67 @@ fn reset_orphaned_commits_excludes_commits_held_by_other_refs() {
     assert_eq!(outcome.orphaned_commits.len(), 1);
     assert_eq!(outcome.orphaned_commits[0].oid, c3);
     let _ = c2;
+}
+
+#[test]
+fn reset_orphan_zero_when_other_ref_holds_old_tip() {
+    let dir = TempDir::new().expect("tempdir");
+    let repo = Repository::init(
+        dir.path(),
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(RefStorageFormat::Files),
+    )
+    .expect("init");
+    let c1 = commit_file(&repo, "f", "1\n", None);
+    let c2 = commit_file(&repo, "f", "2\n", Some(c1));
+    let c3 = commit_file(&repo, "f", "3\n", Some(c2));
+    refs::write_ref(repo.git_dir(), "refs/heads/hold", &c3).expect("hold");
+
+    let outcome = reset_to_commit(
+        &repo,
+        &ResetOptions::new(c1, ResetMode::Mixed, "T <t@t.com> 0 +0000", "reset"),
+    )
+    .expect("reset");
+    assert_eq!(outcome.orphaned_total, 0);
+}
+
+#[test]
+fn reset_keep_rejects_unmerged_index_like_git() {
+    let dir = TempDir::new().expect("tempdir");
+    init_git_repo(dir.path());
+    two_commit_history(dir.path());
+    let tip = git_cmd(&["rev-parse", "HEAD"])
+        .in_dir(dir.path())
+        .suc()
+        .stdout
+        .trim()
+        .to_owned();
+    git_cmd(&["checkout", "-b", "side", "HEAD~1"])
+        .in_dir(dir.path())
+        .suc();
+    std::fs::write(dir.path().join("a"), "side\n").expect("side");
+    git_cmd(&["commit", "-am", "side"]).in_dir(dir.path()).suc();
+    git_cmd(&["checkout", "main"]).in_dir(dir.path()).suc();
+    std::fs::write(dir.path().join("a"), "main\n").expect("main");
+    git_cmd(&["commit", "-am", "main"]).in_dir(dir.path()).suc();
+    git_cmd(&["merge", "side", "--no-commit", "--no-ff"])
+        .in_dir(dir.path())
+        .with_status(1);
+
+    git_cmd(&["reset", "--keep", "HEAD"])
+        .in_dir(dir.path())
+        .with_status(128);
+
+    let repo = open_grit_repo(dir.path());
+    let head = refs::resolve_ref(repo.git_dir(), "HEAD").expect("head");
+    let err = reset_to_commit(
+        &repo,
+        &ResetOptions::new(head, ResetMode::Keep, "T <t@t.com> 0 +0000", "reset"),
+    )
+    .expect_err("grit keep should refuse unmerged index");
+    assert!(matches!(err, Error::IndexUnmerged));
+    let _ = tip;
 }
 
 #[test]

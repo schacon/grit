@@ -774,6 +774,17 @@ pub(crate) fn checkout_tree_transition_allow_local(
     checkout_tree_transition_allow_local_with_preserved(repo, from_tree, to_tree, &HashSet::new())
 }
 
+/// Untracked paths that would block a keep-style transition after [`prepare_tree_transition_allow_local`] succeeds.
+pub(crate) fn untracked_block_paths_for_prepared_switch(prepared: &PreparedSwitch) -> Vec<String> {
+    if !tree_changes_contain_additions(&prepared.plan.tree_changes) {
+        return Vec::new();
+    }
+    untracked_would_be_overwritten_by_tree_changes(
+        &prepared.plan.untracked,
+        &prepared.plan.tree_changes,
+    )
+}
+
 /// Like [`checkout_tree_transition_allow_local`], but local-overwrite paths become [`Error::WouldOverwrite`].
 pub(crate) fn checkout_tree_transition_allow_local_reset(
     repo: &Repository,
@@ -782,6 +793,7 @@ pub(crate) fn checkout_tree_transition_allow_local_reset(
 ) -> Result<()> {
     let prepared = prepare_tree_transition_allow_local(repo, from_tree, to_tree, &HashSet::new())
         .map_err(map_switch_tree_transition_prepare_error)?;
+    verify_prepared_switch_no_untracked_overwrite(&prepared.plan)?;
     checkout_prepared_tree_transition(repo, prepared)
 }
 
