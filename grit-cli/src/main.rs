@@ -322,6 +322,8 @@ enum HistoryAction {
         #[arg(long = "onto", value_name = "REV")]
         onto: Option<String>,
         #[command(flatten)]
+        rebase_flags: commands::history::RebaseRunFlags,
+        #[command(flatten)]
         shared: commands::history::HistoryRewriteArgs,
     },
     /// Peel path-limited changes out of a commit into a new parent and replay descendants.
@@ -1154,6 +1156,8 @@ enum Command {
         /// Replay onto this commit instead of `UPSTREAM`.
         #[arg(long = "onto", value_name = "REV")]
         onto: Option<String>,
+        #[command(flatten)]
+        rebase_flags: commands::history::RebaseRunFlags,
         #[command(flatten)]
         shared: commands::history::HistoryRewriteArgs,
     },
@@ -2270,12 +2274,19 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             HistoryAction::Rebase {
                 upstream,
                 onto,
+                rebase_flags,
                 shared,
-            } => emit(
-                &commands::history::run_rebase(upstream, onto, &shared)?,
-                opts,
-                ctx,
-            ),
+            } => {
+                let outcome =
+                    commands::history::run_rebase(upstream, onto, &shared, &rebase_flags)?;
+                emit(&outcome, opts, ctx)?;
+                if let commands::history::RebaseRunOutcome::Check(c) = &outcome {
+                    if c.result == commands::history::RebaseCheckResult::Conflicts {
+                        std::process::exit(1);
+                    }
+                }
+                Ok(())
+            }
             HistoryAction::Absorb { base, shared } => emit(
                 &commands::history::run_absorb(base.as_deref(), &shared)?,
                 opts,
@@ -2434,12 +2445,18 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
         Command::Rebase {
             upstream,
             onto,
+            rebase_flags,
             shared,
-        } => emit(
-            &commands::history::run_rebase(upstream, onto, &shared)?,
-            opts,
-            ctx,
-        ),
+        } => {
+            let outcome = commands::history::run_rebase(upstream, onto, &shared, &rebase_flags)?;
+            emit(&outcome, opts, ctx)?;
+            if let commands::history::RebaseRunOutcome::Check(c) = &outcome {
+                if c.result == commands::history::RebaseCheckResult::Conflicts {
+                    std::process::exit(1);
+                }
+            }
+            Ok(())
+        }
         Command::Push {
             tags,
             delete,

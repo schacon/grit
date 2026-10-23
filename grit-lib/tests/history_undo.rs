@@ -91,6 +91,7 @@ fn undo_after_rebase_restores_stacked_branches() {
             rewrite: rewrite_opts(),
             skip_applied: true,
             flatten_leaf_merges: false,
+            favor: grit_lib::diff::merge_file::MergeFavor::default(),
         },
     )
     .expect("rebase plan");

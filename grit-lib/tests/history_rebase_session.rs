@@ -40,6 +40,7 @@ fn rebase_opts() -> RebaseOntoOptions {
         },
         skip_applied: false,
         flatten_leaf_merges: false,
+        favor: grit_lib::diff::merge_file::MergeFavor::default(),
     }
 }
 
