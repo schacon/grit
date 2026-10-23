@@ -82,6 +82,24 @@ fn reflog_grep_and_since_flags() {
 }
 
 #[test]
+fn reflog_json_omits_action_when_message_has_no_action_prefix() {
+    let dir = init_repo();
+    let log_path = dir.path().join(".git/logs/HEAD");
+    let mut body = std::fs::read_to_string(&log_path).expect("read reflog");
+    body.push_str(
+        "0000000000000000000000000000000000000000 0000000000000000000000000000000000000000 T <t@e.c> 2000 +0000\thistory undo\n",
+    );
+    std::fs::write(&log_path, body).expect("write reflog");
+    let v = grit_json(dir.path(), &["reflog", "-n", "1"]);
+    let entry = &v["entries"][0];
+    assert_eq!(entry["message"].as_str(), Some("history undo"));
+    assert!(
+        entry.get("action").is_none(),
+        "action must be omitted, not null: {entry:?}"
+    );
+}
+
+#[test]
 fn reflog_max_count_zero_returns_empty_json() {
     let dir = init_repo();
     let v = grit_json(dir.path(), &["reflog", "-n", "0"]);
