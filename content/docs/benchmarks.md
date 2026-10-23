@@ -418,7 +418,7 @@ Two back-to-back hot-path after runs (`hot-paths-after-run1.json` vs `run2.json`
 
 **Scenario:** `grit pick base..topic` vs `git cherry-pick --no-edit base..topic` on the **pick-series** synthetic-**10000** fixture (20 commits on `topic`, one file touched per commit). Baseline: **`grit-utils/baselines/hot-paths-after.json`** (`pick-range-20`).
 
-**Committed baseline (factory VM, release hyperfine, Git 2.43):** grit median **~102 ms** vs git **~118 ms** (**~0.86×** time); peak RSS **~1.40×** git. Median time meets the **≤ 1.0×** goal; peak RSS remains above **≤ 1.2×** until shared replay/checkout work lands.
+**Committed baseline (factory VM, dist hyperfine, Git 2.43):** grit median **~107 ms** vs git **~116 ms** (**~0.92×** time); peak RSS **~1.24×** git (grit **~20.8 MiB** vs git **~16.7 MiB**). Median time meets the **≤ 1.0×** goal; peak RSS remains above **≤ 1.2×** until shared replay/checkout work lands.
 
 **Follow-up:** [GitHub issue #2977](https://github.com/gitbutlerapp/grit/issues/2977) — cross-cutting replay/merge work (index-hinted tree diffs in replay merge, scoped checkout for changed paths only, reduce peak RSS by avoiding full tree/index copies per step). Benefits **revert**, **merge**, and **rebase**, not pick-only code.
 
