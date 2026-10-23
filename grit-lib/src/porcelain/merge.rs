@@ -421,6 +421,82 @@ pub fn predict_merge(
     Ok(MergePrediction::Clean { tree })
 }
 
+/// Planned merge of `other_oid` into `into_oid` without touching refs, the index, merge state,
+/// or the working tree (same in-memory three-way merge as [`predict_merge`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MergeDryRunPlan {
+    /// The current tip already contains the other side.
+    UpToDate,
+    /// The branch ref would move to `tip` (fast-forward).
+    FastForward {
+        /// Tip commit the current branch would become.
+        tip: ObjectId,
+        /// Stored `change-id` on `tip` when present.
+        change_id: Option<ChangeId>,
+    },
+    /// `--ff-only` would refuse because histories diverged.
+    RefusedNotFf,
+    /// A two-parent merge commit would be recorded (tree merge already succeeded).
+    MergeCommit {
+        /// Parent commits of the merge commit (current tip, then merged branch).
+        parents: Vec<ObjectId>,
+    },
+    /// The three-way merge would stop with conflicts.
+    Conflicts {
+        /// Conflicted paths and kinds (same classification as a real merge).
+        conflicts: Vec<MergeConflictDetail>,
+    },
+}
+
+/// Predict integrating `other_oid` into the commit at `into_oid` using [`MergeOptions`], without
+/// mutating the repository.
+///
+/// # Errors
+///
+/// Propagates object read and merge failures. Returns [`Error::Message`] when histories are
+/// unrelated and [`MergeOptions::allow_unrelated`] is false.
+pub fn plan_branch_merge(
+    repo: &Repository,
+    into_oid: ObjectId,
+    other_oid: ObjectId,
+    label: &str,
+    options: &MergeOptions,
+) -> Result<MergeDryRunPlan> {
+    if into_oid == other_oid || is_ancestor(repo, other_oid, into_oid)? {
+        return Ok(MergeDryRunPlan::UpToDate);
+    }
+
+    let ff_possible = is_ancestor(repo, into_oid, other_oid)?;
+    if matches!(options.fast_forward, FastForwardPolicy::Only) && !ff_possible {
+        return Ok(MergeDryRunPlan::RefusedNotFf);
+    }
+
+    if should_take_fast_forward(options, ff_possible) {
+        return Ok(MergeDryRunPlan::FastForward {
+            tip: other_oid,
+            change_id: stored_change_id_for_commit(repo, other_oid)?,
+        });
+    }
+
+    let prediction_opts = MergePredictionOptions {
+        allow_fast_forward: false,
+        allow_unrelated_histories: options.allow_unrelated,
+        favor: options.favor,
+        whitespace: WhitespaceMergeOptions::default(),
+        theirs_label: label.to_owned(),
+    };
+    match predict_merge(repo, into_oid, other_oid, &prediction_opts)? {
+        MergePrediction::UpToDate | MergePrediction::FastForward => Ok(MergeDryRunPlan::UpToDate),
+        MergePrediction::Clean { .. } => Ok(MergeDryRunPlan::MergeCommit {
+            parents: vec![into_oid, other_oid],
+        }),
+        MergePrediction::Conflicts { conflicts } => Ok(MergeDryRunPlan::Conflicts { conflicts }),
+        MergePrediction::Unrelated => Err(Error::Message(format!(
+            "'{label}' has no common history with the current branch"
+        ))),
+    }
+}
+
 /// Enable the ODB mem overlay for the scope of a [`predict_merge`] call without disturbing
 /// an overlay already active on the shared [`Repository`] handle.
 pub(crate) struct MemOverlayGuard<'a> {

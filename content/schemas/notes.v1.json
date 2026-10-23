@@ -90,8 +90,32 @@
           ],
           "type": "string"
         },
+        "dry_run": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "note_blob": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "notes_ref": {
           "type": "string"
+        },
+        "notes_ref_new": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notes_ref_old": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "object": {
           "type": "string"
@@ -117,8 +141,26 @@
           ],
           "type": "string"
         },
+        "dry_run": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "notes_ref": {
           "type": "string"
+        },
+        "notes_ref_new": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notes_ref_old": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "objects": {
           "items": {

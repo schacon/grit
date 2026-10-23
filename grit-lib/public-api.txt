@@ -12283,6 +12283,31 @@ impl core::marker::Unpin for grit_lib::operation::ConflictKind
 impl core::marker::UnsafeUnpin for grit_lib::operation::ConflictKind
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::operation::ConflictKind
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::operation::ConflictKind
+pub enum grit_lib::porcelain::merge::MergeDryRunPlan
+pub grit_lib::porcelain::merge::MergeDryRunPlan::Conflicts
+pub grit_lib::porcelain::merge::MergeDryRunPlan::Conflicts::conflicts: alloc::vec::Vec<grit_lib::operation::Conflict>
+pub grit_lib::porcelain::merge::MergeDryRunPlan::FastForward
+pub grit_lib::porcelain::merge::MergeDryRunPlan::FastForward::change_id: core::option::Option<grit_lib::change_id::ChangeId>
+pub grit_lib::porcelain::merge::MergeDryRunPlan::FastForward::tip: grit_lib::objects::ObjectId
+pub grit_lib::porcelain::merge::MergeDryRunPlan::MergeCommit
+pub grit_lib::porcelain::merge::MergeDryRunPlan::MergeCommit::parents: alloc::vec::Vec<grit_lib::objects::ObjectId>
+pub grit_lib::porcelain::merge::MergeDryRunPlan::RefusedNotFf
+pub grit_lib::porcelain::merge::MergeDryRunPlan::UpToDate
+impl core::clone::Clone for grit_lib::porcelain::merge::MergeDryRunPlan
+pub fn grit_lib::porcelain::merge::MergeDryRunPlan::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::porcelain::merge::MergeDryRunPlan
+impl core::cmp::PartialEq for grit_lib::porcelain::merge::MergeDryRunPlan
+pub fn grit_lib::porcelain::merge::MergeDryRunPlan::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::porcelain::merge::MergeDryRunPlan
+pub fn grit_lib::porcelain::merge::MergeDryRunPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::porcelain::merge::MergeDryRunPlan
+impl core::marker::Freeze for grit_lib::porcelain::merge::MergeDryRunPlan
+impl core::marker::Send for grit_lib::porcelain::merge::MergeDryRunPlan
+impl core::marker::Sync for grit_lib::porcelain::merge::MergeDryRunPlan
+impl core::marker::Unpin for grit_lib::porcelain::merge::MergeDryRunPlan
+impl core::marker::UnsafeUnpin for grit_lib::porcelain::merge::MergeDryRunPlan
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::merge::MergeDryRunPlan
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::merge::MergeDryRunPlan
 pub enum grit_lib::porcelain::merge::MergePrediction
 pub grit_lib::porcelain::merge::MergePrediction::Clean
 pub grit_lib::porcelain::merge::MergePrediction::Clean::tree: grit_lib::objects::ObjectId
@@ -12432,6 +12457,7 @@ pub fn grit_lib::porcelain::merge::continue_merge(&grit_lib::repo::Repository, &
 pub fn grit_lib::porcelain::merge::integrate_branch(&grit_lib::repo::Repository, &str, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, &str) -> grit_lib::error::Result<grit_lib::porcelain::merge::IntegrateBranchOutcome>
 pub fn grit_lib::porcelain::merge::integrate_branch_with(&grit_lib::repo::Repository, &str, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, &str, &grit_lib::porcelain::merge::MergeOptions) -> grit_lib::error::Result<grit_lib::porcelain::merge::IntegrateBranchOutcome>
 pub fn grit_lib::porcelain::merge::integrate_branch_with_options(&grit_lib::repo::Repository, &str, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, &str, grit_lib::porcelain::merge::IntegrateBranchOptions) -> grit_lib::error::Result<grit_lib::porcelain::merge::IntegrateBranchOutcome>
+pub fn grit_lib::porcelain::merge::plan_branch_merge(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, &str, &grit_lib::porcelain::merge::MergeOptions) -> grit_lib::error::Result<grit_lib::porcelain::merge::MergeDryRunPlan>
 pub fn grit_lib::porcelain::merge::predict_merge(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, &grit_lib::porcelain::merge::MergePredictionOptions) -> grit_lib::error::Result<grit_lib::porcelain::merge::MergePrediction>
 pub fn grit_lib::porcelain::merge::reduce_octopus_merge_heads(&grit_lib::repo::Repository, &[grit_lib::objects::ObjectId], &[alloc::string::String]) -> grit_lib::error::Result<(alloc::vec::Vec<grit_lib::objects::ObjectId>, alloc::vec::Vec<alloc::string::String>)>
 pub fn grit_lib::porcelain::merge::resolve_merge_conflict_style(&grit_lib::repo::Repository, core::option::Option<grit_lib::diff::merge_file::ConflictStyle>) -> grit_lib::diff::merge_file::ConflictStyle
@@ -19697,6 +19723,27 @@ impl core::marker::Unpin for grit_lib::repo_handles::Note
 impl core::marker::UnsafeUnpin for grit_lib::repo_handles::Note
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::Note
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::Note
+pub struct grit_lib::repo_handles::NoteAddPlan
+pub grit_lib::repo_handles::NoteAddPlan::note_blob: grit_lib::objects::ObjectId
+pub grit_lib::repo_handles::NoteAddPlan::notes_ref_tip_after: grit_lib::objects::ObjectId
+pub grit_lib::repo_handles::NoteAddPlan::notes_ref_tip_before: core::option::Option<grit_lib::objects::ObjectId>
+pub grit_lib::repo_handles::NoteAddPlan::object: grit_lib::objects::ObjectId
+pub grit_lib::repo_handles::NoteAddPlan::outcome: grit_lib::repo_handles::NoteAddOutcome
+impl core::clone::Clone for grit_lib::repo_handles::NoteAddPlan
+pub fn grit_lib::repo_handles::NoteAddPlan::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::repo_handles::NoteAddPlan
+impl core::cmp::PartialEq for grit_lib::repo_handles::NoteAddPlan
+pub fn grit_lib::repo_handles::NoteAddPlan::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::repo_handles::NoteAddPlan
+pub fn grit_lib::repo_handles::NoteAddPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::repo_handles::NoteAddPlan
+impl core::marker::Freeze for grit_lib::repo_handles::NoteAddPlan
+impl core::marker::Send for grit_lib::repo_handles::NoteAddPlan
+impl core::marker::Sync for grit_lib::repo_handles::NoteAddPlan
+impl core::marker::Unpin for grit_lib::repo_handles::NoteAddPlan
+impl core::marker::UnsafeUnpin for grit_lib::repo_handles::NoteAddPlan
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::NoteAddPlan
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::NoteAddPlan
 pub struct grit_lib::repo_handles::NoteListing
 pub grit_lib::repo_handles::NoteListing::note_blob: grit_lib::objects::ObjectId
 pub grit_lib::repo_handles::NoteListing::object: grit_lib::objects::ObjectId
@@ -19715,6 +19762,26 @@ impl core::marker::Unpin for grit_lib::repo_handles::NoteListing
 impl core::marker::UnsafeUnpin for grit_lib::repo_handles::NoteListing
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::NoteListing
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::NoteListing
+pub struct grit_lib::repo_handles::NoteRemovePlan
+pub grit_lib::repo_handles::NoteRemovePlan::had_note: bool
+pub grit_lib::repo_handles::NoteRemovePlan::notes_ref_tip_after: core::option::Option<grit_lib::objects::ObjectId>
+pub grit_lib::repo_handles::NoteRemovePlan::notes_ref_tip_before: core::option::Option<grit_lib::objects::ObjectId>
+pub grit_lib::repo_handles::NoteRemovePlan::object: grit_lib::objects::ObjectId
+impl core::clone::Clone for grit_lib::repo_handles::NoteRemovePlan
+pub fn grit_lib::repo_handles::NoteRemovePlan::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::repo_handles::NoteRemovePlan
+impl core::cmp::PartialEq for grit_lib::repo_handles::NoteRemovePlan
+pub fn grit_lib::repo_handles::NoteRemovePlan::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::repo_handles::NoteRemovePlan
+pub fn grit_lib::repo_handles::NoteRemovePlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::repo_handles::NoteRemovePlan
+impl core::marker::Freeze for grit_lib::repo_handles::NoteRemovePlan
+impl core::marker::Send for grit_lib::repo_handles::NoteRemovePlan
+impl core::marker::Sync for grit_lib::repo_handles::NoteRemovePlan
+impl core::marker::Unpin for grit_lib::repo_handles::NoteRemovePlan
+impl core::marker::UnsafeUnpin for grit_lib::repo_handles::NoteRemovePlan
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::NoteRemovePlan
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::NoteRemovePlan
 pub struct grit_lib::repo_handles::NotesWriteOptions
 pub grit_lib::repo_handles::NotesWriteOptions::author: core::option::Option<alloc::string::String>
 pub grit_lib::repo_handles::NotesWriteOptions::committer: alloc::string::String
@@ -19830,6 +19897,8 @@ impl<'repo> grit_lib::repo_handles::RepositoryNotes<'repo>
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::add(&self, &grit_lib::notes::NotesRef, &grit_lib::objects::ObjectId, &[u8], &grit_lib::repo_handles::NotesWriteOptions, bool) -> grit_lib::error::Result<grit_lib::repo_handles::NoteAddOutcome>
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::list(&self, &grit_lib::notes::NotesRef) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::repo_handles::NoteListing>>
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::list_with_bodies(&self, &grit_lib::notes::NotesRef) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::repo_handles::Note>>
+pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::plan_add(&self, &grit_lib::notes::NotesRef, &grit_lib::objects::ObjectId, &[u8], &grit_lib::repo_handles::NotesWriteOptions, bool) -> grit_lib::error::Result<grit_lib::repo_handles::NoteAddPlan>
+pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::plan_remove(&self, &grit_lib::notes::NotesRef, &grit_lib::objects::ObjectId, &grit_lib::repo_handles::NotesWriteOptions) -> grit_lib::error::Result<grit_lib::repo_handles::NoteRemovePlan>
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::read(&self, &grit_lib::notes::NotesRef, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<core::option::Option<alloc::vec::Vec<u8>>>
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::remove(&self, &grit_lib::notes::NotesRef, &grit_lib::objects::ObjectId, &grit_lib::repo_handles::NotesWriteOptions) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::remove_many(&self, &grit_lib::notes::NotesRef, &[grit_lib::objects::ObjectId], &grit_lib::repo_handles::NotesWriteOptions) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>

@@ -273,15 +273,24 @@ fn write_notes_tree(repo: &Repository, entries: &[NotesTreeEntry]) -> Result<Obj
 }
 
 /// Identity lines and message for one notes commit.
-struct NotesCommit<'a> {
-    message: &'a str,
+pub(crate) struct NotesCommit<'a> {
+    pub(crate) message: &'a str,
     /// Full author line (`Name <email> unix tz`).
-    author: &'a str,
+    pub(crate) author: &'a str,
     /// Full committer line (`Name <email> unix tz`).
-    committer: &'a str,
+    pub(crate) committer: &'a str,
 }
 
 /// Write the notes tree for `entries` and a commit on top of `parents`; returns the commit id.
+pub(crate) fn preview_notes_commit(
+    repo: &Repository,
+    parent: Option<ObjectId>,
+    entries: &[NotesTreeEntry],
+    commit: &NotesCommit<'_>,
+) -> Result<ObjectId> {
+    write_notes_commit_object(repo, entries, commit, parent.into_iter().collect())
+}
+
 fn write_notes_commit_object(
     repo: &Repository,
     entries: &[NotesTreeEntry],

@@ -8,7 +8,7 @@ use grit_lib::error::Error;
 use grit_lib::notes::{resolve_configured_notes_ref, NotesRef};
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
-use grit_lib::repo_handles::{NoteAddOutcome, NotesWriteOptions};
+use grit_lib::repo_handles::{NoteAddOutcome, NoteAddPlan, NotesWriteOptions};
 use grit_lib::revwalk::rev_parse::resolve_revision;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -38,11 +38,32 @@ pub enum NotesOutcome {
         notes_ref: String,
         object: String,
         replaced: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(skip_serializing_if = "Option::is_none")]
+        dry_run: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(skip_serializing_if = "Option::is_none")]
+        notes_ref_old: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(skip_serializing_if = "Option::is_none")]
+        notes_ref_new: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(skip_serializing_if = "Option::is_none")]
+        note_blob: Option<String>,
     },
     /// Notes were removed from one or more objects.
     Remove {
         notes_ref: String,
         objects: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(skip_serializing_if = "Option::is_none")]
+        dry_run: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(skip_serializing_if = "Option::is_none")]
+        notes_ref_old: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(skip_serializing_if = "Option::is_none")]
+        notes_ref_new: Option<String>,
     },
 }
 
@@ -76,22 +97,37 @@ impl HumanRender for NotesOutcome {
                 }
             }
             NotesOutcome::Add {
-                object, replaced, ..
+                object,
+                replaced,
+                dry_run,
+                ..
             } => {
                 let short = object.get(..7).unwrap_or(object.as_str());
+                let prefix = if dry_run == &Some(true) { "Would " } else { "" };
                 if *replaced {
-                    outln!(w, "Replaced note for {short}");
+                    outln!(w, "{prefix}replace note for {short}");
                 } else {
-                    outln!(w, "Added note for {short}");
+                    outln!(w, "{prefix}add note for {short}");
                 }
             }
-            NotesOutcome::Remove { objects, .. } => {
+            NotesOutcome::Remove {
+                objects, dry_run, ..
+            } => {
                 if objects.is_empty() {
-                    outln!(w, "No notes removed.");
+                    if dry_run == &Some(true) {
+                        outln!(w, "Would remove no notes.");
+                    } else {
+                        outln!(w, "No notes removed.");
+                    }
                 } else {
+                    let prefix = if dry_run == &Some(true) {
+                        "Would remove note for "
+                    } else {
+                        "Removed note for "
+                    };
                     for object in objects {
                         let short = object.get(..7).unwrap_or(object.as_str());
-                        outln!(w, "Removed note for {short}");
+                        outln!(w, "{prefix}{short}");
                     }
                 }
             }
@@ -125,12 +161,17 @@ impl MarkdownRender for NotesOutcome {
                 notes_ref,
                 object,
                 replaced,
+                ..
             } => {
                 let short = object.get(..7).unwrap_or(object.as_str());
                 let verb = if *replaced { "Replaced" } else { "Added" };
                 outln!(w, "{verb} note for `{short}` on `{notes_ref}`.");
             }
-            NotesOutcome::Remove { notes_ref, objects } => {
+            NotesOutcome::Remove {
+                notes_ref,
+                objects,
+                ..
+            } => {
                 if objects.is_empty() {
                     outln!(w, "No notes removed on `{notes_ref}`.");
                 } else {
@@ -175,6 +216,7 @@ pub enum NotesRunAction {
 pub fn run(
     notes_ref_flag: Option<String>,
     action: NotesRunAction,
+    dry_run: bool,
     now: OffsetDateTime,
 ) -> Result<NotesOutcome> {
     let repo = context::discover()?;
@@ -187,8 +229,8 @@ pub fn run(
             rev,
             message,
             force,
-        } => add_note(&repo, &notes_ref, &rev, &message, force, now),
-        NotesRunAction::Remove { revs } => remove_notes(&repo, &notes_ref, &revs, now),
+        } => add_note(&repo, &notes_ref, &rev, &message, force, dry_run, now),
+        NotesRunAction::Remove { revs } => remove_notes(&repo, &notes_ref, &revs, dry_run, now),
     }
 }
 
@@ -239,6 +281,7 @@ fn add_note(
     rev: &str,
     message: &str,
     force: bool,
+    dry_run: bool,
     now: OffsetDateTime,
 ) -> Result<NotesOutcome> {
     if message.is_empty() {
@@ -250,6 +293,13 @@ fn add_note(
     if !content.ends_with(b"\n") {
         content.push(b'\n');
     }
+    if dry_run {
+        let plan = repo
+            .notes()
+            .plan_add(notes_ref, &object, &content, &write_opts, force)
+            .map_err(map_notes_error)?;
+        return Ok(add_outcome_from_plan(notes_ref, plan, true));
+    }
     let outcome = repo
         .notes()
         .add(notes_ref, &object, &content, &write_opts, force)
@@ -258,13 +308,30 @@ fn add_note(
         notes_ref: notes_ref.to_string(),
         object: object.to_hex(),
         replaced: outcome == NoteAddOutcome::Replaced,
+        dry_run: None,
+        notes_ref_old: None,
+        notes_ref_new: None,
+        note_blob: None,
     })
+}
+
+fn add_outcome_from_plan(notes_ref: &NotesRef, plan: NoteAddPlan, dry_run: bool) -> NotesOutcome {
+    NotesOutcome::Add {
+        notes_ref: notes_ref.to_string(),
+        object: plan.object.to_hex(),
+        replaced: plan.outcome == NoteAddOutcome::Replaced,
+        dry_run: dry_run.then_some(true),
+        notes_ref_old: plan.notes_ref_tip_before.map(|o| o.to_hex()),
+        notes_ref_new: Some(plan.notes_ref_tip_after.to_hex()),
+        note_blob: Some(plan.note_blob.to_hex()),
+    }
 }
 
 fn remove_notes(
     repo: &Repository,
     notes_ref: &NotesRef,
     revs: &[String],
+    dry_run: bool,
     now: OffsetDateTime,
 ) -> Result<NotesOutcome> {
     if revs.is_empty() {
@@ -275,6 +342,29 @@ fn remove_notes(
         objects.push(resolve_object(repo, rev)?);
     }
     let write_opts = notes_write_options(repo, "remove", now)?;
+    if dry_run {
+        let mut removed = Vec::new();
+        let mut notes_ref_old = None;
+        let mut notes_ref_new = None;
+        for object in &objects {
+            let plan = repo
+                .notes()
+                .plan_remove(notes_ref, object, &write_opts)
+                .map_err(map_notes_error)?;
+            if plan.had_note {
+                removed.push(object.to_hex());
+                notes_ref_old = plan.notes_ref_tip_before.map(|o| o.to_hex());
+                notes_ref_new = plan.notes_ref_tip_after.map(|o| o.to_hex());
+            }
+        }
+        return Ok(NotesOutcome::Remove {
+            notes_ref: notes_ref.to_string(),
+            objects: removed,
+            dry_run: Some(true),
+            notes_ref_old,
+            notes_ref_new,
+        });
+    }
     let removed = repo
         .notes()
         .remove_many(notes_ref, &objects, &write_opts)
@@ -282,6 +372,9 @@ fn remove_notes(
     Ok(NotesOutcome::Remove {
         notes_ref: notes_ref.to_string(),
         objects: removed.into_iter().map(|o| o.to_hex()).collect(),
+        dry_run: None,
+        notes_ref_old: None,
+        notes_ref_new: None,
     })
 }
 

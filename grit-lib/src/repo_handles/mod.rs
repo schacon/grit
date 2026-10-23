@@ -26,7 +26,10 @@ mod worktree;
 
 pub use bundle::RepositoryBundles;
 pub use hooks::{HookInfo, HookSource, RepositoryHooks};
-pub use notes::{Note, NoteAddOutcome, NoteListing, NotesWriteOptions, RepositoryNotes};
+pub use notes::{
+    Note, NoteAddOutcome, NoteAddPlan, NoteListing, NoteRemovePlan, NotesWriteOptions,
+    RepositoryNotes,
+};
 pub use reflog::{ExpireOptions, IndexedReflogEntry, ReflogExpireOutcome, RepositoryReflogs};
 pub(crate) use remote::has_remote_section;
 pub use remote::{

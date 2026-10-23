@@ -11,8 +11,8 @@ order: 4
 grit notes [--ref REF]
 grit notes list [--ref REF]
 grit notes show <rev> [--ref REF]
-grit notes add <rev> -m <message> [--force] [--ref REF]
-grit notes remove <rev>... [--ref REF]
+grit notes add <rev> -m <message> [--force] [--dry-run] [--ref REF]
+grit notes remove <rev>... [--dry-run] [--ref REF]
 ```
 
 ## Description
@@ -30,6 +30,7 @@ Notes update commits use your configured `user.name` / `user.email` (and optiona
 | `--ref` | Notes namespace (`commits`, `refs/notes/commits`, …). Overrides `core.notesRef` / `GIT_NOTES_REF`. |
 | `-m`, `--message` | Note text for `add` (required). |
 | `--force` | Replace an existing note on `add`. |
+| `--dry-run` | Preview `add` or `remove` without writing objects, refs, or reflogs. |
 
 Subcommands: `list`, `show`, `add`, `remove`.
 
@@ -66,6 +67,10 @@ Pass `--json` for stable output. The top-level `action` field is `list`, `show`,
 | `object` | string | For `show` / `add`: annotated commit id (full hex). |
 | `body` | string | For `show`: note text. |
 | `replaced` | boolean | For `add`: whether a note was overwritten. |
+| `dry_run` | boolean | For `add` / `remove`: `true` when nothing was written. |
+| `notes_ref_old` | string or null | For `add` / `remove` dry-run: notes ref tip before the operation. |
+| `notes_ref_new` | string or null | For `add` / `remove` dry-run: predicted notes ref tip after the operation. |
+| `note_blob` | string or null | For `add` dry-run: blob id that would store the note bytes. |
 | `objects` | array | For `remove`: ids whose notes were removed. |
 
 Listing:

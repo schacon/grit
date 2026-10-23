@@ -17,9 +17,10 @@ use grit_lib::error::Error;
 use grit_lib::objects::ObjectId;
 use grit_lib::operation::{Conflict, ConflictKind};
 use grit_lib::porcelain::merge::{
-    abort_branch_merge, continue_merge, integrate_branch_with, predict_merge, ContinueMergeError,
-    ContinueOptions, FastForwardPolicy, IntegrateBranchOutcome, MergeCommitMode,
-    MergeConflictDetail, MergeConflictKind, MergeOptions, MergePrediction, MergePredictionOptions,
+    abort_branch_merge, continue_merge, integrate_branch_with, plan_branch_merge, predict_merge,
+    ContinueMergeError, ContinueOptions, FastForwardPolicy, IntegrateBranchOutcome,
+    MergeCommitMode, MergeConflictDetail, MergeConflictKind, MergeDryRunPlan, MergeOptions,
+    MergePrediction, MergePredictionOptions,
 };
 use grit_lib::progress::NullProgress;
 use grit_lib::refs;
@@ -92,6 +93,14 @@ pub struct MergeOutcome {
     /// True when this outcome is from `grit merge --check` (nothing was merged).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub check: bool,
+    /// True when this outcome is from `grit merge --dry-run` (nothing was merged).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub dry_run: Option<bool>,
+    /// Parent commits of a predicted merge commit (`--dry-run` with `result: merged`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub parents: Option<Vec<String>>,
 }
 
 /// One conflicted path in `--json` output (pull v1 `conflict_details` and merge v2 items).
@@ -145,12 +154,20 @@ impl MergeOutcome {
             next_steps: None,
             alternatives: None,
             check: false,
+            dry_run: None,
+            parents: None,
         }
     }
 
     fn up_to_date_check(label: &str) -> Self {
         let mut o = Self::up_to_date(label);
         o.check = true;
+        o
+    }
+
+    fn up_to_date_dry_run(label: &str) -> Self {
+        let mut o = Self::up_to_date(label);
+        o.dry_run = Some(true);
         o
     }
 
@@ -165,6 +182,8 @@ impl MergeOutcome {
             next_steps: None,
             alternatives: None,
             check: false,
+            dry_run: None,
+            parents: None,
         }
     }
 
@@ -179,7 +198,15 @@ impl MergeOutcome {
             next_steps: None,
             alternatives: None,
             check: true,
+            dry_run: None,
+            parents: None,
         }
+    }
+
+    fn fast_forward_dry_run(label: &str, oid: ObjectId, change_id: Option<ChangeId>) -> Self {
+        let mut o = Self::fast_forward(label, oid, change_id);
+        o.dry_run = Some(true);
+        o
     }
 
     fn merged(label: &str, oid: ObjectId, change_id: Option<ChangeId>) -> Self {
@@ -193,6 +220,24 @@ impl MergeOutcome {
             next_steps: None,
             alternatives: None,
             check: false,
+            dry_run: None,
+            parents: None,
+        }
+    }
+
+    fn merged_dry_run(label: &str, parents: Vec<ObjectId>) -> Self {
+        Self {
+            result: MergeResult::Merged,
+            branch: label.to_owned(),
+            oid: None,
+            change_id: None,
+            upstream: None,
+            conflicts: None,
+            next_steps: None,
+            alternatives: None,
+            check: false,
+            dry_run: Some(true),
+            parents: Some(parents.iter().map(ObjectId::to_hex).collect()),
         }
     }
 
@@ -207,6 +252,8 @@ impl MergeOutcome {
             next_steps: None,
             alternatives: None,
             check: true,
+            dry_run: None,
+            parents: None,
         }
     }
 
@@ -232,7 +279,16 @@ impl MergeOutcome {
             next_steps: None,
             alternatives: None,
             check: true,
+            dry_run: None,
+            parents: None,
         }
+    }
+
+    fn conflicts_dry_run(label: &str, details: Vec<MergeConflictDetail>) -> Self {
+        let mut o = Self::conflicts_check(label, details);
+        o.check = false;
+        o.dry_run = Some(true);
+        o
     }
 
     fn conflicts(label: &str, details: Vec<MergeConflictDetail>) -> Self {
@@ -254,6 +310,8 @@ impl MergeOutcome {
             next_steps: Some(block.next_steps),
             alternatives: block.alternatives,
             check: false,
+            dry_run: None,
+            parents: None,
         }
     }
 
@@ -271,6 +329,8 @@ impl MergeOutcome {
             ]),
             alternatives: None,
             check: false,
+            dry_run: None,
+            parents: None,
         }
     }
 
@@ -285,6 +345,8 @@ impl MergeOutcome {
             next_steps: Some(vec!["grit commit".into(), "grit merge --abort".into()]),
             alternatives: None,
             check: false,
+            dry_run: None,
+            parents: None,
         }
     }
 
@@ -299,7 +361,15 @@ impl MergeOutcome {
             next_steps: None,
             alternatives: None,
             check: false,
+            dry_run: None,
+            parents: None,
         }
+    }
+
+    fn refused_not_ff_dry_run(label: &str) -> Self {
+        let mut o = Self::refused_not_ff(label);
+        o.dry_run = Some(true);
+        o
     }
 
     fn aborted() -> Self {
@@ -313,6 +383,8 @@ impl MergeOutcome {
             next_steps: None,
             alternatives: None,
             check: false,
+            dry_run: None,
+            parents: None,
         }
     }
 
@@ -334,6 +406,8 @@ impl MergeOutcome {
             next_steps: None,
             alternatives: None,
             check: false,
+            dry_run: None,
+            parents: None,
         }
     }
 }
@@ -342,12 +416,26 @@ impl HumanRender for MergeOutcome {
     fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         let short = self.oid.as_deref().map(short_hex).unwrap_or_default();
         match self.result {
+            MergeResult::UpToDate if self.dry_run == Some(true) => {
+                outln!(
+                    w,
+                    "Would leave the current branch up to date with {}.",
+                    self.branch
+                );
+            }
             MergeResult::UpToDate => outln!(w, "Already up to date."),
-            MergeResult::FastForward if self.check => {
+            MergeResult::FastForward if self.check || self.dry_run == Some(true) => {
                 outln!(w, "Would fast-forward {} → {short}", self.branch);
             }
             MergeResult::FastForward => outln!(w, "Fast-forwarded {} → {short}", self.branch),
             MergeResult::Clean => outln!(w, "Would merge {} cleanly (tree {short})", self.branch),
+            MergeResult::Merged if self.dry_run == Some(true) => {
+                outln!(
+                    w,
+                    "Would merge {} into the current branch (merge commit)",
+                    self.branch
+                );
+            }
             MergeResult::Merged => outln!(
                 w,
                 "Merged {} into the current branch ({short})",
@@ -367,6 +455,13 @@ impl HumanRender for MergeOutcome {
                     self.branch
                 );
             }
+            MergeResult::RefusedNotFf if self.dry_run == Some(true) => {
+                outln!(
+                    w,
+                    "Would refuse to fast-forward {} — histories have diverged (use merge without --ff-only)",
+                    self.branch
+                );
+            }
             MergeResult::RefusedNotFf => {
                 outln!(
                     w,
@@ -374,7 +469,7 @@ impl HumanRender for MergeOutcome {
                     self.branch
                 );
             }
-            MergeResult::Conflicts if self.check => {
+            MergeResult::Conflicts if self.check || self.dry_run == Some(true) => {
                 if let Some(details) = &self.conflicts {
                     crate::operation_output::render_merge_check_conflicts_human(
                         &self.branch,
@@ -417,6 +512,7 @@ pub fn run(
     abort: bool,
     continue_merge_flag: bool,
     check: bool,
+    dry_run: bool,
     options: MergeRunOptions,
 ) -> Result<MergeOutcome> {
     let repo = context::discover()?;
@@ -448,10 +544,13 @@ pub fn run(
     };
 
     let other_oid = resolve_branch(&repo, branch)?;
+    let merge_options = build_merge_options(&options)?;
+    if dry_run {
+        return dry_run_merge(&repo, head_oid, other_oid, branch, &merge_options);
+    }
     if check {
         return check_merge(&repo, head_oid, other_oid, branch);
     }
-    let merge_options = build_merge_options(&options)?;
     integrate_with_options(&repo, &refname, head_oid, other_oid, branch, &merge_options)
 }
 
@@ -525,6 +624,28 @@ fn run_continue(repo: &Repository, message: Option<&str>) -> Result<MergeOutcome
             Ok(MergeOutcome::conflicts(&label, details))
         }
         Err(err) => Err(anyhow::Error::new(err)),
+    }
+}
+
+fn dry_run_merge(
+    repo: &Repository,
+    into_oid: ObjectId,
+    other_oid: ObjectId,
+    label: &str,
+    options: &MergeOptions,
+) -> Result<MergeOutcome> {
+    match plan_branch_merge(repo, into_oid, other_oid, label, options)? {
+        MergeDryRunPlan::UpToDate => Ok(MergeOutcome::up_to_date_dry_run(label)),
+        MergeDryRunPlan::FastForward { tip, change_id } => {
+            Ok(MergeOutcome::fast_forward_dry_run(label, tip, change_id))
+        }
+        MergeDryRunPlan::RefusedNotFf => Ok(MergeOutcome::refused_not_ff_dry_run(label)),
+        MergeDryRunPlan::MergeCommit { parents } => {
+            Ok(MergeOutcome::merged_dry_run(label, parents))
+        }
+        MergeDryRunPlan::Conflicts { conflicts } => {
+            Ok(MergeOutcome::conflicts_dry_run(label, conflicts))
+        }
     }
 }
 

@@ -88,6 +88,13 @@
         "null"
       ]
     },
+    "dry_run": {
+      "description": "True when this outcome is from `grit merge --dry-run` (nothing was merged).",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "next_steps": {
       "description": "Suggested `grit` commands when `result` is `conflicts`.",
       "items": {
@@ -102,6 +109,16 @@
       "description": "Resulting commit (fast-forward target, merge commit, or adopted upstream).",
       "type": [
         "string",
+        "null"
+      ]
+    },
+    "parents": {
+      "description": "Parent commits of a predicted merge commit (`--dry-run` with `result: merged`).",
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
         "null"
       ]
     },

@@ -10,6 +10,7 @@ order: 3
 ```text
 grit merge <branch>
 grit merge --check <branch>
+grit merge --dry-run <branch>
 grit merge --continue [-m <message>]
 grit merge --abort
 grit merge [--ff-only | --no-ff] [--squash | --no-commit] [-X ours|theirs] [--conflict diff3|zdiff3|merge] [--allow-unrelated-histories] [-m <message> | --message-file <path|->] <branch>
@@ -50,6 +51,7 @@ Local edits are allowed when they only touch paths the merge does not change, or
 | --- | --- |
 | `<branch>` | The branch to merge into the current one. |
 | `--check` | Predict whether the merge would succeed without changing refs, the index, or the working tree. Exit **0** when it would fast-forward, already be up to date, or merge cleanly; exit **1** when it would conflict. Other failures use the usual error exit. |
+| `--dry-run` | Report the planned merge outcome (up to date, fast-forward, merge commit with parents, or conflicts) without changing refs, the index, or the working tree. Exit **0** unless the merge would be refused (for example `--ff-only` when a fast-forward is not possible, exit **128**). Conflicts are reported in the JSON but do not fail the command. Mutually exclusive with `--check`. |
 | `--continue` | Finish an in-progress merge after conflicts are resolved (or after `--no-commit`). Conflicts with `<branch>`, `--check`, and `--abort`. |
 | `-m`, `--message` | Commit message for `--continue` only (overrides `MERGE_MSG`). |
 | `--abort` | Cancel an in-progress merge and restore the state recorded in `ORIG_HEAD`. |
@@ -140,8 +142,10 @@ Pass `--json` for stable, scripting-friendly output:
 | ----- | ---- | ------- |
 | `result` | string | `up_to_date`, `fast_forward`, `clean` (`--check` only), `merged`, `squashed`, `stopped`, `conflicts`, `refused_not_ff`, `aborted`, or `set_upstream`. |
 | `check` | boolean | `true` when this outcome is from `--check` (nothing was merged). Omitted for real merges. |
+| `dry_run` | boolean | `true` when this outcome is from `--dry-run` (nothing was merged). Omitted for real merges. |
 | `branch` | string | The branch that was merged in (or set as upstream). |
-| `oid` | string or null | Resulting commit after a real merge or fast-forward; for `--check` with `result: clean`, the predicted merge tree OID. |
+| `oid` | string or null | Resulting commit after a real merge or fast-forward; for `--check` with `result: clean`, the predicted merge tree OID. Omitted for `--dry-run` when a new merge commit would be created. |
+| `parents` | array or null | For `--dry-run` with `result: merged`, the two parent commit ids of the merge commit that would be recorded. |
 | `change_id` | string or null | Stored `change-id` on `oid` when present (merge commit or fast-forward tip). |
 | `upstream` | string or null | For `set_upstream`, the remote-tracking branch that was adopted. |
 | `conflicts` | array or null | When `result` is `conflicts`, each item has `path`, `kind` (`content`, `add_add`, or `modify_delete`), and optional `summary` text. |

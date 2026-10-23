@@ -1135,30 +1135,33 @@ enum Command {
         #[arg(long = "continue", conflicts_with_all = ["abort", "check"])]
         continue_merge: bool,
         /// Predict whether the merge would succeed without changing refs, index, or worktree.
-        #[arg(long = "check", conflicts_with_all = ["abort", "continue_merge"])]
+        #[arg(long = "check", conflicts_with_all = ["abort", "continue_merge", "dry_run"])]
         check: bool,
+        /// Report the planned merge outcome without changing refs, index, or worktree.
+        #[arg(long = "dry-run", conflicts_with_all = ["abort", "continue_merge", "check"])]
+        dry_run: bool,
         /// Refuse when a fast-forward is not possible (exit code 128).
         #[arg(
             long = "ff-only",
-            conflicts_with_all = ["no_ff", "continue_merge", "check"]
+            conflicts_with_all = ["no_ff", "continue_merge", "check", "dry_run"]
         )]
         ff_only: bool,
         /// Record a merge commit even when a fast-forward is possible.
         #[arg(
             long = "no-ff",
-            conflicts_with_all = ["ff_only", "continue_merge", "check"]
+            conflicts_with_all = ["ff_only", "continue_merge", "check", "dry_run"]
         )]
         no_ff: bool,
         /// Apply the merge to the index and worktree but do not commit yet.
         #[arg(
             long = "no-commit",
-            conflicts_with_all = ["squash", "continue_merge", "check"]
+            conflicts_with_all = ["squash", "continue_merge", "check", "dry_run"]
         )]
         no_commit: bool,
         /// Squash merged commits into staged changes and write `SQUASH_MSG`.
         #[arg(
             long = "squash",
-            conflicts_with_all = ["no_commit", "continue_merge", "check"]
+            conflicts_with_all = ["no_commit", "continue_merge", "check", "dry_run"]
         )]
         squash: bool,
         /// Merge histories that share no commits (uses the empty tree as merge base).
@@ -1467,6 +1470,9 @@ enum Command {
         /// Notes ref (default: `core.notesRef` or `refs/notes/commits`).
         #[arg(long = "ref", value_name = "REF", global = true)]
         notes_ref: Option<String>,
+        /// Preview `add` or `remove` without writing objects or refs.
+        #[arg(long = "dry-run", global = true)]
+        dry_run: bool,
         #[command(subcommand)]
         action: Option<NotesAction>,
     },
@@ -2479,7 +2485,11 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 emit(&commands::bundle::run_unbundle(file.into())?, opts, ctx)
             }
         },
-        Command::Notes { notes_ref, action } => {
+        Command::Notes {
+            notes_ref,
+            dry_run,
+            action,
+        } => {
             use commands::notes::NotesRunAction::*;
             let run_action = match action {
                 None | Some(NotesAction::List) => List,
@@ -2496,7 +2506,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 Some(NotesAction::Remove { revs }) => Remove { revs },
             };
             emit(
-                &commands::notes::run(notes_ref, run_action, ctx.now)?,
+                &commands::notes::run(notes_ref, run_action, dry_run, ctx.now)?,
                 opts,
                 ctx,
             )
@@ -2625,6 +2635,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             abort,
             continue_merge,
             check,
+            dry_run,
             ff_only,
             no_ff,
             no_commit,
@@ -2638,6 +2649,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 abort,
                 continue_merge,
                 check,
+                dry_run,
                 commands::merge::MergeRunOptions {
                     ff_only,
                     no_ff,
@@ -2649,10 +2661,16 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 },
             )?;
             emit(&outcome, opts, ctx)?;
-            match outcome.result {
-                commands::merge::MergeResult::Conflicts => std::process::exit(1),
-                commands::merge::MergeResult::RefusedNotFf => std::process::exit(128),
-                _ => {}
+            if dry_run {
+                if matches!(outcome.result, commands::merge::MergeResult::RefusedNotFf) {
+                    std::process::exit(128);
+                }
+            } else {
+                match outcome.result {
+                    commands::merge::MergeResult::Conflicts => std::process::exit(1),
+                    commands::merge::MergeResult::RefusedNotFf => std::process::exit(128),
+                    _ => {}
+                }
             }
             Ok(())
         }
