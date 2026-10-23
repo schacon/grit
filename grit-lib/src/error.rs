@@ -1147,6 +1147,10 @@ pub enum Error {
     #[error("tree-sha256: missing submodules")]
     TreeSha256MissingSubmodules(Vec<crate::tree_sha256::MissingSubmodule>),
 
+    /// `--tree-sha256` was requested with signing explicitly disabled.
+    #[error("tree-sha256 requires a signed tag")]
+    TreeSha256RequiresSigning,
+
     /// [`crate::tree_sha256::verify_tag`] was given an object that is not an annotated tag.
     #[error("verify-tag: object {oid} is a {found:?}, not an annotated tag")]
     TagVerifyNotTag {
