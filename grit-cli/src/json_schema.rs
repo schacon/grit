@@ -196,6 +196,7 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<CloneOutcome>("clone"),
         entry::<RemoteOutcome>("remote"),
         entry::<RemoteOutcome>("remote.add"),
+        entry::<RemoteOutcome>("remote.set-url"),
         entry::<RemoteOutcome>("remote.refs"),
         entry::<LogOutcome>("log"),
         entry::<RevsOutcome>("revs"),
@@ -318,6 +319,7 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
     let key = match positional[0] {
         "remote" => match positional.get(1).copied() {
             Some("add") => "remote.add",
+            Some("set-url") => "remote.set-url",
             Some("refs") => "remote.refs",
             _ => "remote",
         },
@@ -765,6 +767,10 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
         (
             "remote_add",
             &["remote", "add", "upstream", "/tmp/upstream.git"],
+        ),
+        (
+            "remote_set_url",
+            &["remote", "set-url", "origin", "https://example.com/new.git"],
         ),
         (
             "bundle_create",
