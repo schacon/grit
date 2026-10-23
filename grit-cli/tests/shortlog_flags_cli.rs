@@ -59,6 +59,10 @@ fn commit(dir: &Path, file: &str, body: &str, message: &str) {
 }
 
 fn diverged_worktree() -> tempfile::TempDir {
+    diverged_worktree_with_behind_commits(1)
+}
+
+fn diverged_worktree_with_behind_commits(extra_on_origin: usize) -> tempfile::TempDir {
     let root = tempfile::tempdir().expect("tempdir");
     let origin = root.path().join("origin");
     fs::create_dir_all(&origin).expect("mkdir");
@@ -69,7 +73,14 @@ fn diverged_worktree() -> tempfile::TempDir {
     let clone = root.path().join("clone");
     commit(&clone, "b.txt", "b1\n", "b1");
     commit(&clone, "b.txt", "b2\n", "b2");
-    commit(&origin, "a.txt", "3\n", "a3");
+    for i in 0..extra_on_origin {
+        commit(
+            &origin,
+            "a.txt",
+            &format!("{}\n", i + 3),
+            &format!("a{}", i + 3),
+        );
+    }
     git(&clone, &["fetch", "-q"]);
     root
 }
@@ -136,4 +147,39 @@ fn shortlog_flags_cli() {
         files.iter().any(|f| f["path"].as_str() == Some("b.txt")),
         "expected b.txt in files: {files:?}"
     );
+
+    let plain_md = run_grit(&repo, &["shortlog", "--markdown"]);
+    let stat_md = run_grit(&repo, &["shortlog", "--stat", "--markdown"]);
+    assert!(
+        stat_md.contains("b.txt"),
+        "stat markdown should list changed paths: {stat_md}"
+    );
+    assert!(
+        stat_md.contains("### `") || stat_md.contains('|'),
+        "stat markdown should include per-commit diff section: {stat_md}"
+    );
+    assert_ne!(
+        stat_md, plain_md,
+        "stat markdown should differ from plain shortlog markdown"
+    );
+
+    let name_md = run_grit(&repo, &["shortlog", "--name-only", "--markdown"]);
+    assert!(
+        name_md.contains("b.txt"),
+        "name-only markdown should list b.txt: {name_md}"
+    );
+    assert_ne!(name_md, plain_md);
+
+    let many = diverged_worktree_with_behind_commits(3);
+    let many_repo = many.path().join("clone");
+    let truncated: Value = serde_json::from_str(
+        run_grit(&many_repo, &["shortlog", "--behind", "-n", "1", "--json"]).trim(),
+    )
+    .expect("json");
+    assert_eq!(truncated["behind"].as_u64(), Some(3));
+    assert_eq!(
+        truncated["behind_commits"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(truncated["behind_truncated"].as_bool(), Some(true));
 }
