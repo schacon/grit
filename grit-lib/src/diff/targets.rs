@@ -1494,9 +1494,8 @@ pub(crate) fn unstaged_file_diffs_with_peer_hunks(
     let config = repo.config()?;
     let thread_policy = repo.thread_policy();
     let rename_threshold = opts.renames.threshold_percent().unwrap_or(101);
-    let restrict = pathspec_restrict_set(pathspecs);
     let staged = filter_file_changes(
-        staged_changes(repo, rename_threshold, restrict.clone())?,
+        staged_changes(repo, rename_threshold, None)?,
         repo,
         pathspecs,
     );
@@ -1508,7 +1507,7 @@ pub(crate) fn unstaged_file_diffs_with_peer_hunks(
         })
         .collect();
     let unstaged = filter_file_changes(
-        unstaged_changes(repo, rename_threshold, restrict)?,
+        unstaged_changes(repo, rename_threshold, None)?,
         repo,
         pathspecs,
     );
@@ -1535,9 +1534,10 @@ pub(crate) fn hunk_diff_bundle(
     let config = repo.config()?;
     let thread_policy = repo.thread_policy();
     let rename_threshold = opts.renames.threshold_percent().unwrap_or(101);
-    let restrict = pathspec_restrict_set(pathspecs);
+    // Pathspec semantics belong in `filter_file_changes`; do not pass raw pathspec strings
+    // to `restrict_to_paths` (glob/magic patterns are not repository paths).
     let staged_fc = filter_file_changes(
-        staged_changes(repo, rename_threshold, restrict.clone())?,
+        staged_changes(repo, rename_threshold, None)?,
         repo,
         pathspecs,
     );
@@ -1551,7 +1551,7 @@ pub(crate) fn hunk_diff_bundle(
         .map(|f| (f.path.clone(), f.hunks.clone()))
         .collect();
     let unstaged_fc = filter_file_changes(
-        unstaged_changes(repo, rename_threshold, restrict)?,
+        unstaged_changes(repo, rename_threshold, None)?,
         repo,
         pathspecs,
     );

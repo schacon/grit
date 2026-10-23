@@ -547,13 +547,32 @@ fn deletion_selected(removal_point: usize, intervals: &[(usize, usize)]) -> bool
         .any(|(start, end)| removal_point >= *start && removal_point <= *end + 1)
 }
 
-fn max_new_line_in_hunks(hunks: &[StructuredHunk]) -> usize {
-    hunks
-        .iter()
-        .flat_map(|h| h.lines.iter())
-        .filter_map(|l| l.new)
-        .max()
-        .unwrap_or(0)
+fn count_new_side_lines(bytes: &[u8]) -> usize {
+    if bytes.is_empty() {
+        return 0;
+    }
+    let mut count = bytes.iter().filter(|&&b| b == b'\n').count();
+    if bytes.last() != Some(&b'\n') {
+        count += 1;
+    }
+    count
+}
+
+fn new_side_line_count(
+    repo: &Repository,
+    file: &FileDiff,
+) -> std::result::Result<usize, HunkSelectError> {
+    if matches!(file.status, DiffStatus::Deleted) {
+        return Ok(0);
+    }
+    let wt = repo
+        .work_tree()
+        .ok_or_else(|| HunkSelectError::Repo("line ranges require a work tree".into()))?;
+    let path = wt.join(&file.path);
+    let bytes = std::fs::read(&path).map_err(|e| {
+        HunkSelectError::Repo(format!("could not read {} for line bounds: {e}", file.path))
+    })?;
+    Ok(count_new_side_lines(&bytes))
 }
 
 fn range_label(start: usize, end: usize) -> String {
@@ -720,9 +739,6 @@ fn resolve_line_ranges_unstaged(
     let mut by_path: BTreeMap<String, Vec<(usize, usize)>> = BTreeMap::new();
     let mut labels: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for range in &selection.ranges {
-        if !pathspecs.is_empty() && !pathspecs.iter().any(|p| p == &range.path) {
-            continue;
-        }
         by_path
             .entry(range.path.clone())
             .or_default()
@@ -746,7 +762,7 @@ fn resolve_line_ranges_unstaged(
         if file.binary {
             return Err(HunkSelectError::Binary { path: path.clone() });
         }
-        let max_line = max_new_line_in_hunks(&file.hunks);
+        let max_line = new_side_line_count(repo, file)?;
         validate_line_ranges(&path, &intervals, max_line)?;
         let peer = bundle
             .peer_hunks
@@ -765,10 +781,17 @@ fn resolve_line_ranges_unstaged(
                 partial.push(filtered);
             }
         }
-        if !selected_any {
+        let id_covered_any = file
+            .hunks
+            .iter()
+            .zip(ids.iter())
+            .any(|(_, id)| id_selected.contains(id));
+        if !selected_any && !id_covered_any {
             return Err(HunkSelectError::RangeSelectsNothing { path: path.clone() });
         }
-        patches.push(file_patch_from_hunks(file, &partial)?);
+        if selected_any {
+            patches.push(file_patch_from_hunks(file, &partial)?);
+        }
         if let Some(labs) = labels.remove(&path) {
             staged_lines.insert(path, labs);
         }
@@ -1313,6 +1336,124 @@ mod tests {
                 start: 5,
                 end: 14,
             }],
+        );
+    }
+
+    #[test]
+    fn glob_pathspec_includes_file_in_hunk_bundle() {
+        let (dir, repo) = init_repo();
+        let root = dir.path();
+        std::fs::write(root.join("f.txt"), b"a\nb\n").unwrap();
+        git(root, &["add", "f.txt"]);
+        git(root, &["commit", "-qm", "init"]);
+        std::fs::write(root.join("f.txt"), b"a\nB\n").unwrap();
+        let bundle = hunk_diff_bundle(&repo, &[":(glob)*.txt".into()], DiffOptions::default())
+            .expect("bundle");
+        assert!(
+            bundle.unstaged.iter().any(|f| f.path == "f.txt"),
+            "expected f.txt in bundle, got {:?}",
+            bundle
+                .unstaged
+                .iter()
+                .map(|f| f.path.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn lines_pathspec_glob_stages() {
+        let (dir, repo) = init_repo();
+        let root = dir.path();
+        std::fs::write(root.join("f.txt"), b"a\nb\n").unwrap();
+        git(root, &["add", "f.txt"]);
+        git(root, &["commit", "-qm", "init"]);
+        std::fs::write(root.join("f.txt"), b"a\nB\n").unwrap();
+        let selection = HunkSelection {
+            ids: Vec::new(),
+            ranges: vec![LineRange {
+                path: "f.txt".into(),
+                start: 2,
+                end: 2,
+            }],
+        };
+        stage_hunks(
+            &repo,
+            DiffSide::Unstaged,
+            &selection,
+            &[":(glob)*.txt".into()],
+            false,
+        )
+        .unwrap();
+        git(root, &["fsck"]);
+    }
+
+    #[test]
+    fn lines_mix_hunk_id_overlap_stages_via_id() {
+        let (dir, repo) = init_repo();
+        let root = dir.path();
+        std::fs::write(root.join("f.txt"), b"one\n").unwrap();
+        git(root, &["add", "f.txt"]);
+        git(root, &["commit", "-qm", "init"]);
+        std::fs::write(root.join("f.txt"), b"two\n").unwrap();
+        let (files, peers) =
+            unstaged_file_diffs_with_peer_hunks(&repo, &[], DiffOptions::default()).unwrap();
+        let ids = hunk_ids_with_duplicate_peers(
+            DiffSide::Unstaged,
+            "f.txt",
+            &files[0].hunks,
+            peers.get("f.txt").map(|v| v.as_slice()).unwrap_or(&[]),
+        );
+        let selection = HunkSelection {
+            ids: vec![ids[0].clone()],
+            ranges: vec![LineRange {
+                path: "f.txt".into(),
+                start: 1,
+                end: 1,
+            }],
+        };
+        stage_hunks(
+            &repo,
+            DiffSide::Unstaged,
+            &selection,
+            &["f.txt".into()],
+            false,
+        )
+        .unwrap();
+        git(root, &["fsck"]);
+    }
+
+    #[test]
+    fn lines_unchanged_line_beyond_hunk_is_selects_nothing() {
+        let (dir, repo) = init_repo();
+        let root = dir.path();
+        let mut base = String::new();
+        for i in 1..=100 {
+            base.push_str(&format!("line{i}\n"));
+        }
+        std::fs::write(root.join("f.txt"), &base).unwrap();
+        git(root, &["add", "f.txt"]);
+        git(root, &["commit", "-qm", "init"]);
+        let mut edited = base.clone();
+        edited = edited.replacen("line1\n", "LINE1\n", 1);
+        std::fs::write(root.join("f.txt"), edited).unwrap();
+        let err = stage_hunks(
+            &repo,
+            DiffSide::Unstaged,
+            &HunkSelection {
+                ids: Vec::new(),
+                ranges: vec![LineRange {
+                    path: "f.txt".into(),
+                    start: 100,
+                    end: 100,
+                }],
+            },
+            &[],
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, HunkSelectError::RangeSelectsNothing { .. }),
+            "expected RangeSelectsNothing, got {err:?}"
         );
     }
 

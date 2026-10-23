@@ -48,3 +48,30 @@ fn add_lines_json() {
     assert_eq!(out["staged_lines"]["f.txt"], serde_json::json!(["2"]));
     assert_eq!(out["modified"], serde_json::json!(["f.txt"]));
 }
+
+#[test]
+fn add_lines_pathspec_glob() {
+    let grit = env!("CARGO_BIN_EXE_grit");
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let root = dir.path();
+    assert!(run_grit(grit, root, &["init"]).status.success());
+    fs::write(root.join("f.txt"), b"a\nb\n").expect("write");
+    assert!(run_grit(grit, root, &["add", "f.txt"]).status.success());
+    assert!(run_grit(grit, root, &["commit", "-m", "init"])
+        .status
+        .success());
+    fs::write(root.join("f.txt"), b"a\nB\n").expect("write");
+
+    let add = run_grit(
+        grit,
+        root,
+        &["add", "--lines", "f.txt:2", "--json", "--", ":(glob)*.txt"],
+    );
+    assert!(
+        add.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let out: serde_json::Value = serde_json::from_slice(&add.stdout).expect("add json");
+    assert_eq!(out["count"], 1);
+}
