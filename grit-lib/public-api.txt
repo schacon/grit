@@ -6221,6 +6221,29 @@ pub fn grit_lib::index::index_file_mtime(&std::path::Path) -> core::option::Opti
 pub fn grit_lib::index::munge_index_size(u64) -> u32
 pub fn grit_lib::index::normalize_mode(u32) -> u32
 pub fn grit_lib::index::worktree_path_from_index_rel(&std::path::Path, &[u8]) -> std::path::PathBuf
+pub mod grit_lib::list_limit
+pub struct grit_lib::list_limit::Limited<T>
+pub grit_lib::list_limit::Limited::items: alloc::vec::Vec<T>
+pub grit_lib::list_limit::Limited::truncated: bool
+impl<T> grit_lib::list_limit::Limited<T>
+pub fn grit_lib::list_limit::Limited<T>::empty() -> Self
+pub fn grit_lib::list_limit::Limited<T>::from_vec(alloc::vec::Vec<T>, core::option::Option<usize>) -> Self
+impl<T: core::clone::Clone> core::clone::Clone for grit_lib::list_limit::Limited<T>
+pub fn grit_lib::list_limit::Limited<T>::clone(&self) -> Self
+impl<T: core::cmp::Eq> core::cmp::Eq for grit_lib::list_limit::Limited<T>
+impl<T: core::cmp::PartialEq> core::cmp::PartialEq for grit_lib::list_limit::Limited<T>
+pub fn grit_lib::list_limit::Limited<T>::eq(&self, &Self) -> bool
+impl<T: core::cmp::PartialEq> core::marker::StructuralPartialEq for grit_lib::list_limit::Limited<T>
+impl<T: core::fmt::Debug> core::fmt::Debug for grit_lib::list_limit::Limited<T>
+pub fn grit_lib::list_limit::Limited<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T> core::marker::Freeze for grit_lib::list_limit::Limited<T> where alloc::vec::Vec<T>: core::marker::Freeze
+impl<T> core::marker::Send for grit_lib::list_limit::Limited<T> where alloc::vec::Vec<T>: core::marker::Send
+impl<T> core::marker::Sync for grit_lib::list_limit::Limited<T> where alloc::vec::Vec<T>: core::marker::Sync
+impl<T> core::marker::Unpin for grit_lib::list_limit::Limited<T> where alloc::vec::Vec<T>: core::marker::Unpin
+impl<T> core::marker::UnsafeUnpin for grit_lib::list_limit::Limited<T> where alloc::vec::Vec<T>: core::marker::UnsafeUnpin
+impl<T> core::panic::unwind_safe::RefUnwindSafe for grit_lib::list_limit::Limited<T> where alloc::vec::Vec<T>: core::panic::unwind_safe::RefUnwindSafe
+impl<T> core::panic::unwind_safe::UnwindSafe for grit_lib::list_limit::Limited<T> where alloc::vec::Vec<T>: core::panic::unwind_safe::UnwindSafe
+pub fn grit_lib::list_limit::fetch_plus_one(core::option::Option<usize>) -> core::option::Option<usize>
 pub mod grit_lib::lockfile
 #[non_exhaustive] pub enum grit_lib::lockfile::LockError
 pub grit_lib::lockfile::LockError::Held
@@ -6971,6 +6994,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::notes::NotesTreeEntry
 pub fn grit_lib::notes::note_object_name(&[u8]) -> core::option::Option<alloc::string::String>
 pub fn grit_lib::notes::notes_merge_inner(&grit_lib::repo::Repository, &str, &str, grit_lib::notes::NotesMergeStrategy) -> grit_lib::error::Result<core::result::Result<grit_lib::objects::ObjectId, grit_lib::objects::ObjectId>>
 pub fn grit_lib::notes::read_notes_tree(&grit_lib::repo::Repository, &str) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::notes::NotesTreeEntry>>
+pub fn grit_lib::notes::read_notes_tree_limited(&grit_lib::repo::Repository, &str, core::option::Option<usize>) -> grit_lib::error::Result<(alloc::vec::Vec<grit_lib::notes::NotesTreeEntry>, bool)>
 pub fn grit_lib::notes::remove_note_entry(&mut alloc::vec::Vec<grit_lib::notes::NotesTreeEntry>, &str) -> bool
 pub fn grit_lib::notes::resolve_configured_notes_ref<E: grit_lib::config::ident_resolve::IdentityEnv>(&E, &grit_lib::config::ConfigSet) -> grit_lib::error::Result<grit_lib::notes::NotesRef>
 pub fn grit_lib::notes::upsert_note_entry(&mut alloc::vec::Vec<grit_lib::notes::NotesTreeEntry>, &str, grit_lib::objects::ObjectId)
@@ -19858,7 +19882,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::RemoveOpti
 pub struct grit_lib::repo_handles::RepositoryBundles<'repo>
 impl<'repo> grit_lib::repo_handles::RepositoryBundles<'repo>
 pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::create(&self, &grit_lib::bundle::BundleSpec, &std::path::Path) -> core::result::Result<(), grit_lib::bundle::BundleError>
-pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::list_heads(&self, &std::path::Path) -> core::result::Result<alloc::vec::Vec<grit_lib::repo_handles::bundle::BundleHead>, grit_lib::bundle::BundleError>
+pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::list_heads(&self, &std::path::Path, core::option::Option<usize>) -> core::result::Result<grit_lib::list_limit::Limited<grit_lib::repo_handles::bundle::BundleHead>, grit_lib::bundle::BundleError>
 pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::open(&self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<grit_lib::bundle::Bundle, grit_lib::bundle::BundleError>
 pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::repository(&self) -> &'repo grit_lib::repo::Repository
 pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::unbundle(&self, &std::path::Path) -> core::result::Result<grit_lib::bundle::UnbundleOutcome, grit_lib::bundle::BundleError>
@@ -19878,7 +19902,7 @@ impl<'repo> !core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles:
 impl<'repo> !core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::RepositoryBundles<'repo>
 pub struct grit_lib::repo_handles::RepositoryHooks<'repo>
 impl<'repo> grit_lib::repo_handles::RepositoryHooks<'repo>
-pub fn grit_lib::repo_handles::RepositoryHooks<'repo>::list(&self) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::repo_handles::HookInfo>>
+pub fn grit_lib::repo_handles::RepositoryHooks<'repo>::list(&self, core::option::Option<usize>) -> grit_lib::error::Result<grit_lib::list_limit::Limited<grit_lib::repo_handles::HookInfo>>
 pub fn grit_lib::repo_handles::RepositoryHooks<'repo>::repository(&self) -> &'repo grit_lib::repo::Repository
 impl<'repo> core::clone::Clone for grit_lib::repo_handles::RepositoryHooks<'repo>
 pub fn grit_lib::repo_handles::RepositoryHooks<'repo>::clone(&self) -> Self
@@ -19895,8 +19919,8 @@ impl<'repo> !core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::Re
 pub struct grit_lib::repo_handles::RepositoryNotes<'repo>
 impl<'repo> grit_lib::repo_handles::RepositoryNotes<'repo>
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::add(&self, &grit_lib::notes::NotesRef, &grit_lib::objects::ObjectId, &[u8], &grit_lib::repo_handles::NotesWriteOptions, bool) -> grit_lib::error::Result<grit_lib::repo_handles::NoteAddOutcome>
-pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::list(&self, &grit_lib::notes::NotesRef) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::repo_handles::NoteListing>>
-pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::list_with_bodies(&self, &grit_lib::notes::NotesRef) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::repo_handles::Note>>
+pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::list(&self, &grit_lib::notes::NotesRef, core::option::Option<usize>) -> grit_lib::error::Result<grit_lib::list_limit::Limited<grit_lib::repo_handles::NoteListing>>
+pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::list_with_bodies(&self, &grit_lib::notes::NotesRef, core::option::Option<usize>) -> grit_lib::error::Result<grit_lib::list_limit::Limited<grit_lib::repo_handles::Note>>
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::plan_add(&self, &grit_lib::notes::NotesRef, &grit_lib::objects::ObjectId, &[u8], &grit_lib::repo_handles::NotesWriteOptions, bool) -> grit_lib::error::Result<grit_lib::repo_handles::NoteAddPlan>
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::plan_remove(&self, &grit_lib::notes::NotesRef, &grit_lib::objects::ObjectId, &grit_lib::repo_handles::NotesWriteOptions) -> grit_lib::error::Result<grit_lib::repo_handles::NoteRemovePlan>
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::read(&self, &grit_lib::notes::NotesRef, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<core::option::Option<alloc::vec::Vec<u8>>>
