@@ -52,7 +52,8 @@ pub enum CloneError {
 impl CloneError {
     /// Whether [`cleanup_failed_clone`] may run after this failure.
     ///
-    /// Returns `false` when the destination must be left unchanged.
+    /// Returns `false` when the destination must be left unchanged: [`CloneError::DestNotEmpty`]
+    /// and pre-initialization failures such as [`RemoteError::InvalidRemoteName`].
     #[must_use]
     pub fn should_cleanup_failed_clone(&self) -> bool {
         match self {
@@ -302,6 +303,12 @@ pub fn clone(
     if opts.depth == Some(0) {
         return Err(CloneError::InvalidCloneDepth);
     }
+    if !crate::remote::is_valid_remote_name(&opts.remote_name) {
+        return Err(CloneError::Remote(RemoteError::InvalidRemoteName(
+            opts.remote_name.clone(),
+        )));
+    }
+
     if !crate::remote::is_valid_remote_name(&opts.remote_name) {
         return Err(CloneError::Remote(RemoteError::InvalidRemoteName(
             opts.remote_name.clone(),
@@ -856,8 +863,10 @@ mod tests {
     #[test]
     fn dest_not_empty_skips_failed_clone_cleanup() {
         assert!(!CloneError::DestNotEmpty("x".into()).should_cleanup_failed_clone());
-        assert!(!CloneError::Remote(RemoteError::InvalidRemoteName("bad".into()))
-            .should_cleanup_failed_clone());
+        assert!(
+            !CloneError::Remote(RemoteError::InvalidRemoteName("bad".into()))
+                .should_cleanup_failed_clone()
+        );
         assert!(CloneError::Library(Error::Message("x".into())).should_cleanup_failed_clone());
     }
 

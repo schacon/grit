@@ -16,6 +16,7 @@ mod core;
 mod inspect;
 pub mod push_plan;
 
+pub(crate) use core::is_valid_remote_name;
 pub use core::*;
 pub use inspect::{
     inspect_remote, InspectOptions, RemoteBranchState, RemoteBranchStateKind, RemotePullBranch,

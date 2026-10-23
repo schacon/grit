@@ -130,6 +130,9 @@ Pass `--json` for stable, scripting-friendly output:
 | ----- | ---- | ------- |
 | `url` | string | The URL or path that was cloned. |
 | `path` | string | Directory the clone was created in. |
+| `remote` | string | Remote name configured for the source (`origin` by default). |
+| `single_branch` | boolean | Whether only one branch was fetched. |
+| `tag_fetch` | string | Tag fetch mode for the initial fetch: `all`, `following`, or `none`. Named `tag_fetch` because `tags` is already the count of tag refs fetched. |
 | `branch` | string or null | Branch checked out; `null` when detached at a tag. |
 | `detached` | boolean | True when `HEAD` is detached (tag checkout). |
 | `tag` | string or omitted | Tag name when `-b` named a tag. |

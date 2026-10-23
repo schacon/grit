@@ -283,6 +283,100 @@ fn clone_origin_name_used_for_tracking_refs() {
 }
 
 #[test]
+fn clone_invalid_remote_on_nonempty_destination_preserves_files() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bare = tmp.path().join("remote.git");
+    build_two_branch_bare(&bare);
+
+    let dest = tmp.path().join("dest");
+    std::fs::create_dir_all(&dest).unwrap();
+    std::fs::write(dest.join("keep.txt"), b"stay").unwrap();
+
+    let err = clone_repo(
+        CloneOptions {
+            remote_name: "bad name".to_owned(),
+            ..CloneOptions::new(bare.to_string_lossy(), dest.clone())
+        },
+        &mut NoProgress,
+        None,
+    )
+    .expect_err("nonempty destination must fail before remote-name validation matters");
+
+    assert!(
+        matches!(err, CloneError::DestNotEmpty(_)),
+        "expected DestNotEmpty, got {err:?}"
+    );
+    assert!(
+        dest.join("keep.txt").is_file(),
+        "destination must be preserved"
+    );
+}
+
+#[test]
+fn clone_follow_up_fetch_sees_new_remote_branch() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bare = tmp.path().join("remote.git");
+    build_two_branch_bare(&bare);
+    let url = file_url(&bare);
+    let wt = bare.with_extension("wt");
+
+    let git_dest = tmp.path().join("git");
+    let grit_dest = tmp.path().join("grit");
+    git_clone_with(
+        CloneCase {
+            depth: None,
+            branch: None,
+            single_branch: None,
+        },
+        &url,
+        &git_dest,
+    );
+    grit_clone_with(
+        CloneCase {
+            depth: None,
+            branch: None,
+            single_branch: None,
+        },
+        url.clone(),
+        grit_dest.clone(),
+    );
+
+    git(&wt, &["switch", "-qc", "added"]);
+    std::fs::write(wt.join("h.txt"), b"h\n").unwrap();
+    git(&wt, &["add", "h.txt"]);
+    git(
+        &wt,
+        &[
+            "-c",
+            "user.email=u@e.com",
+            "-c",
+            "user.name=U",
+            "commit",
+            "-qm",
+            "added",
+        ],
+    );
+    git(
+        &wt,
+        &["push", "-q", bare.to_str().unwrap(), "refs/heads/added"],
+    );
+
+    git(&git_dest, &["fetch", "-q", "origin"]);
+    git(&grit_dest, &["fetch", "-q", "origin"]);
+    assert_eq!(
+        remote_tracking_ref_names(&git_dest.join(".git")),
+        remote_tracking_ref_names(&grit_dest.join(".git")),
+        "follow-up fetch must match git after a new branch on the remote"
+    );
+    assert!(
+        remote_tracking_ref_names(&grit_dest.join(".git"))
+            .iter()
+            .any(|r| r == "origin/added"),
+        "expected origin/added after fetch"
+    );
+}
+
+#[test]
 fn clone_rejects_invalid_remote_name() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let bare = tmp.path().join("remote.git");
