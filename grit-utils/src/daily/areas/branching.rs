@@ -8,13 +8,12 @@ use super::super::helpers::{
 use super::super::matrix_helpers::{
     branch_create_bench, branch_delete_bench, branch_rename_bench, history_reword_bench,
     merge_100k_bench, pick_100k_bench, prepare_branch_create, prepare_branch_delete,
-    prepare_branch_rename, prepare_stash_list, prepare_tag_create,
-    ref_query_contains_tags_bench, ref_query_merged_branches_bench, revert_bench,
-    setup_branch_create, setup_branch_delete, setup_branch_rename, setup_git_git_ref_contains,
-    setup_history_reword, setup_hot_path_pick_merge_100k, setup_hot_path_revert,
-    setup_hot_path_switch_100k, setup_many_refs, setup_many_refs_loose, setup_many_refs_merged,
-    setup_stash_with_entry, setup_tag_create, stash_list_bench, switch_100k_bench,
-    tag_create_bench, tag_list_bench,
+    prepare_branch_rename, prepare_stash_list, prepare_tag_create, ref_query_contains_tags_bench,
+    ref_query_merged_branches_bench, revert_bench, setup_branch_create, setup_branch_delete,
+    setup_branch_rename, setup_git_git_ref_contains, setup_history_reword,
+    setup_hot_path_pick_merge_100k, setup_hot_path_revert, setup_hot_path_switch_100k,
+    setup_many_refs, setup_many_refs_loose, setup_many_refs_merged, setup_stash_with_entry,
+    setup_tag_create, stash_list_bench, switch_100k_bench, tag_create_bench, tag_list_bench,
 };
 use super::super::plan::DailyHeadlinePlan;
 
