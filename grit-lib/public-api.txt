@@ -5005,6 +5005,8 @@ impl core::convert::From<grit_lib::error::Error> for grit_lib::remote::RemoteErr
 pub fn grit_lib::remote::RemoteError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::remote::clone::CloneError
 pub fn grit_lib::remote::clone::CloneError::from(grit_lib::error::Error) -> Self
+impl core::convert::From<grit_lib::error::Error> for grit_lib::remote::partial_clone::PartialCloneError
+pub fn grit_lib::remote::partial_clone::PartialCloneError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::remote::serve::ServeError
 pub fn grit_lib::remote::serve::ServeError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::revwalk::history::RebaseSessionError
@@ -7746,6 +7748,7 @@ pub mod grit_lib::objects::index_pack
 pub struct grit_lib::objects::index_pack::IngestPackOptions
 pub grit_lib::objects::index_pack::IngestPackOptions::environment: grit_lib::config::environment::Environment
 pub grit_lib::objects::index_pack::IngestPackOptions::fix_thin: bool
+pub grit_lib::objects::index_pack::IngestPackOptions::mark_promisor_pack: bool
 pub grit_lib::objects::index_pack::IngestPackOptions::merged_config: core::option::Option<grit_lib::config::ConfigSet>
 pub grit_lib::objects::index_pack::IngestPackOptions::skip_post_index_verify: bool
 pub grit_lib::objects::index_pack::IngestPackOptions::threads: core::option::Option<usize>
@@ -13826,6 +13829,8 @@ impl core::convert::From<grit_lib::error::Error> for grit_lib::remote::RemoteErr
 pub fn grit_lib::remote::RemoteError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::remote::clone::CloneError
 pub fn grit_lib::remote::clone::CloneError::from(grit_lib::error::Error) -> Self
+impl core::convert::From<grit_lib::error::Error> for grit_lib::remote::partial_clone::PartialCloneError
+pub fn grit_lib::remote::partial_clone::PartialCloneError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::remote::serve::ServeError
 pub fn grit_lib::remote::serve::ServeError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::revwalk::history::RebaseSessionError
@@ -16816,6 +16821,7 @@ pub struct grit_lib::remote::clone::CloneOptions
 pub grit_lib::remote::clone::CloneOptions::depth: core::option::Option<u32>
 pub grit_lib::remote::clone::CloneOptions::dest: std::path::PathBuf
 pub grit_lib::remote::clone::CloneOptions::environment: grit_lib::config::environment::Environment
+pub grit_lib::remote::clone::CloneOptions::filter: core::option::Option<grit_lib::remote::partial_clone::ObjectFilterSpec>
 pub grit_lib::remote::clone::CloneOptions::initial_branch: alloc::string::String
 pub grit_lib::remote::clone::CloneOptions::remote_name: alloc::string::String
 pub grit_lib::remote::clone::CloneOptions::thread_policy: grit_lib::parallel::ThreadPolicy
@@ -16944,7 +16950,7 @@ pub fn grit_lib::remote::fetch::NoProgress::received_objects(&mut self, grit_lib
 pub fn grit_lib::remote::fetch::NoProgress::remote_sideband_progress(&self) -> bool
 pub fn grit_lib::remote::fetch::NoProgress::wants_received_objects(&self) -> bool
 pub fn grit_lib::remote::fetch::fetch_operation_identity(&grit_lib::config::environment::Environment, &std::path::Path) -> grit_lib::error::Result<alloc::string::String>
-pub fn grit_lib::remote::fetch::fetch_remote(&std::path::Path, &mut dyn grit_lib::remote::transport::Connection, &grit_lib::remote::transfer::FetchOptions, &mut dyn grit_lib::remote::fetch::Progress) -> grit_lib::error::Result<grit_lib::remote::transfer::FetchOutcome>
+pub fn grit_lib::remote::fetch::fetch_remote(&std::path::Path, &mut dyn grit_lib::remote::transport::Connection, &mut grit_lib::remote::transfer::FetchOptions, &mut dyn grit_lib::remote::fetch::Progress) -> grit_lib::error::Result<grit_lib::remote::transfer::FetchOutcome>
 pub mod grit_lib::remote::fetch_head
 pub fn grit_lib::remote::fetch_head::merge_object_ids_hex(&str) -> alloc::vec::Vec<alloc::string::String>
 pub mod grit_lib::remote::fetch_negotiator
@@ -17334,6 +17340,64 @@ pub fn alloc::rcs::arc::Arc<C>::post(&self, &str, &str, &str, &[u8], core::optio
 pub fn alloc::rcs::arc::Arc<C>::post_into_reader(&self, &str, &str, &str, &[u8], core::option::Option<&str>) -> grit_lib::error::Result<alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send)>>
 pub fn alloc::rcs::arc::Arc<C>::reset_auth_after_redirect_rebase(&self)
 pub fn alloc::rcs::arc::Arc<C>::smart_http_enabled(&self) -> bool
+pub mod grit_lib::remote::partial_clone
+pub enum grit_lib::remote::partial_clone::ObjectFilterSpec
+pub grit_lib::remote::partial_clone::ObjectFilterSpec::BlobLimit(u64)
+pub grit_lib::remote::partial_clone::ObjectFilterSpec::BlobNone
+impl grit_lib::remote::partial_clone::ObjectFilterSpec
+pub fn grit_lib::remote::partial_clone::ObjectFilterSpec::expand_for_protocol(&self) -> core::result::Result<alloc::string::String, grit_lib::remote::partial_clone::PartialCloneError>
+pub fn grit_lib::remote::partial_clone::ObjectFilterSpec::from_object_filter(&grit_lib::revwalk::rev_list::ObjectFilter) -> core::result::Result<Self, grit_lib::remote::partial_clone::PartialCloneError>
+pub fn grit_lib::remote::partial_clone::ObjectFilterSpec::parse(&str) -> core::result::Result<Self, grit_lib::remote::partial_clone::PartialCloneError>
+pub fn grit_lib::remote::partial_clone::ObjectFilterSpec::to_config_value(&self) -> alloc::string::String
+pub fn grit_lib::remote::partial_clone::ObjectFilterSpec::to_wire_spec(&self) -> alloc::string::String
+impl core::clone::Clone for grit_lib::remote::partial_clone::ObjectFilterSpec
+pub fn grit_lib::remote::partial_clone::ObjectFilterSpec::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::remote::partial_clone::ObjectFilterSpec
+impl core::cmp::PartialEq for grit_lib::remote::partial_clone::ObjectFilterSpec
+pub fn grit_lib::remote::partial_clone::ObjectFilterSpec::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::remote::partial_clone::ObjectFilterSpec
+pub fn grit_lib::remote::partial_clone::ObjectFilterSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::remote::partial_clone::ObjectFilterSpec
+impl core::marker::StructuralPartialEq for grit_lib::remote::partial_clone::ObjectFilterSpec
+impl core::marker::Freeze for grit_lib::remote::partial_clone::ObjectFilterSpec
+impl core::marker::Send for grit_lib::remote::partial_clone::ObjectFilterSpec
+impl core::marker::Sync for grit_lib::remote::partial_clone::ObjectFilterSpec
+impl core::marker::Unpin for grit_lib::remote::partial_clone::ObjectFilterSpec
+impl core::marker::UnsafeUnpin for grit_lib::remote::partial_clone::ObjectFilterSpec
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::partial_clone::ObjectFilterSpec
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::partial_clone::ObjectFilterSpec
+pub enum grit_lib::remote::partial_clone::PartialCloneError
+pub grit_lib::remote::partial_clone::PartialCloneError::InvalidFilter(alloc::string::String)
+pub grit_lib::remote::partial_clone::PartialCloneError::Library(grit_lib::error::Error)
+impl core::convert::From<grit_lib::error::Error> for grit_lib::remote::partial_clone::PartialCloneError
+pub fn grit_lib::remote::partial_clone::PartialCloneError::from(grit_lib::error::Error) -> Self
+impl core::error::Error for grit_lib::remote::partial_clone::PartialCloneError
+pub fn grit_lib::remote::partial_clone::PartialCloneError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for grit_lib::remote::partial_clone::PartialCloneError
+pub fn grit_lib::remote::partial_clone::PartialCloneError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::remote::partial_clone::PartialCloneError
+pub fn grit_lib::remote::partial_clone::PartialCloneError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::remote::partial_clone::PartialCloneError
+impl core::marker::Send for grit_lib::remote::partial_clone::PartialCloneError
+impl core::marker::Sync for grit_lib::remote::partial_clone::PartialCloneError
+impl core::marker::Unpin for grit_lib::remote::partial_clone::PartialCloneError
+impl core::marker::UnsafeUnpin for grit_lib::remote::partial_clone::PartialCloneError
+impl !core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::partial_clone::PartialCloneError
+impl !core::panic::unwind_safe::UnwindSafe for grit_lib::remote::partial_clone::PartialCloneError
+pub struct grit_lib::remote::partial_clone::PartialCloneConfig
+impl grit_lib::remote::partial_clone::PartialCloneConfig
+pub fn grit_lib::remote::partial_clone::PartialCloneConfig::write(&std::path::Path, &str, &grit_lib::remote::partial_clone::ObjectFilterSpec) -> grit_lib::error::Result<()>
+impl core::marker::Freeze for grit_lib::remote::partial_clone::PartialCloneConfig
+impl core::marker::Send for grit_lib::remote::partial_clone::PartialCloneConfig
+impl core::marker::Sync for grit_lib::remote::partial_clone::PartialCloneConfig
+impl core::marker::Unpin for grit_lib::remote::partial_clone::PartialCloneConfig
+impl core::marker::UnsafeUnpin for grit_lib::remote::partial_clone::PartialCloneConfig
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::partial_clone::PartialCloneConfig
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::partial_clone::PartialCloneConfig
+pub fn grit_lib::remote::partial_clone::fetch_requires_upload_pack(core::option::Option<&grit_lib::remote::partial_clone::ObjectFilterSpec>, &grit_lib::config::ConfigSet, core::option::Option<&str>) -> bool
+pub fn grit_lib::remote::partial_clone::remote_is_promisor(&grit_lib::config::ConfigSet, &str) -> bool
+pub fn grit_lib::remote::partial_clone::stored_remote_filter(&grit_lib::config::ConfigSet, &str) -> core::option::Option<grit_lib::remote::partial_clone::ObjectFilterSpec>
+pub fn grit_lib::remote::partial_clone::wire_filter_for_capabilities(core::option::Option<&grit_lib::remote::partial_clone::ObjectFilterSpec>, core::option::Option<&[alloc::string::String]>, core::option::Option<&str>) -> (core::option::Option<alloc::string::String>, bool)
 pub mod grit_lib::remote::pkt_line
 pub enum grit_lib::remote::pkt_line::Packet
 pub grit_lib::remote::pkt_line::Packet::Data(alloc::string::String)
@@ -18055,9 +18119,11 @@ pub grit_lib::remote::transfer::FetchOptions::dry_run: bool
 pub grit_lib::remote::transfer::FetchOptions::environment: grit_lib::config::environment::Environment
 pub grit_lib::remote::transfer::FetchOptions::fetch_depth: core::option::Option<grit_lib::remote::transfer::FetchDepth>
 pub grit_lib::remote::transfer::FetchOptions::fetch_source: core::option::Option<alloc::string::String>
+pub grit_lib::remote::transfer::FetchOptions::filter: core::option::Option<grit_lib::remote::partial_clone::ObjectFilterSpec>
 pub grit_lib::remote::transfer::FetchOptions::http_protocol_version: core::option::Option<u8>
 pub grit_lib::remote::transfer::FetchOptions::index_pack_threads: core::option::Option<usize>
 pub grit_lib::remote::transfer::FetchOptions::initial_remote_fetch: bool
+pub grit_lib::remote::transfer::FetchOptions::mark_received_pack_promisor: bool
 pub grit_lib::remote::transfer::FetchOptions::negative_refspecs: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::remote::transfer::FetchOptions::network_trace: bool
 pub grit_lib::remote::transfer::FetchOptions::pack_spool_only: bool
