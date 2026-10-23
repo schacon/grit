@@ -96,7 +96,7 @@ impl PartialCloneConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`Error`] on config I/O failure.
+    /// Returns [`crate::error::Error`] on config I/O failure.
     pub fn write(git_dir: &Path, remote: &str, spec: &ObjectFilterSpec) -> Result<()> {
         let path = git_dir.join("config");
         let content = std::fs::read_to_string(&path).map_err(Error::Io)?;
