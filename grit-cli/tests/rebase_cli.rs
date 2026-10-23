@@ -143,6 +143,35 @@ fn init_repo(dir: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Like [`init_rebase_fixture`], but `stable.txt` is committed once and never changed on topic or onto.
+fn init_rebase_fixture_with_stable(dir: &Path) -> Result<(String, String, String), Box<dyn Error>> {
+    git(dir, &["init", "-b", "main"])?;
+    fs::write(dir.join("f.txt"), "1\n")?;
+    fs::write(dir.join("stable.txt"), "stable\n")?;
+    git(dir, &["add", "f.txt", "stable.txt"])?;
+    git(dir, &["commit", "-m", "first"])?;
+    git(dir, &["commit", "-m", "second", "--allow-empty"])?;
+    fs::write(dir.join("f.txt"), "2\n")?;
+    git(dir, &["add", "f.txt"])?;
+    git(dir, &["commit", "-m", "second file"])?;
+    fs::write(dir.join("f.txt"), "3\n")?;
+    git(dir, &["add", "f.txt"])?;
+    git(dir, &["commit", "-m", "third"])?;
+    let upstream = git(dir, &["rev-parse", "HEAD~2"])?.trim().to_string();
+    git(dir, &["branch", "onto", &upstream])?;
+    git(dir, &["checkout", "onto"])?;
+    fs::write(dir.join("f.txt"), "2\n")?;
+    git(dir, &["add", "f.txt"])?;
+    git(dir, &["commit", "-m", "onto second"])?;
+    let onto = git(dir, &["rev-parse", "HEAD"])?.trim().to_string();
+    git(dir, &["checkout", "main"])?;
+    Ok((
+        upstream,
+        onto,
+        git(dir, &["rev-parse", "HEAD"])?.trim().to_string(),
+    ))
+}
+
 /// Classic rebase fixture: upstream at first commit, onto branch carries patch 2, topic has patch 3.
 fn init_rebase_fixture(dir: &Path) -> Result<(String, String, String), Box<dyn Error>> {
     init_repo(dir)?;
@@ -466,6 +495,62 @@ fn rebase_exec_true_moves_refs() -> TestResult {
     assert!(!exec.is_empty());
     assert_ne!(git(dir, &["rev-parse", "HEAD"])?.trim(), tip);
     git_fsck_strict(dir)?;
+    Ok(())
+}
+
+#[test]
+fn rebase_exec_failure_emits_single_error_line() -> TestResult {
+    let scratch = Scratch::new("exec-fail-once")?;
+    let dir = scratch.path();
+    let (upstream, onto, tip) = init_rebase_fixture(dir)?;
+    gs(dir, ["config", "grit.changeIds", "false"])?;
+    let out = gs(
+        dir,
+        [
+            "rebase", "--onto", &onto, &upstream, "--exec", "exit 7", "--json",
+        ],
+    )?;
+    assert_eq!(out.status, Some(7), "stderr:\n{}", out.stderr);
+    assert_eq!(git(dir, &["rev-parse", "HEAD"])?.trim(), tip);
+    let marker = "rebase --exec command failed";
+    let count = out.stderr.matches(marker).count() + out.stdout.matches(marker).count();
+    assert_eq!(
+        count, 1,
+        "exec failure message must appear once, got {count} in:\nstdout:{}\nstderr:{}",
+        out.stdout, out.stderr
+    );
+    Ok(())
+}
+
+#[test]
+fn rebase_exec_failure_restores_unchanged_tracked_file() -> TestResult {
+    let scratch = Scratch::new("exec-stable-restore")?;
+    let dir = scratch.path();
+    let (upstream, onto, tip) = init_rebase_fixture_with_stable(dir)?;
+    gs(dir, ["config", "grit.changeIds", "false"])?;
+    let out = gs(
+        dir,
+        [
+            "rebase",
+            "--onto",
+            &onto,
+            &upstream,
+            "--exec",
+            "printf 'dirty\\n' >> stable.txt; exit 7",
+        ],
+    )?;
+    assert_eq!(out.status, Some(7), "stderr:\n{}", out.stderr);
+    assert_eq!(git(dir, &["rev-parse", "HEAD"])?.trim(), tip);
+    assert_eq!(
+        fs::read_to_string(dir.join("stable.txt"))?,
+        "stable\n",
+        "stable.txt must match pre-rebase contents"
+    );
+    let porcelain = git(dir, &["status", "--porcelain"])?.trim().to_string();
+    assert!(
+        porcelain.is_empty(),
+        "git status must be clean after exec rollback, got:\n{porcelain}"
+    );
     Ok(())
 }
 
