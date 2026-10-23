@@ -15,11 +15,12 @@ use crate::diff::structured::{
     StructuredHunk, StructuredLine, StructuredLineKind, StructuredSegment,
 };
 use crate::diff::{
-    collect_files_for_target, hunk_diff_bundle, unstaged_file_diffs_with_peer_hunks, DiffOptions,
-    DiffStatus, DiffTarget, FileDiff,
+    collect_files_for_target, hunk_diff_bundle, read_worktree_side_bytes_for_diff,
+    unstaged_file_diffs_with_peer_hunks, DiffOptions, DiffStatus, DiffTarget, FileDiff,
 };
 use crate::error::{ApplyError, Error};
 use crate::repo::Repository;
+use crate::worktree_rules::WorktreeRules;
 
 /// New-side line range for partial hunk staging (1-based, inclusive).
 ///
@@ -568,10 +569,24 @@ fn new_side_line_count(
     let wt = repo
         .work_tree()
         .ok_or_else(|| HunkSelectError::Repo("line ranges require a work tree".into()))?;
-    let path = wt.join(&file.path);
-    let bytes = std::fs::read(&path).map_err(|e| {
-        HunkSelectError::Repo(format!("could not read {} for line bounds: {e}", file.path))
+    let mode_str = file.new_mode.as_deref().unwrap_or("100644");
+    let mode = u32::from_str_radix(mode_str, 8).map_err(|_| {
+        HunkSelectError::Repo(format!("invalid new mode {mode_str} for {}", file.path))
     })?;
+    let config = repo.config().map_err(HunkSelectError::from)?;
+    let index = repo.index_handle().load().map_err(HunkSelectError::from)?;
+    let rules = WorktreeRules::from_repository(repo, &index).map_err(HunkSelectError::from)?;
+    let index_entry = index.get(file.path.as_bytes(), 0);
+    let bytes = read_worktree_side_bytes_for_diff(
+        repo.odb(),
+        wt,
+        &file.path,
+        mode,
+        config.as_ref(),
+        index_entry,
+        Some(&rules),
+    )
+    .map_err(HunkSelectError::from)?;
     Ok(count_new_side_lines(&bytes))
 }
 
@@ -1481,6 +1496,30 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, HunkSelectError::RangeOutOfBounds { .. }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lines_symlink_dangling_target_matches_git_apply_cached() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, repo) = init_repo();
+        let root = dir.path();
+        symlink("old-target", root.join("link")).expect("symlink");
+        git(root, &["add", "link"]);
+        git(root, &["commit", "-qm", "init"]);
+        std::fs::remove_file(root.join("link")).expect("remove link");
+        symlink("new-target", root.join("link")).expect("retarget");
+        stage_lines_and_compare_git(
+            &repo,
+            root,
+            "link",
+            vec![LineRange {
+                path: "link".into(),
+                start: 1,
+                end: 1,
+            }],
+        );
     }
 
     #[test]

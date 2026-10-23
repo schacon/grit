@@ -154,10 +154,4 @@ URLs can be `https://`, `ssh://`, `user@host:path`, `git://`, `file://` or a loc
 
 ## What grit doesn't do
 
-grit has no equivalent of `reset`, partial staging, interactive commands, or annotated or signed tags. During a merge conflict, use `grit restore --ours|--theirs|--merge` to compare sides or restore markers, then `grit merge --continue` (or `grit commit` for Git-compatible finish). Use `grit commit --amend` (optional message, JSON `amended` field) to rewrite the tip commit. For `grit stash pop` or `grit stash apply` with conflicts, use `git` to finish resolving. When a task needs something else on this list, use `git` on the same repository and come back to `grit` afterwards.
-
-## More
-
-- Docs for every command, with JSON field tables: https://grit-scm.com/docs/
-- Agent guide (output contract, exit codes, credentials): https://grit-scm.com/docs/agents/
-- All docs as one text file: https://grit-scm.com/llms-full.txt
+grit has no equivalent of `rebase`, `reset`, interactive commands, or annotated or signed tags. Partial staging uses `--hunks`, `--lines`, and `--patch-file` on `add` (and related commands as they land), not Git's `-p` / `-i`. During a merge conflict, use `grit restore --ours|--theirs|--merge` to compare sides or restore markers, then `grit merge --continue` (or `grit commit` for Git-compatible finish). Use `grit commit --amend` (optional message, JSON `amended` field) to rewrite the tip commit. For `grit stash pop` or `grit stash apply` with conflicts, use `git` to finish resolving. When a task needs something else on this list, use `git` on the same repository and come back to `grit` afterwards.
