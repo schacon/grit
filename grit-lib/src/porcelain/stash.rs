@@ -1618,10 +1618,29 @@ fn append_stash_untracked_show_entries(
     let ut_commit = parse_commit(&ut_obj.data)?;
     let head_entries = flatten_tree_full_for_repo(repo, head_tree, "")?;
     let ut_entries = flatten_tree_full_for_repo(repo, &ut_commit.tree, "")?;
-    let head_paths: HashSet<&str> = head_entries.iter().map(|e| e.path.as_str()).collect();
-    let diff_paths: HashSet<String> = diffs.iter().map(|e| e.path().to_owned()).collect();
     for entry in ut_entries {
-        if head_paths.contains(entry.path.as_str()) || diff_paths.contains(&entry.path) {
+        if let Some(idx) = diffs
+            .iter()
+            .position(|d| d.path() == entry.path.as_str())
+        {
+            if diffs[idx].status == DiffStatus::Deleted {
+                let head_entry = flat_tree_lookup(&head_entries, &entry.path);
+                let (old_oid, old_mode) = if let Some(h) = head_entry {
+                    (h.oid, format_mode(h.mode))
+                } else {
+                    (zero_oid(), "000000".to_owned())
+                };
+                diffs[idx] = DiffEntry {
+                    status: DiffStatus::Modified,
+                    old_path: Some(entry.path.clone()),
+                    new_path: Some(entry.path.clone()),
+                    old_mode,
+                    new_mode: format_mode(entry.mode),
+                    old_oid,
+                    new_oid: entry.oid,
+                    score: None,
+                };
+            }
             continue;
         }
         diffs.push(DiffEntry {
@@ -1706,7 +1725,7 @@ pub fn stash_branch(
 ///
 /// # Returns
 ///
-/// The number of reflog entries that were present (0 when there was no stash).
+/// The number of reflog entries that were removed (0 when the reflog was already empty).
 ///
 /// # Errors
 ///
@@ -1714,11 +1733,16 @@ pub fn stash_branch(
 pub fn clear_stashes(repo: &Repository) -> Result<usize> {
     let entries = read_reflog(repo.git_dir(), STASH_REF)?;
     let count = entries.len();
-    if count == 0 {
+    let has_ref = refs::resolve_ref(repo.git_dir(), STASH_REF).is_ok();
+    if count == 0 && !has_ref {
         return Ok(0);
     }
-    open_ref_store(repo.git_dir())?.delete_reflog(STASH_REF)?;
-    delete_ref(repo.git_dir(), STASH_REF)?;
+    if count > 0 {
+        open_ref_store(repo.git_dir())?.delete_reflog(STASH_REF)?;
+    }
+    if has_ref {
+        delete_ref(repo.git_dir(), STASH_REF)?;
+    }
     Ok(count)
 }
 

@@ -1180,3 +1180,61 @@ fn stash_clear_removes_ref_and_reflog_git_agrees() {
     assert!(reflog.is_empty(), "stash reflog must be empty after clear");
     assert_fsck_strict(dir.path());
 }
+
+#[test]
+fn stash_clear_removes_ref_without_reflog_like_git() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("a"), "v\n").expect("write");
+    git_cmd(dir.path(), &["add", "a"]);
+    git_cmd(dir.path(), &["commit", "-qm", "init"]);
+    let head = git_cmd(dir.path(), &["rev-parse", "HEAD"]).trim().to_owned();
+    git_cmd(dir.path(), &["update-ref", "refs/stash", &head]);
+    assert!(
+        git_cmd(dir.path(), &["rev-parse", "--verify", "refs/stash"]).trim() == head,
+        "refs/stash must exist before clear"
+    );
+
+    let repo = open_grit(dir.path());
+    let cleared = clear_stashes(&repo).expect("clear");
+    assert_eq!(
+        cleared, 0,
+        "reflog count is zero when ref was created without reflog"
+    );
+    let verify = Command::new("git")
+        .args(["rev-parse", "--verify", "refs/stash"])
+        .current_dir(dir.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git rev-parse");
+    assert!(
+        !verify.status.success(),
+        "refs/stash must be deleted even without a reflog"
+    );
+    assert_fsck_strict(dir.path());
+}
+
+#[test]
+fn stash_show_untracked_lists_u_path_in_base_tree_when_not_in_w_diff() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("shared.txt"), "base\n").expect("write");
+    git_cmd(dir.path(), &["add", "shared.txt"]);
+    git_cmd(dir.path(), &["commit", "-qm", "init"]);
+    git_cmd(dir.path(), &["rm", "--cached", "shared.txt"]);
+    std::fs::write(dir.path().join("shared.txt"), "worktree\n").expect("wt");
+    std::fs::write(dir.path().join("only-u.txt"), "u-only\n").expect("u-only");
+
+    let repo = open_grit(dir.path());
+    push_stash(&repo, &stash_options(true, None))
+        .expect("push")
+        .expect("changes");
+
+    let git_lines = git_stash_name_status(dir.path(), "stash@{0}", true);
+    let grit_lines = grit_stash_name_status(&repo, 0, true);
+    assert_eq!(
+        git_lines, grit_lines,
+        "stash show -u must match git when U paths overlap base tree"
+    );
+}
