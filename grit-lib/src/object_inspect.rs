@@ -26,10 +26,8 @@ use crate::objects::{
     parse_commit, parse_tag, parse_tree, CommitData, Object, ObjectId, ObjectKind, TagData,
     TreeEntry,
 };
-use crate::refs::store::RawRef;
 use crate::refs::{
-    expand_ref_dwim_full_name, peel_symref_to_terminal_ref, shorten_unambiguous,
-    warn_ambiguous_refs_from_config,
+    expand_ref_dwim_full_name, shorten_unambiguous, warn_ambiguous_refs_from_config,
 };
 use crate::repo::Repository;
 use crate::rev_parse::{
@@ -199,9 +197,9 @@ impl Repository {
     ///
     /// # Errors
     ///
-    /// Returns [`RevParseError::AmbiguousRefname`] when DWIM finds multiple refs and
-    /// `core.warnAmbiguousRefs` is enabled, and other [`RevParseError`] variants for invalid
-    /// upstream / `@{-N}` specs.
+    /// When DWIM finds multiple refs and `core.warnAmbiguousRefs` is enabled, emits
+    /// [`Warning::AmbiguousRefname`] and returns `Ok(None)` (matching `git rev-parse` stdout).
+    /// Other [`RevParseError`] variants cover invalid upstream / `@{-N}` specs.
     pub fn resolve_ref_name(
         &self,
         spec: &str,
@@ -224,21 +222,13 @@ impl Repository {
         }
         let (count, full) = expand_ref_dwim_full_name(self, spec).map_err(map_resolve_ref_error)?;
         if count == 0 {
-            if spec == "HEAD" {
-                if let Ok(Some(RawRef::Symbolic(target))) = self.refs().read_raw("HEAD") {
-                    let full = peel_symref_to_terminal_ref(self, &target)
-                        .map_err(map_resolve_ref_error)?;
-                    let short =
-                        shorten_unambiguous(self, &full, strict).map_err(map_resolve_ref_error)?;
-                    return Ok(Some(ResolvedRefName { full, short }));
-                }
-            }
             return Ok(None);
         }
         if count > 1 && strict {
             self.warn(Warning::AmbiguousRefname {
                 spec: spec.to_owned(),
             });
+            return Ok(None);
         }
         let full = full.ok_or_else(|| RevParseError::AmbiguousRefname {
             spec: spec.to_owned(),

@@ -6,8 +6,6 @@ use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::object_inspect::ResolvedRefName;
 use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::revwalk::rev_parse_error::RevParseError;
-
 mod support;
 use support::{git, git_init_reftable_repo, require_reftable_git};
 
@@ -52,12 +50,8 @@ fn assert_ref_names(repo: &Repository, wt: &std::path::Path, spec: &str) {
                     "backend mismatch for spec `{spec}` abbrev={abbrev}"
                 );
             }
-            (Some(_), None) => {
-                // Some git versions print nothing for ambiguous or unborn `HEAD` while still
-                // exiting 0; grit may disambiguate with a warning or follow symbolic HEAD.
-            }
-            (None, Some(_)) => {
-                panic!("git resolved `{spec}` abbrev={abbrev} but grit did not: {git_line:?}");
+            (None, Some(_)) | (Some(_), None) => {
+                panic!("grit {grit:?} vs git {git_line:?} for `{spec}` abbrev={abbrev}");
             }
         }
     }
@@ -73,15 +67,7 @@ fn exercise_resolve_ref_name_git_parity(wt: &std::path::Path) {
 
     let unborn = tempfile::tempdir().expect("unborn");
     git(unborn.path(), &["init", "-q", "-b", "main"]);
-    let unborn_grit = open_grit(unborn.path())
-        .resolve_ref_name("HEAD")
-        .expect("resolve")
-        .expect("head ref");
-    assert_eq!(unborn_grit.short, "main");
-    assert_eq!(unborn_grit.full, "refs/heads/main");
-    if let Some(git_head) = git_rev_parse_ref(unborn.path(), true, "HEAD") {
-        assert_eq!(unborn_grit.short, git_head);
-    }
+    assert_ref_names(&open_grit(unborn.path()), unborn.path(), "HEAD");
 
     git(wt, &["branch", "topic"]);
     git(wt, &["tag", "v1"]);
@@ -115,15 +101,7 @@ fn exercise_resolve_ref_name_git_parity(wt: &std::path::Path) {
     git(wt, &["branch", "heads/x"]);
     assert_ref_names(&open_grit(wt), wt, "refs/heads/x");
     assert_ref_names(&open_grit(wt), wt, "refs/tags/x");
-    let ambiguous_grit = open_grit(wt)
-        .resolve_ref_name("x")
-        .expect("resolve")
-        .expect("ambiguous x");
-    assert_eq!(ambiguous_grit.short, "tags/x");
-    assert_eq!(ambiguous_grit.full, "refs/tags/x");
-    if let Some(git_x) = git_rev_parse_ref(wt, true, "x") {
-        assert_eq!(ambiguous_grit.short, git_x);
-    }
+    assert_ref_names(&open_grit(wt), wt, "x");
     assert_ref_names(&open_grit(wt), wt, "heads/x");
 
     git(wt, &["config", "core.warnAmbiguousRefs", "FALSE"]);

@@ -4,6 +4,8 @@
 
 use std::process::Command;
 
+use serde_json::Value;
+
 fn grit(cwd: &std::path::Path, args: &[&str]) -> (i32, String, String) {
     let bin = env!("CARGO_BIN_EXE_grit");
     let out = Command::new(bin)
@@ -30,6 +32,10 @@ fn git(dir: &std::path::Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+fn parse_json_stdout(stdout: &str) -> Value {
+    serde_json::from_str(stdout.trim()).expect("parse grit --json stdout")
+}
+
 #[test]
 fn resolve_abbrev_and_symbolic_full_name_match_git() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -52,14 +58,41 @@ fn resolve_abbrev_and_symbolic_full_name_match_git() {
 
     let (code, stdout, _stderr) = grit(dir.path(), &["resolve", "--json", "--abbrev-ref", "main"]);
     assert_eq!(code, 0);
-    assert!(stdout.contains("\"full_ref\""));
-    assert!(stdout.contains("\"ref_name\""));
-    assert!(stdout.contains("\"ref_display\""));
+    let json = parse_json_stdout(&stdout);
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "results": [{
+                "spec": "main",
+                "ref_name": "main",
+                "full_ref": "refs/heads/main",
+                "ref_display": "main",
+            }]
+        })
+    );
+
+    let (code, stdout, _stderr) = grit(
+        dir.path(),
+        &["resolve", "--json", "--symbolic-full-name", "main"],
+    );
+    assert_eq!(code, 0);
+    let json = parse_json_stdout(&stdout);
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "results": [{
+                "spec": "main",
+                "ref_name": "main",
+                "full_ref": "refs/heads/main",
+                "ref_display": "refs/heads/main",
+            }]
+        })
+    );
 
     git(dir.path(), &["branch", "dup"]);
     git(dir.path(), &["tag", "dup"]);
     let (_, grit_out, grit_err) = grit(dir.path(), &["resolve", "--abbrev-ref", "dup"]);
-    assert_eq!(grit_out.trim(), "tags/dup");
+    assert_eq!(grit_out.trim(), "");
     assert!(
         grit_err.contains("ambiguous"),
         "stderr should carry ambiguous ref warning: {grit_err}"

@@ -2,68 +2,6 @@
   "$id": "https://grit-scm.com/schemas/resolve/v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "definitions": {
-    "ResolveEntryObjectId": {
-      "description": "One resolved spec in default oid mode (`--json` without ref-name flags).",
-      "properties": {
-        "full_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "kind": {
-          "type": "string"
-        },
-        "oid": {
-          "type": "string"
-        },
-        "ref_name": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "size": {
-          "format": "uint64",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "spec": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "spec",
-        "oid",
-        "kind",
-        "size"
-      ],
-      "type": "object"
-    },
-    "ResolveEntryRefName": {
-      "description": "One resolved spec in `--abbrev-ref` / `--symbolic-full-name` mode.",
-      "properties": {
-        "full_ref": {
-          "type": "string"
-        },
-        "ref_display": {
-          "type": "string"
-        },
-        "ref_name": {
-          "type": "string"
-        },
-        "spec": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "spec",
-        "ref_name",
-        "full_ref",
-        "ref_display"
-      ],
-      "type": "object"
-    },
     "ResolveEntry": {
       "oneOf": [
         {
@@ -73,6 +11,78 @@
           "$ref": "#/definitions/ResolveEntryRefName"
         }
       ]
+    },
+    "ResolveEntryObjectId": {
+      "description": "One resolved spec in default oid mode (`--json` without ref-name flags).",
+      "properties": {
+        "full_ref": {
+          "description": "Full symbolic ref when the spec named a ref.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "`blob`, `tree`, `commit`, or `tag`.",
+          "type": "string"
+        },
+        "oid": {
+          "description": "Resolved object id (abbreviated when `--short` is set).",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "Short ref name when the spec named a ref.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "size": {
+          "description": "Uncompressed object size in bytes.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec": {
+          "description": "Input spec.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "oid",
+        "size",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "ResolveEntryRefName": {
+      "description": "One resolved spec in `--abbrev-ref` / `--symbolic-full-name` mode.",
+      "properties": {
+        "full_ref": {
+          "description": "Full symbolic ref name.",
+          "type": "string"
+        },
+        "ref_display": {
+          "description": "Line printed for this flag (`ref_name` or `full_ref`).",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "Shortest unambiguous ref name.",
+          "type": "string"
+        },
+        "spec": {
+          "description": "Input spec.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "full_ref",
+        "ref_display",
+        "ref_name",
+        "spec"
+      ],
+      "type": "object"
     },
     "WarningRecord": {
       "properties": {

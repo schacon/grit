@@ -21,28 +21,81 @@ pub enum RefNameOutput {
     SymbolicFullName,
 }
 
-/// One resolved spec (`--json` row).
+/// One resolved spec in default oid mode (`--json` without ref-name flags).
 #[derive(Serialize, JsonSchema)]
-pub struct ResolveEntry {
+#[schemars(
+    description = "One resolved spec in default oid mode (`--json` without ref-name flags)."
+)]
+pub struct ResolveEntryObjectId {
+    /// Input spec.
     pub spec: String,
+    /// Resolved object id (abbreviated when `--short` is set).
+    pub oid: String,
+    /// `blob`, `tree`, `commit`, or `tag`.
+    pub kind: String,
+    /// Uncompressed object size in bytes.
+    pub size: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
-    pub oid: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(skip_serializing_if = "Option::is_none")]
-    pub kind: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(skip_serializing_if = "Option::is_none")]
-    pub size: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(skip_serializing_if = "Option::is_none")]
+    /// Short ref name when the spec named a ref.
     pub ref_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
+    /// Full symbolic ref when the spec named a ref.
+    pub full_ref: Option<String>,
+}
+
+/// One resolved spec in `--abbrev-ref` / `--symbolic-full-name` mode.
+#[derive(Serialize, JsonSchema)]
+#[schemars(description = "One resolved spec in `--abbrev-ref` / `--symbolic-full-name` mode.")]
+pub struct ResolveEntryRefName {
+    /// Input spec.
+    pub spec: String,
+    /// Shortest unambiguous ref name.
+    pub ref_name: String,
+    /// Full symbolic ref name.
+    pub full_ref: String,
+    /// Line printed for this flag (`ref_name` or `full_ref`).
+    pub ref_display: String,
+}
+
+/// One resolved spec (`--json` row).
+#[derive(Serialize)]
+pub struct ResolveEntry {
+    pub spec: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ref_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub full_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(skip_serializing_if = "Option::is_none")]
     pub ref_display: Option<String>,
+}
+
+impl JsonSchema for ResolveEntry {
+    fn schema_name() -> String {
+        "ResolveEntry".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        use schemars::schema::{SchemaObject, SubschemaValidation};
+        SchemaObject {
+            subschemas: Some(Box::new(SubschemaValidation {
+                one_of: Some(vec![
+                    gen.subschema_for::<ResolveEntryObjectId>(),
+                    gen.subschema_for::<ResolveEntryRefName>(),
+                ]),
+                ..Default::default()
+            })),
+            ..Default::default()
+        }
+        .into()
+    }
 }
 
 /// Result of `grit resolve`.
@@ -125,7 +178,7 @@ pub fn run(specs: Vec<String>, short: bool, ref_output: RefNameOutput) -> Result
                             oid: None,
                             kind: None,
                             size: None,
-                            ref_name: Some(display.clone()),
+                            ref_name: Some(names.short),
                             full_ref: Some(names.full),
                             ref_display: Some(display),
                         });

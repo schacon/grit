@@ -223,19 +223,14 @@ mod tests {
     }
 
     #[test]
-    fn unborn_head_abbrev_ref_matches_symbolic_branch() {
+    fn unborn_head_ref_name_unresolved_like_git() {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = Repository::init(
             dir.path(),
             &InitOptions::new().with_initial_branch("main".to_owned()),
         )
         .expect("init");
-        let names = repo
-            .resolve_ref_name("HEAD")
-            .expect("resolve")
-            .expect("head");
-        assert_eq!(names.full, "refs/heads/main");
-        assert_eq!(names.short, "main");
+        assert!(repo.resolve_ref_name("HEAD").expect("resolve").is_none());
     }
 
     #[test]
