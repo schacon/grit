@@ -383,28 +383,14 @@ pub fn for_each_loose_object_id(
 
 /// Decompress a zlib-wrapped loose object payload from an open file.
 pub fn read_zlib_loose_payload(file: File) -> Result<Vec<u8>> {
-    let mut hdr = [0u8; 2];
-    let mut read_file = file;
-    read_file.read_exact(&mut hdr).map_err(Error::Io)?;
-    let cmf_flg = u16::from(hdr[0]) << 8 | u16::from(hdr[1]);
-    let looks_like_zlib_header = cmf_flg != 0 && cmf_flg % 31 == 0;
-    let preset_dictionary = looks_like_zlib_header && (hdr[1] & 0x20) != 0;
-    with_loose_scratch(|scratch| {
-        scratch.decompress_loose_payload(&hdr, read_file, preset_dictionary)
-    })
+    let mut out = Vec::new();
+    read_zlib_loose_payload_into(file, &mut out)?;
+    Ok(out)
 }
 
 /// Decompress a loose object into `buf`, reusing its capacity.
-pub(crate) fn read_zlib_loose_payload_into(file: File, buf: &mut Vec<u8>) -> Result<()> {
-    let mut hdr = [0u8; 2];
-    let mut read_file = file;
-    read_file.read_exact(&mut hdr).map_err(Error::Io)?;
-    let cmf_flg = u16::from(hdr[0]) << 8 | u16::from(hdr[1]);
-    let looks_like_zlib_header = cmf_flg != 0 && cmf_flg % 31 == 0;
-    let preset_dictionary = looks_like_zlib_header && (hdr[1] & 0x20) != 0;
-    with_loose_scratch(|scratch| {
-        scratch.decompress_loose_payload_into(&hdr, read_file, preset_dictionary, buf)
-    })
+pub(crate) fn read_zlib_loose_payload_into(mut file: File, buf: &mut Vec<u8>) -> Result<()> {
+    with_loose_scratch(|scratch| scratch.inflate_loose_file(&mut file, buf))
 }
 
 /// Remove the Git object header from decompressed bytes in `buf`, leaving only the payload.

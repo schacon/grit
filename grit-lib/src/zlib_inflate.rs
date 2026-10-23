@@ -52,6 +52,17 @@ fn declared_loose_object_len(out: &[u8]) -> Option<usize> {
     size.checked_add(nul + 1)
 }
 
+/// `read` into `buf`, retrying when interrupted by a signal.
+fn read_retrying(file: &mut std::fs::File, buf: &mut [u8]) -> Result<usize> {
+    loop {
+        match file.read(buf) {
+            Ok(n) => return Ok(n),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(Error::Io(e)),
+        }
+    }
+}
+
 /// Scratch space for one zlib stream decode; reset before each object.
 pub(crate) struct ZlibInflateScratch {
     dec: Decompress,
@@ -210,69 +221,62 @@ impl ZlibInflateScratch {
         }
     }
 
-    /// Decompress a zlib-wrapped loose object from `file` (after optional 2-byte prefix in `prefix`).
+    /// Inflate a whole zlib-wrapped loose object file into `out`, reusing `out`'s capacity.
+    ///
+    /// Inflates straight into `out`'s spare capacity. Once the Git object header has been
+    /// inflated, `out` is sized from the declared object size (bounded by
+    /// [`MAX_HEADER_SIZE_RESERVE`]) so typical objects decode without reallocating. The file
+    /// is read in [`READ_CHUNK`] pieces and reading stops at the end of the zlib stream, so a
+    /// small object costs a single `read`.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Zlib`] for invalid zlib, preset-dictionary streams, or truncated input.
-    /// Returns [`Error::Io`] for read failures.
-    pub fn decompress_loose_payload(
+    /// Returns [`Error::Io`] for read failures, including a file too short to hold a zlib header.
+    pub fn inflate_loose_file(
         &mut self,
-        prefix: &[u8],
-        file: std::fs::File,
-        preset_dictionary: bool,
-    ) -> Result<Vec<u8>> {
-        let mut out = Vec::new();
-        self.decompress_loose_payload_into(prefix, file, preset_dictionary, &mut out)?;
-        Ok(out)
-    }
-
-    /// Like [`Self::decompress_loose_payload`], but inflates into `out` (reusing capacity).
-    ///
-    /// Inflates straight into `out`'s spare capacity. Once the Git object header has been
-    /// inflated, `out` is sized from the declared object size (bounded by
-    /// [`MAX_HEADER_SIZE_RESERVE`]) so typical objects decode without reallocating.
-    pub fn decompress_loose_payload_into(
-        &mut self,
-        prefix: &[u8],
-        mut file: std::fs::File,
-        preset_dictionary: bool,
+        file: &mut std::fs::File,
         out: &mut Vec<u8>,
     ) -> Result<()> {
         self.reset();
         out.clear();
         let mut input = std::mem::take(&mut self.input);
-        input.clear();
-        input.extend_from_slice(prefix);
-        let result = self.inflate_loose_stream(&mut input, &mut file, preset_dictionary, out);
+        if input.len() < READ_CHUNK {
+            input.resize(READ_CHUNK, 0);
+        }
+        let result = self.inflate_loose_reads(&mut input, file, out);
         self.input = input;
         result
     }
 
-    fn inflate_loose_stream(
+    fn inflate_loose_reads(
         &mut self,
-        input: &mut Vec<u8>,
+        input: &mut [u8],
         file: &mut std::fs::File,
-        preset_dictionary: bool,
         out: &mut Vec<u8>,
     ) -> Result<()> {
+        let mut filled = 0usize;
+        while filled < 2 {
+            let n = read_retrying(file, &mut input[filled..])?;
+            if n == 0 {
+                return Err(Error::Io(std::io::ErrorKind::UnexpectedEof.into()));
+            }
+            filled += n;
+        }
+        let cmf_flg = u16::from(input[0]) << 8 | u16::from(input[1]);
+        let preset_dictionary = cmf_flg != 0 && cmf_flg % 31 == 0 && (input[1] & 0x20) != 0;
         let mut in_off = 0usize;
         let mut eof = false;
         let mut sized_from_header = false;
         loop {
-            if in_off == input.len() && !eof {
-                input.clear();
+            if in_off == filled && !eof {
+                filled = read_retrying(file, input)?;
                 in_off = 0;
-                let n = file
-                    .by_ref()
-                    .take(READ_CHUNK as u64)
-                    .read_to_end(input)
-                    .map_err(Error::Io)?;
-                eof = n < READ_CHUNK;
+                eof = filled == 0;
             }
             if out.len() == out.capacity() {
                 let guess = if out.is_empty() {
-                    input.len().saturating_mul(4).max(256)
+                    filled.saturating_mul(4).max(256)
                 } else {
                     out.capacity()
                 };
@@ -285,7 +289,7 @@ impl ZlibInflateScratch {
             };
             let before_in = self.dec.total_in();
             let before_out = out.len();
-            let status = match self.dec.decompress_vec(&input[in_off..], out, flush) {
+            let status = match self.dec.decompress_vec(&input[in_off..filled], out, flush) {
                 Ok(s) => s,
                 Err(e) => {
                     if preset_dictionary {
@@ -309,10 +313,10 @@ impl ZlibInflateScratch {
                 Status::StreamEnd => return Ok(()),
                 Status::Ok | Status::BufError => {
                     let out_has_room = out.len() < out.capacity();
-                    if eof && in_off == input.len() && out_has_room {
+                    if eof && in_off == filled && out_has_room {
                         return Err(Error::Zlib("unexpected end of zlib stream".to_owned()));
                     }
-                    if consumed == 0 && produced == 0 && out_has_room && in_off < input.len() {
+                    if consumed == 0 && produced == 0 && out_has_room && in_off < filled {
                         return Err(Error::CorruptObject(
                             "zlib stream stalled in loose object".to_owned(),
                         ));
@@ -687,8 +691,9 @@ mod tests {
         let mut file = tempfile::NamedTempFile::new().expect("temp");
         file.write_all(&zlib).expect("write");
         let mut scratch = ZlibInflateScratch::default();
-        let out = scratch
-            .decompress_loose_payload(&[], file.reopen().expect("reopen"), false)
+        let mut out = Vec::new();
+        scratch
+            .inflate_loose_file(&mut file.reopen().expect("reopen"), &mut out)
             .expect("decompress file");
         assert_eq!(out.as_slice(), plain);
     }
@@ -729,7 +734,7 @@ mod tests {
             .expect("write");
         let mut scratch = ZlibInflateScratch::default();
         let err = scratch
-            .decompress_loose_payload(&[0x78, 0x20], file.reopen().expect("reopen"), true)
+            .inflate_loose_file(&mut file.reopen().expect("reopen"), &mut Vec::new())
             .unwrap_err();
         match err {
             Error::Zlib(msg) if msg == "needs dictionary" => {}
