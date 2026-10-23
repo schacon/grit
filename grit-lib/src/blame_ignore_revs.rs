@@ -31,7 +31,9 @@ pub struct IgnoreRevs {
 impl IgnoreRevs {
     /// Load ignored commits from config and CLI sources.
     ///
-    /// Config `blame.ignoreRevsFile` values are expanded with [`parse_path`] and
+    /// Config `blame.ignoreRevsFile` values are expanded with [`parse_path`]; `:(optional)`
+    /// skips missing files (Git `git_config_pathname` semantics, checked on the
+    /// work-tree-resolved path).
     /// processed first, then each entry in [`IgnoreRevsSources::files`]. An empty
     /// file path clears the set accumulated so far (Git `--ignore-revs-file ""`).
     /// Finally each `--ignore-rev` spec is resolved to a commit and inserted.
@@ -78,21 +80,30 @@ impl IgnoreRevs {
     }
 }
 
-fn resolve_ignore_revs_file_path(repo: &Repository, path: &str) -> PathBuf {
-    let expanded = parse_path(repo.environment(), path);
+fn resolve_ignore_revs_file_path(repo: &Repository, path: &str) -> Option<PathBuf> {
+    let (optional, body) = match path.strip_prefix(":(optional)") {
+        Some(rest) => (true, rest),
+        None => (false, path),
+    };
+    let expanded = parse_path(repo.environment(), body);
     let p = Path::new(&expanded);
-    if p.is_absolute() {
-        return p.to_path_buf();
-    }
-    if let Some(wt) = repo.work_tree() {
+    let resolved = if p.is_absolute() {
+        p.to_path_buf()
+    } else if let Some(wt) = repo.work_tree() {
         wt.join(p)
     } else {
         repo.git_dir().join(p)
+    };
+    if optional && !resolved.is_file() {
+        return None;
     }
+    Some(resolved)
 }
 
 fn load_file_into(repo: &Repository, path: &str, revs: &mut HashSet<ObjectId>) -> Result<()> {
-    let resolved = resolve_ignore_revs_file_path(repo, path);
+    let Some(resolved) = resolve_ignore_revs_file_path(repo, path) else {
+        return Ok(());
+    };
     let file = fs::File::open(&resolved).map_err(|e| Error::BlameIgnoreRevsFileOpen {
         path: path.to_owned(),
         source: e,
@@ -131,8 +142,13 @@ fn parse_ignore_revs_line(
             rev: trimmed.to_owned(),
         });
     }
-    if let Some(commit) = repo.odb().peel_to_commit(oid)? {
-        revs.insert(commit);
+    match repo.odb().peel_to_commit(oid) {
+        Ok(Some(commit)) => {
+            revs.insert(commit);
+        }
+        Ok(None) => {}
+        Err(Error::ObjectNotFound(_)) => {}
+        Err(e) => return Err(e),
     }
     Ok(())
 }
@@ -140,7 +156,9 @@ fn parse_ignore_revs_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::objects::HashAlgo;
     use crate::repo::{InitOptions, Repository};
+    use grit_test_support::objects::git_supports_sha256;
 
     fn init_repo(dir: &Path) -> Repository {
         Repository::init(dir, &InitOptions::default()).expect("init")
@@ -208,6 +226,59 @@ mod tests {
         let mut revs = HashSet::new();
         parse_ignore_revs_line(&repo, "f", &format!("{hex}\r"), &mut revs).unwrap();
         assert_eq!(revs.len(), 1);
+    }
+
+    #[test]
+    fn parse_line_rejects_wrong_length_in_sha256_repo() {
+        if !git_supports_sha256() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .current_dir(dir.path())
+            .args(["init", "--object-format=sha256"])
+            .status()
+            .unwrap();
+        let repo = Repository::open(
+            &dir.path().join(".git"),
+            &crate::config::environment::RepositoryOptions::empty().with_work_tree(dir.path()),
+        )
+        .unwrap();
+        assert_eq!(repo.odb().hash_algo(), HashAlgo::Sha256);
+        let mut revs = HashSet::new();
+        let forty = "a".repeat(40);
+        let err = parse_ignore_revs_line(&repo, "f", &forty, &mut revs).unwrap_err();
+        assert!(matches!(err, Error::BlameIgnoreRevsFileInvalidRev { .. }));
+    }
+
+    #[test]
+    fn parse_line_skips_missing_full_length_oid() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        let mut revs = HashSet::new();
+        parse_ignore_revs_line(
+            &repo,
+            "f",
+            "0000000000000000000000000000000000000001",
+            &mut revs,
+        )
+        .unwrap();
+        assert!(revs.is_empty());
+    }
+
+    #[test]
+    fn optional_ignore_revs_file_path_is_skipped_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = init_repo(dir.path());
+        let loaded = IgnoreRevs::load(
+            &repo,
+            &IgnoreRevsSources {
+                files: vec![":(optional)no-such-ignore-revs-file".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(loaded.revs.is_empty());
     }
 
     #[test]

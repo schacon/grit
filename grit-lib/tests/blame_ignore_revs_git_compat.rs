@@ -512,6 +512,28 @@ fn ignore_revs_file_resolves_from_worktree_root_when_cwd_is_subdirectory() {
 }
 
 #[test]
+fn ignore_revs_file_skips_absent_full_length_oid() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_abcx(dir.path());
+    std::fs::write(
+        dir.path().join("ignore_absent"),
+        "0000000000000000000000000000000000000001\n",
+    )
+    .unwrap();
+    let repo = open_repo(dir.path());
+    assert_blame_matches(
+        &repo,
+        dir.path(),
+        "file",
+        &IgnoreParams {
+            ignore_rev: &[],
+            ignore_revs_file: &["ignore_absent"],
+            use_config: false,
+        },
+    );
+}
+
+#[test]
 fn typed_errors_for_bad_rev_and_file() {
     let dir = tempfile::tempdir().unwrap();
     setup_abcx(dir.path());

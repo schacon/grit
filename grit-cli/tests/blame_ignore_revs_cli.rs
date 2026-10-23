@@ -148,3 +148,22 @@ fn json_includes_ignored_and_unblamable_when_true() {
     assert_eq!(line3.get("ignored"), None);
     assert_eq!(line3.get("unblamable"), Some(&Value::Bool(true)));
 }
+
+#[test]
+fn json_includes_ignored_when_line_passes_through_ignore() {
+    let dir = tempfile::tempdir().unwrap();
+    setup(dir.path());
+    fs::write(dir.path().join("file"), "line-one-Z\nline-two-Z\n").unwrap();
+    git(dir.path(), &["add", "file"]);
+    git(dir.path(), &["commit", "-m", "Z"]);
+    git(dir.path(), &["tag", "Z"]);
+    let z = Command::new("git")
+        .current_dir(dir.path())
+        .args(["rev-parse", "Z"])
+        .output()
+        .unwrap();
+    let z = String::from_utf8_lossy(&z.stdout).trim().to_owned();
+    let out = gs_json(dir.path(), &["blame", "file", "--ignore-rev", &z]);
+    assert_eq!(out["lines"][0].get("ignored"), Some(&Value::Bool(true)));
+    assert_eq!(out["lines"][1].get("ignored"), Some(&Value::Bool(true)));
+}
