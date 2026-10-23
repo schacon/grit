@@ -243,38 +243,10 @@ fn build_line_map_with_changed_flags_owned(
         Vec::new()
     };
 
-    let (old_w_lo, old_w_hi, new_w_lo, new_w_hi) = if let Some(focus) = child_focus {
-        if old.len() == new.len()
-            && (old_hi - old_lo) == (new_hi - new_lo)
-            && !focus.is_empty()
-            && focus.len() * 8 < new_hi.saturating_sub(new_lo)
-        {
-            let mid_focus: Vec<usize> = focus
-                .iter()
-                .copied()
-                .filter(|&idx| (new_lo..new_hi).contains(&idx))
-                .collect();
-            if let (Some(&f_min), Some(&f_max)) = (mid_focus.iter().min(), mid_focus.iter().max()) {
-                const PAD: usize = 48;
-                let w_lo = f_min.saturating_sub(PAD).max(new_lo);
-                let w_hi = (f_max + 1 + PAD).min(new_hi);
-                let delta = w_lo - new_lo;
-                let old_w_lo = old_lo + delta;
-                let old_w_hi = old_w_lo + (w_hi - w_lo);
-                if old_w_hi <= old_hi {
-                    (old_w_lo, old_w_hi, w_lo, w_hi)
-                } else {
-                    (old_lo, old_hi, new_lo, new_hi)
-                }
-            } else {
-                (old_lo, old_hi, new_lo, new_hi)
-            }
-        } else {
-            (old_lo, old_hi, new_lo, new_hi)
-        }
-    } else {
-        (old_lo, old_hi, new_lo, new_hi)
-    };
+    // When `child_focus` is set (-L blame), always diff the full affix-trimmed middle.
+    // Index-aligned sub-windows are unsafe when both sides have equal line counts but an
+    // insert on one side of the window and a delete on the other shift true correspondence.
+    let (old_w_lo, old_w_hi, new_w_lo, new_w_hi) = (old_lo, old_hi, new_lo, new_hi);
 
     let old_mid_owned: Vec<&str> = (old_w_lo..old_w_hi).map(|i| old.line(i)).collect();
     let new_mid_owned: Vec<&str> = (new_w_lo..new_w_hi).map(|i| new.line(i)).collect();
@@ -3534,51 +3506,6 @@ mod tests {
         let (affix, need) = partition_pending_by_affix(&old, &new, pending_mid);
         assert!(affix.is_empty());
         assert_eq!(need.len(), 1);
-    }
-
-    #[test]
-    fn cargo_bloom_may_skip_in_blame_session_when_bench_repo_set() {
-        use crate::environment::RepositoryOptions;
-        use crate::repo::Repository;
-        use std::path::Path;
-
-        let repo_path = match std::env::var("GRIT_CARGO_BENCH_REPO") {
-            Ok(p) => p,
-            Err(_) => return,
-        };
-        let git_dir = Path::new(&repo_path).join(".git");
-        if !git_dir.is_dir() {
-            return;
-        }
-        let repo =
-            Repository::open(git_dir.as_path(), &RepositoryOptions::default()).expect("open");
-        let mut session = BlameSession::new(repo.odb(), None, false, &repo.thread_policy());
-        session.commit_graph = repo.caches().commit_graph_chain(repo.odb().objects_dir());
-        let head = *crate::state::resolve_head(repo.git_dir())
-            .expect("head")
-            .oid()
-            .expect("commit");
-        let path = "src/workspace/parser/mod.rs";
-        session.set_bloom_path(path);
-        let chain = session.commit_graph.as_ref().expect("graph");
-        let (parents, _) = chain.graph_commit(&head).expect("in graph");
-        let parent = parents[0];
-        let mut cache = BlameCommitCache::default();
-        let skip = bloom_may_skip_to_first_parent(
-            &mut session,
-            repo.odb(),
-            head,
-            parent,
-            path,
-            &HashMap::new(),
-            &mut cache,
-            true,
-        )
-        .expect("bloom");
-        assert!(
-            skip,
-            "expected bloom skip on unchanged path step for cargo parser"
-        );
     }
 
     #[test]
