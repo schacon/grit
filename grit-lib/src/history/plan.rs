@@ -517,6 +517,7 @@ fn plan_rewrite_with_order_impl(
                         &old.author,
                         committer,
                         message,
+                        true,
                     )?;
                     Ok((oid, Some(oid)))
                 }
@@ -589,6 +590,7 @@ fn plan_rewrite_with_order_impl(
                             author,
                             committer,
                             message,
+                            false,
                         )?
                     } else {
                         replay_edited_commit(
@@ -1288,6 +1290,9 @@ fn replay_merge_tree(
 }
 
 /// Write a replacement commit for `old_oid`, honoring [`RewriteOptions::empty`].
+///
+/// When `split_rest_commit` is true (history split rest commit after an insert parent), the
+/// result tree may match the insert parent's tree but the commit must still be written.
 #[allow(clippy::too_many_arguments)]
 fn write_replacement_commit(
     repo: &Repository,
@@ -1300,6 +1305,7 @@ fn write_replacement_commit(
     author: &str,
     committer: &str,
     message: &str,
+    split_rest_commit: bool,
 ) -> Result<ObjectId, HistoryError> {
     let empty = empty_tree_oid(repo)?;
     let old_parent = old.parents.first().copied().unwrap_or(empty);
@@ -1315,7 +1321,7 @@ fn write_replacement_commit(
         commit_tree(repo, new_parent)?
     };
 
-    if old.tree != old_parent_tree && result_tree == new_parent_tree {
+    if !split_rest_commit && old.tree != old_parent_tree && result_tree == new_parent_tree {
         return match opts.empty {
             EmptyPolicy::Abort => Err(HistoryError::BecameEmpty { commit: old_oid }),
             EmptyPolicy::Drop => Ok(new_parent),
@@ -1400,6 +1406,7 @@ fn replay_edited_commit(
         author,
         committer,
         message,
+        false,
     )
 }
 
@@ -1726,6 +1733,7 @@ pub fn plan_fold_range_at_head(
         &oldest_commit.author,
         committer,
         message,
+        false,
     )?;
     let mut mapping = HashMap::with_capacity(commits.len());
     for &oid in commits {
