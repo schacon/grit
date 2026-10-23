@@ -10,7 +10,8 @@ use crate::refs::store::{Expected, RefUpdate, RefUpdateFlags};
 use crate::refs::{commit_ref_updates_on_store, list_refs_for_repository};
 use crate::refspec::{fetch_specs_bind_local_ref, parse_fetch_refspec, RefspecItem};
 use crate::remote::{
-    HttpClientFactory, ListRefsOptions, Remote, RemoteError, RemoteRef, DEFAULT_REMOTE,
+    inspect_remote, HttpClientFactory, InspectOptions, ListRefsOptions, Remote, RemoteError,
+    RemoteRef, RemoteSummary, DEFAULT_REMOTE,
 };
 use crate::repo::Repository;
 use crate::transfer::{FetchOptions, FetchOutcome, PushOptions, PushOutcome, PushRefSpec};
@@ -351,6 +352,26 @@ impl<'repo> RepositoryRemotes<'repo> {
         http_factory: Option<&dyn HttpClientFactory>,
     ) -> std::result::Result<PushOutcome, RemoteError> {
         remote.push(self.repo, refs, options, progress, http_factory)
+    }
+
+    /// Summarize a configured remote: URLs, default branch, tracking branch states, pull config.
+    ///
+    /// With [`InspectOptions::query`], contacts the remote (like `git remote show`) to classify
+    /// branches as tracked, new, or stale. Without a query, branch states come from local
+    /// remote-tracking refs only (every branch is reported as tracked).
+    ///
+    /// # Errors
+    ///
+    /// - [`RemoteError::UnknownRemote`] when `name` is not configured.
+    /// - [`RemoteError::NoUrl`] when the remote has no URL.
+    /// - Propagates transport and ref errors as [`RemoteError::Library`].
+    pub fn inspect(
+        &self,
+        name: &str,
+        options: &InspectOptions,
+        http_factory: Option<&dyn HttpClientFactory>,
+    ) -> std::result::Result<RemoteSummary, RemoteError> {
+        inspect_remote(self.repo, name, options, http_factory)
     }
 
     /// Remove remote `name`: drop its config section, remote-tracking refs, and branch upstream keys.
@@ -721,7 +742,7 @@ pub fn configured_remotes(config: &ConfigSet) -> Vec<ConfiguredRemote> {
 }
 
 /// Whether any `remote.<name>.*` key exists (membership in [`configured_remotes`]).
-pub(crate) fn has_remote_section(config: &ConfigSet, name: &str) -> bool {
+pub fn has_remote_section(config: &ConfigSet, name: &str) -> bool {
     config.entries().iter().any(|entry| {
         entry
             .key

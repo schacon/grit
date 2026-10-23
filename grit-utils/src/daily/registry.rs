@@ -250,6 +250,13 @@ pub const REMOTE_MATRIX_SCENARIOS: [ScenarioSpec; 11] = [
         description: "List all refs on many-refs bare remote vs git ls-remote",
     },
     ScenarioSpec {
+        id: "remote/show@many-refs",
+        area: Area::Remotes,
+        headline: false,
+        name: None,
+        description: "Remote show on many-refs client vs git remote show origin",
+    },
+    ScenarioSpec {
         id: "clone/http@synth-10k",
         area: Area::Remotes,
         headline: false,

@@ -1,6 +1,6 @@
 ---
 title: grit remote
-summary: List remotes, add one, or list refs on a remote.
+summary: List remotes, add one, show one, set URLs, remove one, or list refs on a remote.
 group: Remotes
 order: 1
 ---
@@ -12,6 +12,7 @@ grit remote [-v]
 grit remote add <name> <url>
 grit remote set-url <name> <url> [--push] [--dry-run]
 grit remote remove <name> [--dry-run]
+grit remote show <name> [--no-query] [-n N]
 grit remote refs <remote-or-url> [--heads] [--tags] [--sort name|version] [--reverse] [-n N] [<prefix>…]
 ```
 
@@ -27,6 +28,8 @@ A remote is another copy of the repository that you fetch from and push to, usua
 
 `grit remote remove` deletes a configured remote: it removes the `remote.<name>` section from the shared config, deletes every remote-tracking ref this remote's fetch refspecs map to (including `refs/remotes/<name>/HEAD`), and clears `branch.<b>.remote`, `branch.<b>.merge`, and matching `branch.<b>.pushRemote` / `remote.pushDefault` keys. Tracking refs that another remote's fetch refspec also maps to are kept. `--dry-run` reports what would change without writing config or refs. There is no `rm` alias.
 
+`grit remote show` summarizes one configured remote: fetch and push URLs, the remote `HEAD` branch, each remote branch classified as tracked, new, or stale (when the remote is queried), and local branches whose `branch.<name>.remote` points at this remote. By default it contacts the remote (same transports as [`grit fetch`](../fetch/)). With `--no-query`, branch rows come from local remote-tracking refs only and every branch is reported as tracked.
+
 `grit remote refs` lists references on a configured remote name or a literal URL, scp-style `host:path` or path (same transports as [`grit clone`](../clone/)), matching `git ls-remote` ordering. An argument that is none of these fails with `unknown remote`. SSH URLs use the same `GIT_SSH_COMMAND`, `GIT_SSH`, and `core.sshCommand` resolution as [`grit clone`](../clone/) and [`grit fetch`](../fetch/).
 
 ## Options
@@ -38,12 +41,14 @@ A remote is another copy of the repository that you fetch from and push to, usua
 | `set-url <name> <url>` | Set the fetch URL for `<name>`. Use `--push` for `pushurl`. |
 | `--push` | With `set-url`, update push URL(s) instead of fetch. |
 | `remove <name>` | Remove remote `<name>` and its tracking refs. `--dry-run` previews without writing. |
+| `show <name>` | Summarize `<name>` (URLs, HEAD branch, remote branches, pull config). |
+| `--no-query` | With `show`, use local remote-tracking refs only; do not contact the remote. |
 | `refs <remote-or-url>` | List refs on the remote (or URL). |
 | `--heads` | With `refs`, only `refs/heads/`. |
 | `--tags` | With `refs`, only `refs/tags/`. |
 | `--sort` | With `refs`, `name` (default) or `version` (`git ls-remote --sort=version:refname`). |
 | `--reverse` | With `refs`, reverse `--sort` order. |
-| `-n`, `--limit` | With `refs`, return at most `N` lines after sorting. |
+| `-n`, `--limit` | With `show` or `refs`, return at most `N` branch or ref lines after sorting. |
 | `<prefix>…` | With `refs`, optional ref prefixes (same rules as `git ls-remote`). |
 
 ## Examples
@@ -62,27 +67,43 @@ origin	https://github.com/ada/project.git (push)
 $ grit remote set-url origin git@github.com:ada/project.git
 Set remote origin fetch URL to git@github.com:ada/project.git
 
+$ grit remote show origin
+* remote origin
+  Fetch URL: https://github.com/ada/project.git
+  Push  URL: https://github.com/ada/project.git
+  HEAD branch: main
+  Remote branches:
+    main tracked
+    feature new
+  Local branches configured for pull:
+    main merges with remote main
+
 $ grit remote refs origin
 a1b2c3d4e5f6789012345678901234567890abcd	refs/heads/main
 ```
 
 ## JSON output
 
-Schema: [v1](/schemas/remote/v1.json) · [remote.add v1](/schemas/remote.add/v1.json) · [remote.remove v1](/schemas/remote.remove/v1.json) · [remote.refs v1](/schemas/remote.refs/v1.json) (set-url uses the main remote schema)
+Schema: [v1](/schemas/remote/v1.json) · [remote.add v1](/schemas/remote.add/v1.json) · [remote.remove v1](/schemas/remote.remove/v1.json) · [remote.show v1](/schemas/remote.show/v1.json) · [remote.refs v1](/schemas/remote.refs/v1.json) (set-url uses the main remote schema)
 
 Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `action` | string | `list`, `add`, `set_url`, `remove`, or `refs`. |
+| `action` | string | `list`, `add`, `set_url`, `remove`, `show`, or `refs`. |
 | `remotes` | array | For `list`, each remote with `name` and `url`; with `-v`, also `fetch_url`, `push_url`, and `refspecs`. |
-| `name` | string | For `add`, `set_url`, or `remove`, the remote name. |
+| `name` | string | For `add`, `set_url`, `remove`, or `show`, the remote name. |
 | `url` | string | For `add` or `set_url`, the remote URL or path. |
 | `kind` | string | For `set_url`, `fetch` or `push`. |
 | `old_url` | string or null | For `set_url`, previous URL for that kind, if any. |
 | `refs_deleted` | array | For `remove`, deleted remote-tracking ref names. |
 | `branches_untracked` | array | For `remove`, local branch short names whose upstream keys were cleared. |
 | `dry_run` | boolean | For `set_url` or `remove`, whether changes were only reported. |
+| `fetch_url` | string | For `show`, fetch URL after config rewrite. |
+| `push_url` | string | For `show`, push URL (`pushurl` when set). |
+| `head_branch` | string or null | For `show`, remote default branch when known. |
+| `branches` | array | For `show`, each `{ name, state }` with `state` `tracked`, `new`, or `stale`. |
+| `pull` | array | For `show`, each `{ local, merges }` from `branch.*` config. |
 | `refs` | array | For `refs`, each entry with `name`, `oid`, optional `peeled`, optional `symref_target`. |
 
 Listing remotes:
@@ -95,6 +116,35 @@ Listing remotes:
       "name": "origin",
       "url": "https://github.com/ada/project.git"
     }
+  ]
+}
+```
+
+Adding a remote:
+
+```json
+{
+  "action": "add",
+  "name": "origin",
+  "url": "https://github.com/ada/project.git"
+}
+```
+
+Showing a remote:
+
+```json
+{
+  "action": "show",
+  "name": "origin",
+  "fetch_url": "https://github.com/ada/project.git",
+  "push_url": "https://github.com/ada/project.git",
+  "head_branch": "main",
+  "branches": [
+    { "name": "main", "state": "tracked" },
+    { "name": "feature", "state": "new" }
+  ],
+  "pull": [
+    { "local": "main", "merges": "refs/heads/main" }
   ]
 }
 ```

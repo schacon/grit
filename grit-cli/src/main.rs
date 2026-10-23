@@ -125,6 +125,17 @@ enum RemoteAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Summarize a remote (URLs, branches, pull config).
+    Show {
+        /// Configured remote name.
+        name: String,
+        /// Use local remote-tracking refs only; do not contact the remote.
+        #[arg(long = "no-query")]
+        no_query: bool,
+        /// Return at most this many remote branches.
+        #[arg(short = 'n', long = "limit", value_name = "N")]
+        limit: Option<usize>,
+    },
     /// List references on a remote (like `git ls-remote`).
     Refs {
         /// Configured remote name or a literal URL/path.
@@ -1959,6 +1970,21 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
             Some(RemoteAction::Remove { name, dry_run }) => {
                 emit_success(&commands::remote::run_remove(&name, dry_run)?, opts, ctx)
             }
+            Some(RemoteAction::Show {
+                name,
+                no_query,
+                limit,
+            }) => emit_success(
+                &commands::remote::run_show(
+                    &name,
+                    &commands::remote::RemoteShowCliOptions {
+                        query: !no_query,
+                        limit,
+                    },
+                )?,
+                opts,
+                ctx,
+            )
             Some(RemoteAction::Refs {
                 remote_or_url,
                 heads,
