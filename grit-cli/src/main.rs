@@ -509,7 +509,10 @@ enum HistoryAction {
 #[derive(Debug, Subcommand)]
 enum NotesAction {
     /// List notes attached to commits.
-    List,
+    List {
+        #[command(flatten)]
+        limit: limit_args::LimitArgs,
+    },
     /// Show the note for a revision.
     Show {
         /// Commit (or other object) to show the note for.
@@ -972,6 +975,8 @@ enum Command {
     },
     /// List hook scripts or run one by name.
     Hooks {
+        #[command(flatten)]
+        limit: limit_args::LimitArgs,
         #[command(subcommand)]
         action: Option<HooksAction>,
     },
@@ -2401,11 +2406,13 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
                 Ok(ExitStatus::from_ignore_check(&outcome))
             }
         },
-        Command::Hooks { action } => match action {
-            None => emit_success(&commands::hooks::run_list(None)?, opts, ctx),
-            Some(HooksAction::List { limit }) => {
-                emit_success(&commands::hooks::run_list(limit.get())?, opts, ctx)
-            }
+        Command::Hooks { limit, action } => match action {
+            None => emit_success(&commands::hooks::run_list(limit.get())?, opts, ctx),
+            Some(HooksAction::List { limit: sub_limit }) => emit_success(
+                &commands::hooks::run_list(sub_limit.get().or(limit.get()))?,
+                opts,
+                ctx,
+            ),
             Some(HooksAction::Run { name, hook_args }) => {
                 let outcome = commands::hooks::run_hook_by_name(&name, &hook_args)?;
                 emit_success(&outcome, opts, ctx)?;
@@ -2590,22 +2597,28 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
             action,
         } => {
             use commands::notes::NotesRunAction::*;
-            let run_action = match action {
-                None | Some(NotesAction::List) => List,
-                Some(NotesAction::Show { rev }) => Show { rev },
+            let (run_action, list_limit) = match action {
+                None => (List, limit.get()),
+                Some(NotesAction::List { limit: sub_limit }) => {
+                    (List, sub_limit.get().or(limit.get()))
+                }
+                Some(NotesAction::Show { rev }) => (Show { rev }, None),
                 Some(NotesAction::Add {
                     rev,
                     message,
                     force,
-                }) => Add {
-                    rev,
-                    message,
-                    force,
-                },
-                Some(NotesAction::Remove { revs }) => Remove { revs },
+                }) => (
+                    Add {
+                        rev,
+                        message,
+                        force,
+                    },
+                    None,
+                ),
+                Some(NotesAction::Remove { revs }) => (Remove { revs }, None),
             };
             emit_success(
-                &commands::notes::run(notes_ref, run_action, dry_run, limit.get(), ctx.now)?,
+                &commands::notes::run(notes_ref, run_action, dry_run, list_limit, ctx.now)?,
                 opts,
                 ctx,
             )
