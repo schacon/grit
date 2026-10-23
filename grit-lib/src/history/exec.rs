@@ -7,7 +7,7 @@ use crate::command_runner::{
     run_sh_dash_c, CommandOutput, CommandRunner, CommandStdin, CommandStdio,
 };
 use crate::objects::ObjectId;
-use crate::porcelain::checkout::checkout_between_trees;
+use crate::porcelain::checkout::checkout_hard_to_tree_from_head_tree;
 use crate::porcelain::switch::{
     checkout_tree_transition_allow_local, verify_tree_transition_allow_local,
     TreeTransitionVerifyError,
@@ -277,7 +277,7 @@ fn restore_exec_prestate(
             })?;
         }
     }
-    checkout_between_trees(repo, Some(&current_tree), &pre.head_tree).map_err(|e| {
+    checkout_hard_to_tree_from_head_tree(repo, &current_tree, &pre.head_tree).map_err(|e| {
         HistoryError::WorktreeApply {
             message: e.to_string(),
         }
@@ -307,7 +307,8 @@ mod tests {
     use std::sync::Arc;
 
     use crate::command_runner::{
-        CommandRunner, CommandSpec, RecordedResponse, RecordingRunner, RunningCommand,
+        system_command_runner, CommandRunner, CommandSpec, RecordedResponse, RecordingRunner,
+        RunningCommand,
     };
     use crate::history::{
         plan_rewrite, CommitEdit, EmptyPolicy, HistoryEdits, RefScope, RewriteOptions,
@@ -315,6 +316,8 @@ mod tests {
     use crate::index::write_tree::write_tree_from_index;
     use crate::objects::parse_commit;
     use crate::objects::{serialize_commit, CommitData, ObjectKind};
+    use crate::porcelain::status::{status, StatusOptions};
+    use crate::progress::NullProgress;
     use crate::refs::{resolve_ref, write_ref, write_symbolic_ref};
     use crate::repo::{InitOptions, Repository};
 
@@ -624,6 +627,38 @@ mod tests {
         assert_eq!(
             fs::read(&collision).expect("untracked survives"),
             b"precious untracked"
+        );
+    }
+
+    #[test]
+    fn exec_failure_restores_worktree_when_exec_dirties_unchanged_blob() {
+        let (_dir, repo) = init_repo();
+        let stable = b"stable\n";
+        let root = commit_file(&repo, "main", "stable.txt", stable, "root\n", None);
+        let tip = commit_file(&repo, "main", "b.txt", b"2\n", "tip\n", Some(root));
+        let stable_path = repo.work_tree().expect("worktree").join("stable.txt");
+        let stable_before = fs::read(&stable_path).expect("stable.txt");
+        let plan = two_commit_plan(&repo, root, tip);
+        let runner = system_command_runner();
+        let spec = ExecSpec {
+            commands: vec!["printf 'dirty\\n' >> stable.txt; exit 7".into()],
+        };
+        let err =
+            verify_rebase_with_exec(&repo, &plan, &spec, runner.as_ref()).expect_err("exec fail");
+        match err {
+            HistoryError::ExecFailed { exit_code, .. } => assert_eq!(exit_code, 7),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(
+            fs::read(&stable_path).expect("stable.txt after restore"),
+            stable_before
+        );
+        let model = status(&repo, &StatusOptions::default(), &mut NullProgress).expect("status");
+        assert!(
+            model.staged.is_empty() && model.unstaged.is_empty(),
+            "worktree must be clean after exec rollback, staged={:?} unstaged={:?}",
+            model.staged,
+            model.unstaged
         );
     }
 
