@@ -95,6 +95,8 @@ fn auth_logout_render() {
     let logout = LogoutOutcome {
         logged_out: true,
         host: "github.com".to_owned(),
+        dry_run: false,
+        credential: None,
     };
     let human = render_to_string(&logout, OutputMode::Human, &ctx).expect("human");
     let json = render_to_string(&logout, OutputMode::Json, &ctx).expect("json");
