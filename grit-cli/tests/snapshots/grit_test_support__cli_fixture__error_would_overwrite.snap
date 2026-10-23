@@ -1,21 +1,21 @@
 ---
-source: grit-cli/src/error_outcome_snapshots.rs
+source: grit-test-support/src/cli_fixture.rs
 expression: payload
 ---
 {
   "human": {
     "exit": 1,
     "stdout": "",
-    "stderr": "error: switch would overwrite local changes"
+    "stderr": "error: untracked file 'slot/precious.txt' would be overwritten — move or remove it first\n"
   },
   "json": {
     "exit": 1,
-    "stdout": "{\"error\":\"switch would overwrite local changes\",\"kind\":\"would_overwrite\",\"would_overwrite\":{\"reason\":\"local_changes\",\"paths\":[\"tracked.txt\"]}}\n",
+    "stdout": "{\"error\":\"untracked file 'slot/precious.txt' would be overwritten — move or remove it first\",\"kind\":\"would_overwrite\",\"would_overwrite\":{\"paths\":[\"slot/precious.txt\"],\"reason\":\"untracked\"}}\n",
     "stderr": ""
   },
   "markdown": {
     "exit": 1,
-    "stdout": "## Error\n\n- **would_overwrite** — switch would overwrite local changes",
+    "stdout": "**Error:** untracked file 'slot/precious.txt' would be overwritten — move or remove it first\n",
     "stderr": ""
   }
 }

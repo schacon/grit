@@ -307,9 +307,6 @@ fn args_has_flag(args: &[&str], flag: &str) -> bool {
 
 /// Resolve the schema registry key for a `grit` argv slice (no global flags).
 pub fn schema_command_key(args: &[&str]) -> Option<String> {
-    if args.first().copied() == Some("__error_fixture__") {
-        return Some("error".into());
-    }
     let positional: Vec<&str> = args
         .iter()
         .copied()
@@ -884,16 +881,10 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
         ("reflog_delete", &["reflog", "delete", "HEAD@{1}"]),
         ("reflog_expire", &["reflog", "expire", "--expire", "now"]),
         ("worktree_prune", &["worktree", "prune"]),
-        ("error_usage", &["__error_fixture__", "usage"]),
-        (
-            "error_invalid_pattern",
-            &["__error_fixture__", "invalid_pattern"],
-        ),
-        (
-            "error_would_overwrite",
-            &["__error_fixture__", "would_overwrite"],
-        ),
-        ("error_conflict", &["__error_fixture__", "conflict"]),
+        ("error_usage", &["branch", "--delete"]),
+        ("error_invalid_pattern", &["log", "--author", "["]),
+        ("error_would_overwrite", &["switch", "br"]),
+        ("error_conflict", &["history", "drop", "HEAD~1"]),
         ("auth_render", &[]),
         ("update_render", &[]),
     ]
@@ -1048,11 +1039,7 @@ mod tests {
     }
 
     fn snapshot_validates_for_command(name: &str, args: &[&str], instance: &Value) -> bool {
-        let schema_key = if args.first().copied() == Some("__error_fixture__") {
-            "error".to_owned()
-        } else if instance.get("error").is_some() && instance.get("kind").is_none() {
-            "error".to_owned()
-        } else if instance.get("error").is_some() && instance.get("kind").is_some() {
+        let schema_key = if instance.get("error").is_some() {
             "error".to_owned()
         } else {
             schema_command_key(args)
@@ -1123,9 +1110,7 @@ mod tests {
                 snapshot_validates_for_command(&name, args, &instance),
                 "snapshot `{name}` JSON must validate against its schema"
             );
-            let command = if args.first().copied() == Some("__error_fixture__") {
-                "error".to_owned()
-            } else if instance.get("error").is_some() {
+            let command = if instance.get("error").is_some() {
                 "error".to_owned()
             } else {
                 schema_command_key(args)
@@ -1186,11 +1171,6 @@ mod tests {
                 .unwrap_or_else(|| panic!("snapshot {name} missing json.stdout"));
             let instance: Value = serde_json::from_str(stdout.trim())
                 .unwrap_or_else(|e| panic!("parse json stdout in {name}: {e}"));
-
-            if args.first().copied() == Some("__error_fixture__") {
-                validate_json_against_schema(&name, "error", &instance);
-                continue;
-            }
 
             if instance.get("error").is_some() {
                 validate_json_against_schema(&name, "error", &instance);

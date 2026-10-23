@@ -1036,6 +1036,65 @@ fn snapshot_worktree_prune() {
     });
 }
 
+fn prepare_overwrite_switch(fixture: &CliFixture) {
+    fixture.write_repo_file("a.txt", "base\n");
+    fixture.run_ok(&["add", "a.txt"]);
+    fixture.run_ok(&["commit", "-m", "base"]);
+    fixture.run_ok(&["switch", "-c", "br"]);
+    fixture.write_repo_file("slot", "incoming-file\n");
+    fixture.run_ok(&["add", "slot"]);
+    fixture.run_ok(&["commit", "-m", "add slot file"]);
+    fixture.run_ok(&["switch", "main"]);
+    std::fs::create_dir_all(fixture.path().join("slot")).expect("mkdir slot");
+    fixture.write_repo_file("slot/precious.txt", "PRECIOUS\n");
+}
+
+fn prepare_history_conflict(fixture: &CliFixture) {
+    prepare_third_commit(fixture);
+    fixture.write_repo_file("tracked.txt", "dirty\n");
+}
+
+#[test]
+fn snapshot_error_usage() {
+    let fixture = CliFixture::new();
+    fixture.snapshot_all_modes_expect("error_usage", &["branch", "--delete"], snapshot_dir(), 2);
+}
+
+#[test]
+fn snapshot_error_invalid_pattern() {
+    let fixture = CliFixture::new();
+    fixture.snapshot_all_modes_exits(
+        "error_invalid_pattern",
+        &["log", "--author", "["],
+        snapshot_dir(),
+        SnapshotExitCodes::all(129),
+    );
+}
+
+#[test]
+fn snapshot_error_would_overwrite() {
+    let fixture = CliFixture::empty();
+    prepare_overwrite_switch(&fixture);
+    fixture.snapshot_all_modes_expect(
+        "error_would_overwrite",
+        &["switch", "br"],
+        snapshot_dir(),
+        1,
+    );
+}
+
+#[test]
+fn snapshot_error_conflict() {
+    let fixture = CliFixture::new();
+    prepare_history_conflict(&fixture);
+    fixture.snapshot_all_modes_exits(
+        "error_conflict",
+        &["history", "drop", "HEAD~1"],
+        snapshot_dir(),
+        SnapshotExitCodes::all(1),
+    );
+}
+
 trait ExpectSuccess {
     fn expect_success(self, label: &str) -> grit_test_support::Output;
 }

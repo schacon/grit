@@ -1,21 +1,21 @@
 ---
-source: grit-cli/src/error_outcome_snapshots.rs
+source: grit-test-support/src/cli_fixture.rs
 expression: payload
 ---
 {
   "human": {
-    "exit": 1,
+    "exit": 2,
     "stdout": "",
-    "stderr": "error: branch delete requires a branch name"
+    "stderr": "error: branch name required with `--delete`\n"
   },
   "json": {
-    "exit": 1,
-    "stdout": "{\"error\":\"branch delete requires a branch name\",\"kind\":\"usage\"}\n",
+    "exit": 2,
+    "stdout": "{\"error\":\"branch name required with `--delete`\",\"kind\":\"usage\"}\n",
     "stderr": ""
   },
   "markdown": {
-    "exit": 1,
-    "stdout": "## Error\n\n- **usage** — branch delete requires a branch name",
+    "exit": 2,
+    "stdout": "**Error:** branch name required with `--delete`\n",
     "stderr": ""
   }
 }

@@ -1,21 +1,21 @@
 ---
-source: grit-cli/src/error_outcome_snapshots.rs
+source: grit-test-support/src/cli_fixture.rs
 expression: payload
 ---
 {
   "human": {
-    "exit": 1,
+    "exit": 129,
     "stdout": "",
-    "stderr": "error: invalid commit filter pattern `[`: unterminated bracket expression"
+    "stderr": "error: invalid commit filter pattern `[`: unterminated bracket expression\n"
   },
   "json": {
-    "exit": 1,
+    "exit": 129,
     "stdout": "{\"error\":\"invalid commit filter pattern `[`: unterminated bracket expression\",\"kind\":\"invalid_pattern\"}\n",
     "stderr": ""
   },
   "markdown": {
-    "exit": 1,
-    "stdout": "## Error\n\n- **invalid_pattern** — invalid commit filter pattern `[`: unterminated bracket expression",
+    "exit": 129,
+    "stdout": "**Error:** invalid commit filter pattern `[`: unterminated bracket expression\n",
     "stderr": ""
   }
 }
