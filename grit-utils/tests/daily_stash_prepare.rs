@@ -1,5 +1,6 @@
 //! Stash list daily prepare must leave at least one stash entry.
 
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
 
@@ -34,9 +35,11 @@ fn stash_list_prepare_seed_creates_stash_entry() {
     grit_utils::fixture_registry::ensure_cached(&git, FixtureKind::Synth10kSmoke, true)
         .expect("fixture");
 
+    let bench = PathBuf::from(env!("CARGO_BIN_EXE_grit-bench"));
     let setup = DailySetup {
         git: &git,
         grit: &grit,
+        bench: &bench,
         smoke: true,
         offline: true,
     };

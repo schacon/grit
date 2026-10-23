@@ -1925,6 +1925,306 @@ impl<'r> CommitGraphCache<'r> {
         }
         Ok(false)
     }
+
+    /// Mark branch tips that are ancestors of (merged into) any commit in `bases`.
+    ///
+    /// Uses commit-graph generations to stop the walk below the minimum generation among
+    /// `tips`, matching Git's `tips_reachable_from_bases` / `--merged` batch filter.
+    fn tips_merged_from_bases(
+        &mut self,
+        bases: &[ObjectId],
+        tips: &[ObjectId],
+    ) -> Result<OidHashSet> {
+        let mut merged = oid_hash_set();
+        if bases.is_empty() || tips.is_empty() {
+            return Ok(merged);
+        }
+
+        let mut tip_gens: Vec<(ObjectId, u64)> = Vec::with_capacity(tips.len());
+        for &tip in tips {
+            let peeled = peel_to_commit_for_merge_base(self.repo, tip).unwrap_or(tip);
+            tip_gens.push((peeled, commit_rank_for_walk(self, peeled)));
+        }
+        tip_gens.sort_by_key(|(_, gen)| *gen);
+        let mut min_gen_index = 0usize;
+        let mut min_generation = tip_gens[0].1;
+
+        let tip_set: OidHashSet = tip_gens.iter().map(|(tip, _)| *tip).collect();
+
+        let mut stack: Vec<ObjectId> = Vec::new();
+        for &base in bases {
+            let peeled = peel_to_commit_for_merge_base(self.repo, base).unwrap_or(base);
+            stack.push(peeled);
+        }
+
+        let mut seen: OidHashSet = oid_hash_set();
+        while let Some(oid) = stack.pop() {
+            if !seen.insert(oid) {
+                continue;
+            }
+            if tip_set.contains(&oid) {
+                merged.insert(oid);
+                while min_gen_index < tip_gens.len() && merged.contains(&tip_gens[min_gen_index].0)
+                {
+                    min_gen_index += 1;
+                }
+                if min_gen_index >= tip_gens.len() {
+                    break;
+                }
+                min_generation = tip_gens[min_gen_index].1;
+            }
+            for parent in self.parents_of(oid)? {
+                if seen.contains(&parent) {
+                    continue;
+                }
+                let p_gen = commit_rank_for_walk(self, parent);
+                if p_gen != UNRANKED_COMMIT && p_gen < min_generation {
+                    continue;
+                }
+                stack.push(parent);
+            }
+        }
+        Ok(merged)
+    }
+}
+
+/// Dense bitset of ref-tip indices (for shared `--contains` walks).
+#[derive(Clone)]
+struct TipIndexBitset {
+    words: Vec<u64>,
+}
+
+impl TipIndexBitset {
+    fn with_capacity(tips: usize) -> Self {
+        Self {
+            words: vec![0; tips.div_ceil(64)],
+        }
+    }
+
+    fn set(&mut self, index: usize) {
+        self.words[index / 64] |= 1_u64 << (index % 64);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.words.iter().all(|w| *w == 0)
+    }
+
+    /// Union `other` into `self`. Returns whether any new bit was set.
+    fn or_assign(&mut self, other: &Self) -> bool {
+        let mut changed = false;
+        for (slot, &bits) in self.words.iter_mut().zip(&other.words) {
+            let merged = *slot | bits;
+            if merged != *slot {
+                *slot = merged;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    fn iter_indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.words.iter().enumerate().flat_map(|(word_idx, word)| {
+            let base = word_idx * 64;
+            (0..64).filter_map(move |bit| {
+                if *word & (1_u64 << bit) != 0 {
+                    Some(base + bit)
+                } else {
+                    None
+                }
+            })
+        })
+    }
+}
+
+/// Per-tip results from one shared backward walk for `--contains` / `--no-contains`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RefContainsTipState {
+    /// Any `--contains` target appears in this tip's history (OR semantics).
+    pub contains_match: bool,
+    /// Any `--no-contains` target appears in this tip's history.
+    pub no_contains_match: bool,
+}
+
+/// One memoized shared-history walk over all candidate ref tips.
+pub(crate) struct RefContainsBatch<'repo> {
+    graph: CommitGraphCache<'repo>,
+    tips: Vec<ObjectId>,
+    tip_state: Vec<RefContainsTipState>,
+    tip_index: OidHashMap<usize>,
+}
+
+impl<'repo> RefContainsBatch<'repo> {
+    /// Start a batch session on `repo`.
+    pub(crate) fn new(repo: &'repo Repository) -> Self {
+        Self {
+            graph: CommitGraphCache::new(repo),
+            tips: Vec::new(),
+            tip_state: Vec::new(),
+            tip_index: oid_hash_map(),
+        }
+    }
+
+    /// Register a peeled commit tip; returns its index (deduplicated by commit oid).
+    pub(crate) fn register_tip(&mut self, repo: &'repo Repository, tip: ObjectId) -> usize {
+        let peeled = peel_to_commit_for_merge_base(repo, tip).unwrap_or(tip);
+        if let Some(&idx) = self.tip_index.get(&peeled) {
+            return idx;
+        }
+        let idx = self.tips.len();
+        self.tips.push(peeled);
+        self.tip_state.push(RefContainsTipState {
+            contains_match: false,
+            no_contains_match: false,
+        });
+        self.tip_index.insert(peeled, idx);
+        idx
+    }
+
+    /// Walk shared history from all registered tips and fill [`Self::tip_state`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates object read failures during parent walks.
+    pub(crate) fn run(
+        &mut self,
+        contains_targets: &[ObjectId],
+        no_contains_targets: &[ObjectId],
+    ) -> Result<()> {
+        if self.tips.is_empty() || (contains_targets.is_empty() && no_contains_targets.is_empty()) {
+            return Ok(());
+        }
+
+        self.graph.ensure_single_pack_reader();
+
+        for state in &mut self.tip_state {
+            state.contains_match = contains_targets.is_empty();
+            state.no_contains_match = false;
+        }
+
+        let contains_set: OidHashSet = contains_targets.iter().copied().collect();
+        let no_contains_set: OidHashSet = no_contains_targets.iter().copied().collect();
+
+        let filter_targets: Vec<ObjectId> = contains_targets
+            .iter()
+            .chain(no_contains_targets.iter())
+            .copied()
+            .collect();
+        let min_target_gen = min_ranked_generation(&mut self.graph, &filter_targets);
+        let need_contains = !contains_targets.is_empty();
+        let need_no_contains = !no_contains_targets.is_empty();
+
+        let tip_count = self.tips.len();
+        let mut reach: OidHashMap<TipIndexBitset> = oid_hash_map();
+        let mut stack: Vec<ObjectId> = self.tips.clone();
+
+        for (i, &tip) in self.tips.iter().enumerate() {
+            reach
+                .entry(tip)
+                .or_insert_with(|| TipIndexBitset::with_capacity(tip_count))
+                .set(i);
+        }
+
+        let tip_still_active = |state: &RefContainsTipState| -> bool {
+            (need_contains && !state.contains_match)
+                || (need_no_contains && !state.no_contains_match)
+        };
+
+        while let Some(oid) = stack.pop() {
+            let Some(indices_set) = reach.remove(&oid) else {
+                continue;
+            };
+            if indices_set.is_empty() {
+                continue;
+            }
+
+            if contains_set.contains(&oid) {
+                for i in indices_set.iter_indices() {
+                    self.tip_state[i].contains_match = true;
+                }
+            }
+            if no_contains_set.contains(&oid) {
+                for i in indices_set.iter_indices() {
+                    self.tip_state[i].no_contains_match = true;
+                }
+            }
+
+            let mut active = TipIndexBitset::with_capacity(tip_count);
+            for i in indices_set.iter_indices() {
+                if tip_still_active(&self.tip_state[i]) {
+                    active.set(i);
+                }
+            }
+            if active.is_empty() {
+                if self.tip_state.iter().all(|s| !tip_still_active(s)) {
+                    break;
+                }
+                continue;
+            }
+
+            for parent in self.graph.parents_of(oid)? {
+                if should_prune_ref_filter_parent(&mut self.graph, parent, min_target_gen) {
+                    continue;
+                }
+                let entry = reach
+                    .entry(parent)
+                    .or_insert_with(|| TipIndexBitset::with_capacity(tip_count));
+                if entry.or_assign(&active) {
+                    stack.push(parent);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// State for a tip index from [`Self::register_tip`].
+    #[must_use]
+    pub(crate) fn tip_state(&self, index: usize) -> &RefContainsTipState {
+        &self.tip_state[index]
+    }
+
+    /// Peeled commit oid for a tip index from [`Self::register_tip`].
+    #[must_use]
+    pub(crate) fn tip_commit(&self, index: usize) -> ObjectId {
+        self.tips[index]
+    }
+}
+
+fn min_ranked_generation(graph: &mut CommitGraphCache<'_>, targets: &[ObjectId]) -> Option<u64> {
+    let mut min_gen: Option<u64> = None;
+    for &target in targets {
+        let gen = commit_rank_for_walk(graph, target);
+        if gen == UNRANKED_COMMIT {
+            return None;
+        }
+        min_gen = Some(min_gen.map_or(gen, |m| m.min(gen)));
+    }
+    min_gen
+}
+
+fn should_prune_ref_filter_parent(
+    graph: &mut CommitGraphCache<'_>,
+    parent: ObjectId,
+    min_target_gen: Option<u64>,
+) -> bool {
+    let Some(min_gen) = min_target_gen else {
+        return false;
+    };
+    let p_gen = commit_rank_for_walk(graph, parent);
+    p_gen != UNRANKED_COMMIT && p_gen < min_gen
+}
+
+/// Branch tips that are merged into any of `bases` (ancestors of a base commit).
+///
+/// # Errors
+///
+/// Propagates object read failures during the ancestry walk.
+pub(crate) fn branch_tips_merged_into(
+    repo: &Repository,
+    bases: &[ObjectId],
+    tips: &[ObjectId],
+) -> Result<OidHashSet> {
+    let mut cache = CommitGraphCache::new(repo);
+    cache.tips_merged_from_bases(bases, tips)
 }
 
 #[cfg(test)]
