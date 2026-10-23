@@ -45,6 +45,7 @@ The target branch is the first that exists of: the `target.branch` config value,
 | Recent history, ten at a time | `grit log`, then `grit log --before <next>` using the `next` value |
 | History with patches or file lists | `grit log -p`, `grit log --stat`, `grit log --name-status`, … (same format flags as `grit diff`) |
 | Commits on this branch not on the target | `grit shortlog` or `grit ahead`; add `--target <REF>` to pick the base |
+| Who last touched each line of a file | `grit blame <path> --json` (author dates live under `commits.<oid>.author.date`; use **`--group`** for smaller `hunks[]` on large files) |
 | Skip formatting commits in blame | `grit blame --ignore-rev <OID>` or `grit blame --ignore-revs-file .git-blame-ignore-revs` (set `blame.ignoreRevsFile` in config for a default list) |
 | What happened to this branch recently | `grit reflog [REF] -n 20 --json` (`--since` / `--until` / `--grep`; `old_oid`, `new_oid`, `date`, `committer`, optional `action`; indices match Git `ref@{n}`) |
 

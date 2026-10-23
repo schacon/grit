@@ -8,7 +8,7 @@ order: 2
 ## Synopsis
 
 ```text
-grit blame [--rev <commit>] [-L START,END] [--first-parent]
+grit blame [--rev <commit>] [-L START,END] [--first-parent] [--group]
   [--ignore-rev <REV>]... [--ignore-revs-file <FILE>]... <file>
 ```
 
@@ -28,6 +28,7 @@ When a commit renamed or moved the file (including rename-and-edit in the same c
 | `-L START,END` | Limit output to an inclusive 1-based line range in the final file. Blame stops once every line in the range is attributed. |
 | `--lines` | Same as `-L` (long form). |
 | `--first-parent` | At merge commits, follow only the first parent when attributing lines. Default matches Git blame: all parents are considered. |
+| `--group` | With `--json` only: emit grouped `hunks[]` instead of per-line `lines[]` (smaller on large files). Human and `--markdown` output stay per line. |
 | `--ignore-rev <REV>` | Treat this commit as transparent while walking history (repeatable). Unknown revisions are an error. |
 | `--ignore-revs-file <FILE>` | Read full-length commit oids to ignore, one per line (`#` comments, blank lines skipped). Repeatable; `""` clears entries loaded from config or earlier files. Missing files are an error. Relative paths are resolved from the repository root. Config `blame.ignoreRevsFile` (multi-valued) is applied before CLI files. |
 
@@ -68,13 +69,31 @@ Pass `--json` for stable, scripting-friendly output:
 | `lines` | array | One record per line (after any `-L` filter), in final-line order. |
 | `lines[].commit` | string | Full commit oid for the line. |
 | `lines[].original_line` | number | 1-based line number in the originating commit. |
+| `lines[].original_path` | string | Path of the line in its originating commit (matches `git blame --porcelain` `filename`, including after renames). |
 | `lines[].final_line` | number | 1-based line number in the blamed revision. |
 | `lines[].content` | string | Line text. |
 | `lines[].ignored` | boolean | Present and `true` when the line was attributed through an ignored revision. |
 | `lines[].unblamable` | boolean | Present and `true` when the line was added in an ignored revision and cannot be blamed further back. |
 | `commits` | object | Map of commit oid → metadata for every line. |
-| `commits.<oid>.author` | object | Author with `name`, `email`, and `date` (RFC 3339 — same shape as [`grit show`](../show/)). |
+| `commits.<oid>.author` | object | Author with `name`, `email`, and `date` (RFC 3339 — same shape as [`grit show`](../show/)). Author date is only here, not repeated on each line or hunk. |
 | `commits.<oid>.summary` | string | First line of the commit message. |
+
+### Grouped JSON (`--json --group`)
+
+Same top-level `file`, `rev`, and `commits` map. Replaces `lines[]` with `hunks[]` (omit `lines`):
+
+| Field | Type | Meaning |
+| ----- | ---- | ------- |
+| `hunks[].commit` | string | Full commit oid for every line in the hunk. |
+| `hunks[].original_path` | string | Originating path for the hunk (porcelain `filename`). |
+| `hunks[].original_start` | number | 1-based first line in the originating commit. |
+| `hunks[].final_start` | number | 1-based first line in the blamed revision. |
+| `hunks[].count` | number | Number of consecutive final lines in the hunk. |
+| `hunks[].ignored` | boolean | Present and `true` when the hunk passed through an ignored revision. |
+| `hunks[].unblamable` | boolean | Present and `true` when blame could not continue past an ignored revision. |
+| `hunks[].lines` | array of strings | Line text for each row in the hunk (same order as final lines). |
+
+Hunk boundaries match `git blame --porcelain` group headers (`<oid> <orig> <final> <count>`). Prefer `--group` for agents and scripts on large files.
 
 Example:
 
@@ -86,6 +105,7 @@ Example:
     {
       "commit": "919c45f33de5e5c0bd05f8ffb089f697f4644976",
       "original_line": 1,
+      "original_path": "story.txt",
       "final_line": 1,
       "content": "alpha ONE"
     }

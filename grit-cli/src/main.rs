@@ -832,6 +832,9 @@ enum Command {
         /// Read revision oids to ignore from a file (repeatable; `""` clears prior entries).
         #[arg(long = "ignore-revs-file", value_name = "FILE")]
         ignore_revs_file: Vec<String>,
+        /// With `--json`, emit grouped `hunks[]` instead of per-line `lines[]`.
+        #[arg(long)]
+        group: bool,
     },
     /// Show changes as a diff. No argument: uncommitted changes; with a commit:
     /// the change that commit introduced; with two commits (or `A..B`) diff their trees.
@@ -2254,6 +2257,7 @@ fn dispatch(
             first_parent,
             ignore_rev,
             ignore_revs_file,
+            group,
         } => emit_success(
             &commands::blame::run(
                 file,
@@ -2262,6 +2266,7 @@ fn dispatch(
                 first_parent,
                 ignore_rev,
                 ignore_revs_file,
+                group,
                 ctx.now,
             )?,
             opts,
