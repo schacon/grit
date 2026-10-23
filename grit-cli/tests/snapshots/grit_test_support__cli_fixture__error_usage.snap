@@ -1,0 +1,21 @@
+---
+source: grit-test-support/src/cli_fixture.rs
+expression: payload
+---
+{
+  "human": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "error: branch name required with `--delete`\n"
+  },
+  "json": {
+    "exit": 2,
+    "stdout": "{\"error\":\"branch name required with `--delete`\",\"kind\":\"usage\"}\n",
+    "stderr": ""
+  },
+  "markdown": {
+    "exit": 2,
+    "stdout": "**Error:** branch name required with `--delete`\n",
+    "stderr": ""
+  }
+}

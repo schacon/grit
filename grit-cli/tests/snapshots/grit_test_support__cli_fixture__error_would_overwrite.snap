@@ -1,0 +1,21 @@
+---
+source: grit-test-support/src/cli_fixture.rs
+expression: payload
+---
+{
+  "human": {
+    "exit": 1,
+    "stdout": "",
+    "stderr": "error: untracked file 'slot/precious.txt' would be overwritten — move or remove it first\n"
+  },
+  "json": {
+    "exit": 1,
+    "stdout": "{\"error\":\"untracked file 'slot/precious.txt' would be overwritten — move or remove it first\",\"kind\":\"would_overwrite\",\"would_overwrite\":{\"paths\":[\"slot/precious.txt\"],\"reason\":\"untracked\"}}\n",
+    "stderr": ""
+  },
+  "markdown": {
+    "exit": 1,
+    "stdout": "**Error:** untracked file 'slot/precious.txt' would be overwritten — move or remove it first\n",
+    "stderr": ""
+  }
+}
