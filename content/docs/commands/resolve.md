@@ -8,7 +8,7 @@ order: 4
 ## Synopsis
 
 ```text
-grit resolve [--short] [--abbrev-ref | --symbolic-full-name] <SPEC>...
+grit resolve [--short] [--abbrev-ref | --symbolic-full-name] [--verify <SPEC> [-q]] <SPEC>...
 ```
 
 ## Description
@@ -18,6 +18,9 @@ Resolves one or more revision specs to an object id, plus the object type and un
 Each spec prints on its own line as `OID TYPE` (full hex by default). With `--short`, oids are abbreviated using the same uniqueness rules as elsewhere in grit.
 
 With `--abbrev-ref` or `--symbolic-full-name`, output switches to ref names (one line per spec): the shortest unambiguous short name, or the full symbolic ref name, matching `git rev-parse` for the same flags. Specs that are not refs (commit oids, peeled objects, unknown names) produce no line for that spec; exit status stays `0` unless a spec fails for another reason (for example `@{u}` with no upstream).
+
+With `--verify <SPEC>`, exactly one spec is resolved strictly (like `git rev-parse --verify`): revision ranges (`A..B`, `A...B`), revision-set excludes (`^ref`), and other multi-revision forms are rejected with a typed error. Full hex ids must exist in the object database, and peel suffixes such as `^{commit}` are honored. Clap rejects extra positional specs when `--verify` is used (usage exit `2`). Success prints one object id line (abbreviated when `--short` is set). Combine with `-q` / `--quiet` to suppress all stdout and stderr and answer with exit status only (`0` = exists, `1` = not). `--json --quiet` prints nothing; the exit code alone answers.
+
 ## Options
 
 | Option | Description |
@@ -26,6 +29,8 @@ With `--abbrev-ref` or `--symbolic-full-name`, output switches to ref names (one
 | `--short` | Print abbreviated object ids instead of full hex. |
 | `--abbrev-ref` | Print the shortest unambiguous ref name for each spec (conflicts with default oid output). |
 | `--symbolic-full-name` | Print the full symbolic ref name for each spec. |
+| `--verify <SPEC>` | Resolve one spec strictly (`git rev-parse --verify`); conflicts with ref-name modes and extra positionals. |
+| `-q`, `--quiet` | With `--verify`, suppress stdout and stderr; exit `0` or `1` only. |
 
 ## Examples
 
@@ -101,9 +106,9 @@ Pass `--markdown` for a table of resolved specs, oids, kinds, and sizes.
 
 | Code | Meaning |
 | ---: | --- |
-| `0` | Every spec resolved. |
-| `1` | At least one spec failed. |
-| `2` | Invalid flags ([`usage`](../exit-codes/)). |
+| `0` | Every spec resolved (default mode), or `--verify` / `--verify --quiet` resolved the spec. |
+| `1` | At least one spec failed, or `--verify` / `--verify --quiet` could not resolve the spec. |
+| `2` | Invalid flags ([`usage`](../exit-codes/)), or `--verify` with zero or multiple specs. |
 
 See [Exit codes](../exit-codes/).
 

@@ -52,6 +52,7 @@ The target branch is the first that exists of: the `target.branch` config value,
 | What happened to this branch recently | `grit reflog [REF] -n 20 --json` (`--since` / `--until` / `--grep`; `old_oid`, `new_oid`, `date`, `committer`, optional `action`; indices match Git `ref@{n}`) |
 | Preview reflog expiry | `grit reflog expire --dry-run --json` (no log files written; `dry_run` and per-ref `refs[].pruned`) |
 | Drop old reflog entries | `grit reflog expire` (gc rules; `--expire`, `--expire-unreachable`, `--all`) |
+| Does this ref or object exist? | `grit resolve --verify <SPEC> --quiet` (exit `0` = yes, `1` = no; no output; add `--json` only when you need the oid without `--quiet`) |
 
 A branch literally named `list` is not the `list` subcommand — use **`grit reflog refs/heads/list`** to show that branch's entries.
 

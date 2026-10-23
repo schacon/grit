@@ -98,6 +98,35 @@ impl JsonSchema for ResolveEntry {
     }
 }
 
+/// Result of `grit resolve --verify` (`--json` when not `--quiet`).
+#[derive(Serialize, JsonSchema)]
+pub struct VerifyResolveOutcome {
+    pub spec: String,
+    pub oid: String,
+}
+
+impl HumanRender for VerifyResolveOutcome {
+    fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
+        outln!(w, "{}", self.oid);
+        Ok(())
+    }
+}
+
+impl MarkdownRender for VerifyResolveOutcome {
+    fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
+        outln!(w, "## Resolve (verify)\n");
+        outln!(w, "| Spec | OID |");
+        outln!(w, "| --- | --- |");
+        outln!(
+            w,
+            "| `{}` | `{}` |",
+            self.spec.replace('|', "\\|"),
+            self.oid
+        );
+        Ok(())
+    }
+}
+
 /// Result of `grit resolve`.
 #[derive(Serialize, JsonSchema)]
 pub struct ResolveOutcome {
@@ -157,6 +186,30 @@ impl MarkdownRender for ResolveOutcome {
             }
         }
         Ok(())
+    }
+}
+
+pub fn run_verify(spec: String, short: bool, quiet: bool) -> Result<VerifyResolveOutcome> {
+    let repo = if quiet {
+        context::discover()?
+    } else {
+        context::discover_with_warnings()?.0
+    };
+    let oid = repo
+        .verify_object(&spec, None)
+        .map_err(|e| map_resolve_error(&spec, e))?;
+    let oid = abbreviate_for_display(&repo, oid, short)
+        .with_context(|| format!("abbreviate oid for '{spec}'"))?;
+    Ok(VerifyResolveOutcome { spec, oid })
+}
+
+/// Exit code for `grit resolve --verify` (0 = resolved, 1 = not).
+#[must_use]
+pub fn verify_exit_code(result: &Result<VerifyResolveOutcome, anyhow::Error>) -> i32 {
+    if result.is_ok() {
+        0
+    } else {
+        1
     }
 }
 
