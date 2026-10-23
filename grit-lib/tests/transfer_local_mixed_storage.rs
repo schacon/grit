@@ -132,6 +132,7 @@ fn grit_clone(url: String, dest: PathBuf) {
             branch: None,
             single_branch: None,
             tags: None,
+            promisor_fetcher: None,
         },
         &mut NoProgress,
         None,
