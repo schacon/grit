@@ -85,6 +85,7 @@ fn clone_local_repacked_plus_loose_reports_full_transfer_stats() {
             initial_branch: "main".to_owned(),
             thread_policy: grit_lib::parallel::ThreadPolicy::default(),
             depth: None,
+            filter: None,
         },
         &mut NoProgress,
         None,

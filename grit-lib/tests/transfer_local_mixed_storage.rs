@@ -128,6 +128,7 @@ fn grit_clone(url: String, dest: PathBuf) {
             initial_branch: "main".to_owned(),
             thread_policy: grit_lib::parallel::ThreadPolicy::default(),
             depth: None,
+            filter: None,
         },
         &mut NoProgress,
         None,

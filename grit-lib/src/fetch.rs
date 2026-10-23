@@ -1401,12 +1401,14 @@ pub fn fetch_remote(
     } else {
         None
     };
-    let (wire_filter, filter_sent) = crate::partial_clone::wire_filter_for_capabilities(
+    let (wire_filter, _filter_sent) = crate::partial_clone::wire_filter_for_capabilities(
         opts.filter.as_ref(),
         v2_caps.as_deref(),
         v0_caps.as_deref(),
     );
-    opts.mark_received_pack_promisor = filter_sent;
+    // Match Git: a requested/stored partial-clone filter marks the received pack
+    // promisor even when the server lacks `filter` and fetches unfiltered.
+    opts.mark_received_pack_promisor = opts.filter.is_some();
     let wire_filter = wire_filter.as_deref();
 
     if wants.is_empty() {

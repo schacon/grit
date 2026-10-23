@@ -1,23 +1,23 @@
 //! Filtered fetch with promisor packs (partial clone) over upload-pack.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::fs;
-use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
 
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::ConfigSet;
 use grit_lib::maintenance::{fsck, FsckOptions};
 use grit_lib::objects::pack::clear_pack_cache;
-use grit_lib::objects::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
+use grit_lib::objects::promisor::repo_treats_promisor_packs;
 use grit_lib::objects::ObjectId;
 use grit_lib::remote::clone::{clone, CloneOptions};
 use grit_lib::remote::fetch::NoProgress;
 use grit_lib::remote::partial_clone::ObjectFilterSpec;
 use grit_lib::remote::transfer::{FetchOptions, TagMode};
 use grit_lib::remote::Remote;
-use grit_lib::repo::{InitOptions, Repository};
+use grit_lib::repo::Repository;
 use grit_test_support::git_cmd;
 
 fn git_in(dir: &Path, args: &[&str]) {
@@ -230,9 +230,10 @@ fn filter_dropped_when_server_lacks_capability() {
     let git_dir = grit_clone_filtered(&url, dest.path(), ObjectFilterSpec::BlobNone);
     clear_pack_cache();
     let objects = git_dir.join("objects");
+    assert_partial_clone_config(&git_dir, "origin");
     assert!(
-        !promisor_sidecar_exists(&objects),
-        "filter dropped — full pack, no promisor marker"
+        promisor_sidecar_exists(&objects),
+        "Git still marks the pack promisor when the server drops the filter"
     );
     assert!(
         pack_has_blob(&objects.join("pack")),
@@ -266,10 +267,12 @@ fn refetch_reapplies_stored_filter() {
     )
     .expect("cfg");
     let remote = Remote::from_config(&config, "origin").expect("remote");
-    let mut fetch_opts = FetchOptions::default();
-    fetch_opts.refspecs = vec!["+refs/heads/main:refs/remotes/origin/main".to_owned()];
-    fetch_opts.tags = TagMode::Following;
-    fetch_opts.remote_name = Some("origin".to_owned());
+    let fetch_opts = FetchOptions {
+        refspecs: vec!["+refs/heads/main:refs/remotes/origin/main".to_owned()],
+        tags: TagMode::Following,
+        remote_name: Some("origin".to_owned()),
+        ..Default::default()
+    };
     remote
         .fetch(&repo, fetch_opts, &mut NoProgress, None)
         .expect("refetch");
@@ -317,7 +320,10 @@ fn fsck_accepts_promised_missing_blobs() {
 #[cfg(feature = "http-ureq")]
 mod http_v2 {
     use super::*;
-    use grit_lib::remote::HttpClientFactory;
+    use std::net::{TcpListener, TcpStream};
+    use std::process::{Child, Stdio};
+    use std::time::{Duration, Instant};
+
     fn find_binary(name: &str) -> Option<PathBuf> {
         let exe = std::env::current_exe().ok()?;
         let deps = exe.parent()?;
