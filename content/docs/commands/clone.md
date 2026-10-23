@@ -122,7 +122,7 @@ $ grit clone -b v1.0.0 https://github.com/BurntSushi/ripgrep.git
 
 ## JSON output
 
-Schema: [v1](/schemas/clone/v1.json)
+Schema: [v2](/schemas/clone/v2.json)
 
 Pass `--json` for stable, scripting-friendly output:
 
@@ -231,7 +231,7 @@ Unborn remote default branch (`HEAD` on the server points at a branch with no co
 
 Pass [`--markdown`](../global-options/) for agent-friendly output.
 
-Schema: [v1](/schemas/clone/v1.json)
+Schema: [v2](/schemas/clone/v2.json)
 
 Markdown uses headings, bullet lists, and fenced blocks; pipe characters inside table cells are escaped. See the JSON output section for the stable field contract.
 

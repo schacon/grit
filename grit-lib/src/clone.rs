@@ -556,15 +556,13 @@ pub fn clone_effective_single_branch(opts: &CloneOptions) -> bool {
 }
 
 fn resolve_clone_tag_mode(opts: &CloneOptions) -> TagMode {
-    opts.tags
-        .map(CloneTags::tag_mode)
-        .unwrap_or_else(|| {
-            if opts.depth.is_some() {
-                TagMode::Following
-            } else {
-                TagMode::All
-            }
-        })
+    opts.tags.map(CloneTags::tag_mode).unwrap_or_else(|| {
+        if opts.depth.is_some() {
+            TagMode::Following
+        } else {
+            TagMode::All
+        }
+    })
 }
 
 fn setup_clone_head(
