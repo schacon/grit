@@ -152,18 +152,39 @@ impl GcTaskReport {
                 refs_packed,
                 refs_pruned,
                 path,
-            } => outln!(
-                w,
-                "pack-refs: packed {refs_packed} refs ({refs_pruned} loose removed) → {path} ({duration_ms} ms)."
-            ),
+            } => {
+                if dry_run {
+                    outln!(
+                        w,
+                        "pack-refs: would pack {refs_packed} refs ({refs_pruned} loose removed) → {path} ({duration_ms} ms)."
+                    );
+                } else {
+                    outln!(
+                        w,
+                        "pack-refs: packed {refs_packed} refs ({refs_pruned} loose removed) → {path} ({duration_ms} ms)."
+                    );
+                }
+            }
             Self::ReflogExpire {
                 duration_ms,
                 entries_pruned,
-            } => outln!(
-                w,
-                "reflog-expire: removed {entries_pruned} entries ({duration_ms} ms)."
-            ),
-            Self::Repack { duration_ms, report } => {
+            } => {
+                if dry_run {
+                    outln!(
+                        w,
+                        "reflog-expire: would remove {entries_pruned} entries ({duration_ms} ms)."
+                    );
+                } else {
+                    outln!(
+                        w,
+                        "reflog-expire: removed {entries_pruned} entries ({duration_ms} ms)."
+                    );
+                }
+            }
+            Self::Repack {
+                duration_ms,
+                report,
+            } => {
                 if dry_run {
                     outln!(
                         w,
@@ -187,28 +208,55 @@ impl GcTaskReport {
                 duration_ms,
                 pruned,
                 kept,
-            } => outln!(
-                w,
-                "prune: removed {pruned} unreachable loose objects ({kept} kept, {duration_ms} ms)."
-            ),
+            } => {
+                if dry_run {
+                    outln!(
+                        w,
+                        "prune: would remove {pruned} unreachable loose objects ({kept} kept, {duration_ms} ms)."
+                    );
+                } else {
+                    outln!(
+                        w,
+                        "prune: removed {pruned} unreachable loose objects ({kept} kept, {duration_ms} ms)."
+                    );
+                }
+            }
             Self::CommitGraph {
                 duration_ms,
                 commit_count,
                 path,
                 ..
-            } => outln!(
-                w,
-                "commit-graph: wrote {commit_count} commits to {path} ({duration_ms} ms)."
-            ),
+            } => {
+                if dry_run {
+                    outln!(
+                        w,
+                        "commit-graph: would write {commit_count} commits to {path} ({duration_ms} ms)."
+                    );
+                } else {
+                    outln!(
+                        w,
+                        "commit-graph: wrote {commit_count} commits to {path} ({duration_ms} ms)."
+                    );
+                }
+            }
             Self::Midx {
                 duration_ms,
                 pack_count,
                 path,
                 bitmap,
-            } => outln!(
-                w,
-                "midx: indexed {pack_count} packs at {path} (bitmap: {bitmap}, {duration_ms} ms)."
-            ),
+            } => {
+                if dry_run {
+                    outln!(
+                        w,
+                        "midx: would index {pack_count} packs at {path} (bitmap: {bitmap}, {duration_ms} ms)."
+                    );
+                } else {
+                    outln!(
+                        w,
+                        "midx: indexed {pack_count} packs at {path} (bitmap: {bitmap}, {duration_ms} ms)."
+                    );
+                }
+            }
         }
         Ok(())
     }

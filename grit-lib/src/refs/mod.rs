@@ -2720,7 +2720,8 @@ fn pack_refs_reftable(git_dir: &Path, dry_run: bool) -> Result<(PathBuf, usize, 
         .map(|s| s.lines().filter(|l| !l.is_empty()).count())
         .unwrap_or(0);
     if dry_run {
-        return Ok((rt_dir, 0, 0));
+        let tables_pruned = tables_before.saturating_sub(1);
+        return Ok((rt_dir, 0, tables_pruned));
     }
     let mut stack = ReftableStack::open(&store_git_dir)?;
     stack.compact()?;

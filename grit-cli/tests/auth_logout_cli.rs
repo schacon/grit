@@ -40,12 +40,16 @@ fn git(home: &Path, args: &[&str], stdin: Option<&[u8]>) -> Option<Output> {
     child.wait_with_output().ok()
 }
 
-fn grit_logout_json(home: &Path) -> Value {
+fn grit_logout_json(home: &Path, dry_run: bool) -> Value {
     let mut cmd = Command::new(GRIT);
     isolated(&mut cmd, home);
+    let mut args = vec!["--json", "auth", "logout"];
+    if dry_run {
+        args.push("--dry-run");
+    }
     let out = cmd
         .current_dir(home)
-        .args(["--json", "auth", "logout"])
+        .args(args)
         .output()
         .expect("spawn grit");
     assert!(
@@ -71,7 +75,7 @@ fn logout_without_helper_reports_nothing_removed() {
         eprintln!("skipping: system git unavailable");
         return;
     }
-    let json = grit_logout_json(&home);
+    let json = grit_logout_json(&home, false);
     assert_eq!(json["logged_out"], Value::Bool(false));
     assert_eq!(json["host"], "github.com");
 }
@@ -104,7 +108,17 @@ fn logout_erases_token_that_git_credential_stored() {
     let filled = git(&home, &["credential", "fill"], Some(TOKEN_QUERY)).expect("fill");
     assert!(String::from_utf8_lossy(&filled.stdout).contains("password=gho_cli"));
 
-    let json = grit_logout_json(&home);
+    let preview = grit_logout_json(&home, true);
+    assert_eq!(preview["dry_run"], Value::Bool(true));
+    assert_eq!(preview["logged_out"], Value::Bool(true));
+    assert!(preview["credential"]["username"]
+        .as_str()
+        .is_some_and(|u| u.contains("access-token")));
+    assert!(std::fs::read_to_string(&store)
+        .unwrap_or_default()
+        .contains("gho_cli"));
+
+    let json = grit_logout_json(&home, false);
     assert_eq!(json["logged_out"], Value::Bool(true));
 
     let after = std::fs::read_to_string(&store).unwrap_or_default();
@@ -130,6 +144,6 @@ fn logout_ignores_helpers_scoped_to_other_hosts() {
         return;
     };
     assert!(out.status.success(), "git config: {out:?}");
-    let json = grit_logout_json(&home);
+    let json = grit_logout_json(&home, false);
     assert_eq!(json["logged_out"], Value::Bool(false));
 }

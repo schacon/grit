@@ -50,7 +50,7 @@ You can also treat a bundle path like a remote: [`grit fetch`](../fetch/) and [`
 
 | Option | Description |
 | --- | --- |
-| `--dry-run` | Verify the bundle and list ref updates that would apply; do not ingest objects or write refs. |
+| `--dry-run` | Verify the bundle and report refs that differ from local tips; do not ingest objects or write refs (`unbundle` never updates refs). |
 
 ## Examples
 

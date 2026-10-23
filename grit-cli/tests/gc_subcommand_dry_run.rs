@@ -80,22 +80,53 @@ fn gc_commit_graph_dry_run_then_real() {
 }
 
 #[test]
-fn gc_pack_refs_dry_run_unchanged() {
+fn gc_pack_refs_dry_run_then_real() {
     let fixture = CliFixture::new();
     fixture.run_ok(&["branch", "side"]);
     let before = git_fingerprint(&fixture);
-    let out = fixture.run_ok(&["gc", "pack-refs", "--dry-run", "--json"]);
+    let dry = fixture.run_ok(&["gc", "pack-refs", "--dry-run", "--json"]);
     assert_unchanged_git(&before, &git_fingerprint(&fixture), "gc pack-refs");
-    let doc: Value = serde_json::from_str(&out.stdout).expect("json");
-    assert_eq!(doc["dry_run"], true);
+    let dry_doc: Value = serde_json::from_str(&dry.stdout).expect("json");
+    assert_eq!(dry_doc["dry_run"], true);
+
+    let real = fixture.run_ok(&["gc", "pack-refs", "--json"]);
+    let real_doc: Value = serde_json::from_str(&real.stdout).expect("json");
+    let dry_task = task_report(&dry_doc, "pack-refs");
+    let real_task = task_report(&real_doc, "pack-refs");
+    assert_eq!(dry_task["refs_packed"], real_task["refs_packed"]);
+    assert_eq!(dry_task["refs_pruned"], real_task["refs_pruned"]);
 }
 
 #[test]
-fn gc_prune_dry_run_unchanged() {
+fn gc_prune_dry_run_then_real() {
     let fixture = CliFixture::new();
     let before = git_fingerprint(&fixture);
-    let out = fixture.run_ok(&["gc", "prune", "--dry-run", "--json"]);
+    let dry = fixture.run_ok(&["gc", "prune", "--dry-run", "--json"]);
     assert_unchanged_git(&before, &git_fingerprint(&fixture), "gc prune");
-    let doc: Value = serde_json::from_str(&out.stdout).expect("json");
-    assert_eq!(doc["dry_run"], true);
+    let dry_doc: Value = serde_json::from_str(&dry.stdout).expect("json");
+    assert_eq!(dry_doc["dry_run"], true);
+
+    let real = fixture.run_ok(&["gc", "prune", "--json"]);
+    let real_doc: Value = serde_json::from_str(&real.stdout).expect("json");
+    let dry_task = task_report(&dry_doc, "prune");
+    let real_task = task_report(&real_doc, "prune");
+    assert_eq!(dry_task["pruned"], real_task["pruned"]);
+    assert_eq!(dry_task["kept"], real_task["kept"]);
+}
+
+#[test]
+fn gc_midx_dry_run_then_real() {
+    let fixture = CliFixture::new();
+    fixture.run_ok(&["gc", "repack"]);
+    let before = git_fingerprint(&fixture);
+    let dry = fixture.run_ok(&["gc", "midx", "--dry-run", "--json"]);
+    assert_unchanged_git(&before, &git_fingerprint(&fixture), "gc midx");
+    let dry_doc: Value = serde_json::from_str(&dry.stdout).expect("json");
+    assert_eq!(dry_doc["dry_run"], true);
+
+    let real = fixture.run_ok(&["gc", "midx", "--json"]);
+    let real_doc: Value = serde_json::from_str(&real.stdout).expect("json");
+    let dry_task = task_report(&dry_doc, "midx");
+    let real_task = task_report(&real_doc, "midx");
+    assert_eq!(dry_task["pack_count"], real_task["pack_count"]);
 }

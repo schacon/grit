@@ -59,10 +59,6 @@ pub struct BundleListOutcome {
     pub truncated: bool,
 }
 
-fn is_false(value: &bool) -> bool {
-    !*value
-}
-
 /// One ref update that would be applied when unbundling with ref writes enabled.
 #[derive(Serialize, JsonSchema)]
 pub struct BundleRefUpdateJson {
@@ -223,7 +219,7 @@ impl HumanRender for BundleUnbundleOutcome {
         if self.dry_run {
             outln!(
                 w,
-                "Dry run: would unbundle {} ({} objects, {} ref updates).",
+                "Dry run: verified {} ({} objects in pack); {} refs differ from local tips (unbundle does not update refs).",
                 self.path,
                 self.object_count.unwrap_or(0),
                 self.ref_updates.len()

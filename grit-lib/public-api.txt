@@ -580,6 +580,8 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::bundle::bundle_remote::B
 pub fn grit_lib::bundle::bundle_remote::fetch_from_bundle(&std::path::Path, &std::path::Path, &grit_lib::remote::transfer::FetchOptions) -> grit_lib::error::Result<grit_lib::remote::transfer::FetchOutcome>
 pub fn grit_lib::bundle::bundle_remote::fetch_from_bundle_with_progress(&std::path::Path, &std::path::Path, &grit_lib::remote::transfer::FetchOptions, &mut dyn grit_lib::remote::fetch::Progress) -> grit_lib::error::Result<grit_lib::remote::transfer::FetchOutcome>
 pub fn grit_lib::bundle::bundle_remote::is_bundle_path(&std::path::Path) -> bool
+pub fn grit_lib::bundle::bundle_remote::plan_create_with_options(&grit_lib::repo::Repository, &grit_lib::bundle::bundle_remote::BundleCreateOptions) -> grit_lib::error::Result<grit_lib::bundle::BundleCreatePlan>
+pub fn grit_lib::bundle::bundle_remote::resolve_bundle_spec(&grit_lib::repo::Repository, &grit_lib::bundle::bundle_remote::BundleCreateOptions) -> grit_lib::error::Result<grit_lib::bundle::BundleSpec>
 pub fn grit_lib::bundle::bundle_remote::split_revision_specs_for_bundle(&[alloc::string::String]) -> (alloc::vec::Vec<alloc::string::String>, alloc::vec::Vec<alloc::string::String>)
 pub fn grit_lib::bundle::bundle_remote::write_bundle_from_rev_specs(&grit_lib::repo::Repository, &std::path::Path, &[alloc::string::String]) -> grit_lib::error::Result<usize>
 pub fn grit_lib::bundle::bundle_remote::write_bundle_with_options(&grit_lib::repo::Repository, &std::path::Path, &grit_lib::bundle::bundle_remote::BundleCreateOptions) -> grit_lib::error::Result<usize>
@@ -642,6 +644,7 @@ impl grit_lib::bundle::Bundle
 pub fn grit_lib::bundle::Bundle::header(&self) -> &grit_lib::bundle::BundleHeader
 pub fn grit_lib::bundle::Bundle::open(impl core::convert::AsRef<std::path::Path>) -> core::result::Result<Self, grit_lib::bundle::BundleError>
 pub fn grit_lib::bundle::Bundle::pack_byte_offset(&self) -> u64
+pub fn grit_lib::bundle::Bundle::pack_object_count(&self) -> core::result::Result<u32, grit_lib::bundle::BundleError>
 pub fn grit_lib::bundle::Bundle::path(&self) -> &std::path::Path
 pub fn grit_lib::bundle::Bundle::unbundle(&self, &grit_lib::repo::Repository) -> core::result::Result<alloc::vec::Vec<grit_lib::bundle::UnbundledRef>, grit_lib::bundle::BundleError>
 pub fn grit_lib::bundle::Bundle::unbundle_with_progress(&self, &grit_lib::repo::Repository, &mut dyn grit_lib::progress::ProgressSink) -> core::result::Result<grit_lib::bundle::UnbundleOutcome, grit_lib::bundle::BundleError>
@@ -657,6 +660,25 @@ impl core::marker::Unpin for grit_lib::bundle::Bundle
 impl core::marker::UnsafeUnpin for grit_lib::bundle::Bundle
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::bundle::Bundle
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::bundle::Bundle
+pub struct grit_lib::bundle::BundleCreatePlan
+pub grit_lib::bundle::BundleCreatePlan::object_count: u32
+pub grit_lib::bundle::BundleCreatePlan::prerequisites: alloc::vec::Vec<grit_lib::bundle::BundlePrerequisite>
+pub grit_lib::bundle::BundleCreatePlan::refs: alloc::vec::Vec<grit_lib::bundle::BundleRefEntry>
+impl core::clone::Clone for grit_lib::bundle::BundleCreatePlan
+pub fn grit_lib::bundle::BundleCreatePlan::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::bundle::BundleCreatePlan
+impl core::cmp::PartialEq for grit_lib::bundle::BundleCreatePlan
+pub fn grit_lib::bundle::BundleCreatePlan::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::bundle::BundleCreatePlan
+pub fn grit_lib::bundle::BundleCreatePlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::bundle::BundleCreatePlan
+impl core::marker::Freeze for grit_lib::bundle::BundleCreatePlan
+impl core::marker::Send for grit_lib::bundle::BundleCreatePlan
+impl core::marker::Sync for grit_lib::bundle::BundleCreatePlan
+impl core::marker::Unpin for grit_lib::bundle::BundleCreatePlan
+impl core::marker::UnsafeUnpin for grit_lib::bundle::BundleCreatePlan
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::bundle::BundleCreatePlan
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::bundle::BundleCreatePlan
 pub struct grit_lib::bundle::BundleHeader
 pub grit_lib::bundle::BundleHeader::filter: core::option::Option<grit_lib::bundle::FilterSpec>
 pub grit_lib::bundle::BundleHeader::object_format: grit_lib::objects::HashAlgo
@@ -678,6 +700,61 @@ impl core::marker::Unpin for grit_lib::bundle::BundleHeader
 impl core::marker::UnsafeUnpin for grit_lib::bundle::BundleHeader
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::bundle::BundleHeader
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::bundle::BundleHeader
+pub struct grit_lib::bundle::BundlePrerequisite
+pub grit_lib::bundle::BundlePrerequisite::oid: grit_lib::objects::ObjectId
+pub grit_lib::bundle::BundlePrerequisite::subject: core::option::Option<alloc::string::String>
+impl core::clone::Clone for grit_lib::bundle::BundlePrerequisite
+pub fn grit_lib::bundle::BundlePrerequisite::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::bundle::BundlePrerequisite
+impl core::cmp::PartialEq for grit_lib::bundle::BundlePrerequisite
+pub fn grit_lib::bundle::BundlePrerequisite::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::bundle::BundlePrerequisite
+pub fn grit_lib::bundle::BundlePrerequisite::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::bundle::BundlePrerequisite
+impl core::marker::Freeze for grit_lib::bundle::BundlePrerequisite
+impl core::marker::Send for grit_lib::bundle::BundlePrerequisite
+impl core::marker::Sync for grit_lib::bundle::BundlePrerequisite
+impl core::marker::Unpin for grit_lib::bundle::BundlePrerequisite
+impl core::marker::UnsafeUnpin for grit_lib::bundle::BundlePrerequisite
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::bundle::BundlePrerequisite
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::bundle::BundlePrerequisite
+pub struct grit_lib::bundle::BundleRefEntry
+pub grit_lib::bundle::BundleRefEntry::name: alloc::string::String
+pub grit_lib::bundle::BundleRefEntry::oid: grit_lib::objects::ObjectId
+impl core::clone::Clone for grit_lib::bundle::BundleRefEntry
+pub fn grit_lib::bundle::BundleRefEntry::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::bundle::BundleRefEntry
+impl core::cmp::PartialEq for grit_lib::bundle::BundleRefEntry
+pub fn grit_lib::bundle::BundleRefEntry::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::bundle::BundleRefEntry
+pub fn grit_lib::bundle::BundleRefEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::bundle::BundleRefEntry
+impl core::marker::Freeze for grit_lib::bundle::BundleRefEntry
+impl core::marker::Send for grit_lib::bundle::BundleRefEntry
+impl core::marker::Sync for grit_lib::bundle::BundleRefEntry
+impl core::marker::Unpin for grit_lib::bundle::BundleRefEntry
+impl core::marker::UnsafeUnpin for grit_lib::bundle::BundleRefEntry
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::bundle::BundleRefEntry
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::bundle::BundleRefEntry
+pub struct grit_lib::bundle::BundleRefUpdatePlan
+pub grit_lib::bundle::BundleRefUpdatePlan::name: alloc::string::String
+pub grit_lib::bundle::BundleRefUpdatePlan::new_oid: grit_lib::objects::ObjectId
+pub grit_lib::bundle::BundleRefUpdatePlan::old_oid: core::option::Option<grit_lib::objects::ObjectId>
+impl core::clone::Clone for grit_lib::bundle::BundleRefUpdatePlan
+pub fn grit_lib::bundle::BundleRefUpdatePlan::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::bundle::BundleRefUpdatePlan
+impl core::cmp::PartialEq for grit_lib::bundle::BundleRefUpdatePlan
+pub fn grit_lib::bundle::BundleRefUpdatePlan::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::bundle::BundleRefUpdatePlan
+pub fn grit_lib::bundle::BundleRefUpdatePlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::bundle::BundleRefUpdatePlan
+impl core::marker::Freeze for grit_lib::bundle::BundleRefUpdatePlan
+impl core::marker::Send for grit_lib::bundle::BundleRefUpdatePlan
+impl core::marker::Sync for grit_lib::bundle::BundleRefUpdatePlan
+impl core::marker::Unpin for grit_lib::bundle::BundleRefUpdatePlan
+impl core::marker::UnsafeUnpin for grit_lib::bundle::BundleRefUpdatePlan
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::bundle::BundleRefUpdatePlan
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::bundle::BundleRefUpdatePlan
 pub struct grit_lib::bundle::BundleSpec
 pub grit_lib::bundle::BundleSpec::exclude: alloc::vec::Vec<grit_lib::objects::ObjectId>
 pub grit_lib::bundle::BundleSpec::filter: core::option::Option<grit_lib::bundle::FilterSpec>
@@ -695,6 +772,25 @@ impl core::marker::Unpin for grit_lib::bundle::BundleSpec
 impl core::marker::UnsafeUnpin for grit_lib::bundle::BundleSpec
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::bundle::BundleSpec
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::bundle::BundleSpec
+pub struct grit_lib::bundle::BundleUnbundlePlan
+pub grit_lib::bundle::BundleUnbundlePlan::object_count: u32
+pub grit_lib::bundle::BundleUnbundlePlan::ref_updates: alloc::vec::Vec<grit_lib::bundle::BundleRefUpdatePlan>
+pub grit_lib::bundle::BundleUnbundlePlan::verify: grit_lib::bundle::BundleVerifyReport
+impl core::clone::Clone for grit_lib::bundle::BundleUnbundlePlan
+pub fn grit_lib::bundle::BundleUnbundlePlan::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::bundle::BundleUnbundlePlan
+impl core::cmp::PartialEq for grit_lib::bundle::BundleUnbundlePlan
+pub fn grit_lib::bundle::BundleUnbundlePlan::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::bundle::BundleUnbundlePlan
+pub fn grit_lib::bundle::BundleUnbundlePlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::bundle::BundleUnbundlePlan
+impl core::marker::Freeze for grit_lib::bundle::BundleUnbundlePlan
+impl core::marker::Send for grit_lib::bundle::BundleUnbundlePlan
+impl core::marker::Sync for grit_lib::bundle::BundleUnbundlePlan
+impl core::marker::Unpin for grit_lib::bundle::BundleUnbundlePlan
+impl core::marker::UnsafeUnpin for grit_lib::bundle::BundleUnbundlePlan
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::bundle::BundleUnbundlePlan
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::bundle::BundleUnbundlePlan
 pub struct grit_lib::bundle::BundleVerifyReport
 pub grit_lib::bundle::BundleVerifyReport::missing_prerequisites: alloc::vec::Vec<(grit_lib::objects::ObjectId, core::option::Option<alloc::string::String>)>
 pub grit_lib::bundle::BundleVerifyReport::prerequisites_not_connected: bool
@@ -786,6 +882,8 @@ impl core::marker::Unpin for grit_lib::bundle::UnbundledRef
 impl core::marker::UnsafeUnpin for grit_lib::bundle::UnbundledRef
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::bundle::UnbundledRef
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::bundle::UnbundledRef
+pub fn grit_lib::bundle::plan_bundle_create(&grit_lib::repo::Repository, &grit_lib::bundle::BundleSpec) -> core::result::Result<grit_lib::bundle::BundleCreatePlan, grit_lib::bundle::BundleError>
+pub fn grit_lib::bundle::plan_bundle_unbundle(&grit_lib::bundle::Bundle, &grit_lib::repo::Repository) -> core::result::Result<grit_lib::bundle::BundleUnbundlePlan, grit_lib::bundle::BundleError>
 pub fn grit_lib::bundle::read_header(&mut dyn alloc::io::buf_read::BufRead) -> core::result::Result<grit_lib::bundle::BundleHeader, grit_lib::bundle::BundleError>
 pub fn grit_lib::bundle::write_bundle(&grit_lib::repo::Repository, &grit_lib::bundle::BundleSpec, &mut dyn core::io::write::Write) -> core::result::Result<(), grit_lib::bundle::BundleError>
 pub mod grit_lib::change_id
@@ -6615,8 +6713,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::reposito
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::repository_fsck::FsckSeverity
 #[non_exhaustive] pub struct grit_lib::maintenance::CommitGraphOptions
 pub grit_lib::maintenance::CommitGraphOptions::changed_paths: bool
+pub grit_lib::maintenance::CommitGraphOptions::dry_run: bool
 impl grit_lib::maintenance::CommitGraphOptions
 pub fn grit_lib::maintenance::CommitGraphOptions::with_changed_paths(bool) -> Self
+pub fn grit_lib::maintenance::CommitGraphOptions::with_dry_run(bool) -> Self
 impl core::clone::Clone for grit_lib::maintenance::CommitGraphOptions
 pub fn grit_lib::maintenance::CommitGraphOptions::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::maintenance::CommitGraphOptions
@@ -6790,8 +6890,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::GcStats
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::GcStats
 #[non_exhaustive] pub struct grit_lib::maintenance::MidxOptions
 pub grit_lib::maintenance::MidxOptions::bitmap: bool
+pub grit_lib::maintenance::MidxOptions::dry_run: bool
 impl grit_lib::maintenance::MidxOptions
 pub fn grit_lib::maintenance::MidxOptions::with_bitmap(bool) -> Self
+pub fn grit_lib::maintenance::MidxOptions::with_dry_run(bool) -> Self
 impl core::clone::Clone for grit_lib::maintenance::MidxOptions
 pub fn grit_lib::maintenance::MidxOptions::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::maintenance::MidxOptions
@@ -6831,8 +6933,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::MidxWrit
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::MidxWriteReport
 #[non_exhaustive] pub struct grit_lib::maintenance::PackRefsOptions
 pub grit_lib::maintenance::PackRefsOptions::all: bool
+pub grit_lib::maintenance::PackRefsOptions::dry_run: bool
 impl grit_lib::maintenance::PackRefsOptions
 pub fn grit_lib::maintenance::PackRefsOptions::with_all(bool) -> Self
+pub fn grit_lib::maintenance::PackRefsOptions::with_dry_run(bool) -> Self
 impl core::clone::Clone for grit_lib::maintenance::PackRefsOptions
 pub fn grit_lib::maintenance::PackRefsOptions::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::maintenance::PackRefsOptions
@@ -15808,6 +15912,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::gc::RefTransact
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::gc::RefTransactionItem
 pub fn grit_lib::refs::gc::collect_referenced_object_roots(&std::path::Path) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
 pub fn grit_lib::refs::gc::prune_loose_unreachable(&grit_lib::objects::odb::Odb, &[grit_lib::objects::ObjectId], core::option::Option<std::time::SystemTime>) -> grit_lib::error::Result<grit_lib::refs::gc::PruneStats>
+pub fn grit_lib::refs::gc::prune_loose_unreachable_with_dry_run(&grit_lib::objects::odb::Odb, &[grit_lib::objects::ObjectId], core::option::Option<std::time::SystemTime>, bool) -> grit_lib::error::Result<grit_lib::refs::gc::PruneStats>
 pub fn grit_lib::refs::gc::remote_default_branch_local(&std::path::Path) -> grit_lib::error::Result<core::option::Option<alloc::string::String>>
 pub fn grit_lib::refs::gc::update_refs(&std::path::Path, &[grit_lib::refs::gc::RefTransactionItem]) -> grit_lib::error::Result<()>
 pub mod grit_lib::refs::handle
@@ -20194,6 +20299,9 @@ impl<'repo> grit_lib::repo_handles::RepositoryBundles<'repo>
 pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::create(&self, &grit_lib::bundle::BundleSpec, &std::path::Path) -> core::result::Result<(), grit_lib::bundle::BundleError>
 pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::list_heads(&self, &std::path::Path, core::option::Option<usize>) -> core::result::Result<grit_lib::list_limit::Limited<grit_lib::repo_handles::bundle::BundleHead>, grit_lib::bundle::BundleError>
 pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::open(&self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<grit_lib::bundle::Bundle, grit_lib::bundle::BundleError>
+pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::plan_create(&self, &grit_lib::bundle::BundleSpec) -> core::result::Result<grit_lib::bundle::BundleCreatePlan, grit_lib::bundle::BundleError>
+pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::plan_create_with_options(&self, &grit_lib::bundle::bundle_remote::BundleCreateOptions) -> core::result::Result<grit_lib::bundle::BundleCreatePlan, grit_lib::bundle::BundleError>
+pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::plan_unbundle(&self, &std::path::Path) -> core::result::Result<grit_lib::bundle::BundleUnbundlePlan, grit_lib::bundle::BundleError>
 pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::repository(&self) -> &'repo grit_lib::repo::Repository
 pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::unbundle(&self, &std::path::Path) -> core::result::Result<grit_lib::bundle::UnbundleOutcome, grit_lib::bundle::BundleError>
 pub fn grit_lib::repo_handles::RepositoryBundles<'repo>::unbundle_with_progress(&self, &std::path::Path, &mut dyn grit_lib::progress::ProgressSink) -> core::result::Result<grit_lib::bundle::UnbundleOutcome, grit_lib::bundle::BundleError>
