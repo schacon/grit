@@ -257,7 +257,7 @@ fn translate_single_star(
     let middle_len = from_ref
         .len()
         .checked_sub(from_pre.len() + from_post.len())?;
-    let middle = &from_ref[from_pre.len()..from_ref.len() - from_post.len()];
+    let middle = &from_ref[from_pre.len()..from_pre.len() + middle_len];
     Some(format!("{into_pre}{middle}{into_post}"))
 }
 
