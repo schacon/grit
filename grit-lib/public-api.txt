@@ -4897,6 +4897,7 @@ pub grit_lib::error::Error::IndexPathPrefixConflict::file: std::path::PathBuf
 pub grit_lib::error::Error::IndexUnmerged
 pub grit_lib::error::Error::InitBareWithSeparateGitDir
 pub grit_lib::error::Error::InitObjectFormatChange
+pub grit_lib::error::Error::InvalidHead
 pub grit_lib::error::Error::InvalidNotesRef(alloc::string::String)
 pub grit_lib::error::Error::InvalidObjectId(alloc::string::String)
 pub grit_lib::error::Error::InvalidPath(alloc::string::String)
@@ -4982,8 +4983,10 @@ pub grit_lib::error::Error::RevParse(grit_lib::revwalk::rev_parse_error::RevPars
 pub grit_lib::error::Error::SequencerUnknownCommand
 pub grit_lib::error::Error::SequencerUnknownCommand::command: alloc::string::String
 pub grit_lib::error::Error::Signing(alloc::string::String)
+pub grit_lib::error::Error::StashBareRepository
 pub grit_lib::error::Error::StashCouldNotRestoreUntracked
 pub grit_lib::error::Error::StashCouldNotRestoreUntracked::path: alloc::string::String
+pub grit_lib::error::Error::StashIndexConflict
 pub grit_lib::error::Error::StashIndexWrite(alloc::string::String)
 pub grit_lib::error::Error::StashMissingHead
 pub grit_lib::error::Error::StashNoInitialCommit
@@ -12857,6 +12860,7 @@ pub fn grit_lib::porcelain::replay_sequence::start_replay_sequence(&grit_lib::re
 pub mod grit_lib::porcelain::reset
 pub enum grit_lib::porcelain::reset::ResetMode
 pub grit_lib::porcelain::reset::ResetMode::Hard
+pub grit_lib::porcelain::reset::ResetMode::Keep
 pub grit_lib::porcelain::reset::ResetMode::Mixed
 pub grit_lib::porcelain::reset::ResetMode::Soft
 impl grit_lib::porcelain::reset::ResetMode
@@ -12879,11 +12883,35 @@ impl core::marker::Unpin for grit_lib::porcelain::reset::ResetMode
 impl core::marker::UnsafeUnpin for grit_lib::porcelain::reset::ResetMode
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::reset::ResetMode
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::reset::ResetMode
+pub struct grit_lib::porcelain::reset::OrphanedCommitSummary
+pub grit_lib::porcelain::reset::OrphanedCommitSummary::change_id: alloc::string::String
+pub grit_lib::porcelain::reset::OrphanedCommitSummary::oid: grit_lib::objects::ObjectId
+pub grit_lib::porcelain::reset::OrphanedCommitSummary::subject: alloc::string::String
+impl core::clone::Clone for grit_lib::porcelain::reset::OrphanedCommitSummary
+pub fn grit_lib::porcelain::reset::OrphanedCommitSummary::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::porcelain::reset::OrphanedCommitSummary
+impl core::cmp::PartialEq for grit_lib::porcelain::reset::OrphanedCommitSummary
+pub fn grit_lib::porcelain::reset::OrphanedCommitSummary::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::porcelain::reset::OrphanedCommitSummary
+pub fn grit_lib::porcelain::reset::OrphanedCommitSummary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::porcelain::reset::OrphanedCommitSummary
+impl core::marker::Freeze for grit_lib::porcelain::reset::OrphanedCommitSummary
+impl core::marker::Send for grit_lib::porcelain::reset::OrphanedCommitSummary
+impl core::marker::Sync for grit_lib::porcelain::reset::OrphanedCommitSummary
+impl core::marker::Unpin for grit_lib::porcelain::reset::OrphanedCommitSummary
+impl core::marker::UnsafeUnpin for grit_lib::porcelain::reset::OrphanedCommitSummary
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::reset::OrphanedCommitSummary
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::reset::OrphanedCommitSummary
 pub struct grit_lib::porcelain::reset::ResetOptions
+pub grit_lib::porcelain::reset::ResetOptions::dry_run: bool
 pub grit_lib::porcelain::reset::ResetOptions::identity: alloc::string::String
 pub grit_lib::porcelain::reset::ResetOptions::message: alloc::string::String
 pub grit_lib::porcelain::reset::ResetOptions::mode: grit_lib::porcelain::reset::ResetMode
+pub grit_lib::porcelain::reset::ResetOptions::orphan_limit: usize
 pub grit_lib::porcelain::reset::ResetOptions::target: grit_lib::objects::ObjectId
+impl grit_lib::porcelain::reset::ResetOptions
+pub fn grit_lib::porcelain::reset::ResetOptions::effective_orphan_limit(&self) -> usize
+pub fn grit_lib::porcelain::reset::ResetOptions::new(grit_lib::objects::ObjectId, grit_lib::porcelain::reset::ResetMode, impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
 impl core::clone::Clone for grit_lib::porcelain::reset::ResetOptions
 pub fn grit_lib::porcelain::reset::ResetOptions::clone(&self) -> Self
 impl core::fmt::Debug for grit_lib::porcelain::reset::ResetOptions
@@ -12896,10 +12924,16 @@ impl core::marker::UnsafeUnpin for grit_lib::porcelain::reset::ResetOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::reset::ResetOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::reset::ResetOptions
 pub struct grit_lib::porcelain::reset::ResetOutcome
+pub grit_lib::porcelain::reset::ResetOutcome::dry_run: bool
 pub grit_lib::porcelain::reset::ResetOutcome::mode: grit_lib::porcelain::reset::ResetMode
+pub grit_lib::porcelain::reset::ResetOutcome::orphaned_commits: alloc::vec::Vec<grit_lib::porcelain::reset::OrphanedCommitSummary>
+pub grit_lib::porcelain::reset::ResetOutcome::orphaned_total: usize
+pub grit_lib::porcelain::reset::ResetOutcome::orphaned_truncated: bool
 pub grit_lib::porcelain::reset::ResetOutcome::previous: grit_lib::objects::ObjectId
 pub grit_lib::porcelain::reset::ResetOutcome::ref_updated: alloc::string::String
 pub grit_lib::porcelain::reset::ResetOutcome::target: grit_lib::objects::ObjectId
+pub grit_lib::porcelain::reset::ResetOutcome::would_block: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::porcelain::reset::ResetOutcome::would_overwrite: alloc::vec::Vec<alloc::string::String>
 impl core::clone::Clone for grit_lib::porcelain::reset::ResetOutcome
 pub fn grit_lib::porcelain::reset::ResetOutcome::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::porcelain::reset::ResetOutcome
@@ -12915,6 +12949,29 @@ impl core::marker::Unpin for grit_lib::porcelain::reset::ResetOutcome
 impl core::marker::UnsafeUnpin for grit_lib::porcelain::reset::ResetOutcome
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::reset::ResetOutcome
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::reset::ResetOutcome
+pub struct grit_lib::porcelain::reset::ResetPreview
+pub grit_lib::porcelain::reset::ResetPreview::orphaned_commits: alloc::vec::Vec<grit_lib::porcelain::reset::OrphanedCommitSummary>
+pub grit_lib::porcelain::reset::ResetPreview::orphaned_total: usize
+pub grit_lib::porcelain::reset::ResetPreview::orphaned_truncated: bool
+pub grit_lib::porcelain::reset::ResetPreview::would_block: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::porcelain::reset::ResetPreview::would_overwrite: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for grit_lib::porcelain::reset::ResetPreview
+pub fn grit_lib::porcelain::reset::ResetPreview::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::porcelain::reset::ResetPreview
+impl core::cmp::PartialEq for grit_lib::porcelain::reset::ResetPreview
+pub fn grit_lib::porcelain::reset::ResetPreview::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::porcelain::reset::ResetPreview
+pub fn grit_lib::porcelain::reset::ResetPreview::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::porcelain::reset::ResetPreview
+impl core::marker::Freeze for grit_lib::porcelain::reset::ResetPreview
+impl core::marker::Send for grit_lib::porcelain::reset::ResetPreview
+impl core::marker::Sync for grit_lib::porcelain::reset::ResetPreview
+impl core::marker::Unpin for grit_lib::porcelain::reset::ResetPreview
+impl core::marker::UnsafeUnpin for grit_lib::porcelain::reset::ResetPreview
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::reset::ResetPreview
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::reset::ResetPreview
+pub const grit_lib::porcelain::reset::DEFAULT_ORPHAN_LIMIT: usize
+pub fn grit_lib::porcelain::reset::preview_reset(&grit_lib::repo::Repository, &grit_lib::porcelain::reset::ResetOptions) -> grit_lib::error::Result<grit_lib::porcelain::reset::ResetPreview>
 pub fn grit_lib::porcelain::reset::reset_to_commit(&grit_lib::repo::Repository, &grit_lib::porcelain::reset::ResetOptions) -> grit_lib::error::Result<grit_lib::porcelain::reset::ResetOutcome>
 pub mod grit_lib::porcelain::restore
 pub enum grit_lib::porcelain::restore::ConflictSide
@@ -13069,6 +13126,26 @@ impl core::marker::Unpin for grit_lib::stash::FlatTreeEntry
 impl core::marker::UnsafeUnpin for grit_lib::stash::FlatTreeEntry
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::stash::FlatTreeEntry
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::stash::FlatTreeEntry
+pub struct grit_lib::porcelain::stash::StashApplyOptions
+pub grit_lib::porcelain::stash::StashApplyOptions::restore_index: bool
+impl core::clone::Clone for grit_lib::stash::StashApplyOptions
+pub fn grit_lib::stash::StashApplyOptions::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::stash::StashApplyOptions
+impl core::cmp::PartialEq for grit_lib::stash::StashApplyOptions
+pub fn grit_lib::stash::StashApplyOptions::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::stash::StashApplyOptions
+pub fn grit_lib::stash::StashApplyOptions::default() -> Self
+impl core::fmt::Debug for grit_lib::stash::StashApplyOptions
+pub fn grit_lib::stash::StashApplyOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::stash::StashApplyOptions
+impl core::marker::StructuralPartialEq for grit_lib::stash::StashApplyOptions
+impl core::marker::Freeze for grit_lib::stash::StashApplyOptions
+impl core::marker::Send for grit_lib::stash::StashApplyOptions
+impl core::marker::Sync for grit_lib::stash::StashApplyOptions
+impl core::marker::Unpin for grit_lib::stash::StashApplyOptions
+impl core::marker::UnsafeUnpin for grit_lib::stash::StashApplyOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::stash::StashApplyOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::stash::StashApplyOptions
 pub struct grit_lib::porcelain::stash::StashApplyOutcome
 pub grit_lib::porcelain::stash::StashApplyOutcome::conflicted_paths: alloc::vec::Vec<alloc::string::String>
 impl grit_lib::stash::StashApplyOutcome
@@ -13731,6 +13808,7 @@ pub grit_lib::prelude::Error::IndexPathPrefixConflict::file: std::path::PathBuf
 pub grit_lib::prelude::Error::IndexUnmerged
 pub grit_lib::prelude::Error::InitBareWithSeparateGitDir
 pub grit_lib::prelude::Error::InitObjectFormatChange
+pub grit_lib::prelude::Error::InvalidHead
 pub grit_lib::prelude::Error::InvalidNotesRef(alloc::string::String)
 pub grit_lib::prelude::Error::InvalidObjectId(alloc::string::String)
 pub grit_lib::prelude::Error::InvalidPath(alloc::string::String)
@@ -13816,8 +13894,10 @@ pub grit_lib::prelude::Error::RevParse(grit_lib::revwalk::rev_parse_error::RevPa
 pub grit_lib::prelude::Error::SequencerUnknownCommand
 pub grit_lib::prelude::Error::SequencerUnknownCommand::command: alloc::string::String
 pub grit_lib::prelude::Error::Signing(alloc::string::String)
+pub grit_lib::prelude::Error::StashBareRepository
 pub grit_lib::prelude::Error::StashCouldNotRestoreUntracked
 pub grit_lib::prelude::Error::StashCouldNotRestoreUntracked::path: alloc::string::String
+pub grit_lib::prelude::Error::StashIndexConflict
 pub grit_lib::prelude::Error::StashIndexWrite(alloc::string::String)
 pub grit_lib::prelude::Error::StashMissingHead
 pub grit_lib::prelude::Error::StashNoInitialCommit
@@ -22419,6 +22499,26 @@ impl core::marker::Unpin for grit_lib::stash::FlatTreeEntry
 impl core::marker::UnsafeUnpin for grit_lib::stash::FlatTreeEntry
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::stash::FlatTreeEntry
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::stash::FlatTreeEntry
+pub struct grit_lib::stash::StashApplyOptions
+pub grit_lib::stash::StashApplyOptions::restore_index: bool
+impl core::clone::Clone for grit_lib::stash::StashApplyOptions
+pub fn grit_lib::stash::StashApplyOptions::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::stash::StashApplyOptions
+impl core::cmp::PartialEq for grit_lib::stash::StashApplyOptions
+pub fn grit_lib::stash::StashApplyOptions::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::stash::StashApplyOptions
+pub fn grit_lib::stash::StashApplyOptions::default() -> Self
+impl core::fmt::Debug for grit_lib::stash::StashApplyOptions
+pub fn grit_lib::stash::StashApplyOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::stash::StashApplyOptions
+impl core::marker::StructuralPartialEq for grit_lib::stash::StashApplyOptions
+impl core::marker::Freeze for grit_lib::stash::StashApplyOptions
+impl core::marker::Send for grit_lib::stash::StashApplyOptions
+impl core::marker::Sync for grit_lib::stash::StashApplyOptions
+impl core::marker::Unpin for grit_lib::stash::StashApplyOptions
+impl core::marker::UnsafeUnpin for grit_lib::stash::StashApplyOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::stash::StashApplyOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::stash::StashApplyOptions
 pub struct grit_lib::stash::StashApplyOutcome
 pub grit_lib::stash::StashApplyOutcome::conflicted_paths: alloc::vec::Vec<alloc::string::String>
 impl grit_lib::stash::StashApplyOutcome
