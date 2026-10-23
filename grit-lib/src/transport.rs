@@ -1022,6 +1022,7 @@ pub(crate) fn connect_local_upload_pack(
             "local upload-pack connect supports fetch only".to_owned(),
         ));
     }
+    // hygiene: local partial-clone filters need system git upload-pack until in-process fetch supports them
     let mut cmd = std::process::Command::new("git");
     cmd.arg("upload-pack").arg(remote_git_dir);
     cmd.stdin(std::process::Stdio::piped())
