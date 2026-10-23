@@ -2,8 +2,6 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
-#[cfg(any(test, feature = "unstable-bench-helpers"))]
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::change_id::{
@@ -31,10 +29,9 @@ use super::types::{
     RewritePlan, RewrittenCommit,
 };
 
-#[cfg(any(test, feature = "unstable-bench-helpers"))]
-static MERGE_TREE_CALLS: AtomicUsize = AtomicUsize::new(0); // hygiene: merge-call counter for tests and unstable-bench-helpers
-
 thread_local! {
+    #[cfg(any(test, feature = "unstable-bench-helpers"))]
+    static MERGE_TREE_CALLS: Cell<usize> = const { Cell::new(0) };
     static RESUMABLE_REPLAY: Cell<bool> = const { Cell::new(false) };
     static REPLAY_STOP_PARENT: Cell<Option<ObjectId>> = const { Cell::new(None) };
     static REPLAY_STOP_COMMIT: Cell<Option<ObjectId>> = const { Cell::new(None) };
@@ -117,7 +114,7 @@ fn take_resumable_conflict() -> Option<PartialReplayConflict> {
 pub fn test_merge_tree_call_count() -> usize {
     #[cfg(any(test, feature = "unstable-bench-helpers"))]
     {
-        MERGE_TREE_CALLS.load(Ordering::Relaxed)
+        MERGE_TREE_CALLS.with(|c| c.get())
     }
     #[cfg(not(any(test, feature = "unstable-bench-helpers")))]
     {
@@ -130,12 +127,12 @@ pub fn test_merge_tree_call_count() -> usize {
 #[doc(hidden)]
 pub fn test_reset_merge_tree_call_count() {
     #[cfg(any(test, feature = "unstable-bench-helpers"))]
-    MERGE_TREE_CALLS.store(0, Ordering::Relaxed);
+    MERGE_TREE_CALLS.with(|c| c.set(0));
 }
 
 fn record_merge_call() {
     #[cfg(any(test, feature = "unstable-bench-helpers"))]
-    MERGE_TREE_CALLS.fetch_add(1, Ordering::Relaxed);
+    MERGE_TREE_CALLS.with(|c| c.set(c.get() + 1));
 }
 
 struct ChangeIdWriteContext {
