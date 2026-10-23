@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::blame::{blame_file, BlameOptions};
-use grit_lib::config::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::WhitespaceMode;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
@@ -190,6 +190,21 @@ fn ignore_whitespace_tab_space_swap() {
     git_run(root, &["commit", "-m", "spaces"]);
     let repo = open_repo(root);
     assert_blame_matches(&repo, root, "f.txt");
+}
+
+#[test]
+fn ignore_whitespace_mixed_edit_duplicate_b_line() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    git_run(root, &["init"]);
+    std::fs::write(root.join("f"), "a\na\nb\na\n").unwrap();
+    git_run(root, &["add", "f"]);
+    git_run(root, &["commit", "-m", "initial"]);
+    std::fs::write(root.join("f"), "c\nc\nb\nb \n").unwrap();
+    git_run(root, &["add", "f"]);
+    git_run(root, &["commit", "-m", "mixed"]);
+    let repo = open_repo(root);
+    assert_blame_matches(&repo, root, "f");
 }
 
 #[test]

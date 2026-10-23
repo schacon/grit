@@ -2206,7 +2206,14 @@ pub(crate) fn line_diff_ops_git_xdiff_compacted(
         let id = *interner.entry(line).or_insert(next);
         ids2.push(id);
     }
-    line_diff_ops_git_xdiff_compacted_ids(&ids1, &ids2, old_lines, new_lines, indent_heuristic)
+    line_diff_ops_git_xdiff_compacted_ids(
+        &ids1,
+        &ids2,
+        old_lines,
+        new_lines,
+        indent_heuristic,
+        super::WhitespaceMode::default(),
+    )
 }
 
 /// Like [`line_diff_ops_git_xdiff_compacted`], but reuses precomputed line ids for each side.
@@ -2217,10 +2224,17 @@ pub(crate) fn line_diff_ops_git_xdiff_compacted_ids(
     old_lines: &[&str],
     new_lines: &[&str],
     indent_heuristic: bool,
+    ws: super::WhitespaceMode,
 ) -> Vec<similar::DiffOp> {
     let (changed1, changed2) = git_xdiff::changed_flags(old_ids, new_ids, false);
     let ops = changed_flags_to_ops(&changed1, &changed2, old_lines.len(), new_lines.len());
-    diff_indent_heuristic::apply_change_compact_to_ops(&ops, old_lines, new_lines, indent_heuristic)
+    diff_indent_heuristic::apply_change_compact_to_ops_with_ws(
+        &ops,
+        old_lines,
+        new_lines,
+        indent_heuristic,
+        ws,
+    )
 }
 
 /// Whether each new-side line is marked changed by Git's xdiff engine (after change compaction).

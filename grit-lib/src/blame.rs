@@ -193,17 +193,19 @@ fn blame_compacted_line_ops(
             old_mid,
             new_mid,
             indent_heuristic,
+            ws,
         );
     }
     let diff = TextDiff::configure()
         .algorithm(diff_algorithm.to_similar())
         .diff_slices(&old_cmp, &new_cmp);
     let raw = diff.ops().to_vec();
-    crate::diff_indent_heuristic::apply_change_compact_to_ops(
+    crate::diff_indent_heuristic::apply_change_compact_to_ops_with_ws(
         &raw,
         old_mid,
         new_mid,
         indent_heuristic,
+        ws,
     )
 }
 
