@@ -50,10 +50,7 @@ fn remote_rename_json() {
     git(&repo, &["config", "user.email", "t@example.com"]);
     git(&repo, &["config", "user.name", "Test"]);
     git(&repo, &["commit", "-q", "--allow-empty", "-m", "one"]);
-    git(
-        &repo,
-        &["remote", "add", "origin", bare.to_str().unwrap()],
-    );
+    git(&repo, &["remote", "add", "origin", bare.to_str().unwrap()]);
     git(&repo, &["fetch", "-q", "origin"]);
 
     let out = grit(&repo, &["remote", "rename", "origin", "upstream", "--json"]);
@@ -62,8 +59,7 @@ fn remote_rename_json() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let json: serde_json::Value =
-        serde_json::from_slice(&out.stdout).expect("json");
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
     assert_eq!(json["action"], "rename");
     assert_eq!(json["old"], "origin");
     assert_eq!(json["new"], "upstream");

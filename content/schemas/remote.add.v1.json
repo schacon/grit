@@ -230,6 +230,52 @@
       "properties": {
         "action": {
           "enum": [
+            "rename"
+          ],
+          "type": "string"
+        },
+        "branches_updated": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "new": {
+          "type": "string"
+        },
+        "old": {
+          "type": "string"
+        },
+        "refs_renamed": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "refspecs_updated": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "action",
+        "branches_updated",
+        "dry_run",
+        "new",
+        "old",
+        "refs_renamed",
+        "refspecs_updated"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "action": {
+          "enum": [
             "refs"
           ],
           "type": "string"

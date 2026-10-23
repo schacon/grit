@@ -1,11 +1,11 @@
 //! `RepositoryRemotes::rename` vs the system `git remote rename`.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::remote::RemoteError;
-use grit_lib::repo::{InitOptions, Repository};
-use grit_test_support::git;
+use grit_lib::repo::Repository;
+use grit_test_support::{git, git_cmd};
 use std::path::{Path, PathBuf};
 
 mod support;
@@ -21,6 +21,11 @@ fn init_repo(root: &Path) {
 
 fn open(path: &Path) -> Repository {
     Repository::discover(Some(path), &RepositoryOptions::empty()).expect("open grit repo")
+}
+
+fn open_with_environment(path: &Path, env: Environment) -> Repository {
+    Repository::discover(Some(path), &RepositoryOptions::with_environment(env))
+        .expect("open grit repo")
 }
 
 fn bare_upstream(tmp: &Path) -> PathBuf {
@@ -73,6 +78,15 @@ fn twin_with_fetched_remote(tmp: &Path) -> (PathBuf, PathBuf, PathBuf) {
 
 fn config_list_local(dir: &Path) -> String {
     git(dir, &["config", "--list", "--local"])
+}
+
+fn git_with_global(dir: &Path, global: &Path, args: &[&str]) -> String {
+    git_cmd(args)
+        .env("GIT_CONFIG_GLOBAL", global)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .in_dir(dir)
+        .suc()
+        .stdout
 }
 
 fn for_each_ref(dir: &Path) -> String {
@@ -202,6 +216,72 @@ fn rename_invalid_name_typed_error() {
         open(&repo).remotes().rename("origin", "bad name", false),
         Err(RemoteError::InvalidRemoteName(name)) if name == "bad name"
     ));
+}
+
+#[test]
+fn rename_retargets_branch_remote_from_global_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let global = tmp.path().join("global-config");
+    std::fs::write(
+        &global,
+        "[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n",
+    )
+    .unwrap();
+    let bare = bare_upstream(tmp.path());
+    let grit_repo = tmp.path().join("grit");
+    let git_repo = tmp.path().join("git");
+    std::fs::create_dir_all(&grit_repo).unwrap();
+    std::fs::create_dir_all(&git_repo).unwrap();
+    for repo in [&grit_repo, &git_repo] {
+        init_repo(repo);
+        git(repo, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    }
+    std::env::set_var("GIT_CONFIG_GLOBAL", &global);
+    std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
+    let mut env = Environment::capture_process();
+    env.git_config_global = Some(global.to_string_lossy().into_owned());
+    env.git_config_nosystem = Some("1".into());
+    open_with_environment(&grit_repo, env)
+        .remotes()
+        .rename("origin", "upstream", false)
+        .expect("rename");
+    git_with_global(
+        &git_repo,
+        &global,
+        &["remote", "rename", "origin", "upstream"],
+    );
+    for repo in [&grit_repo, &git_repo] {
+        assert_eq!(
+            git_with_global(repo, &global, &["config", "--get", "branch.main.remote"]).trim(),
+            "upstream"
+        );
+        assert_eq!(
+            git_with_global(
+                repo,
+                &global,
+                &["config", "--local", "--get", "branch.main.remote"],
+            )
+            .trim(),
+            "upstream"
+        );
+    }
+    std::env::remove_var("GIT_CONFIG_GLOBAL");
+    std::env::remove_var("GIT_CONFIG_NOSYSTEM");
+}
+
+#[test]
+fn rename_same_name_is_noop() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("r");
+    std::fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+    git(&repo, &["remote", "add", "origin", "/srv/a.git"]);
+    let out = open(&repo)
+        .remotes()
+        .rename("origin", "origin", false)
+        .expect("same-name");
+    assert_eq!(out.refs_renamed, 0);
+    assert_eq!(git(&repo, &["remote"]).trim(), "origin");
 }
 
 #[test]

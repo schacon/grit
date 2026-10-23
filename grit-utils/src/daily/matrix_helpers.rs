@@ -436,7 +436,7 @@ pub fn branch_delete_bench(ctx: &DailyHeadlineContext) -> (BenchArgv, BenchArgv)
     )
 }
 
-pub fn prepare_remote_rename_reset(ctx: &DailyHeadlineContext) -> BenchArgv {
+pub fn prepare_remote_rename_reset(ctx: &DailyHeadlineContext) -> DailyPrepare {
     let reset = prepare_daily_reset_script(&ctx.git);
     let undo = shell_command(
         &ctx.git,
@@ -446,7 +446,7 @@ pub fn prepare_remote_rename_reset(ctx: &DailyHeadlineContext) -> BenchArgv {
         "{reset}\ncd {} && ({undo} 2>/dev/null || true)\n",
         ctx.repo.display()
     );
-    BenchArgv::new("/bin/sh", ["-c", script.as_str()])
+    DailyPrepare::Shell(BenchArgv::new("/bin/sh", ["-c", script.as_str()]))
 }
 
 pub fn remote_rename_bench(ctx: &DailyHeadlineContext) -> (BenchArgv, BenchArgv) {

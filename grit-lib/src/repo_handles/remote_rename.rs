@@ -60,9 +60,6 @@ impl<'repo> RepositoryRemotes<'repo> {
         if !has_remote_section(config.as_ref(), old) {
             return Err(RemoteError::UnknownRemote(old.to_owned()));
         }
-        if has_remote_section(config.as_ref(), new) {
-            return Err(RemoteError::RemoteExists(new.to_owned()));
-        }
         if old == new {
             return Ok(RemoteRename {
                 old: old.to_owned(),
@@ -72,6 +69,9 @@ impl<'repo> RepositoryRemotes<'repo> {
                 branches_updated: Vec::new(),
                 dry_run,
             });
+        }
+        if has_remote_section(config.as_ref(), new) {
+            return Err(RemoteError::RemoteExists(new.to_owned()));
         }
 
         let refspec_marker = format!(":refs/remotes/{old}/");
@@ -94,7 +94,7 @@ impl<'repo> RepositoryRemotes<'repo> {
             new: new.to_owned(),
             refs_renamed,
             refspecs_updated,
-            branches_updated,
+            branches_updated: branches_updated.clone(),
             dry_run,
         };
 
@@ -105,7 +105,14 @@ impl<'repo> RepositoryRemotes<'repo> {
         if refspecs_need_update {
             rename_remote_tracking_refs(repo, old, new)?;
         }
-        apply_remote_rename_config(repo, old, new, refspecs_need_update)?;
+        apply_remote_rename_config(
+            repo,
+            config.as_ref(),
+            old,
+            new,
+            refspecs_need_update,
+            &branches_updated,
+        )?;
         Ok(outcome)
     }
 }
@@ -124,8 +131,10 @@ fn count_remote_tracking_refs(repo: &Repository, old: &str) -> Result<usize, Rem
     let prefix = remote_ref_prefix(old);
     let mut count = 0usize;
     repo.refs()
-        .for_each_ref(&prefix, &mut |_: &RefEntry| {
-            count += 1;
+        .for_each_ref(&prefix, &mut |entry: &RefEntry| {
+            if entry.name.starts_with(&prefix) {
+                count += 1;
+            }
             ControlFlow::Continue(())
         })
         .map_err(RemoteError::Library)?;
@@ -137,7 +146,9 @@ fn rename_remote_tracking_refs(repo: &Repository, old: &str, new: &str) -> Resul
     let mut entries = Vec::new();
     repo.refs()
         .for_each_ref(&prefix, &mut |entry: &RefEntry| {
-            entries.push(entry.clone());
+            if entry.name.starts_with(&prefix) {
+                entries.push(entry.clone());
+            }
             ControlFlow::Continue(())
         })
         .map_err(RemoteError::Library)?;
@@ -248,9 +259,11 @@ fn update_fetch_refspec(spec: &str, old: &str, new: &str) -> String {
 
 fn apply_remote_rename_config(
     repo: &Repository,
+    merged: &ConfigSet,
     old: &str,
     new: &str,
     refspecs_need_update: bool,
+    branches_updated: &[String],
 ) -> Result<(), RemoteError> {
     let path = crate::repo::common_git_dir_for_config(repo.git_dir()).join("config");
     let content = std::fs::read_to_string(&path).map_err(crate::error::Error::Io)?;
@@ -279,26 +292,18 @@ fn apply_remote_rename_config(
         }
     }
 
-    let keys: Vec<String> = file.entries.iter().map(|e| e.key.clone()).collect();
-    for key in keys {
-        let Some(rest) = key.strip_prefix("branch.") else {
-            continue;
-        };
-        let Some((branch, field)) = rest.rsplit_once('.') else {
-            continue;
-        };
-        if (field.eq_ignore_ascii_case("remote") || field.eq_ignore_ascii_case("pushremote"))
-            && file.get(&key).as_deref() == Some(old)
-        {
-            file.set(&format!("branch.{branch}.{field}"), new)?;
+    for branch in branches_updated {
+        let remote_key = format!("branch.{branch}.remote");
+        if merged.get(&remote_key).as_deref() == Some(old) {
+            file.set(&remote_key, new)?;
+        }
+        let push_key = format!("branch.{branch}.pushRemote");
+        if merged.get(&push_key).as_deref() == Some(old) {
+            file.set(&push_key, new)?;
         }
     }
 
-    if file
-        .get("remote.pushDefault")
-        .as_deref()
-        .is_some_and(|v| v == old)
-    {
+    if merged.get("remote.pushDefault").as_deref() == Some(old) {
         file.set("remote.pushDefault", new)?;
     }
 
