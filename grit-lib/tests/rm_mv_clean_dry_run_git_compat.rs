@@ -299,6 +299,148 @@ fn clean_exclude_pattern_matches_git_clean_e() {
 }
 
 #[test]
+fn move_paths_rejects_duplicate_destinations_even_with_force() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    fs::create_dir_all(root.join("dir1")).unwrap();
+    fs::create_dir_all(root.join("dir2")).unwrap();
+    fs::create_dir_all(root.join("dest")).unwrap();
+    fs::write(root.join("dir1/x"), b"1\n").unwrap();
+    fs::write(root.join("dir2/x"), b"2\n").unwrap();
+    git(root, &["add", "."]);
+    git(root, &["commit", "-q", "-m", "init"]);
+
+    let index_before = index_bytes(root);
+    let repo = grit_repo(root);
+    let err = move_paths(
+        &repo,
+        &MoveOptions {
+            sources: vec!["dir1/x".into(), "dir2/x".into()],
+            destination: "dest".into(),
+            force: true,
+            dry_run: false,
+        },
+    )
+    .expect_err("duplicate basename targets must fail");
+    assert!(
+        err.to_string()
+            .contains("multiple sources for the same target"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(index_bytes(root), index_before);
+    assert!(root.join("dir1/x").is_file());
+    assert!(root.join("dir2/x").is_file());
+}
+
+#[test]
+fn clean_exclude_inside_untracked_dir_matches_git() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    fs::create_dir_all(root.join("dir")).unwrap();
+    fs::write(root.join("dir/keep.special"), b"k\n").unwrap();
+    fs::write(root.join("dir/drop.tmp"), b"d\n").unwrap();
+    git(root, &["commit", "-q", "--allow-empty", "-m", "empty"]);
+
+    let repo = grit_repo(root);
+    let outcome = clean_untracked(
+        &repo,
+        &CleanOptions {
+            directories: true,
+            excludes: vec!["*.special".into()],
+            dry_run: true,
+            ..Default::default()
+        },
+        &mut NullProgress,
+    )
+    .expect("clean -e dir");
+    let grit_set: BTreeSet<String> = outcome
+        .removed
+        .iter()
+        .map(|p| p.trim_end_matches('/').replace('\\', "/"))
+        .collect();
+    assert_eq!(
+        grit_set,
+        git_clean_preview(root, &["-e", "*.special", "-d"]),
+        "exclude must apply inside collapsed untracked directories"
+    );
+}
+
+#[test]
+fn clean_nested_untracked_dir_without_d_matches_git() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    fs::create_dir_all(root.join("untracked/sub")).unwrap();
+    fs::write(root.join("untracked/sub/file"), b"u\n").unwrap();
+    fs::create_dir_all(root.join("tracked-dir/untracked-sub")).unwrap();
+    fs::write(root.join("tracked-dir/untracked-sub/file"), b"v\n").unwrap();
+    fs::write(root.join("tracked-dir/tracked.txt"), b"t\n").unwrap();
+    git(root, &["add", "tracked-dir/tracked.txt"]);
+    git(root, &["commit", "-q", "-m", "init"]);
+
+    let repo = grit_repo(root);
+    let outcome = clean_untracked(
+        &repo,
+        &CleanOptions {
+            files_only: true,
+            dry_run: true,
+            ..Default::default()
+        },
+        &mut NullProgress,
+    )
+    .expect("files-only preview");
+    let grit_set: BTreeSet<String> = outcome
+        .removed
+        .iter()
+        .map(|p| p.trim_end_matches('/').replace('\\', "/"))
+        .collect();
+    assert_eq!(
+        grit_set,
+        git_clean_preview(root, &[]),
+        "must not enumerate files inside untracked directories without -d"
+    );
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn clean_only_ignored_with_exclude_matches_git_clean_Xe() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    fs::write(root.join(".gitignore"), b"*.ignored\n").unwrap();
+    fs::write(root.join("drop.ignored"), b"i\n").unwrap();
+    fs::write(root.join("extra.special"), b"s\n").unwrap();
+    git(root, &["add", ".gitignore"]);
+    git(root, &["commit", "-q", "-m", "init"]);
+
+    let repo = grit_repo(root);
+    let outcome = clean_untracked(
+        &repo,
+        &CleanOptions {
+            directories: true,
+            scope: CleanScope::OnlyIgnored,
+            excludes: vec!["*.special".into()],
+            dry_run: true,
+            ..Default::default()
+        },
+        &mut NullProgress,
+    )
+    .expect("clean -Xe preview");
+    let grit_set: BTreeSet<String> = outcome
+        .removed
+        .iter()
+        .map(|p| p.trim_end_matches('/').replace('\\', "/"))
+        .collect();
+    assert_eq!(
+        grit_set,
+        git_clean_preview(root, &["-X", "-e", "*.special", "-d"]),
+        "only-ignored -e patterns add removal targets"
+    );
+}
+
+#[test]
 fn clean_files_only_matches_git_clean_without_d() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();

@@ -230,6 +230,8 @@ pub fn move_paths(repo: &Repository, opts: &MoveOptions) -> Result<MoveOutcome> 
         })
         .collect();
 
+    validate_unique_move_destinations(&moves)?;
+
     if opts.dry_run {
         return Ok(MoveOutcome { moves });
     }
@@ -256,6 +258,7 @@ pub fn move_paths(repo: &Repository, opts: &MoveOptions) -> Result<MoveOutcome> 
         Vec::new()
     };
 
+    let mut completed_worktree_renames: Vec<(String, String)> = Vec::new();
     for plan in &planned {
         if opts.force {
             clear_destination_index(&mut index, &plan.final_dst);
@@ -268,8 +271,10 @@ pub fn move_paths(repo: &Repository, opts: &MoveOptions) -> Result<MoveOutcome> 
             ignorecase,
         ) {
             let _ = restore_worktree_backups(work_tree, &cleared_backup);
+            let _ = rollback_worktree_renames(work_tree, &completed_worktree_renames, ignorecase);
             return Err(err);
         }
+        completed_worktree_renames.extend(plan.renames.clone());
     }
 
     let all_renames: Vec<(String, String)> = planned
@@ -278,6 +283,7 @@ pub fn move_paths(repo: &Repository, opts: &MoveOptions) -> Result<MoveOutcome> 
         .collect();
     if let Err(err) = apply_renames_to_index(&mut index, &all_renames) {
         let _ = restore_worktree_backups(work_tree, &cleared_backup);
+        let _ = rollback_worktree_renames(work_tree, &completed_worktree_renames, ignorecase);
         return Err(err);
     }
 
@@ -285,6 +291,33 @@ pub fn move_paths(repo: &Repository, opts: &MoveOptions) -> Result<MoveOutcome> 
     repo.finish_index_update(&mut lock, true)?;
 
     Ok(MoveOutcome { moves })
+}
+
+fn validate_unique_move_destinations(moves: &[PathMove]) -> Result<()> {
+    let mut seen = HashSet::new();
+    for mv in moves {
+        if !seen.insert(mv.to.clone()) {
+            return Err(Error::MoveDuplicateDestination {
+                destination: mv.to.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn rollback_worktree_renames(
+    work_tree: &Path,
+    renames: &[(String, String)],
+    ignorecase: bool,
+) -> Result<()> {
+    for (from, to) in renames.iter().rev() {
+        let from_abs = work_tree.join(from);
+        let to_abs = work_tree.join(to);
+        if to_abs.exists() || to_abs.symlink_metadata().is_ok() {
+            let _ = rename_worktree_entry(&to_abs, &from_abs, ignorecase);
+        }
+    }
+    Ok(())
 }
 
 struct SingleMovePlan {

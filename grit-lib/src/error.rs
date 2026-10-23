@@ -891,11 +891,18 @@ pub enum Error {
         destination: String,
     },
 
-    /// Move refused because the source has no tracked index entries.
+    /// Move refused because the source has no index entries.
     #[error("nothing to move, source={src}")]
     MoveNothingToMove {
         /// Source path with no index entries.
         src: String,
+    },
+
+    /// Multi-source move would write more than one source to the same destination path.
+    #[error("multiple sources for the same target, destination={destination}")]
+    MoveDuplicateDestination {
+        /// Destination path that would receive more than one source.
+        destination: String,
     },
 
     /// A worktree source path is missing or not a file, directory, or symlink.

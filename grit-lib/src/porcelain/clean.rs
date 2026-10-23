@@ -80,6 +80,9 @@ pub fn clean_untracked(
 
     let mut index = repo.load_index()?;
     let rules = WorktreeRules::from_repository(repo, &index)?;
+    if opts.scope == CleanScope::OnlyIgnored && !opts.excludes.is_empty() {
+        rules.ignore_mut().add_cli_excludes(&opts.excludes);
+    }
 
     let remove_directories = opts.directories && !opts.files_only;
     let ignored_mode = if clean_scope_includes_ignored(opts.scope) {
@@ -87,7 +90,8 @@ pub fn clean_untracked(
     } else {
         IgnoredMode::No
     };
-    let show_all = !remove_directories;
+    // Match `git clean` without `-d`: never enumerate nested files inside untracked directories.
+    let show_all = false;
 
     let scan = UntrackedScan {
         ignored_mode,
@@ -113,7 +117,7 @@ pub fn clean_untracked(
     if clean_scope_includes_ignored(opts.scope) {
         candidates.extend(ignored);
     }
-    if remove_directories {
+    if remove_directories && opts.scope != CleanScope::OnlyIgnored {
         let empty_dirs = empty_untracked_directories(
             repo,
             &index,
@@ -124,10 +128,9 @@ pub fn clean_untracked(
         )?;
         candidates.extend(empty_dirs);
     }
+    let pathspec_ctx = repo.pathspec_match_context();
     candidates.sort();
     candidates.dedup();
-
-    let pathspec_ctx = repo.pathspec_match_context();
     let mut removed = Vec::new();
     for rel in candidates {
         if should_skip_nested_git(work_tree, &rel) {
@@ -142,6 +145,9 @@ pub fn clean_untracked(
             if nested_git_worktree_descendant_under(&abs)
                 || (!clean_scope_includes_ignored(opts.scope)
                     && dir_preserves_ignored_descendants(repo, &index, &rules, work_tree, &abs)?)
+                || (!opts.excludes.is_empty()
+                    && opts.scope != CleanScope::OnlyIgnored
+                    && dir_has_excluded_descendant(work_tree, &abs, &opts.excludes, pathspec_ctx))
             {
                 expand_collapsed_dir_paths(repo, &index, &rules, opts.scope, trimmed)?
             } else {
@@ -157,7 +163,15 @@ pub fn clean_untracked(
             if !remove_directories && path.ends_with('/') {
                 continue;
             }
-            if path_matches_clean_exclude(&path, &opts.excludes, pathspec_ctx) {
+            if !path_eligible_for_clean_removal(
+                repo,
+                &index,
+                &rules,
+                opts.scope,
+                &path,
+                &opts.excludes,
+                pathspec_ctx,
+            )? {
                 continue;
             }
             if crate::worktree_cwd::cwd_would_be_removed_with_repo_path(
@@ -248,6 +262,79 @@ fn path_matches_clean_exclude(
                 ctx,
             )
     })
+}
+
+/// Whether `path` should be removed given scope and `-e` patterns (protection vs extra `-X` targets).
+fn path_eligible_for_clean_removal(
+    repo: &Repository,
+    index: &Index,
+    rules: &WorktreeRules,
+    scope: CleanScope,
+    path: &str,
+    excludes: &[String],
+    ctx: crate::pathspec::PathspecMatchContext,
+) -> Result<bool> {
+    let matches_exclude = path_matches_clean_exclude(path, excludes, ctx);
+    match scope {
+        CleanScope::OnlyIgnored => {
+            if matches_exclude {
+                return Ok(true);
+            }
+            let is_dir = path.ends_with('/');
+            let check_path = path.trim_end_matches('/');
+            let (ignored, _) =
+                rules
+                    .ignore_mut()
+                    .check_path(repo, Some(index), check_path, is_dir)?;
+            Ok(ignored)
+        }
+        _ => Ok(!matches_exclude),
+    }
+}
+
+fn dir_has_excluded_descendant(
+    work_tree: &Path,
+    dir_abs: &Path,
+    excludes: &[String],
+    ctx: crate::pathspec::PathspecMatchContext,
+) -> bool {
+    walk_dir_has_excluded_descendant(work_tree, dir_abs, excludes, ctx)
+}
+
+fn walk_dir_has_excluded_descendant(
+    work_tree: &Path,
+    abs: &Path,
+    excludes: &[String],
+    ctx: crate::pathspec::PathspecMatchContext,
+) -> bool {
+    if is_nested_git_worktree(abs) {
+        return false;
+    }
+    let entries: Vec<_> = match fs::read_dir(abs) {
+        Ok(e) => e.filter_map(|e| e.ok()).collect(),
+        Err(_) => return false,
+    };
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == ".git" {
+            continue;
+        }
+        let path = entry.path();
+        let rel = crate::git_path::strip_worktree_prefix(&path, work_tree).unwrap_or(name);
+        if path.is_dir() {
+            if path_matches_clean_exclude(&format!("{rel}/"), excludes, ctx)
+                || path_matches_clean_exclude(&rel, excludes, ctx)
+            {
+                return true;
+            }
+            if walk_dir_has_excluded_descendant(work_tree, &path, excludes, ctx) {
+                return true;
+            }
+        } else if path_matches_clean_exclude(&rel, excludes, ctx) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Returns the highest empty untracked directory marker under `abs` (e.g. `outer/` not `outer/inner/`).

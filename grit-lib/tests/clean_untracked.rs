@@ -456,11 +456,11 @@ fn directories_false_preserves_empty_parent_dir() {
 
     assert!(
         root.path().join("untracked-dir").is_dir(),
-        "empty parent dir must remain when directories is false"
+        "parent dir must remain when directories is false"
     );
     assert!(
-        !root.path().join("untracked-dir/file.txt").exists(),
-        "untracked file must still be removed"
+        root.path().join("untracked-dir/file.txt").is_file(),
+        "files inside an untracked directory must remain without -d (match git clean)"
     );
 }
 

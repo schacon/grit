@@ -10,7 +10,7 @@ expression: payload
   },
   "json": {
     "exit": 0,
-    "stdout": "{\"dry_run\":false,\"moves\":[{\"from\":\"second.txt\",\"to\":\"renamed.txt\"}]}\n",
+    "stdout": "{\"moves\":[{\"from\":\"second.txt\",\"to\":\"renamed.txt\"}],\"dry_run\":false}\n",
     "stderr": ""
   },
   "markdown": {
