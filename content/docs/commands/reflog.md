@@ -9,8 +9,9 @@ order: 2
 
 ```text
 grit reflog [REF] [-n N] [--since DATE] [--until DATE] [--grep PAT]
+grit reflog list [-n N]
 grit reflog delete <REF@{N}>...
-grit reflog expire [--all] [--expire <DATE>] [--expire-unreachable <DATE>]
+grit reflog expire [--all] [--expire <DATE>] [--expire-unreachable <DATE>] [--dry-run]
 ```
 
 ## Description
@@ -19,7 +20,9 @@ Inspect and maintain reference logs. With no subcommand, lists entries for `REF`
 
 Filters apply to the reflog entry identity timestamp (not the commit date). Scanning stops once `-n` matches are collected, so large logs are not fully materialized.
 
-`delete` removes explicit entries without rewriting the branch tip. `expire` applies Git-compatible `gc.reflogExpire*` rules (same layering as `grit gc`), using explicit `--expire` / `--expire-unreachable` values when given and merged config otherwise.
+`delete` removes explicit entries without rewriting the branch tip. `list` prints every ref that currently has a reflog file (sorted), bounded by `-n` / `--limit`. `expire` applies Git-compatible `gc.reflogExpire*` rules (same layering as `grit gc`), using explicit `--expire` / `--expire-unreachable` values when given and merged config otherwise. With `--dry-run`, `expire` reports per-ref prune counts without rewriting any log file.
+
+A branch literally named `list` is ambiguous with the `list` subcommand; use the full ref (`refs/heads/list`) when showing that branch's entries.
 
 ## Options
 
@@ -30,11 +33,13 @@ Filters apply to the reflog entry identity timestamp (not the commit date). Scan
 | `--since`, `--after` | Exclude entries older than this date (Git `--since`). |
 | `--until`, `--before` | Exclude entries newer than this date (Git `--until`). |
 | `--grep` | Keep entries whose message contains this substring (case-sensitive). |
+| `list` | List refs that have a reflog (`-n` / `--limit` bounds the list). |
 | `delete` | Remove one or more `ref@{n}` selectors. |
 | `expire` | Drop old reflog entries using gc expiry rules. |
 | `--all` | On `expire`, walk every ref under `refs/`, not only refs that already have log files. |
 | `--expire` | Reachable expiry time (`now`, `never`, `2.weeks.ago`, Unix time, …). |
 | `--expire-unreachable` | Unreachable expiry time (same syntax as Git). |
+| `--dry-run` | On `expire`, preview pruning without writing reflog files. |
 
 ## Examples
 
@@ -68,7 +73,7 @@ Pruned 0 reflog entries
 
 ## JSON output
 
-Schema: [v1](/schemas/reflog/v1.json) (list), [delete v1](/schemas/reflog.delete/v1.json), [expire v1](/schemas/reflog.expire/v1.json)
+Schema: [v1](/schemas/reflog/v1.json) (show entries), [list v1](/schemas/reflog.list/v1.json), [delete v1](/schemas/reflog.delete/v1.json), [expire v1](/schemas/reflog.expire/v1.json)
 
 List (`grit reflog [REF]`):
 
@@ -117,17 +122,37 @@ Delete (`grit reflog delete …`):
 | --- | --- | --- |
 | `deleted` | array of strings | Selectors that were removed. |
 
+List refs (`grit reflog list`):
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `refs` | array | Sorted ref names that have a log. |
+| `refs[].ref` | string | Full ref name (for example `refs/heads/main`). |
+
+```json
+{
+  "refs": [
+    { "ref": "HEAD" },
+    { "ref": "refs/heads/main" }
+  ]
+}
+```
+
 Expire (`grit reflog expire`):
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `entries_pruned` | integer | Reflog lines removed. |
+| `entries_pruned` | integer | Reflog lines removed (or that would be removed with `--dry-run`). |
+| `dry_run` | boolean | `true` when `--dry-run` was passed (default `false`). |
+| `refs` | array | Per-ref prune counts. |
+| `refs[].ref` | string | Ref that was processed. |
+| `refs[].pruned` | integer | Entries pruned on that ref. |
 
 ## Markdown output
 
 Pass [`--markdown`](../global-options/) for agent-friendly output.
 
-Schema: [v1](/schemas/reflog/v1.json) (list); subcommands use [delete v1](/schemas/reflog.delete/v1.json) and [expire v1](/schemas/reflog.expire/v1.json).
+Schema: [v1](/schemas/reflog/v1.json) (show entries); subcommands use [list v1](/schemas/reflog.list/v1.json), [delete v1](/schemas/reflog.delete/v1.json), and [expire v1](/schemas/reflog.expire/v1.json).
 
 List mode emits a bullet per entry with `REF@{n}`, abbreviated oid, **absolute** `date`, and message (human mode keeps relative dates). Delete and expire print short confirmation lines.
 
