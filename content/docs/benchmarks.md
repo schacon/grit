@@ -290,12 +290,12 @@ Factory follow-ups (queued as **Speed:** tasks): `diff-100000`, `add-100000`, `p
 
 ### Daily common paths (roadmap 2)
 
-**`grit-utils/baselines/daily-common-paths.json`** records six **`grit-bench daily`** matrix ids added for roadmap-2 CLI conventions: **`diff/stat@synth-100k`**, **`log/stat-n50@git-git`**, **`log/json-filter@git-git`**, **`notes/list-n100@synth-10k`**, and shallow clone over **`file://`** and grit smart HTTP (**`clone/shallow-depth1@synth-10k`**, **`clone/shallow-depth1-http@synth-10k`**). Each row includes hyperfine medians and **`peak_rss_bytes`** for grit and system git; pre-timed hooks check output equivalence where semantics match (stat summary, commit oids, note counts, shallow clone refs). On the factory VM capture (2026-10-23), **`log/stat-n50@git-git`** is the largest time gap (**~4.3×** git); that row is queued for the speed agent rather than fixed in the registry change.
+**`grit-utils/baselines/daily-common-paths.json`** records six **`grit-bench daily`** matrix ids added for roadmap-2 CLI conventions: **`diff/stat@synth-100k`**, **`log/stat-n50@git-git`**, **`log/json-filter@git-git`**, **`notes/list-n100@synth-10k`**, and shallow clone over **`file://`** and grit smart HTTP (**`clone/shallow-depth1@synth-10k`**, **`clone/shallow-depth1-http@synth-10k`**). Each row includes hyperfine medians and **`peak_rss_bytes`** for grit and system git; pre-timed hooks check output equivalence where semantics match (full diff numstat paths, per-commit log stat blocks, log JSON commit oids, exact note `(commit, blob)` mappings, shallow boundary refs and `.git/shallow`). On the factory VM capture (2026-10-23), **`log/stat-n50@git-git`** is the largest time gap (**~4.3×** git); that row is queued for the speed agent rather than fixed in the registry change.
 
 ```bash
-cargo build --release -p grit-cli -p grit-http-server -p grit-utils
-./target/release/grit-bench daily --only 'diff/stat@synth-100k,log/stat-n50@git-git,log/json-filter@git-git,notes/list-n100@synth-10k,clone/shallow-depth1@synth-10k,clone/shallow-depth1-http@synth-10k' \
-  --format json --output grit-utils/baselines/daily-common-paths.json
+cargo build --profile dist -p grit-cli -p grit-http-server -p grit-utils
+./target/dist/grit-bench daily --only 'diff/stat@synth-100k,log/stat-n50@git-git,log/json-filter@git-git,notes/list-n100@synth-10k,clone/shallow-depth1@synth-10k,clone/shallow-depth1-http@synth-10k' \
+  --format json --output grit-utils/baselines/daily-common-paths.json --grit ./target/dist/grit
 ```
 
 ### git.git headlines (hyperfine wall time + peak RSS)

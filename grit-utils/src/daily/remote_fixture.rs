@@ -22,7 +22,9 @@ use crate::network_suite::{
     prepare_network_fetch_noop, prepare_network_force_with_lease, prepare_network_pull_rebase,
     prepare_network_push,
 };
-use crate::network_verify::{verify_client_fetch_tip, verify_clone_against_bare};
+use crate::network_verify::{
+    verify_client_fetch_tip, verify_clone_against_bare, verify_shallow_depth_one_clone,
+};
 use crate::shell::shell_quote;
 
 fn ctx_with_remote(
@@ -840,8 +842,21 @@ pub fn post_timed_for(id: &str) -> Option<fn(&DailyHeadlineContext, bool) -> Res
         "push/incremental@git-git" | "push/incremental-http@git-git" => {
             Some(post_verify_push_incremental)
         }
+        "clone/shallow-depth1@synth-10k" | "clone/shallow-depth1-http@synth-10k" => {
+            Some(post_verify_clone_shallow_depth1)
+        }
         _ => None,
     }
+}
+
+fn post_verify_clone_shallow_depth1(ctx: &DailyHeadlineContext, _is_git: bool) -> Result<()> {
+    let remote = remote_state(ctx)?;
+    verify_shallow_depth_one_clone(
+        &ctx.git,
+        &remote.bare,
+        &remote.meta.clone_dest,
+        &remote.meta.default_branch,
+    )
 }
 
 pub fn verify_push_incremental(ctx: &DailyHeadlineContext, cwd: &Path) -> Result<()> {
@@ -932,14 +947,14 @@ pub fn verify_clone_shallow(ctx: &DailyHeadlineContext, cwd: &Path) -> Result<()
             dest_name,
         ],
     )?;
-    verify_clone_against_bare(&ctx.git, &remote.bare, &dest, &remote.meta.default_branch)?;
+    verify_shallow_depth_one_clone(&ctx.git, &remote.bare, &dest, &remote.meta.default_branch)?;
     prepare_network_clone(&remote.bare)?;
     run_grit(
         &ctx.grit,
         cwd,
         &["clone", "--shallow", remote.remote_url.as_str(), dest_name],
     )?;
-    verify_clone_against_bare(&ctx.git, &remote.bare, &dest, &remote.meta.default_branch)?;
+    verify_shallow_depth_one_clone(&ctx.git, &remote.bare, &dest, &remote.meta.default_branch)?;
     Ok(())
 }
 

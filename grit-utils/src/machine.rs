@@ -29,8 +29,8 @@ pub fn collect_machine_info(scratch_dir: &Path) -> Result<MachineInfo> {
 pub fn grit_bench_cargo_profile() -> String {
     if cfg!(debug_assertions) {
         "dev".into()
-    } else if option_env!("CARGO_PROFILE").is_some_and(|p| p == "dist") {
-        "dist".into()
+    } else if let Some(profile) = option_env!("GRIT_BENCH_CARGO_PROFILE") {
+        profile.into()
     } else {
         "release".into()
     }

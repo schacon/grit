@@ -726,28 +726,136 @@ fn tool_stdout(tool: &Path, cwd: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
-fn diff_shortstat_line(text: &str) -> Option<String> {
-    text.lines()
-        .map(str::trim)
-        .rfind(|line| line.contains("changed") && line.contains("insertion"))
-        .map(str::to_string)
+/// One row of `git diff --numstat` / grit diff JSON numstat.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct NumstatRow {
+    path: String,
+    insertions: u64,
+    deletions: u64,
+}
+
+fn parse_git_numstat(text: &str) -> Result<Vec<NumstatRow>> {
+    let mut rows = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.split('\t');
+        let ins = parts.next().context("numstat insertions")?;
+        let del = parts.next().context("numstat deletions")?;
+        let path = parts.next().context("numstat path")?.to_string();
+        let insertions = if ins == "-" {
+            0
+        } else {
+            ins.parse()
+                .with_context(|| format!("parse insertions {ins}"))?
+        };
+        let deletions = if del == "-" {
+            0
+        } else {
+            del.parse()
+                .with_context(|| format!("parse deletions {del}"))?
+        };
+        rows.push(NumstatRow {
+            path,
+            insertions,
+            deletions,
+        });
+    }
+    rows.sort();
+    Ok(rows)
+}
+
+fn parse_grit_diff_numstat_json(text: &str) -> Result<Vec<NumstatRow>> {
+    let json: serde_json::Value = serde_json::from_str(text.trim()).context("grit diff json")?;
+    let files = json
+        .get("files")
+        .and_then(|v| v.as_array())
+        .context("diff json files array")?;
+    let mut rows = Vec::new();
+    for file in files {
+        let path = file
+            .get("path")
+            .and_then(|v| v.as_str())
+            .context("diff file path")?
+            .to_string();
+        let stat = file.get("stat").context("diff file stat")?;
+        let insertions = stat.get("insertions").and_then(|v| v.as_u64()).unwrap_or(0);
+        let deletions = stat.get("deletions").and_then(|v| v.as_u64()).unwrap_or(0);
+        rows.push(NumstatRow {
+            path,
+            insertions,
+            deletions,
+        });
+    }
+    rows.sort();
+    Ok(rows)
 }
 
 pub fn verify_diff_stat(ctx: &DailyHeadlineContext) -> Result<()> {
-    let git_out = tool_stdout(&ctx.git, &ctx.repo, &["diff", "--stat"])?;
-    let grit_out = tool_stdout(&ctx.grit, &ctx.repo, &["diff", "--stat"])?;
-    let git_line = diff_shortstat_line(&git_out).context("git diff --stat summary")?;
-    let grit_line = diff_shortstat_line(&grit_out).context("grit diff --stat summary")?;
-    if git_line != grit_line {
-        anyhow::bail!("diff --stat summary mismatch:\ngit:  {git_line}\ngrit: {grit_line}");
+    let git_out = tool_stdout(&ctx.git, &ctx.repo, &["diff", "--numstat"])?;
+    let grit_out = tool_stdout(&ctx.grit, &ctx.repo, &["diff", "--json", "--numstat"])?;
+    let git_rows = parse_git_numstat(&git_out)?;
+    let grit_rows = parse_grit_diff_numstat_json(&grit_out)?;
+    if git_rows != grit_rows {
+        anyhow::bail!(
+            "diff numstat mismatch (git {} rows, grit {} rows)",
+            git_rows.len(),
+            grit_rows.len()
+        );
     }
     Ok(())
 }
 
+fn git_show_numstat_block(git: &Path, repo: &Path, oid: &str) -> Result<String> {
+    Ok(
+        tool_stdout(git, repo, &["show", "--numstat", "--format=", oid])?
+            .trim_end()
+            .to_string(),
+    )
+}
+
+fn grit_log_commit_numstat_block(entry: &serde_json::Value) -> Result<String> {
+    let files = entry
+        .get("files")
+        .and_then(|v| v.as_array())
+        .context("log commit files")?;
+    let mut lines = Vec::new();
+    for file in files {
+        let path = file.get("path").and_then(|v| v.as_str()).unwrap_or("");
+        let stat = file.get("stat").context("log file stat")?;
+        let ins = stat.get("insertions").and_then(|v| v.as_u64()).unwrap_or(0);
+        let del = stat.get("deletions").and_then(|v| v.as_u64()).unwrap_or(0);
+        lines.push(format!("{ins}\t{del}\t{path}"));
+    }
+    Ok(lines.join("\n"))
+}
+
 pub fn verify_log_stat_n50(ctx: &DailyHeadlineContext) -> Result<()> {
     verify_log_json_filter(ctx)?;
-    tool_stdout(&ctx.git, &ctx.repo, &["log", "--stat", "-50"])?;
-    tool_stdout(&ctx.grit, &ctx.repo, &["log", "--limit", "50", "--stat"])?;
+    let grit_out = tool_stdout(
+        &ctx.grit,
+        &ctx.repo,
+        &["log", "--limit", "50", "--json", "--numstat"],
+    )?;
+    let grit_json: serde_json::Value =
+        serde_json::from_str(grit_out.trim()).context("parse grit log numstat json")?;
+    let commits = grit_json
+        .get("commits")
+        .and_then(|v| v.as_array())
+        .context("log json commits")?;
+    for entry in commits {
+        let oid = entry
+            .get("oid")
+            .and_then(|v| v.as_str())
+            .context("log commit oid")?;
+        let grit_block = grit_log_commit_numstat_block(entry)?;
+        let git_block = git_show_numstat_block(&ctx.git, &ctx.repo, oid)?;
+        if grit_block != git_block {
+            anyhow::bail!("log numstat mismatch for commit {oid}");
+        }
+    }
     Ok(())
 }
 
@@ -793,24 +901,65 @@ pub fn verify_log_json_filter(ctx: &DailyHeadlineContext) -> Result<()> {
     Ok(())
 }
 
+fn parse_git_notes_list(text: &str) -> Result<Vec<(String, String)>> {
+    let mut pairs = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (note_blob, commit) = line
+            .split_once(' ')
+            .context("notes list note-blob and commit oids")?;
+        pairs.push((commit.to_string(), note_blob.to_string()));
+    }
+    pairs.sort();
+    Ok(pairs)
+}
+
+fn parse_grit_notes_list_json(text: &str) -> Result<Vec<(String, String)>> {
+    let json: serde_json::Value = serde_json::from_str(text.trim()).context("grit notes json")?;
+    if json.get("action").and_then(|v| v.as_str()) != Some("list") {
+        anyhow::bail!("expected notes list json action");
+    }
+    let notes = json
+        .get("notes")
+        .and_then(|v| v.as_array())
+        .context("notes json notes array")?;
+    let mut pairs = Vec::new();
+    for note in notes {
+        let object = note
+            .get("object")
+            .and_then(|v| v.as_str())
+            .context("note object")?
+            .to_string();
+        let blob = note
+            .get("blob")
+            .and_then(|v| v.as_str())
+            .context("note blob")?
+            .to_string();
+        // `git notes list` prints `<note-blob> <commit>`; grit JSON uses object = commit, blob = note.
+        pairs.push((object, blob));
+    }
+    pairs.sort();
+    Ok(pairs)
+}
+
 pub fn verify_notes_list_n100(ctx: &DailyHeadlineContext) -> Result<()> {
     let expected = notes_seed_count(ctx.smoke);
     let git_out = tool_stdout(&ctx.git, &ctx.repo, &["notes", "list"])?;
     let grit_out = tool_stdout(&ctx.grit, &ctx.repo, &["notes", "--json"])?;
-    let git_lines = git_out.lines().filter(|l| !l.is_empty()).count();
-    let grit_json: serde_json::Value =
-        serde_json::from_str(grit_out.trim()).context("parse grit notes --json")?;
-    let grit_count = grit_json
-        .get("notes")
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
-    let grit_action = grit_json.get("action").and_then(|v| v.as_str());
-    if grit_action != Some("list") {
-        anyhow::bail!("expected notes list json action, got {grit_action:?}");
+    let git_pairs = parse_git_notes_list(&git_out)?;
+    let grit_pairs = parse_grit_notes_list_json(&grit_out)?;
+    if git_pairs.len() != expected || grit_pairs.len() != expected {
+        anyhow::bail!(
+            "notes list count git {} grit {} expected {expected}",
+            git_pairs.len(),
+            grit_pairs.len()
+        );
     }
-    if git_lines != expected || grit_count != expected {
-        anyhow::bail!("notes list count git {git_lines} grit {grit_count} expected {expected}");
+    if git_pairs != grit_pairs {
+        anyhow::bail!("notes (commit, note-blob) mappings differ between git and grit");
     }
     Ok(())
 }
