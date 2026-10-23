@@ -1,7 +1,5 @@
 //! Move `HEAD` and optionally the index and working tree to a target commit.
 
-use std::collections::HashSet;
-
 use crate::change_id::resolved_change_id;
 use crate::config::ConfigSet;
 use crate::diff::DiffEntry;
@@ -13,8 +11,7 @@ use crate::objects::{parse_commit, read_commit_subject_line, ObjectId, ObjectKin
 use crate::porcelain::checkout::checkout_hard_to_tree_from_head_tree;
 use crate::porcelain::index_from_tree::index_from_tree_with_worktree_stats;
 use crate::porcelain::switch::{
-    checkout_tree_transition_allow_local_reset, prepare_tree_transition_allow_local,
-    untracked_block_paths_for_prepared_switch, TreeTransitionPrepareError,
+    checkout_tree_transition_allow_local_reset, keep_style_transition_would_block_paths_for_preview,
 };
 use crate::porcelain::worktree_guard::{load_worktree_snapshot, local_change_diffs};
 use crate::refs::{self, append_reflog};
@@ -446,20 +443,7 @@ fn keep_reset_would_block_paths(
     head_tree: &ObjectId,
     target_tree: &ObjectId,
 ) -> Result<Vec<String>> {
-    let prepared = match prepare_tree_transition_allow_local(
-        repo,
-        Some(head_tree),
-        target_tree,
-        &HashSet::new(),
-    ) {
-        Ok(prepared) => prepared,
-        Err(TreeTransitionPrepareError::OverwritePaths(paths)) => return Ok(paths),
-        Err(TreeTransitionPrepareError::Failed(err)) => return Err(err),
-    };
-    let mut paths = untracked_block_paths_for_prepared_switch(&prepared);
-    paths.sort();
-    paths.dedup();
-    Ok(paths)
+    keep_style_transition_would_block_paths_for_preview(repo, Some(head_tree), target_tree)
 }
 
 fn ref_updated_label_after_reset(head: &HeadState) -> String {
@@ -997,6 +981,59 @@ mod tests {
             c2
         );
         assert_eq!(std::fs::read(wt.join("f")).expect("disk"), b"dirty\n");
+    }
+
+    #[test]
+    fn keep_dry_run_lists_local_and_untracked_blockers() {
+        let (_dir, repo) = init_repo();
+        let c1 = commit_two_files(&repo, &[("f", "1\n"), ("u", "base\n")], None);
+        let wt = repo.work_tree().expect("wt");
+        {
+            let mut index = repo.load_index().expect("index");
+            index.remove(b"u");
+            std::fs::write(wt.join("f"), "2\n").expect("f at tip");
+            let oid_f = repo.odb().write(ObjectKind::Blob, b"2\n").expect("blob f");
+            let entry_f = crate::index::entry_from_stat(
+                &wt.join("f"),
+                b"f",
+                oid_f,
+                crate::index::MODE_REGULAR,
+            )
+            .expect("entry f");
+            index.add_or_replace(entry_f);
+            index.sort();
+            let tree =
+                write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+                    .expect("tree");
+            repo.write_index(&mut index).expect("write index");
+            let commit = CommitData {
+                tree,
+                parents: vec![c1],
+                author: "T <t@t> 0 +0000".into(),
+                committer: "T <t@t> 0 +0000".into(),
+                author_raw: vec![],
+                committer_raw: vec![],
+                encoding: None,
+                message: "drop u\n".into(),
+                raw_message: None,
+                extra_headers: Vec::new(),
+            };
+            let c2 = repo
+                .odb()
+                .write(ObjectKind::Commit, &serialize_commit(&commit))
+                .expect("commit");
+            refs::write_ref(&repo.git_dir(), "refs/heads/main", &c2).expect("branch");
+            refs::write_symbolic_ref(&repo.git_dir(), "HEAD", "refs/heads/main").expect("symhead");
+            let _ = c2;
+        }
+
+        std::fs::write(wt.join("f"), "local\n").expect("local edit on f");
+        std::fs::write(wt.join("u"), "untracked\n").expect("untracked u");
+
+        let mut opts = reset_opts(c1, ResetMode::Keep);
+        opts.dry_run = true;
+        let outcome = reset_to_commit(&repo, &opts).expect("keep dry-run");
+        assert_eq!(outcome.would_block, ["f", "u"]);
     }
 
     #[test]

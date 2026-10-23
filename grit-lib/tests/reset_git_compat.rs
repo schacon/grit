@@ -282,7 +282,7 @@ fn reset_keep_rejects_unmerged_index_like_git() {
         .in_dir(dir.path())
         .with_status(1);
 
-    git_cmd(&["reset", "--keep", "HEAD"])
+    let _ = git_cmd(&["reset", "--keep", "HEAD"])
         .in_dir(dir.path())
         .with_status(128);
 

@@ -540,13 +540,37 @@ pub(crate) fn prepare_tree_transition_allow_local(
     )
 }
 
-pub(crate) fn prepare_tree_transition_allow_local_with_snapshot(
+struct AllowLocalTreeTransitionCore {
+    tree_changes: Vec<DiffEntry>,
+    untracked: Vec<String>,
+    local_blocked_paths: Vec<String>,
+    preserve_worktree_paths: HashSet<String>,
+    index: crate::index::Index,
+    trust_wholesale_dir_removal: bool,
+    preverified_wholesale_dirs: BTreeSet<String>,
+    wholesale_safety_precomputed: bool,
+}
+
+fn merge_keep_style_block_paths(core: &AllowLocalTreeTransitionCore) -> Vec<String> {
+    let mut paths = core.local_blocked_paths.clone();
+    if tree_changes_contain_additions(&core.tree_changes) {
+        paths.extend(untracked_would_be_overwritten_by_tree_changes(
+            &core.untracked,
+            &core.tree_changes,
+        ));
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn plan_allow_local_tree_transition_core(
     repo: &Repository,
     from_tree: Option<&ObjectId>,
     to_tree: &ObjectId,
     mut snapshot: WorktreeSnapshot,
     force_preserve_worktree: &HashSet<String>,
-) -> std::result::Result<PreparedSwitch, TreeTransitionPrepareError> {
+) -> std::result::Result<AllowLocalTreeTransitionCore, TreeTransitionPrepareError> {
     let from_tree_oid = from_tree.copied().or(snapshot.head_tree);
     snapshot.head_tree = from_tree_oid;
     let trust_index_for_old_tree =
@@ -579,15 +603,18 @@ pub(crate) fn prepare_tree_transition_allow_local_with_snapshot(
             "this operation must be run in a work tree".into(),
         ))
     })?;
-    let preserve_worktree_paths = ensure_local_changes_compatible_with_switch(
-        work_tree,
-        &snapshot.index,
-        &staged,
-        &unstaged,
-        &tree_changes,
-        force_preserve_worktree,
-    )
-    .map_err(TreeTransitionPrepareError::OverwritePaths)?;
+    let (local_blocked_paths, preserve_worktree_paths) =
+        match ensure_local_changes_compatible_with_switch(
+            work_tree,
+            &snapshot.index,
+            &staged,
+            &unstaged,
+            &tree_changes,
+            force_preserve_worktree,
+        ) {
+            Ok(preserve) => (Vec::new(), preserve),
+            Err(blocked) => (blocked, HashSet::new()),
+        };
     let ignorecase = repo
         .config()
         .ok()
@@ -645,18 +672,67 @@ pub(crate) fn prepare_tree_transition_allow_local_with_snapshot(
         );
         (safe_directories, true)
     };
-    Ok(PreparedSwitch {
-        plan: TreeSwitchPlan {
-            untracked,
-            tree_changes,
-        },
+    Ok(AllowLocalTreeTransitionCore {
+        tree_changes,
+        untracked,
+        local_blocked_paths,
         preserve_worktree_paths,
         index: snapshot.index,
-        target_tree: *to_tree,
         trust_wholesale_dir_removal,
         preverified_wholesale_dirs,
         wholesale_safety_precomputed,
     })
+}
+
+pub(crate) fn prepare_tree_transition_allow_local_with_snapshot(
+    repo: &Repository,
+    from_tree: Option<&ObjectId>,
+    to_tree: &ObjectId,
+    snapshot: WorktreeSnapshot,
+    force_preserve_worktree: &HashSet<String>,
+) -> std::result::Result<PreparedSwitch, TreeTransitionPrepareError> {
+    let core = plan_allow_local_tree_transition_core(
+        repo,
+        from_tree,
+        to_tree,
+        snapshot,
+        force_preserve_worktree,
+    )?;
+    if !core.local_blocked_paths.is_empty() {
+        return Err(TreeTransitionPrepareError::OverwritePaths(
+            core.local_blocked_paths,
+        ));
+    }
+    Ok(PreparedSwitch {
+        plan: TreeSwitchPlan {
+            untracked: core.untracked,
+            tree_changes: core.tree_changes,
+        },
+        preserve_worktree_paths: core.preserve_worktree_paths,
+        index: core.index,
+        target_tree: *to_tree,
+        trust_wholesale_dir_removal: core.trust_wholesale_dir_removal,
+        preverified_wholesale_dirs: core.preverified_wholesale_dirs,
+        wholesale_safety_precomputed: core.wholesale_safety_precomputed,
+    })
+}
+
+/// Paths that would block a keep-style reset preview (local edits plus untracked collisions).
+pub(crate) fn keep_style_transition_would_block_paths_for_preview(
+    repo: &Repository,
+    from_tree: Option<&ObjectId>,
+    to_tree: &ObjectId,
+) -> Result<Vec<String>> {
+    let snapshot = load_worktree_snapshot(repo)?;
+    let core =
+        plan_allow_local_tree_transition_core(repo, from_tree, to_tree, snapshot, &HashSet::new())
+            .map_err(|err| match err {
+                TreeTransitionPrepareError::Failed(err) => err,
+                TreeTransitionPrepareError::OverwritePaths(_) => {
+                    Error::Message("keep preview planning should not fail on local paths".into())
+                }
+            })?;
+    Ok(merge_keep_style_block_paths(&core))
 }
 
 fn commit_tree(repo: &Repository, commit: &ObjectId) -> Result<ObjectId> {
@@ -772,17 +848,6 @@ pub(crate) fn checkout_tree_transition_allow_local(
     to_tree: &ObjectId,
 ) -> Result<()> {
     checkout_tree_transition_allow_local_with_preserved(repo, from_tree, to_tree, &HashSet::new())
-}
-
-/// Untracked paths that would block a keep-style transition after [`prepare_tree_transition_allow_local`] succeeds.
-pub(crate) fn untracked_block_paths_for_prepared_switch(prepared: &PreparedSwitch) -> Vec<String> {
-    if !tree_changes_contain_additions(&prepared.plan.tree_changes) {
-        return Vec::new();
-    }
-    untracked_would_be_overwritten_by_tree_changes(
-        &prepared.plan.untracked,
-        &prepared.plan.tree_changes,
-    )
 }
 
 /// Like [`checkout_tree_transition_allow_local`], but local-overwrite paths become [`Error::WouldOverwrite`].
