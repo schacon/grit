@@ -103,11 +103,16 @@ impl HumanRender for NotesOutcome {
                 ..
             } => {
                 let short = object.get(..7).unwrap_or(object.as_str());
-                let prefix = if dry_run == &Some(true) { "Would " } else { "" };
-                if *replaced {
-                    outln!(w, "{prefix}replace note for {short}");
+                if dry_run == &Some(true) {
+                    if *replaced {
+                        outln!(w, "Would replace note for {short}");
+                    } else {
+                        outln!(w, "Would add note for {short}");
+                    }
+                } else if *replaced {
+                    outln!(w, "Replaced note for {short}");
                 } else {
-                    outln!(w, "{prefix}add note for {short}");
+                    outln!(w, "Added note for {short}");
                 }
             }
             NotesOutcome::Remove {
@@ -168,9 +173,7 @@ impl MarkdownRender for NotesOutcome {
                 outln!(w, "{verb} note for `{short}` on `{notes_ref}`.");
             }
             NotesOutcome::Remove {
-                notes_ref,
-                objects,
-                ..
+                notes_ref, objects, ..
             } => {
                 if objects.is_empty() {
                     outln!(w, "No notes removed on `{notes_ref}`.");
