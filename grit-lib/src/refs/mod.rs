@@ -3346,6 +3346,51 @@ pub fn update_branch_for_commit_with_config(
     update_branch_for_commit_files(git_dir, update, &reflog_old, config)
 }
 
+/// Advance detached `HEAD` to a new commit with CAS and optional `HEAD` reflog.
+///
+/// Uses the ref store (files or reftable) so detached tips stored only in `.git/HEAD`
+/// participate in CAS the same way as branch updates.
+///
+/// # Errors
+///
+/// Returns [`Error::Message`] when `HEAD` is symbolic (not detached), when the CAS check
+/// fails, or when ref/reflog I/O fails.
+pub(crate) fn update_detached_head_for_commit_with_config(
+    git_dir: &Path,
+    expected_old: Option<ObjectId>,
+    new_oid: ObjectId,
+    identity: &str,
+    reflog_message: &str,
+    config: &ConfigSet,
+) -> Result<()> {
+    if read_head(git_dir)?.is_some() {
+        return Err(Error::Message(
+            "HEAD points at a branch; use update_branch_for_commit".into(),
+        ));
+    }
+    let current = resolve_ref(git_dir, "HEAD").ok();
+    verify_branch_cas(expected_old, current, "HEAD")?;
+    let reflog_old = expected_old.unwrap_or_else(crate::diff::zero_oid);
+
+    write_ref_cas(git_dir, "HEAD", &new_oid, reflog_old)?;
+    if should_autocreate_reflog_with_config(config, git_dir, "HEAD") {
+        if let Err(err) = append_reflog_with_config(
+            git_dir,
+            "HEAD",
+            &reflog_old,
+            &new_oid,
+            identity,
+            reflog_message,
+            false,
+            Some(config),
+        ) {
+            let _ = write_ref_cas(git_dir, "HEAD", &reflog_old, new_oid);
+            return Err(err);
+        }
+    }
+    Ok(())
+}
+
 /// Filesystem path to the reflog file for `refname` (same layout as [`append_reflog`]).
 ///
 /// Branch and tag reflogs live under the shared [`common_dir`] when the repository uses a

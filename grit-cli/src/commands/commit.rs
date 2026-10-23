@@ -139,8 +139,7 @@ pub fn run(
     let repo = context::discover()?;
 
     match resolve_head(repo.git_dir())? {
-        HeadState::Branch { .. } => {}
-        HeadState::Detached { .. } => bail!("HEAD is detached; grit commit needs a branch"),
+        HeadState::Branch { .. } | HeadState::Detached { .. } => {}
         HeadState::Invalid => bail!("HEAD is in an unknown state"),
     }
 
@@ -222,7 +221,7 @@ pub fn run(
 
     let subject = if dry_run && amend && message.as_ref().is_none_or(|m| m.trim().is_empty()) {
         let head = resolve_head(repo.git_dir()).context("resolve HEAD")?;
-        if let HeadState::Branch { oid: Some(tip), .. } = head {
+        if let HeadState::Branch { oid: Some(tip), .. } | HeadState::Detached { oid: tip } = head {
             let obj = repo.odb().read(&tip).context("read HEAD commit")?;
             subject_line(
                 &parse_commit(&obj.data)
@@ -368,7 +367,6 @@ fn scope_json(scope: &CommitScope) -> CommitScopeJson {
 fn map_commit_error(err: Error) -> anyhow::Error {
     match err {
         Error::NothingToCommit => anyhow::anyhow!("nothing to commit — working tree clean"),
-        Error::DetachedHead => anyhow::anyhow!("HEAD is detached; grit commit needs a branch"),
         Error::IndexUnmerged => anyhow::anyhow!(
             "cannot commit: unresolved merge conflicts remain — resolve each conflicted path (grit add or grit rm), then try again"
         ),
