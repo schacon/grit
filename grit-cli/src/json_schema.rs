@@ -524,6 +524,23 @@ pub fn schema_key_for_doc_example(
             return Some("rebase.check".into());
         }
     }
+    if page_command == "reflog" {
+        if instance.get("deleted").is_some() {
+            return Some("reflog.delete".into());
+        }
+        if instance.get("entries_pruned").is_some() || instance.get("dry_run").is_some() {
+            return Some("reflog.expire".into());
+        }
+        if instance.get("refs").is_some() && instance.get("entries").is_none() {
+            if instance
+                .get("refs")
+                .and_then(|r| r.as_array())
+                .is_some_and(|refs| refs.iter().all(|e| e.get("ref").is_some()))
+            {
+                return Some("reflog.list".into());
+            }
+        }
+    }
     if page_command == "stash" {
         if instance.is_array() {
             return Some("stash.list".into());
@@ -1127,6 +1144,7 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
         ("rebase_check", &["rebase", "HEAD~2", "--check"]),
         ("reflog_delete", &["reflog", "delete", "HEAD@{1}"]),
         ("reflog_expire", &["reflog", "expire", "--expire", "now"]),
+        ("reflog_list", &["reflog", "list"]),
         ("worktree_prune", &["worktree", "prune"]),
         ("error_usage", &["branch", "--delete"]),
         ("error_invalid_pattern", &["log", "--author", "["]),
@@ -1243,8 +1261,8 @@ mod tests {
             );
         }
         assert_eq!(
-            checked, 97,
-            "expected 97 committed schema files under content/schemas"
+            checked, 100,
+            "expected 100 committed schema files under content/schemas"
         );
     }
 
@@ -1358,7 +1376,7 @@ mod tests {
             "schema index must list every committed schema document exactly"
         );
         let file_count: usize = on_disk.values().map(|v| v.len()).sum();
-        assert_eq!(file_count, 97, "expected 97 schema files indexed");
+        assert_eq!(file_count, 100, "expected 100 schema files indexed");
     }
 
     fn load_snapshot_json_stdout(name: &str, snapshot_dir: &Path) -> Value {

@@ -1104,6 +1104,11 @@ fn snapshot_reflog_delete() {
 }
 
 #[test]
+fn snapshot_reflog_list() {
+    snapshot_fresh("reflog_list", &["reflog", "list"], |_| {});
+}
+
+#[test]
 fn snapshot_reflog_expire() {
     snapshot_fresh(
         "reflog_expire",

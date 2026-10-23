@@ -10,7 +10,7 @@ expression: payload
   },
   "json": {
     "exit": 0,
-    "stdout": "{\"entries_pruned\":5}\n",
+    "stdout": "{\"entries_pruned\":5,\"dry_run\":false,\"refs\":[{\"ref\":\"HEAD\",\"pruned\":2},{\"ref\":\"refs/heads/feature\",\"pruned\":1},{\"ref\":\"refs/heads/main\",\"pruned\":2}]}\n",
     "stderr": ""
   },
   "markdown": {

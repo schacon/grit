@@ -468,6 +468,14 @@ const COMMAND_CONTRACTS: &[(&str, CommandContract)] = &[
         },
     ),
     (
+        "reflog.list",
+        CommandContract {
+            kind: CommandKind::List,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
         "reflog.delete",
         CommandContract {
             kind: CommandKind::Mutation,
@@ -916,12 +924,6 @@ const EXCEPTIONS: &[(&str, ContractRule, &str, &str)] = &[
         ContractRule::DryRun,
         "inspection-extras",
         "reflog delete has no `--dry-run` yet",
-    ),
-    (
-        "reflog.expire",
-        ContractRule::DryRun,
-        "inspection-extras",
-        "reflog expire has no `--dry-run` yet",
     ),
     (
         "remote.add",

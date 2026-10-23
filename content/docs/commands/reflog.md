@@ -148,6 +148,14 @@ Expire (`grit reflog expire`):
 | `refs[].ref` | string | Ref that was processed. |
 | `refs[].pruned` | integer | Entries pruned on that ref. |
 
+```json
+{
+  "entries_pruned": 0,
+  "dry_run": false,
+  "refs": []
+}
+```
+
 ## Markdown output
 
 Pass [`--markdown`](../global-options/) for agent-friendly output.

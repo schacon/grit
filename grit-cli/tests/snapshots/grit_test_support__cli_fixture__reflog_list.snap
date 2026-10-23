@@ -1,0 +1,21 @@
+---
+source: grit-test-support/src/cli_fixture.rs
+expression: payload
+---
+{
+  "human": {
+    "exit": 0,
+    "stdout": "HEAD\nrefs/heads/feature\nrefs/heads/main\n",
+    "stderr": ""
+  },
+  "json": {
+    "exit": 0,
+    "stdout": "{\"refs\":[{\"ref\":\"HEAD\"},{\"ref\":\"refs/heads/feature\"},{\"ref\":\"refs/heads/main\"}]}\n",
+    "stderr": ""
+  },
+  "markdown": {
+    "exit": 0,
+    "stdout": "- `HEAD`\n- `refs/heads/feature`\n- `refs/heads/main`\n",
+    "stderr": ""
+  }
+}
