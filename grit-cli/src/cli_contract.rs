@@ -636,6 +636,22 @@ const COMMAND_CONTRACTS: &[(&str, CommandContract)] = &[
         },
     ),
     (
+        "stash.branch",
+        CommandContract {
+            kind: CommandKind::Mutation,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
+        "stash.clear",
+        CommandContract {
+            kind: CommandKind::Mutation,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
         "stash.list",
         CommandContract {
             kind: CommandKind::List,
@@ -872,6 +888,12 @@ const EXCEPTIONS: &[(&str, ContractRule, &str, &str)] = &[
         "config set/unset has no `--dry-run` yet",
     ),
     (
+        "reset",
+        ContractRule::DryRun,
+        "workspace-extras",
+        "reset has no `--dry-run` yet",
+    ),
+    (
         "auth",
         ContractRule::DryRun,
         "s6 dry-run",
@@ -948,6 +970,18 @@ const EXCEPTIONS: &[(&str, ContractRule, &str, &str)] = &[
         ContractRule::DryRun,
         "workspace-extras",
         "stash drop has no `--dry-run` yet",
+    ),
+    (
+        "stash.branch",
+        ContractRule::DryRun,
+        "workspace-extras",
+        "stash branch has no `--dry-run` yet",
+    ),
+    (
+        "stash.clear",
+        ContractRule::Force,
+        "workspace-extras",
+        "stash clear uses long-only `--force` (matches destructive clear semantics)",
     ),
     (
         "worktree.add",
