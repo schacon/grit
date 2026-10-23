@@ -1188,9 +1188,9 @@ fn shortlog_target_argv(grit: &Path, git: &Path, meta: &HotPathMeta) -> (Vec<Str
     let grit_cmd = chain_shell_public(
         grit,
         &[
-            vec!["checkout".into(), "-q".into(), meta.topic_branch.clone()],
+            vec!["switch".into(), meta.topic_branch.clone()],
             vec!["shortlog".into(), "--target".into(), target.clone()],
-            vec!["checkout".into(), "-q".into(), meta.main_branch.clone()],
+            vec!["switch".into(), meta.main_branch.clone()],
         ],
     );
     let git_cmd = chain_shell_public(
@@ -1310,7 +1310,7 @@ impl Drop for CampaignCwdGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::LOG_BENCH_GRIT_PAGE_COUNT;
+    use super::{shortlog_target_argv, LOG_BENCH_GRIT_PAGE_COUNT};
 
     use crate::conflicts_fixture::ConflictsMeta;
     use crate::conflicts_suite::campaign_conflicts_scenarios;
@@ -1372,5 +1372,104 @@ mod tests {
         let log_limit = 1000usize;
         let pages = log_limit.div_ceil(LOG_BENCH_GRIT_PAGE_COUNT);
         assert_eq!(pages, 100);
+    }
+
+    #[test]
+    fn shortlog_target_grit_shell_uses_switch_not_quiet_checkout() {
+        let meta = sample_conflicts_meta().base;
+        let grit = Path::new("/usr/bin/grit");
+        let git = Path::new("/usr/bin/git");
+        let (grit_argv, _) = shortlog_target_argv(grit, git, &meta);
+        let script = grit_argv.get(1).expect("shell script");
+        assert!(
+            !script.contains("'checkout'"),
+            "grit side must use switch, not checkout: {script}"
+        );
+        assert!(
+            script.matches("'switch'").count() >= 2,
+            "grit side should switch to topic and back: {script}"
+        );
+    }
+
+    fn build_grit_for_campaign_tests() -> std::path::PathBuf {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let status = std::process::Command::new(env!("CARGO"))
+            .args(["build", "-p", "grit-cli", "--bin", "grit", "-q"])
+            .current_dir(&workspace)
+            .status()
+            .expect("spawn cargo build grit-cli");
+        assert!(status.success(), "cargo build grit-cli failed");
+        let grit = workspace.join("target/debug/grit");
+        grit.canonicalize().unwrap_or(grit)
+    }
+
+    fn git_quiet(repo: &Path, args: &[&str]) {
+        assert!(
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(repo)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "T")
+                .env("GIT_AUTHOR_EMAIL", "t@e.com")
+                .env("GIT_COMMITTER_NAME", "T")
+                .env("GIT_COMMITTER_EMAIL", "t@e.com")
+                .status()
+                .expect("git")
+                .success(),
+            "git {} failed",
+            args.join(" ")
+        );
+    }
+
+    #[test]
+    fn shortlog_target_grit_shell_exits_zero() {
+        let grit = build_grit_for_campaign_tests();
+        let dir = tempfile::tempdir().expect("tempdir");
+        git_quiet(dir.path(), &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.path().join("f"), b"0\n").expect("write");
+        git_quiet(dir.path(), &["add", "f"]);
+        git_quiet(dir.path(), &["commit", "-qm", "c0"]);
+        for i in 1..105 {
+            std::fs::write(dir.path().join("f"), format!("{i}\n")).expect("write");
+            git_quiet(dir.path(), &["commit", "-am", &format!("c{i}")]);
+        }
+        let main_tip = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir.path())
+            .output()
+            .expect("rev-parse");
+        let main_tip = String::from_utf8_lossy(&main_tip.stdout).trim().to_string();
+        git_quiet(dir.path(), &["branch", "-q", "campaign-topic"]);
+        git_quiet(dir.path(), &["checkout", "-q", "campaign-topic"]);
+        std::fs::write(dir.path().join("f"), b"topic\n").expect("write");
+        git_quiet(dir.path(), &["commit", "-am", "topic"]);
+        git_quiet(dir.path(), &["checkout", "-q", "main"]);
+
+        let meta = HotPathMeta {
+            branch_a: "campaign-a".into(),
+            branch_b: "campaign-b".into(),
+            main_branch: "main".into(),
+            topic_branch: "campaign-topic".into(),
+            base_commit: main_tip.clone(),
+            main_tip,
+            pick_commit: "0000000000000000000000000000000000000001".into(),
+            pick_series_commits: Vec::new(),
+            wide: false,
+            wide_branch_b: None,
+        };
+
+        let (grit_argv, _) = shortlog_target_argv(&grit, Path::new("git"), &meta);
+        let script = grit_argv.get(1).expect("shell script");
+        let status = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(script)
+            .current_dir(dir.path())
+            .status()
+            .expect("run grit shortlog-target shell");
+        assert!(
+            status.success(),
+            "shortlog-target grit shell failed for script: {script}"
+        );
     }
 }

@@ -19,7 +19,10 @@ struct Scratch {
 
 impl Scratch {
     fn new(name: &str) -> Result<Self, Box<dyn Error>> {
-        let path = std::env::temp_dir().join(format!("grit-shortlog-target-{name}-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "grit-shortlog-target-{name}-{}",
+            std::process::id()
+        ));
         fs::create_dir_all(&path)?;
         Ok(Self { path })
     }
@@ -61,20 +64,18 @@ fn gs_ok(dir: &Path, args: &[&str]) {
 }
 
 fn git(repo: &Path, args: &[&str]) {
-    assert!(
-        Command::new("git")
-            .args(args)
-            .current_dir(repo)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env("GIT_AUTHOR_NAME", "T")
-            .env("GIT_AUTHOR_EMAIL", "t@e.com")
-            .env("GIT_COMMITTER_NAME", "T")
-            .env("GIT_COMMITTER_EMAIL", "t@e.com")
-            .status()
-            .expect("git")
-            .success()
-    );
+    assert!(Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "T")
+        .env("GIT_AUTHOR_EMAIL", "t@e.com")
+        .env("GIT_COMMITTER_NAME", "T")
+        .env("GIT_COMMITTER_EMAIL", "t@e.com")
+        .status()
+        .expect("git")
+        .success());
 }
 
 #[test]
