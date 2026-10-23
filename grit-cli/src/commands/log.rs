@@ -342,7 +342,6 @@ pub fn run(
     let use_rev_walk = display.graph
         || display.group_by.is_some()
         || pathspecs.has_any()
-        || rev.max_count().is_some()
         || walk_opts
             .commit_filter
             .as_ref()
@@ -429,7 +428,11 @@ pub fn run(
     let page =
         LogWalkCursor::step(&repo, &query, None, page_size).context("could not list commits")?;
     let truncated = page.next.is_some();
-    let next = page.next.map(|c| c.encode()).transpose()?;
+    let next = if rev.max_count().is_some() {
+        None
+    } else {
+        page.next.map(|c| c.encode()).transpose()?
+    };
     build_commit_outcome(
         &repo,
         &page.commits,
