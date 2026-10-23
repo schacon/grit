@@ -30,6 +30,7 @@ mod json_error;
 mod json_filter;
 #[cfg(test)]
 mod json_schema;
+mod limit_args;
 mod log_display;
 mod markdown;
 mod merge_strategy_args;
@@ -560,6 +561,8 @@ enum BundleAction {
     List {
         /// Bundle file to read.
         file: String,
+        #[command(flatten)]
+        limit: limit_args::LimitArgs,
     },
     /// Ingest a bundle pack into the current repository.
     Unbundle {
@@ -913,6 +916,8 @@ enum Command {
     },
     /// List hook scripts or run one by name.
     Hooks {
+        #[command(flatten)]
+        limit: limit_args::LimitArgs,
         #[command(subcommand)]
         action: Option<HooksAction>,
     },
@@ -1476,6 +1481,8 @@ enum Command {
         /// Preview `add` or `remove` without writing objects or refs.
         #[arg(long = "dry-run", global = true)]
         dry_run: bool,
+        #[command(flatten)]
+        limit: limit_args::LimitArgs,
         #[command(subcommand)]
         action: Option<NotesAction>,
     },
@@ -1509,9 +1516,8 @@ enum Command {
         /// Only tags pointing at this object (repeatable).
         #[arg(long = "points-at", value_name = "REV")]
         points_at: Vec<String>,
-        /// Maximum number of tags to list.
-        #[arg(short = 'n', long = "limit", value_name = "N")]
-        limit: Option<usize>,
+        #[command(flatten)]
+        limit: limit_args::LimitArgs,
         /// Delete the named tag instead of creating it.
         #[arg(short = 'd', long = "delete")]
         delete: bool,
@@ -2291,9 +2297,9 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
                 Ok(ExitStatus::from_ignore_check(&outcome))
             }
         },
-        Command::Hooks { action } => match action {
+        Command::Hooks { limit, action } => match action {
             None | Some(HooksAction::List) => {
-                emit_success(&commands::hooks::run_list()?, opts, ctx)
+                emit_success(&commands::hooks::run_list(limit.get())?, opts, ctx)
             }
             Some(HooksAction::Run { name, hook_args }) => {
                 let outcome = commands::hooks::run_hook_by_name(&name, &hook_args)?;
@@ -2456,9 +2462,11 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
                 emit_success(&outcome, opts, ctx)?;
                 Ok(ExitStatus::from_bundle_verify_ok(outcome.ok))
             }
-            BundleAction::List { file } => {
-                emit_success(&commands::bundle::run_list(file.into())?, opts, ctx)
-            }
+            BundleAction::List { file, limit } => emit_success(
+                &commands::bundle::run_list(file.into(), limit.get())?,
+                opts,
+                ctx,
+            ),
             BundleAction::Unbundle { file } => {
                 emit_success(&commands::bundle::run_unbundle(file.into())?, opts, ctx)
             }
@@ -2466,6 +2474,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
         Command::Notes {
             notes_ref,
             dry_run,
+            limit,
             action,
         } => {
             use commands::notes::NotesRunAction::*;
@@ -2484,7 +2493,13 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
                 Some(NotesAction::Remove { revs }) => Remove { revs },
             };
             emit_success(
-                &commands::notes::run(notes_ref, run_action, dry_run, ctx.now)?,
+                &commands::notes::run(
+                    notes_ref,
+                    run_action,
+                    dry_run,
+                    limit.get(),
+                    ctx.now,
+                )?,
                 opts,
                 ctx,
             )
@@ -2540,7 +2555,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<ExitS
                 reverse,
                 contains,
                 points_at,
-                limit,
+                limit: limit.get(),
                 tree_sha256,
                 exclude_submodule,
             })?;

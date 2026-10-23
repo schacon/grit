@@ -230,6 +230,7 @@ pub(crate) mod index_name_hash_lazy;
 pub(crate) mod index_pack;
 pub(crate) mod init_filesystem;
 pub(crate) mod interpret_trailers;
+pub mod list_limit;
 pub(crate) mod local_object_copy;
 pub mod lockfile;
 pub(crate) mod log_walk;
