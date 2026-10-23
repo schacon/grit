@@ -130,6 +130,122 @@ fn config_get_git_config_parameters_has_command_scope_no_file() -> TestResult {
 }
 
 #[test]
+fn config_hot_path_honors_git_dir_from_outside_worktree() -> TestResult {
+    let scratch = Scratch::new("config-git-dir")?;
+    let outside = scratch.child("outside");
+    fs::create_dir_all(&outside)?;
+    let repo = scratch.child("target-repo");
+    fs::create_dir_all(&repo)?;
+    grit_ok(&repo, &["init", "."]);
+
+    let git_dir = repo.join(".git");
+    let key = "review.gitdir";
+    let value = "from-outside";
+
+    let mut set = Command::new(GRIT);
+    set.env("GIT_DIR", git_dir.to_str().unwrap())
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .args(["config", key, value])
+        .current_dir(&outside);
+    let set_out = set.output()?;
+    assert!(
+        set_out.status.success(),
+        "set stderr: {}",
+        String::from_utf8_lossy(&set_out.stderr)
+    );
+
+    let mut get = Command::new(GRIT);
+    get.env("GIT_DIR", git_dir.to_str().unwrap())
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .args(["config", key])
+        .current_dir(&outside);
+    let get_out = get.output()?;
+    assert!(get_out.status.success());
+    assert_eq!(String::from_utf8_lossy(&get_out.stdout).trim(), value);
+
+    let git_check = Command::new("git")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .args([
+            "-C",
+            repo.to_str().unwrap(),
+            "config",
+            "--local",
+            "--get",
+            key,
+        ])
+        .output()?;
+    assert!(git_check.status.success());
+    assert_eq!(String::from_utf8_lossy(&git_check.stdout).trim(), value);
+
+    // cwd is another repo: must still write GIT_DIR target, not cwd repo.
+    let other = scratch.child("other-repo");
+    fs::create_dir_all(&other)?;
+    grit_ok(&other, &["init", "."]);
+    let other_key = "review.other";
+    grit_ok(&other, &["config", other_key, "must-not-leak"]);
+
+    let mut set_gitdir = Command::new(GRIT);
+    set_gitdir
+        .env("GIT_DIR", git_dir.to_str().unwrap())
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .args(["config", "review.cwd-isolation", "ok"])
+        .current_dir(&other);
+    assert!(set_gitdir.output()?.status.success());
+
+    let other_cfg = other.join(".git").join("config");
+    let other_text = fs::read_to_string(&other_cfg)?;
+    assert!(
+        !other_text.contains("review.cwd-isolation"),
+        "must not write cwd repo config when GIT_DIR selects another repository"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn config_unset_with_extra_value_rejected_on_hot_path() -> TestResult {
+    let scratch = Scratch::new("config-unset-value")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    grit_ok(&repo, &["init", "."]);
+
+    let key = "review.validation";
+    grit_ok(&repo, &["config", key, "keep"]);
+
+    let out = grit(&repo, &["config", "--unset", key, "ignored"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--unset does not take a value"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    grit_ok(&repo, &["config", key]);
+    let got = grit(&repo, &["config", key]);
+    assert!(got.status.success());
+    assert_eq!(String::from_utf8_lossy(&got.stdout).trim(), "keep");
+
+    // Same check with GIT_DIR from outside the worktree (human hot path + env routing).
+    let outside = scratch.child("outside");
+    fs::create_dir_all(&outside)?;
+    let git_dir = repo.join(".git");
+    let mut cmd = Command::new(GRIT);
+    cmd.env("GIT_DIR", git_dir.to_str().unwrap())
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .args(["config", "--unset", key, "ignored"])
+        .current_dir(&outside);
+    let out = cmd.output()?;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--unset does not take a value"));
+    grit_ok(&repo, &["config", key]);
+    assert_eq!(
+        String::from_utf8_lossy(&grit(&repo, &["config", key]).stdout).trim(),
+        "keep"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn config_local_flag() -> TestResult {
     let scratch = Scratch::new("config-local-flag")?;
     let repo = scratch.child("repo");
