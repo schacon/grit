@@ -16964,10 +16964,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::clone::CloneC
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::clone::CloneCheckout
 pub enum grit_lib::remote::clone::CloneError
 pub grit_lib::remote::clone::CloneError::DestNotEmpty(alloc::string::String)
+pub grit_lib::remote::clone::CloneError::InvalidCloneDepth
 pub grit_lib::remote::clone::CloneError::Library(grit_lib::error::Error)
 pub grit_lib::remote::clone::CloneError::Remote(grit_lib::remote::RemoteError)
 pub grit_lib::remote::clone::CloneError::RemoteRefNotFound(alloc::string::String)
-pub grit_lib::remote::clone::CloneError::InvalidCloneDepth
 impl grit_lib::remote::clone::CloneError
 pub fn grit_lib::remote::clone::CloneError::is_remote_read_failure(&self) -> bool
 pub fn grit_lib::remote::clone::CloneError::is_remote_ref_not_found(&self) -> bool
@@ -16991,11 +16991,28 @@ impl !core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::clone::Clone
 impl !core::panic::unwind_safe::UnwindSafe for grit_lib::remote::clone::CloneError
 pub enum grit_lib::remote::clone::CloneHead
 pub grit_lib::remote::clone::CloneHead::Branch(alloc::string::String)
-pub grit_lib::remote::clone::CloneHead::Detached { tag: alloc::string::String, oid: grit_lib::objects::ObjectId }
+pub grit_lib::remote::clone::CloneHead::Detached
+pub grit_lib::remote::clone::CloneHead::Detached::oid: grit_lib::objects::ObjectId
+pub grit_lib::remote::clone::CloneHead::Detached::tag: alloc::string::String
 impl grit_lib::remote::clone::CloneHead
 pub fn grit_lib::remote::clone::CloneHead::branch_name(&self) -> core::option::Option<&str>
 pub fn grit_lib::remote::clone::CloneHead::is_detached(&self) -> bool
 pub fn grit_lib::remote::clone::CloneHead::tag_name(&self) -> core::option::Option<&str>
+impl core::clone::Clone for grit_lib::remote::clone::CloneHead
+pub fn grit_lib::remote::clone::CloneHead::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::remote::clone::CloneHead
+impl core::cmp::PartialEq for grit_lib::remote::clone::CloneHead
+pub fn grit_lib::remote::clone::CloneHead::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::remote::clone::CloneHead
+pub fn grit_lib::remote::clone::CloneHead::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::remote::clone::CloneHead
+impl core::marker::Freeze for grit_lib::remote::clone::CloneHead
+impl core::marker::Send for grit_lib::remote::clone::CloneHead
+impl core::marker::Sync for grit_lib::remote::clone::CloneHead
+impl core::marker::Unpin for grit_lib::remote::clone::CloneHead
+impl core::marker::UnsafeUnpin for grit_lib::remote::clone::CloneHead
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::clone::CloneHead
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::clone::CloneHead
 pub struct grit_lib::remote::clone::CloneOptions
 pub grit_lib::remote::clone::CloneOptions::branch: core::option::Option<alloc::string::String>
 pub grit_lib::remote::clone::CloneOptions::depth: core::option::Option<u32>
@@ -17016,11 +17033,11 @@ impl core::marker::UnsafeUnpin for grit_lib::remote::clone::CloneOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::clone::CloneOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::clone::CloneOptions
 pub struct grit_lib::remote::clone::CloneOutcome
-pub grit_lib::remote::clone::CloneOutcome::head: grit_lib::remote::clone::CloneHead
 pub grit_lib::remote::clone::CloneOutcome::branches: u64
 pub grit_lib::remote::clone::CloneOutcome::branches_with_commits: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::remote::clone::CloneOutcome::checkout: grit_lib::remote::clone::CloneCheckout
 pub grit_lib::remote::clone::CloneOutcome::checkout_oid: grit_lib::objects::ObjectId
+pub grit_lib::remote::clone::CloneOutcome::head: grit_lib::remote::clone::CloneHead
 pub grit_lib::remote::clone::CloneOutcome::path: std::path::PathBuf
 pub grit_lib::remote::clone::CloneOutcome::repo: grit_lib::repo::Repository
 pub grit_lib::remote::clone::CloneOutcome::tags: u64
