@@ -203,6 +203,49 @@ fn config_hot_path_honors_git_dir_from_outside_worktree() -> TestResult {
 }
 
 #[test]
+fn config_unset_with_extra_value_rejected_on_hot_path() -> TestResult {
+    let scratch = Scratch::new("config-unset-value")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    grit_ok(&repo, &["init", "."]);
+
+    let key = "review.validation";
+    grit_ok(&repo, &["config", key, "keep"]);
+
+    let out = grit(&repo, &["config", "--unset", key, "ignored"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--unset does not take a value"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    grit_ok(&repo, &["config", key]);
+    let got = grit(&repo, &["config", key]);
+    assert!(got.status.success());
+    assert_eq!(String::from_utf8_lossy(&got.stdout).trim(), "keep");
+
+    // Same check with GIT_DIR from outside the worktree (human hot path + env routing).
+    let outside = scratch.child("outside");
+    fs::create_dir_all(&outside)?;
+    let git_dir = repo.join(".git");
+    let mut cmd = Command::new(GRIT);
+    cmd.env("GIT_DIR", git_dir.to_str().unwrap())
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .args(["config", "--unset", key, "ignored"])
+        .current_dir(&outside);
+    let out = cmd.output()?;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--unset does not take a value"));
+    grit_ok(&repo, &["config", key]);
+    assert_eq!(
+        String::from_utf8_lossy(&grit(&repo, &["config", key]).stdout).trim(),
+        "keep"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn config_local_flag() -> TestResult {
     let scratch = Scratch::new("config-local-flag")?;
     let repo = scratch.child("repo");

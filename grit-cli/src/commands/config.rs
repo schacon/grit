@@ -147,6 +147,10 @@ pub fn run(
         bail!("specify a config key (e.g. user.name), or pass --list to see everything");
     };
 
+    if unset && value.is_some() {
+        bail!("--unset does not take a value");
+    }
+
     if default_repo_hot_path(global, local, file.as_ref(), mode) {
         if unset {
             return hot_unset_in_repo(process_env, &key);
@@ -161,9 +165,6 @@ pub fn run(
     let read_location = resolve_location(global, local, file, false)?;
 
     if unset {
-        if value.is_some() {
-            bail!("--unset does not take a value");
-        }
         return unset_value(write_location, process_env, &key);
     }
 
