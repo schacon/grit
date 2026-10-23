@@ -6702,11 +6702,11 @@ pub(crate) fn single_tip_bounded_page_with_parent_probe(
 ) -> Result<RevListResult> {
     let mut commits = vec![tip];
     if max_fetch >= 2 {
-        if let Some(parent) = crate::rev_parse::commit_parents_for_navigation(repo, tip)?
-            .first()
-            .copied()
-        {
-            commits.push(parent);
+        let parents = crate::rev_parse::commit_parents_for_navigation(repo, tip)?;
+        if parents.len() <= 1 {
+            if let Some(parent) = parents.first().copied() {
+                commits.push(parent);
+            }
         }
     }
     commits.truncate(max_fetch);

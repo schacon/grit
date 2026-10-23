@@ -337,14 +337,69 @@ fn retain_commit_data_returns_parsed_listed_commits() {
 }
 
 #[test]
+fn merge_tip_limit_two_uses_date_order_not_first_parent() {
+    let dir = tempdir().expect("tempdir");
+    let repo = open_bare(dir.path()).expect("repo");
+    let root = write_commit(repo.odb(), &[], "root", 10, 10).expect("root");
+    let first = write_commit(repo.odb(), &[root], "first", 20, 20).expect("first");
+    let second = write_commit(repo.odb(), &[root], "second", 30, 30).expect("second");
+    let merge = write_commit(repo.odb(), &[first, second], "merge", 40, 40).expect("merge");
+    let merge_hex = merge.to_hex();
+    let expected = support::git_rev_list(dir.path(), &["-n", "2", &merge_hex]);
+    let result = repo
+        .rev_walk()
+        .rev_list_result(
+            &[merge_hex.as_str()],
+            &RevWalkListOptions {
+                limit: Some(2),
+                ..Default::default()
+            },
+        )
+        .expect("rev walk");
+    assert_eq!(result.commits, expected);
+    assert_eq!(result.commits.len(), 2);
+    assert_eq!(
+        result.commits[1], second,
+        "newer second parent should precede first parent in default order"
+    );
+}
+
+#[test]
+fn non_commit_tip_skips_fast_path_and_matches_rev_list() {
+    const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+    let dir = tempdir().expect("tempdir");
+    let repo = open_bare(dir.path()).expect("repo");
+    support::git(
+        dir.path(),
+        &["tag", "-a", "tree-tag", "-m", "tree", EMPTY_TREE],
+    );
+    let list_opts = RevListOptions {
+        max_count: Some(1),
+        ..Default::default()
+    };
+    let general = rev_list(&repo, &["tree-tag".to_owned()], &[], &list_opts);
+    let walk = repo.rev_walk().rev_list_result(
+        &["tree-tag"],
+        &RevWalkListOptions {
+            limit: Some(1),
+            ..Default::default()
+        },
+    );
+    match (&general, &walk) {
+        (Ok(g), Ok(w)) => assert_eq!(g.commits, w.commits),
+        (Err(_), Err(_)) => {}
+        _ => panic!("fast path changed outcome: general={general:?} walk={walk:?}"),
+    }
+}
+
+#[test]
 fn rev_walk_single_positive_limit_one_matches_git() {
     let repo = support::HistoryRepo::init();
     let wt = repo.worktree();
     for i in 0..50 {
         support::commit_file(wt, &format!("f{i}.txt"), "x\n", &format!("m{i}"));
     }
-    let grit_repo =
-        Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
+    let grit_repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
     let expected = support::git_rev_list(wt, &["-n", "1", "HEAD~20"]);
     let result = grit_repo
         .rev_walk()

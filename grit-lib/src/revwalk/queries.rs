@@ -17,7 +17,7 @@ use crate::rev_list::{
 use crate::rev_list_error::RevListError;
 use crate::rev_parse::{
     peel_to_commit_for_merge_base, resolve_revision, resolve_revision_for_range_end,
-    split_triple_dot_range,
+    split_triple_dot_range, try_peel_to_commit_for_merge_base,
 };
 use crate::revwalk::filter::CommitFilter;
 
@@ -343,12 +343,20 @@ fn try_single_positive_bounded_page(
         return Ok(None);
     }
     let oid = resolve_revision_for_range_end(repo, spec)?;
-    let oid = peel_to_commit_for_merge_base(repo, oid)?;
+    let Some(commit_tip) = try_peel_to_commit_for_merge_base(repo, oid)? else {
+        return Ok(None);
+    };
     let max_fetch = walk.limit.unwrap_or(1);
+    if max_fetch >= 2 {
+        let parents = crate::rev_parse::commit_parents_for_navigation(repo, commit_tip)?;
+        if parents.len() > 1 {
+            return Ok(None);
+        }
+    }
     Ok(Some(
         crate::rev_list::single_tip_bounded_page_with_parent_probe(
             repo,
-            oid,
+            commit_tip,
             max_fetch,
             walk.retain_commit_data,
         )?,
