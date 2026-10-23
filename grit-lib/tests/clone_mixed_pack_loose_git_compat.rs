@@ -97,6 +97,7 @@ fn clone_local_mixed_packed_tree_and_loose_blob() {
             initial_branch: "main".to_owned(),
             thread_policy: grit_lib::parallel::ThreadPolicy::default(),
             depth: None,
+            filter: None,
         },
         &mut NoProgress,
         None,

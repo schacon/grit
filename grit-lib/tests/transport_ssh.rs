@@ -139,7 +139,7 @@ fn run_fetch_and_assert(transport: &SshTransport, url: &str, source: &Path, loca
         tags: TagMode::All,
         ..Default::default()
     };
-    let outcome = fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress)
+    let outcome = fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
         .expect("fetch_remote over ssh");
 
     let got_main = resolve_ref(&local_git, "refs/remotes/origin/main").expect("origin/main");
@@ -293,8 +293,8 @@ fn fetch_over_ssh_v2_lands_refs_and_objects() {
         tags: TagMode::All,
         ..Default::default()
     };
-    let outcome =
-        fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress).expect("v2 fetch over ssh");
+    let outcome = fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
+        .expect("v2 fetch over ssh");
 
     let got_main = resolve_ref(&local_git, "refs/remotes/origin/main").expect("origin/main");
     let got_topic = resolve_ref(&local_git, "refs/remotes/origin/topic").expect("origin/topic");

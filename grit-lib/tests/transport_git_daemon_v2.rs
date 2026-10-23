@@ -228,7 +228,7 @@ fn fetch_over_git_daemon_v2_lands_refs_and_objects() {
         tags: TagMode::All,
         ..Default::default()
     };
-    let outcome = fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress)
+    let outcome = fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
         .expect("v2 fetch_remote over git daemon");
 
     // Tracking refs written (same assertions as the v0/v1 test).
@@ -386,7 +386,7 @@ fn fetch_over_git_daemon_v2_incremental_with_haves() {
             tags: TagMode::None,
             ..Default::default()
         };
-        fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress).expect("seed v2 fetch");
+        fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress).expect("seed v2 fetch");
     }
 
     // Materialize a local branch at the fetched tip so the negotiator has a real
@@ -417,7 +417,7 @@ fn fetch_over_git_daemon_v2_incremental_with_haves() {
         tags: TagMode::None,
         ..Default::default()
     };
-    fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress).expect("incremental v2 fetch");
+    fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress).expect("incremental v2 fetch");
 
     // The new topic tip landed.
     let got_topic = resolve_ref(&local_git, "refs/remotes/origin/topic").expect("origin/topic");

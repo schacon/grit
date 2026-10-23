@@ -263,13 +263,13 @@ fn grit_fetch_daemon(
     let mut conn = transport
         .connect(url, Service::UploadPack, &connect_opts)
         .expect("connect git daemon");
-    let opts = FetchOptions {
+    let mut opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
         tags: TagMode::Following,
         fetch_depth,
         ..Default::default()
     };
-    fetch_remote(&git_dir, &mut *conn, &opts, &mut NoProgress).expect("fetch_remote");
+    fetch_remote(&git_dir, &mut *conn, &mut opts, &mut NoProgress).expect("fetch_remote");
 }
 
 fn init_shallow_client_from_daemon(tmp: &Path, url: &str, name: &str) -> PathBuf {

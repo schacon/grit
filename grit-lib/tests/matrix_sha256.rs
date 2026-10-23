@@ -418,7 +418,7 @@ fn sha256_fetch_over_git_daemon_v2() {
         tags: TagMode::All,
         ..Default::default()
     };
-    let outcome = fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress)
+    let outcome = fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
         .expect("sha256 v2 fetch_remote over git daemon");
 
     // Tracking refs landed with the source's 64-hex oids.
