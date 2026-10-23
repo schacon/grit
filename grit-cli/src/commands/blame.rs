@@ -152,6 +152,7 @@ fn normalize_blame_line_content(content: String) -> String {
     content.trim_end_matches(['\n', '\r']).to_owned()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     file: String,
     rev: Option<String>,
