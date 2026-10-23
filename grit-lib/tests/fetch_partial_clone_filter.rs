@@ -317,6 +317,42 @@ fn fsck_accepts_promised_missing_blobs() {
     );
 }
 
+#[test]
+fn fsck_accepts_promised_missing_blobs_in_index_after_reset() {
+    let (_layout, bare) = setup_filtering_bare();
+    let url = format!("file://{}", bare.canonicalize().unwrap().display());
+    let dest = tempfile::TempDir::new().expect("dest");
+    let git_dir = grit_clone_filtered(&url, dest.path(), ObjectFilterSpec::BlobNone);
+    clear_pack_cache();
+    git_in(dest.path(), &["read-tree", "HEAD"]);
+    let repo = Repository::open(
+        &git_dir,
+        &RepositoryOptions::empty().with_work_tree(dest.path()),
+    )
+    .expect("open");
+    let index = repo.index_handle().load().expect("index");
+    assert!(
+        index
+            .entries()
+            .iter()
+            .any(|e| !repo.odb().exists_local(&e.oid)),
+        "index should reference at least one promisor-only blob after read-tree"
+    );
+    assert!(
+        index
+            .entries()
+            .iter()
+            .any(|e| repo.odb().read(&e.oid).is_err()),
+        "missing promisor blobs must not be materialized locally"
+    );
+    let report = fsck(&repo, &FsckOptions::default()).expect("grit fsck");
+    assert!(
+        report.ok,
+        "promised index blobs must not fail fsck: {:?}",
+        report.issues
+    );
+}
+
 #[cfg(feature = "http-ureq")]
 mod http_v2 {
     use super::*;

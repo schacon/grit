@@ -510,14 +510,21 @@ pub fn fsck(
         let index_roots_set = index_object_roots(repo)?;
         let index_roots = oid_hash_set_from(&index_roots_set);
         let roots = reachability_roots(repo)?;
-        let promisor_parents =
-            if crate::promisor::repo_treats_promisor_packs(repo.git_dir(), &config) {
-                oid_hash_set_from(&crate::promisor::promisor_pack_object_ids(
-                    &repo.git_dir().join("objects"),
-                ))
-            } else {
-                oid_hash_set()
-            };
+        let treats_promisor = crate::promisor::repo_treats_promisor_packs(repo.git_dir(), &config);
+        let promisor_parents = if treats_promisor {
+            oid_hash_set_from(&crate::promisor::promisor_pack_object_ids(
+                &repo.git_dir().join("objects"),
+            ))
+        } else {
+            oid_hash_set()
+        };
+        let promisor_promised = if treats_promisor {
+            Some(oid_hash_set_from(
+                &crate::promisor::promisor_expanded_object_ids(repo)?,
+            ))
+        } else {
+            None
+        };
         let (walked, connectivity_issues) = walk_connectivity(
             repo,
             &roots,
@@ -533,7 +540,13 @@ pub fn fsck(
         reachable = walked;
         issues.extend(connectivity_issues);
 
-        fsck_index_missing_blobs(repo, &config, options.strict, &mut issues)?;
+        fsck_index_missing_blobs(
+            repo,
+            &config,
+            options.strict,
+            &mut issues,
+            promisor_promised.as_ref(),
+        )?;
     }
     dedupe_issues(&mut issues);
 
@@ -1603,6 +1616,7 @@ fn fsck_index_missing_blobs(
     config: &ConfigSet,
     strict: bool,
     issues: &mut Vec<FsckIssue>,
+    promisor_promised: Option<&OidHashSet>,
 ) -> Result<()> {
     let index = repo.load_index()?;
     let odb = repo.odb();
@@ -1614,12 +1628,17 @@ fn fsck_index_missing_blobs(
         if already_reported.contains(&entry.oid) {
             continue;
         }
-        if odb.read(&entry.oid).is_err() && should_emit(config, strict, "missingObject") {
-            already_reported.insert(entry.oid);
-            issues.push(FsckIssue::MissingObject {
-                oid: entry.oid,
-                referrer: MissingObjectReferrer::Index,
-            });
+        if odb.read(&entry.oid).is_err() {
+            if promisor_promised.is_some_and(|promised| promised.contains(&entry.oid)) {
+                continue;
+            }
+            if should_emit(config, strict, "missingObject") {
+                already_reported.insert(entry.oid);
+                issues.push(FsckIssue::MissingObject {
+                    oid: entry.oid,
+                    referrer: MissingObjectReferrer::Index,
+                });
+            }
         }
     }
     Ok(())
