@@ -162,10 +162,27 @@ impl NextStep {
             }
             Self::Skip(InProgressOperation::CherryPick) => Some("grit pick --skip".to_owned()),
             Self::Skip(InProgressOperation::Revert) => Some("grit revert --skip".to_owned()),
-            Self::Abort(_)
-            | Self::Continue(_)
+            Self::Continue(InProgressOperation::Rebase) => {
+                Some("grit rebase --continue".to_owned())
+            }
+            Self::Abort(InProgressOperation::Rebase) => Some("grit rebase --abort".to_owned()),
+            Self::Skip(InProgressOperation::Rebase) => Some("grit rebase --skip".to_owned()),
+            Self::Abort(
+                InProgressOperation::RebaseInteractive
+                | InProgressOperation::Am
+                | InProgressOperation::Bisect,
+            )
+            | Self::Continue(
+                InProgressOperation::RebaseInteractive
+                | InProgressOperation::Am
+                | InProgressOperation::Bisect,
+            )
             | Self::Skip(InProgressOperation::Merge)
-            | Self::Skip(_) => None,
+            | Self::Skip(
+                InProgressOperation::RebaseInteractive
+                | InProgressOperation::Am
+                | InProgressOperation::Bisect,
+            ) => None,
         }
     }
 }
@@ -275,13 +292,15 @@ pub fn operation_alternatives(kind: InProgressOperation) -> Vec<NextStep> {
 
 /// [`Operation`] guidance for [`StatusModel`](crate::porcelain::status::StatusModel).
 ///
-/// Merge, cherry-pick, and revert in progress expose continue/abort/skip hints when grit
-/// implements the matching commands. Other in-progress states detected via [`WtStatusState`] omit
-/// `operation` until grit implements them.
+/// Merge, cherry-pick, revert, and grit rebase sessions expose continue/abort/skip hints when
+/// grit implements the matching commands. Other in-progress states detected via [`WtStatusState`]
+/// omit `operation` until grit implements them.
 #[must_use]
 pub fn status_operation(state: &WtStatusState, has_unmerged_conflicts: bool) -> Option<Operation> {
     let kind = if state.merge_in_progress {
         InProgressOperation::Merge
+    } else if state.grit_rebase_in_progress {
+        InProgressOperation::Rebase
     } else if state.cherry_pick_in_progress {
         InProgressOperation::CherryPick
     } else if state.revert_in_progress {
@@ -415,6 +434,11 @@ fn resolve_head_impl(git_dir: &Path, repo: Option<&crate::repo::Repository>) -> 
     }
 }
 
+/// True when grit owns the in-progress rebase (`.git/rebase-merge/grit-plan`).
+fn grit_rebase_plan_active(rebase_merge: &Path) -> bool {
+    rebase_merge.join("grit-plan").is_file()
+}
+
 /// Detect in-progress operations by checking for sentinel files.
 ///
 /// # Parameters
@@ -434,7 +458,7 @@ pub fn detect_in_progress(git_dir: &Path) -> Vec<InProgressOperation> {
     // Interactive rebase: rebase-merge/ directory
     let rebase_merge = git_dir.join("rebase-merge");
     if rebase_merge.is_dir() {
-        if rebase_merge.join("interactive").exists() {
+        if rebase_merge.join("interactive").exists() && !grit_rebase_plan_active(&rebase_merge) {
             ops.push(InProgressOperation::RebaseInteractive);
         } else {
             ops.push(InProgressOperation::Rebase);
@@ -507,6 +531,8 @@ pub struct WtStatusState {
     pub detached_at: bool,
     /// Grit wrote `.git/sequencer/grit-opts` for this replay (show pick/revert operation hints).
     pub grit_replay_sequencer: bool,
+    /// Grit wrote `.git/rebase-merge/grit-plan` for a resumable rebase session.
+    pub grit_rebase_in_progress: bool,
 }
 
 fn abbrev_oid(oid: &ObjectId) -> String {
@@ -644,11 +670,13 @@ fn wt_status_check_rebase(git_dir: &Path, state: &mut WtStatusState) -> bool {
     }
     let merge = git_dir.join("rebase-merge");
     if merge.is_dir() {
-        if merge.join("interactive").exists() {
+        let grit_plan = grit_rebase_plan_active(&merge);
+        if merge.join("interactive").exists() && !grit_plan {
             state.rebase_interactive_in_progress = true;
         } else {
             state.rebase_in_progress = true;
         }
+        state.grit_rebase_in_progress = grit_plan;
         state.rebase_branch = get_branch_display(git_dir, "rebase-merge/head-name");
         state.rebase_onto = get_branch_display(git_dir, "rebase-merge/onto");
         return true;

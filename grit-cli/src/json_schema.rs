@@ -83,7 +83,9 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         fetch::{FetchAllOutcome, FetchOutcome},
         fsck::FsckOutcome,
         gc::GcOutcome,
-        history::{HistoryAbsorbOutcome, HistoryRewriteOutcome, RebaseCheckOutcome},
+        history::{
+            HistoryAbsorbOutcome, HistoryRewriteOutcome, RebaseCheckOutcome, RebaseCliOutcome,
+        },
         hooks::HooksOutcome,
         ignore::IgnoreCheckOutcome,
         init::InitOutcome,
@@ -171,8 +173,8 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<HistoryRewriteOutcome>("history.move"),
         entry::<HistoryRewriteOutcome>("history.fixup"),
         entry::<HistoryRewriteOutcome>("history.squash"),
-        entry::<HistoryRewriteOutcome>("history.rebase"),
-        entry::<HistoryRewriteOutcome>("rebase"),
+        entry::<RebaseCliOutcome>("history.rebase"),
+        entry::<RebaseCliOutcome>("rebase"),
         entry::<HistoryRewriteOutcome>("history.split"),
         entry::<RebaseCheckOutcome>("rebase.check"),
         entry::<HistoryAbsorbOutcome>("history.absorb"),
@@ -445,16 +447,18 @@ fn canonicalize_json(value: &mut serde_json::Value) {
 
 /// Enumerate every non-plumbing command path that must appear in [`schema_registry`].
 pub fn expected_json_command_paths() -> Vec<String> {
-    use clap::CommandFactory;
+    crate::cli_test_stack::run(|| {
+        use clap::CommandFactory;
 
-    let mut paths = vec!["status".to_owned()];
-    let root = crate::Cli::command();
-    for sub in root.get_subcommands().filter(|c| c.get_name() != "help") {
-        collect_json_commands(sub, None, &mut paths);
-    }
-    paths.sort();
-    paths.dedup();
-    paths
+        let mut paths = vec!["status".to_owned()];
+        let root = crate::Cli::command();
+        for sub in root.get_subcommands().filter(|c| c.get_name() != "help") {
+            collect_json_commands(sub, None, &mut paths);
+        }
+        paths.sort();
+        paths.dedup();
+        paths
+    })
 }
 
 fn collect_json_commands(cmd: &clap::Command, prefix: Option<&str>, out: &mut Vec<String>) {
