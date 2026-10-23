@@ -48,14 +48,6 @@ You can also clone from a shallow repository (including one created with `git cl
 
 Working-tree materialization after fetch uses the same parallel checkout path as [`grit switch`](../switch/). Configure [`checkout.workers`](../../library/parallelism.md) and `checkout.thresholdForParallelism` in the repository config, or pass global [`--threads`](../global-options.md) to override worker count for this process.
 
-### Exit status
-
-On failure, `grit clone` exits **1** for most errors (destination not empty, checkout failure, and so on). When the remote cannot be read — for example SSH cannot connect or the repository path on the server is missing — grit exits **128** with `could not read from remote repository`. That is distinct from a reachable empty remote, which exits **0** after configuring `origin` and the default branch without checking out files (see above).
-
-If a large receive fails with `received pack file missing` pointing at a `pack-receive-*.tmp` path under `.git/objects/incoming/`, real-time antivirus or disk cleanup may have removed the in-progress pack before index-pack ran; retry the clone or check that nothing else is deleting files under the repository directory during the receive.
-
-Object ids in received packs use plain SHA-1 like Git, so repositories such as `git/git` (which include SHAttered test blobs) clone successfully.
-
 ## Options
 
 | Option | Description |
@@ -185,6 +177,7 @@ Empty remote (no branch tips yet):
   "url": "/tmp/origin.git",
   "path": "project",
   "branch": "main",
+  "detached": false,
   "objects": 0,
   "bytes": 0,
   "branches": 0,
@@ -193,7 +186,7 @@ Empty remote (no branch tips yet):
   "no_checkout_reason": "empty_remote",
   "object_types": null,
   "worktree_bytes": 0,
-  "seconds": 0.05,
+  "seconds": 0.013,
   "phases": []
 }
 ```
@@ -205,17 +198,25 @@ Unborn remote default branch (`HEAD` on the server points at a branch with no co
   "url": "/tmp/remote.git",
   "path": "clone2",
   "branch": "master",
-  "objects": 4,
-  "bytes": 72896,
+  "detached": false,
+  "objects": 3,
+  "bytes": 458,
   "branches": 1,
   "tags": 0,
   "files": 0,
   "no_checkout_reason": "unborn_default_branch",
   "branches_with_commits": ["main"],
-  "object_types": { "commits": 1, "trees": 1, "blobs": 1, "tags": 0 },
+  "object_types": null,
   "worktree_bytes": 0,
-  "seconds": 0.12,
-  "phases": []
+  "seconds": 0.003,
+  "phases": [
+    {
+      "phase": "copying",
+      "unit": "objects",
+      "count": 1,
+      "seconds": 0.00006
+    }
+  ]
 }
 ```
 
@@ -226,6 +227,41 @@ Pass [`--markdown`](../global-options/) for agent-friendly output.
 Schema: [v1](/schemas/clone/v1.json)
 
 Markdown uses headings, bullet lists, and fenced blocks; pipe characters inside table cells are escaped. See the JSON output section for the stable field contract.
+
+
+
+```text
+## Clone complete
+
+- **path**: `cloned-markdown`
+- **branch**: `main`
+- **url**: `[UPSTREAM]`
+- **objects**: 8
+- **object types**: 2 commits, 2 trees, 3 blobs, 1 tags
+- **bytes**: 665 ([SIZE])
+- **branches**: 2
+- **tags**: 1
+- **files**: 2
+- **worktree bytes**: 23 ([SIZE])
+- **elapsed**: [DURATION]
+
+| Phase | Count | Unit | Seconds |
+| --- | ---: | --- | ---: |
+| copying | 8 | objects | [SECONDS] |
+| checkout | 2 | files | [SECONDS] |
+```
+
+## Exit status
+
+| Code | Meaning |
+| ---: | --- |
+| `0` | Clone succeeded (including empty remote with no checkout). |
+| `1` | Destination not empty, checkout failure, or other error. |
+| `2` | Invalid flags ([`usage`](../exit-codes/)). |
+| `128` | Remote unreadable ([`remote_unreadable`](../exit-codes/)). |
+
+See [Exit codes](../exit-codes/).
+
 
 ## See also
 

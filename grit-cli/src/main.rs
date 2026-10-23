@@ -3285,21 +3285,37 @@ mod tests {
         let marker = format!("## {heading}");
         let start = body.find(&marker)? + marker.len();
         let rest = &body[start..];
-        let end = rest.find("\n## ").map(|i| start + i).unwrap_or(body.len());
-        Some(body[start..end].trim().to_owned())
+        let mut in_fenced = false;
+        let mut end = rest.len();
+        for (i, line) in rest.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("```") {
+                in_fenced = !in_fenced;
+                continue;
+            }
+            if !in_fenced && i > 0 && line.starts_with("## ") {
+                end = rest.lines().take(i).map(|l| l.len() + 1).sum();
+                break;
+            }
+        }
+        Some(rest[..end].trim().to_owned())
     }
 
-    fn fenced_json_blocks(section: &str) -> Vec<String> {
+    fn fenced_json_blocks(section: &str) -> Vec<(usize, String)> {
         const OPEN: &str = "```json";
         let mut blocks = Vec::new();
         let mut rest = section;
+        let mut base = 0usize;
         while let Some(start) = rest.find(OPEN) {
+            let abs_start = base + start + OPEN.len();
             let after = &rest[start + OPEN.len()..];
             let Some(end) = after.find("```") else {
                 break;
             };
-            blocks.push(after[..end].trim().to_owned());
-            rest = &after[end + 3..];
+            blocks.push((abs_start, after[..end].trim().to_owned()));
+            let consumed = start + OPEN.len() + end + 3;
+            base += consumed;
+            rest = &rest[consumed..];
         }
         blocks
     }
