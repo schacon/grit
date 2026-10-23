@@ -1,6 +1,8 @@
 //! Correctness checks for network benchmark clones (system `git` fsck + ref parity).
 
-use std::path::Path;
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
@@ -121,6 +123,96 @@ pub fn verify_clone_against_bare(
         if clone_oid != bare_oid {
             bail!("ref mismatch for {name}: clone {clone_oid} != bare {bare_ref} {bare_oid}");
         }
+    }
+    Ok(())
+}
+
+fn rev_list_count(git: &Path, repo: &Path, spec: &str) -> Result<u64> {
+    let mut cmd = Command::new(git);
+    cmd.args(["rev-list", "--count", spec]).current_dir(repo);
+    git_env(&mut cmd);
+    let out = cmd
+        .output()
+        .with_context(|| format!("git rev-list --count {spec} in {}", repo.display()))?;
+    if !out.status.success() {
+        bail!(
+            "git rev-list --count failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<u64>()
+        .with_context(|| format!("parse rev-list count {:?}", out.stdout))
+}
+
+fn resolve_git_dir(worktree: &Path) -> Result<PathBuf> {
+    let dot_git = worktree.join(".git");
+    if dot_git.is_dir() {
+        return Ok(dot_git);
+    }
+    if dot_git.is_file() {
+        let content = fs::read_to_string(&dot_git).context("read .git file")?;
+        for line in content.lines() {
+            if let Some(rest) = line.strip_prefix("gitdir:") {
+                let path = PathBuf::from(rest.trim());
+                return Ok(if path.is_absolute() {
+                    path
+                } else {
+                    worktree.join(path)
+                });
+            }
+        }
+    }
+    bail!("could not resolve git directory for {}", worktree.display());
+}
+
+/// Depth-1 / `--shallow` clone semantics: refs match the bare remote tip, history is truncated,
+/// and `.git/shallow` lists the boundary commit(s).
+pub fn verify_shallow_depth_one_clone(
+    git: &Path,
+    source_bare: &Path,
+    clone: &Path,
+    default_branch: &str,
+) -> Result<()> {
+    verify_clone_against_bare(git, source_bare, clone, default_branch)?;
+
+    let head = rev_parse(git, clone, "HEAD")?;
+    let reachable = rev_list_count(git, clone, "HEAD")?;
+    if reachable != 1 {
+        bail!(
+            "shallow clone rev-list --count HEAD expected 1, got {reachable} (full clone has deeper history)"
+        );
+    }
+
+    let bare_ref = format!("refs/heads/{default_branch}");
+    let bare_depth = rev_list_count(git, source_bare, &bare_ref)?;
+    if bare_depth <= 1 {
+        bail!("bare remote must have >1 commits for shallow-depth1 scenario (got {bare_depth})");
+    }
+
+    let shallow_path = resolve_git_dir(clone)?.join("shallow");
+    if !shallow_path.is_file() {
+        bail!(
+            "expected shallow boundary file {} (absent on full clones)",
+            shallow_path.display()
+        );
+    }
+    let boundaries: HashSet<String> = fs::read_to_string(&shallow_path)
+        .with_context(|| format!("read {}", shallow_path.display()))?
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect();
+    if boundaries.is_empty() {
+        bail!(".git/shallow is empty");
+    }
+    if !boundaries.contains(&head) {
+        bail!(
+            "HEAD {head} not listed in .git/shallow ({} boundaries)",
+            boundaries.len()
+        );
     }
     Ok(())
 }

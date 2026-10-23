@@ -7,6 +7,7 @@ description = "Benchmarking and utility tools for grit"
 repository = "https://github.com/gitbutlerapp/grit"
 # Internal tooling: depends on grit-lib by path only.
 publish = false
+build = "build.rs"
 
 [lints]
 workspace = true
