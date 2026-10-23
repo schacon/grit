@@ -14,6 +14,7 @@ use grit_lib::repo::Repository;
 use grit_lib::repo_handles::{
     LockWorktreeOptions, NotesWriteOptions, StashApplyOptions, StashPushOptions,
 };
+use grit_lib::worktree::WorktreeBranch;
 use grit_test_support::git;
 
 fn git_cmd(root: &Path, args: &[&str]) -> String {

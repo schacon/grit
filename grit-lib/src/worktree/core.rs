@@ -691,6 +691,229 @@ pub fn prune_linked_worktrees(
     Ok(pruned)
 }
 
+fn prune_reason(admin: &Path, wt_path: &Path) -> String {
+    let prunable_file = admin.join("prunable");
+    if prunable_file.is_file() {
+        if let Ok(content) = fs::read_to_string(&prunable_file) {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_owned();
+            }
+        }
+    }
+    if !wt_path.exists() {
+        return "gitdir file points to non-existent location".into();
+    }
+    "prunable".into()
+}
+
+fn write_admin_lock_file(admin: &Path, reason: Option<&str>) -> Result<()> {
+    let body = reason.unwrap_or("");
+    fs::write(admin.join("locked"), body).map_err(Error::Io)
+}
+
+struct WorktreeHeadPlan {
+    head_ref: Option<String>,
+    branch_write: Option<BranchWritePlan>,
+    track_branch: Option<String>,
+}
+
+struct BranchWritePlan {
+    branch_short: String,
+    start_spec: String,
+    start_oid: crate::objects::ObjectId,
+    force_reset: bool,
+}
+
+struct BranchRefRollback<'a> {
+    git_dir: &'a Path,
+    branch_ref: String,
+    previous_tip: Option<crate::objects::ObjectId>,
+    committed: bool,
+}
+
+impl BranchRefRollback<'_> {
+    fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for BranchRefRollback<'_> {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        let _ = match self.previous_tip {
+            None => refs::delete_ref(self.git_dir, &self.branch_ref),
+            Some(old) => refs::write_ref(self.git_dir, &self.branch_ref, &old),
+        };
+    }
+}
+
+fn resolve_worktree_start_commit(
+    repo: &Repository,
+    opts: &AddLinkedWorktreeOptions,
+) -> Result<(String, crate::objects::ObjectId)> {
+    if let Some(WorktreeBranch::Existing(name)) = &opts.branch {
+        if opts.start_point.is_none() {
+            validate_branch_short_name(name).map_err(|e| Error::Message(e.to_string()))?;
+            let branch_ref = format!("refs/heads/{name}");
+            let oid = refs::resolve_ref(repo.git_dir(), &branch_ref)
+                .map_err(|_| Error::Message(format!("no branch named '{name}'")))?;
+            return Ok((name.clone(), oid));
+        }
+    }
+    let start_spec = opts.start_point.as_deref().unwrap_or("HEAD").to_owned();
+    let start_oid = resolve_revision(repo, &start_spec)?;
+    Ok((start_spec, start_oid))
+}
+
+fn plan_worktree_head(
+    repo: &Repository,
+    opts: &AddLinkedWorktreeOptions,
+    wt_path: &Path,
+    start_spec: &str,
+    start_oid: crate::objects::ObjectId,
+) -> Result<WorktreeHeadPlan> {
+    match &opts.branch {
+        Some(WorktreeBranch::Detach) => Ok(WorktreeHeadPlan {
+            head_ref: None,
+            branch_write: None,
+            track_branch: None,
+        }),
+        Some(WorktreeBranch::Existing(name)) => {
+            let branch_ref = prepare_existing_branch(repo, name, start_oid)?;
+            Ok(WorktreeHeadPlan {
+                head_ref: Some(branch_ref),
+                branch_write: None,
+                track_branch: None,
+            })
+        }
+        Some(WorktreeBranch::Create(name)) => Ok(WorktreeHeadPlan {
+            head_ref: Some(format!("refs/heads/{name}")),
+            branch_write: Some(BranchWritePlan {
+                branch_short: name.clone(),
+                start_spec: start_spec.to_owned(),
+                start_oid,
+                force_reset: false,
+            }),
+            track_branch: if opts.track { Some(name.clone()) } else { None },
+        }),
+        Some(WorktreeBranch::CreateOrReset(name)) => Ok(WorktreeHeadPlan {
+            head_ref: Some(format!("refs/heads/{name}")),
+            branch_write: Some(BranchWritePlan {
+                branch_short: name.clone(),
+                start_spec: start_spec.to_owned(),
+                start_oid,
+                force_reset: true,
+            }),
+            track_branch: if opts.track { Some(name.clone()) } else { None },
+        }),
+        None => {
+            if let Some(start) = opts.start_point.as_deref() {
+                if let Some(branch_ref) = resolve_existing_branch(repo, start) {
+                    let tip = refs::resolve_ref(repo.git_dir(), &branch_ref)?;
+                    if tip != start_oid {
+                        return Err(Error::Message(format!(
+                            "branch '{}' does not match start commit",
+                            branch_ref
+                                .strip_prefix("refs/heads/")
+                                .unwrap_or(&branch_ref)
+                        )));
+                    }
+                    return Ok(WorktreeHeadPlan {
+                        head_ref: Some(branch_ref),
+                        branch_write: None,
+                        track_branch: None,
+                    });
+                }
+                return Ok(WorktreeHeadPlan {
+                    head_ref: None,
+                    branch_write: None,
+                    track_branch: None,
+                });
+            }
+            let branch = worktree_path_basename(wt_path);
+            validate_branch_short_name(&branch).map_err(|e| Error::Message(e.to_string()))?;
+            Ok(WorktreeHeadPlan {
+                head_ref: Some(format!("refs/heads/{branch}")),
+                branch_write: Some(BranchWritePlan {
+                    branch_short: branch.clone(),
+                    start_spec: start_spec.to_owned(),
+                    start_oid,
+                    force_reset: false,
+                }),
+                track_branch: if opts.track { Some(branch) } else { None },
+            })
+        }
+    }
+}
+
+fn prepare_existing_branch(
+    repo: &Repository,
+    name: &str,
+    start_oid: crate::objects::ObjectId,
+) -> Result<String> {
+    validate_branch_short_name(name).map_err(|e| Error::Message(e.to_string()))?;
+    let branch_ref = format!("refs/heads/{name}");
+    if refs::resolve_ref(repo.git_dir(), &branch_ref).is_err() {
+        return Err(Error::Message(format!("no branch named '{name}'")));
+    }
+    let tip = refs::resolve_ref(repo.git_dir(), &branch_ref)?;
+    if tip != start_oid {
+        return Err(Error::Message(format!(
+            "branch '{name}' does not match start commit"
+        )));
+    }
+    Ok(branch_ref)
+}
+
+fn create_worktree_branch(
+    repo: &Repository,
+    name: &str,
+    start_spec: &str,
+    start_oid: crate::objects::ObjectId,
+    force_reset: bool,
+) -> Result<String> {
+    validate_branch_short_name(name).map_err(|e| Error::Message(e.to_string()))?;
+    let branch_ref = format!("refs/heads/{name}");
+    let existing = repo.references().read_existing(&branch_ref)?;
+    if existing.is_some() && !force_reset {
+        return Err(Error::Message(format!("branch '{name}' already exists")));
+    }
+    if let Some(existing_ref) = existing {
+        ensure_branch_not_checked_out_in_any_worktree(repo, name)?;
+        reset_branch_ref_with_reflog(repo, &branch_ref, start_oid, start_spec, &existing_ref)?;
+    } else {
+        create_branch_ref_with_reflog(repo, &branch_ref, start_oid, start_spec)?;
+    }
+    Ok(branch_ref)
+}
+
+fn maybe_track_new_branch(
+    repo: &Repository,
+    opts: &AddLinkedWorktreeOptions,
+    branch_short: &str,
+    start_spec: &str,
+    start_oid: crate::objects::ObjectId,
+) -> Result<()> {
+    if !opts.track {
+        return Ok(());
+    }
+    let mode = match opts.start_point.as_deref() {
+        Some(s) if s != "HEAD" => TrackMode::Always,
+        _ => TrackMode::Auto,
+    };
+    match resolve_create_tracking(repo, branch_short, start_spec, start_oid, mode) {
+        Ok(Some((remote, merge))) => {
+            write_branch_upstream_config(repo, branch_short, &remote, &merge)
+        }
+        Ok(None) => Ok(()),
+        Err(Error::Branch(BranchError::UpstreamNotTracking { .. })) => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
 fn linked_worktree_entry(
     admin: &Path,
     common: &Path,

@@ -10,10 +10,7 @@ fn unique_tmp(tag: &str) -> std::path::PathBuf {
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let mut p = std::env::temp_dir();
-    p.push(format!(
-        "grit-wt-flags-{tag}-{}-{n}",
-        std::process::id()
-    ));
+    p.push(format!("grit-wt-flags-{tag}-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&p);
     std::fs::create_dir_all(&p).expect("tempdir");
     p

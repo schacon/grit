@@ -3,12 +3,12 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_lib::worktree::{
     add_linked_worktree, list_worktrees, prune_linked_worktrees, AddLinkedWorktreeOptions,
     LockWorktreeOptions, PruneWorktreesOptions, WorktreeBranch,
 };
-use grit_lib::config::environment::RepositoryOptions;
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -41,6 +41,57 @@ fn init_repo(tmp: &TempDir) -> PathBuf {
     git(&main, &["branch", "topic"]);
     git(&main, &["commit", "--allow-empty", "-qm", "two"]);
     main
+}
+
+#[test]
+fn worktree_add_existing_branch_when_head_advanced() {
+    let tmp = TempDir::new().unwrap();
+    let main = init_repo(&tmp);
+    git(&main, &["branch", "feature"]);
+    git(&main, &["commit", "--allow-empty", "-qm", "advance-main"]);
+
+    let repo = Repository::discover(Some(&main), &RepositoryOptions::empty()).unwrap();
+    let feature_tip = git(&main, &["rev-parse", "feature"]);
+    let wt = tmp.path().join("feature-wt");
+    add_linked_worktree(
+        &repo,
+        &AddLinkedWorktreeOptions {
+            path: wt.clone(),
+            branch: Some(WorktreeBranch::Existing("feature".into())),
+            start_point: None,
+            force: false,
+            lock: None,
+            no_checkout: false,
+            track: false,
+        },
+    )
+    .expect("checkout existing branch at its tip");
+
+    let wt_head = git(&wt, &["rev-parse", "HEAD"]);
+    assert_eq!(wt_head.trim(), feature_tip.trim());
+    git(&main, &["fsck"]);
+}
+
+#[test]
+fn worktree_add_track_with_default_head_succeeds() {
+    let tmp = TempDir::new().unwrap();
+    let main = init_repo(&tmp);
+    let repo = Repository::discover(Some(&main), &RepositoryOptions::empty()).unwrap();
+    let wt = tmp.path().join("track-head");
+    add_linked_worktree(
+        &repo,
+        &AddLinkedWorktreeOptions {
+            path: wt.clone(),
+            branch: Some(WorktreeBranch::Create("local".into())),
+            start_point: None,
+            force: false,
+            lock: None,
+            no_checkout: false,
+            track: true,
+        },
+    )
+    .expect("track with implicit HEAD must not fail");
+    git(&main, &["fsck"]);
 }
 
 #[test]
@@ -172,6 +223,48 @@ fn worktree_add_track_sets_upstream_git_agrees() {
 }
 
 #[test]
+fn worktree_add_create_or_reset_leaves_branch_when_checked_out_elsewhere() {
+    let tmp = TempDir::new().unwrap();
+    let main = init_repo(&tmp);
+    let topic_before = git(&main, &["rev-parse", "topic"]);
+
+    let repo = Repository::discover(Some(&main), &RepositoryOptions::empty()).unwrap();
+    let first = tmp.path().join("first");
+    add_linked_worktree(
+        &repo,
+        &AddLinkedWorktreeOptions {
+            path: first.clone(),
+            branch: Some(WorktreeBranch::Existing("topic".into())),
+            start_point: None,
+            force: false,
+            lock: None,
+            no_checkout: false,
+            track: false,
+        },
+    )
+    .expect("first checkout of topic");
+
+    let second = tmp.path().join("second");
+    assert!(add_linked_worktree(
+        &repo,
+        &AddLinkedWorktreeOptions {
+            path: second,
+            branch: Some(WorktreeBranch::CreateOrReset("topic".into())),
+            start_point: Some("main".into()),
+            force: false,
+            lock: None,
+            no_checkout: false,
+            track: false,
+        },
+    )
+    .is_err());
+    assert_eq!(
+        git(&main, &["rev-parse", "topic"]).trim(),
+        topic_before.trim()
+    );
+}
+
+#[test]
 fn worktree_prune_dry_run_deletes_nothing() {
     let tmp = TempDir::new().unwrap();
     let main = init_repo(&tmp);
@@ -193,16 +286,12 @@ fn worktree_prune_dry_run_deletes_nothing() {
     std::fs::remove_dir_all(&wt).unwrap();
     assert_eq!(list_worktrees(&repo).unwrap().len(), 2);
 
-    let would = prune_linked_worktrees(
-        &repo,
-        &PruneWorktreesOptions { dry_run: true },
-    )
-    .expect("dry-run prune");
+    let would = prune_linked_worktrees(&repo, &PruneWorktreesOptions { dry_run: true })
+        .expect("dry-run prune");
     assert_eq!(would.len(), 1);
     assert_eq!(list_worktrees(&repo).unwrap().len(), 2);
 
-    let pruned =
-        prune_linked_worktrees(&repo, &PruneWorktreesOptions::default()).expect("prune");
+    let pruned = prune_linked_worktrees(&repo, &PruneWorktreesOptions::default()).expect("prune");
     assert_eq!(pruned.len(), 1);
     assert_eq!(list_worktrees(&repo).unwrap().len(), 1);
 }
