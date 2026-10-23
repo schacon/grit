@@ -32,6 +32,8 @@ use crate::refs::listing::{
 };
 use crate::repo::Repository;
 use crate::signing::{should_sign_tag, sign_serialized_tag, GpgConfig};
+use crate::tree_sha256::{TagTreeSha256Outcome, TreeSha256Claim, TreeSha256Options};
+use std::time::Instant;
 
 const TAGS_PREFIX: &str = "refs/tags/";
 
@@ -128,6 +130,8 @@ pub struct CreateTagRequest {
     pub sign: Option<bool>,
     /// Override `user.signingkey` for this tag (same resolution as commit signing).
     pub signing_key: Option<String>,
+    /// When set, attach a tree-sha256 claim (implies signing).
+    pub tree_sha256: Option<TreeSha256Options>,
     /// Replace an existing tag ref when set.
     pub force: bool,
     /// Compute the outcome without updating refs (or writing new tag objects).
@@ -135,7 +139,7 @@ pub struct CreateTagRequest {
 }
 
 /// Result of [`create_tag`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct CreateTagOutcome {
     /// Short tag name (without `refs/tags/`).
     pub name: String,
@@ -147,6 +151,8 @@ pub struct CreateTagOutcome {
     pub peeled: Option<ObjectId>,
     /// Whether the tag object was signed (always false for lightweight tags).
     pub signed: bool,
+    /// Present when a tree-sha256 claim was computed and written on the tag object.
+    pub tree_sha256: Option<TagTreeSha256Outcome>,
     /// When `force` replaced an existing tag, the previous ref target.
     pub replaced: Option<ObjectId>,
     /// Whether this outcome was preview-only (no ref or object writes).
@@ -189,9 +195,17 @@ pub fn create_tag(repo: &Repository, req: &CreateTagRequest) -> Result<CreateTag
     let peeled = repo.odb().peel_to_commit(req.target).ok().flatten();
 
     let config = repo.config()?;
-    let sign = should_sign_tag(config.as_ref(), req.sign)?;
-    let wants_annotated = req.message.is_some() || sign;
+    let tree_opts = req.tree_sha256.clone();
+    if tree_opts.is_some() && req.sign == Some(false) {
+        return Err(Error::TreeSha256RequiresSigning);
+    }
+    let mut sign = should_sign_tag(config.as_ref(), req.sign)?;
+    if tree_opts.is_some() {
+        sign = true;
+    }
+    let wants_annotated = req.message.is_some() || sign || tree_opts.is_some();
     let mut signed = false;
+    let mut tree_sha256_outcome = None;
     let (ref_oid, kind) = if wants_annotated {
         let tagger = req
             .tagger
@@ -202,29 +216,58 @@ pub fn create_tag(repo: &Repository, req: &CreateTagRequest) -> Result<CreateTag
             .as_deref()
             .map(strip_comments)
             .unwrap_or_default();
-        let tag = TagData {
-            object: req.target,
-            object_type: target_kind.as_str().to_owned(),
-            tag: req.name.clone(),
-            tagger: Some(tagger.clone()),
-            extra_headers: Vec::new(),
-            message,
+        let write_tag_bytes = |bytes: &[u8]| -> Result<ObjectId> {
+            if req.dry_run {
+                hash_object(repo.odb().hash_algo(), ObjectKind::Tag, bytes)
+            } else {
+                repo.odb().write(ObjectKind::Tag, bytes)
+            }
         };
-        let unsigned = serialize_tag(&tag);
-        let bytes = if sign {
+        if let Some(opts) = tree_opts {
+            let hash_start = Instant::now();
+            let report = repo.tree_sha256(req.target, &opts)?;
+            let hash_elapsed = hash_start.elapsed();
+            let claim = TreeSha256Claim::from_report(&report);
+            let mut tag = TagData {
+                object: req.target,
+                object_type: target_kind.as_str().to_owned(),
+                tag: req.name.clone(),
+                tagger: Some(tagger.clone()),
+                extra_headers: Vec::new(),
+                message,
+            };
+            claim.apply_to_tag(&mut tag);
+            tree_sha256_outcome = Some(TagTreeSha256Outcome {
+                claim,
+                report,
+                hash_elapsed,
+            });
+            let unsigned = serialize_tag(&tag);
             let gpg =
                 GpgConfig::from_config(config.as_ref())?.with_command_runner(repo.command_runner());
             signed = true;
-            sign_serialized_tag(&gpg, &unsigned, tagger, req.signing_key.as_deref())?
+            let bytes = sign_serialized_tag(&gpg, &unsigned, tagger, req.signing_key.as_deref())?;
+            (write_tag_bytes(&bytes)?, TagKind::Annotated)
         } else {
-            unsigned
-        };
-        let tag_oid = if req.dry_run {
-            hash_object(repo.odb().hash_algo(), ObjectKind::Tag, &bytes)?
-        } else {
-            repo.odb().write(ObjectKind::Tag, &bytes)?
-        };
-        (tag_oid, TagKind::Annotated)
+            let tag = TagData {
+                object: req.target,
+                object_type: target_kind.as_str().to_owned(),
+                tag: req.name.clone(),
+                tagger: Some(tagger.clone()),
+                extra_headers: Vec::new(),
+                message,
+            };
+            let unsigned = serialize_tag(&tag);
+            let bytes = if sign {
+                let gpg = GpgConfig::from_config(config.as_ref())?
+                    .with_command_runner(repo.command_runner());
+                signed = true;
+                sign_serialized_tag(&gpg, &unsigned, tagger, req.signing_key.as_deref())?
+            } else {
+                unsigned
+            };
+            (write_tag_bytes(&bytes)?, TagKind::Annotated)
+        }
     } else {
         (req.target, TagKind::Lightweight)
     };
@@ -239,6 +282,7 @@ pub fn create_tag(repo: &Repository, req: &CreateTagRequest) -> Result<CreateTag
         kind,
         peeled,
         signed,
+        tree_sha256: tree_sha256_outcome,
         replaced,
         dry_run: req.dry_run,
     })
@@ -527,6 +571,7 @@ mod tests {
                 tagger: Some("T <t@example.com> 1700000000 +0000".into()),
                 sign: None,
                 signing_key: None,
+                tree_sha256: None,
                 force: false,
                 dry_run: false,
             },
@@ -604,6 +649,7 @@ mod tests {
                 tagger: None,
                 sign: None,
                 signing_key: None,
+                tree_sha256: None,
                 force: false,
                 dry_run: false,
             },
@@ -627,6 +673,7 @@ mod tests {
                 tagger: None,
                 sign: None,
                 signing_key: None,
+                tree_sha256: None,
                 force: false,
                 dry_run: false,
             },
@@ -647,6 +694,7 @@ mod tests {
                 tagger: Some("T <t@example.com> 1700000000 +0000".into()),
                 sign: None,
                 signing_key: None,
+                tree_sha256: None,
                 force: false,
                 dry_run: false,
             },

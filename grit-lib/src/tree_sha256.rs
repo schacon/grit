@@ -25,6 +25,7 @@ pub use tag_verify::{
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::Duration;
 
 use crate::config::ConfigSet;
 use crate::diff::submodule_embedded_git_dir;
@@ -576,6 +577,17 @@ pub(crate) fn gitlink_in_commit_chain(chain: &[ObjectId], gitlink: ObjectId) -> 
     chain.contains(&gitlink)
 }
 
+/// Tree-sha256 digest, counts, and timing from explicit tag creation (`CreateTagRequest::tree_sha256`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TagTreeSha256Outcome {
+    /// Headers written on the tag object.
+    pub claim: TreeSha256Claim,
+    /// Full hash report (files, submodules, excluded gitlinks).
+    pub report: TreeSha256Report,
+    /// Wall time spent computing the digest.
+    pub hash_elapsed: Duration,
+}
+
 /// Digest and excluded submodule paths recorded on an annotated tag.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeSha256Claim {
@@ -633,6 +645,17 @@ impl TreeSha256Claim {
             digest: d,
             excluded,
         }))
+    }
+
+    /// Build a claim from a freshly computed [`TreeSha256Report`].
+    #[must_use]
+    pub fn from_report(report: &TreeSha256Report) -> Self {
+        let mut excluded: Vec<String> = report.excluded.iter().map(|(p, _)| p.clone()).collect();
+        excluded.sort();
+        Self {
+            digest: report.digest,
+            excluded,
+        }
     }
 
     /// Replace any existing tree-sha256 headers on `tag` with this claim.

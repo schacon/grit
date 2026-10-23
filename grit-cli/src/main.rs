@@ -1361,7 +1361,9 @@ enum Command {
                 "sign",
                 "no_sign",
                 "signing_key",
-                "object"
+                "object",
+                "tree_sha256",
+                "exclude_submodule"
             ]
         )]
         verify: bool,
@@ -1377,6 +1379,16 @@ enum Command {
         /// Skip signature verification (still checks `tree-sha256` when present).
         #[arg(long = "no-signature", requires = "verify")]
         no_signature: bool,
+        /// Attach a tree-sha256 content digest to the tag (implies `--sign`).
+        #[arg(long = "tree-sha256", conflicts_with = "verify")]
+        tree_sha256: bool,
+        /// Submodule path globs excluded from the digest (repeatable).
+        #[arg(
+            long = "exclude-submodule",
+            value_name = "GLOB",
+            conflicts_with = "verify"
+        )]
+        exclude_submodule: Vec<String>,
     },
     /// List, add, or remove linked worktrees.
     Worktree {
@@ -2177,6 +2189,8 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             verify,
             verify_names,
             no_signature,
+            tree_sha256,
+            exclude_submodule,
         } => {
             let sign_override = if sign {
                 Some(true)
@@ -2206,6 +2220,8 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 contains,
                 points_at,
                 limit,
+                tree_sha256,
+                exclude_submodule,
             })?;
             emit(&outcome, opts, ctx)?;
             if verify {
