@@ -7,6 +7,7 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::diff::merge_file::MergeFavor;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::merge::{predict_merge, MergePrediction, MergePredictionOptions};
 use grit_lib::repo::Repository;
@@ -88,7 +89,7 @@ fn predict_clean_matches_git_merge_tree_tree_oid() {
     let (tmp, base, main, topic) = sibling_merge_repo();
     let repo = grit_repo(tmp.path());
 
-    let oracle = git_merge_tree_oracle(tmp.path(), &base, &main, &topic);
+    let oracle = git_merge_tree_oracle(tmp.path(), Some(&base), &main, &topic, MergeFavor::None);
     let prediction = predict_merge(&repo, main, topic, &MergePredictionOptions::default())
         .expect("predict_merge");
     match prediction {
@@ -118,7 +119,7 @@ fn predict_conflicts_match_git_merge_tree_paths() {
         .expect("main");
 
     let repo = grit_repo(tmp.path());
-    let oracle = git_merge_tree_oracle(tmp.path(), &base, &main, &topic);
+    let oracle = git_merge_tree_oracle(tmp.path(), Some(&base), &main, &topic, MergeFavor::None);
     assert!(
         !oracle.unmerged.is_empty(),
         "oracle must report conflicts for this setup"
