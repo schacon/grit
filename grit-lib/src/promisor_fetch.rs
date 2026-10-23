@@ -1,6 +1,6 @@
 //! On-demand fetch of objects promised by a partial-clone promisor remote.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::cell::Cell;
 use std::sync::Arc;
 
 use crate::config::ConfigSet;
@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::fetch::NoProgress;
 use crate::objects::pack::clear_pack_cache;
 use crate::objects::ObjectId;
+use crate::objects::OidHashSet;
 use crate::partial_clone::{remote_is_promisor, stored_remote_filter};
 use crate::promisor::repo_treats_promisor_packs;
 use crate::remote::{HttpClientFactory, Remote, DEFAULT_REMOTE};
@@ -21,8 +22,15 @@ pub const NO_LAZY_FETCH_ENV: &str = "GRIT_NO_LAZY_FETCH";
 /// Config key to disable automatic promisor lazy fetch (`true` by default when unset).
 pub const PROMISOR_LAZY_FETCH_CONFIG: &str = "fetch.promisorLazy";
 
-/// Maximum nested lazy-fetch depth (matches Git's promisor-remote guard).
-const MAX_LAZY_FETCH_DEPTH: u32 = 5;
+/// Maximum lazy-fetch retries for one read when the object stays missing after fetch.
+const MAX_LAZY_READ_RETRIES: u32 = 5;
+
+/// Maximum nested promisor lazy-fetch depth on one thread (matches Git's promisor-remote guard).
+const MAX_LAZY_FETCH_NEST: u32 = 5;
+
+thread_local! {
+    static PROMISOR_LAZY_NEST: Cell<u32> = const { Cell::new(0) };
+}
 
 /// Fetches missing objects from the configured promisor remote without updating refs.
 pub trait PromisorFetcher: Send + Sync {
@@ -96,7 +104,7 @@ pub fn fetch_promisor_objects(
     }
     let missing: Vec<ObjectId> = unique
         .into_iter()
-        .filter(|oid| !repo.odb().exists_local(oid))
+        .filter(|oid| !repo.odb().exists_stored(oid))
         .collect();
     if missing.is_empty() {
         return Ok(());
@@ -127,6 +135,7 @@ pub fn fetch_promisor_objects(
         fetch_opts.http_protocol_version = Some(v);
     }
 
+    let _nest = PromisorLazyNestGuard::enter()?;
     let mut progress = NoProgress;
     remote.fetch(repo, fetch_opts, &mut progress, http_factory)?;
     clear_pack_cache();
@@ -135,68 +144,92 @@ pub fn fetch_promisor_objects(
 }
 
 fn dedupe_oids(oids: &[ObjectId]) -> Vec<ObjectId> {
-    let mut out = Vec::new();
+    let mut set = OidHashSet::default();
     for oid in oids {
-        if !out.contains(oid) {
-            out.push(*oid);
-        }
+        set.insert(*oid);
     }
-    out
+    set.into_iter().collect()
 }
 
-/// Lazy-fetch depth guard stored on [`crate::repo_caches::RepoCaches`].
-#[derive(Default)]
-pub(crate) struct PromisorLazyFetchDepth(AtomicU32);
+struct PromisorLazyNestGuard;
 
-impl PromisorLazyFetchDepth {
-    pub(crate) fn enter(&self) -> Result<PromisorLazyFetchGuard<'_>> {
-        let prev = self.0.fetch_add(1, Ordering::SeqCst);
-        if prev >= MAX_LAZY_FETCH_DEPTH {
-            self.0.fetch_sub(1, Ordering::SeqCst);
-            return Err(Error::Message(format!(
-                "too many nested promisor lazy fetches (limit {MAX_LAZY_FETCH_DEPTH})"
-            )));
-        }
-        Ok(PromisorLazyFetchGuard { slot: &self.0 })
+impl PromisorLazyNestGuard {
+    fn enter() -> Result<Self> {
+        PROMISOR_LAZY_NEST.with(|cell| {
+            let prev = cell.get();
+            if prev >= MAX_LAZY_FETCH_NEST {
+                return Err(Error::Message(format!(
+                    "too many nested promisor lazy fetches (limit {MAX_LAZY_FETCH_NEST})"
+                )));
+            }
+            cell.set(prev + 1);
+            Ok(Self)
+        })
     }
 }
 
-pub(crate) struct PromisorLazyFetchGuard<'a> {
-    slot: &'a AtomicU32,
-}
-
-impl Drop for PromisorLazyFetchGuard<'_> {
+impl Drop for PromisorLazyNestGuard {
     fn drop(&mut self) {
-        self.slot.fetch_sub(1, Ordering::SeqCst);
+        PROMISOR_LAZY_NEST.with(|cell| cell.set(cell.get().saturating_sub(1)));
     }
 }
 
-/// ODB read miss hook: lazy-fetch or surface [`Error::PromisedObjectMissing`].
-pub(crate) fn handle_promisor_read_miss(
+/// Outcome of attempting promisor lazy fetch after an ODB read miss.
+pub(crate) enum PromisorMissResolution {
+    /// Object should be present; caller retries the read.
+    RetryAfterFetch,
+    /// Not a partial-clone repository — surface [`Error::ObjectNotFound`].
+    NotPromisorRepo,
+    /// Lazy fetch disabled or no fetcher installed.
+    PromisedMissing(Error),
+}
+
+/// After an ODB read miss, optionally fetch from the promisor remote and signal retry.
+pub(crate) fn resolve_promisor_read_miss(
     repo_caches: &crate::repo_caches::RepoCaches,
     odb: &crate::odb::Odb,
     oid: &ObjectId,
     env: &Environment,
-) -> Result<Option<()>> {
+    lazy_retry_count: u32,
+) -> Result<PromisorMissResolution> {
+    if lazy_retry_count >= MAX_LAZY_READ_RETRIES {
+        return Err(Error::Message(format!(
+            "promisor lazy fetch did not materialize {} after {MAX_LAZY_READ_RETRIES} attempts",
+            oid.to_hex()
+        )));
+    }
+
     let git_dir = odb.config_git_dir().ok_or_else(|| {
         Error::Message("promisor lazy fetch requires a git directory on the ODB".into())
     })?;
     let config = repo_caches.load_config(env, Some(git_dir), true)?;
     if !repo_treats_promisor_packs(git_dir, config.as_ref()) {
-        return Ok(None);
+        return Ok(PromisorMissResolution::NotPromisorRepo);
     }
     if !promisor_lazy_fetch_enabled(config.as_ref(), env) {
-        return Err(Error::PromisedObjectMissing(*oid));
+        return Ok(PromisorMissResolution::PromisedMissing(
+            Error::PromisedObjectMissing(*oid),
+        ));
     }
     let Some(fetcher) = repo_caches.promisor_fetcher() else {
-        return Err(Error::PromisedObjectMissing(*oid));
+        return Ok(PromisorMissResolution::PromisedMissing(
+            Error::PromisedObjectMissing(*oid),
+        ));
     };
-    let _depth = repo_caches.promisor_lazy_depth().enter()?;
+
+    let _nest = PromisorLazyNestGuard::enter()?;
     let repo = open_repo_for_promisor_fetch(git_dir, env, repo_caches)?;
     fetcher.fetch_missing(&repo, &[*oid])?;
     odb.reprepare_local_packs();
     odb.invalidate_packs();
-    Ok(Some(()))
+
+    if !odb.exists_stored(oid) {
+        return Err(Error::Message(format!(
+            "promisor fetch completed but {} is still missing locally",
+            oid.to_hex()
+        )));
+    }
+    Ok(PromisorMissResolution::RetryAfterFetch)
 }
 
 fn open_repo_for_promisor_fetch(

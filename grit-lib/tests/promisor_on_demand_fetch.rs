@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::thread;
 
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::ConfigFile;
@@ -272,4 +273,176 @@ fn blobless_clone_checkout_matches_git() {
 
     git_in(grit_dest.path(), &["status", "--porcelain"]);
     git_in(git_dest.path(), &["status", "--porcelain"]);
+}
+
+#[test]
+fn lazy_read_into_and_read_info() {
+    let (_layout, bare) = setup_blobless_upstream();
+    let url = format!("file://{}", bare.canonicalize().unwrap().display());
+    let dest = TempDir::new().expect("dest");
+    let fetcher = Arc::new(DefaultPromisorFetcher::new(Arc::new(
+        DefaultHttpClientFactory,
+    )));
+    let repo = grit_blobless_clone(&url, dest.path(), Some(fetcher));
+
+    let blob_hex = git_cmd(&["rev-parse", "HEAD:b.txt"])
+        .in_dir(dest.path())
+        .exec()
+        .stdout;
+    let oid = ObjectId::from_hex(blob_hex.trim()).expect("oid");
+
+    let mut buf = Vec::new();
+    let kind = repo.odb().read_into(&oid, &mut buf).expect("read_into");
+    assert_eq!(kind, grit_lib::objects::ObjectKind::Blob);
+    assert_eq!(buf, b"bbb\n");
+
+    let info = repo.odb().read_info(&oid).expect("read_info");
+    assert_eq!(info.kind, grit_lib::objects::ObjectKind::Blob);
+    assert_eq!(info.size, 4);
+}
+
+struct NoOpFetcher;
+
+impl PromisorFetcher for NoOpFetcher {
+    fn fetch_missing(&self, _repo: &Repository, _oids: &[ObjectId]) -> grit_lib::error::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn lazy_fetch_no_materialization_errors() {
+    let (_layout, bare) = setup_blobless_upstream();
+    let url = format!("file://{}", bare.canonicalize().unwrap().display());
+    let dest = TempDir::new().expect("dest");
+    let repo = grit_blobless_clone(&url, dest.path(), Some(Arc::new(NoOpFetcher)));
+
+    let blob_hex = git_cmd(&["rev-parse", "HEAD:a.txt"])
+        .in_dir(dest.path())
+        .exec()
+        .stdout;
+    let oid = ObjectId::from_hex(blob_hex.trim()).expect("oid");
+    let err = repo.odb().read(&oid).unwrap_err();
+    assert!(
+        matches!(err, Error::Message(_)),
+        "expected materialization failure, got {err:?}"
+    );
+}
+
+#[test]
+fn concurrent_lazy_reads_do_not_share_recursion_limit() {
+    let (_layout, bare) = setup_blobless_upstream();
+    let url = format!("file://{}", bare.canonicalize().unwrap().display());
+    let dest = TempDir::new().expect("dest");
+    let fetcher = Arc::new(DefaultPromisorFetcher::new(Arc::new(
+        DefaultHttpClientFactory,
+    )));
+    let repo = Arc::new(grit_blobless_clone(&url, dest.path(), Some(fetcher)));
+
+    let blobs = ["a.txt", "b.txt", "c.txt", "d.txt"];
+    thread::scope(|scope| {
+        for name in blobs {
+            let repo = Arc::clone(&repo);
+            scope.spawn(move || {
+                let hex = git_cmd(&["rev-parse", &format!("HEAD:{name}")])
+                    .in_dir(repo.work_tree().unwrap())
+                    .exec()
+                    .stdout;
+                let oid = ObjectId::from_hex(hex.trim()).expect("oid");
+                repo.odb().read(&oid).expect("concurrent lazy read");
+            });
+        }
+    });
+}
+
+#[test]
+fn repeated_checkout_does_not_refetch_promisor_blobs() {
+    let (_layout, bare) = setup_blobless_upstream();
+    let url = format!("file://{}", bare.canonicalize().unwrap().display());
+    let dest = TempDir::new().expect("dest");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let fetcher = Arc::new(CountingFetcher {
+        calls: Arc::clone(&calls),
+        inner: DefaultPromisorFetcher::new(Arc::new(DefaultHttpClientFactory)),
+    });
+    let repo = grit_blobless_clone(&url, dest.path(), Some(fetcher));
+
+    let head_commit = ObjectId::from_hex(
+        git_cmd(&["rev-parse", "HEAD"])
+            .in_dir(dest.path())
+            .exec()
+            .stdout
+            .trim(),
+    )
+    .expect("head");
+    let head_tree = parse_commit(&repo.odb().read(&head_commit).expect("commit").data)
+        .expect("parse")
+        .tree;
+    let empty = ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904").expect("empty");
+
+    checkout_between_trees(&repo, Some(&empty), &head_tree).expect("first checkout");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    checkout_between_trees(&repo, Some(&empty), &head_tree).expect("second checkout");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "second checkout must not refetch blobs already in promisor packs"
+    );
+}
+
+fn setup_deltified_blobless_upstream() -> (TempDir, PathBuf) {
+    let layout = TempDir::new().expect("layout");
+    let upstream = layout.path().join("upstream");
+    git_in(layout.path(), &["init", "-q", "-b", "main", "upstream"]);
+    git_in(&upstream, &["config", "user.email", "t@t"]);
+    let base = vec![b'a'; 64 * 1024];
+    fs::write(upstream.join("base.bin"), &base).expect("base");
+    git_in(&upstream, &["add", "base.bin"]);
+    git_in(&upstream, &["commit", "-m", "base", "-q"]);
+    let mut delta = base.clone();
+    delta.extend_from_slice(b"tail");
+    fs::write(upstream.join("delta.bin"), &delta).expect("delta");
+    git_in(&upstream, &["add", "delta.bin"]);
+    git_in(&upstream, &["commit", "-m", "delta", "-q"]);
+
+    let bare = layout.path().join("remote.git");
+    git_in(
+        layout.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            upstream.to_str().unwrap(),
+            "remote.git",
+        ],
+    );
+    git_in(&bare, &["config", "uploadpack.allowFilter", "true"]);
+    git_in(&bare, &["repack", "-adf"]);
+    (layout, bare)
+}
+
+#[test]
+fn noop_negotiation_fetches_deltified_missing_blob() {
+    let (_layout, bare) = setup_deltified_blobless_upstream();
+    let url = format!("file://{}", bare.canonicalize().unwrap().display());
+    let dest = TempDir::new().expect("dest");
+    let fetcher = Arc::new(DefaultPromisorFetcher::new(Arc::new(
+        DefaultHttpClientFactory,
+    )));
+    let repo = grit_blobless_clone(&url, dest.path(), Some(fetcher));
+
+    let blob_hex = git_cmd(&["rev-parse", "HEAD:delta.bin"])
+        .in_dir(dest.path())
+        .exec()
+        .stdout;
+    let oid = ObjectId::from_hex(blob_hex.trim()).expect("oid");
+    assert!(!repo.odb().exists_local(&oid));
+
+    let obj = repo.odb().read(&oid).expect("read deltified blob");
+    let expected = Command::new("git")
+        .current_dir(&bare)
+        .args(["cat-file", "blob", "HEAD:delta.bin"])
+        .output()
+        .expect("git cat-file");
+    assert!(expected.status.success());
+    assert_eq!(obj.data, expected.stdout);
 }
