@@ -6,7 +6,9 @@ use std::sync::Arc;
 use crate::bitmap_walk::{BitmapWalkError, ReachabilityQuery, ReachableSet};
 use crate::environment::RepositoryOptions;
 use crate::error::Result;
-use crate::objects::{parse_commit, parse_tag, parse_tree, Object, ObjectId, ObjectKind};
+use crate::objects::{
+    oid_hash_set, parse_commit, parse_tag, Object, ObjectId, ObjectKind, OidHashSet, TreeRefIter,
+};
 use crate::odb::Odb;
 use crate::pack_bitmap::BitmapIndex;
 use crate::pack_name_hash::pack_name_hash;
@@ -293,7 +295,8 @@ fn collect_reachable_excluding_with_name_hashes(
     HashMap<ObjectId, u32>,
     HashMap<ObjectId, Object>,
 )> {
-    let mut visited: HashSet<ObjectId> = HashSet::new();
+    let oid_len = odb.hash_algo().len();
+    let mut visited: OidHashSet = oid_hash_set();
     let mut ordered: Vec<ObjectId> = Vec::new();
     let mut queue: VecDeque<(ObjectId, String)> = VecDeque::new();
     let mut blob_name_hashes: HashMap<ObjectId, u32> = HashMap::new();
@@ -302,7 +305,7 @@ fn collect_reachable_excluding_with_name_hashes(
     let enqueue = |oid: ObjectId,
                    path: String,
                    queue: &mut VecDeque<(ObjectId, String)>,
-                   visited: &mut HashSet<ObjectId>,
+                   visited: &mut OidHashSet,
                    ordered: &mut Vec<ObjectId>|
      -> bool {
         if !visited.insert(oid) {
@@ -348,40 +351,34 @@ fn collect_reachable_excluding_with_name_hashes(
                 );
             }
             ObjectKind::Tree => {
-                for entry in parse_tree(&obj.data)? {
-                    if entry.mode == 0o160000 {
-                        continue;
-                    }
-                    let name = String::from_utf8_lossy(&entry.name);
-                    let child_path = if path.is_empty() {
-                        name.into_owned()
-                    } else {
-                        format!("{path}/{name}")
-                    };
-                    let file_type = entry.mode & 0o170000;
-                    if file_type != 0o100000 && file_type != 0o120000 {
-                        enqueue(
-                            entry.oid,
-                            child_path,
-                            &mut queue,
-                            &mut visited,
-                            &mut ordered,
-                        );
-                        continue;
-                    }
-                    // Regular files and symlinks have no children: record them
-                    // without inflating their contents. The pack writer reads (or
-                    // copies verbatim) each one later and fails there if it is missing.
-                    if !visited.insert(entry.oid) {
+                for entry in TreeRefIter::with_oid_len(&obj.data, oid_len) {
+                    let entry = entry?;
+                    if entry.mode == 0o160000 || !visited.insert(entry.oid) {
                         continue;
                     }
                     if !exclude.contains(&entry.oid) {
                         ordered.push(entry.oid);
                     }
+                    // Regular files and symlinks have no children: record them
+                    // without inflating their contents. The pack writer reads (or
+                    // copies verbatim) each one later and fails there if it is
+                    // missing. Any other mode, including directories written with
+                    // non-canonical permission bits, is read so the object's own
+                    // kind decides whether it is walked.
+                    let file_type = entry.mode & 0o170000;
+                    if file_type == 0o120000 {
+                        continue;
+                    }
+                    let name = String::from_utf8_lossy(entry.name);
+                    let child_path = if path.is_empty() {
+                        name.into_owned()
+                    } else {
+                        format!("{path}/{name}")
+                    };
                     if file_type == 0o100000 {
-                        blob_name_hashes
-                            .entry(entry.oid)
-                            .or_insert_with(|| pack_name_hash(&child_path));
+                        blob_name_hashes.insert(entry.oid, pack_name_hash(&child_path));
+                    } else {
+                        queue.push_back((entry.oid, child_path));
                     }
                 }
             }
@@ -474,6 +471,77 @@ mod tests {
         assert!(
             without_prefetch.walk_prefetch.is_empty(),
             "reuse-only repack walk must not retain blob payloads"
+        );
+    }
+
+    fn tree_entry(mode: &str, name: &str, oid: ObjectId) -> Vec<u8> {
+        let mut bytes = format!("{mode} {name}\0").into_bytes();
+        bytes.extend_from_slice(oid.as_bytes());
+        bytes
+    }
+
+    /// Old tools wrote tree entries with non-canonical modes (`40755` for a
+    /// directory, `100664` for a file). Git walks them by their type bits, so the
+    /// enumeration must too, or everything below such a directory is left out.
+    #[test]
+    fn walk_descends_into_trees_with_non_canonical_modes() {
+        let tmp = tempfile::tempdir().unwrap();
+        Repository::init(tmp.path(), &InitOptions::new().with_bare(true)).unwrap();
+        let repo = Repository::open(tmp.path(), &RepositoryOptions::empty()).unwrap();
+        let odb = repo.odb();
+        let deep = odb
+            .write_loose_materialize(ObjectKind::Blob, b"deep\n")
+            .unwrap();
+        let odd = odb
+            .write_loose_materialize(ObjectKind::Blob, b"odd\n")
+            .unwrap();
+        let inner = odb
+            .write_loose_materialize(ObjectKind::Tree, &tree_entry("100644", "deep.txt", deep))
+            .unwrap();
+        let mut root = tree_entry("100664", "odd.txt", odd);
+        root.extend(tree_entry("40755", "sub", inner));
+        let root = odb
+            .write_loose_materialize(ObjectKind::Tree, &root)
+            .unwrap();
+        let commit = format!(
+            "tree {root}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\nodd modes\n"
+        );
+        let commit = odb
+            .write_loose_materialize(ObjectKind::Commit, commit.as_bytes())
+            .unwrap();
+
+        let empty = HashSet::new();
+        let selection = enumerate_pack_objects(
+            odb,
+            &[commit],
+            &[],
+            &PackEnumerateOptions {
+                filter: None,
+                shallow_grafts: &empty,
+                have_shallow_grafts: Some(&empty),
+                use_bitmaps: false,
+                exclude_objects: None,
+                prefetch_walk_objects: true,
+            },
+        )
+        .unwrap();
+
+        let ours: HashSet<ObjectId> = selection.send.iter().copied().collect();
+        let git: HashSet<ObjectId> =
+            grit_test_support::git(tmp.path(), &["rev-list", "--objects", &commit.to_hex()])
+                .lines()
+                .map(|line| ObjectId::from_hex(&line[..40]).unwrap())
+                .collect();
+        assert_eq!(ours, git, "same objects as git rev-list --objects");
+        assert!(ours.contains(&inner) && ours.contains(&deep));
+        assert_eq!(selection.send.len(), 5);
+        assert_eq!(
+            selection.blob_name_hashes.get(&deep),
+            Some(&pack_name_hash("sub/deep.txt"))
+        );
+        assert_eq!(
+            selection.blob_name_hashes.get(&odd),
+            Some(&pack_name_hash("odd.txt"))
         );
     }
 }
