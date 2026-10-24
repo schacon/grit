@@ -5223,8 +5223,6 @@ pub grit_lib::error::Error::IndexPathPrefixConflict
 pub grit_lib::error::Error::IndexPathPrefixConflict::directory: std::path::PathBuf
 pub grit_lib::error::Error::IndexPathPrefixConflict::file: std::path::PathBuf
 pub grit_lib::error::Error::IndexUnmerged
-pub grit_lib::error::Error::UnmergedConflictMarkers
-pub grit_lib::error::Error::UnmergedConflictMarkers::paths: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::error::Error::InitBareWithSeparateGitDir
 pub grit_lib::error::Error::InitObjectFormatChange
 pub grit_lib::error::Error::InvalidHead
@@ -5369,6 +5367,8 @@ pub grit_lib::error::Error::UnexpectedObjectKind::actual: grit_lib::objects::Obj
 pub grit_lib::error::Error::UnexpectedObjectKind::expected: grit_lib::objects::ObjectKind
 pub grit_lib::error::Error::UnexpectedObjectKind::oid: grit_lib::objects::ObjectId
 pub grit_lib::error::Error::UnknownObjectType(alloc::string::String)
+pub grit_lib::error::Error::UnmergedConflictMarkers
+pub grit_lib::error::Error::UnmergedConflictMarkers::paths: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::error::Error::UnsupportedObjectStore
 pub grit_lib::error::Error::UnsupportedObjectStore::operation: &'static str
 pub grit_lib::error::Error::UnsupportedRepositoryExtension(alloc::string::String)
@@ -9467,9 +9467,9 @@ impl !core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::odb::builde
 impl !core::panic::unwind_safe::UnwindSafe for grit_lib::objects::odb::builder::OdbBuilder
 pub struct grit_lib::objects::odb::WriteOptions
 pub grit_lib::objects::odb::WriteOptions::assume_loose_only_existence: bool
+pub grit_lib::objects::odb::WriteOptions::loose_prefix_dirs_ready: bool
 pub grit_lib::objects::odb::WriteOptions::silent: bool
 pub grit_lib::objects::odb::WriteOptions::trust_new_loose: bool
-pub grit_lib::objects::odb::WriteOptions::loose_prefix_dirs_ready: bool
 impl core::clone::Clone for grit_lib::objects::odb::WriteOptions
 pub fn grit_lib::objects::odb::WriteOptions::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::objects::odb::WriteOptions
@@ -14518,8 +14518,6 @@ pub grit_lib::prelude::Error::IndexPathPrefixConflict
 pub grit_lib::prelude::Error::IndexPathPrefixConflict::directory: std::path::PathBuf
 pub grit_lib::prelude::Error::IndexPathPrefixConflict::file: std::path::PathBuf
 pub grit_lib::prelude::Error::IndexUnmerged
-pub grit_lib::prelude::Error::UnmergedConflictMarkers
-pub grit_lib::prelude::Error::UnmergedConflictMarkers::paths: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::prelude::Error::InitBareWithSeparateGitDir
 pub grit_lib::prelude::Error::InitObjectFormatChange
 pub grit_lib::prelude::Error::InvalidHead
@@ -14664,6 +14662,8 @@ pub grit_lib::prelude::Error::UnexpectedObjectKind::actual: grit_lib::objects::O
 pub grit_lib::prelude::Error::UnexpectedObjectKind::expected: grit_lib::objects::ObjectKind
 pub grit_lib::prelude::Error::UnexpectedObjectKind::oid: grit_lib::objects::ObjectId
 pub grit_lib::prelude::Error::UnknownObjectType(alloc::string::String)
+pub grit_lib::prelude::Error::UnmergedConflictMarkers
+pub grit_lib::prelude::Error::UnmergedConflictMarkers::paths: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::prelude::Error::UnsupportedObjectStore
 pub grit_lib::prelude::Error::UnsupportedObjectStore::operation: &'static str
 pub grit_lib::prelude::Error::UnsupportedRepositoryExtension(alloc::string::String)
@@ -23163,6 +23163,7 @@ pub grit_lib::revwalk::rev_list::RevListOptions::use_bitmap_index: bool
 pub grit_lib::revwalk::rev_list::RevListOptions::use_commit_graph: bool
 pub grit_lib::revwalk::rev_list::RevListOptions::use_commit_graph_bloom: bool
 impl grit_lib::revwalk::rev_list::RevListOptions
+pub fn grit_lib::revwalk::rev_list::RevListOptions::normalize_for_walk(&mut self, &grit_lib::repo::Repository, &grit_lib::config::ConfigSet)
 pub fn grit_lib::revwalk::rev_list::RevListOptions::wants_parent_rewrite(&self) -> bool
 impl core::clone::Clone for grit_lib::revwalk::rev_list::RevListOptions
 pub fn grit_lib::revwalk::rev_list::RevListOptions::clone(&self) -> Self
