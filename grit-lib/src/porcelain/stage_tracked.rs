@@ -926,11 +926,8 @@ fn restage_deferred_jobs(
             {
                 continue;
             }
-            repo.odb().write_loose_zlib_prehashed(
-                &prep.oid,
-                &prep.zlib_store,
-                BULK_TRACKED_RESTAGE_LOOSE_WRITE,
-            )?;
+            prep.payload
+                .store(repo.odb(), &prep.oid, BULK_TRACKED_RESTAGE_LOOSE_WRITE)?;
         }
     }
     if !replacements.is_empty() {
