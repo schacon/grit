@@ -5,7 +5,7 @@
 //! that full [`super::status::status`] requires.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -17,7 +17,8 @@ use crate::error::{Error, Result};
 use crate::hash::Parallelism;
 use crate::ignore::IgnoreMatcher;
 use crate::index::{
-    entry_from_metadata, index_file_mtime, Index, IndexEntry, MODE_GITLINK, MODE_REGULAR, MODE_TREE,
+    entry_from_metadata, index_file_mtime, index_path_outcome_key, Index, IndexEntry, MODE_GITLINK,
+    MODE_REGULAR, MODE_TREE,
 };
 use crate::objects::ObjectId;
 use crate::odb::BULK_NEW_LOOSE_WRITE;
@@ -107,38 +108,22 @@ impl StageOutcome {
 }
 
 fn index_path_to_string(path: &[u8]) -> String {
-    std::str::from_utf8(path)
-        .map(str::to_owned)
-        .unwrap_or_else(|_| String::from_utf8_lossy(path).into_owned())
-}
-
-fn stage0_path_index_positions(index: &Index) -> HashMap<String, usize> {
-    let mut positions = HashMap::with_capacity(index.entries.len());
-    for (pos, entry) in index.entries.iter().enumerate() {
-        if entry.stage() == 0 {
-            positions
-                .entry(index_path_to_string(&entry.path))
-                .or_insert(pos);
-        }
-    }
-    positions
-}
-
-fn sort_paths_by_index_order(paths: &mut Vec<String>, positions: &HashMap<String, usize>) {
-    paths.sort_by(|a, b| {
-        let pos_a = positions.get(a).copied().unwrap_or(usize::MAX);
-        let pos_b = positions.get(b).copied().unwrap_or(usize::MAX);
-        pos_a.cmp(&pos_b).then_with(|| a.as_str().cmp(b))
-    });
-    paths.dedup();
+    index_path_outcome_key(path).into_owned()
 }
 
 fn sort_outcome_paths_in_index_order(outcome: &mut StageOutcome, index: &Index) {
-    let positions = stage0_path_index_positions(index);
-    sort_paths_by_index_order(&mut outcome.added, &positions);
-    sort_paths_by_index_order(&mut outcome.modified, &positions);
-    sort_paths_by_index_order(&mut outcome.removed, &positions);
-    sort_paths_by_index_order(&mut outcome.intent_to_add, &positions);
+    let positions = index.stage0_path_positions();
+    let sort_paths = |paths: &mut Vec<String>| {
+        paths.sort_by(|a, b| {
+            let pos = |p: &str| positions.get(p).copied().unwrap_or(usize::MAX);
+            pos(a).cmp(&pos(b)).then_with(|| a.as_str().cmp(b))
+        });
+        paths.dedup();
+    };
+    sort_paths(&mut outcome.added);
+    sort_paths(&mut outcome.modified);
+    sort_paths(&mut outcome.removed);
+    sort_paths(&mut outcome.intent_to_add);
 }
 
 fn sort_outcome_paths_lexicographic(outcome: &mut StageOutcome) {
@@ -3003,5 +2988,97 @@ mod tests {
             porcelain_ita_lines(&git_porcelain.stdout),
             "porcelain v2 for -N must match git"
         );
+    }
+
+    fn plain_index_entry(path: &str) -> IndexEntry {
+        plain_index_entry_path(path.as_bytes())
+    }
+
+    fn plain_index_entry_path(path: &[u8]) -> IndexEntry {
+        IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid: ObjectId::zero(),
+            flags: path.len().min(0xFFF) as u16,
+            flags_extended: None,
+            path: path.to_vec(),
+            base_index_pos: 0,
+        }
+    }
+
+    #[test]
+    fn sort_outcome_paths_in_index_order_non_utf8_matches_lossy_outcome_keys() {
+        let mut index = Index::new();
+        index.add_or_replace(plain_index_entry_path(b"a\x80.c"));
+        index.add_or_replace(plain_index_entry("aé.c"));
+        index.sort();
+
+        let invalid_display = index_path_to_string(b"a\x80.c");
+        let valid_display = index_path_to_string("aé.c".as_bytes());
+        assert_ne!(invalid_display, valid_display);
+
+        let mut outcome = StageOutcome {
+            added: Vec::new(),
+            modified: vec![valid_display.clone(), invalid_display.clone()],
+            removed: Vec::new(),
+            intent_to_add: Vec::new(),
+        };
+        sort_outcome_paths_in_index_order(&mut outcome, &index);
+        assert_eq!(
+            outcome.modified,
+            vec![invalid_display, valid_display],
+            "order must follow index entry order using lossy outcome strings"
+        );
+    }
+
+    #[test]
+    fn sort_outcome_paths_in_index_order_scales_with_index_build_not_sort_size() {
+        const INDEX_LEN: usize = 30_000;
+        const SORT_LEN: usize = 2_000;
+        let mut index = Index::new();
+        for i in 0..INDEX_LEN {
+            index.add_or_replace(plain_index_entry(&format!("f/{i:06}.txt")));
+        }
+        index.sort();
+
+        let mut modified: Vec<String> = (0..SORT_LEN)
+            .map(|i| format!("f/{:06}.txt", INDEX_LEN - 1 - i))
+            .collect();
+        let mut outcome = StageOutcome {
+            added: Vec::new(),
+            modified,
+            removed: Vec::new(),
+            intent_to_add: Vec::new(),
+        };
+
+        let start = std::time::Instant::now();
+        sort_outcome_paths_in_index_order(&mut outcome, &index);
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed.as_secs() < 2,
+            "sorting {SORT_LEN} paths against {INDEX_LEN} index entries took {elapsed:?}"
+        );
+
+        for window in outcome.modified.windows(2) {
+            let pos_a = index
+                .entries
+                .iter()
+                .position(|e| e.path == window[0].as_bytes())
+                .expect("path in index");
+            let pos_b = index
+                .entries
+                .iter()
+                .position(|e| e.path == window[1].as_bytes())
+                .expect("path in index");
+            assert!(pos_a < pos_b);
+        }
     }
 }
