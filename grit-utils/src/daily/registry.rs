@@ -229,7 +229,7 @@ pub const HEADLINE_SCENARIOS: [HeadlineScenario; 22] = [
         area: Area::Remotes,
         headline: true,
         name: Some("clone"),
-        description: "Clone over file:// (not git clone --local hardlink shortcut) vs git clone",
+        description: "Clone over smart HTTP from git http-backend vs git clone",
     },
 ];
 
@@ -240,7 +240,7 @@ pub const REMOTE_MATRIX_SCENARIOS: [ScenarioSpec; 17] = [
         area: Area::Remotes,
         headline: false,
         name: None,
-        description: "No-op fetch when client already matches remote (file:// git-git)",
+        description: "No-op fetch when client already matches remote (git-git over smart HTTP)",
     },
     ScenarioSpec {
         id: "ls-remote/all@many-refs",
@@ -268,7 +268,7 @@ pub const REMOTE_MATRIX_SCENARIOS: [ScenarioSpec; 17] = [
         area: Area::Remotes,
         headline: false,
         name: None,
-        description: "Bare clone synth-10k vs git clone --bare --no-local file://",
+        description: "Bare clone synth-10k over smart HTTP vs git clone --bare",
     },
     ScenarioSpec {
         id: "fetch/incremental-http@git-git",
@@ -324,7 +324,7 @@ pub const REMOTE_MATRIX_SCENARIOS: [ScenarioSpec; 17] = [
         area: Area::Remotes,
         headline: false,
         name: None,
-        description: "Shallow clone (`--depth 1`) over file:// vs git clone --depth 1",
+        description: "Shallow clone (`--depth 1`) over smart HTTP vs git clone --depth 1",
     },
     ScenarioSpec {
         id: "clone/blobless@git-git",
@@ -332,14 +332,14 @@ pub const REMOTE_MATRIX_SCENARIOS: [ScenarioSpec; 17] = [
         headline: false,
         name: None,
         description:
-            "Blobless partial clone over file://: grit clone --blobs none vs git clone --filter=blob:none",
+            "Blobless partial clone over smart HTTP: grit clone --blobs none vs git clone --filter=blob:none",
     },
     ScenarioSpec {
         id: "clone/shallow-depth1@synth-10k",
         area: Area::Remotes,
         headline: false,
         name: None,
-        description: "Shallow clone over file://: grit clone --shallow vs git clone --depth 1",
+        description: "Shallow clone over smart HTTP: grit clone --shallow vs git clone --depth 1",
     },
     ScenarioSpec {
         id: "clone/shallow-depth1-http@synth-10k",

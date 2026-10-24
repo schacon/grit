@@ -319,10 +319,14 @@ pub fn run_daily(opts: DailyRunOptions, timestamp: OffsetDateTime) -> Result<Dai
         ];
         let detail = DailyScenarioDetail {
             setup: headline_ctx.remote.as_ref().map(|r| {
-                format!(
-                    "fixture repo with a bare file:// remote ({})",
-                    r.bare.display()
-                )
+                let server = if r.git_http.is_some() {
+                    "git http-backend (git's own smart HTTP server)"
+                } else if r.grit_http.is_some() {
+                    "grit-http-server"
+                } else {
+                    "no server"
+                };
+                format!("remote {} served by {server}", r.remote_url)
             }),
             prepare: prepare.as_ref().map(|p| display_argv(p, &names)),
             commands: DailyCommands {

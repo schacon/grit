@@ -7,17 +7,17 @@ use super::super::remote_fixture::{
     clone_bare_bench_script, clone_bare_bench_script_grit, clone_bench_script,
     clone_bench_script_grit, clone_bench_script_grit_shallow, clone_bench_script_shallow,
     clone_blobless_bench_script_git, clone_blobless_bench_script_grit,
-    clone_shallow_bench_script_git, clone_shallow_bench_script_grit, setup_git_git_file_remote,
-    setup_git_git_file_remote_blobless, setup_git_git_grit_http_fetch_remote,
-    setup_git_git_grit_http_push_remote, setup_many_refs_file_remote, setup_many_refs_remote_show,
-    setup_remote_remove_many_refs, setup_remote_rename_many_refs, setup_synth10k_file_remote,
-    setup_synth10k_grit_http_remote, setup_synth10k_pull_rebase_remote, verify_clone_bare,
-    verify_clone_blobless, verify_clone_http, verify_clone_local, verify_clone_shallow,
-    verify_clone_shallow_http, verify_fetch_deepen, verify_fetch_dry_run, verify_fetch_incremental,
-    verify_fetch_incremental_http, verify_fetch_noop, verify_fetch_one_branch,
-    verify_ls_remote_all, verify_pull_check, verify_pull_fast_forward, verify_pull_rebase,
-    verify_push_force_with_lease, verify_push_incremental, verify_push_incremental_http,
-    verify_push_refspec,
+    clone_shallow_bench_script_git, clone_shallow_bench_script_grit,
+    setup_git_git_grit_http_fetch_remote, setup_git_git_grit_http_push_remote,
+    setup_git_git_remote, setup_git_git_remote_blobless, setup_many_refs_remote,
+    setup_many_refs_remote_show, setup_remote_remove_many_refs, setup_remote_rename_many_refs,
+    setup_synth10k_grit_http_remote, setup_synth10k_pull_rebase_remote, setup_synth10k_remote,
+    verify_clone_bare, verify_clone_blobless, verify_clone_http, verify_clone_local,
+    verify_clone_shallow, verify_clone_shallow_http, verify_fetch_deepen, verify_fetch_dry_run,
+    verify_fetch_incremental, verify_fetch_incremental_http, verify_fetch_noop,
+    verify_fetch_one_branch, verify_ls_remote_all, verify_pull_check, verify_pull_fast_forward,
+    verify_pull_rebase, verify_push_force_with_lease, verify_push_incremental,
+    verify_push_incremental_http, verify_push_refspec,
 };
 use super::super::runner::BenchArgv;
 use crate::shell::shell_quote;
@@ -406,7 +406,7 @@ fn headline_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: headline_spec("fetch/incremental@git-git"),
             pending: false,
-            setup: setup_git_git_file_remote,
+            setup: setup_git_git_remote,
             prepare: prepare_network_fetch_incr,
             build_git: fetch_incr_git,
             build_grit: fetch_incr_grit,
@@ -415,7 +415,7 @@ fn headline_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: headline_spec("pull/fast-forward@git-git"),
             pending: false,
-            setup: setup_git_git_file_remote,
+            setup: setup_git_git_remote,
             prepare: prepare_network_fetch_incr,
             build_git: pull_ff_git,
             build_grit: pull_ff_grit,
@@ -433,7 +433,7 @@ fn headline_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: headline_spec("push/incremental@git-git"),
             pending: false,
-            setup: setup_git_git_file_remote,
+            setup: setup_git_git_remote,
             prepare: prepare_network_push,
             build_git: push_incr_git,
             build_grit: push_incr_grit,
@@ -442,7 +442,7 @@ fn headline_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: headline_spec("push/force-with-lease@git-git"),
             pending: false,
-            setup: setup_git_git_file_remote,
+            setup: setup_git_git_remote,
             prepare: prepare_network_force_with_lease,
             build_git: push_fwl_git,
             build_grit: push_fwl_grit,
@@ -451,7 +451,7 @@ fn headline_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: headline_spec("clone/local@synth-10k"),
             pending: false,
-            setup: setup_synth10k_file_remote,
+            setup: setup_synth10k_remote,
             prepare: prepare_network_clone,
             build_git: clone_local_git,
             build_grit: clone_local_grit,
@@ -465,7 +465,7 @@ fn matrix_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: matrix_spec("fetch/noop@git-git"),
             pending: false,
-            setup: setup_git_git_file_remote,
+            setup: setup_git_git_remote,
             prepare: prepare_network_fetch_noop,
             build_git: fetch_incr_git,
             build_grit: fetch_incr_grit,
@@ -474,7 +474,7 @@ fn matrix_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: matrix_spec("ls-remote/all@many-refs"),
             pending: false,
-            setup: setup_many_refs_file_remote,
+            setup: setup_many_refs_remote,
             prepare: prepare_none,
             build_git: ls_remote_git,
             build_grit: ls_remote_grit,
@@ -510,7 +510,7 @@ fn matrix_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: matrix_spec("clone/bare@synth-10k"),
             pending: false,
-            setup: setup_synth10k_file_remote,
+            setup: setup_synth10k_remote,
             prepare: prepare_network_clone,
             build_git: clone_bare_git,
             build_grit: clone_bare_grit,
@@ -537,7 +537,7 @@ fn matrix_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: matrix_spec("push/refspec@git-git"),
             pending: false,
-            setup: setup_git_git_file_remote,
+            setup: setup_git_git_remote,
             prepare: prepare_network_push,
             build_git: push_refspec_git,
             build_grit: push_refspec_grit,
@@ -546,7 +546,7 @@ fn matrix_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: matrix_spec("fetch/one-branch@git-git"),
             pending: false,
-            setup: setup_git_git_file_remote,
+            setup: setup_git_git_remote,
             prepare: prepare_network_fetch_incr,
             build_git: fetch_one_branch_git,
             build_grit: fetch_one_branch_grit,
@@ -555,7 +555,7 @@ fn matrix_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: matrix_spec("fetch/dry-run@git-git"),
             pending: false,
-            setup: setup_git_git_file_remote,
+            setup: setup_git_git_remote,
             prepare: prepare_network_fetch_incr,
             build_git: fetch_dry_run_git,
             build_grit: fetch_dry_run_grit,
@@ -564,7 +564,7 @@ fn matrix_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: matrix_spec("fetch/deepen@git-git"),
             pending: false,
-            setup: setup_git_git_file_remote,
+            setup: setup_git_git_remote,
             prepare: prepare_fetch_deepen_client,
             build_git: fetch_deepen_git,
             build_grit: fetch_deepen_grit,
@@ -573,7 +573,7 @@ fn matrix_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: matrix_spec("pull/check@git-git"),
             pending: false,
-            setup: setup_git_git_file_remote,
+            setup: setup_git_git_remote,
             prepare: prepare_network_fetch_incr,
             build_git: pull_check_git,
             build_grit: pull_check_grit,
@@ -582,7 +582,7 @@ fn matrix_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: matrix_spec("clone/shallow@git-git"),
             pending: false,
-            setup: setup_git_git_file_remote,
+            setup: setup_git_git_remote,
             prepare: prepare_network_clone,
             build_git: clone_shallow_git,
             build_grit: clone_shallow_grit,
@@ -591,7 +591,7 @@ fn matrix_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: matrix_spec("clone/blobless@git-git"),
             pending: false,
-            setup: setup_git_git_file_remote_blobless,
+            setup: setup_git_git_remote_blobless,
             prepare: prepare_network_clone,
             build_git: clone_blobless_git,
             build_grit: clone_blobless_grit,
@@ -600,7 +600,7 @@ fn matrix_plans() -> Vec<DailyHeadlinePlan> {
         DailyHeadlinePlan {
             spec: matrix_spec("clone/shallow-depth1@synth-10k"),
             pending: false,
-            setup: setup_synth10k_file_remote,
+            setup: setup_synth10k_remote,
             prepare: prepare_network_clone,
             build_git: clone_shallow_local_git,
             build_grit: clone_shallow_local_grit,

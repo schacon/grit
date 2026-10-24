@@ -12,10 +12,9 @@ use crate::bench_env::empty_global_config_path;
 use crate::fixture::remove_dir_robust;
 use crate::fixture_registry::{self, FixtureKind};
 use crate::network_fixture::{
-    ensure_campaign_bare_network_meta, file_url, install_http_repo, meta_path, NetworkBenchMeta,
-    REPO_NAME,
+    ensure_campaign_bare_network_meta, install_http_repo, meta_path, NetworkBenchMeta, REPO_NAME,
 };
-use crate::network_http::GritHttpServer;
+use crate::network_http::{GitHttpBackendServer, GritHttpServer};
 use crate::network_suite::{
     assert_push_target_lacks_client_tip, configure_remote, ensure_network_client_repo,
     git_object_exists, network_http_root, prepare_network_clone, prepare_network_fetch_incr,
@@ -219,6 +218,21 @@ fn bootstrap_bare_default_branch(git: &Path, bare: &Path, meta: &NetworkBenchMet
     Ok(())
 }
 
+/// Serve `bare` with git's own smart HTTP server (`git http-backend`), so clients fetch, pull,
+/// push and clone end to end over HTTP rather than through the `file://` shortcut. The bare
+/// stays the one prepare and the checks work on; the server lives as long as the scenario.
+fn serve_over_http(git: &Path, bare: &Path) -> Result<(String, GitHttpBackendServer)> {
+    let root = bare.parent().context("bare repo parent")?.to_path_buf();
+    let name = bare
+        .file_name()
+        .and_then(|n| n.to_str())
+        .context("bare repo name")?
+        .to_string();
+    let server = GitHttpBackendServer::start(git, root)?;
+    let url = server.url(&name);
+    Ok((url, server))
+}
+
 fn ensure_client(git: &Path, remote: &DailyRemoteState) -> Result<PathBuf> {
     ensure_network_client_repo(git, &remote.bare)
 }
@@ -239,14 +253,14 @@ pub fn setup_synth10k_pull_rebase_remote(setup: &DailySetup<'_>) -> Result<Daily
         worktree_to_bare(setup.git, &worktree, &bare)?;
         let meta = install_network_meta(setup.git, &bare, setup.smoke)?;
         clear_network_sidecars(&meta);
-        let remote_url = file_url(&bare)?;
+        let (remote_url, git_http) = serve_over_http(setup.git, &bare)?;
         std::env::set_var("GRIT_BENCH_DAILY_NETWORK_BARE", &bare);
         let remote = DailyRemoteState {
             bare: bare.clone(),
             meta: meta.clone(),
             remote_url: remote_url.clone(),
             grit_http: None,
-            git_http: None,
+            git_http: Some(git_http),
         };
         let client = ensure_client(setup.git, &remote)?;
         configure_remote(setup.git, &client, &remote_url, &meta.default_branch)?;
@@ -264,20 +278,20 @@ fn configure_blobless_upload_pack(git: &Path, bare: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn setup_git_git_file_remote_blobless(setup: &DailySetup<'_>) -> Result<DailyHeadlineContext> {
-    let ctx = setup_git_git_file_remote(setup)?;
+pub fn setup_git_git_remote_blobless(setup: &DailySetup<'_>) -> Result<DailyHeadlineContext> {
+    let ctx = setup_git_git_remote(setup)?;
     let remote = ctx.remote.as_ref().context("remote state")?;
     configure_blobless_upload_pack(setup.git, &remote.bare)?;
     Ok(ctx)
 }
 
-pub fn setup_git_git_file_remote(setup: &DailySetup<'_>) -> Result<DailyHeadlineContext> {
+pub fn setup_git_git_remote(setup: &DailySetup<'_>) -> Result<DailyHeadlineContext> {
     with_remote_scratch("git-git", |scratch| {
         let bare = scratch.join("remote.git");
         copy_cached_bare(setup.git, setup, FixtureKind::GitGit, &bare)?;
         let meta = install_network_meta(setup.git, &bare, setup.smoke)?;
         clear_network_sidecars(&meta);
-        let remote_url = file_url(&bare)?;
+        let (remote_url, git_http) = serve_over_http(setup.git, &bare)?;
         std::env::set_var("GRIT_BENCH_DAILY_NETWORK_BARE", &bare);
         let client = ensure_client(
             setup.git,
@@ -298,13 +312,13 @@ pub fn setup_git_git_file_remote(setup: &DailySetup<'_>) -> Result<DailyHeadline
                 meta,
                 remote_url,
                 grit_http: None,
-                git_http: None,
+                git_http: Some(git_http),
             },
         ))
     })
 }
 
-pub fn setup_synth10k_file_remote(setup: &DailySetup<'_>) -> Result<DailyHeadlineContext> {
+pub fn setup_synth10k_remote(setup: &DailySetup<'_>) -> Result<DailyHeadlineContext> {
     with_remote_scratch("synth-10k-clone", |scratch| {
         let kind = if setup.smoke {
             FixtureKind::Synth10kSmoke
@@ -315,7 +329,7 @@ pub fn setup_synth10k_file_remote(setup: &DailySetup<'_>) -> Result<DailyHeadlin
         let bare = scratch.join("remote.git");
         worktree_to_bare(setup.git, &worktree, &bare)?;
         let meta = install_network_meta(setup.git, &bare, setup.smoke)?;
-        let remote_url = file_url(&bare)?;
+        let (remote_url, git_http) = serve_over_http(setup.git, &bare)?;
         std::env::set_var("GRIT_BENCH_DAILY_NETWORK_BARE", &bare);
         Ok(ctx_with_remote(
             scratch.to_path_buf(),
@@ -325,14 +339,14 @@ pub fn setup_synth10k_file_remote(setup: &DailySetup<'_>) -> Result<DailyHeadlin
                 meta,
                 remote_url,
                 grit_http: None,
-                git_http: None,
+                git_http: Some(git_http),
             },
         ))
     })
 }
 
 pub fn setup_remote_remove_many_refs(setup: &DailySetup<'_>) -> Result<DailyHeadlineContext> {
-    let mut ctx = setup_many_refs_file_remote(setup)?;
+    let mut ctx = setup_many_refs_remote(setup)?;
     let remote = ctx.remote.as_ref().context("remote state")?;
     let client = ensure_client(setup.git, remote)?;
     configure_client_remote(setup.git, &client, remote)?;
@@ -355,14 +369,14 @@ pub fn setup_many_refs_remote_show(setup: &DailySetup<'_>) -> Result<DailyHeadli
         let bare = scratch.join("remote.git");
         worktree_to_bare(setup.git, &worktree, &bare)?;
         let meta = install_network_meta(setup.git, &bare, setup.smoke)?;
-        let remote_url = file_url(&bare)?;
+        let (remote_url, git_http) = serve_over_http(setup.git, &bare)?;
         std::env::set_var("GRIT_BENCH_DAILY_NETWORK_BARE", &bare);
         let remote = DailyRemoteState {
             bare: bare.clone(),
             meta: meta.clone(),
             remote_url: remote_url.clone(),
             grit_http: None,
-            git_http: None,
+            git_http: Some(git_http),
         };
         let client = ensure_client(setup.git, &remote)?;
         configure_client_remote(setup.git, &client, &remote)?;
@@ -370,7 +384,7 @@ pub fn setup_many_refs_remote_show(setup: &DailySetup<'_>) -> Result<DailyHeadli
     })
 }
 
-pub fn setup_many_refs_file_remote(setup: &DailySetup<'_>) -> Result<DailyHeadlineContext> {
+pub fn setup_many_refs_remote(setup: &DailySetup<'_>) -> Result<DailyHeadlineContext> {
     with_remote_scratch("many-refs-ls", |scratch| {
         let kind = if setup.smoke {
             FixtureKind::ManyRefsSmoke
@@ -381,7 +395,7 @@ pub fn setup_many_refs_file_remote(setup: &DailySetup<'_>) -> Result<DailyHeadli
         let bare = scratch.join("remote.git");
         worktree_to_bare(setup.git, &worktree, &bare)?;
         let meta = install_network_meta(setup.git, &bare, setup.smoke)?;
-        let remote_url = file_url(&bare)?;
+        let (remote_url, git_http) = serve_over_http(setup.git, &bare)?;
         std::env::set_var("GRIT_BENCH_DAILY_NETWORK_BARE", &bare);
         Ok(ctx_with_remote(
             scratch.to_path_buf(),
@@ -391,7 +405,7 @@ pub fn setup_many_refs_file_remote(setup: &DailySetup<'_>) -> Result<DailyHeadli
                 meta,
                 remote_url,
                 grit_http: None,
-                git_http: None,
+                git_http: Some(git_http),
             },
         ))
     })
@@ -409,14 +423,14 @@ pub fn setup_remote_rename_many_refs(setup: &DailySetup<'_>) -> Result<DailyHead
         let bare = scratch.join("remote.git");
         worktree_to_bare(setup.git, &worktree, &bare)?;
         let meta = install_network_meta(setup.git, &bare, setup.smoke)?;
-        let remote_url = file_url(&bare)?;
+        let (remote_url, git_http) = serve_over_http(setup.git, &bare)?;
         std::env::set_var("GRIT_BENCH_DAILY_NETWORK_BARE", &bare);
         let remote = DailyRemoteState {
             bare: bare.clone(),
             meta: meta.clone(),
             remote_url: remote_url.clone(),
             grit_http: None,
-            git_http: None,
+            git_http: Some(git_http),
         };
         let client = ensure_client(setup.git, &remote)?;
         configure_remote(setup.git, &client, &remote_url, &meta.default_branch)?;
@@ -801,7 +815,8 @@ fn repo_has_object(git: &Path, repo: &Path, oid: &str) -> Result<()> {
 
 fn push_target_bare(ctx: &DailyHeadlineContext) -> Result<PathBuf> {
     let remote = remote_state(ctx)?;
-    if remote.remote_url.starts_with("http://") {
+    // grit-http-server serves a mirror of the bare; git http-backend serves the bare itself.
+    if remote.grit_http.is_some() {
         Ok(network_http_root(&remote.bare).join(REPO_NAME))
     } else {
         Ok(remote.bare.clone())
@@ -1273,7 +1288,9 @@ pub fn refresh_grit_http_server(ctx: &mut DailyHeadlineContext) -> Result<()> {
     let Some(remote) = ctx.remote.as_mut() else {
         return Ok(());
     };
-    if !remote.remote_url.starts_with("http://") {
+    // Only the grit-http-server scenarios: the others are served by git http-backend, which
+    // reads the bare directly and needs no refresh.
+    if remote.grit_http.is_none() {
         return Ok(());
     }
     let http_root = network_http_root(&remote.bare);
