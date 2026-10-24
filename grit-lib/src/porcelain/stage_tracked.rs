@@ -754,11 +754,12 @@ fn refresh_present_tracked_path(
                 filter_fp,
             )?;
             if !idx_intent_to_add && staged_oid == idx_oid {
-                let mode_for_index = if trust_filemode || type_changed {
-                    wt_mode
-                } else {
-                    idx_mode
-                };
+                if type_changed {
+                    let entry = entry_from_stat(abs_path, raw_path, staged_oid, wt_mode)?;
+                    index.stage_file(entry);
+                    return Ok(true);
+                }
+                let mode_for_index = if trust_filemode { wt_mode } else { idx_mode };
                 if mode_for_index == idx_mode || !trust_filemode {
                     let entry = entry_from_stat(abs_path, raw_path, staged_oid, mode_for_index)?;
                     if entry.ctime_sec != idx_e.ctime_sec

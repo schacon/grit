@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::porcelain::add::{stage, StageMode, StageOptions};
-use grit_lib::porcelain::commit::{create_commit, CommitRequest, HookPolicy};
+use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::porcelain::index_mode::StageExecutableHint;
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
@@ -217,6 +217,69 @@ fn filemode_false_stages_regular_to_symlink_typechange() {
         git_index.starts_with("120000 "),
         "git reference: {git_index}"
     );
+}
+
+/// UTF-8 `refresh_present_tracked_path` path: file blob bytes equal symlink target (same oid),
+/// stat fields unchanged after typechange, `core.filemode=false`.
+#[cfg(unix)]
+#[test]
+fn filemode_false_stages_typechange_when_symlink_oid_matches_file() {
+    use std::os::unix::fs::symlink;
+
+    use filetime::{set_symlink_file_times, FileTime};
+
+    let target = "target.txt";
+    let link = "link";
+
+    fn init_base_commit(root: &Path, target: &str, link: &str) {
+        git(root, &["init", "-q", "-b", "main"]);
+        git(root, &["config", "core.filemode", "false"]);
+        fs::write(root.join(target), "payload\n").expect("write target");
+        fs::write(root.join(link), target.as_bytes()).expect("write link as file");
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-qm", "base"]);
+    }
+
+    fn replace_file_with_symlink_preserving_stat(root: &Path, target: &str, link: &str) {
+        let link_path = root.join(link);
+        let meta = fs::symlink_metadata(&link_path).expect("stat file");
+        let atime = FileTime::from_last_access_time(&meta);
+        let mtime = FileTime::from_last_modification_time(&meta);
+        fs::remove_file(&link_path).expect("remove file");
+        symlink(target, &link_path).expect("symlink");
+        set_symlink_file_times(&link_path, atime, mtime).expect("preserve symlink times");
+    }
+
+    let git_tmp = tempfile::tempdir().expect("git tempdir");
+    let gr = git_tmp.path();
+    init_base_commit(gr, target, link);
+    replace_file_with_symlink_preserving_stat(gr, target, link);
+    git(gr, &["add", link]);
+    let git_index = git_out(gr, &["ls-files", "-s", link]);
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_base_commit(root, target, link);
+    replace_file_with_symlink_preserving_stat(root, target, link);
+
+    let repo = Repository::discover(Some(root), &Default::default()).expect("open");
+    stage(
+        &repo,
+        &StageOptions {
+            pathspecs: vec![link.to_owned()],
+            pathspec_sources: vec![link.to_owned()],
+            ..StageOptions::default()
+        },
+        &mut NullProgress,
+    )
+    .expect("stage typechange");
+
+    let grit_index = git_out(root, &["ls-files", "-s", link]);
+    assert_eq!(
+        grit_index, git_index,
+        "grit index row must match system git (mode 120000, same oid)"
+    );
+    git(root, &["fsck", "--strict"]);
 }
 
 #[test]
