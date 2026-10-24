@@ -1394,12 +1394,14 @@ fn rss_harness_install_pack_path() {
         .ok()
         .and_then(|s| s.parse().ok());
     let fix_thin = std::env::var("GRIT_FIX_THIN").ok().as_deref() != Some("0");
+    let skip_verify = std::env::var("GRIT_SKIP_VERIFY").ok().as_deref() == Some("1");
     install_pack_path(
         &staging,
         &odb,
         &IngestPackOptions {
             fix_thin,
             threads,
+            skip_post_index_verify: skip_verify,
             ..Default::default()
         },
     )
