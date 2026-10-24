@@ -6,7 +6,6 @@ use flate2::read::ZlibDecoder;
 use flate2::Compression;
 
 use crate::error::{Error, Result};
-use crate::unpack_objects::decompress_zlib_at_into;
 use crate::zlib_inflate::ZlibInflateScratch;
 
 const SKIP_BUF_LEN: usize = 64 * 1024;
@@ -73,16 +72,6 @@ pub(crate) fn skip_zlib_at_with_scratch(
     let mut pos = offset;
     scratch.skip_zlib_stream(pack, &mut pos, expected_size as u64)?;
     Ok(pos - offset)
-}
-
-/// Like [`decompress_zlib_at`], reusing `out` storage for parallel index-pack workers.
-pub(crate) fn decompress_zlib_at_index_into(
-    pack: &[u8],
-    offset: usize,
-    expected_size: usize,
-    out: &mut Vec<u8>,
-) -> Result<()> {
-    decompress_zlib_at_into(pack, offset, expected_size, out).map(|_| ())
 }
 
 /// Map Git pack zlib level (`pack.compression` / `core.compression`) to flate2.
