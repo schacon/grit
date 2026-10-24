@@ -17,7 +17,11 @@
 //! - Tag message cleanup: [`strip_comments`] then [`crate::porcelain::commit::normalize_commit_message`]
 //!   via [`normalize_tag_message`].
 
+use std::cell::OnceCell;
+use std::sync::Arc;
+
 use crate::check_ref_format::validate_tag_short_name;
+use crate::commit_graph_file::CommitGraphChain;
 use crate::commit_pretty::message_subject;
 use crate::diff_rename_parallel::parallel_map_indices;
 use crate::error::{Error, Result};
@@ -31,6 +35,7 @@ use crate::refs::listing::{
     pattern_matches_short_name, query_refs, ref_query_options_for_repo, RefListing, RefNamespace,
     RefQuery, RefQueryError,
 };
+use crate::refs::PackedRefPeels;
 use crate::repo::Repository;
 use crate::signing::{should_sign_tag, sign_serialized_tag, GpgConfig};
 use crate::tree_sha256::{TagTreeSha256Outcome, TreeSha256Claim, TreeSha256Options};
@@ -118,6 +123,27 @@ pub struct TagSummary {
 #[deprecated(note = "use TagSummary instead")]
 pub type TagInfo = TagSummary;
 
+/// Amount of tag metadata requested from [`list_tags`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TagDetail {
+    /// Return only short tag names without classifying their target objects.
+    Names,
+    /// Return tag kind, peeled commit, and target kind without annotation text.
+    Kind,
+    /// Return complete tag summaries, including annotated-tag message and tagger fields.
+    #[default]
+    Annotation,
+}
+
+/// Result rows returned by [`list_tags`] for the requested [`TagDetail`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TagList {
+    /// Short tag names requested with [`TagDetail::Names`].
+    Names(Vec<String>),
+    /// Classified summaries requested with [`TagDetail::Kind`] or [`TagDetail::Annotation`].
+    Summaries(Vec<TagSummary>),
+}
+
 /// Inputs for [`create_tag`].
 #[derive(Debug, Clone)]
 pub struct CreateTagRequest {
@@ -175,8 +201,9 @@ pub fn create_tag(repo: &Repository, req: &CreateTagRequest) -> Result<CreateTag
         })
     })?;
     let tag_ref = format!("refs/tags/{}", req.name);
-    let replaced = match refs::resolve_ref(repo.git_dir(), &tag_ref) {
-        Ok(existing) => {
+    // An unreadable or dangling tag ref counts as absent, so it is overwritten.
+    let replaced = match repo.references().resolve_if_exists(&tag_ref) {
+        Ok(Some(existing)) => {
             if req.force {
                 Some(existing)
             } else {
@@ -185,7 +212,7 @@ pub fn create_tag(repo: &Repository, req: &CreateTagRequest) -> Result<CreateTag
                 }));
             }
         }
-        Err(_) => None,
+        Ok(None) | Err(_) => None,
     };
 
     if let Some(ref raw) = req.message {
@@ -276,7 +303,7 @@ pub fn create_tag(repo: &Repository, req: &CreateTagRequest) -> Result<CreateTag
     };
 
     if !req.dry_run {
-        refs::write_ref(repo.git_dir(), &tag_ref, &ref_oid)?;
+        refs::update_direct_ref_on_store(repo.refs(), repo.git_dir(), &tag_ref, &ref_oid)?;
     }
 
     Ok(CreateTagOutcome {
@@ -307,32 +334,77 @@ pub fn tag_ref_metadata(repo: &Repository, ref_oid: &ObjectId) -> (TagKind, Opti
     }
 }
 
-/// List tags matching `query` (always scoped to [`RefNamespace::Tags`]).
+/// List complete tag summaries matching `query`.
 ///
-/// Annotated tag objects are read in parallel when the thread policy allows.
-/// Default CLI sort is `version`; pass [`RefQuery::sort`] explicitly in library callers.
+/// This preserves the annotation-rich API. Use [`list_tags_with_detail`] when
+/// names or classification alone are sufficient.
 ///
 /// # Errors
 ///
 /// Propagates ref-query, config, and object read failures.
 pub fn list_tags(repo: &Repository, query: &RefQuery) -> Result<Vec<TagSummary>> {
+    let TagList::Summaries(tags) = list_tags_with_detail(repo, query, TagDetail::Annotation)?
+    else {
+        return Err(Error::Message(
+            "annotation detail returned tag names without summaries".into(),
+        ));
+    };
+    Ok(tags)
+}
+
+/// List tags matching `query` (always scoped to [`RefNamespace::Tags`]).
+///
+/// [`TagDetail::Names`] avoids tag-object reads. [`TagDetail::Kind`] classifies
+/// packed refs from their peel records and falls back to objects when needed.
+/// [`TagDetail::Annotation`] reads annotated tag objects in parallel when the
+/// thread policy allows.
+/// Default CLI sort is `version`; pass [`RefQuery::sort`] explicitly in library callers.
+///
+/// # Errors
+///
+/// Propagates ref-query, config, and object read failures.
+pub fn list_tags_with_detail(
+    repo: &Repository,
+    query: &RefQuery,
+    detail: TagDetail,
+) -> Result<TagList> {
     let mut query = query.clone();
     query.namespaces = vec![RefNamespace::Tags];
     let options = ref_query_options_for_repo(repo)?;
     let listings = query_refs(repo, &query, &options).map_err(ref_query_to_error)?;
     if listings.is_empty() {
-        return Ok(Vec::new());
+        return Ok(match detail {
+            TagDetail::Names => TagList::Names(Vec::new()),
+            TagDetail::Kind | TagDetail::Annotation => TagList::Summaries(Vec::new()),
+        });
     }
-    let config = repo.config()?;
-    let par = repo
-        .thread_policy()
-        .resolve(ParallelOp::DiffContent, config.as_ref());
-    let odb = repo.odb();
-    odb.with_pack_read_context(|| {
-        parallel_map_indices(odb, listings.len(), par, listings.len() * 512, |i| {
-            summarize_listing(repo, &listings[i])
-        })
-    })
+    match detail {
+        TagDetail::Names => Ok(TagList::Names(
+            listings.into_iter().map(|entry| entry.short_name).collect(),
+        )),
+        TagDetail::Kind => {
+            let classifier = TagClassifier::new(repo);
+            Ok(TagList::Summaries(
+                listings
+                    .into_iter()
+                    .map(|entry| classifier.summarize(&entry))
+                    .collect(),
+            ))
+        }
+        TagDetail::Annotation => {
+            let config = repo.config()?;
+            let par = repo
+                .thread_policy()
+                .resolve(ParallelOp::DiffContent, config.as_ref());
+            let odb = repo.odb();
+            odb.with_pack_read_context(|| {
+                parallel_map_indices(odb, listings.len(), par, listings.len() * 512, |i| {
+                    summarize_listing(repo, &listings[i])
+                })
+                .map(TagList::Summaries)
+            })
+        }
+    }
 }
 
 fn ref_query_to_error(err: RefQueryError) -> Error {
@@ -455,6 +527,97 @@ fn object_kind_from_type_name(s: &str) -> ObjectKind {
         "blob" => ObjectKind::Blob,
         "tag" => ObjectKind::Tag,
         _ => ObjectKind::Blob,
+    }
+}
+
+/// Classifies tag refs for [`list_tags`], preferring the peel lines of `packed-refs`
+/// over reading tag objects.
+struct TagClassifier<'a> {
+    repo: &'a Repository,
+    packed: Option<PackedRefPeels>,
+    graph: OnceCell<Option<Arc<CommitGraphChain>>>,
+}
+
+impl<'a> TagClassifier<'a> {
+    fn new(repo: &'a Repository) -> Self {
+        // A malformed `packed-refs` only loses the shortcut; classification falls back to
+        // the objects.
+        let packed = PackedRefPeels::load(repo.git_dir(), repo.refs().format()).ok();
+        Self {
+            repo,
+            packed,
+            graph: OnceCell::new(),
+        }
+    }
+
+    fn summarize(&self, listing: &RefListing) -> TagSummary {
+        let (kind, peeled, target_kind) = match self
+            .packed
+            .as_ref()
+            .and_then(|packed| packed.peeled(&listing.full_name, &listing.oid))
+        {
+            Some(Some(target)) => {
+                let target_kind = self.object_kind(&target).unwrap_or(ObjectKind::Blob);
+                (
+                    TagKind::Annotated,
+                    (target_kind == ObjectKind::Commit).then_some(target),
+                    target_kind,
+                )
+            }
+            Some(None) => {
+                let target_kind = self.object_kind(&listing.oid).unwrap_or(ObjectKind::Blob);
+                (
+                    TagKind::Lightweight,
+                    (target_kind == ObjectKind::Commit).then_some(listing.oid),
+                    target_kind,
+                )
+            }
+            None => self.classify_from_objects(&listing.oid),
+        };
+        TagSummary {
+            name: listing.short_name.clone(),
+            oid: listing.oid,
+            kind,
+            peeled,
+            target_kind,
+            annotation: None,
+        }
+    }
+
+    fn classify_from_objects(&self, oid: &ObjectId) -> (TagKind, Option<ObjectId>, ObjectKind) {
+        let Some(kind) = self.object_kind(oid) else {
+            return (TagKind::Lightweight, None, ObjectKind::Blob);
+        };
+        if kind != ObjectKind::Tag {
+            return (
+                TagKind::Lightweight,
+                (kind == ObjectKind::Commit).then_some(*oid),
+                kind,
+            );
+        }
+        let (target, target_kind) = self
+            .repo
+            .odb()
+            .peel_tags(*oid)
+            .ok()
+            .unwrap_or((*oid, ObjectKind::Blob));
+        (
+            TagKind::Annotated,
+            (target_kind == ObjectKind::Commit).then_some(target),
+            target_kind,
+        )
+    }
+
+    fn object_kind(&self, oid: &ObjectId) -> Option<ObjectKind> {
+        let graph = self.graph.get_or_init(|| {
+            self.repo
+                .caches()
+                .commit_graph_chain(self.repo.odb().objects_dir())
+        });
+        if graph.as_ref().is_some_and(|g| g.find_commit(oid).is_some()) {
+            return Some(ObjectKind::Commit);
+        }
+        self.repo.odb().read_info(oid).ok().map(|info| info.kind)
     }
 }
 
@@ -634,16 +797,28 @@ mod tests {
     #[test]
     fn list_tags_is_empty_without_tags() {
         let (_tmp, repo, _) = repo_with_commit();
-        assert!(list_tags(&repo, &name_sorted_query()).unwrap().is_empty());
+        assert_eq!(
+            list_tags_with_detail(&repo, &name_sorted_query(), TagDetail::Names).unwrap(),
+            TagList::Names(Vec::new())
+        );
     }
 
     #[test]
-    fn list_tags_sorts_and_classifies() {
+    fn list_tags_detail_levels_are_typed_and_sorted() {
         let (_tmp, repo, commit) = repo_with_commit();
         let annotated = tag(&repo, "v2", commit, Some("release"));
         tag(&repo, "v1", commit, None);
 
-        let tags = list_tags(&repo, &name_sorted_query()).unwrap();
+        assert_eq!(
+            list_tags_with_detail(&repo, &name_sorted_query(), TagDetail::Names).unwrap(),
+            TagList::Names(vec!["v1".to_owned(), "v2".to_owned()])
+        );
+
+        let TagList::Summaries(tags) =
+            list_tags_with_detail(&repo, &name_sorted_query(), TagDetail::Kind).unwrap()
+        else {
+            panic!("kind detail must return summaries");
+        };
         assert_eq!(tags.len(), 2);
         assert_eq!(tags[0].name, "v1");
         assert_eq!(tags[0].oid, commit);
@@ -652,6 +827,13 @@ mod tests {
         assert_eq!(tags[1].name, "v2");
         assert_eq!(tags[1].oid, annotated);
         assert_eq!(tags[1].kind, TagKind::Annotated);
+        assert!(tags[1].annotation.is_none());
+
+        let TagList::Summaries(tags) =
+            list_tags_with_detail(&repo, &name_sorted_query(), TagDetail::Annotation).unwrap()
+        else {
+            panic!("annotation detail must return summaries");
+        };
         assert!(tags[1].annotation.is_some());
     }
 
@@ -661,7 +843,10 @@ mod tests {
         let annotated = tag(&repo, "v1", commit, Some("release"));
 
         assert_eq!(delete_tag(&repo, "v1", false).unwrap(), annotated);
-        assert!(list_tags(&repo, &name_sorted_query()).unwrap().is_empty());
+        assert_eq!(
+            list_tags_with_detail(&repo, &name_sorted_query(), TagDetail::Names).unwrap(),
+            TagList::Names(Vec::new())
+        );
         assert!(repo.odb().exists(&annotated));
     }
 

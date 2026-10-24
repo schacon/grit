@@ -3097,6 +3097,11 @@ fn dispatch(
                 limit: limit.get(),
                 tree_sha256,
                 exclude_submodule,
+                list_detail: if opts.mode == OutputMode::Human {
+                    grit_lib::porcelain::tag::TagDetail::Names
+                } else {
+                    grit_lib::porcelain::tag::TagDetail::Annotation
+                },
             })?;
             emit_success(&outcome, opts, ctx)?;
             if verify {

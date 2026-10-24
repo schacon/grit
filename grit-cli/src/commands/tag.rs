@@ -10,15 +10,15 @@ use grit_lib::config::ident_resolve::IdentRole;
 use grit_lib::error::Error;
 use grit_lib::objects::ObjectKind;
 use grit_lib::porcelain::tag::{
-    create_tag, delete_tag, list_tags, CreateTagRequest, TagAnnotation, TagError, TagKind,
-    TagSummary,
+    create_tag, delete_tag, list_tags_with_detail, CreateTagRequest, TagAnnotation, TagDetail,
+    TagError, TagKind, TagList, TagSummary,
 };
 use grit_lib::refs::check_ref_format::validate_tag_short_name;
 use grit_lib::refs::listing::{RefQuery, RefSort, SortKey};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
 use grit_lib::revwalk::rev_parse::resolve_revision;
-use grit_lib::state::{resolve_head, HeadState};
+use grit_lib::state::{resolve_head_for_repository, HeadState};
 use grit_lib::tree_sha256::{
     parse_tree_sha256_tag_headers, MissingSubmodule, MissingSubmoduleReason, SignatureVerdict,
     TagVerifyOptions, TreeSha256Options, TreeSha256Verdict,
@@ -66,6 +66,9 @@ pub enum TagOutcome {
         #[serde(default, skip_serializing_if = "is_false")]
         #[schemars(default)]
         truncated: bool,
+        #[serde(skip)]
+        #[schemars(skip)]
+        names: Vec<String>,
     },
     /// A new tag was created.
     Create {
@@ -231,22 +234,16 @@ pub struct TagEntry {
 impl HumanRender for TagOutcome {
     fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         match self {
-            TagOutcome::List { tags, .. } => {
-                if tags.is_empty() {
+            TagOutcome::List { tags, names, .. } => {
+                if tags.is_empty() && names.is_empty() {
                     outln!(w, "No tags yet.");
                     return Ok(());
                 }
+                for name in names {
+                    outln!(w, "  {name}");
+                }
                 for tag in tags {
-                    if let Some(subject) = tag
-                        .annotation
-                        .as_ref()
-                        .map(|a| a.subject.as_str())
-                        .filter(|s| !s.is_empty())
-                    {
-                        outln!(w, "  {}  {}", tag.name, subject);
-                    } else {
-                        outln!(w, "  {}", tag.name);
-                    }
+                    outln!(w, "  {}", tag.name);
                 }
             }
             TagOutcome::Create { name, dry_run, .. } => {
@@ -370,6 +367,8 @@ pub struct TagRunOptions {
     pub tree_sha256: bool,
     /// Submodule path globs excluded from the digest (repeatable).
     pub exclude_submodule: Vec<String>,
+    /// Metadata required by the selected output renderer.
+    pub list_detail: TagDetail,
 }
 
 /// Run `grit tag` with the parsed CLI arguments.
@@ -409,7 +408,10 @@ pub fn run(opts: TagRunOptions) -> Result<TagOutcome> {
             opts.reverse,
             opts.contains,
             opts.points_at,
-            opts.limit,
+            ListOutputOptions {
+                limit: opts.limit,
+                detail: opts.list_detail,
+            },
         ),
         (Some(name), false) if list_by_flags => {
             patterns.push(name.clone());
@@ -420,7 +422,10 @@ pub fn run(opts: TagRunOptions) -> Result<TagOutcome> {
                 opts.reverse,
                 opts.contains,
                 opts.points_at,
-                opts.limit,
+                ListOutputOptions {
+                    limit: opts.limit,
+                    detail: opts.list_detail,
+                },
             )
         }
         (Some(name), false) => create(&repo, name, &opts),
@@ -560,6 +565,11 @@ fn tag_list_requested(
         || !list_patterns.is_empty()
 }
 
+struct ListOutputOptions {
+    limit: Option<usize>,
+    detail: TagDetail,
+}
+
 fn list(
     repo: &Repository,
     patterns: Vec<String>,
@@ -567,12 +577,14 @@ fn list(
     reverse: bool,
     contains: Option<String>,
     points_at: Vec<String>,
-    limit: Option<usize>,
+    output: ListOutputOptions,
 ) -> Result<TagOutcome> {
     let mut contains_ids = Vec::new();
     if let Some(rev) = contains {
         let oid = if rev == "HEAD" {
-            match resolve_head(repo.git_dir()).context("could not resolve HEAD for --contains")? {
+            match resolve_head_for_repository(repo)
+                .context("could not resolve HEAD for --contains")?
+            {
                 HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => oid,
                 HeadState::Branch { .. } => bail!("HEAD has no commit for --contains"),
                 HeadState::Invalid => bail!("HEAD is in an unknown state"),
@@ -590,11 +602,12 @@ fn list(
                 key: sort.sort_key(),
                 reverse,
             },
-            limit,
+            limit: output.limit,
             contains: contains_ids,
             points_at: resolve_points_at(repo, &points_at)?,
             ..RefQuery::default()
         },
+        output.detail,
     )
 }
 
@@ -610,20 +623,34 @@ fn resolve_points_at(
         .collect()
 }
 
-fn list_with_query(repo: &Repository, query: RefQuery) -> Result<TagOutcome> {
+fn list_with_query(repo: &Repository, query: RefQuery, detail: TagDetail) -> Result<TagOutcome> {
     let user_limit = query.limit;
     let mut fetch_query = query;
     fetch_query.limit = grit_lib::list_limit::fetch_plus_one(user_limit);
-    let tags = list_tags(repo, &fetch_query)
-        .context("could not list tags")?
-        .into_iter()
-        .map(tag_entry_from_summary)
-        .collect::<Vec<_>>();
-    let limited = grit_lib::list_limit::Limited::from_vec(tags, user_limit);
-    Ok(TagOutcome::List {
-        tags: limited.items,
-        truncated: limited.truncated,
-    })
+    let listed =
+        list_tags_with_detail(repo, &fetch_query, detail).context("could not list tags")?;
+    match listed {
+        TagList::Names(names) => {
+            let limited = grit_lib::list_limit::Limited::from_vec(names, user_limit);
+            Ok(TagOutcome::List {
+                tags: Vec::new(),
+                truncated: limited.truncated,
+                names: limited.items,
+            })
+        }
+        TagList::Summaries(tags) => {
+            let entries = tags
+                .into_iter()
+                .map(tag_entry_from_summary)
+                .collect::<Vec<_>>();
+            let limited = grit_lib::list_limit::Limited::from_vec(entries, user_limit);
+            Ok(TagOutcome::List {
+                tags: limited.items,
+                truncated: limited.truncated,
+                names: Vec::new(),
+            })
+        }
+    }
 }
 
 fn tag_entry_from_summary(tag: TagSummary) -> TagEntry {
@@ -654,7 +681,7 @@ fn create(repo: &Repository, name: &str, opts: &TagRunOptions) -> Result<TagOutc
     let target_oid = if let Some(rev) = rev {
         resolve_revision(repo, &rev).context("could not resolve tag target")?
     } else {
-        match resolve_head(repo.git_dir())? {
+        match resolve_head_for_repository(repo)? {
             HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => oid,
             HeadState::Branch { .. } => bail!("no commits yet to tag"),
             HeadState::Invalid => bail!("HEAD is in an unknown state"),

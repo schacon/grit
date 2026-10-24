@@ -26,7 +26,7 @@ grit tag -v <name>... --no-signature
 
 ## Description
 
-With no arguments, lists your tags sorted by **version** (`version:refname`). Use `-l` / `--list` with optional glob patterns (repeatable), `--sort version|date|name`, `--reverse`, `--contains [REV]` (defaults to `HEAD`), `--points-at <REV>` (repeatable), and `-n` / `--limit` to cap the list. Annotated tags show the subject on the human line; `--json` includes full `annotation` metadata.
+With no arguments, lists tag names sorted by **version** (`version:refname`). Use `-l` / `--list` with optional glob patterns (repeatable), `--sort version|date|name`, `--reverse`, `--contains [REV]` (defaults to `HEAD`), `--points-at <REV>` (repeatable), and `-n` / `--limit` to cap the list. Plain human output reads names only and avoids loading annotated tag objects; `--json` and `--markdown` retain full annotation metadata.
 
 With a name and no `-m`/`-F`, creates a **lightweight** tag pointing at `HEAD` or the optional `<target>` revision. With `-m` or `-F`, creates an **annotated** tag object with that message (comment lines starting with `#` are stripped, matching Git's default cleanup). Use `-s` / `--sign` (or `tag.gpgSign=true`) to cryptographically sign an annotated tag; signed tags verify with `git verify-tag` and system `git tag -v`.
 
