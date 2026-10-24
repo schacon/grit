@@ -727,6 +727,8 @@ struct PreparedEntry {
     payload_len: usize,
     /// Set for freshly compressed whole objects.
     whole_kind: Option<ObjectKind>,
+    /// Body copied verbatim from an existing local pack.
+    reused: bool,
 }
 
 /// Resolve [`ParallelOptions`] for pack writing from repo config and an optional override.
@@ -823,6 +825,8 @@ fn write_pack_in_batches(
     let count = u32::try_from(entries.len())
         .map_err(|_| Error::CorruptObject("pack object count exceeds u32".to_owned()))?;
     let delta_count = entries.iter().filter(|e| e.base.is_some()).count() as u32;
+    let mut verbatim_reuse_objects = 0u32;
+    let mut verbatim_reuse_bytes = 0u64;
 
     let mut out = HashingWriter::new(algo, w);
     let mut header: Vec<u8> = Vec::with_capacity(12 + algo.len());
@@ -874,6 +878,10 @@ fn write_pack_in_batches(
                 crc.update(body);
                 rows.push((entry.oid, offset, crc.finalize()));
             }
+            if prep.reused {
+                verbatim_reuse_objects += 1;
+                verbatim_reuse_bytes += body.len() as u64;
+            }
             oid_to_offset.insert(entry.oid, offset);
             offset += (header.len() + body.len()) as u64;
         }
@@ -883,6 +891,8 @@ fn write_pack_in_batches(
         object_count: count,
         pack_bytes: offset + algo.len() as u64,
         delta_count,
+        verbatim_reuse_bytes,
+        verbatim_reuse_objects,
         ..PackStats::default()
     })
 }
@@ -989,9 +999,10 @@ fn prepare_whole(
     if opts.reuse_objects && odb.hash_algo() == HashAlgo::Sha1 {
         if let Some(raw) = crate::pack::packed_full_object_slice(odb.objects_dir(), &entry.oid)? {
             return Ok(PreparedEntry {
-                body: PreparedBody::Raw(raw.to_vec()),
+                body: PreparedBody::Raw(raw),
                 payload_len: 0,
                 whole_kind: None,
+                reused: true,
             });
         }
     }
@@ -1001,6 +1012,7 @@ fn prepare_whole(
         body: PreparedBody::Zlib(zlib),
         payload_len: payload.len(),
         whole_kind: Some(entry.kind),
+        reused: false,
     })
 }
 
@@ -1020,6 +1032,7 @@ fn prepare_delta(
             body: PreparedBody::Zlib(zlib),
             payload_len: delta_len,
             whole_kind: None,
+            reused: true,
         });
     }
 
@@ -1045,6 +1058,7 @@ fn prepare_delta(
         body: PreparedBody::Zlib(zlib),
         payload_len: delta.len(),
         whole_kind: None,
+        reused: false,
     })
 }
 
