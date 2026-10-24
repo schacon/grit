@@ -6554,12 +6554,10 @@ fn try_bounded_commit_filter_limit_list(
     Ok(Some(ordered))
 }
 
+/// `--date-order` is left to the full path: Git topo-sorts the whole range there, which a walk
+/// that stops early cannot reproduce.
 fn can_use_bounded_limit_list(options: &RevListOptions) -> bool {
-    bounded_limit_list_common(options)
-        && matches!(
-            options.ordering,
-            OrderingMode::Default | OrderingMode::DateOrderWalk
-        )
+    bounded_limit_list_common(options) && options.ordering == OrderingMode::Default
 }
 
 fn can_use_bounded_topo_limit_list(options: &RevListOptions) -> bool {
