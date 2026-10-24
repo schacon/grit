@@ -85,8 +85,19 @@ function isDashboardPrimary(rel: string): boolean {
   return rel.endsWith("dashboard/current.json");
 }
 
+function readBaselineJson(rel: string): Record<string, unknown> {
+  const file = path.resolve(REPO_ROOT, rel);
+  if (!fs.existsSync(file)) fail(`missing ${rel}`);
+  return JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+}
+
+function isDailyBenchReport(report: Record<string, unknown>): boolean {
+  return report.schema === DAILY_BENCH_SCHEMA;
+}
+
+/** True when `rel` points at a `grit-daily-bench/1` census report (not hyperfine v1). */
 function isDailyBenchBaseline(rel: string): boolean {
-  return rel.includes("/baselines/daily/") && rel.endsWith(".json");
+  return isDailyBenchReport(readBaselineJson(rel));
 }
 
 export interface DailyToolRun {
