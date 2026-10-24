@@ -262,6 +262,24 @@ fn fixture_exact_rename_preserves_original_path() -> (tempfile::TempDir, Reposit
     (tmp, open_repo(&root))
 }
 
+fn fixture_two_hop_exact_rename_preserves_original_path() -> (tempfile::TempDir, Repository) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().to_path_buf();
+    git_run(&root, &["init", "-q", "-b", "main"]);
+    std::fs::write(root.join("source.txt"), "hello\n").unwrap();
+    git_run(&root, &["add", "source.txt"]);
+    git_run(&root, &["commit", "-m", "init"]);
+    git_run(&root, &["rm", "source.txt"]);
+    std::fs::write(root.join("middle.txt"), "hello\n").unwrap();
+    git_run(&root, &["add", "middle.txt"]);
+    git_run(&root, &["commit", "-m", "rename to middle"]);
+    git_run(&root, &["rm", "middle.txt"]);
+    std::fs::write(root.join("dest.txt"), "hello\n").unwrap();
+    git_run(&root, &["add", "dest.txt"]);
+    git_run(&root, &["commit", "-m", "rename to dest"]);
+    (tmp, open_repo(&root))
+}
+
 #[test]
 fn copy_from_modified_file_in_same_commit_level1() {
     let (tmp, repo) = fixture_same_commit_modified_copy();
@@ -301,5 +319,11 @@ fn copy_from_older_commit_level3() {
 #[test]
 fn exact_rename_reports_original_path_like_git() {
     let (tmp, repo) = fixture_exact_rename_preserves_original_path();
+    assert_blame_copy_matches(&repo, tmp.path(), "dest.txt", CopyDetection::Off, None);
+}
+
+#[test]
+fn two_hop_exact_rename_reports_original_path_like_git() {
+    let (tmp, repo) = fixture_two_hop_exact_rename_preserves_original_path();
     assert_blame_copy_matches(&repo, tmp.path(), "dest.txt", CopyDetection::Off, None);
 }

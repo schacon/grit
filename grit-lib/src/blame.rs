@@ -3198,8 +3198,9 @@ fn path_allowed_for_copy_search(path: &str, allowed: Option<&HashSet<String>>) -
 }
 
 fn note_blame_source_path(pending: &mut [TrackedLine], path: &str) {
+    let path = path.to_owned();
     for t in pending.iter_mut() {
-        t.source_path.get_or_insert_with(|| path.to_owned());
+        t.source_path = Some(path.clone());
     }
 }
 
