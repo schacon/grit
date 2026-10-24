@@ -404,7 +404,7 @@ fn gzip_bomb_push_is_refused_and_server_keeps_serving() {
 }
 
 #[test]
-fn global_receive_deny_non_fast_forward_rejects_force_push() {
+fn global_receive_deny_non_fast_forward_accepts_fast_forward_rejects_force_push() {
     let server_bin = require_binary("grit-http-server");
 
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -461,11 +461,24 @@ fn global_receive_deny_non_fast_forward_rejects_force_push() {
             clone_dir.to_str().expect("utf8"),
         ],
     );
-    git(&clone_dir, &["reset", "--hard", "HEAD~1"]);
+    std::fs::write(clone_dir.join("c.txt"), "3\n").unwrap();
+    git(&clone_dir, &["add", "c.txt"]);
+    git(&clone_dir, &["commit", "-q", "-m", "c3"]);
+    git(&clone_dir, &["push", "-q", "origin", "main:main"]);
+    let fast_forward_tip = rev_parse(&clone_dir, "HEAD");
+    assert_eq!(
+        rev_parse(&bare, "refs/heads/main"),
+        fast_forward_tip,
+        "a fast-forward push must be accepted under denyNonFastForwards"
+    );
+    assert_ne!(fast_forward_tip, advanced_tip);
+    assert!(git_ok(&bare, &["fsck", "--strict"]));
+
+    git(&clone_dir, &["reset", "--hard", "HEAD~2"]);
     git_expect_failure(&clone_dir, &["push", "--force", "origin", "main:main"]);
     assert_eq!(
         rev_parse(&bare, "refs/heads/main"),
-        advanced_tip,
+        fast_forward_tip,
         "non-fast-forward force push must not rewind the served branch"
     );
 }

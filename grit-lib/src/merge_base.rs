@@ -221,36 +221,169 @@ pub fn is_ancestor(repo: &Repository, ancestor: ObjectId, descendant: ObjectId) 
     cache.is_ancestor(ancestor, descendant)
 }
 
-/// Reachability test using only the object database (no commit-graph setup).
+/// Reachability test using only the given object database (no commit-graph,
+/// grafts or shallow boundaries).
 ///
-/// Suitable for client-side fast-forward checks on modest histories (e.g. push).
+/// Works on any [`Odb`](crate::odb::Odb), such as a receive quarantine whose
+/// alternates include the repository's own objects, so it can check commits
+/// that are not yet visible through [`Repository::odb`].
+///
+/// History is walked from both commits at once, newest committer date first.
+/// The walk ends once every line of history from `descendant` has either
+/// reached `ancestor` or joined `ancestor`'s own history, so a rejected
+/// fast-forward costs about the distance to the fork point. Committer dates
+/// only order the walk; the answer stays exact when they are skewed.
+///
+/// # Parameters
+///
+/// - `odb` - object database holding both commits and the history between them.
+/// - `ancestor` - candidate ancestor commit.
+/// - `descendant` - commit whose history is searched.
+///
+/// # Returns
+///
+/// `true` when `ancestor` equals or is reachable from `descendant`; `false`
+/// otherwise, including when either object is not a commit. Parents missing
+/// from `odb` end their line of history.
+///
+/// # Errors
+///
+/// Returns read errors for `ancestor` or `descendant`, and parse errors for
+/// commits on the walk.
 pub fn is_ancestor_odb_walk(
     odb: &crate::odb::Odb,
+    ancestor: ObjectId,
+    descendant: ObjectId,
+) -> Result<bool> {
+    is_ancestor_odb_walk_with_graph(odb, None, ancestor, descendant)
+}
+
+/// [`is_ancestor_odb_walk`] that also uses `graph`, the commit-graph of the
+/// repository whose objects `odb` contains (directly or as an alternate).
+///
+/// Commits found in `graph` take their parents from it without an object
+/// read. When `ancestor` has a corrected commit date (generation v2), any
+/// graph commit with a generation at or below it cannot reach `ancestor`, so
+/// its history is skipped. Generations strictly increase from parent to
+/// child, which makes this cutoff exact; commits outside the graph (such as
+/// freshly pushed ones) are always expanded.
+pub(crate) fn is_ancestor_odb_walk_with_graph(
+    odb: &crate::odb::Odb,
+    graph: Option<&crate::commit_graph_file::CommitGraphChain>,
     ancestor: ObjectId,
     descendant: ObjectId,
 ) -> Result<bool> {
     if ancestor == descendant {
         return Ok(true);
     }
-    let mut seen = oid_hash_set();
-    let mut queue = VecDeque::from([descendant]);
-    while let Some(cur) = queue.pop_front() {
-        if !seen.insert(cur) {
-            continue;
-        }
-        if cur == ancestor {
-            return Ok(true);
-        }
-        let obj = odb.read(&cur)?;
-        if obj.kind != ObjectKind::Commit {
-            continue;
-        }
-        let commit = parse_commit(&obj.data)?;
-        for parent in commit.parents {
-            queue.push_back(parent);
+    let Some(ancestor_linkage) = read_commit_linkage(odb, graph, &ancestor)? else {
+        return Ok(false);
+    };
+    let Some(descendant_linkage) = read_commit_linkage(odb, graph, &descendant)? else {
+        return Ok(false);
+    };
+    let ancestor_generation = graph
+        .map(|g| g.commit_generation_for_walk(&ancestor))
+        .filter(|&generation| generation != UNRANKED_COMMIT);
+    let cannot_reach_ancestor = |oid: &ObjectId| {
+        let (Some(graph), Some(limit)) = (graph, ancestor_generation) else {
+            return false;
+        };
+        let generation = graph.commit_generation_for_walk(oid);
+        generation != UNRANKED_COMMIT && generation <= limit
+    };
+
+    // Paint everything reachable from `ancestor` with FROM_ANCESTOR and from
+    // `descendant` with FROM_DESCENDANT. `ancestor` is reachable exactly when it
+    // gets FROM_DESCENDANT. Only a commit painted FROM_DESCENDANT alone can
+    // still pass that paint on to `ancestor`: a commit with both paints is an
+    // ancestor of `ancestor`, so nothing it reaches is `ancestor` itself. The
+    // walk therefore ends once no queued commit is painted FROM_DESCENDANT alone,
+    // whatever order committer dates put the commits in.
+    const FROM_ANCESTOR: u8 = 1;
+    const FROM_DESCENDANT: u8 = 2;
+    let mut paint: OidHashMap<u8> = oid_hash_map();
+    let mut parents_of: OidHashMap<Vec<ObjectId>> = oid_hash_map();
+    let mut times: OidHashMap<i64> = oid_hash_map();
+    let mut descendant_only = oid_hash_set();
+    let mut heap = BinaryHeap::new();
+    for (oid, color, (time, parents)) in [
+        (ancestor, FROM_ANCESTOR, ancestor_linkage),
+        (descendant, FROM_DESCENDANT, descendant_linkage),
+    ] {
+        paint.insert(oid, color);
+        parents_of.insert(oid, parents);
+        times.insert(oid, time);
+        heap.push((time, oid));
+    }
+    descendant_only.insert(descendant);
+
+    while !descendant_only.is_empty() {
+        let Some((_, oid)) = heap.pop() else {
+            break;
+        };
+        descendant_only.remove(&oid);
+        let color = paint.get(&oid).copied().unwrap_or_default();
+        let parents = parents_of.get(&oid).cloned().unwrap_or_default();
+        for parent in parents {
+            let old_color = paint.get(&parent).copied().unwrap_or_default();
+            let new_color = old_color | color;
+            if new_color == old_color {
+                continue;
+            }
+            if parent == ancestor {
+                return Ok(true);
+            }
+            if new_color == FROM_DESCENDANT && cannot_reach_ancestor(&parent) {
+                continue;
+            }
+            let time = match times.get(&parent) {
+                Some(&time) => time,
+                None => {
+                    let linkage = match read_commit_linkage(odb, graph, &parent) {
+                        Err(Error::ObjectNotFound(_)) => None,
+                        other => other?,
+                    };
+                    let Some((time, grandparents)) = linkage else {
+                        continue;
+                    };
+                    times.insert(parent, time);
+                    parents_of.insert(parent, grandparents);
+                    time
+                }
+            };
+            paint.insert(parent, new_color);
+            if new_color == FROM_DESCENDANT {
+                descendant_only.insert(parent);
+            } else {
+                descendant_only.remove(&parent);
+            }
+            heap.push((time, parent));
         }
     }
     Ok(false)
+}
+
+/// Committer timestamp and parents of `oid`, or `None` when it is not a commit.
+///
+/// Reads them from `graph` when it lists `oid`, otherwise from `odb`.
+fn read_commit_linkage(
+    odb: &crate::odb::Odb,
+    graph: Option<&crate::commit_graph_file::CommitGraphChain>,
+    oid: &ObjectId,
+) -> Result<Option<(i64, Vec<ObjectId>)>> {
+    if let Some((parents, time)) = graph.and_then(|g| g.graph_commit(oid)) {
+        return Ok(Some((time, parents)));
+    }
+    let object = odb.read(oid)?;
+    if object.kind != ObjectKind::Commit {
+        return Ok(None);
+    }
+    let commit = CommitRef::parse(&object.data)?;
+    Ok(Some((
+        commit.committer_timestamp(),
+        commit.parents().to_vec(),
+    )))
 }
 
 /// Returns the ref path under `logs/` used for fork-point reflog scanning for `merge-base --fork-point`
@@ -3091,6 +3224,249 @@ mod tests {
         let err = commits_reachable_excluding_ancestors_of(&repo, &[tip], &[], None).unwrap_err();
         assert!(matches!(err, Error::ObjectNotFound(_)));
 
+        Ok(())
+    }
+
+    #[test]
+    fn odb_walk_sees_quarantined_commits_that_repo_odb_cannot() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_test_bare(&dir)?;
+        let old = write_commit_same_time(&repo.odb(), &[], "old", 100)?;
+        let quarantine =
+            crate::receive_quarantine::ReceiveQuarantine::create(&repo.odb(), repo.git_dir())?;
+        let q_odb = quarantine.odb();
+        let mid = write_commit_same_time(&q_odb, &[old], "mid", 200)?;
+        let new = write_commit_same_time(&q_odb, &[mid], "new", 300)?;
+
+        assert!(!repo.odb().exists(&new));
+        assert!(is_ancestor_odb_walk(&q_odb, old, new)?);
+        assert!(!is_ancestor_odb_walk(&q_odb, new, old)?);
+        Ok(())
+    }
+
+    #[test]
+    fn odb_walk_handles_merges_skew_and_non_commits() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_test_bare(&dir)?;
+        let odb = repo.odb();
+        let root = write_commit_same_time(&odb, &[], "root", 1_000)?;
+        // Side branch committed with a clock far ahead of its descendants.
+        let skewed = write_commit_same_time(&odb, &[root], "skewed", 9_000)?;
+        let mut main = root;
+        for i in 0..20 {
+            main = write_commit_same_time(&odb, &[main], &format!("m{i}"), 2_000 + i)?;
+        }
+        let merge = write_commit_same_time(&odb, &[main, skewed], "merge", 3_000)?;
+        let unrelated = write_commit_same_time(&odb, &[], "unrelated", 2_500)?;
+
+        assert!(is_ancestor_odb_walk(&odb, root, merge)?);
+        assert!(is_ancestor_odb_walk(&odb, skewed, merge)?);
+        assert!(is_ancestor_odb_walk(&odb, merge, merge)?);
+        assert!(!is_ancestor_odb_walk(&odb, merge, root)?);
+        assert!(!is_ancestor_odb_walk(&odb, unrelated, merge)?);
+
+        let tree = empty_tree(&odb)?;
+        assert!(!is_ancestor_odb_walk(&odb, tree, merge)?);
+        assert!(!is_ancestor_odb_walk(&odb, root, tree)?);
+        Ok(())
+    }
+
+    #[test]
+    fn odb_walk_treats_missing_parents_as_history_end() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_test_bare(&dir)?;
+        let odb = repo.odb();
+        let missing: ObjectId = "0000000000000000000000000000000000000001"
+            .parse()
+            .expect("oid");
+        let base = write_commit_same_time(&odb, &[], "base", 50)?;
+        let tip = write_commit_same_time(&odb, &[missing], "tip", 100)?;
+
+        assert!(!is_ancestor_odb_walk(&odb, base, tip)?);
+        assert!(matches!(
+            is_ancestor_odb_walk(&odb, missing, base),
+            Err(Error::ObjectNotFound(_))
+        ));
+        Ok(())
+    }
+
+    /// 2035-01-01 and 2000-01-01, for histories whose dates run backwards.
+    const YEAR_2035: i64 = 2_051_222_400;
+    const YEAR_2000: i64 = 946_684_800;
+
+    #[test]
+    fn odb_walk_follows_descendants_dated_before_the_ancestor() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_test_bare(&dir)?;
+        let odb = repo.odb();
+        let root = write_commit_same_time(&odb, &[], "root", YEAR_2000 - 10)?;
+        let ancestor = write_commit_same_time(&odb, &[root], "future", YEAR_2035)?;
+        let mut tip = ancestor;
+        for i in 0..250 {
+            tip = write_commit_same_time(&odb, &[tip], &format!("skewed{i}"), YEAR_2000 + i)?;
+        }
+        let unrelated = write_commit_same_time(&odb, &[], "unrelated", YEAR_2035)?;
+
+        assert!(is_ancestor_odb_walk(&odb, ancestor, tip)?);
+        assert!(is_ancestor_odb_walk(&odb, root, tip)?);
+        assert!(!is_ancestor_odb_walk(&odb, unrelated, tip)?);
+        assert!(!is_ancestor_odb_walk(&odb, tip, ancestor)?);
+        Ok(())
+    }
+
+    #[test]
+    fn odb_walk_matches_exhaustive_reachability_on_random_skewed_histories() -> Result<()> {
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = move |bound: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            usize::try_from(state % bound as u64).unwrap_or_default()
+        };
+        for round in 0..4 {
+            let dir = tempdir().map_err(Error::Io)?;
+            let repo = open_test_bare(&dir)?;
+            let odb = repo.odb();
+            let quarantine =
+                crate::receive_quarantine::ReceiveQuarantine::create(&odb, repo.git_dir())?;
+            let q_odb = quarantine.odb();
+            let graphed = 40;
+            let mut commits: Vec<ObjectId> = Vec::new();
+            let mut parents_of: Vec<Vec<usize>> = Vec::new();
+            for i in 0..70 {
+                let mut parents = Vec::new();
+                if i > 0 && next(10) != 0 {
+                    parents.push(next(i));
+                    if next(3) == 0 {
+                        let other = next(i);
+                        if !parents.contains(&other) {
+                            parents.push(other);
+                        }
+                    }
+                }
+                let parent_oids: Vec<ObjectId> = parents.iter().map(|&p| commits[p]).collect();
+                let time = 1_000_000 + i64::try_from(next(5_000)).unwrap_or_default();
+                let target = if i < graphed { &odb } else { &q_odb };
+                commits.push(write_commit_same_time(
+                    target,
+                    &parent_oids,
+                    &format!("r{round}c{i}"),
+                    time,
+                )?);
+                parents_of.push(parents);
+                if i == graphed - 1 {
+                    for (n, oid) in commits.iter().enumerate() {
+                        fs::write(
+                            repo.git_dir().join(format!("refs/heads/b{n}")),
+                            format!("{oid}\n"),
+                        )
+                        .map_err(Error::Io)?;
+                    }
+                    odb.write_commit_graph()?;
+                }
+            }
+            let graph =
+                crate::commit_graph_file::CommitGraphChain::load(&repo.git_dir().join("objects"))
+                    .expect("commit-graph");
+
+            let reaches = |from: usize, to: usize| {
+                let mut stack = vec![from];
+                let mut seen = vec![false; parents_of.len()];
+                while let Some(n) = stack.pop() {
+                    if n == to {
+                        return true;
+                    }
+                    if !std::mem::replace(&mut seen[n], true) {
+                        stack.extend(&parents_of[n]);
+                    }
+                }
+                false
+            };
+            for a in 0..commits.len() {
+                for d in 0..commits.len() {
+                    let expected = reaches(d, a);
+                    assert_eq!(
+                        is_ancestor_odb_walk(&q_odb, commits[a], commits[d])?,
+                        expected,
+                        "round {round}: is {a} an ancestor of {d}"
+                    );
+                    assert_eq!(
+                        is_ancestor_odb_walk_with_graph(
+                            &q_odb,
+                            Some(&graph),
+                            commits[a],
+                            commits[d]
+                        )?,
+                        expected,
+                        "round {round} with commit-graph: is {a} an ancestor of {d}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn odb_walk_with_graph_bounds_by_generation_not_by_date() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_test_bare(&dir)?;
+        let odb = repo.odb();
+        let root = write_commit_same_time(&odb, &[], "root", YEAR_2000 - 10)?;
+        let ancestor = write_commit_same_time(&odb, &[root], "future", YEAR_2035)?;
+        let mut graphed_tip = ancestor;
+        for i in 0..150 {
+            graphed_tip =
+                write_commit_same_time(&odb, &[graphed_tip], &format!("g{i}"), YEAR_2000 + i)?;
+        }
+        let unrelated = write_commit_same_time(&odb, &[], "unrelated", YEAR_2035 + 1)?;
+        let side = write_commit_same_time(&odb, &[root], "side", YEAR_2035 + 5)?;
+        fs::write(
+            repo.git_dir().join("refs/heads/main"),
+            format!("{graphed_tip}\n"),
+        )
+        .map_err(Error::Io)?;
+        fs::write(
+            repo.git_dir().join("refs/heads/u"),
+            format!("{unrelated}\n"),
+        )
+        .map_err(Error::Io)?;
+        fs::write(repo.git_dir().join("refs/heads/side"), format!("{side}\n"))
+            .map_err(Error::Io)?;
+        odb.write_commit_graph()?;
+        let graph =
+            crate::commit_graph_file::CommitGraphChain::load(&repo.git_dir().join("objects"))
+                .expect("commit-graph");
+        assert_ne!(graph.commit_generation_for_walk(&ancestor), UNRANKED_COMMIT);
+        assert_ne!(
+            graph.commit_generation_for_walk(&graphed_tip),
+            UNRANKED_COMMIT
+        );
+
+        // Pushed commits outside the graph, dated before the ancestor.
+        let quarantine =
+            crate::receive_quarantine::ReceiveQuarantine::create(&odb, repo.git_dir())?;
+        let q_odb = quarantine.odb();
+        let mut pushed_tip = graphed_tip;
+        for i in 0..120 {
+            pushed_tip =
+                write_commit_same_time(&q_odb, &[pushed_tip], &format!("p{i}"), YEAR_2000 + i)?;
+        }
+
+        let walk = |a, d| is_ancestor_odb_walk_with_graph(&q_odb, Some(&graph), a, d);
+        assert!(walk(ancestor, graphed_tip)?);
+        assert!(walk(ancestor, pushed_tip)?);
+        assert!(walk(root, pushed_tip)?);
+        assert!(walk(graphed_tip, pushed_tip)?);
+        assert!(!walk(unrelated, pushed_tip)?);
+        assert!(!walk(side, pushed_tip)?);
+        assert!(!walk(pushed_tip, ancestor)?);
+        for (a, d) in [
+            (ancestor, pushed_tip),
+            (unrelated, pushed_tip),
+            (side, graphed_tip),
+        ] {
+            assert_eq!(walk(a, d)?, is_ancestor_odb_walk(&q_odb, a, d)?);
+        }
         Ok(())
     }
 }
