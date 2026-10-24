@@ -27,7 +27,7 @@ When the fetch received objects, the ref list is followed by the same transfer s
 
 On a terminal, stderr first shows `Fetching <remote> <url>`, then one live progress line per phase with a throughput graph and, under it, an overall bar with a time-left estimate. Finished phases stay on screen as `✓` lines. When stderr is not a TTY, or with `--json`, `--markdown` or `-q`, no progress is drawn.
 
-Tag policy follows Git: default is follow-tags (reachable annotated tags), `--tags` fetches every remote tag, `--no-tags` disables automatic tags. `remote.<name>.tagOpt` (`--tags` / `--no-tags`) applies when the CLI does not override it.
+By default grit follows tags, fetching every tag (lightweight or annotated) that points into the fetched history. That includes tags on commits, trees and blobs that arrive with the fetch, and tags on trees or blobs you already have. A tag on a commit you already have is followed only when the fetched refs reach that commit; Git also follows it when the commit is unreachable from them. In a partial clone, tag following never downloads missing objects. `--tags` fetches every remote tag, and `--no-tags` disables automatic tags. Tag following costs milliseconds even on large repositories. `remote.<name>.tagOpt` (`--tags` / `--no-tags`) applies when the CLI does not override it.
 
 `--dry-run` negotiates and reports updates without writing refs, objects, or `FETCH_HEAD`. Human output ends with **Would fetch N update(s) from …** when anything would change, or **Already up to date with …** when nothing would.
 
