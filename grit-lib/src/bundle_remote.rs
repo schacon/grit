@@ -65,15 +65,11 @@ pub fn write_bundle_from_rev_specs(
     )
 }
 
-/// Write a bundle file using ref-set flags and revision tokens.
+/// Resolve [`BundleSpec`] from create options without writing a file.
 ///
 /// When [`BundleCreateOptions::all_refs`] is true (or `--all` appears among `rev_tokens`), the bundle
 /// header lists `HEAD` and every ref under `refs/`, matching `git bundle create --all`.
-///
-/// # Errors
-///
-/// Propagates rev-list, ref resolution, and bundle write failures.
-/// Resolve [`BundleSpec`] from create options without writing a file.
+/// Only commits are walked here; objects are enumerated once, by the pack writer.
 ///
 /// # Errors
 ///
@@ -90,7 +86,6 @@ pub fn resolve_bundle_spec(repo: &Repository, options: &BundleCreateOptions) -> 
 
     let rev_opts = crate::rev_list::RevListOptions {
         boundary: true,
-        objects: true,
         all_refs,
         ..Default::default()
     };
@@ -99,7 +94,7 @@ pub fn resolve_bundle_spec(repo: &Repository, options: &BundleCreateOptions) -> 
     let include = if all_refs {
         refs_for_bundle_header(repo)?
     } else {
-        include_refs_from_rev_specs(repo, &positive_specs, &revs)?
+        include_refs_from_rev_specs(repo, &positive_specs, &negative_specs, &revs)?
     };
 
     if include.is_empty() {
@@ -171,12 +166,28 @@ fn refs_for_bundle_header(repo: &Repository) -> Result<Vec<(ObjectId, String)>> 
 fn include_refs_from_rev_specs(
     repo: &Repository,
     positive_specs: &[String],
+    negative_specs: &[String],
     revs: &crate::rev_list::RevListResult,
 ) -> Result<Vec<(ObjectId, String)>> {
+    let commits: HashSet<ObjectId> = revs.commits.iter().copied().collect();
+    let excluded: HashSet<ObjectId> = negative_specs
+        .iter()
+        .filter_map(|spec| crate::rev_parse::resolve_revision(repo, spec).ok())
+        .collect();
+    // A commit tip is bundled when that commit is sent. An annotated tag (or a tree or
+    // blob) is bundled unless it is excluded itself, even when its commit is a
+    // prerequisite: the recipient still needs the tag object and ref.
+    let tip_is_sent = |oid: ObjectId| match repo.odb().peel_tags(oid) {
+        Ok((commit, crate::objects::ObjectKind::Commit)) if commit == oid => {
+            commits.contains(&commit)
+        }
+        Ok(_) => !excluded.contains(&oid),
+        Err(_) => false,
+    };
     let mut include: Vec<(ObjectId, String)> = Vec::new();
     for spec in positive_specs {
         if let Ok(oid) = crate::rev_parse::resolve_revision(repo, spec) {
-            if revs.commits.contains(&oid) || revs.objects.iter().any(|(o, _)| *o == oid) {
+            if tip_is_sent(oid) {
                 let name = display_ref_for_spec(repo, spec, oid)?;
                 if !include.iter().any(|(_, n)| n == &name) {
                     include.push((oid, name));
