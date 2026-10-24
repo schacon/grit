@@ -1,0 +1,218 @@
+{
+  "$id": "https://grit-scm.com/schemas/clone/v3.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "definitions": {
+    "ClonePhase": {
+      "description": "Timing for one step of the clone.",
+      "properties": {
+        "count": {
+          "description": "Units processed in this step.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "phase": {
+          "description": "`receiving`, `indexing`, `resolving_deltas`, `copying` or `checkout`.",
+          "type": "string"
+        },
+        "seconds": {
+          "description": "Wall-clock seconds spent in this step.",
+          "format": "double",
+          "type": "number"
+        },
+        "unit": {
+          "description": "Unit of `count`: `bytes`, `objects` or `files`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "count",
+        "phase",
+        "seconds",
+        "unit"
+      ],
+      "type": "object"
+    },
+    "ObjectTypes": {
+      "description": "Objects received, by type.",
+      "properties": {
+        "blobs": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "commits": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tags": {
+          "description": "Annotated tag objects (not refs).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "trees": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "blobs",
+        "commits",
+        "tags",
+        "trees"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Result of `grit clone`.",
+  "properties": {
+    "bare": {
+      "description": "Whether the clone destination is a bare repository.",
+      "type": "boolean"
+    },
+    "branch": {
+      "description": "Branch checked out, or `null` when detached at a tag.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "branches": {
+      "description": "Remote branches fetched.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "branches_with_commits": {
+      "description": "Remote branch names that have commits when `no_checkout_reason` is `unborn_default_branch`.",
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "bytes": {
+      "description": "Pack bytes received during the fetch.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "depth": {
+      "description": "Shallow depth when `--depth` or `--shallow` was used.",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "detached": {
+      "description": "True when `HEAD` is detached (tag checkout).",
+      "type": "boolean"
+    },
+    "files": {
+      "description": "Working-tree files checked out.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "no_checkout_reason": {
+      "description": "Why no working-tree checkout happened, when `files` is zero.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "object_types": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ObjectTypes"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Objects received by type, or `null` when the pack was copied from a local repository without being re-indexed."
+    },
+    "objects": {
+      "description": "Objects received during the fetch.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "path": {
+      "description": "Destination directory.",
+      "type": "string"
+    },
+    "phases": {
+      "description": "Time spent in each step, in order.",
+      "items": {
+        "$ref": "#/definitions/ClonePhase"
+      },
+      "type": "array"
+    },
+    "remote": {
+      "description": "Remote name configured for the source (`origin` by default).",
+      "type": "string"
+    },
+    "seconds": {
+      "description": "Wall-clock seconds for the whole clone.",
+      "format": "double",
+      "type": "number"
+    },
+    "single_branch": {
+      "description": "Whether only one branch was fetched (`git clone --single-branch` semantics).",
+      "type": "boolean"
+    },
+    "tag": {
+      "description": "Tag name when `-b` named a tag; omitted on branch checkout.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tag_fetch": {
+      "description": "Tag fetch mode used for the initial fetch: `all`, `following`, or `none`.",
+      "type": "string"
+    },
+    "tags": {
+      "description": "Remote tags fetched.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "url": {
+      "type": "string"
+    },
+    "worktree_bytes": {
+      "description": "Total size of the checked-out files, in bytes.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "bare",
+    "branches",
+    "bytes",
+    "detached",
+    "files",
+    "objects",
+    "path",
+    "phases",
+    "remote",
+    "seconds",
+    "single_branch",
+    "tag_fetch",
+    "tags",
+    "url",
+    "worktree_bytes"
+  ],
+  "title": "CloneOutcome",
+  "type": "object"
+}

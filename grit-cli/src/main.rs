@@ -708,6 +708,12 @@ enum Command {
         /// Name for the remote (default `origin`).
         #[arg(short = 'o', long, value_name = "NAME")]
         origin: Option<String>,
+        /// Create a bare repository (`git clone --bare`).
+        #[arg(long)]
+        bare: bool,
+        /// Do not check out the default branch (`git clone --no-checkout`).
+        #[arg(long = "no-checkout")]
+        no_checkout: bool,
     },
     /// List remotes, or add one.
     Remote {
@@ -2208,6 +2214,8 @@ fn dispatch(
             no_single_branch,
             no_tags,
             origin,
+            bare,
+            no_checkout,
         } => {
             let single_branch = if single_branch {
                 Some(true)
@@ -2226,6 +2234,8 @@ fn dispatch(
                     single_branch,
                     no_tags,
                     origin,
+                    bare,
+                    no_checkout,
                     mode: opts.mode,
                 })?,
                 opts,

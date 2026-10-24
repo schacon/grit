@@ -243,18 +243,7 @@ fn non_utf8_tracked_status_diff_add_clone_and_restore() {
     let clone_dest = tmp.path().join("r1c");
     let outcome = clone_repo(
         CloneOptions {
-            url: r1.to_string_lossy().into_owned(),
-            dest: clone_dest.clone(),
-            environment: Environment::capture_process(),
-            remote_name: grit_lib::remote::DEFAULT_REMOTE.to_owned(),
-            initial_branch: "main".to_owned(),
-            thread_policy: grit_lib::parallel::ThreadPolicy::default(),
-            depth: None,
-            branch: None,
-            filter: None,
-            single_branch: None,
-            tags: None,
-            promisor_fetcher: None,
+            ..CloneOptions::new(r1.to_string_lossy(), clone_dest.clone())
         },
         &mut NoProgress,
         None,
