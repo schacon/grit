@@ -93,8 +93,8 @@ pub struct RepackOptions {
     /// packed object is still reachable and none would be dropped by the active prune policy.
     /// Explicit [`repack_all`] / [`repack`] leave this false so maintenance still runs.
     pub auto_skip: bool,
-    /// When true, rebuild deltas from scratch ([`PackBuildOptions::for_local_copy`])
-    /// even if pack files already exist (Git `git repack -f`).
+    /// When true, pack with [`PackBuildOptions::for_local_copy`] but without reusing
+    /// on-disk deltas (Git `git repack -f`). Library callers only until the CLI exposes it.
     pub force_recompress: bool,
 }
 
@@ -667,7 +667,11 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         } else {
             // Loose objects and/or forced full recompression: delta consolidation like Git
             // `repack -adf` on loose or `-f` on existing packs.
-            PackBuildOptions::for_local_copy(cfg.as_ref())
+            let mut build = PackBuildOptions::for_local_copy(cfg.as_ref());
+            if opts.force_recompress {
+                build.reuse_deltas = false;
+            }
+            build
         }
     });
 

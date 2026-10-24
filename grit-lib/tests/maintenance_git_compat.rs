@@ -1178,8 +1178,8 @@ fn gc_skips_repack_when_single_pack_and_no_loose() {
 
     let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
     let stats = gc(&repo, &GcOptions::with_reflog_policy(1_700_000_000, false)).expect("grit gc");
-    assert!(
-        stats.repack.objects_packed.is_none() || stats.repack.objects_packed == Some(0),
+    assert_eq!(
+        stats.repack.objects_packed, None,
         "expected repack skip on single pack with no loose objects"
     );
     let pack_after = std::fs::read_dir(dir.path().join(".git/objects/pack"))
