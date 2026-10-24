@@ -197,6 +197,31 @@ impl FilesRefStore {
         file.first_descendant(&path, storage_name)
     }
 
+    /// Records of the common dir's `packed-refs` under `prefix` (storage names), read through
+    /// the cached file view so a listing and later lookups index the file once.
+    fn packed_map_for_prefix_filtered(
+        &self,
+        prefix: &str,
+        keep: Option<PackedRecordFilter<'_>>,
+    ) -> Result<HashMap<String, ObjectId>> {
+        self.refresh_packed_cache_if_stale()?;
+        let guard = self.packed_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(ref file) = guard.file else {
+            return Ok(HashMap::new());
+        };
+        let path = super::paths::packed_refs_path(&self.common_dir);
+        let prefix = (!prefix.is_empty()).then_some(prefix);
+        file.map_for_prefix_filtered(&path, prefix, keep)
+    }
+
+    /// The common dir's `packed-refs` view this store reads through, refreshed when the file
+    /// changed (`None` without a `packed-refs`). The copy shares the file's bytes and index.
+    pub(crate) fn packed_refs_view(&self) -> Result<Option<crate::refs::PackedRefsFileView>> {
+        self.refresh_packed_cache_if_stale()?;
+        let guard = self.packed_cache.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(guard.file.clone())
+    }
+
     fn lookup_packed_oid(&self, storage_name: &str) -> Result<Option<ObjectId>> {
         self.refresh_packed_cache_if_stale()?;
         let guard = self.packed_cache.lock().unwrap_or_else(|e| e.into_inner());
@@ -477,9 +502,12 @@ impl FilesRefStore {
                     continue;
                 }
                 let packed_prefix = self.packed_refs_scan_prefix(logical_prefix);
-                for (storage, oid) in
+                let packed = if i == 0 {
+                    self.packed_map_for_prefix_filtered(&packed_prefix, keep)?
+                } else {
                     read_packed_refs_map_for_prefix_filtered(base, &packed_prefix, keep)?
-                {
+                };
+                for (storage, oid) in packed {
                     if !self.packed_storage_visible(&storage) {
                         continue;
                     }
@@ -1296,6 +1324,10 @@ impl RefStore for FilesRefStore {
             }
         }
         Ok(())
+    }
+
+    fn as_files(&self) -> Option<&FilesRefStore> {
+        Some(self)
     }
 }
 
