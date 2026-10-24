@@ -1535,6 +1535,51 @@ mod tests {
         repo.write_index(index).unwrap();
     }
 
+    #[test]
+    fn sort_outcome_paths_in_index_order_non_utf8_display_key() {
+        use crate::objects::ObjectId;
+
+        let empty = ObjectId::from_hex("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391").unwrap();
+        let bad_path = b"bad\xffname.txt".to_vec();
+        let mut index = Index::new();
+        for path in [b"a.txt".as_slice(), bad_path.as_slice()] {
+            index.add_or_replace(IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: MODE_REGULAR,
+                uid: 0,
+                gid: 0,
+                size: 1,
+                oid: empty,
+                flags: path.len().min(0xfff) as u16,
+                flags_extended: None,
+                path: path.to_vec(),
+                base_index_pos: 0,
+            });
+        }
+        index.sort();
+
+        let mut outcome = StageOutcome::default();
+        outcome
+            .modified
+            .push(index_path_to_string(bad_path.as_slice()));
+        outcome.modified.push(index_path_to_string(b"a.txt"));
+
+        sort_outcome_paths_in_index_order(&mut outcome, &index);
+
+        let expected: Vec<String> = index
+            .entries
+            .iter()
+            .filter(|e| e.stage() == 0)
+            .map(|e| index_path_to_string(&e.path))
+            .collect();
+        assert_eq!(outcome.modified, expected);
+    }
+
     fn cache_tree_node_valid(index: &Index, path: &str) -> Option<bool> {
         let root = index.cache_tree.as_ref()?;
         let mut current = root;
@@ -1611,6 +1656,45 @@ mod tests {
             .map(|e| String::from_utf8_lossy(&e.path).into_owned())
             .collect();
         assert_eq!(paths, ["a.txt", "d/x.txt", "z.txt"]);
+    }
+
+    #[test]
+    fn stage_outcome_sort_matches_index_order_many_paths() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        for a in 0..8_u8 {
+            for b in 0..8 {
+                let dir = root.join(format!("big/{a}/{b}"));
+                fs::create_dir_all(&dir).unwrap();
+                for f in 0..12_u8 {
+                    fs::write(dir.join(format!("f{f}.txt")), b"x\n").unwrap();
+                }
+            }
+        }
+        let expected_count = 8 * 8 * 12;
+        let outcome = stage(
+            &repo,
+            &StageOptions {
+                staging_thresholds: Some(IndexStagingThresholds {
+                    large_index_restage: 0,
+                    parallel_tracked_restage: 0,
+                }),
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap();
+        assert_eq!(outcome.added.len(), expected_count);
+
+        let index = repo.load_index().unwrap();
+        let index_order: Vec<String> = index
+            .entries
+            .iter()
+            .filter(|e| e.stage() == 0)
+            .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+            .collect();
+        assert_eq!(outcome.added, index_order);
     }
 
     #[test]
