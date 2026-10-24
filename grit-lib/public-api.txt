@@ -8144,6 +8144,18 @@ impl<W> core::marker::Unpin for grit_lib::objects::hash::HashingWriter<W> where 
 impl<W> core::marker::UnsafeUnpin for grit_lib::objects::hash::HashingWriter<W> where W: core::marker::UnsafeUnpin
 impl<W> core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::hash::HashingWriter<W> where W: core::panic::unwind_safe::RefUnwindSafe
 impl<W> core::panic::unwind_safe::UnwindSafe for grit_lib::objects::hash::HashingWriter<W> where W: core::panic::unwind_safe::UnwindSafe
+pub struct grit_lib::objects::hash::ObjectPayloadHasher
+impl grit_lib::objects::hash::ObjectPayloadHasher
+pub fn grit_lib::objects::hash::ObjectPayloadHasher::finish(self) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
+pub fn grit_lib::objects::hash::ObjectPayloadHasher::new(grit_lib::objects::HashAlgo, grit_lib::objects::ObjectKind, u64) -> Self
+pub fn grit_lib::objects::hash::ObjectPayloadHasher::update(&mut self, &[u8])
+impl core::marker::Freeze for grit_lib::objects::hash::ObjectPayloadHasher
+impl core::marker::Send for grit_lib::objects::hash::ObjectPayloadHasher
+impl core::marker::Sync for grit_lib::objects::hash::ObjectPayloadHasher
+impl core::marker::Unpin for grit_lib::objects::hash::ObjectPayloadHasher
+impl core::marker::UnsafeUnpin for grit_lib::objects::hash::ObjectPayloadHasher
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::hash::ObjectPayloadHasher
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::hash::ObjectPayloadHasher
 pub struct grit_lib::objects::hash::Parallelism
 impl grit_lib::parallel::Parallelism
 pub fn grit_lib::parallel::Parallelism::new(core::num::nonzero::NonZeroUsize) -> Self
@@ -9800,9 +9812,9 @@ pub fn grit_lib::objects::pack_name_hash::pack_name_hash_v2(&[u8]) -> u32
 pub mod grit_lib::objects::pack_object_select
 pub struct grit_lib::objects::pack_object_select::PackEnumerateOptions<'a>
 pub grit_lib::objects::pack_object_select::PackEnumerateOptions::exclude_objects: core::option::Option<&'a std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>>
-pub grit_lib::objects::pack_object_select::PackEnumerateOptions::prefetch_walk_objects: bool
 pub grit_lib::objects::pack_object_select::PackEnumerateOptions::filter: core::option::Option<&'a grit_lib::revwalk::rev_list::ObjectFilter>
 pub grit_lib::objects::pack_object_select::PackEnumerateOptions::have_shallow_grafts: core::option::Option<&'a std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>>
+pub grit_lib::objects::pack_object_select::PackEnumerateOptions::prefetch_walk_objects: bool
 pub grit_lib::objects::pack_object_select::PackEnumerateOptions::shallow_grafts: &'a std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>
 pub grit_lib::objects::pack_object_select::PackEnumerateOptions::use_bitmaps: bool
 impl<'a> core::clone::Clone for grit_lib::objects::pack_object_select::PackEnumerateOptions<'a>

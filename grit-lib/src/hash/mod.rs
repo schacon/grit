@@ -362,6 +362,37 @@ pub fn hash_object(algo: HashAlgo, kind: ObjectKind, data: &[u8]) -> Result<Obje
     hasher.finalize()
 }
 
+/// Incremental Git object-id hash (header plus payload chunks).
+///
+/// Use this instead of constructing [`ObjectHasher`] outside the hash module.
+pub struct ObjectPayloadHasher {
+    inner: ObjectHasher,
+}
+
+impl ObjectPayloadHasher {
+    /// Start hashing canonical store bytes for `kind` with payload length `len`.
+    #[must_use]
+    pub fn new(algo: HashAlgo, kind: ObjectKind, len: u64) -> Self {
+        Self {
+            inner: ObjectHasher::for_object(algo, kind, len),
+        }
+    }
+
+    /// Feed more decompressed payload bytes.
+    pub fn update(&mut self, chunk: &[u8]) {
+        self.inner.update(chunk);
+    }
+
+    /// Finish and return the object id.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::HashCollision`] when sha1dc detects a chosen-prefix collision.
+    pub fn finish(self) -> Result<ObjectId> {
+        self.inner.finalize()
+    }
+}
+
 fn object_id_from_sha1_digest(digest: &sha1dc::Digest) -> ObjectId {
     ObjectId::from_bytes(digest.as_ref())
         .unwrap_or_else(|_| unreachable!("SHA-1 digest is 20 bytes"))
