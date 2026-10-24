@@ -486,56 +486,51 @@ fn switch_worktree_clean_for_paths(
             Ok(())
         })?;
     }
-    if !stat_clean {
-        let dirty = dirty_paths.into_inner().unwrap_or_else(|e| e.into_inner());
-        return Ok(SwitchWorktreeClean::StatDirty(dirty));
-    }
-    if !needs_racy_content {
-        return Ok(SwitchWorktreeClean::Clean);
-    }
-    let cfg = config.unwrap_or_else(|| Arc::new(ConfigSet::new()));
-    let conv = crlf::ConversionConfig::from_config(cfg.as_ref());
-    let rules = WorktreeRules::from_parts_index_attributes_only(repo, index, cfg)?;
-    let filters = repo.caches().filters();
-    let odb = repo.odb();
-    for path in paths {
-        let Some(ie) = index.get(path.as_bytes(), 0) else {
-            continue;
-        };
-        if !indexed_path_needs_worktree_stat_check(ie)
-            || !entry_is_racy_with_policy(ie, index_mtime, stat_policy)
-        {
-            continue;
-        }
-        let abs = index_entry_worktree_abs(work_tree, path, precompose_unicode, ignorecase);
-        let meta = match fs::symlink_metadata(&abs) {
-            Ok(m) => m,
-            Err(_) => {
+    if needs_racy_content {
+        let cfg = config.unwrap_or_else(|| Arc::new(ConfigSet::new()));
+        let conv = crlf::ConversionConfig::from_config(cfg.as_ref());
+        let rules = WorktreeRules::from_parts_index_attributes_only(repo, index, cfg)?;
+        let filters = repo.caches().filters();
+        let odb = repo.odb();
+        for path in paths {
+            let Some(ie) = index.get(path.as_bytes(), 0) else {
+                continue;
+            };
+            if !indexed_path_needs_worktree_stat_check(ie)
+                || !entry_is_racy_with_policy(ie, index_mtime, stat_policy)
+            {
+                continue;
+            }
+            let abs = index_entry_worktree_abs(work_tree, path, precompose_unicode, ignorecase);
+            let meta = match fs::symlink_metadata(&abs) {
+                Ok(m) => m,
+                Err(_) => {
+                    stat_clean = false;
+                    note_dirty(path);
+                    continue;
+                }
+            };
+            if !stat_matches_with_policy(ie, &meta, stat_policy) {
                 stat_clean = false;
                 note_dirty(path);
                 continue;
             }
-        };
-        if !stat_matches_with_policy(ie, &meta, stat_policy) {
-            stat_clean = false;
-            note_dirty(path);
-            continue;
-        }
-        let attrs = rules.file_attrs(path, false);
-        let content_ok = hash_worktree_file(
-            odb,
-            &abs,
-            &meta,
-            &conv,
-            &attrs,
-            path,
-            Some(ie),
-            Some(filters),
-        )
-        .is_ok_and(|oid| oid == ie.oid);
-        if !content_ok {
-            stat_clean = false;
-            note_dirty(path);
+            let attrs = rules.file_attrs(path, false);
+            let content_ok = hash_worktree_file(
+                odb,
+                &abs,
+                &meta,
+                &conv,
+                &attrs,
+                path,
+                Some(ie),
+                Some(filters),
+            )
+            .is_ok_and(|oid| oid == ie.oid);
+            if !content_ok {
+                stat_clean = false;
+                note_dirty(path);
+            }
         }
     }
     if !stat_clean {
