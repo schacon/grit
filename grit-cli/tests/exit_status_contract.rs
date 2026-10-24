@@ -54,6 +54,7 @@ fn exit_codes_page_matches_enum() {
         "branch_upstream_not_tracking",
         "branch_no_upstream",
         "branch_error",
+        "hook_failed",
     ] {
         assert!(
             text.contains(&format!("`{slug}`")),

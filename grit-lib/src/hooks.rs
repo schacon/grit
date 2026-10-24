@@ -15,7 +15,6 @@ use crate::state::HeadState;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::fs;
-use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -34,16 +33,66 @@ fn is_not_an_executable(err: &std::io::Error) -> bool {
     err.raw_os_error() == Some(NOT_EXECUTABLE)
 }
 
+/// Where hook subprocesses send their stdout and stderr.
+///
+/// The library never writes hook output itself: it either hands the bytes back to the caller
+/// or lets the child write straight to this process's standard streams.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum HookStdio {
+    /// Pipe both streams and return them in [`HookResult`] and [`HookError::Failed`].
+    ///
+    /// The default, so an embedder (TUI, GUI, server) can show the output in its own way.
+    #[default]
+    Capture,
+    /// The child writes directly to this process's stderr, as Git does: live output, nothing
+    /// buffered. A hook's stdout goes to stderr too unless
+    /// [`RunHookOptions::stdout_to_stderr`] is false. Returned [`HookOutput`]s are empty.
+    Inherit,
+}
+
+/// Bytes the hooks of one event wrote while [`HookStdio::Capture`] was in effect.
+///
+/// When several hooks run for one event (configured `hook.<name>.*` entries, then the hooks
+/// directory script), their output is appended in run order.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct HookOutput {
+    /// Everything the hooks wrote to stdout.
+    pub stdout: Vec<u8>,
+    /// Everything the hooks wrote to stderr.
+    pub stderr: Vec<u8>,
+}
+
+impl std::fmt::Debug for HookOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HookOutput")
+            .field("stdout", &String::from_utf8_lossy(&self.stdout))
+            .field("stderr", &String::from_utf8_lossy(&self.stderr))
+            .finish()
+    }
+}
+
+impl HookOutput {
+    /// Whether no output was captured on either stream.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.stdout.is_empty() && self.stderr.is_empty()
+    }
+}
+
 /// Hook subprocess failure (non-zero exit or spawn error).
 #[derive(Debug, Error)]
 pub enum HookError {
     /// A hook ran and returned a non-zero exit status.
+    ///
+    /// The message is one line; the hook's own output is in `output`, never in `Display`.
     #[error("hook {hook_name} failed with exit status {status}")]
     Failed {
         /// Basename of the hook script that failed.
         hook_name: String,
         /// Process exit code from the hook subprocess.
         status: i32,
+        /// What the hooks wrote; empty under [`HookStdio::Inherit`].
+        output: HookOutput,
     },
     /// The hook (or the shell that runs it) could not be started.
     #[error("failed to run hook {hook_name} ({})", path.display())]
@@ -55,23 +104,30 @@ pub enum HookError {
         /// Error returned by the [`CommandRunner`] when spawning.
         #[source]
         source: std::io::Error,
+        /// What earlier hooks for the same event wrote before this one could not start
+        /// (configured `hook.<name>.*` entries run before the hooks directory script); empty
+        /// under [`HookStdio::Inherit`].
+        output: HookOutput,
     },
     /// Configuration or internal error while resolving hooks.
     #[error("{0}")]
     Internal(String),
 }
 
-impl From<String> for HookError {
-    fn from(value: String) -> Self {
-        Self::Internal(value)
+impl HookError {
+    /// Hook output captured before the failure, or `None` for [`HookError::Internal`].
+    #[must_use]
+    pub fn output(&self) -> Option<&HookOutput> {
+        match self {
+            HookError::Failed { output, .. } | HookError::Spawn { output, .. } => Some(output),
+            HookError::Internal(_) => None,
+        }
     }
 }
 
-fn stdio_mode(piped: bool) -> CommandStdio {
-    if piped {
-        CommandStdio::Pipe
-    } else {
-        CommandStdio::Inherit
+impl From<String> for HookError {
+    fn from(value: String) -> Self {
+        Self::Internal(value)
     }
 }
 
@@ -456,8 +512,8 @@ struct HookSpawnContext<'a> {
     cwd: &'a Path,
     env: &'a CommandEnvironment,
     stdin_piped: bool,
-    stdout_piped: bool,
-    stderr_piped: bool,
+    stdout: CommandStdio,
+    stderr: CommandStdio,
 }
 
 impl HookSpawnContext<'_> {
@@ -477,8 +533,8 @@ impl HookSpawnContext<'_> {
             } else {
                 CommandStdin::Inherit
             },
-            stdout: stdio_mode(self.stdout_piped),
-            stderr: stdio_mode(self.stderr_piped),
+            stdout: self.stdout,
+            stderr: self.stderr,
         }
     }
 
@@ -487,6 +543,7 @@ impl HookSpawnContext<'_> {
             hook_name: hook_name.to_owned(),
             path: spec.program.clone(),
             source,
+            output: HookOutput::default(),
         })
     }
 
@@ -522,6 +579,7 @@ impl HookSpawnContext<'_> {
                 hook_name: hook_name.to_owned(),
                 path: direct.program,
                 source,
+                output: HookOutput::default(),
             }),
             Ok(child) => Ok(child),
         }
@@ -569,35 +627,85 @@ impl HookName {
     }
 }
 
-/// Result of running a hook.
-#[derive(Debug)]
+/// Result of running the hooks for one event.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HookResult {
-    /// Hook ran successfully (exit code 0).
-    Success,
-    /// Hook does not exist or is not executable — treated as success.
+    /// Every hook ran and exited 0.
+    Success {
+        /// What the hooks wrote; empty under [`HookStdio::Inherit`].
+        output: HookOutput,
+    },
+    /// No hook is installed for the event (or it is not executable) — treated as success.
     NotFound,
-    /// Hook ran but returned a non-zero exit code.
-    Failed(i32),
+    /// A hook exited non-zero; later hooks for the event did not run.
+    Failed {
+        /// Exit code of the failing hook (1 when it had none, e.g. killed by a signal).
+        status: i32,
+        /// What the hooks wrote up to and including the failing one; empty under
+        /// [`HookStdio::Inherit`].
+        output: HookOutput,
+    },
 }
 
 impl HookResult {
     /// Returns true if the hook was successful or not found.
     #[must_use]
     pub fn is_ok(&self) -> bool {
-        matches!(self, HookResult::Success | HookResult::NotFound)
+        matches!(self, HookResult::Success { .. } | HookResult::NotFound)
     }
 
     /// Returns true if the hook existed and ran (regardless of exit code).
     #[must_use]
     pub fn was_executed(&self) -> bool {
-        matches!(self, HookResult::Success | HookResult::Failed(_))
+        !matches!(self, HookResult::NotFound)
+    }
+
+    /// Exit code of the hook run: `Some(0)` on success, `None` when no hook ran.
+    #[must_use]
+    pub fn status(&self) -> Option<i32> {
+        match self {
+            HookResult::Success { .. } => Some(0),
+            HookResult::NotFound => None,
+            HookResult::Failed { status, .. } => Some(*status),
+        }
+    }
+
+    /// Captured output, or `None` when no hook ran.
+    #[must_use]
+    pub fn output(&self) -> Option<&HookOutput> {
+        match self {
+            HookResult::Success { output } | HookResult::Failed { output, .. } => Some(output),
+            HookResult::NotFound => None,
+        }
+    }
+
+    /// Turn a failed run into [`HookError::Failed`] for `hook_name`; returns whether a hook ran.
+    ///
+    /// # Errors
+    ///
+    /// [`HookError::Failed`] carrying the status and captured output when a hook exited non-zero.
+    pub fn check(self, hook_name: &str) -> Result<bool, HookError> {
+        match self {
+            HookResult::Success { .. } => Ok(true),
+            HookResult::NotFound => Ok(false),
+            HookResult::Failed { status, output } => Err(HookError::Failed {
+                hook_name: hook_name.to_owned(),
+                status,
+                output,
+            }),
+        }
     }
 }
 
 /// Options for [`run_hook_opts`].
 #[derive(Debug, Clone, Default)]
 pub struct RunHookOptions<'a> {
-    /// When true, hook stdout is merged to stderr (Git default except `pre-push`).
+    /// Capture hook output or let hooks write to this process's stderr (see [`HookStdio`]).
+    ///
+    /// The `run_*` helpers that take a [`Repository`] use [`Repository::hook_stdio`].
+    pub stdio: HookStdio,
+    /// Under [`HookStdio::Inherit`], send hook stdout to this process's stderr (Git does this
+    /// for every hook except `pre-push`). Captured stdout is always returned separately.
     pub stdout_to_stderr: bool,
     /// File path to open and pipe to each hook's stdin (reopened per hook).
     pub path_to_stdin: Option<&'a Path>,
@@ -616,21 +724,21 @@ pub struct RunHookOptions<'a> {
 /// When `repo` is `None`, only configured hooks run (out-of-repo); cwd is the process cwd and
 /// `GIT_DIR` is not set for those hooks.
 ///
-/// When `capture_output` is `Some`, each hook's stdout and stderr are appended there (receive-pack /
-/// simulated remote) instead of being written to the process stderr.
+/// Hook output is handled per [`RunHookOptions::stdio`]: captured into the returned
+/// [`HookOutput`], or written by the child straight to this process's stderr. The library
+/// never re-emits what a hook (or an injected [`CommandRunner`]) produced.
 ///
 /// # Errors
 ///
-/// [`HookError::Spawn`] when a hook (or the shell that runs it) cannot be started, and
-/// [`HookError::Internal`] for invalid `hook.*` configuration. A hook that runs and exits
-/// non-zero is `Ok(HookResult::Failed(status))`.
+/// [`HookError::Spawn`] when a hook (or the shell that runs it) cannot be started, carrying the
+/// output earlier hooks for the event already wrote, and [`HookError::Internal`] for invalid
+/// `hook.*` configuration. A hook that runs and exits non-zero is `Ok(HookResult::Failed { .. })`.
 pub fn run_hook_opts(
     repo: Option<&Repository>,
     hook_name: &str,
     args: &[&str],
     config: &ConfigSet,
     opts: RunHookOptions<'_>,
-    mut capture_output: Option<&mut Vec<u8>>,
 ) -> Result<HookResult, HookError> {
     let seq = match repo {
         Some(r) => resolve_hook_sequence(r, hook_name, config)?,
@@ -673,18 +781,20 @@ pub fn run_hook_opts(
         None => hook_command_env(git_dir_for_configured, &merged_env),
     };
 
+    let capture = opts.stdio == HookStdio::Capture;
+    let (stdout, stderr) = match opts.stdio {
+        HookStdio::Capture => (CommandStdio::Pipe, CommandStdio::Pipe),
+        HookStdio::Inherit if opts.stdout_to_stderr => {
+            (CommandStdio::ParentStderr, CommandStdio::Inherit)
+        }
+        HookStdio::Inherit => (CommandStdio::Inherit, CommandStdio::Inherit),
+    };
+    let mut output = HookOutput::default();
+
     for h in &seq {
         let (stdin_piped, stdin_file) = match opts.path_to_stdin {
             Some(p) => (true, Some(p.to_path_buf())),
             None => (opts.stdin_data.is_some(), None),
-        };
-
-        let capture_mode = capture_output.is_some();
-        let pipe_stderr_to_capture = capture_mode || opts.stdout_to_stderr;
-        let (stdout_piped, stderr_piped) = if pipe_stderr_to_capture {
-            (true, true)
-        } else {
-            (false, false)
         };
 
         let ctx = HookSpawnContext {
@@ -692,10 +802,10 @@ pub fn run_hook_opts(
             cwd: work_dir,
             env: &hook_env,
             stdin_piped,
-            stdout_piped,
-            stderr_piped,
+            stdout,
+            stderr,
         };
-        let mut child = match h {
+        let spawned = match h {
             ResolvedHook::Traditional { path, argv0 } => {
                 let Some(r) = repo else {
                     continue;
@@ -704,18 +814,33 @@ pub fn run_hook_opts(
                     .parent()
                     .map(|hooks_dir| hook_argv0(r, hooks_dir, hook_name, work_dir))
                     .unwrap_or_else(|| argv0.clone());
-                ctx.spawn_traditional(hook_name, path, &effective_argv0, args)?
+                ctx.spawn_traditional(hook_name, path, &effective_argv0, args)
             }
-            ResolvedHook::Configured { command } => {
-                ctx.spawn_configured(hook_name, command, args)?
+            ResolvedHook::Configured { command } => ctx.spawn_configured(hook_name, command, args),
+        };
+        let mut child = match spawned {
+            Ok(child) => child,
+            Err(HookError::Spawn {
+                hook_name,
+                path,
+                source,
+                ..
+            }) => {
+                return Err(HookError::Spawn {
+                    hook_name,
+                    path,
+                    source,
+                    output,
+                })
             }
+            Err(other) => return Err(other),
         };
 
         if let Some(ref path) = stdin_file {
             let file = match fs::File::open(path) {
                 Ok(f) => f,
                 Err(_e) => {
-                    return Ok(HookResult::Failed(1));
+                    return Ok(HookResult::Failed { status: 1, output });
                 }
             };
             if let Some(stdin) = child.stdin_mut() {
@@ -731,37 +856,28 @@ pub fn run_hook_opts(
             child.close_stdin();
         }
 
-        let exit = if capture_mode {
-            let output = match child.wait_with_output() {
-                Ok(o) => o,
-                Err(_) => return Ok(HookResult::Failed(1)),
-            };
-            if let Some(buf) = capture_output.as_mut() {
-                buf.extend_from_slice(&output.stdout);
-                buf.extend_from_slice(&output.stderr);
-            }
-            output.status
-        } else if opts.stdout_to_stderr {
-            let output = match child.wait_with_output() {
-                Ok(o) => o,
-                Err(_) => return Ok(HookResult::Failed(1)),
-            };
-            let mut stderr = std::io::stderr().lock();
-            let _ = stderr.write_all(&output.stdout);
-            let _ = stderr.write_all(&output.stderr);
-            output.status
+        let waited = if capture {
+            child.wait_with_output().map(|o| {
+                output.stdout.extend_from_slice(&o.stdout);
+                output.stderr.extend_from_slice(&o.stderr);
+                o.status
+            })
         } else {
-            match child.wait() {
-                Ok(s) => s,
-                Err(_) => return Ok(HookResult::Failed(1)),
-            }
+            child.wait()
+        };
+        let exit = match waited {
+            Ok(exit) => exit,
+            Err(_) => return Ok(HookResult::Failed { status: 1, output }),
         };
 
         if !exit.success {
             if let Some(r) = repo {
                 let _ = r.reload_config();
             }
-            return Ok(HookResult::Failed(exit.code.unwrap_or(1)));
+            return Ok(HookResult::Failed {
+                status: exit.code.unwrap_or(1),
+                output,
+            });
         }
     }
 
@@ -769,14 +885,15 @@ pub fn run_hook_opts(
         let _ = r.reload_config();
     }
 
-    Ok(HookResult::Success)
+    Ok(HookResult::Success { output })
 }
 
 /// Like [`run_commit_hook`] but a hook that exits non-zero is an error.
 ///
 /// # Errors
 ///
-/// [`HookError::Failed`] with the hook's exit status, or any error from [`run_commit_hook`].
+/// [`HookError::Failed`] with the hook's exit status and captured output, or any error from
+/// [`run_commit_hook`].
 pub fn run_commit_hook_checked(
     repo: &Repository,
     hook_name: &str,
@@ -784,16 +901,14 @@ pub fn run_commit_hook_checked(
     stdin_data: Option<&[u8]>,
     commit_env: &CommitHookEnv<'_>,
 ) -> Result<(), HookError> {
-    match run_commit_hook(repo, hook_name, args, stdin_data, commit_env)? {
-        HookResult::Success | HookResult::NotFound => Ok(()),
-        HookResult::Failed(status) => Err(HookError::Failed {
-            hook_name: hook_name.to_owned(),
-            status,
-        }),
-    }
+    run_commit_hook(repo, hook_name, args, stdin_data, commit_env)?
+        .check(hook_name)
+        .map(drop)
 }
 
 /// Run commit-style hooks with `GIT_INDEX_FILE`, `GIT_PREFIX`, and related env (Git `run_commit_hook`).
+///
+/// Output follows [`Repository::hook_stdio`].
 ///
 /// # Errors
 ///
@@ -811,27 +926,33 @@ pub fn run_commit_hook(
         .map_err(|e| HookError::Internal(e.to_string()))?
         .as_ref()
         .clone();
-    let stdout_to_stderr = hook_name != "pre-push";
     run_hook_opts(
         Some(repo),
         hook_name,
         args,
         &config,
         RunHookOptions {
-            stdout_to_stderr,
-            path_to_stdin: None,
             stdin_data,
-            env_vars: &[],
-            cwd: None,
             commit_env: Some(commit_env),
+            ..repo_hook_options(repo, hook_name)
         },
-        None,
     )
+}
+
+/// Default [`RunHookOptions`] for `hook_name` on `repo`: [`Repository::hook_stdio`], and stdout
+/// sent to stderr for every hook except `pre-push`, whose stdout is part of its protocol.
+fn repo_hook_options<'a>(repo: &Repository, hook_name: &str) -> RunHookOptions<'a> {
+    RunHookOptions {
+        stdio: repo.hook_stdio(),
+        stdout_to_stderr: hook_name != "pre-push",
+        ..RunHookOptions::default()
+    }
 }
 
 /// Run a hook by name with the given arguments (Git-compatible multihooks).
 ///
-/// `pre-push` keeps stdout separate; other hooks merge stdout to stderr.
+/// Output follows [`Repository::hook_stdio`]; when inherited, `pre-push` keeps stdout
+/// separate and other hooks send stdout to stderr.
 ///
 /// # Errors
 ///
@@ -846,103 +967,58 @@ pub fn run_hook(
     let config = repo
         .config()
         .map_err(|e| HookError::Internal(e.to_string()))?;
-    let stdout_to_stderr = hook_name != "pre-push";
     run_hook_opts(
         Some(repo),
         hook_name,
         args,
         config.as_ref(),
         RunHookOptions {
-            stdout_to_stderr,
-            path_to_stdin: None,
             stdin_data,
-            env_vars: &[],
-            cwd: None,
-            commit_env: None,
+            ..repo_hook_options(repo, hook_name)
         },
-        None,
     )
 }
 
-/// Run a hook with extra env vars, cwd = `GIT_DIR` (receive-pack and similar).
+/// Run a server-side hook (`pre-receive`, `update`, …) with cwd = `GIT_DIR`.
 ///
 /// The hook sees `GIT_DIR=.`, as Git's receive-pack hooks do, so scripts that run
 /// `git` commands address the repository they were started in.
+///
+/// Output is always captured, whatever [`Repository::hook_stdio`] says, because the server
+/// relays it to the client over the sideband. A hook that cannot be resolved or started is
+/// reported as `Failed { status: 1 }` so the push is declined.
 pub fn run_hook_in_git_dir(
     repo: &Repository,
     hook_name: &str,
     args: &[&str],
     stdin_data: Option<&[u8]>,
     env_vars: &[(&str, &str)],
-) -> (HookResult, Vec<u8>) {
-    let Some(config) = repo.config().ok() else {
-        return (HookResult::Failed(1), Vec::new());
+) -> HookResult {
+    let declined = || HookResult::Failed {
+        status: 1,
+        output: HookOutput::default(),
     };
     let env_vars: Vec<(&str, &str)> = std::iter::once(("GIT_DIR", "."))
         .chain(env_vars.iter().copied())
         .collect();
-    let env_vars = env_vars.as_slice();
-    let mut captured = Vec::new();
-    match run_hook_opts(
-        Some(repo),
-        hook_name,
-        args,
-        config.as_ref(),
-        RunHookOptions {
-            stdout_to_stderr: true,
-            path_to_stdin: None,
-            stdin_data,
-            env_vars,
-            cwd: Some(repo.git_dir()),
-            commit_env: None,
-        },
-        Some(&mut captured),
-    ) {
-        Ok(r) => (r, captured),
-        Err(_) => (HookResult::Failed(1), captured),
-    }
-}
-
-/// Like `run_hook` but with extra environment variables and captures output.
-pub fn run_hook_with_env(
-    repo: &Repository,
-    hook_name: &str,
-    args: &[&str],
-    stdin_data: Option<&[u8]>,
-    env_vars: &[(&str, &str)],
-) -> (HookResult, Vec<u8>) {
     let Some(config) = repo.config().ok() else {
-        return (HookResult::Failed(1), Vec::new());
+        return declined();
     };
-    let mut captured = Vec::new();
-    match run_hook_opts(
+    run_hook_opts(
         Some(repo),
         hook_name,
         args,
         config.as_ref(),
         RunHookOptions {
+            stdio: HookStdio::Capture,
             stdout_to_stderr: true,
-            path_to_stdin: None,
             stdin_data,
-            env_vars,
-            cwd: None,
-            commit_env: None,
+            env_vars: &env_vars,
+            cwd: Some(repo.git_dir()),
+            ..RunHookOptions::default()
         },
-        Some(&mut captured),
-    ) {
-        Ok(r) => (r, captured),
-        Err(_) => (HookResult::Failed(1), captured),
-    }
-}
-
-/// `run_hook_capture` function.
-pub fn run_hook_capture(
-    repo: &Repository,
-    hook_name: &str,
-    args: &[&str],
-    stdin_data: Option<&[u8]>,
-) -> (HookResult, Vec<u8>) {
-    run_hook_with_env(repo, hook_name, args, stdin_data, &[])
+    )
+    .unwrap_or_else(|_| declined())
 }
 
 /// `reference-transaction` hook with phase `committed` after updating `HEAD` and (on a branch)
@@ -998,6 +1074,57 @@ mod tests {
 
     fn exe(name: &str) -> String {
         format!("{name}{}", std::env::consts::EXE_SUFFIX)
+    }
+
+    #[test]
+    fn hook_result_reports_status_output_and_checks() {
+        let output = HookOutput {
+            stdout: b"out".to_vec(),
+            stderr: b"err".to_vec(),
+        };
+        assert!(!output.is_empty());
+        assert!(HookOutput::default().is_empty());
+        assert_eq!(HookError::Internal("bad".into()).output(), None);
+        assert_eq!(
+            format!("{output:?}"),
+            r#"HookOutput { stdout: "out", stderr: "err" }"#
+        );
+
+        let success = HookResult::Success {
+            output: output.clone(),
+        };
+        assert!(success.is_ok() && success.was_executed());
+        assert_eq!(success.status(), Some(0));
+        assert_eq!(success.output(), Some(&output));
+        assert!(success.check("pre-commit").expect("success"));
+
+        let missing = HookResult::NotFound;
+        assert!(missing.is_ok() && !missing.was_executed());
+        assert_eq!((missing.status(), missing.output()), (None, None));
+        assert!(!missing.check("pre-commit").expect("not found"));
+
+        let failed = HookResult::Failed {
+            status: 3,
+            output: output.clone(),
+        };
+        assert!(!failed.is_ok() && failed.was_executed());
+        assert_eq!(failed.status(), Some(3));
+        match failed.check("commit-msg") {
+            Err(err @ HookError::Failed { .. }) => {
+                assert_eq!(err.to_string(), "hook commit-msg failed with exit status 3");
+                let HookError::Failed {
+                    hook_name,
+                    status,
+                    output: got,
+                } = err
+                else {
+                    unreachable!()
+                };
+                assert_eq!((hook_name.as_str(), status), ("commit-msg", 3));
+                assert_eq!(got, output);
+            }
+            other => panic!("expected HookError::Failed, got {other:?}"),
+        }
     }
 
     #[test]
