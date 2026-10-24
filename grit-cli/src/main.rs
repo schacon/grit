@@ -2335,10 +2335,8 @@ fn dispatch(
                 } else if let Some(branch) = branch {
                     SetHead::Branch(branch)
                 } else {
-                    return Err(anyhow::anyhow!(
-                        "set-head requires --auto, --delete, or a branch name"
-                    )
-                    .context(commands::remote::RemoteUsageError));
+                    return Err(anyhow::Error::from(commands::remote::RemoteUsageError)
+                        .context("set-head requires --auto, --delete, or a branch name"));
                 };
                 emit_success(
                     &commands::remote::run_set_head(&name, mode, dry_run)?,

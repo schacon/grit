@@ -2,8 +2,8 @@
 
 use anyhow::{Context, Result};
 use grit_lib::config::ConfigSet;
-use grit_lib::remote::fetch::NoProgress;
 use grit_lib::refs::listing::{RefSort, SortKey};
+use grit_lib::remote::fetch::NoProgress;
 use grit_lib::remote::fetch_request::resolve_remote_argument;
 use grit_lib::remote::transfer::FetchOptions;
 use grit_lib::remote::{
@@ -648,7 +648,12 @@ fn add_remote(repo: &Repository, name: &str, url: &str, fetch: bool) -> Result<R
         let remote = repo.remotes().get(name).map_err(map_remote_error)?;
         let mut progress = NoProgress;
         repo.remotes()
-            .fetch(&remote, FetchOptions::default(), &mut progress, Some(&factory))
+            .fetch(
+                &remote,
+                FetchOptions::default(),
+                &mut progress,
+                Some(&factory),
+            )
             .map_err(map_remote_error)?;
     }
     Ok(RemoteOutcome::Add {

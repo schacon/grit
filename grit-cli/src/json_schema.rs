@@ -1041,10 +1041,7 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
             "remote_remove",
             &["remote", "remove", "origin", "--dry-run"],
         ),
-        (
-            "remote_prune",
-            &["remote", "prune", "origin", "--dry-run"],
-        ),
+        ("remote_prune", &["remote", "prune", "origin", "--dry-run"]),
         (
             "remote_set_head",
             &["remote", "set-head", "origin", "--auto", "--dry-run"],

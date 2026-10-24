@@ -398,6 +398,7 @@ impl<'repo> RepositoryRemotes<'repo> {
             return Err(RemoteError::UnknownRemote(name.to_owned()));
         }
         let specs = load_remote_fetch_specs(config.as_ref(), name)?;
+        let positive: Vec<RefspecItem> = specs.iter().filter(|s| !s.negative).cloned().collect();
         let remote = Remote::from_config(config.as_ref(), name)?;
         let advertised = self.ls_remote(
             &remote,
@@ -409,9 +410,14 @@ impl<'repo> RepositoryRemotes<'repo> {
         )?;
         let remote_pairs: Vec<(String, crate::objects::ObjectId)> =
             advertised.iter().map(|r| (r.name.clone(), r.oid)).collect();
-        let stale = tracking_refs_gone_on_remote(self.repo.git_dir(), &specs, &remote_pairs)
+        let git_dir = self.repo.git_dir();
+        let stale = tracking_refs_gone_on_remote(git_dir, &positive, &remote_pairs)
             .map_err(RemoteError::Library)?;
-        let mut refs: Vec<String> = stale.into_iter().map(|(name, _)| name).collect();
+        let mut refs: Vec<String> = stale
+            .into_iter()
+            .filter(|(local_ref, _)| fetch_specs_bind_local_ref(&specs, local_ref).is_some())
+            .map(|(name, _)| name)
+            .collect();
         refs.sort_unstable();
         if dry_run || refs.is_empty() {
             return Ok(refs);
@@ -462,7 +468,12 @@ impl<'repo> RepositoryRemotes<'repo> {
 
         let target = match mode {
             SetHead::Delete => {
-                if !dry_run && crate::refs::resolve_ref(git_dir, &head_ref).is_ok() {
+                if !dry_run
+                    && !matches!(
+                        crate::refs::read_raw_ref(git_dir, &head_ref),
+                        Ok(crate::refs::RawRefLookup::NotFound)
+                    )
+                {
                     crate::refs::delete_ref(git_dir, &head_ref).map_err(RemoteError::Library)?;
                 }
                 return Ok(SetHeadOutcome {

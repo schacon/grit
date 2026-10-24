@@ -150,20 +150,14 @@ fn set_head_auto_matches_git() {
     let (_git, git_dir) = copy_dir(&clone, "git");
 
     git(&git_dir, &["remote", "set-head", "origin", "--auto"]);
-    let git_head = git(
-        &git_dir,
-        &["symbolic-ref", "refs/remotes/origin/HEAD"],
-    );
+    let git_head = git(&git_dir, &["symbolic-ref", "refs/remotes/origin/HEAD"]);
 
     let grit_repo = open(&grit_dir);
     grit_repo
         .remotes()
         .set_head("origin", SetHead::Auto, false, None)
         .expect("set-head auto");
-    let grit_head = git(
-        &grit_dir,
-        &["symbolic-ref", "refs/remotes/origin/HEAD"],
-    );
+    let grit_head = git(&grit_dir, &["symbolic-ref", "refs/remotes/origin/HEAD"]);
     assert_eq!(git_head.trim(), grit_head.trim());
 }
 
@@ -227,4 +221,140 @@ fn set_head_delete() {
         .status()
         .expect("git status");
     assert!(!status.success());
+}
+
+#[test]
+fn prune_negative_refspec_preserves_excluded_ref() {
+    if !git_interop_available(Backend::Files) {
+        return;
+    }
+    let root = tempfile::tempdir().expect("tempdir");
+    let upstream = root.path().join("upstream");
+    git_cmd(&["init", "-q", "-b", "main", upstream.to_str().unwrap()])
+        .in_dir(root.path())
+        .suc();
+    git(
+        &upstream,
+        &[
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "c1",
+        ],
+    );
+    git(&upstream, &["branch", "private"]);
+    let clone = root.path().join("clone");
+    git_cmd(&[
+        "clone",
+        "-q",
+        upstream.to_str().unwrap(),
+        clone.to_str().unwrap(),
+    ])
+    .in_dir(root.path())
+    .suc();
+    git(&clone, &["fetch", "origin", "private"]);
+    git(
+        &clone,
+        &[
+            "config",
+            "--add",
+            "remote.origin.fetch",
+            "^refs/heads/private",
+        ],
+    );
+    git(&upstream, &["branch", "-D", "private"]);
+
+    let (_g, grit_dir) = copy_dir(&clone, "grit");
+    let (_git, git_dir) = copy_dir(&clone, "git");
+
+    git(&git_dir, &["remote", "prune", "origin"]);
+    let git_refs = git_for_each_ref(&git_dir, "refs/remotes");
+
+    let grit_repo = open(&grit_dir);
+    let pruned = grit_repo
+        .remotes()
+        .prune("origin", false, None)
+        .expect("prune");
+    assert!(
+        !pruned.iter().any(|r| r.ends_with("/private")),
+        "excluded ref must not be pruned: {pruned:?}"
+    );
+    let grit_refs = git_for_each_ref(&grit_dir, "refs/remotes");
+    assert_eq!(git_refs, grit_refs);
+    assert!(
+        grit_refs.iter().any(|(name, _)| name.ends_with("/private")),
+        "private tracking ref should remain"
+    );
+}
+
+#[test]
+fn set_head_delete_broken_symref() {
+    if !git_interop_available(Backend::Files) {
+        return;
+    }
+    let root = tempfile::tempdir().expect("tempdir");
+    let upstream = root.path().join("upstream");
+    git_cmd(&["init", "-q", "-b", "main", upstream.to_str().unwrap()])
+        .in_dir(root.path())
+        .suc();
+    git(
+        &upstream,
+        &[
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "c1",
+        ],
+    );
+    let clone = root.path().join("clone");
+    git_cmd(&[
+        "clone",
+        "-q",
+        upstream.to_str().unwrap(),
+        clone.to_str().unwrap(),
+    ])
+    .in_dir(root.path())
+    .suc();
+    git(
+        &clone,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/missing-branch",
+        ],
+    );
+
+    let (_g, grit_dir) = copy_dir(&clone, "grit");
+    let (_git, git_dir) = copy_dir(&clone, "git");
+
+    git(&git_dir, &["remote", "set-head", "origin", "--delete"]);
+
+    let grit_repo = open(&grit_dir);
+    grit_repo
+        .remotes()
+        .set_head("origin", SetHead::Delete, false, None)
+        .expect("delete broken head");
+
+    for dir in [&git_dir, &grit_dir] {
+        let status = Command::new("git")
+            .current_dir(dir)
+            .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
+            .status()
+            .expect("git status");
+        assert!(
+            !status.success(),
+            "HEAD symref should be gone in {}",
+            dir.display()
+        );
+    }
 }
