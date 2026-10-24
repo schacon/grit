@@ -64,6 +64,8 @@ impl OdbBuilder {
     ///
     /// Writes and primary reads go through this backend, including commits, staging
     /// ([`crate::porcelain::add::stage`]), merges, stash, notes, and bundle creation.
+    /// [`Repository::fsck`](crate::repo::Repository::fsck) validates the objects this
+    /// store lists.
     ///
     /// Operations that still need the on-disk `objects/` directory refuse up front with
     /// [`Error::UnsupportedObjectStore`] (its `operation` names the refused call) and leave
@@ -76,7 +78,6 @@ impl OdbBuilder {
     ///   [`RepositoryRemotes::push`](crate::repo_handles::RepositoryRemotes::push)
     /// - `"unbundle"`: [`Bundle::unbundle`](crate::bundle::Bundle::unbundle), reported as
     ///   [`BundleError::UnsupportedObjectStore`](crate::bundle::BundleError::UnsupportedObjectStore)
-    /// - `"fsck"`: [`Repository::fsck`](crate::repo::Repository::fsck)
     /// - maintenance: [`Odb::gc`], [`Odb::write_commit_graph`], repack, MIDX, and pack helpers
     #[must_use]
     pub fn primary(mut self, store: Arc<dyn WritableObjectStore>) -> Self {

@@ -936,8 +936,8 @@ impl Repository {
     ///
     /// # Errors
     ///
-    /// Propagates object-store, ref, or index failures that abort the run, and returns
-    /// [`crate::error::Error::UnsupportedObjectStore`] for a custom primary object store.
+    /// Propagates object-store, ref, or index failures that abort the run. A custom primary
+    /// object store is validated through the objects it lists (see [`crate::fsck::fsck`]).
     pub fn fsck(
         &self,
         options: &crate::fsck::FsckOptions,

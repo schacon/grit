@@ -37,13 +37,14 @@ cargo run -p grit-examples --bin memory_primary
 
 Object reads and writes go through your store, so commits, staging (`porcelain::add::stage` and auto-staging commits), log, diff, merge, stash, notes and bundle creation all work.
 
+[`Repository::fsck`](rustdoc:grit_lib::repo::Repository::fsck) works too: it lists the store's objects with `ObjectStore::for_each_object`, re-hashes each one against its id and runs the usual object and connectivity checks. Read or hash failures are reported as `FsckIssue::BadObject`, since there is no loose file path to name.
+
 Some operations still install or verify packs under the on-disk `objects/` directory. With a custom primary they fail up front with [`Error::UnsupportedObjectStore`](rustdoc:grit_lib::error::Error::UnsupportedObjectStore), before they touch refs, the remote or `objects/`. The `operation` field names the refused call:
 
 | `operation` | Refused API |
 | ----------- | ----------- |
 | `fetch` | [`Remote::fetch`](rustdoc:grit_lib::remote::Remote::fetch), `repo.remotes().fetch` / `fetch_all`, pull, promisor lazy fetch (every transport, bundles included) |
 | `push` | [`Remote::push`](rustdoc:grit_lib::remote::Remote::push), `repo.remotes().push` |
-| `fsck` | [`Repository::fsck`](rustdoc:grit_lib::repo::Repository::fsck) |
 | `gc`, `commit-graph write`, `repack`, `midx write`, `prune` | Filesystem maintenance (`Odb::gc`, `Odb::write_commit_graph`, `Odb::pack_store`, pack install, MIDX write) |
 
 `repo.bundles().unbundle` reports the same refusal as [`BundleError::UnsupportedObjectStore`](rustdoc:grit_lib::bundle::BundleError::UnsupportedObjectStore) with operation `unbundle`.

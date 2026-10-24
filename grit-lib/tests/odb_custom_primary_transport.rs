@@ -1,10 +1,10 @@
 //! Transport, fsck, unbundle, and staging behavior for repositories whose object database
 //! uses a custom [`OdbBuilder::primary`] store (issue #1735).
 //!
-//! Fetch, push, fsck, and unbundle still assume the files-backed `objects/` directory, so they
+//! Fetch, push, and unbundle still assume the files-backed `objects/` directory, so they
 //! must fail up front with a typed [`Error::UnsupportedObjectStore`] instead of writing packs
 //! the repository cannot read or moving refs to objects it does not have. Staging writes go
-//! through the custom primary.
+//! through the custom primary, and fsck validates the objects the primary lists.
 
 use std::fs;
 use std::path::Path;
@@ -296,16 +296,16 @@ fn push_from_custom_primary_fails_without_touching_remote() {
 }
 
 #[test]
-fn fsck_on_custom_primary_is_rejected_by_name() {
+fn fsck_on_custom_primary_validates_the_store() {
     let (_dir, repo, _store) = memory_repo();
     commit_into(&repo, b"x\n");
-    let err = repo
-        .fsck(&FsckOptions::default(), &mut NullProgress, &NeverCancel)
-        .expect_err("fsck needs the files-backed object store");
-    assert!(
-        matches!(err, Error::UnsupportedObjectStore { operation: "fsck" }),
-        "unexpected error: {err:?}"
-    );
+    let options = FsckOptions::default();
+    let report = repo
+        .fsck(&options, &mut NullProgress, &NeverCancel)
+        .expect("fsck reads objects through the custom primary");
+    assert!(report.objects_checked > 0);
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    assert!(report.ok(&repo.config().expect("config"), &options));
 }
 
 #[test]
