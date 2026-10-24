@@ -92,7 +92,8 @@ pub struct RepackOptions {
     /// When [`Self::write_bitmap`] is true and the repository already has pack files, bitmaps are
     /// written via a multi-pack-index sidecar instead of a per-pack `.bitmap` on the new pack alone.
     pub incremental: bool,
-    /// When true, skip rebuilding packs when Git `gc` would not (`gc.auto` / `gc.autoPackLimit`).
+    /// When true, [`gc`] may skip repack on a single pack with no loose objects when every
+    /// packed object is still reachable and none would be dropped by the active prune policy.
     pub auto_skip: bool,
 }
 
@@ -763,7 +764,12 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         run_incremental,
         opts.auto_skip,
         cfg.as_ref(),
-    );
+    ) && !skipping_repack_would_retain_prunable_packed_objects(
+        odb,
+        &pack_dir,
+        &roots,
+        opts,
+    )?;
 
     if opts.dry_run {
         report.objects = if skip_repack {
@@ -1059,6 +1065,51 @@ fn should_auto_skip_repack(
         return loose_objects == 0;
     }
     loose_objects == 0
+}
+
+/// True when skipping repack would leave unreachable objects in pack storage that repack would
+/// remove under `opts` (for example expired unreachable commits when `gc.pruneExpire=now`).
+fn skipping_repack_would_retain_prunable_packed_objects(
+    odb: &Odb,
+    pack_dir: &Path,
+    roots: &[ObjectId],
+    opts: &RepackOptions,
+) -> Result<bool> {
+    if opts.keep_unreachable {
+        return Ok(false);
+    }
+    let retention = if let Some(cutoff) = opts.prune_older_than.map(offset_to_system_time) {
+        UnreachablePackRetention::KeepGraceProtected(cutoff)
+    } else {
+        UnreachablePackRetention::DropAll
+    };
+    let reachable = reachability_closure_for_roots(odb, roots)?;
+    let indexes = crate::pack::read_local_pack_indexes_cached(odb.objects_dir())?;
+    for idx in indexes {
+        if pack_has_keep_marker(pack_dir, &idx.pack_path) {
+            continue;
+        }
+        let pack_mtime = fs::metadata(&idx.pack_path)
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let drop_unreachable_from_pack = match retention {
+            UnreachablePackRetention::KeepAll => false,
+            UnreachablePackRetention::DropAll => true,
+            UnreachablePackRetention::KeepGraceProtected(cutoff) => pack_mtime < cutoff,
+        };
+        if !drop_unreachable_from_pack {
+            continue;
+        }
+        for entry in idx.iter() {
+            let Ok(oid) = ObjectId::from_bytes(entry.oid()) else {
+                continue;
+            };
+            if !reachable.contains(&oid) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Delete unreachable loose objects using `gc.pruneExpire` or an explicit cutoff.
@@ -1499,7 +1550,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn auto_skip_repack_matches_gc_auto_heuristics() {
+    fn gc_auto_skip_single_pack_without_loose() {
         let dir = TempDir::new().unwrap();
         let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
         std::fs::write(repo.work_tree().unwrap().join("a"), b"x").unwrap();

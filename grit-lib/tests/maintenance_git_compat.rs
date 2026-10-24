@@ -1061,6 +1061,73 @@ fn gc_twice_on_single_pack_keeps_loose_count_zero() {
 }
 
 #[test]
+fn gc_drops_expired_unreachable_packed_commit_like_git() {
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-b", "main"]);
+    git(dir.path(), &["config", "gc.auto", "0"]);
+    git(dir.path(), &["config", "gc.pruneExpire", "now"]);
+    git_commit_dated(dir.path(), "2020-01-01T00:00:00 +0000", "main seed");
+    git(dir.path(), &["checkout", "-b", "side"]);
+    git_commit_dated(dir.path(), "2020-01-02T00:00:00 +0000", "side tip");
+    let side_tip = Command::new("git")
+        .current_dir(dir.path())
+        .args(["rev-parse", "HEAD"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("rev-parse");
+    assert!(side_tip.status.success());
+    let side_hex = String::from_utf8_lossy(&side_tip.stdout).trim().to_string();
+    git(dir.path(), &["checkout", "main"]);
+    git(dir.path(), &["repack", "-a", "-d"]);
+    git(dir.path(), &["branch", "-D", "side"]);
+    git(
+        dir.path(),
+        &[
+            "reflog",
+            "expire",
+            "--expire=now",
+            "--expire-unreachable=now",
+            "--all",
+        ],
+    );
+
+    let pack_path = std::fs::read_dir(dir.path().join(".git/objects/pack"))
+        .expect("pack dir")
+        .filter_map(|e| e.ok())
+        .find(|e| e.path().extension().is_some_and(|x| x == "pack"))
+        .expect("pack")
+        .path();
+    filetime::set_file_mtime(&pack_path, FileTime::from_unix_time(946_684_800, 0))
+        .expect("age pack");
+
+    let grit_copy = TempDir::new().expect("grit");
+    duplicate_repo_tree(dir.path(), grit_copy.path());
+    let git_copy = TempDir::new().expect("git");
+    duplicate_repo_tree(dir.path(), git_copy.path());
+
+    let repo =
+        Repository::discover(Some(grit_copy.path()), &RepositoryOptions::empty()).expect("open");
+    gc(
+        &repo,
+        &GcOptions::with_reflog_policy(1_761_000_000, false),
+    )
+    .expect("grit gc");
+    clear_pack_cache_after_disk_maintenance();
+    git(git_copy.path(), &["gc", "--quiet"]);
+
+    assert!(
+        !cat_file_exists(grit_copy.path(), &side_hex),
+        "grit gc must drop expired unreachable packed commit (issue #1038 review)"
+    );
+    assert!(
+        !cat_file_exists(git_copy.path(), &side_hex),
+        "git gc must drop expired unreachable packed commit"
+    );
+    git_fsck(grit_copy.path(), true);
+}
+
+#[test]
 fn gc_skips_repack_when_single_pack_and_no_loose() {
     let dir = TempDir::new().expect("tempdir");
     git(dir.path(), &["init", "-b", "main"]);
