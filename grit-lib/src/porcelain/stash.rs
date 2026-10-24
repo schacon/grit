@@ -28,6 +28,7 @@ use crate::index::{index_file_mtime, Index, IndexEntry, MODE_GITLINK, MODE_SYMLI
 use crate::apply::{apply_patch_to_index, FilePatch, IndexApplyOptions};
 use crate::check_ref_format::validate_branch_short_name;
 use crate::diff::hunk_id::DiffSide;
+use crate::ident::Signature;
 #[cfg(unix)]
 use crate::index::MODE_EXECUTABLE;
 use crate::merge_file::MergeFavor;
@@ -273,8 +274,9 @@ pub struct StashPushOptions {
     pub message: Option<String>,
     /// When true, include untracked files as a parentless U commit (parent 3 of W).
     pub include_untracked: bool,
-    /// Full author/committer identity (`Name <email> timestamp tz`).
-    pub identity: String,
+    /// Author and committer of the stash commits and identity of the `refs/stash` reflog entry
+    /// (for example from [`Repository::identity`]).
+    pub identity: Signature,
     /// When set, stash only these unstaged hunks (index is left unchanged on push).
     pub selection: Option<HunkSelection>,
     /// Pathspecs narrowing hunk resolution (same as `grit add --hunks`).
@@ -292,8 +294,10 @@ impl StashPushOptions {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::StashOptionConflict`] when options conflict.
+    /// Returns [`Error::StashOptionConflict`] when options conflict and
+    /// [`Error::InvalidSignature`] when [`Self::identity`] cannot be written into a commit.
     pub fn validate(&self) -> Result<()> {
+        self.identity.validate()?;
         if self.mode == StashMode::StagedOnly && self.include_untracked {
             return Err(Error::StashOptionConflict(
                 "cannot combine --staged with --include-untracked".into(),
@@ -1241,6 +1245,7 @@ fn build_stash_commit(
     let head_oid = head_commit_oid(&head)?;
     let head_tree = repo.odb().commit_tree(&head_oid)?;
     options.validate_staged_worktree(repo, work_tree, &head_tree)?;
+    let identity = options.identity.header_line();
 
     let pathspec_push = stash_push_pathspecs_active(options);
     if pathspec_push {
@@ -1276,8 +1281,8 @@ fn build_stash_commit(
     let i_commit_data = CommitData {
         tree: i_tree,
         parents: vec![head_oid],
-        author: options.identity.clone(),
-        committer: options.identity.clone(),
+        author: identity.clone(),
+        committer: identity.clone(),
         author_raw: Vec::new(),
         committer_raw: Vec::new(),
         encoding: None,
@@ -1305,7 +1310,7 @@ fn build_stash_commit(
             work_tree,
             &untracked_paths,
             &context,
-            &options.identity,
+            &identity,
         )?)
     };
 
@@ -1350,8 +1355,8 @@ fn build_stash_commit(
     let w_commit_data = CommitData {
         tree: w_tree,
         parents,
-        author: options.identity.clone(),
-        committer: options.identity.clone(),
+        author: identity.clone(),
+        committer: identity.clone(),
         author_raw: Vec::new(),
         committer_raw: Vec::new(),
         encoding: None,
@@ -1459,7 +1464,12 @@ pub(crate) fn push_stash(
         message: built.message.clone(),
         w_tree: built.w_tree,
     };
-    store_stash(repo, built.w_commit, &built.message, &options.identity)?;
+    store_stash(
+        repo,
+        built.w_commit,
+        &built.message,
+        &options.identity.header_line(),
+    )?;
     if let Some(ref patches) = built.partial_patches {
         if !built.untracked_paths.is_empty() {
             remove_stashed_untracked(repo, work_tree, &built.untracked_paths)?;
@@ -2565,7 +2575,7 @@ pub(crate) fn push_operation_autostash(
         &StashPushOptions {
             message: Some("autostash".to_owned()),
             include_untracked: true,
-            identity: identity.to_owned(),
+            identity: identity.parse()?,
             selection: None,
             pathspecs: Vec::new(),
             dry_run: false,
@@ -2697,7 +2707,7 @@ mod coverage_tests {
         let opts = StashPushOptions {
             message: Some("msg".into()),
             include_untracked: false,
-            identity: ident.into(),
+            identity: ident.parse().expect("signature"),
             selection: None,
             pathspecs: Vec::new(),
             dry_run: false,
@@ -2754,7 +2764,7 @@ mod coverage_tests {
         let opts = StashPushOptions {
             message: None,
             include_untracked: false,
-            identity: "T <t@t> 1 +0000".into(),
+            identity: "T <t@t> 1 +0000".parse().expect("signature"),
             selection: None,
             pathspecs: Vec::new(),
             dry_run: false,
@@ -2786,7 +2796,7 @@ mod coverage_tests {
         let opts = StashPushOptions {
             message: None,
             include_untracked: false,
-            identity: "T <t@t> 1 +0000".into(),
+            identity: "T <t@t> 1 +0000".parse().expect("signature"),
             selection: None,
             pathspecs: Vec::new(),
             dry_run: false,
@@ -2804,7 +2814,7 @@ mod coverage_tests {
         let opts = StashPushOptions {
             message: Some("m".into()),
             include_untracked: true,
-            identity: ident.into(),
+            identity: ident.parse().expect("signature"),
             selection: None,
             pathspecs: Vec::new(),
             dry_run: false,
@@ -2919,7 +2929,7 @@ mod hunk_push_tests {
             &StashPushOptions {
                 message: Some("preview".into()),
                 include_untracked: false,
-                identity: IDENT.into(),
+                identity: IDENT.parse().expect("signature"),
                 selection: Some(selection),
                 pathspecs: Vec::new(),
                 dry_run: true,
@@ -2945,7 +2955,7 @@ mod hunk_push_tests {
             &StashPushOptions {
                 message: Some("partial".into()),
                 include_untracked: false,
-                identity: IDENT.into(),
+                identity: IDENT.parse().expect("signature"),
                 selection: Some(selection),
                 pathspecs: Vec::new(),
                 dry_run: false,
@@ -2974,7 +2984,7 @@ mod hunk_push_tests {
             &StashPushOptions {
                 message: None,
                 include_untracked: false,
-                identity: IDENT.into(),
+                identity: IDENT.parse().expect("signature"),
                 selection: Some(selection),
                 pathspecs: Vec::new(),
                 dry_run: false,
@@ -3003,7 +3013,7 @@ mod hunk_push_tests {
             &StashPushOptions {
                 message: None,
                 include_untracked: false,
-                identity: IDENT.into(),
+                identity: IDENT.parse().expect("signature"),
                 selection: Some(selection),
                 pathspecs: Vec::new(),
                 dry_run: false,
@@ -3030,7 +3040,7 @@ mod hunk_push_tests {
             &StashPushOptions {
                 message: None,
                 include_untracked: false,
-                identity: IDENT.into(),
+                identity: IDENT.parse().expect("signature"),
                 selection: Some(selection),
                 pathspecs: Vec::new(),
                 dry_run: false,

@@ -274,8 +274,8 @@ mod tests {
             &repo,
             &CommitRequest {
                 message: "init".into(),
-                author: ident.clone(),
-                committer: ident,
+                author: Some(ident.parse().expect("signature")),
+                committer: Some(ident.parse().expect("signature")),
                 ..Default::default()
             },
             &mut NullProgress,

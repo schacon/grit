@@ -31,8 +31,8 @@ fn commit_req(message: &str) -> CommitRequest {
     let id = "Link Test <link@example.com> 1700000000 +0000".to_owned();
     CommitRequest {
         message: message.to_owned(),
-        author: id.clone(),
-        committer: id,
+        author: Some(id.parse().expect("signature")),
+        committer: Some(id.parse().expect("signature")),
         ..Default::default()
     }
 }

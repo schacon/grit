@@ -67,8 +67,8 @@ fn commit_second(repo: &Repository) -> grit_lib::error::Result<grit_lib::objects
     let id = "T <t@e.x> 1700000000 +0000".to_string();
     let req = CommitRequest {
         message: "second".into(),
-        author: id.clone(),
-        committer: id,
+        author: Some(id.parse().expect("signature")),
+        committer: Some(id.parse().expect("signature")),
         ..Default::default()
     };
     commit_worktree(repo, &req, &mut NullProgress).map(|o| o.oid)

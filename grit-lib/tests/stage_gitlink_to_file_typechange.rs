@@ -79,8 +79,8 @@ fn stage_and_commit(repo: &Repository) {
         repo,
         &CommitRequest {
             message: "replace with file".to_owned(),
-            author: ident.clone(),
-            committer: ident,
+            author: Some(ident.parse().expect("signature")),
+            committer: Some(ident.parse().expect("signature")),
             ..Default::default()
         },
         CommitScope::Staged,
