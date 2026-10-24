@@ -1547,12 +1547,27 @@ fn commit_rank_for_walk(cache: &mut CommitGraphCache<'_>, oid: ObjectId) -> u64 
     if let Some(rank) = commit_graph_rank(cache, oid) {
         return rank;
     }
-    // Without commit-graph generations, Git orders by committer date (newest first).
-    // Map unix seconds into `[1, LEGACY_RANK_CAP]` for heap ordering only (not pruning).
-    match cache.commit_time(oid) {
-        Ok(t) if t > 0 => (t as u64).clamp(1, LEGACY_RANK_CAP),
-        _ => 0,
-    }
+    UNRANKED_COMMIT
+}
+
+/// Heap ordering key: commit-graph generation when present, else [`UNRANKED_COMMIT`]
+/// with [`CommitGraphCache::commit_time`] as the tie-break (see [`PaintKey`]).
+fn push_commit_heap_key(
+    cache: &mut CommitGraphCache<'_>,
+    heap: &mut BinaryHeap<PaintKey>,
+    seq: &mut u64,
+    oid: ObjectId,
+) -> Result<()> {
+    let rank = commit_rank_for_walk(cache, oid);
+    let committed_at = cache.commit_time(oid)?;
+    heap.push(PaintKey {
+        rank,
+        committed_at,
+        seq: std::cmp::Reverse(*seq),
+        oid,
+    });
+    *seq += 1;
+    Ok(())
 }
 
 /// Commit is reachable from the left tips of a [`SidePaint`].
@@ -2321,15 +2336,7 @@ impl RefContainsWalk {
             self.queued.remove(&oid);
         }
         if self.queued.insert(oid) {
-            let rank = commit_rank_for_walk(cache, oid);
-            let committed_at = cache.commit_time(oid)?;
-            self.heap.push(PaintKey {
-                rank,
-                committed_at,
-                seq: std::cmp::Reverse(self.seq),
-                oid,
-            });
-            self.seq += 1;
+            push_commit_heap_key(cache, &mut self.heap, &mut self.seq, oid)?;
         }
         Ok(())
     }
@@ -2912,6 +2919,22 @@ mod tests {
              (parent lookups {parent_reads} across 10 calls; full trunk scan would be \
              ~{TRUNK_LEN} per failed probe)"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn commit_rank_for_walk_unranked_without_commit_graph_despite_dates() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_test_bare(&dir)?;
+        let old = write_commit_same_time(&repo.odb(), &[], "old", 946_684_800)?;
+        let new = write_commit_same_time(&repo.odb(), &[old], "new", 1_893_456_000)?;
+        let mut cache = CommitGraphCache::new(&repo);
+        assert_eq!(
+            commit_rank_for_walk(&mut cache, new),
+            UNRANKED_COMMIT,
+            "generation probes must not treat committer dates as ranks without a commit-graph"
+        );
+        assert_eq!(commit_rank_for_walk(&mut cache, old), UNRANKED_COMMIT);
         Ok(())
     }
 
