@@ -564,19 +564,17 @@ fn load_gitignore_for_dir(
 
     // In-tree `.gitignore` must not be a symlink (Git follows symlinks for global/info excludes
     // only). Match Git's warning and skip the file (t0008).
-    if path.exists() {
-        if let Ok(meta) = fs::symlink_metadata(&path) {
-            if meta.file_type().is_symlink() {
-                warnings.push(crate::diagnostics::warning_line(&format!(
-                    "unable to access '{source_display}': Too many levels of symbolic links"
-                )));
-                return Ok(Vec::new());
-            }
+    match read_in_tree_pattern_file(&path)? {
+        InTreePatternFile::Symlink => {
+            warnings.push(crate::diagnostics::warning_line(&format!(
+                "unable to access '{source_display}': Too many levels of symbolic links"
+            )));
+            return Ok(Vec::new());
         }
-    }
-
-    if let Some(content) = read_optional_text(&path)? {
-        return parse_gitignore_content(&content, source, dir, warnings);
+        InTreePatternFile::Content(content) => {
+            return parse_gitignore_content(&content, source, dir, warnings);
+        }
+        InTreePatternFile::Missing => {}
     }
 
     if let Some(ix) = index {
@@ -916,6 +914,45 @@ impl Repository {
         }
         Ok(out)
     }
+}
+
+/// Outcome of reading a per-directory pattern file that Git refuses to follow as a symlink.
+enum InTreePatternFile {
+    Missing,
+    Symlink,
+    Content(String),
+}
+
+/// Read `path` without following a final symlink, so a link (dangling, or to a FIFO or
+/// device) is reported instead of opened. A missing file costs a single failed open on Unix.
+fn read_in_tree_pattern_file(path: &Path) -> Result<InTreePatternFile> {
+    let is_symlink = || fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    #[cfg(unix)]
+    let opened = {
+        use std::os::unix::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+    };
+    #[cfg(not(unix))]
+    let opened = if is_symlink() {
+        return Ok(InTreePatternFile::Symlink);
+    } else {
+        fs::File::open(path)
+    };
+    let mut file = match opened {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(InTreePatternFile::Missing);
+        }
+        // `O_NOFOLLOW` fails with `ELOOP` (or `EMLINK` on some BSDs) on a symlink.
+        Err(_) if is_symlink() => return Ok(InTreePatternFile::Symlink),
+        Err(err) => return Err(Error::Io(err)),
+    };
+    let mut content = String::new();
+    std::io::Read::read_to_string(&mut file, &mut content).map_err(Error::Io)?;
+    Ok(InTreePatternFile::Content(content))
 }
 
 fn read_optional_text(path: &Path) -> Result<Option<String>> {
@@ -1394,6 +1431,65 @@ mod gitignore_glob_tests {
     #[test]
     fn nested_dir_star_extension() {
         assert!(!pathname_pattern_matches("foo/bar/*.c", "foo/bar/baz/x.c"));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod per_directory_gitignore_tests {
+    use super::*;
+    use crate::repo::init_repository;
+    use crate::RefStorageFormat;
+    use std::os::unix::ffi::OsStringExt;
+    use std::os::unix::fs::symlink;
+    use tempfile::TempDir;
+
+    fn ignored_with_warnings(repo: &Repository, path: &str) -> (bool, Vec<String>) {
+        let mut matcher = IgnoreMatcher::from_repository(repo).unwrap();
+        let ignored = matcher.is_path_ignored(repo, None, path, false).unwrap();
+        (ignored, matcher.take_warnings())
+    }
+
+    #[test]
+    fn symlinked_gitignore_is_skipped_with_warning_and_plain_one_applies() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        let repo = init_repository(root, false, "main", None, RefStorageFormat::Files).unwrap();
+        fs::create_dir_all(root.join("plain")).unwrap();
+        fs::create_dir_all(root.join("to_file")).unwrap();
+        fs::create_dir_all(root.join("to_dir")).unwrap();
+        fs::create_dir_all(root.join("none")).unwrap();
+        fs::write(root.join("plain/.gitignore"), "*.log\n").unwrap();
+        fs::write(root.join("rules"), "*.log\n").unwrap();
+        symlink(root.join("rules"), root.join("to_file/.gitignore")).unwrap();
+        symlink(root.join("plain"), root.join("to_dir/.gitignore")).unwrap();
+        fs::create_dir_all(root.join("dangling")).unwrap();
+        symlink(root.join("no-such-rules"), root.join("dangling/.gitignore")).unwrap();
+        fs::create_dir_all(root.join("to_fifo")).unwrap();
+        let fifo = std::ffi::CString::new(root.join("fifo").into_os_string().into_vec()).unwrap();
+        // SAFETY: `fifo` is a NUL-terminated path that outlives the call.
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o644) }, 0);
+        symlink(root.join("fifo"), root.join("to_fifo/.gitignore")).unwrap();
+
+        assert_eq!(ignored_with_warnings(&repo, "plain/a.log"), (true, vec![]));
+        assert_eq!(ignored_with_warnings(&repo, "none/a.log"), (false, vec![]));
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let fifo_root = root.to_path_buf();
+        std::thread::spawn(move || {
+            let options = crate::environment::RepositoryOptions::empty().with_work_tree(&fifo_root);
+            let repo = Repository::open(&fifo_root.join(".git"), &options).unwrap();
+            let _ = done_tx.send(ignored_with_warnings(&repo, "to_fifo/a.log"));
+        });
+        let (ignored, warnings) = done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("a .gitignore symlink to a FIFO must be rejected without opening it");
+        assert!(!ignored);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        for dir in ["to_file", "to_dir", "dangling"] {
+            let (ignored, warnings) = ignored_with_warnings(&repo, &format!("{dir}/a.log"));
+            assert!(!ignored, "{dir}: symlinked .gitignore must not apply");
+            assert_eq!(warnings.len(), 1, "{dir}: {warnings:?}");
+            assert!(warnings[0].contains(&format!("{dir}/.gitignore")));
+        }
     }
 }
 

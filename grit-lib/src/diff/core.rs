@@ -4360,12 +4360,7 @@ fn push_index_blob_worktree_diff(
 
     if stat_same
         && (!trust_filemode || worktree_mode == ie.mode)
-        && index_entry_skips_worktree_content_hash_after_stat_match(
-            ie,
-            index_mtime,
-            stat_policy,
-            trust_filemode,
-        )
+        && index_entry_skips_worktree_content_hash_after_stat_match(ie, index_mtime, stat_policy)
     {
         return Ok(());
     }
@@ -4775,7 +4770,7 @@ fn diff_index_to_worktree_inner(
     // Cache of ancestor-directory symlink-ness so we stat each directory at most
     // once, rather than re-lstat'ing every ancestor of every index entry
     // (O(unique dirs) instead of O(files × depth)).
-    let mut dir_symlinks = SymlinkDirCache::default();
+    let dir_symlinks = SymlinkDirCache::default();
 
     let error_on_broken_gitlinks = options.error_on_broken_gitlinks;
     if options.restrict_to_paths.is_none() {
@@ -4852,9 +4847,9 @@ fn diff_index_to_worktree_inner(
     }
 
     use crate::worktree_scan::{
-        blob_lookup_batch_entry_indices, collect_blob_lookup_batches, group_blob_entries_by_dir,
-        stat_scan_thread_count, visit_blob_lookup_batches, BlobDiskLookup, BlobScanSparseMode,
-        WorktreeBlobScanOptions, PARALLEL_STAT_MIN_ENTRIES,
+        collect_blob_lookup_batches, group_blob_entries_by_dir, stat_scan_thread_count,
+        visit_blob_lookup_batches, BlobDiskLookup, BlobScanSparseMode, WorktreeBlobScanOptions,
+        PARALLEL_STAT_MIN_ENTRIES,
     };
     let preload_index = config
         .get_bool("core.preloadIndex")
@@ -4888,7 +4883,8 @@ fn diff_index_to_worktree_inner(
         && hash_threads > 1
         && (materialize_dirty_blobs || options.for_status);
     let mut staging_hash_jobs: Vec<StagingHashJob> = Vec::new();
-    let mut stat_refresh_verified = vec![false; index.entries.len()];
+    // Entries the stat refresh just hashed and found matching their recorded blob.
+    let mut refresh_content_verified = vec![false; index.entries.len()];
     // Parallel preload must lstat ancestor directories without following symlinks. When a
     // tracked directory is replaced by a symlink, indexed paths under it are deletions even if
     // the link target still holds a file at the same relative path with an unchanged stat.
@@ -4912,8 +4908,6 @@ fn diff_index_to_worktree_inner(
         blob_scan,
         &thread_policy,
         &config,
-        true,
-        None,
         dir_abs,
         file_abs,
         |rel_path| {
@@ -4926,7 +4920,6 @@ fn diff_index_to_worktree_inner(
         },
         sparse,
     )?;
-    let retained_indices = blob_lookup_batch_entry_indices(&blob_stat_batches);
     visit_blob_lookup_batches(blob_stat_batches, |entry_index, lookup| {
         let path_owned = crate::repo_relpath::storage_string(&index.entries[entry_index].path);
         let path_str_ref = path_owned.as_str();
@@ -4968,9 +4961,6 @@ fn diff_index_to_worktree_inner(
                         && !ie_ref.stat_cache_unset();
                     let racy = entry_is_racy_with_policy(ie_ref, index_mtime, stat_policy);
                     let skip_refresh_clean_status = options.for_status && stat_matches && !racy;
-                    if skip_refresh_clean_status && index_stat_cache_trustworthy(index_mtime) {
-                        stat_refresh_verified[entry_index] = true;
-                    }
                     if !skip_refresh_for_status_diff && !skip_refresh_clean_status {
                         let path_owned = path_str_ref.to_owned();
                         let path_bytes = index.entries[entry_index].path.as_slice();
@@ -4998,7 +4988,7 @@ fn diff_index_to_worktree_inner(
                             index_stat_refresh_changed = true;
                         }
                         if refresh.content_verified {
-                            stat_refresh_verified[entry_index] = true;
+                            refresh_content_verified[entry_index] = true;
                         }
                         if index.fsmonitor_last_update.is_some()
                             && stat_matches_blob_stat(
@@ -5016,15 +5006,12 @@ fn diff_index_to_worktree_inner(
                 if parallel_blob_work {
                     let worktree_mode = stat.git_mode;
                     let stat_same = stat_matches_blob_stat(ie, &stat, stat_policy);
-                    let racy = entry_is_racy_with_policy(ie, index_mtime, stat_policy);
                     if stat_same
-                        && !racy
                         && (!trust_filemode || worktree_mode == ie.mode)
                         && index_entry_skips_worktree_content_hash_after_stat_match(
                             ie,
                             index_mtime,
                             stat_policy,
-                            trust_filemode,
                         )
                     {
                         return Ok(());
@@ -5048,9 +5035,7 @@ fn diff_index_to_worktree_inner(
                         options.for_status,
                         &mut result,
                     ) {
-                    } else if !(stat_same && (!trust_filemode || worktree_mode == ie.mode) && !racy)
-                        && !stat_refresh_verified[entry_index]
-                    {
+                    } else if !refresh_content_verified[entry_index] {
                         let file_path = index_entry_worktree_abs_bytes(
                             work_tree,
                             &index.entries[entry_index].path,
@@ -5067,17 +5052,20 @@ fn diff_index_to_worktree_inner(
                         });
                     }
                 } else {
-                    // The scan's lstat already proves an unchanged, non-racy entry clean; only
+                    // The scan's lstat already proves an unchanged, non-racy entry clean, and the
+                    // stat refresh above may have just verified a racy entry by content; only
                     // re-stat paths that `push_index_blob_worktree_diff` has to inspect.
+                    let same_file_type = (stat.git_mode == crate::index::MODE_SYMLINK)
+                        == (ie.mode == crate::index::MODE_SYMLINK);
                     if !stat.is_dir
-                        && stat_matches_blob_stat(ie, &stat, stat_policy)
                         && (!trust_filemode || stat.git_mode == ie.mode)
-                        && index_entry_skips_worktree_content_hash_after_stat_match(
-                            ie,
-                            index_mtime,
-                            stat_policy,
-                            trust_filemode,
-                        )
+                        && ((refresh_content_verified[entry_index] && same_file_type)
+                            || (stat_matches_blob_stat(ie, &stat, stat_policy)
+                                && index_entry_skips_worktree_content_hash_after_stat_match(
+                                    ie,
+                                    index_mtime,
+                                    stat_policy,
+                                )))
                     {
                         return Ok(());
                     }
@@ -5110,24 +5098,6 @@ fn diff_index_to_worktree_inner(
         }
         Ok(())
     })?;
-    if parallel_blob_work
-        && refresh_index_stat_in_pass
-        && options.for_status
-        && index_stat_cache_trustworthy(index_mtime)
-    {
-        for &entry_index in &blob_dirs.indices {
-            if retained_indices.contains(&entry_index) {
-                continue;
-            }
-            let ie = &index.entries[entry_index];
-            if !index_entry_needs_worktree_diff_pass1(ie) {
-                continue;
-            }
-            if !entry_is_racy_with_policy(ie, index_mtime, stat_policy) {
-                stat_refresh_verified[entry_index] = true;
-            }
-        }
-    }
     if parallel_blob_work && !staging_hash_jobs.is_empty() {
         parallel_process_blob_worktree_jobs(
             odb,
@@ -5206,13 +5176,11 @@ fn diff_index_to_worktree_inner(
 }
 
 /// Memoized cache of which ancestor directories are symlinks, so each directory
-/// is lstat'd at most once per `diff_index_to_worktree` call.
+/// is probed at most once per worktree scan. Shared by parallel stat workers.
 #[derive(Default)]
 pub(crate) struct SymlinkDirCache {
-    /// Relative dir prefixes confirmed to be symlinks.
-    symlink: std::collections::HashSet<String>,
-    /// Relative dir prefixes confirmed not to be symlinks.
-    plain: std::collections::HashSet<String>,
+    /// Repository-relative directory (raw index bytes) to whether it is a symlink.
+    dirs: std::sync::Mutex<hashbrown::HashMap<Vec<u8>, bool>>,
 }
 
 pub(crate) fn index_entry_worktree_abs(
@@ -5259,111 +5227,53 @@ pub fn index_mtime_for_diff(index: &Index, explicit: Option<(u32, u32)>) -> Opti
 }
 
 impl SymlinkDirCache {
-    /// Returns `true` when `prefix` itself is a symlink (and records the result).
-    fn probe_prefix(
-        &mut self,
-        work_tree: &Path,
-        prefix: &str,
-        precompose_unicode: bool,
-        ignorecase: bool,
-    ) -> bool {
-        if self.symlink.contains(prefix) {
-            return true;
-        }
-        if self.plain.contains(prefix) {
-            return false;
-        }
-        let abs = index_entry_worktree_abs(work_tree, prefix, precompose_unicode, ignorecase);
-        let is_symlink = match fs::symlink_metadata(&abs) {
-            Ok(meta) => meta.file_type().is_symlink(),
-            _ => false,
-        };
-        if is_symlink {
-            self.symlink.insert(prefix.to_owned());
-        } else {
-            self.plain.insert(prefix.to_owned());
-        }
-        is_symlink
-    }
-
-    /// Whether any parent component of `rel_path` is a symlink.
-    pub(crate) fn has_symlink_in_path(
-        &mut self,
-        work_tree: &Path,
-        rel_path: &str,
-        precompose_unicode: bool,
-        ignorecase: bool,
-    ) -> bool {
-        let components: Vec<&str> = rel_path.split('/').collect();
-        let mut prefix = String::new();
-        // Check every ancestor directory (all components except the file itself).
-        for component in &components[..components.len().saturating_sub(1)] {
-            if !prefix.is_empty() {
-                prefix.push('/');
-            }
-            prefix.push_str(component);
-            if self.symlink.contains(&prefix) {
-                return true;
-            }
-            if self.plain.contains(&prefix) {
-                continue;
-            }
-            if self.probe_prefix(work_tree, &prefix, precompose_unicode, ignorecase) {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Whether any parent component of `rel_path` is a symlink (raw index path bytes).
+    /// Whether any parent directory of `rel_path` (raw index path bytes) is a symlink.
+    ///
+    /// Probes each ancestor at most once across all callers; the filesystem query runs
+    /// outside the lock so parallel workers do not serialize on it.
     pub(crate) fn has_symlink_in_path_bytes(
-        &mut self,
+        &self,
         work_tree: &Path,
         rel_path: &[u8],
         precompose_unicode: bool,
         ignorecase: bool,
     ) -> bool {
-        if let Ok(s) = std::str::from_utf8(rel_path) {
-            return self.has_symlink_in_path(work_tree, s, precompose_unicode, ignorecase);
-        }
-        let mut prefix = Vec::<u8>::new();
-        let mut start = 0usize;
-        let end = rel_path
+        let Some(dir_len) = rel_path.iter().rposition(|&b| b == b'/') else {
+            return false;
+        };
+        let prefix_ends = rel_path[..dir_len]
             .iter()
-            .rposition(|&b| b == b'/')
-            .unwrap_or(rel_path.len());
-        while start < end {
-            let next = rel_path[start..end]
-                .iter()
-                .position(|&b| b == b'/')
-                .map_or(end, |p| start + p);
-            let component = &rel_path[start..next];
-            start = next + 1;
-            if component.is_empty() {
+            .enumerate()
+            .filter_map(|(i, &b)| (b == b'/').then_some(i))
+            .chain(std::iter::once(dir_len));
+        for end in prefix_ends {
+            let prefix = &rel_path[..end];
+            if prefix.is_empty() || prefix.ends_with(b"/") {
                 continue;
             }
-            if !prefix.is_empty() {
-                prefix.push(b'/');
-            }
-            prefix.extend_from_slice(component);
-            let key = crate::repo_relpath::storage_string(&prefix);
-            if self.symlink.contains(&key) {
-                return true;
-            }
-            if self.plain.contains(&key) {
-                continue;
-            }
-            let abs =
-                index_entry_worktree_abs_bytes(work_tree, &prefix, precompose_unicode, ignorecase);
-            let is_symlink = match fs::symlink_metadata(&abs) {
-                Ok(meta) => meta.file_type().is_symlink(),
-                _ => false,
-            };
+            let cached = self
+                .dirs
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(prefix)
+                .copied();
+            let is_symlink = cached.unwrap_or_else(|| {
+                let abs = index_entry_worktree_abs_bytes(
+                    work_tree,
+                    prefix,
+                    precompose_unicode,
+                    ignorecase,
+                );
+                let probed = crate::worktree_scan::path_is_symlink(&abs);
+                self.dirs
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(prefix.to_vec(), probed);
+                probed
+            });
             if is_symlink {
-                self.symlink.insert(key);
                 return true;
             }
-            self.plain.insert(key);
         }
         false
     }
@@ -5644,14 +5554,17 @@ pub(crate) fn index_stat_cache_trustworthy(index_mtime: Option<(u32, u32)>) -> b
 /// hashing may be skipped (Git `diff-files` / `update-index --refresh` style).
 ///
 /// Does not permit skipping worktree observation; fsmonitor-valid entries use a separate path.
+/// Independent of `core.filemode`: callers compare the executable bit separately.
+///
+/// A zero cached size is trusted only for the empty blob; any other blob with size zero was
+/// smudged by a racy index write and must be re-hashed (Git `ce_match_stat_basic`).
 #[must_use]
 pub(crate) fn index_entry_skips_worktree_content_hash_after_stat_match(
     ie: &IndexEntry,
     index_mtime: Option<(u32, u32)>,
     stat_policy: crate::index::StatMatchPolicy,
-    trust_filemode: bool,
 ) -> bool {
-    if !trust_filemode || ie.stat_cache_unset() || ie.size == 0 {
+    if ie.stat_cache_unset() || (ie.size == 0 && !ie.oid.is_empty_blob()) {
         return false;
     }
     if !index_stat_cache_trustworthy(index_mtime) {
@@ -5973,7 +5886,7 @@ pub fn refresh_index_stat_content_verified_with_rules(
     let file_abs = move |rel: &[u8]| {
         index_entry_worktree_abs_bytes(&work_tree_for_files, rel, precompose_unicode, ignorecase)
     };
-    let mut dir_symlinks = SymlinkDirCache::default();
+    let dir_symlinks = SymlinkDirCache::default();
     let mut changed = false;
     let filter_fp = rules_lock.as_ref().map(|r| r.filter_process());
     let thread_policy = crate::parallel::ThreadPolicy::default();
@@ -5984,8 +5897,6 @@ pub fn refresh_index_stat_content_verified_with_rules(
         blob_scan,
         &thread_policy,
         &config,
-        true,
-        None,
         dir_abs,
         file_abs,
         |rel_path| {
@@ -12182,7 +12093,6 @@ mod smudge_racily_clean_tests {
                 &entry,
                 Some(index_mtime),
                 policy,
-                true
             )
         );
         entry.size = 0;
@@ -12193,10 +12103,96 @@ mod smudge_racily_clean_tests {
                 &entry,
                 Some(index_mtime),
                 policy,
-                true
             )
         );
         let _ = git_dir;
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_dir_cache_detects_symlinked_ancestors_across_threads() {
+        let td = tempfile::tempdir().expect("tempdir");
+        let wt = td.path();
+        fs::create_dir_all(wt.join("real/deep")).expect("mkdir");
+        fs::create_dir_all(wt.join("target/deep")).expect("mkdir");
+        std::os::unix::fs::symlink(wt.join("target"), wt.join("linked")).expect("symlink");
+        let cache = super::SymlinkDirCache::default();
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    assert!(!cache.has_symlink_in_path_bytes(wt, b"top.txt", false, false));
+                    assert!(!cache.has_symlink_in_path_bytes(wt, b"linked", false, false));
+                    assert!(!cache.has_symlink_in_path_bytes(wt, b"real/deep/f", false, false));
+                    assert!(cache.has_symlink_in_path_bytes(wt, b"linked/f", false, false));
+                    assert!(cache.has_symlink_in_path_bytes(wt, b"linked/deep/f", false, false));
+                    assert!(!cache.has_symlink_in_path_bytes(wt, b"\xff\xfe", false, false));
+                });
+            }
+        });
+    }
+
+    #[test]
+    fn content_hash_skip_trusts_empty_blob_but_not_smudged_size() {
+        use crate::index::StatMatchPolicy;
+        let td = tempfile::tempdir().expect("tempdir");
+        let wt = td.path();
+        let (_git_dir, odb) = minimal_repo(wt, "[core]\n\tfilemode = false\n");
+        let file_mtime = (1_700_000_000, 0);
+        let index_mtime = Some((file_mtime.0 + 1, 0));
+        let policy = StatMatchPolicy::from_config(None);
+
+        let empty = staged_entry_for_file(&odb, wt, "empty.txt", b"", file_mtime);
+        assert_eq!(empty.size, 0);
+        assert!(
+            super::index_entry_skips_worktree_content_hash_after_stat_match(
+                &empty,
+                index_mtime,
+                policy,
+            )
+        );
+
+        let smudged_oid = odb.hash(ObjectKind::Blob, b"abc\n").expect("hash");
+        let smudged = staged_entry_with_oid(wt, "smudged.txt", b"", smudged_oid, file_mtime);
+        assert_eq!(smudged.size, 0);
+        assert!(
+            !super::index_entry_skips_worktree_content_hash_after_stat_match(
+                &smudged,
+                index_mtime,
+                policy,
+            )
+        );
+    }
+
+    #[test]
+    fn status_diff_reports_smudged_entry_whose_file_became_empty() {
+        let td = tempfile::tempdir().expect("tempdir");
+        let wt = td.path();
+        let (git_dir, odb) = minimal_repo(wt, "[core]\n\tfilemode = false\n");
+        let oid = odb.write(ObjectKind::Blob, b"abc\n").expect("write blob");
+        let file_mtime = (1_700_000_000, 0);
+        let mut index = Index::new();
+        index.entries.push(staged_entry_with_oid(
+            wt,
+            "smudged.txt",
+            b"",
+            oid,
+            file_mtime,
+        ));
+        let (entries, _) = super::diff_index_to_worktree_with_options(
+            &odb,
+            &mut index,
+            wt,
+            super::DiffIndexToWorktreeOptions {
+                repository_git_dir: Some(git_dir),
+                index_mtime: Some((file_mtime.0 + 1, 0)),
+                for_status: true,
+                stat_parallel_threads: Some(1),
+                ..Default::default()
+            },
+        )
+        .expect("diff");
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        assert_eq!(entries[0].status, DiffStatus::Modified);
     }
 
     #[test]
