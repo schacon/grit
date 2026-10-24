@@ -11,9 +11,7 @@ use crate::odb::Odb;
 use crate::pack_zlib::skip_zlib_at_with_scratch;
 use crate::parallel::run_ordered_pool_with_local;
 use crate::progress::{ProgressPhase, ProgressSink};
-use crate::unpack_objects::{
-    apply_delta, apply_delta_into, type_code_to_kind, PackIndexRecord, PackReader,
-};
+use crate::unpack_objects::{apply_delta_into, type_code_to_kind, PackIndexRecord, PackReader};
 use crate::zlib_inflate::ZlibInflateScratch;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -111,6 +109,8 @@ enum BasePayload {
         base_offset: Option<usize>,
         base_oid: Option<ObjectId>,
     },
+    /// Inflated bytes for a resolved delta kept as a base for further deltas in a chain.
+    Owned(Vec<u8>),
 }
 
 #[derive(Clone)]
@@ -680,15 +680,15 @@ fn hash_whole_slot_oid_from_pack(
     algo: HashAlgo,
     scratch: &mut ZlibInflateScratch,
 ) -> Result<ObjectId> {
-    use crate::hash::ObjectHasher;
+    use crate::hash::ObjectPayloadHasher;
     let len = u64::try_from(work.uncompressed_size).unwrap_or(u64::MAX);
-    let mut hasher = ObjectHasher::for_object(algo, work.kind, len);
+    let mut hasher = ObjectPayloadHasher::new(algo, work.kind, len);
     let mut pos = work.zlib_offset;
     scratch.decompress_fixed_update(pack, &mut pos, len, |chunk| {
         hasher.update(chunk);
         Ok(())
     })?;
-    hasher.finalize()
+    hasher.finish()
 }
 
 fn hash_whole_slot_from_oid(
@@ -868,6 +868,54 @@ fn retain_delta_pack_base_for_delta(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn retain_owned_base_for_delta(
+    offset: usize,
+    oid: ObjectId,
+    kind: ObjectKind,
+    data: Vec<u8>,
+    ofs_base_refs: &HashMap<usize, u32>,
+    oid_base_refs: &OidHashMap<u32>,
+    ofs_bases: &mut HashMap<usize, IndexBase>,
+    oid_bases: &mut OidHashMap<IndexBase>,
+) {
+    let payload = BasePayload::Owned(data);
+    let retain_ofs = ofs_base_refs.get(&offset).copied().unwrap_or(0) > 0;
+    let retain_oid = oid_base_refs.get(&oid).copied().unwrap_or(0) > 0;
+    let base = IndexBase { kind, payload };
+    match (retain_ofs, retain_oid) {
+        (true, true) => {
+            ofs_bases.insert(offset, base.clone());
+            oid_bases.insert(oid, base);
+        }
+        (true, false) => {
+            ofs_bases.insert(offset, base);
+        }
+        (false, true) => {
+            oid_bases.insert(oid, base);
+        }
+        (false, false) => {}
+    }
+}
+
+fn immediate_base_is_resolved_delta(
+    delta: &PendingIndexDelta,
+    ofs_bases: &HashMap<usize, IndexBase>,
+    oid_bases: &OidHashMap<IndexBase>,
+) -> bool {
+    if let Some(base_off) = delta.base_offset {
+        return ofs_bases
+            .get(&base_off)
+            .is_some_and(|b| !matches!(b.payload, BasePayload::InPack { .. }));
+    }
+    if let Some(ref base_id) = delta.base_oid {
+        if let Some(b) = oid_bases.get(base_id) {
+            return !matches!(b.payload, BasePayload::InPack { .. });
+        }
+    }
+    false
+}
+
 /// Inflate a pack index base into `data`, using `op` for delta opcode scratch.
 #[allow(clippy::too_many_arguments)]
 fn inflate_index_base(
@@ -882,8 +930,9 @@ fn inflate_index_base(
     at_oid: Option<ObjectId>,
     op: &mut Vec<u8>,
     data: &mut Vec<u8>,
+    ops_chain: &mut Vec<Vec<u8>>,
 ) -> Result<ObjectKind> {
-    let mut ops_chain: Vec<Vec<u8>> = Vec::new();
+    ops_chain.clear();
     let mut current = base;
     let mut at_off = at_offset;
     let mut at_oid = at_oid;
@@ -915,6 +964,11 @@ fn inflate_index_base(
                 )?;
                 break;
             }
+            BasePayload::Owned(inflated) => {
+                data.clear();
+                data.extend_from_slice(inflated);
+                break;
+            }
             BasePayload::DeltaInPack {
                 zlib_offset,
                 uncompressed_size,
@@ -927,7 +981,7 @@ fn inflate_index_base(
                     *uncompressed_size,
                     op,
                 )?;
-                ops_chain.push(op.clone());
+                ops_chain.push(std::mem::take(op));
                 if let Some(base_off) = base_offset {
                     let Some(inner) = ofs_bases.get(base_off) else {
                         return Err(Error::CorruptObject("delta base not available".to_owned()));
@@ -945,10 +999,7 @@ fn inflate_index_base(
                     } else if let Ok(obj) = odb.read(base_id) {
                         data.clear();
                         data.extend_from_slice(&obj.data);
-                        for delta_ops in ops_chain.iter().rev() {
-                            let patched = apply_delta(data.as_slice(), delta_ops)?;
-                            *data = patched;
-                        }
+                        apply_delta_ops_chain_into(data, ops_chain)?;
                         return Ok(obj.kind);
                     } else {
                         return Err(Error::CorruptObject("delta base not available".to_owned()));
@@ -960,11 +1011,42 @@ fn inflate_index_base(
         }
     }
 
-    for delta_ops in ops_chain.iter().rev() {
-        let patched = apply_delta(data.as_slice(), delta_ops)?;
-        *data = patched;
-    }
+    apply_delta_ops_chain_into(data, ops_chain)?;
     Ok(kind)
+}
+
+fn apply_delta_ops_chain_into(data: &mut Vec<u8>, ops_chain: &mut [Vec<u8>]) -> Result<()> {
+    if ops_chain.is_empty() {
+        return Ok(());
+    }
+    let mut chain_a = Vec::new();
+    let mut chain_b = Vec::new();
+    let mut rev = ops_chain.iter().rev().collect::<Vec<_>>();
+    let Some(last) = rev.pop() else {
+        return Ok(());
+    };
+    if rev.is_empty() {
+        let base = std::mem::take(data);
+        apply_delta_into(data, base.as_slice(), last)?;
+        return Ok(());
+    }
+    apply_delta_into(&mut chain_a, data.as_slice(), rev[0])?;
+    let mut src_is_a = true;
+    for frame in rev.iter().skip(1) {
+        if src_is_a {
+            apply_delta_into(&mut chain_b, chain_a.as_slice(), frame)?;
+        } else {
+            apply_delta_into(&mut chain_a, chain_b.as_slice(), frame)?;
+        }
+        src_is_a = !src_is_a;
+    }
+    let penultimate = if src_is_a {
+        chain_a.as_slice()
+    } else {
+        chain_b.as_slice()
+    };
+    apply_delta_into(data, penultimate, last)?;
+    Ok(())
 }
 
 struct DeltaHashed {
@@ -975,6 +1057,7 @@ struct DeltaHashed {
     zlib_offset: usize,
     uncompressed_size: usize,
     retain: bool,
+    retain_owned: Option<Vec<u8>>,
     base_offset: Option<usize>,
     base_oid: Option<ObjectId>,
 }
@@ -983,6 +1066,10 @@ struct DeltaResolveScratch {
     delta: Vec<u8>,
     base: Vec<u8>,
     result: Vec<u8>,
+    op: Vec<u8>,
+    ops_chain: Vec<Vec<u8>>,
+    visited_offs: HashSet<usize>,
+    visited_oids: HashSet<ObjectId>,
 }
 
 impl DeltaResolveScratch {
@@ -1039,6 +1126,10 @@ fn resolve_pending_deltas_parallel(
                     delta: Vec::new(),
                     base: Vec::new(),
                     result: Vec::new(),
+                    op: Vec::new(),
+                    ops_chain: Vec::new(),
+                    visited_offs: HashSet::new(),
+                    visited_oids: HashSet::new(),
                 },
                 |scratch, delta| {
                     resolve_one_delta(
@@ -1057,7 +1148,18 @@ fn resolve_pending_deltas_parallel(
 
             for item in hashed {
                 state.records.push(item.record);
-                if item.retain {
+                if let Some(data) = item.retain_owned {
+                    retain_owned_base_for_delta(
+                        item.offset,
+                        item.oid,
+                        item.kind,
+                        data,
+                        state.ofs_base_refs,
+                        state.oid_base_refs,
+                        state.ofs_bases,
+                        state.oid_bases,
+                    );
+                } else if item.retain {
                     retain_delta_pack_base_for_delta(
                         item.offset,
                         item.oid,
@@ -1128,8 +1230,10 @@ fn resolve_one_delta(
         delta.uncompressed_size,
         &mut scratch.delta,
     )?;
-    let mut visited_offs = HashSet::new();
-    let mut visited_oids = HashSet::new();
+    scratch.visited_offs.clear();
+    scratch.visited_oids.clear();
+    scratch.op.clear();
+    scratch.ops_chain.clear();
     let base_kind = if let Some(base_off) = delta.base_offset {
         let Some(b) = ofs_bases.get(&base_off) else {
             return Err(Error::CorruptObject("delta base not available".to_owned()));
@@ -1140,12 +1244,13 @@ fn resolve_one_delta(
             ofs_bases,
             oid_bases,
             odb,
-            &mut visited_offs,
-            &mut visited_oids,
+            &mut scratch.visited_offs,
+            &mut scratch.visited_oids,
             Some(base_off),
             None,
-            &mut scratch.result,
+            &mut scratch.op,
             &mut scratch.base,
+            &mut scratch.ops_chain,
         )?
     } else if let Some(ref base_id) = delta.base_oid {
         if let Some(b) = oid_bases.get(base_id) {
@@ -1155,12 +1260,13 @@ fn resolve_one_delta(
                 ofs_bases,
                 oid_bases,
                 odb,
-                &mut visited_offs,
-                &mut visited_oids,
+                &mut scratch.visited_offs,
+                &mut scratch.visited_oids,
                 None,
                 Some(*base_id),
-                &mut scratch.result,
+                &mut scratch.op,
                 &mut scratch.base,
+                &mut scratch.ops_chain,
             )?
         } else if let Ok(obj) = odb.read(base_id) {
             scratch.base.clear();
@@ -1177,7 +1283,12 @@ fn resolve_one_delta(
     let retain_ofs = ofs_out_refs.get(&delta.offset).copied().unwrap_or(0) > 0;
     let retain_oid = oid_out_refs.get(&oid).copied().unwrap_or(0) > 0;
     let retain = retain_ofs || retain_oid;
-    scratch.result.clear();
+    let retain_owned = if retain && immediate_base_is_resolved_delta(delta, ofs_bases, oid_bases) {
+        Some(std::mem::take(&mut scratch.result))
+    } else {
+        scratch.result.clear();
+        None
+    };
     scratch.release_excess();
     Ok(DeltaHashed {
         record: PackIndexRecord {
@@ -1192,6 +1303,7 @@ fn resolve_one_delta(
         zlib_offset: delta.zlib_offset,
         uncompressed_size: delta.uncompressed_size,
         retain,
+        retain_owned,
         base_offset: delta.base_offset,
         base_oid: delta.base_oid,
     })
