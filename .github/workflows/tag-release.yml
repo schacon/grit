@@ -8,7 +8,7 @@ run-name: Tag ${{ inputs.tag }}
 # so this then starts release.yml on the new tag.
 #
 # Needs the `RELEASE_TAG_SIGNING_KEY` secret: an OpenSSH private key without a passphrase.
-# The tagger defaults to "grit release <release@grit-scm.com>"; set the repository
+# The tagger defaults to "Scott Chacon <scott@gitbutler.com>"; set the repository
 # variables RELEASE_TAGGER_NAME / RELEASE_TAGGER_EMAIL to change it.
 on:
   workflow_dispatch:
@@ -71,8 +71,8 @@ jobs:
         if: steps.existing.outputs.exists != 'true'
         env:
           SIGNING_KEY: ${{ secrets.RELEASE_TAG_SIGNING_KEY }}
-          TAGGER_NAME: ${{ vars.RELEASE_TAGGER_NAME || 'grit release' }}
-          TAGGER_EMAIL: ${{ vars.RELEASE_TAGGER_EMAIL || 'release@grit-scm.com' }}
+          TAGGER_NAME: ${{ vars.RELEASE_TAGGER_NAME || 'Scott Chacon' }}
+          TAGGER_EMAIL: ${{ vars.RELEASE_TAGGER_EMAIL || 'scott@gitbutler.com' }}
         run: |
           if [ -z "$SIGNING_KEY" ]; then
             echo "::error::The RELEASE_TAG_SIGNING_KEY secret is not set, so $TAG can't be signed."
