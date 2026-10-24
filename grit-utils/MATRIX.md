@@ -180,6 +180,7 @@ Overview of **grit-lib** coverage, **`grit` commands**, common workflows, and **
 | `clone/local@synth-10k` | Clone over file:// (not git clone --local hardlink shortcut) vs git clone |
 | `clone/bare@synth-10k` | Bare clone synth-10k vs `git clone --bare --no-local file://` |
 | `clone/shallow@git-git` | Shallow clone (`--depth 1`) over file:// vs git clone --depth 1 |
+| `clone/blobless@git-git` | Blobless partial clone over file://: grit `clone --blobs none` vs `git clone --filter=blob:none` |
 | `clone/shallow-depth1@synth-10k` | Shallow clone over file://: grit clone --shallow vs git clone --depth 1 |
 | `clone/shallow-depth1-http@synth-10k` | Shallow clone over grit smart HTTP: grit clone --shallow vs git clone --depth 1 |
 | `fetch/incremental-http@git-git` | Incremental fetch over grit smart HTTP (git-git bare remote) |

@@ -757,6 +757,9 @@ enum Command {
         /// Name for the remote (default `origin`).
         #[arg(short = 'o', long, value_name = "NAME")]
         origin: Option<String>,
+        /// Partial clone: omit blobs (`none`) or blobs at/above a size (`1k`, `512`, …).
+        #[arg(long, value_name = "none|SIZE")]
+        blobs: Option<String>,
         /// Create a bare repository (`git clone --bare`).
         #[arg(long)]
         bare: bool,
@@ -2296,6 +2299,7 @@ fn dispatch(
             no_single_branch,
             no_tags,
             origin,
+            blobs,
             bare,
             no_checkout,
         } => {
@@ -2316,6 +2320,7 @@ fn dispatch(
                     single_branch,
                     no_tags,
                     origin,
+                    blobs,
                     bare,
                     no_checkout,
                     mode: opts.mode,
