@@ -34,6 +34,31 @@ pub enum Error {
     Io(#[from] std::io::Error),
 }
 
+impl Error {
+    /// The I/O error from reading the client's request stream, for a failed
+    /// [`receive_pack::stateless_rpc_from_reader`] exchange.
+    ///
+    /// Servers use this to answer a request body that could not be read (truncated,
+    /// badly encoded, or rejected by the server's own decoding limits) with a client
+    /// error rather than a server error. During receive-pack that is the only source of
+    /// stream errors: the response is collected in memory, and repository failures are
+    /// reported as other [`serve::ServeError`] variants or inside the status report.
+    /// Upload-pack can
+    /// also return stream errors while reading repository data, so do not use this to
+    /// classify upload-pack failures.
+    ///
+    /// # Returns
+    ///
+    /// `Some` with the request read error, or `None` for every other failure.
+    #[must_use]
+    pub fn request_stream_error(&self) -> Option<&std::io::Error> {
+        match self {
+            Self::Serve(serve::ServeError::Io(e)) => Some(e),
+            _ => None,
+        }
+    }
+}
+
 /// Result alias for protocol handlers.
 pub type Result<T> = std::result::Result<T, Error>;
 
