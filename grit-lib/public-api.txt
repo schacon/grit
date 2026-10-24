@@ -20391,6 +20391,25 @@ impl core::marker::Unpin for grit_lib::repo_handles::RemoteUrlKind
 impl core::marker::UnsafeUnpin for grit_lib::repo_handles::RemoteUrlKind
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::RemoteUrlKind
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::RemoteUrlKind
+pub enum grit_lib::repo_handles::SetHead
+pub grit_lib::repo_handles::SetHead::Auto
+pub grit_lib::repo_handles::SetHead::Branch(alloc::string::String)
+pub grit_lib::repo_handles::SetHead::Delete
+impl core::clone::Clone for grit_lib::repo_handles::SetHead
+pub fn grit_lib::repo_handles::SetHead::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::repo_handles::SetHead
+impl core::cmp::PartialEq for grit_lib::repo_handles::SetHead
+pub fn grit_lib::repo_handles::SetHead::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::repo_handles::SetHead
+pub fn grit_lib::repo_handles::SetHead::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::repo_handles::SetHead
+impl core::marker::Freeze for grit_lib::repo_handles::SetHead
+impl core::marker::Send for grit_lib::repo_handles::SetHead
+impl core::marker::Sync for grit_lib::repo_handles::SetHead
+impl core::marker::Unpin for grit_lib::repo_handles::SetHead
+impl core::marker::UnsafeUnpin for grit_lib::repo_handles::SetHead
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::SetHead
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::SetHead
 pub struct grit_lib::repo_handles::ConfiguredRemote
 pub grit_lib::repo_handles::ConfiguredRemote::effective_fetch_url: core::option::Option<alloc::string::String>
 pub grit_lib::repo_handles::ConfiguredRemote::effective_push_url: core::option::Option<alloc::string::String>
@@ -20906,9 +20925,11 @@ pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::get_or_default(&self, &
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::inspect(&self, &str, &grit_lib::remote::InspectOptions, core::option::Option<&dyn grit_lib::remote::HttpClientFactory>) -> core::result::Result<grit_lib::remote::RemoteSummary, grit_lib::remote::RemoteError>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::list(&self) -> grit_lib::error::Result<alloc::vec::Vec<alloc::string::String>>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::ls_remote(&self, &grit_lib::remote::Remote, &grit_lib::remote::ListRefsOptions, core::option::Option<&dyn grit_lib::remote::HttpClientFactory>) -> core::result::Result<alloc::vec::Vec<grit_lib::remote::RemoteRef>, grit_lib::remote::RemoteError>
+pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::prune(&self, &str, bool, core::option::Option<&dyn grit_lib::remote::HttpClientFactory>) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, grit_lib::remote::RemoteError>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::push(&self, &grit_lib::remote::Remote, &[grit_lib::remote::transfer::PushRefSpec], grit_lib::remote::transfer::PushOptions, &mut dyn grit_lib::remote::fetch::Progress, core::option::Option<&dyn grit_lib::remote::HttpClientFactory>) -> core::result::Result<grit_lib::remote::transfer::PushOutcome, grit_lib::remote::RemoteError>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::remove(&self, &str, grit_lib::repo_handles::RemoveOptions) -> core::result::Result<grit_lib::repo_handles::RemoteRemoval, grit_lib::remote::RemoteError>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::repository(&self) -> &'repo grit_lib::repo::Repository
+pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::set_head(&self, &str, grit_lib::repo_handles::SetHead, bool, core::option::Option<&dyn grit_lib::remote::HttpClientFactory>) -> core::result::Result<grit_lib::repo_handles::SetHeadOutcome, grit_lib::remote::RemoteError>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::set_url(&self, &str, &str, grit_lib::repo_handles::RemoteUrlKind, bool) -> core::result::Result<grit_lib::repo_handles::UrlChange, grit_lib::remote::RemoteError>
 impl<'repo> grit_lib::repo_handles::RepositoryRemotes<'repo>
 pub fn grit_lib::repo_handles::RepositoryRemotes<'repo>::rename(&self, &str, &str, bool) -> core::result::Result<grit_lib::repo_handles::RemoteRename, grit_lib::remote::RemoteError>
@@ -20967,6 +20988,25 @@ impl<'repo> core::marker::Unpin for grit_lib::repo_handles::RepositoryWorktrees<
 impl<'repo> core::marker::UnsafeUnpin for grit_lib::repo_handles::RepositoryWorktrees<'repo>
 impl<'repo> !core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::RepositoryWorktrees<'repo>
 impl<'repo> !core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::RepositoryWorktrees<'repo>
+pub struct grit_lib::repo_handles::SetHeadOutcome
+pub grit_lib::repo_handles::SetHeadOutcome::dry_run: bool
+pub grit_lib::repo_handles::SetHeadOutcome::previous_target: core::option::Option<alloc::string::String>
+pub grit_lib::repo_handles::SetHeadOutcome::target: core::option::Option<alloc::string::String>
+impl core::clone::Clone for grit_lib::repo_handles::SetHeadOutcome
+pub fn grit_lib::repo_handles::SetHeadOutcome::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::repo_handles::SetHeadOutcome
+impl core::cmp::PartialEq for grit_lib::repo_handles::SetHeadOutcome
+pub fn grit_lib::repo_handles::SetHeadOutcome::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::repo_handles::SetHeadOutcome
+pub fn grit_lib::repo_handles::SetHeadOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::repo_handles::SetHeadOutcome
+impl core::marker::Freeze for grit_lib::repo_handles::SetHeadOutcome
+impl core::marker::Send for grit_lib::repo_handles::SetHeadOutcome
+impl core::marker::Sync for grit_lib::repo_handles::SetHeadOutcome
+impl core::marker::Unpin for grit_lib::repo_handles::SetHeadOutcome
+impl core::marker::UnsafeUnpin for grit_lib::repo_handles::SetHeadOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::SetHeadOutcome
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::SetHeadOutcome
 pub struct grit_lib::repo_handles::StashApplyOptions
 pub grit_lib::repo_handles::StashApplyOptions::identity: alloc::string::String
 pub grit_lib::repo_handles::StashApplyOptions::index: usize
@@ -25316,6 +25356,27 @@ impl core::marker::Unpin for grit_lib::worktree::WorktreeBranch
 impl core::marker::UnsafeUnpin for grit_lib::worktree::WorktreeBranch
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::WorktreeBranch
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::WorktreeBranch
+pub enum grit_lib::worktree::WorktreeRepairKind
+pub grit_lib::worktree::WorktreeRepairKind::GitFileAdminDir
+pub grit_lib::worktree::WorktreeRepairKind::GitFilePathStyle
+pub grit_lib::worktree::WorktreeRepairKind::GitdirPathStyle
+pub grit_lib::worktree::WorktreeRepairKind::GitdirWorktreePath
+impl core::clone::Clone for grit_lib::worktree::WorktreeRepairKind
+pub fn grit_lib::worktree::WorktreeRepairKind::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::worktree::WorktreeRepairKind
+impl core::cmp::PartialEq for grit_lib::worktree::WorktreeRepairKind
+pub fn grit_lib::worktree::WorktreeRepairKind::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::worktree::WorktreeRepairKind
+pub fn grit_lib::worktree::WorktreeRepairKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::worktree::WorktreeRepairKind
+impl core::marker::StructuralPartialEq for grit_lib::worktree::WorktreeRepairKind
+impl core::marker::Freeze for grit_lib::worktree::WorktreeRepairKind
+impl core::marker::Send for grit_lib::worktree::WorktreeRepairKind
+impl core::marker::Sync for grit_lib::worktree::WorktreeRepairKind
+impl core::marker::Unpin for grit_lib::worktree::WorktreeRepairKind
+impl core::marker::UnsafeUnpin for grit_lib::worktree::WorktreeRepairKind
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::WorktreeRepairKind
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::WorktreeRepairKind
 pub struct grit_lib::worktree::AddLinkedWorktreeOptions
 pub grit_lib::worktree::AddLinkedWorktreeOptions::branch: core::option::Option<grit_lib::worktree::WorktreeBranch>
 pub grit_lib::worktree::AddLinkedWorktreeOptions::force: bool
@@ -25369,6 +25430,22 @@ impl core::marker::Unpin for grit_lib::worktree::LockWorktreeOptions
 impl core::marker::UnsafeUnpin for grit_lib::worktree::LockWorktreeOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::LockWorktreeOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::LockWorktreeOptions
+pub struct grit_lib::worktree::MoveWorktreeOptions
+pub grit_lib::worktree::MoveWorktreeOptions::dry_run: bool
+pub grit_lib::worktree::MoveWorktreeOptions::force: bool
+impl core::clone::Clone for grit_lib::worktree::MoveWorktreeOptions
+pub fn grit_lib::worktree::MoveWorktreeOptions::clone(&self) -> Self
+impl core::default::Default for grit_lib::worktree::MoveWorktreeOptions
+pub fn grit_lib::worktree::MoveWorktreeOptions::default() -> Self
+impl core::fmt::Debug for grit_lib::worktree::MoveWorktreeOptions
+pub fn grit_lib::worktree::MoveWorktreeOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::worktree::MoveWorktreeOptions
+impl core::marker::Send for grit_lib::worktree::MoveWorktreeOptions
+impl core::marker::Sync for grit_lib::worktree::MoveWorktreeOptions
+impl core::marker::Unpin for grit_lib::worktree::MoveWorktreeOptions
+impl core::marker::UnsafeUnpin for grit_lib::worktree::MoveWorktreeOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::MoveWorktreeOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::MoveWorktreeOptions
 pub struct grit_lib::worktree::PruneWorktreesOptions
 pub grit_lib::worktree::PruneWorktreesOptions::dry_run: bool
 impl core::clone::Clone for grit_lib::worktree::PruneWorktreesOptions
@@ -25432,28 +25509,6 @@ impl core::marker::Unpin for grit_lib::worktree::WorktreeEntry
 impl core::marker::UnsafeUnpin for grit_lib::worktree::WorktreeEntry
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::WorktreeEntry
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::WorktreeEntry
-pub fn grit_lib::worktree::add_linked_worktree(&grit_lib::repo::Repository, &grit_lib::worktree::AddLinkedWorktreeOptions) -> grit_lib::error::Result<grit_lib::worktree::WorktreeEntry>
-pub fn grit_lib::worktree::allocate_worktree_admin_dir(&std::path::Path, &std::path::Path) -> std::path::PathBuf
-pub fn grit_lib::worktree::common_git_dir(&std::path::Path) -> std::path::PathBuf
-pub fn grit_lib::worktree::copy_filtered_worktree_config(&std::path::Path, &std::path::Path) -> grit_lib::error::Result<()>
-pub fn grit_lib::worktree::ensure_branch_not_checked_out_elsewhere(&grit_lib::repo::Repository, &str) -> grit_lib::error::Result<()>
-pub fn grit_lib::worktree::ensure_branch_not_checked_out_in_any_worktree(&grit_lib::repo::Repository, &str) -> grit_lib::error::Result<()>
-pub fn grit_lib::worktree::find_worktree_with_branch_checked_out(&grit_lib::repo::Repository, &str, core::option::Option<&std::path::Path>) -> grit_lib::error::Result<core::option::Option<grit_lib::worktree::BranchWorktreeCheckout>>
-pub fn grit_lib::worktree::is_bare_repository(&std::path::Path) -> bool
-pub fn grit_lib::worktree::list_worktrees(&grit_lib::repo::Repository) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::worktree::WorktreeEntry>>
-pub fn grit_lib::worktree::move_linked_worktree(&grit_lib::repo::Repository, &std::path::Path, &std::path::Path, &grit_lib::worktree::MoveWorktreeOptions) -> grit_lib::error::Result<()>
-pub struct grit_lib::worktree::MoveWorktreeOptions
-pub grit_lib::worktree::MoveWorktreeOptions::dry_run: bool
-pub grit_lib::worktree::MoveWorktreeOptions::force: bool
-impl core::clone::Clone for grit_lib::worktree::MoveWorktreeOptions
-pub fn grit_lib::worktree::MoveWorktreeOptions::clone(&self) -> Self
-impl core::default::Default for grit_lib::worktree::MoveWorktreeOptions
-pub fn grit_lib::worktree::MoveWorktreeOptions::default() -> Self
-impl core::fmt::Debug for grit_lib::worktree::MoveWorktreeOptions
-pub fn grit_lib::worktree::MoveWorktreeOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn grit_lib::worktree::prune_linked_worktrees(&grit_lib::repo::Repository, &grit_lib::worktree::PruneWorktreesOptions) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::worktree::PrunedWorktreeEntry>>
-pub fn grit_lib::worktree::repair_worktrees(&grit_lib::repo::Repository, &[&std::path::Path], bool) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::worktree::WorktreeRepair>>
-pub fn grit_lib::worktree::resolve_move_destination(&std::path::Path, &std::path::Path) -> grit_lib::error::Result<std::path::PathBuf>
 pub struct grit_lib::worktree::WorktreeRepair
 pub grit_lib::worktree::WorktreeRepair::kind: grit_lib::worktree::WorktreeRepairKind
 pub grit_lib::worktree::WorktreeRepair::path: std::path::PathBuf
@@ -25464,25 +25519,32 @@ impl core::cmp::PartialEq for grit_lib::worktree::WorktreeRepair
 pub fn grit_lib::worktree::WorktreeRepair::eq(&self, &Self) -> bool
 impl core::fmt::Debug for grit_lib::worktree::WorktreeRepair
 pub fn grit_lib::worktree::WorktreeRepair::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub enum grit_lib::worktree::WorktreeRepairKind
-pub grit_lib::worktree::WorktreeRepairKind::GitFileAdminDir
-pub grit_lib::worktree::WorktreeRepairKind::GitFilePathStyle
-pub grit_lib::worktree::WorktreeRepairKind::GitdirPathStyle
-pub grit_lib::worktree::WorktreeRepairKind::GitdirWorktreePath
-impl core::clone::Copy for grit_lib::worktree::WorktreeRepairKind
-impl core::clone::Clone for grit_lib::worktree::WorktreeRepairKind
-pub fn grit_lib::worktree::WorktreeRepairKind::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::worktree::WorktreeRepairKind
-impl core::cmp::PartialEq for grit_lib::worktree::WorktreeRepairKind
-pub fn grit_lib::worktree::WorktreeRepairKind::eq(&self, &Self) -> bool
-impl core::fmt::Debug for grit_lib::worktree::WorktreeRepairKind
-pub fn grit_lib::worktree::WorktreeRepairKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for grit_lib::worktree::WorktreeRepairKind
+impl core::marker::StructuralPartialEq for grit_lib::worktree::WorktreeRepair
+impl core::marker::Freeze for grit_lib::worktree::WorktreeRepair
+impl core::marker::Send for grit_lib::worktree::WorktreeRepair
+impl core::marker::Sync for grit_lib::worktree::WorktreeRepair
+impl core::marker::Unpin for grit_lib::worktree::WorktreeRepair
+impl core::marker::UnsafeUnpin for grit_lib::worktree::WorktreeRepair
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::WorktreeRepair
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::WorktreeRepair
+pub fn grit_lib::worktree::add_linked_worktree(&grit_lib::repo::Repository, &grit_lib::worktree::AddLinkedWorktreeOptions) -> grit_lib::error::Result<grit_lib::worktree::WorktreeEntry>
+pub fn grit_lib::worktree::allocate_worktree_admin_dir(&std::path::Path, &std::path::Path) -> std::path::PathBuf
+pub fn grit_lib::worktree::common_git_dir(&std::path::Path) -> std::path::PathBuf
+pub fn grit_lib::worktree::copy_filtered_worktree_config(&std::path::Path, &std::path::Path) -> grit_lib::error::Result<()>
+pub fn grit_lib::worktree::ensure_branch_not_checked_out_elsewhere(&grit_lib::repo::Repository, &str) -> grit_lib::error::Result<()>
+pub fn grit_lib::worktree::ensure_branch_not_checked_out_in_any_worktree(&grit_lib::repo::Repository, &str) -> grit_lib::error::Result<()>
+pub fn grit_lib::worktree::find_worktree_with_branch_checked_out(&grit_lib::repo::Repository, &str, core::option::Option<&std::path::Path>) -> grit_lib::error::Result<core::option::Option<grit_lib::worktree::BranchWorktreeCheckout>>
+pub fn grit_lib::worktree::is_bare_repository(&std::path::Path) -> bool
+pub fn grit_lib::worktree::list_worktrees(&grit_lib::repo::Repository) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::worktree::WorktreeEntry>>
+pub fn grit_lib::worktree::move_linked_worktree(&grit_lib::repo::Repository, &std::path::Path, &std::path::Path, &grit_lib::worktree::MoveWorktreeOptions) -> grit_lib::error::Result<()>
+pub fn grit_lib::worktree::prune_linked_worktrees(&grit_lib::repo::Repository, &grit_lib::worktree::PruneWorktreesOptions) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::worktree::PrunedWorktreeEntry>>
 pub fn grit_lib::worktree::read_worktree_path(&std::path::Path) -> grit_lib::error::Result<std::path::PathBuf>
 pub fn grit_lib::worktree::registered_worktree_count(&std::path::Path) -> usize
 pub fn grit_lib::worktree::remove_linked_worktree(&grit_lib::repo::Repository, &std::path::Path, bool) -> grit_lib::error::Result<()>
+pub fn grit_lib::worktree::repair_worktrees(&grit_lib::repo::Repository, &[&std::path::Path], bool) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::worktree::WorktreeRepair>>
 pub fn grit_lib::worktree::resolve_linked_head(&std::path::Path, &std::path::Path) -> grit_lib::state::HeadState
 pub fn grit_lib::worktree::resolve_linked_worktree_add_path(&std::path::Path, &std::path::Path) -> grit_lib::error::Result<std::path::PathBuf>
+pub fn grit_lib::worktree::resolve_move_destination(&std::path::Path, &std::path::Path) -> grit_lib::error::Result<std::path::PathBuf>
 pub fn grit_lib::worktree::sanitize_worktree_id_component(&str) -> alloc::string::String
 pub fn grit_lib::worktree::worktree_admin_dir(&grit_lib::repo::Repository) -> std::path::PathBuf
 pub fn grit_lib::worktree::worktree_path_basename(&std::path::Path) -> alloc::string::String
