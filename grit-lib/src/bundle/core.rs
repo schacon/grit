@@ -426,8 +426,12 @@ impl Bundle {
             repo.odb(),
             &opts,
             Some(progress),
+            Some(cancel),
         )
-        .map_err(|e| BundleError::Io(e.to_string()))?;
+        .map_err(|e| match e {
+            crate::error::Error::Cancelled => BundleError::Cancelled,
+            other => BundleError::Io(other.to_string()),
+        })?;
         if self.header.filter.is_some() {
             std::fs::write(ingested.pack_path.with_extension("promisor"), b"")
                 .map_err(|e| BundleError::Io(e.to_string()))?;

@@ -15,7 +15,7 @@ use crate::objects::{ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::pack::{verify_pack_and_collect, write_v2_pack_index_with_trailer};
 use crate::pack_map::PackData;
-use crate::progress::ProgressSink;
+use crate::progress::{poll_cancel, Cancel, ProgressSink};
 use crate::transfer::{fix_thin_pack, ref_delta_bases_in_pack};
 use crate::unpack_objects::PackIndexRecord;
 
@@ -176,7 +176,7 @@ pub fn ingest_received_pack(
     odb: &Odb,
     opts: &IngestPackOptions,
 ) -> Result<IngestedPack> {
-    ingest_received_pack_with_progress(pack, odb, opts, None)
+    ingest_received_pack_with_progress(pack, odb, opts, None, None)
 }
 
 /// Like [`ingest_received_pack`], reporting pack indexing progress on `progress` when set.
@@ -185,6 +185,7 @@ pub fn ingest_received_pack_with_progress(
     odb: &Odb,
     opts: &IngestPackOptions,
     progress: Option<&mut dyn ProgressSink>,
+    cancel: Option<&dyn Cancel>,
 ) -> Result<IngestedPack> {
     if pack.is_empty() {
         return Ok(IngestedPack {
@@ -203,7 +204,7 @@ pub fn ingest_received_pack_with_progress(
             "received pack checksum mismatch (download may be incomplete): {e}"
         ))
     })?;
-    install_pack_bytes_with_progress(pack, odb, opts, progress)
+    install_pack_bytes_with_progress(pack, odb, opts, progress, cancel)
 }
 
 /// Ingest a pack already written to disk (streaming fetch/clone receive path).
@@ -216,7 +217,7 @@ pub fn ingest_received_pack_path(
     odb: &Odb,
     opts: &IngestPackOptions,
 ) -> Result<IngestedPack> {
-    ingest_received_pack_path_with_progress(pack_path, odb, opts, None)
+    ingest_received_pack_path_with_progress(pack_path, odb, opts, None, None)
 }
 
 fn wait_for_received_pack_path(path: PathBuf) -> Result<PathBuf> {
@@ -245,10 +246,11 @@ pub fn ingest_received_pack_path_with_progress(
     odb: &Odb,
     opts: &IngestPackOptions,
     progress: Option<&mut dyn ProgressSink>,
+    cancel: Option<&dyn Cancel>,
 ) -> Result<IngestedPack> {
     crate::trace::trace_span!("grit.pack.index");
     let pack_path = wait_for_received_pack_path(pack_path)?;
-    install_pack_path_with_progress(&pack_path, odb, opts, progress)
+    install_pack_path_with_progress(&pack_path, odb, opts, progress, cancel)
 }
 
 /// Write `pack` into `odb`'s `objects/pack/` directory with a v2 index.
@@ -259,7 +261,7 @@ pub fn install_pack_bytes(
     odb: &Odb,
     opts: &IngestPackOptions,
 ) -> Result<IngestedPack> {
-    install_pack_bytes_with_progress(pack, odb, opts, None)
+    install_pack_bytes_with_progress(pack, odb, opts, None, None)
 }
 
 /// Like [`install_pack_bytes`], reporting pack indexing progress on `progress` when set.
@@ -268,6 +270,7 @@ pub fn install_pack_bytes_with_progress(
     odb: &Odb,
     opts: &IngestPackOptions,
     progress: Option<&mut dyn ProgressSink>,
+    cancel: Option<&dyn Cancel>,
 ) -> Result<IngestedPack> {
     odb.require_files_primary("index_pack")?;
     let pack_dir = odb.objects_dir().join("pack");
@@ -276,7 +279,7 @@ pub fn install_pack_bytes_with_progress(
     let seq = INSTALL_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = pack_dir.join(format!("tmp_install_{}_{seq}", std::process::id()));
     std::fs::write(&tmp, &pack).map_err(Error::Io)?;
-    match install_pack_path_with_progress(&tmp, odb, opts, progress) {
+    match install_pack_path_with_progress(&tmp, odb, opts, progress, cancel) {
         Ok(ingested) => Ok(ingested),
         Err(e) => {
             let _ = std::fs::remove_file(&tmp);
@@ -294,7 +297,7 @@ pub fn install_pack_path(
     odb: &Odb,
     opts: &IngestPackOptions,
 ) -> Result<IngestedPack> {
-    install_pack_path_with_progress(pack_path, odb, opts, None)
+    install_pack_path_with_progress(pack_path, odb, opts, None, None)
 }
 
 /// Like [`install_pack_path`], reporting pack indexing progress on `progress` when set.
@@ -302,7 +305,8 @@ pub fn install_pack_path_with_progress(
     pack_path: &Path,
     odb: &Odb,
     opts: &IngestPackOptions,
-    progress: Option<&mut dyn ProgressSink>,
+    mut progress: Option<&mut dyn ProgressSink>,
+    cancel: Option<&dyn Cancel>,
 ) -> Result<IngestedPack> {
     odb.require_files_primary("index_pack")?;
     let owned = pack_path.to_path_buf();
@@ -383,7 +387,8 @@ pub fn install_pack_path_with_progress(
                     odb,
                     parallelism,
                     !opts.skip_post_index_verify,
-                    progress,
+                    progress.as_mut().map(|p| p as &mut dyn ProgressSink),
+                    cancel,
                 )?;
                 if opts.fix_thin {
                     let ref_bases = ref_delta_bases_in_pack(pack_bytes, odb.hash_algo())?;
@@ -400,6 +405,7 @@ pub fn install_pack_path_with_progress(
                             parallelism,
                             !opts.skip_post_index_verify,
                             None,
+                            cancel,
                         )?;
                     }
                 }

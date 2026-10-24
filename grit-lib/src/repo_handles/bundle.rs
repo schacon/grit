@@ -170,12 +170,9 @@ impl<'repo> RepositoryBundles<'repo> {
         &self,
         path: &Path,
         progress: &mut dyn ProgressSink,
+        cancel: &dyn crate::progress::Cancel,
     ) -> std::result::Result<UnbundleOutcome, BundleError> {
-        Bundle::open(path)?.unbundle_with_progress(
-            self.repo,
-            progress,
-            &crate::progress::NeverCancel,
-        )
+        Bundle::open(path)?.unbundle_with_progress(self.repo, progress, cancel)
     }
 
     /// Open a bundle file handle for repeated operations.

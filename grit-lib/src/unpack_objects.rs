@@ -636,6 +636,7 @@ pub fn pack_index_records_with_threads_with_progress(
         parallelism,
         true,
         progress,
+        None,
     )
 }
 

@@ -70,7 +70,7 @@ fn load_fixture() -> Option<ChangeIdResolveFixture> {
         return None;
     }
     let head_hex = std::str::from_utf8(&out.stdout).ok()?.trim();
-    let oid = grit_lib::objects::ObjectId::from_hex(head_hex.as_bytes()).ok()?;
+    let oid = grit_lib::objects::ObjectId::from_hex(head_hex).ok()?;
     let derived = ChangeId::derived_from_commit_id(&oid);
     let prefix = derived.short(12).to_string();
     find_commits_by_change_id_prefix(&repo, &prefix).ok()?;

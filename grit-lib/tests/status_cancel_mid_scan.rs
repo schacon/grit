@@ -3,7 +3,7 @@
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::porcelain::status::{status, StatusOptions, UntrackedMode};
-use grit_lib::progress::{FlagCancel, NullProgress};
+use grit_lib::progress::{FlagCancel, NeverCancel, NullProgress};
 use grit_lib::repo::Repository;
 use grit_test_support::git;
 use std::thread;
@@ -36,4 +36,11 @@ fn status_returns_cancelled_when_signalled_during_untracked_walk() {
         status(&repo, &opts, &mut NullProgress, &flag).expect_err("cancel during untracked walk");
     sleeper.join().expect("join");
     assert!(matches!(err, Error::Cancelled));
+
+    let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).expect("full scan");
+    assert_eq!(
+        model.untracked.len(),
+        800,
+        "non-cancelled status must enumerate every untracked file"
+    );
 }

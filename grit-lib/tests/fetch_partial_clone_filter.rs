@@ -438,6 +438,7 @@ mod http_v2 {
                 ..CloneOptions::new(&url, dest.path().to_path_buf())
             },
             &mut NoProgress,
+            &NeverCancel,
             Some(&grit_lib::remote::DefaultHttpClientFactory),
         )
         .expect("http clone");

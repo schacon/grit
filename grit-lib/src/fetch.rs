@@ -1522,6 +1522,7 @@ pub fn fetch_remote(
                         trusted_index_rows: None,
                     },
                     Some(progress),
+                    Some(cancel),
                 )?
             } else {
                 crate::index_pack::ingest_received_pack_path_with_progress(
@@ -1537,6 +1538,7 @@ pub fn fetch_remote(
                         trusted_index_rows: None,
                     },
                     Some(progress),
+                    Some(cancel),
                 )?
             };
             pack_oids = ingested.object_ids;
@@ -1897,6 +1899,7 @@ fn fetch_remote_object_wants(
                 trusted_index_rows: None,
             },
             Some(progress),
+            Some(cancel),
         )?;
         let bytes = std::fs::metadata(&ingested.pack_path)
             .map_err(crate::error::Error::Io)?
