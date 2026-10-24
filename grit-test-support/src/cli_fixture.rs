@@ -727,15 +727,47 @@ pub fn register_cli_snapshot_filters(settings: &mut insta::Settings, fixture: &C
     register_cli_snapshot_filters_for(settings, &[fixture]);
 }
 
-/// Like [`register_cli_snapshot_filters`], but redact every fixture path (for
-/// `snapshot_fresh_all_modes`, where human/json/markdown use separate repos).
-pub fn register_cli_snapshot_filters_for(settings: &mut insta::Settings, fixtures: &[&CliFixture]) {
+fn register_fixture_path_filters(settings: &mut insta::Settings, fixtures: &[&CliFixture]) {
     register_common_cli_snapshot_filters(settings);
 
     for fixture in fixtures {
         redact_path(settings, fixture.path(), "[REPO]");
         redact_path(settings, fixture.home_root(), "[HOME]");
     }
+}
+
+/// Redact ephemeral directories from the `tempfile` crate in insta output.
+///
+/// Runs after fixture-specific `[REPO]` / `[UPSTREAM]` redaction so a repo under
+/// `std::env::temp_dir()` is not partially rewritten.
+fn register_tempfile_path_redaction(settings: &mut insta::Settings) {
+    let temp_root = std::env::temp_dir();
+    register_temp_dir_prefix_redaction(settings, &temp_root);
+    if let Ok(canonical) = temp_root.canonicalize() {
+        if canonical != temp_root {
+            register_temp_dir_prefix_redaction(settings, &canonical);
+        }
+    }
+    // Leftover `.tmp*` segments after `[REPO]` / `[UPSTREAM]` redaction.
+    settings.add_filter(r"[/\\]\.tmp[A-Za-z0-9]+", "[TMPDIR]");
+}
+
+fn register_temp_dir_prefix_redaction(settings: &mut insta::Settings, temp_root: &Path) {
+    if !temp_root.is_absolute() {
+        return;
+    }
+    let prefix = regex::escape(temp_root.to_string_lossy().as_ref());
+    if prefix.is_empty() {
+        return;
+    }
+    settings.add_filter(&format!(r"{prefix}[/\\]\.tmp[A-Za-z0-9]+"), "[TMPDIR]");
+}
+
+/// Like [`register_cli_snapshot_filters`], but redact every fixture path (for
+/// `snapshot_fresh_all_modes`, where human/json/markdown use separate repos).
+pub fn register_cli_snapshot_filters_for(settings: &mut insta::Settings, fixtures: &[&CliFixture]) {
+    register_fixture_path_filters(settings, fixtures);
+    register_tempfile_path_redaction(settings);
 }
 
 /// Insta redactions for network CLI snapshots (transfer stats and temp paths).
@@ -745,11 +777,12 @@ pub fn register_network_snapshot_filters(
     upstream: &Path,
     extra_paths: &[&Path],
 ) {
-    register_cli_snapshot_filters(settings, fixture);
+    register_fixture_path_filters(settings, &[fixture]);
     redact_path(settings, upstream, "[UPSTREAM]");
     for path in extra_paths {
         redact_path(settings, path, "[WORKTREE]");
     }
+    register_tempfile_path_redaction(settings);
 
     settings.add_filter(r#""bytes": \d+"#, r#""bytes": "[BYTES]""#);
     settings.add_filter(r" \([\d.]+ (?:KiB|MiB|B)\)", " ([SIZE])");
@@ -960,5 +993,20 @@ mod snapshot_filter_tests {
         assert!(!md.contains(pkg_version));
         assert!(json.contains(r#""version":"[VERSION]""#));
         assert!(md.contains("previous version **[VERSION]**"));
+    }
+
+    #[test]
+    fn tempfile_redaction_uses_runtime_temp_dir_prefix() {
+        let temp_root = std::env::temp_dir();
+        let root = temp_root
+            .to_string_lossy()
+            .trim_end_matches(['/', '\\'])
+            .to_string();
+        let sample = format!(r#""fetch_url":"{root}/.tmpSnapTest""#);
+        let prefix = regex::escape(&root);
+        let re =
+            regex::Regex::new(&format!(r"{prefix}[/\\]\.tmp[A-Za-z0-9]+")).expect("temp regex");
+        let redacted = re.replace_all(&sample, "[TMPDIR]").to_string();
+        assert_eq!(redacted, r#""fetch_url":"[TMPDIR]""#);
     }
 }
