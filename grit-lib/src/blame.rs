@@ -546,15 +546,10 @@ fn blame_stops_on_current_commit(
         if stop[child_idx] {
             continue;
         }
-        if diff_map[child_idx].is_some() {
-            continue;
-        }
-        match relocate_map.get(child_idx).and_then(|p| *p) {
-            None => stop[child_idx] = true,
-            Some(parent_idx) if parent_idx == child_idx => {
-                stop[child_idx] = xdiff_changed.get(child_idx).copied().unwrap_or(false);
-            }
-            Some(_) => {}
+        if diff_map[child_idx].is_none() {
+            // xdiff insert/replace on the child side: stay on this commit even when
+            // exact-text relocation could pair the line with distant equal text (#1610).
+            stop[child_idx] = true;
         }
     }
     stop
@@ -1000,6 +995,39 @@ type CopySourceBlameCache = (
     HashMap<String, Vec<BlameLine>>,
     HashMap<String, usize>,
 );
+
+/// Attribute `current_idx` through copy detection when `-C`/`-CCC` data is cached.
+fn attribute_line_from_copy_cache(
+    inserted_copy_source: &mut Option<CopySourceBlameCache>,
+    cur_lines: &BlobLines,
+    current_idx: usize,
+    t: &TrackedLine,
+    final_lines: &[String],
+    result: &mut Vec<BlameLine>,
+) -> bool {
+    let Some((source_path, by_content, used)) = inserted_copy_source.as_mut() else {
+        return false;
+    };
+    let line_text = cur_lines.line(current_idx);
+    let used_key = line_text.to_owned();
+    let used_count = used.get(&used_key).copied().unwrap_or(0);
+    let Some(pb) = by_content
+        .get(line_text)
+        .and_then(|candidates| candidates.get(used_count))
+    else {
+        return false;
+    };
+    used.insert(used_key, used_count + 1);
+    result.push(blame_line_from_parent(
+        pb,
+        t.final_lineno,
+        final_lines[t.final_lineno - 1].clone(),
+        pb.source_file.clone().or_else(|| Some(source_path.clone())),
+        pb.ignored || t.ignored,
+        pb.unblamable,
+    ));
+    true
+}
 
 /// Hook the CLI installs so blame can lazily hydrate missing objects from a
 /// promisor remote (partial clone). The lib does no transport itself; the CLI
@@ -1809,13 +1837,6 @@ impl<'a> BlameSession<'a> {
                 && xdiff_changed.iter().all(|&f| !f)
             {
                 (diff_line_map.clone(), vec![false; cur_lines.len()])
-            } else if !is_ignored && diff_line_map.iter().all(|m| m.is_some()) {
-                let stop = if par_lines.len() == cur_lines.len() {
-                    blame_stops_on_current_commit(&diff_line_map, &diff_line_map, &xdiff_changed)
-                } else {
-                    Vec::new()
-                };
-                (diff_line_map.clone(), stop)
             } else {
                 let par_refs = Self::line_refs(par_lines);
                 let cur_refs = Self::line_refs(cur_lines);
@@ -2471,11 +2492,11 @@ fn compute_blame_with_session(
                     map_algo,
                     indent_heuristic,
                     false,
-                    false,
+                    true,
                     None,
                 );
                 par_lines_vec[i] = Some(pl_arc);
-                maps[i] = Some(pair.diff_line_map);
+                maps[i] = Some(Arc::clone(&pair.diff_line_map));
 
                 let mut next_remaining: Vec<TrackedLine> = Vec::new();
                 let Some(map) = maps[i].as_ref() else {
@@ -2835,6 +2856,7 @@ fn compute_blame_with_session(
                     true,
                     child_focus,
                 );
+                let diff_line_map = maps.diff_line_map.as_slice();
                 let line_map = maps.line_map.as_slice();
                 let stop_blame_on_current = maps.stop_blame_on_current.as_slice();
                 let mut inserted_copy_source: Option<CopySourceBlameCache> = None;
@@ -2870,6 +2892,32 @@ fn compute_blame_with_session(
 
                 for t in pending.drain(..) {
                     if t.current_idx < line_map.len() {
+                        if diff_line_map.get(t.current_idx).and_then(|m| *m).is_none()
+                            && !is_ignored
+                        {
+                            if attribute_line_from_copy_cache(
+                                &mut inserted_copy_source,
+                                cur_lines_arc.as_ref(),
+                                t.current_idx,
+                                &t,
+                                &final_lines,
+                                &mut result,
+                            ) {
+                                continue;
+                            }
+                            result.push(blame_line_at_path(
+                                current_oid,
+                                t.final_lineno,
+                                t.current_idx + 1,
+                                final_lines[t.final_lineno - 1].clone(),
+                                &current_path,
+                                None,
+                                t.ignored,
+                                false,
+                                false,
+                            ));
+                            continue;
+                        }
                         if let Some(parent_idx) = line_map[t.current_idx] {
                             if should_drop_tail_match_for_myers_blob(
                                 diff_algorithm,
@@ -2966,29 +3014,15 @@ fn compute_blame_with_session(
                                 ));
                             }
                         } else {
-                            if let Some((source_path, by_content, used)) =
-                                inserted_copy_source.as_mut()
-                            {
-                                let line_text = cur_lines_arc.line(t.current_idx);
-                                let used_key = line_text.to_owned();
-                                let used_count = used.get(&used_key).copied().unwrap_or(0);
-                                if let Some(pb) = by_content
-                                    .get(line_text)
-                                    .and_then(|candidates| candidates.get(used_count))
-                                {
-                                    used.insert(used_key, used_count + 1);
-                                    result.push(blame_line_from_parent(
-                                        pb,
-                                        t.final_lineno,
-                                        final_lines[t.final_lineno - 1].clone(),
-                                        pb.source_file
-                                            .clone()
-                                            .or_else(|| Some(source_path.clone())),
-                                        pb.ignored || t.ignored,
-                                        pb.unblamable,
-                                    ));
-                                    continue;
-                                }
+                            if attribute_line_from_copy_cache(
+                                &mut inserted_copy_source,
+                                cur_lines_arc.as_ref(),
+                                t.current_idx,
+                                &t,
+                                &final_lines,
+                                &mut result,
+                            ) {
+                                continue;
                             }
                             // Line was introduced in current commit
                             result.push(blame_line_at_path(
@@ -3577,10 +3611,7 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
         .as_ref()
         .and_then(|name| parse_diff_algorithm_name(name))
         .unwrap_or(BlameDiffAlgorithm::Myers);
-    let indent_heuristic = config
-        .get_bool("diff.indentHeuristic")
-        .and_then(|v| v.ok())
-        .unwrap_or(false);
+    let indent_heuristic = crate::diff::indent_heuristic_from_config(&config);
     let ignore_revs: HashSet<ObjectId> = options.ignore.as_set().clone();
 
     let thread_policy = repo.thread_policy();
@@ -3709,6 +3740,76 @@ mod tests {
                 .collect();
             assert_eq!(blob.to_vec(), expected, "content={content:?}");
         }
+    }
+
+    #[test]
+    fn shuffle_commit_stops_blame_on_moved_include_line() {
+        let old = [
+            "",
+            "#include \"cache.h\"",
+            "#include \"builtin.h\"",
+            "#include \"advice.h\"",
+            "#include \"pathspec.h\"",
+            "static int chmod_pathspec(struct pathspec_item *item, void *cb)",
+            "{",
+            "    return 0;",
+            "}",
+            "#include \"run-command.h\"",
+            "#include \"builtin.h\"",
+        ];
+        let new = [
+            "",
+            "#include \"builtin.h\"",
+            "#include \"advice.h\"",
+            "#include \"pathspec.h\"",
+            "#include \"run-command.h\"",
+            "static int chmod_pathspec(struct pathspec_item *item, void *cb)",
+            "{",
+            "    return 0;",
+            "}",
+        ];
+        let diff = build_line_map(&old, &new, BlameDiffAlgorithm::Myers, true);
+        let map = build_exact_relocate_line_map(&old, &new, &diff);
+        let (_, flags) =
+            build_line_map_with_changed_flags(&old, &new, BlameDiffAlgorithm::Myers, true, true);
+        let stop = blame_stops_on_current_commit(&diff, &map, &flags);
+        assert_eq!(diff[4], None);
+        assert_eq!(
+            map[4],
+            Some(9),
+            "exact relocate pairs moved text with old index"
+        );
+        assert!(
+            stop[4],
+            "moved include stops on shuffle commit: stop={stop:?} map={map:?} flags={flags:?}"
+        );
+    }
+
+    #[test]
+    fn build_line_map_include_shuffle_matches_git_with_indent_heuristic() {
+        let old = [
+            "",
+            "#include \"cache.h\"",
+            "#include \"builtin.h\"",
+            "#include \"advice.h\"",
+            "static void foo(void)",
+            "{",
+            "}",
+        ];
+        let new = [
+            "",
+            "#include \"builtin.h\"",
+            "#include \"advice.h\"",
+            "static void foo(void)",
+            "{",
+            "}",
+        ];
+        let map = build_line_map(&old, &new, BlameDiffAlgorithm::Myers, true);
+        assert_eq!(
+            map,
+            vec![Some(0), Some(2), Some(3), Some(4), Some(5), Some(6),],
+            "git keeps matching includes through equal hunks"
+        );
     }
 
     #[test]
