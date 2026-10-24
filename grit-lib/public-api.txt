@@ -3970,7 +3970,7 @@ pub const grit_lib::diff::userdiff::GIT_WORD_REGEX_DEFAULT_SUFFIX: &str
 pub const grit_lib::diff::userdiff::GIT_WORD_REGEX_FALLBACK: &str
 pub fn grit_lib::diff::userdiff::builtin_word_regex(&str) -> core::option::Option<(&'static str, bool)>
 pub fn grit_lib::diff::userdiff::matcher_for_driver(&grit_lib::config::ConfigSet, &str) -> core::result::Result<core::option::Option<grit_lib::diff::userdiff::FuncnameMatcher>, alloc::string::String>
-pub fn grit_lib::diff::userdiff::matcher_for_path(&grit_lib::config::ConfigSet, &[grit_lib::worktree::crlf::AttrRule], &str) -> core::result::Result<core::option::Option<grit_lib::diff::userdiff::FuncnameMatcher>, alloc::string::String>
+pub fn grit_lib::diff::userdiff::matcher_for_path(&grit_lib::config::ConfigSet, &[grit_lib::worktree::attributes::AttrRule], &str) -> core::result::Result<core::option::Option<grit_lib::diff::userdiff::FuncnameMatcher>, alloc::string::String>
 pub fn grit_lib::diff::userdiff::matcher_for_path_parsed(&grit_lib::config::ConfigSet, &[grit_lib::worktree::attributes::AttrRule], &grit_lib::worktree::attributes::MacroTable, &str, bool) -> core::result::Result<core::option::Option<grit_lib::diff::userdiff::FuncnameMatcher>, alloc::string::String>
 pub fn grit_lib::diff::userdiff::word_regex_pattern_for_path_parsed(&grit_lib::config::ConfigSet, &[grit_lib::worktree::attributes::AttrRule], &grit_lib::worktree::attributes::MacroTable, &str, bool) -> core::option::Option<(alloc::string::String, bool)>
 pub mod grit_lib::diff::ws
@@ -8335,6 +8335,7 @@ pub grit_lib::objects::index_pack::IngestPackOptions::mark_promisor_pack: bool
 pub grit_lib::objects::index_pack::IngestPackOptions::merged_config: core::option::Option<grit_lib::config::ConfigSet>
 pub grit_lib::objects::index_pack::IngestPackOptions::skip_post_index_verify: bool
 pub grit_lib::objects::index_pack::IngestPackOptions::threads: core::option::Option<usize>
+pub grit_lib::objects::index_pack::IngestPackOptions::trusted_index_rows: core::option::Option<alloc::vec::Vec<(grit_lib::objects::ObjectId, u64, u32)>>
 impl core::clone::Clone for grit_lib::objects::index_pack::IngestPackOptions
 pub fn grit_lib::objects::index_pack::IngestPackOptions::clone(&self) -> Self
 impl core::default::Default for grit_lib::objects::index_pack::IngestPackOptions
@@ -11607,15 +11608,15 @@ pub fn grit_lib::pathspec::context_from_mode_octal(&str) -> grit_lib::pathspec::
 pub fn grit_lib::pathspec::extend_pathspec_list_implicit_cwd(&[alloc::string::String], core::option::Option<&str>) -> alloc::vec::Vec<alloc::string::String>
 pub fn grit_lib::pathspec::has_glob_chars(&str) -> bool
 pub fn grit_lib::pathspec::literal_pathspecs_enabled() -> bool
-pub fn grit_lib::pathspec::matches_ls_tree_pathspec(&str, &str, u32, &[grit_lib::worktree::crlf::AttrRule]) -> bool
+pub fn grit_lib::pathspec::matches_ls_tree_pathspec(&str, &str, u32, &[grit_lib::worktree::attributes::AttrRule]) -> bool
 pub fn grit_lib::pathspec::matches_pathspec(&str, &str) -> bool
-pub fn grit_lib::pathspec::matches_pathspec_for_object(&str, &str, u32, &[grit_lib::worktree::crlf::AttrRule]) -> bool
+pub fn grit_lib::pathspec::matches_pathspec_for_object(&str, &str, u32, &[grit_lib::worktree::attributes::AttrRule]) -> bool
 pub fn grit_lib::pathspec::matches_pathspec_list(&str, &[alloc::string::String]) -> bool
-pub fn grit_lib::pathspec::matches_pathspec_list_for_object(&str, u32, &[grit_lib::worktree::crlf::AttrRule], &[alloc::string::String]) -> bool
+pub fn grit_lib::pathspec::matches_pathspec_list_for_object(&str, u32, &[grit_lib::worktree::attributes::AttrRule], &[alloc::string::String]) -> bool
 pub fn grit_lib::pathspec::matches_pathspec_list_precompose(&str, &[alloc::string::String], bool) -> bool
 pub fn grit_lib::pathspec::matches_pathspec_list_with_context(&str, &[alloc::string::String], grit_lib::pathspec::PathspecMatchContext) -> bool
-pub fn grit_lib::pathspec::matches_pathspec_set_for_object(&[alloc::string::String], &str, u32, &[grit_lib::worktree::crlf::AttrRule]) -> bool
-pub fn grit_lib::pathspec::matches_pathspec_set_for_object_ls_tree(&[alloc::string::String], &str, u32, &[grit_lib::worktree::crlf::AttrRule]) -> bool
+pub fn grit_lib::pathspec::matches_pathspec_set_for_object(&[alloc::string::String], &str, u32, &[grit_lib::worktree::attributes::AttrRule]) -> bool
+pub fn grit_lib::pathspec::matches_pathspec_set_for_object_ls_tree(&[alloc::string::String], &str, u32, &[grit_lib::worktree::attributes::AttrRule]) -> bool
 pub fn grit_lib::pathspec::matches_pathspec_with_context(&str, &str, grit_lib::pathspec::PathspecMatchContext) -> bool
 pub fn grit_lib::pathspec::normalize_worktree_file_path(&str, &std::path::Path, core::option::Option<&str>) -> alloc::string::String
 pub fn grit_lib::pathspec::normalize_worktree_file_path_with_git_dir(&str, &std::path::Path, core::option::Option<&str>, core::option::Option<&std::path::Path>) -> alloc::string::String
@@ -12710,10 +12711,10 @@ pub enum grit_lib::porcelain::merge::ContinueMergeError
 pub grit_lib::porcelain::merge::ContinueMergeError::EmptyMessage
 pub grit_lib::porcelain::merge::ContinueMergeError::NoMergeInProgress
 pub grit_lib::porcelain::merge::ContinueMergeError::Repository(grit_lib::error::Error)
-pub grit_lib::porcelain::merge::ContinueMergeError::UnmergedPaths
-pub grit_lib::porcelain::merge::ContinueMergeError::UnmergedPaths::paths: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::porcelain::merge::ContinueMergeError::ResolvedNotStaged
 pub grit_lib::porcelain::merge::ContinueMergeError::ResolvedNotStaged::paths: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::porcelain::merge::ContinueMergeError::UnmergedPaths
+pub grit_lib::porcelain::merge::ContinueMergeError::UnmergedPaths::paths: alloc::vec::Vec<alloc::string::String>
 impl core::convert::From<grit_lib::error::Error> for grit_lib::porcelain::merge::ContinueMergeError
 pub fn grit_lib::porcelain::merge::ContinueMergeError::from(grit_lib::error::Error) -> Self
 impl core::error::Error for grit_lib::porcelain::merge::ContinueMergeError
@@ -24976,17 +24977,24 @@ impl core::marker::UnsafeUnpin for grit_lib::worktree::crlf::WorkTreeEncodingErr
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::crlf::WorkTreeEncodingError
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::crlf::WorkTreeEncodingError
 pub struct grit_lib::worktree::crlf::AttrRule
-impl core::clone::Clone for grit_lib::worktree::crlf::AttrRule
-pub fn grit_lib::worktree::crlf::AttrRule::clone(&self) -> Self
-impl core::fmt::Debug for grit_lib::worktree::crlf::AttrRule
-pub fn grit_lib::worktree::crlf::AttrRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for grit_lib::worktree::crlf::AttrRule
-impl core::marker::Send for grit_lib::worktree::crlf::AttrRule
-impl core::marker::Sync for grit_lib::worktree::crlf::AttrRule
-impl core::marker::Unpin for grit_lib::worktree::crlf::AttrRule
-impl core::marker::UnsafeUnpin for grit_lib::worktree::crlf::AttrRule
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::crlf::AttrRule
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::crlf::AttrRule
+pub grit_lib::worktree::crlf::AttrRule::attr_base: alloc::string::String
+pub grit_lib::worktree::crlf::AttrRule::attrs: alloc::vec::Vec<(alloc::string::String, grit_lib::worktree::attributes::AttrValue)>
+pub grit_lib::worktree::crlf::AttrRule::line: usize
+pub grit_lib::worktree::crlf::AttrRule::nowildcardlen: usize
+pub grit_lib::worktree::crlf::AttrRule::pattern: alloc::string::String
+pub grit_lib::worktree::crlf::AttrRule::pattern_flags: u32
+pub grit_lib::worktree::crlf::AttrRule::skip: bool
+impl core::clone::Clone for grit_lib::worktree::attributes::AttrRule
+pub fn grit_lib::worktree::attributes::AttrRule::clone(&self) -> Self
+impl core::fmt::Debug for grit_lib::worktree::attributes::AttrRule
+pub fn grit_lib::worktree::attributes::AttrRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::worktree::attributes::AttrRule
+impl core::marker::Send for grit_lib::worktree::attributes::AttrRule
+impl core::marker::Sync for grit_lib::worktree::attributes::AttrRule
+impl core::marker::Unpin for grit_lib::worktree::attributes::AttrRule
+impl core::marker::UnsafeUnpin for grit_lib::worktree::attributes::AttrRule
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::attributes::AttrRule
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::attributes::AttrRule
 pub struct grit_lib::worktree::crlf::ConversionConfig
 pub grit_lib::worktree::crlf::ConversionConfig::autocrlf: grit_lib::worktree::crlf::AutoCrlf
 pub grit_lib::worktree::crlf::ConversionConfig::check_roundtrip_encoding: core::option::Option<alloc::string::String>
@@ -25056,18 +25064,20 @@ impl core::marker::Unpin for grit_lib::worktree::crlf::FileAttrs
 impl core::marker::UnsafeUnpin for grit_lib::worktree::crlf::FileAttrs
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::crlf::FileAttrs
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::crlf::FileAttrs
-pub fn grit_lib::worktree::crlf::attr_rule_matches(&grit_lib::worktree::crlf::AttrRule, &str, bool) -> bool
+pub fn grit_lib::worktree::crlf::attr_rule_matches(&grit_lib::worktree::attributes::AttrRule, &str, bool) -> bool
 pub fn grit_lib::worktree::crlf::clean_uses_autocrlf_index_guard(&grit_lib::worktree::crlf::FileAttrs, &grit_lib::worktree::crlf::ConversionConfig) -> bool
 pub fn grit_lib::worktree::crlf::collapse_ident(&[u8]) -> alloc::vec::Vec<u8>
-pub fn grit_lib::worktree::crlf::convert_attr_ascii_for_ls_files(&[grit_lib::worktree::crlf::AttrRule], &str, &grit_lib::config::ConfigSet) -> alloc::string::String
+pub fn grit_lib::worktree::crlf::convert_attr_ascii_for_ls_files(&[grit_lib::worktree::attributes::AttrRule], &str, &grit_lib::config::ConfigSet) -> alloc::string::String
 pub fn grit_lib::worktree::crlf::convert_to_git(&[u8], &str, &grit_lib::worktree::crlf::ConversionConfig, &grit_lib::worktree::crlf::FileAttrs) -> core::result::Result<alloc::vec::Vec<u8>, grit_lib::error::FilterError>
 pub fn grit_lib::worktree::crlf::convert_to_git_with_opts(&[u8], &str, &grit_lib::worktree::crlf::ConversionConfig, &grit_lib::worktree::crlf::FileAttrs, grit_lib::worktree::crlf::ConvertToGitOpts<'_>) -> core::result::Result<alloc::vec::Vec<u8>, grit_lib::error::FilterError>
 pub fn grit_lib::worktree::crlf::convert_to_worktree(&[u8], &str, &grit_lib::worktree::crlf::ConversionConfig, &grit_lib::worktree::crlf::FileAttrs, core::option::Option<&str>, core::option::Option<&grit_lib::filter_process::FilterSmudgeMeta>, core::option::Option<&mut grit_lib::filter_process::DelayedProcessCheckout>, core::option::Option<&grit_lib::filter_process::FilterProcessState>) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, grit_lib::error::FilterError>
 pub fn grit_lib::worktree::crlf::convert_to_worktree_eager(&[u8], &str, &grit_lib::worktree::crlf::ConversionConfig, &grit_lib::worktree::crlf::FileAttrs, core::option::Option<&str>, core::option::Option<&grit_lib::filter_process::FilterSmudgeMeta>, core::option::Option<&grit_lib::filter_process::FilterProcessState>) -> core::result::Result<alloc::vec::Vec<u8>, grit_lib::error::FilterError>
 pub fn grit_lib::worktree::crlf::convert_to_worktree_with_runner(&[u8], &str, &grit_lib::worktree::crlf::ConversionConfig, &grit_lib::worktree::crlf::FileAttrs, core::option::Option<&str>, core::option::Option<&grit_lib::filter_process::FilterSmudgeMeta>, core::option::Option<&mut grit_lib::filter_process::DelayedProcessCheckout>, core::option::Option<&grit_lib::filter_process::FilterProcessState>, core::option::Option<&dyn grit_lib::command_runner::CommandRunner>) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, grit_lib::error::FilterError>
 pub fn grit_lib::worktree::crlf::crlf_to_lf(&[u8]) -> alloc::vec::Vec<u8>
+pub fn grit_lib::worktree::crlf::file_attrs_from_attr_map(&std::collections::hash::map::HashMap<alloc::string::String, grit_lib::worktree::attributes::AttrValue>, &grit_lib::config::ConfigSet) -> grit_lib::worktree::crlf::FileAttrs
+pub fn grit_lib::worktree::crlf::file_attrs_from_gitattributes(&[grit_lib::worktree::attributes::AttrRule], &grit_lib::worktree::attributes::MacroTable, &str, bool, &grit_lib::config::ConfigSet) -> grit_lib::worktree::crlf::FileAttrs
 pub fn grit_lib::worktree::crlf::gather_convert_stats_ascii(&[u8]) -> &'static str
-pub fn grit_lib::worktree::crlf::get_file_attrs(&[grit_lib::worktree::crlf::AttrRule], &str, bool, &grit_lib::config::ConfigSet) -> grit_lib::worktree::crlf::FileAttrs
+pub fn grit_lib::worktree::crlf::get_file_attrs(&[grit_lib::worktree::attributes::AttrRule], &str, bool, &grit_lib::config::ConfigSet) -> grit_lib::worktree::crlf::FileAttrs
 pub fn grit_lib::worktree::crlf::has_crlf(&[u8]) -> bool
 pub fn grit_lib::worktree::crlf::has_crlf_in_index_blob(&[u8]) -> bool
 pub fn grit_lib::worktree::crlf::has_lone_lf(&[u8]) -> bool
@@ -25075,16 +25085,18 @@ pub fn grit_lib::worktree::crlf::is_all_crlf(&[u8]) -> bool
 pub fn grit_lib::worktree::crlf::is_all_lf(&[u8]) -> bool
 pub fn grit_lib::worktree::crlf::is_binary(&[u8]) -> bool
 pub fn grit_lib::worktree::crlf::lf_to_crlf(&[u8]) -> alloc::vec::Vec<u8>
-pub fn grit_lib::worktree::crlf::load_gitattributes(&std::path::Path) -> alloc::vec::Vec<grit_lib::worktree::crlf::AttrRule>
-pub fn grit_lib::worktree::crlf::load_gitattributes_for_checkout(&std::path::Path, &str, &grit_lib::index::Index, &grit_lib::objects::odb::Odb) -> alloc::vec::Vec<grit_lib::worktree::crlf::AttrRule>
-pub fn grit_lib::worktree::crlf::load_gitattributes_for_tree_path(&grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &str) -> alloc::vec::Vec<grit_lib::worktree::crlf::AttrRule>
-pub fn grit_lib::worktree::crlf::load_gitattributes_from_index(&grit_lib::index::Index, &grit_lib::objects::odb::Odb) -> alloc::vec::Vec<grit_lib::worktree::crlf::AttrRule>
-pub fn grit_lib::worktree::crlf::parse_gitattributes_content(&str) -> alloc::vec::Vec<grit_lib::worktree::crlf::AttrRule>
-pub fn grit_lib::worktree::crlf::path_gitattribute_value(&[grit_lib::worktree::crlf::AttrRule], &str, bool, &str) -> core::option::Option<alloc::string::String>
-pub fn grit_lib::worktree::crlf::path_has_gitattribute(&[grit_lib::worktree::crlf::AttrRule], &str, bool, &str) -> bool
+pub fn grit_lib::worktree::crlf::load_gitattributes(&std::path::Path) -> alloc::vec::Vec<grit_lib::worktree::attributes::AttrRule>
+pub fn grit_lib::worktree::crlf::load_gitattributes_for_checkout(&std::path::Path, &str, &grit_lib::index::Index, &grit_lib::objects::odb::Odb) -> alloc::vec::Vec<grit_lib::worktree::attributes::AttrRule>
+pub fn grit_lib::worktree::crlf::load_gitattributes_for_checkout_parsed(&std::path::Path, &str, &grit_lib::index::Index, &grit_lib::objects::odb::Odb) -> grit_lib::worktree::attributes::ParsedGitAttributes
+pub fn grit_lib::worktree::crlf::load_gitattributes_for_tree_path(&grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &str) -> alloc::vec::Vec<grit_lib::worktree::attributes::AttrRule>
+pub fn grit_lib::worktree::crlf::load_gitattributes_from_index(&grit_lib::index::Index, &grit_lib::objects::odb::Odb) -> alloc::vec::Vec<grit_lib::worktree::attributes::AttrRule>
+pub fn grit_lib::worktree::crlf::load_gitattributes_parsed(&std::path::Path) -> grit_lib::worktree::attributes::ParsedGitAttributes
+pub fn grit_lib::worktree::crlf::parse_gitattributes_content(&str) -> alloc::vec::Vec<grit_lib::worktree::attributes::AttrRule>
+pub fn grit_lib::worktree::crlf::path_gitattribute_value(&[grit_lib::worktree::attributes::AttrRule], &str, bool, &str) -> core::option::Option<alloc::string::String>
+pub fn grit_lib::worktree::crlf::path_has_gitattribute(&[grit_lib::worktree::attributes::AttrRule], &str, bool, &str) -> bool
 pub fn grit_lib::worktree::crlf::run_filter(&dyn grit_lib::command_runner::CommandRunner, &str, &[u8], &str) -> core::result::Result<alloc::vec::Vec<u8>, grit_lib::error::FilterError>
 pub fn grit_lib::worktree::crlf::should_convert_to_crlf(&grit_lib::worktree::crlf::ConversionConfig, &grit_lib::worktree::crlf::FileAttrs, &[u8]) -> bool
-pub type grit_lib::worktree::crlf::GitAttributes = alloc::vec::Vec<grit_lib::worktree::crlf::AttrRule>
+pub type grit_lib::worktree::crlf::GitAttributes = alloc::vec::Vec<grit_lib::worktree::attributes::AttrRule>
 pub mod grit_lib::worktree::fsmonitor
 pub struct grit_lib::worktree::fsmonitor::FsmonitorQueryBoundary(pub u64)
 impl core::clone::Clone for grit_lib::worktree::fsmonitor::FsmonitorQueryBoundary
@@ -25391,15 +25403,15 @@ pub fn grit_lib::worktree::pathspec::context_from_mode_octal(&str) -> grit_lib::
 pub fn grit_lib::worktree::pathspec::extend_pathspec_list_implicit_cwd(&[alloc::string::String], core::option::Option<&str>) -> alloc::vec::Vec<alloc::string::String>
 pub fn grit_lib::worktree::pathspec::has_glob_chars(&str) -> bool
 pub fn grit_lib::worktree::pathspec::literal_pathspecs_enabled() -> bool
-pub fn grit_lib::worktree::pathspec::matches_ls_tree_pathspec(&str, &str, u32, &[grit_lib::worktree::crlf::AttrRule]) -> bool
+pub fn grit_lib::worktree::pathspec::matches_ls_tree_pathspec(&str, &str, u32, &[grit_lib::worktree::attributes::AttrRule]) -> bool
 pub fn grit_lib::worktree::pathspec::matches_pathspec(&str, &str) -> bool
-pub fn grit_lib::worktree::pathspec::matches_pathspec_for_object(&str, &str, u32, &[grit_lib::worktree::crlf::AttrRule]) -> bool
+pub fn grit_lib::worktree::pathspec::matches_pathspec_for_object(&str, &str, u32, &[grit_lib::worktree::attributes::AttrRule]) -> bool
 pub fn grit_lib::worktree::pathspec::matches_pathspec_list(&str, &[alloc::string::String]) -> bool
-pub fn grit_lib::worktree::pathspec::matches_pathspec_list_for_object(&str, u32, &[grit_lib::worktree::crlf::AttrRule], &[alloc::string::String]) -> bool
+pub fn grit_lib::worktree::pathspec::matches_pathspec_list_for_object(&str, u32, &[grit_lib::worktree::attributes::AttrRule], &[alloc::string::String]) -> bool
 pub fn grit_lib::worktree::pathspec::matches_pathspec_list_precompose(&str, &[alloc::string::String], bool) -> bool
 pub fn grit_lib::worktree::pathspec::matches_pathspec_list_with_context(&str, &[alloc::string::String], grit_lib::pathspec::PathspecMatchContext) -> bool
-pub fn grit_lib::worktree::pathspec::matches_pathspec_set_for_object(&[alloc::string::String], &str, u32, &[grit_lib::worktree::crlf::AttrRule]) -> bool
-pub fn grit_lib::worktree::pathspec::matches_pathspec_set_for_object_ls_tree(&[alloc::string::String], &str, u32, &[grit_lib::worktree::crlf::AttrRule]) -> bool
+pub fn grit_lib::worktree::pathspec::matches_pathspec_set_for_object(&[alloc::string::String], &str, u32, &[grit_lib::worktree::attributes::AttrRule]) -> bool
+pub fn grit_lib::worktree::pathspec::matches_pathspec_set_for_object_ls_tree(&[alloc::string::String], &str, u32, &[grit_lib::worktree::attributes::AttrRule]) -> bool
 pub fn grit_lib::worktree::pathspec::matches_pathspec_with_context(&str, &str, grit_lib::pathspec::PathspecMatchContext) -> bool
 pub fn grit_lib::worktree::pathspec::normalize_worktree_file_path(&str, &std::path::Path, core::option::Option<&str>) -> alloc::string::String
 pub fn grit_lib::worktree::pathspec::normalize_worktree_file_path_with_git_dir(&str, &std::path::Path, core::option::Option<&str>, core::option::Option<&std::path::Path>) -> alloc::string::String
@@ -25466,7 +25478,7 @@ pub fn grit_lib::worktree::worktree_ref::sole_dwim_ref_name<F>(F, &str) -> core:
 pub mod grit_lib::worktree::worktree_rules
 pub struct grit_lib::worktree::worktree_rules::WorktreeRules
 impl grit_lib::worktree::worktree_rules::WorktreeRules
-pub fn grit_lib::worktree::worktree_rules::WorktreeRules::attribute_rules_for_path(&self, &str) -> alloc::vec::Vec<grit_lib::worktree::crlf::AttrRule>
+pub fn grit_lib::worktree::worktree_rules::WorktreeRules::attribute_rules_for_path(&self, &str) -> alloc::vec::Vec<grit_lib::worktree::attributes::AttrRule>
 pub fn grit_lib::worktree::worktree_rules::WorktreeRules::config(&self) -> &grit_lib::config::ConfigSet
 pub fn grit_lib::worktree::worktree_rules::WorktreeRules::config_arc(&self) -> alloc::rcs::arc::Arc<grit_lib::config::ConfigSet>
 pub fn grit_lib::worktree::worktree_rules::WorktreeRules::conversion(&self) -> &grit_lib::worktree::crlf::ConversionConfig
