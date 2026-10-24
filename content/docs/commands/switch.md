@@ -34,7 +34,7 @@ When `<branch>` names a remote-tracking branch (for example `origin/feature`), G
 
 `--detach` checks out `<rev>` without moving a branch tip. Use another branch or `grit switch <branch>` to reattach.
 
-Updating the working tree uses parallel checkout when the change set is large enough; tune [`checkout.workers`](../../library/parallelism.md) and `checkout.thresholdForParallelism`, or pass global [`--threads`](../global-options.md) to cap or force worker count for this run.
+Updating the working tree uses parallel checkout when the change set is large enough; tune [`checkout.workers`](../../library/parallelism.md) and `checkout.thresholdForParallelism`. On non-Windows hosts, global [`--threads`](../global-options.md) can cap checkout workers for this run; on **Windows**, checkout stays serial until `checkout.workers` is set in config (see [parallelism](../../library/parallelism.md)).
 
 ## Options
 

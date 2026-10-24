@@ -303,35 +303,53 @@ fn resolve_pack_threads(
     Ok(Parallelism::resolve(requested).threads())
 }
 
+/// Parsed `checkout.workers` value (Git: unset vs explicit auto vs explicit count).
+enum CheckoutWorkersSetting {
+    /// Key absent or unreadable — platform default applies.
+    Unset,
+    /// Explicit `< 1` (including `0`) — auto / all logical CPUs.
+    Auto,
+    /// Explicit worker count.
+    Count(usize),
+}
+
+#[must_use]
+fn checkout_workers_setting(config: &ConfigSet) -> CheckoutWorkersSetting {
+    match config.get_i64("checkout.workers") {
+        None | Some(Err(_)) => CheckoutWorkersSetting::Unset,
+        Some(Ok(n)) if n < 1 => CheckoutWorkersSetting::Auto,
+        Some(Ok(n)) => CheckoutWorkersSetting::Count(n as usize),
+    }
+}
+
 #[must_use]
 fn resolve_checkout_workers(config: &ConfigSet, override_threads: Option<usize>) -> NonZeroUsize {
-    let configured = match config.get_i64("checkout.workers") {
-        None => None,
-        Some(Ok(n)) if n < 1 => None,
-        Some(Ok(n)) => Some(n as usize),
-        Some(Err(_)) => None,
-    };
+    let setting = checkout_workers_setting(config);
 
-    #[cfg(windows)]
-    {
-        if let Some(n) = configured {
-            return Parallelism::resolve(Some(n)).threads();
+    if let Some(n) = override_threads {
+        #[cfg(windows)]
+        if matches!(setting, CheckoutWorkersSetting::Unset) {
+            // Issue #1613: global `--threads` must not enable checkout disk pools when
+            // `checkout.workers` was never configured.
+            let _ = n;
+            return NonZeroUsize::MIN;
         }
-        // Git keeps checkout serial unless `checkout.workers` is set. Global `--threads`
-        // must not fan out NTFS writes/deletes (issue #1613).
-        let _ = override_threads;
-        return NonZeroUsize::MIN;
+        return Parallelism::resolve(Some(n)).threads();
     }
 
-    #[cfg(not(windows))]
-    {
-        if let Some(n) = override_threads {
-            return Parallelism::resolve(Some(n)).threads();
+    match setting {
+        CheckoutWorkersSetting::Unset => {
+            #[cfg(windows)]
+            {
+                return NonZeroUsize::MIN;
+            }
+            #[cfg(not(windows))]
+            {
+                Parallelism::resolve(None).threads()
+            }
         }
-        match configured {
-            None => Parallelism::resolve(None).threads(),
-            Some(n) => Parallelism::resolve(Some(n)).threads(),
-        }
+        CheckoutWorkersSetting::Auto => Parallelism::resolve(Some(0)).threads(),
+        CheckoutWorkersSetting::Count(n) => Parallelism::resolve(Some(n)).threads(),
     }
 }
 
@@ -486,6 +504,35 @@ mod tests {
         let policy = ThreadPolicy::with_threads_override(Some(8));
         let opts = policy.resolve(ParallelOp::Checkout, &cfg);
         assert_eq!(opts.threads, NonZeroUsize::MIN);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn checkout_explicit_auto_enables_parallel_workers() {
+        let cfg = config_from("[checkout]\n\tworkers = 0\n");
+        let opts = ThreadPolicy::default().resolve(ParallelOp::Checkout, &cfg);
+        assert_eq!(
+            opts.threads.get(),
+            std::thread::available_parallelism()
+                .map(NonZeroUsize::get)
+                .unwrap_or(1)
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn checkout_thread_override_beats_workers_config_on_windows() {
+        let cfg = config_from("[checkout]\n\tworkers = 2\n");
+        let policy = ThreadPolicy::with_threads_override(Some(6));
+        let opts = policy.resolve(ParallelOp::Checkout, &cfg);
+        assert_eq!(
+            opts.threads.get(),
+            6.min(
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(1)
+            )
+        );
     }
 
     #[test]
