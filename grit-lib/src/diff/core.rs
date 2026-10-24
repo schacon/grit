@@ -10799,7 +10799,7 @@ pub(crate) fn is_unregistered_embedded_git_repo(index: &Index, rel: &str, abs: &
     let Some(git_dir) = submodule_embedded_git_dir(abs) else {
         return false;
     };
-    crate::submodule_gitdir::git_directory_for_embedded_repo(&git_dir)
+    crate::submodule_gitdir::is_valid_git_dir(&git_dir)
 }
 
 /// Walk upward from `sub_dir` to find the nearest containing Git work tree.
