@@ -2189,6 +2189,28 @@ impl Repository {
         )
     }
 
+    /// Lock the index selected by `GIT_INDEX_FILE` (or `$GIT_DIR/index`), then load it.
+    ///
+    /// Read-modify-write commands must load the index only after the lock is held: an index
+    /// read before locking can be replaced by a concurrent writer, and writing the stale copy
+    /// back would silently drop that writer's update. Persist with
+    /// [`Self::write_index_with_lock`]; dropping the lock without writing leaves the index as is.
+    ///
+    /// Returns the held lock and the index read under it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::IndexLocked`] when another process still holds the lock after the
+    /// `core.filesRefLockTimeout` wait, and propagates index read and parse failures
+    /// (including [`std::io::ErrorKind::NotFound`] when there is no index file yet).
+    pub(crate) fn lock_and_load_index(&self) -> Result<(crate::index::IndexLock, Index)> {
+        let path = self.index_path_for_env()?;
+        let cfg = self.config()?;
+        let lock = crate::index::IndexLock::acquire(&path, Some(cfg.as_ref()))?;
+        let index = self.load_index_at(&path)?;
+        Ok((lock, index))
+    }
+
     fn write_index_file(
         &self,
         path: &std::path::Path,
