@@ -2,10 +2,12 @@
 
 use std::error::Error as StdError;
 use std::fmt;
+use std::path::Path;
 
 use anyhow::Error;
 use grit_lib::command_runner::hooks::HookError;
 use grit_lib::error::{Error as LibError, OverwriteReason};
+use grit_lib::lockfile::LockHolder;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::pull::PullError;
 use grit_lib::remote::clone::CloneError;
@@ -24,6 +26,26 @@ pub struct WouldOverwriteJson {
     pub reason: String,
     /// Sorted, deduplicated repository-relative paths.
     pub paths: Vec<String>,
+}
+
+/// The lock file that blocked the command, when `kind == "lock_held"`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct LockHeldJson {
+    /// Lock file that already exists (for example `/repo/.git/index.lock`).
+    pub path: String,
+    /// Process recorded in the lock's pid sidecar (`core.lockfilePid`); absent when none was written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub holder: Option<LockHolderJson>,
+}
+
+/// Process recorded as the owner of a held lock.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct LockHolderJson {
+    /// Process id from the pid sidecar.
+    pub pid: u64,
+    /// Whether that process is running; `false` means the lock is stale.
+    pub running: bool,
 }
 
 /// JSON object emitted on stdout for structured command failures.
@@ -62,6 +84,10 @@ pub struct StructuredJsonError {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+    /// Lock file details when `kind == "lock_held"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub lock: Option<LockHeldJson>,
 }
 
 impl StructuredJsonError {
@@ -78,6 +104,7 @@ impl StructuredJsonError {
             hook: None,
             paths: None,
             hint: None,
+            lock: None,
         }
     }
 }
@@ -204,14 +231,6 @@ pub fn would_overwrite_error(
     })
 }
 
-/// Build a structured CLI error for [`LibError::LockHeld`] (`human` is the library message).
-pub fn index_locked(human: String) -> Error {
-    Error::new(StructuredCliError {
-        payload: StructuredJsonError::new(human.clone(), ErrorKind::IndexLocked),
-        human,
-    })
-}
-
 /// Build a structured CLI error for a command refused while `kind` is paused.
 ///
 /// `operation` supplies the finish / cancel commands named in the message, when grit knows them.
@@ -263,7 +282,6 @@ pub fn revision_not_found(spec: &str) -> Error {
 pub fn map_lib_error(err: LibError) -> Error {
     match err {
         LibError::HashCollision { oid } => hash_collision(oid),
-        locked @ LibError::LockHeld { .. } => index_locked(locked.to_string()),
         LibError::RevisionNotFound(spec) => revision_not_found(&spec),
         LibError::UnbornHead => crate::unborn_errors::unborn_head_from_cwd()
             .unwrap_or_else(|| crate::unborn_errors::unborn_head_error(None)),
@@ -272,8 +290,50 @@ pub fn map_lib_error(err: LibError) -> Error {
             paths,
             message,
         } => would_overwrite_error(reason, paths, message),
+        LibError::LockHeld { path, holder } => lock_held(&path, holder),
         other => Error::new(other),
     }
+}
+
+/// Build a structured CLI error for a lock file that already exists.
+pub fn lock_held(path: &Path, holder: Option<LockHolder>) -> Error {
+    let shown = path.display();
+    let human = match holder {
+        None => format!(
+            "another process holds {shown}; if none is running, remove the stale lock and retry"
+        ),
+        Some(LockHolder { pid, running: true }) => format!(
+            "process {pid} holds {shown}; wait for it to finish, or remove the lock if that process is not grit or git"
+        ),
+        Some(LockHolder {
+            pid,
+            running: false,
+        }) => format!(
+            "{shown} is a stale lock left by process {pid}, which is no longer running; remove it and retry"
+        ),
+    };
+    Error::new(StructuredCliError {
+        payload: StructuredJsonError {
+            lock: Some(LockHeldJson {
+                path: shown.to_string(),
+                holder: holder.map(|h| LockHolderJson {
+                    pid: h.pid,
+                    running: h.running,
+                }),
+            }),
+            ..StructuredJsonError::new(human.clone(), ErrorKind::LockHeld)
+        },
+        human,
+    })
+}
+
+/// Wrap [`LibError::LockHeld`] anywhere in the chain as [`StructuredCliError`].
+fn lock_held_from_chain(err: &Error) -> Option<Error> {
+    err.chain()
+        .find_map(|cause| match cause.downcast_ref::<LibError>() {
+            Some(LibError::LockHeld { path, holder }) => Some(lock_held(path, *holder)),
+            _ => None,
+        })
 }
 
 fn hash_collision_from_chain(err: &Error) -> Option<ObjectId> {
@@ -321,10 +381,14 @@ fn would_overwrite_from_chain(err: &Error) -> Option<Error> {
 
 /// Wrap typed library failures anywhere in the chain as [`StructuredCliError`].
 pub fn ensure_structured(err: Error) -> Error {
-    if err.downcast_ref::<StructuredCliError>().is_none() {
-        if let Some(guided) = error_hints::guided_error(&err) {
-            return guided;
-        }
+    if err.downcast_ref::<StructuredCliError>().is_some() {
+        return err;
+    }
+    if let Some(guided) = error_hints::guided_error(&err) {
+        return guided;
+    }
+    if let Some(structured) = lock_held_from_chain(&err) {
+        return structured;
     }
     if structured_json_payload(&err).is_some() {
         return err;
@@ -334,15 +398,6 @@ pub fn ensure_structured(err: Error) -> Error {
     }
     if let Some(structured) = would_overwrite_from_chain(&err) {
         return structured;
-    }
-    if let Some(locked) = err
-        .chain()
-        .find_map(|cause| match cause.downcast_ref::<LibError>() {
-            Some(locked @ LibError::LockHeld { .. }) => Some(locked.to_string()),
-            _ => None,
-        })
-    {
-        return index_locked(locked);
     }
     crate::unborn_errors::enrich_unborn_head(err)
 }
@@ -382,10 +437,16 @@ pub fn structured_json_payload(err: &Error) -> Option<StructuredJsonError> {
             ErrorKind::RemoteUnreadable,
         ));
     }
-    hash_collision_from_chain(err).map(|oid| StructuredJsonError {
-        oid: Some(oid.to_hex()),
-        ..StructuredJsonError::new("SHA-1 hash collision", ErrorKind::HashCollision)
-    })
+    hash_collision_from_chain(err)
+        .map(|oid| StructuredJsonError {
+            oid: Some(oid.to_hex()),
+            ..StructuredJsonError::new("SHA-1 hash collision", ErrorKind::HashCollision)
+        })
+        .or_else(|| {
+            lock_held_from_chain(err)?
+                .downcast_ref::<StructuredCliError>()
+                .map(|structured| structured.payload.clone())
+        })
 }
 
 /// Build a structured error for incompatible `--json` / `--markdown` flag combinations.

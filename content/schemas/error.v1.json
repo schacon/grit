@@ -78,7 +78,14 @@
           "type": "string"
         },
         {
-          "description": "Another process holds the index lock; refs, reflog and index are unchanged, so retrying is safe.",
+          "description": "A lock file such as `.git/index.lock` or a ref lock already exists (another process, or a stale lock); nothing was changed, so retrying is safe (`lock.path`, `lock.holder`).",
+          "enum": [
+            "lock_held"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Deprecated alias of `lock_held`, emitted by v0.5.21 for a held index lock. grit no longer emits it; it stays in the error schema for one release so v0.5.21 output still validates, and will be removed after that.",
           "enum": [
             "index_locked"
           ],
@@ -290,6 +297,50 @@
       ],
       "type": "object"
     },
+    "LockHeldJson": {
+      "description": "The lock file that blocked the command, when `kind == \"lock_held\"`.",
+      "properties": {
+        "holder": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LockHolderJson"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Process recorded in the lock's pid sidecar (`core.lockfilePid`); absent when none was written."
+        },
+        "path": {
+          "description": "Lock file that already exists (for example `/repo/.git/index.lock`).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "LockHolderJson": {
+      "description": "Process recorded as the owner of a held lock.",
+      "properties": {
+        "pid": {
+          "description": "Process id from the pid sidecar.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "running": {
+          "description": "Whether that process is running; `false` means the lock is stale.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pid",
+        "running"
+      ],
+      "type": "object"
+    },
     "StructuredJsonError": {
       "description": "JSON object emitted on stdout for structured command failures.",
       "properties": {
@@ -339,6 +390,17 @@
             }
           ],
           "description": "Machine-readable category (e.g. `conflict`)."
+        },
+        "lock": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LockHeldJson"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Lock file details when `kind == \"lock_held\"`."
         },
         "oid": {
           "description": "Plain SHA-1 digest for colliding input, when `kind == \"hash_collision\"`.",

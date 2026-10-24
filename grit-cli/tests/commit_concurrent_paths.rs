@@ -1,7 +1,7 @@
 //! Concurrent `grit commit -m MSG -- <path>` processes in one repository (issue #1791).
 //!
 //! Like Git, the index lock serializes the processes: each one either lands a commit carrying its
-//! own message and only its own path, or fails with `index_locked`. The real index never ends up
+//! own message and only its own path, or fails with `lock_held`. The real index never ends up
 //! stale and the history passes `git fsck`.
 #![cfg(unix)]
 
@@ -92,7 +92,13 @@ fn concurrent_path_commits_never_record_another_process_message() {
                     )
                 });
             let kind = err["kind"].as_str().unwrap_or_default().to_owned();
-            assert_eq!(kind, "index_locked", "unexpected failure: {err}");
+            assert_eq!(kind, "lock_held", "unexpected failure: {err}");
+            assert!(
+                err["lock"]["path"]
+                    .as_str()
+                    .is_some_and(|p| p.ends_with(".git/index.lock")),
+                "unexpected failure: {err}"
+            );
             *failures.entry(kind).or_default() += 1;
         }
 

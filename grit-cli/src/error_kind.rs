@@ -22,7 +22,13 @@ pub enum ErrorKind {
     Usage,
     /// Incompatible flag combination (often with `--json` / `--markdown`).
     IncompatibleFlags,
-    /// Another process holds the index lock; refs, reflog and index are unchanged, so retrying is safe.
+    /// A lock file such as `.git/index.lock` or a ref lock already exists (another process, or a
+    /// stale lock); nothing was changed, so retrying is safe (`lock.path`, `lock.holder`).
+    LockHeld,
+    /// Deprecated alias of `lock_held`, emitted by v0.5.21 for a held index lock. grit no
+    /// longer emits it; it stays in the error schema for one release so v0.5.21 output still
+    /// validates, and will be removed after that.
+    #[allow(dead_code)]
     IndexLocked,
     /// Branch already exists on create.
     BranchAlreadyExists,
@@ -109,7 +115,7 @@ impl ErrorKind {
             Self::InvalidPattern,
             Self::Usage,
             Self::IncompatibleFlags,
-            Self::IndexLocked,
+            Self::LockHeld,
             Self::BranchAlreadyExists,
             Self::BranchNotFound,
             Self::NoPreviousBranch,

@@ -118,7 +118,13 @@ fn commit_paths_with_held_index_lock_creates_nothing() -> TestResult {
     let out = run_grit(root, &["commit", "-m", "x", "--json", "--", "f1.txt"]);
     assert_eq!(out.status.code(), Some(1));
     let v: Value = serde_json::from_slice(&out.stdout)?;
-    assert_eq!(v.get("kind").and_then(Value::as_str), Some("index_locked"));
+    assert_eq!(v.get("kind").and_then(Value::as_str), Some("lock_held"));
+    assert!(
+        v["lock"]["path"]
+            .as_str()
+            .is_some_and(|p| p.ends_with(".git/index.lock")),
+        "{v}"
+    );
 
     assert_eq!(git_in(root, &["rev-parse", "HEAD"]), head);
     assert!(lock.exists(), "foreign lock must be left in place");
@@ -179,7 +185,13 @@ fn commit_patch_file_and_hunks_with_held_index_lock_create_nothing() -> TestResu
         let v: Value = serde_json::from_slice(&out.stdout)?;
         assert_eq!(
             v.get("kind").and_then(Value::as_str),
-            Some("index_locked"),
+            Some("lock_held"),
+            "{args:?}: {v}"
+        );
+        assert!(
+            v["lock"]["path"]
+                .as_str()
+                .is_some_and(|p| p.ends_with(".git/index.lock")),
             "{args:?}: {v}"
         );
 
