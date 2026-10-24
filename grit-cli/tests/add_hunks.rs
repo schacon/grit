@@ -22,12 +22,12 @@ fn run_grit(grit: &str, dir: &std::path::Path, args: &[&str]) -> std::process::O
         .expect("run grit")
 }
 
-fn validate_add_v1_schema(instance: &serde_json::Value) {
+fn validate_add_schema(instance: &serde_json::Value) {
     let schema_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../content/schemas/add.v1.json");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../content/schemas/add.v2.json");
     let schema_text = fs::read_to_string(&schema_path)
         .unwrap_or_else(|e| panic!("read {}: {e}", schema_path.display()));
-    let schema: serde_json::Value = serde_json::from_str(&schema_text).expect("parse add.v1.json");
+    let schema: serde_json::Value = serde_json::from_str(&schema_text).expect("parse add.v2.json");
     let compiled =
         jsonschema::validator_for(&schema).unwrap_or_else(|e| panic!("compile add schema: {e}"));
     assert!(
@@ -85,7 +85,7 @@ fn add_hunks_json() {
     let out: serde_json::Value = serde_json::from_slice(&add.stdout).expect("add json");
     assert_eq!(out["staged_hunks"]["f.txt"], serde_json::json!([id]));
     assert_eq!(out["modified"], serde_json::json!(["f.txt"]));
-    validate_add_v1_schema(&out);
+    validate_add_schema(&out);
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn add_plain_json_matches_schema() {
     let out: serde_json::Value = serde_json::from_slice(&add.stdout).expect("add json");
     assert_eq!(out["staged_hunks"], serde_json::json!({}));
     assert_eq!(out["staged_lines"], serde_json::json!({}));
-    validate_add_v1_schema(&out);
+    validate_add_schema(&out);
 }
 
 #[test]

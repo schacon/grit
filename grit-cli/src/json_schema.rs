@@ -53,6 +53,7 @@ pub fn schema_id_v2(command: &str) -> String {
 
 /// Commands whose live `--json` shape is versioned separately from the frozen v1 contract.
 const SCHEMA_V2_COMMANDS: &[&str] = &[
+    "add",
     "config",
     "merge",
     "mv",
@@ -1036,6 +1037,44 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
+
+    #[test]
+    fn add_committed_schema_uses_v2_contract() {
+        let doc = load_committed_schema("add");
+        assert_eq!(
+            doc.get("$id").and_then(|v| v.as_str()),
+            Some("https://grit-scm.com/schemas/add/v2.json")
+        );
+        let required = doc
+            .get("required")
+            .and_then(|v| v.as_array())
+            .expect("add v2 required");
+        assert!(required.iter().any(|v| v == "staged_hunks"));
+        assert!(required.iter().any(|v| v == "staged_lines"));
+    }
+
+    #[test]
+    fn add_v1_schema_still_accepts_legacy_stdout_without_hunk_maps() {
+        let path = schemas_dir().join(schema_file_name_for("add", 1));
+        let schema: Value = serde_json::from_str(
+            &fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display())),
+        )
+        .expect("parse add.v1.json");
+        let compiled = jsonschema::validator_for(&schema).expect("compile add v1");
+        let legacy = serde_json::json!({
+            "added": ["f.txt"],
+            "modified": [],
+            "removed": [],
+            "intent_to_add": [],
+            "dry_run": false,
+            "count": 1,
+            "staged": 1
+        });
+        assert!(
+            compiled.is_valid(&legacy),
+            "add v1 must remain valid for outputs that omit staged_hunks/staged_lines"
+        );
+    }
 
     #[test]
     fn clone_committed_schema_uses_v3_contract() {

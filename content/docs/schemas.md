@@ -13,7 +13,7 @@ Plain command failures with `--json` validate against the shared [error schema](
 
 | Command path | Schema |
 | --- | --- |
-| `add` | [v1](/schemas/add/v1.json) |
+| `add` | [v2](/schemas/add/v2.json), [v1](/schemas/add/v1.json) |
 | `auth` | [v1](/schemas/auth/v1.json) |
 | `auth.logout` | [v1](/schemas/auth.logout/v1.json) |
 | `blame` | [v1](/schemas/blame/v1.json) |
