@@ -14,6 +14,7 @@ use grit_lib::revwalk::{
     committer_cutoff_from_date, MergeFilter, RefSelection, RevWalkListOptions,
 };
 
+use crate::error_kind::ErrorKind;
 use crate::json_error::{
     invalid_commit_filter, invalid_pickaxe, StructuredCliError, StructuredJsonError,
 };
@@ -329,7 +330,7 @@ fn rev_select_usage(message: impl Into<String>) -> anyhow::Error {
     anyhow::Error::new(StructuredCliError {
         payload: StructuredJsonError {
             error: human.clone(),
-            kind: "usage",
+            kind: ErrorKind::Usage,
             conflicts: None,
             commit: None,
             would_overwrite: None,
