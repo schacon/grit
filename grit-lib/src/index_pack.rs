@@ -118,6 +118,9 @@ pub struct IngestPackOptions {
     pub environment: crate::environment::Environment,
     /// When true, write an empty sibling `.promisor` file next to the installed pack.
     pub mark_promisor_pack: bool,
+    /// Rows for a pack built in-process (`oid`, pack offset, per-object CRC32). When set, the
+    /// pack body is not rescanned to rebuild the index (local repack/gc only).
+    pub trusted_index_rows: Option<Vec<(ObjectId, u64, u32)>>,
 }
 
 impl Default for IngestPackOptions {
@@ -129,6 +132,7 @@ impl Default for IngestPackOptions {
             merged_config: None,
             environment: crate::environment::Environment::empty(),
             mark_promisor_pack: false,
+            trusted_index_rows: None,
         }
     }
 }
@@ -343,34 +347,51 @@ pub fn install_pack_path_with_progress(
         let parallelism = opts.index_parallelism(odb)?;
         record_resolved_ingest_threads(parallelism.threads().get());
         let sort_threads = parallelism.threads().get();
-        let (records, trailer) = {
+        let (entries, oids, object_counts, trailer) = {
             let pack_bytes: &[u8] = indexed.deref();
             verify_trailer(odb.hash_algo(), pack_bytes).map_err(|e| {
                 Error::CorruptObject(format!(
                     "received pack checksum mismatch (download may be incomplete): {e}"
                 ))
             })?;
-            let records = crate::pack_index_build::build_pack_index_records_with_progress(
-                pack_bytes,
-                odb,
-                parallelism,
-                !opts.skip_post_index_verify,
-                progress,
-            )?;
             let trailer = pack_bytes[pack_bytes.len() - hb..].to_vec();
-            (records, trailer)
+            if let Some(rows) = &opts.trusted_index_rows {
+                if rows.len() != u32::from_be_bytes([
+                    pack_bytes[8],
+                    pack_bytes[9],
+                    pack_bytes[10],
+                    pack_bytes[11],
+                ]) as usize
+                {
+                    return Err(Error::CorruptObject(
+                        "trusted index row count does not match pack header".to_owned(),
+                    ));
+                }
+                let oids: HashSet<ObjectId> = rows.iter().map(|(oid, _, _)| *oid).collect();
+                let object_counts = ObjectKindCounts::default();
+                (rows.clone(), oids, object_counts, trailer)
+            } else {
+                let records = crate::pack_index_build::build_pack_index_records_with_progress(
+                    pack_bytes,
+                    odb,
+                    parallelism,
+                    !opts.skip_post_index_verify,
+                    progress,
+                )?;
+                let oids: HashSet<ObjectId> = records.iter().map(|r| r.oid).collect();
+                let object_counts: ObjectKindCounts = records.iter().map(|r| r.kind).collect();
+                let entries: Vec<(ObjectId, u64, u32)> = records
+                    .into_iter()
+                    .map(
+                        |PackIndexRecord {
+                             oid, offset, crc32, ..
+                         }| (oid, offset, crc32),
+                    )
+                    .collect();
+                (entries, oids, object_counts, trailer)
+            }
         };
         drop(indexed);
-        let oids: HashSet<ObjectId> = records.iter().map(|r| r.oid).collect();
-        let object_counts: ObjectKindCounts = records.iter().map(|r| r.kind).collect();
-        let entries: Vec<(ObjectId, u64, u32)> = records
-            .into_iter()
-            .map(
-                |PackIndexRecord {
-                     oid, offset, crc32, ..
-                 }| (oid, offset, crc32),
-            )
-            .collect();
         write_v2_pack_index_with_trailer(&stage_idx, &entries, &trailer, hb, Some(sort_threads))?;
         if !opts.skip_post_index_verify {
             verify_pack_and_collect(&stage_idx)?;

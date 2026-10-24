@@ -95,6 +95,7 @@ pub(crate) fn extend_send_order_blob_deltas(
         return;
     }
     let mut recent_same_path: HashMap<u32, VecDeque<ObjectId>> = HashMap::new();
+    let mut index_cache: HashMap<ObjectId, Arc<DeltaIndex>> = HashMap::new();
     let remember =
         |recent_same_path: &mut HashMap<u32, VecDeque<ObjectId>>, path_key: u32, oid: ObjectId| {
             let recent = recent_same_path.entry(path_key).or_default();
@@ -128,12 +129,18 @@ pub(crate) fn extend_send_order_blob_deltas(
                     {
                         continue;
                     }
-                    let base_data = &objects[&base].data;
+                    let Some(base_obj) = objects.get(&base) else {
+                        continue;
+                    };
+                    let base_data = &base_obj.data;
                     let chosen =
                         if obj.data.starts_with(base_data) && obj.data.len() > base_data.len() {
                             encode_prefix_extension_delta(base_data, &obj.data).ok()
                         } else {
-                            DeltaIndex::new(base_data).encode(&obj.data, max_size)
+                            let index = index_cache
+                                .entry(base)
+                                .or_insert_with(|| Arc::new(DeltaIndex::new(base_data)));
+                            index.encode(&obj.data, max_size)
                         };
                     if let Some(delta) = chosen {
                         if delta.len() <= max_size && delta.len() < best_len {
@@ -694,7 +701,7 @@ pub(crate) fn serialize_pack_with_deltas(
     plan_payloads: &OidHashMap<Arc<[u8]>>,
     opts: &PackBuildOptions,
     write_threads: Option<usize>,
-) -> Result<Vec<u8>> {
+) -> Result<crate::pack_objects::SerializedDeltaPack> {
     let par_opts = pack_write_parallel_options(odb, write_threads)?;
     let prepared = prepare_entries_parallel(odb, entries, plan_payloads, opts, &par_opts)?;
     write_prepared_pack(odb, entries, &prepared, opts)
@@ -847,7 +854,7 @@ fn write_prepared_pack(
     entries: &[PlannedEntry],
     prepared: &[PreparedEntry],
     opts: &PackBuildOptions,
-) -> Result<Vec<u8>> {
+) -> Result<crate::pack_objects::SerializedDeltaPack> {
     let algo = odb.hash_algo();
     debug_assert_eq!(entries.len(), prepared.len());
 
@@ -859,6 +866,7 @@ fn write_prepared_pack(
     buf.extend_from_slice(&count.to_be_bytes());
 
     let mut oid_to_offset: HashMap<ObjectId, u64> = HashMap::new();
+    let mut index_rows: Vec<(ObjectId, u64, u32)> = Vec::with_capacity(entries.len());
 
     for (entry, prep) in entries.iter().zip(prepared) {
         let start = buf.len() as u64;
@@ -895,10 +903,16 @@ fn write_prepared_pack(
             }
         }
         oid_to_offset.insert(entry.oid, start);
+        let end = buf.len();
+        let crc = crc32fast::hash(&buf[start as usize..end]);
+        index_rows.push((entry.oid, start, crc));
     }
 
     append_pack_trailer(&mut buf, algo);
-    Ok(buf)
+    Ok(crate::pack_objects::SerializedDeltaPack {
+        bytes: buf,
+        index_rows,
+    })
 }
 
 fn zlib_compress(data: &[u8]) -> Result<Vec<u8>> {

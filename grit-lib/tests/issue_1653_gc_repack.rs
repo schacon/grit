@@ -33,6 +33,29 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
+fn count_loose_objects(git_dir: &Path) -> usize {
+    let objects = git_dir.join("objects");
+    walkdir_loose_count(&objects)
+}
+
+fn walkdir_loose_count(objects: &Path) -> usize {
+    let mut n = 0usize;
+    for entry in std::fs::read_dir(objects).expect("objects dir").flatten() {
+        let path = entry.path();
+        if path.file_name().is_some_and(|n| n == "pack" || n == "info") {
+            continue;
+        }
+        if path.is_dir() {
+            n += std::fs::read_dir(&path)
+                .expect("fanout")
+                .flatten()
+                .filter(|e| e.path().is_file())
+                .count();
+        }
+    }
+    n
+}
+
 fn populate_loose_history(dir: &Path, commits: usize) {
     git(dir, &["init", "-q", "-b", "main"]);
     git(dir, &["config", "gc.auto", "0"]);
@@ -45,7 +68,7 @@ fn populate_loose_history(dir: &Path, commits: usize) {
             }
             let extra = 5 + (i * 17 + name.len()) % 56;
             for j in 0..extra {
-                body.push_str(&format!("line {i}-{j} lorem ipsum dolor\n"));
+                body.push_str(&format!("{name} line {i}-{j} lorem ipsum dolor\n"));
             }
             std::fs::write(&path, body).expect("write blob");
         }
@@ -71,9 +94,19 @@ fn issue_1653_loose_gc_pack_near_git_size_and_fsck_clean() {
     populate_loose_history(grit_dir.path(), 120);
     populate_loose_history(git_dir.path(), 120);
 
+    assert_eq!(
+        count_loose_objects(&grit_dir.path().join(".git")),
+        600,
+        "fixture must have 600 loose objects before gc"
+    );
+
     let repo = Repository::discover(Some(grit_dir.path()), &RepositoryOptions::empty())
         .expect("open grit repo");
-    gc(&repo, &GcOptions::with_reflog_policy(1_700_000_000, false)).expect("grit gc");
+    gc(
+        &repo,
+        &GcOptions::with_reflog_policy(1_700_000_000, false),
+    )
+    .expect("grit gc");
 
     git(git_dir.path(), &["gc", "-q"]);
 
