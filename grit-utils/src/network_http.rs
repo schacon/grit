@@ -1,7 +1,7 @@
 //! Local smart HTTP servers for network benchmarks.
 
 use std::env;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -14,7 +14,8 @@ use anyhow::{bail, Context, Result};
 
 use crate::binary::resolve_http_server as resolve_server_bin;
 
-/// Running `git http-backend` behind a minimal HTTP/1.1 listener.
+/// `git http-backend` (git's own smart HTTP server) behind a small HTTP/1.1 listener, so
+/// network benchmarks run both clients end to end against a stock git server.
 pub struct GitHttpBackendServer {
     addr: SocketAddr,
     stop: Arc<AtomicBool>,
@@ -24,31 +25,28 @@ pub struct GitHttpBackendServer {
 }
 
 impl GitHttpBackendServer {
+    /// Serve every repository under `project_root` (`http://<addr>/<name>.git`), push included.
     pub fn start(git: &Path, project_root: PathBuf) -> Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0").context("bind git http-backend")?;
-        listener
-            .set_nonblocking(true)
-            .context("set_nonblocking listener")?;
         let addr = listener.local_addr()?;
+        let backend = git_http_backend_path(git)?;
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = Arc::clone(&stop);
-        let git_path = git.to_path_buf();
         let root = project_root.clone();
+        // Blocking accept: no polling delay on any request. Drop wakes it with a connection.
         let thread = thread::spawn(move || {
-            while !stop_flag.load(Ordering::Relaxed) {
-                match listener.accept() {
-                    Ok((mut stream, _)) => {
-                        let git_path = git_path.clone();
-                        let root = root.clone();
-                        thread::spawn(move || {
-                            let _ = handle_git_http_connection(&git_path, &root, &mut stream);
-                        });
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(5));
-                    }
-                    Err(_) => break,
+            for stream in listener.incoming() {
+                if stop_flag.load(Ordering::Relaxed) {
+                    break;
                 }
+                let Ok(mut stream) = stream else {
+                    continue;
+                };
+                let backend = backend.clone();
+                let root = root.clone();
+                thread::spawn(move || {
+                    let _ = serve_backend_request(&backend, &root, &mut stream);
+                });
             }
         });
         Ok(Self {
@@ -72,6 +70,7 @@ impl GitHttpBackendServer {
 impl Drop for GitHttpBackendServer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        let _ = TcpStream::connect_timeout(&self.addr, Duration::from_millis(500));
         if let Some(handle) = self.thread.take() {
             let _ = handle.join();
         }
@@ -84,156 +83,185 @@ pub fn handle_git_http_connection(
     project_root: &Path,
     stream: &mut TcpStream,
 ) -> Result<()> {
-    stream.set_read_timeout(Some(Duration::from_secs(120)))?;
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 8192];
-    loop {
-        let n = stream.read(&mut chunk).context("read HTTP request")?;
-        if n == 0 {
-            return Ok(());
-        }
-        buf.extend_from_slice(&chunk[..n]);
-        if buf.windows(4).any(|w| w == b"\r\n\r\n") {
-            break;
-        }
-        if buf.len() > 256 * 1024 {
-            bail!("HTTP request too large");
-        }
+    serve_backend_request(&git_http_backend_path(git)?, project_root, stream)
+}
+
+/// A parsed request head.
+struct RequestHead {
+    method: String,
+    path: String,
+    headers: Vec<(String, String)>,
+}
+
+impl RequestHead {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
+}
 
-    let header_end = buf
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .context("HTTP header end")?
-        + 4;
-    let header_bytes = buf[..header_end].to_vec();
-    let header_text = String::from_utf8_lossy(&header_bytes);
-    let mut lines = header_text.lines();
-    let request_line = lines.next().context("request line")?.to_string();
-    let mut parts = request_line.split_whitespace();
-    let method = parts.next().unwrap_or("GET").to_string();
-    let path = parts.next().unwrap_or("/").to_string();
-
-    let mut content_length = 0usize;
-    let mut content_type = String::new();
-    let mut expect_continue = false;
-    for line in lines {
-        let Some((name, value)) = line.split_once(':') else {
-            continue;
-        };
-        let name = name.trim();
-        let value = value.trim();
-        if name.eq_ignore_ascii_case("Content-Length") {
-            content_length = value.parse().unwrap_or(0);
-        } else if name.eq_ignore_ascii_case("Content-Type") {
-            content_type = value.to_string();
-        } else if name.eq_ignore_ascii_case("Expect") && value.eq_ignore_ascii_case("100-continue")
-        {
-            expect_continue = true;
-        }
-    }
-
-    if expect_continue {
+fn serve_backend_request(
+    backend: &Path,
+    project_root: &Path,
+    stream: &mut TcpStream,
+) -> Result<()> {
+    stream.set_read_timeout(Some(Duration::from_secs(300)))?;
+    stream.set_nodelay(true)?;
+    let mut reader = BufReader::new(stream.try_clone().context("clone request stream")?);
+    let Some(head) = read_request_head(&mut reader)? else {
+        return Ok(());
+    };
+    if head
+        .header("Expect")
+        .is_some_and(|v| v.eq_ignore_ascii_case("100-continue"))
+    {
         stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
     }
-
-    while buf.len() < header_end + content_length {
-        let n = stream.read(&mut chunk).context("read HTTP body")?;
-        if n == 0 {
-            break;
-        }
-        buf.extend_from_slice(&chunk[..n]);
-    }
-    let body = &buf[header_end..header_end + content_length];
-
-    let path_info = path.split('?').next().unwrap_or(path.as_str());
-    let query = path.split('?').nth(1).unwrap_or("");
-
-    let backend = git_http_backend_path(git)?;
-    let mut cmd = Command::new(&backend);
-    configure_git_http_backend_cgi(
-        &mut cmd,
-        project_root,
-        path_info,
-        query,
-        &method,
-        content_length,
-        &content_type,
-    );
-    if content_length > 0 {
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+    let chunked = head
+        .header("Transfer-Encoding")
+        .is_some_and(|v| v.to_ascii_lowercase().contains("chunked"));
+    let body = if chunked {
+        read_chunked_body(&mut reader)?
     } else {
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-    }
+        let len: usize = head
+            .header("Content-Length")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let mut body = vec![0u8; len];
+        reader.read_exact(&mut body).context("read HTTP body")?;
+        body
+    };
+
+    let (path_info, query) = head
+        .path
+        .split_once('?')
+        .unwrap_or((head.path.as_str(), ""));
+    let mut cmd = Command::new(backend);
+    configure_git_http_backend_cgi(&mut cmd, project_root, path_info, query, &head, body.len());
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
     let mut child = cmd.spawn().context("spawn git http-backend")?;
-    if content_length > 0 {
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(body)?;
-        }
+    // Feed the body from another thread so a large request and a large reply can't deadlock.
+    let mut stdin = child.stdin.take().context("http-backend stdin")?;
+    let writer = thread::spawn(move || {
+        let _ = stdin.write_all(&body);
+    });
+    let mut stdout = BufReader::new(child.stdout.take().context("http-backend stdout")?);
+    let (status, headers) = read_cgi_head(&mut stdout)?;
+
+    let mut out = format!("HTTP/1.1 {status}\r\n");
+    for (name, value) in &headers {
+        out.push_str(&format!("{name}: {value}\r\n"));
     }
-    let output = child.wait_with_output().context("wait git http-backend")?;
-    if !output.status.success() {
-        let response = b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n";
-        let _ = stream.write_all(response);
-        return Ok(());
-    }
-    let response = wrap_cgi_response(&output.stdout);
-    stream.write_all(&response)?;
+    // No Content-Length from the CGI: the body runs to the end of the connection.
+    out.push_str("Connection: close\r\n\r\n");
+    stream.write_all(out.as_bytes())?;
+    std::io::copy(&mut stdout, stream).context("stream http-backend reply")?;
+    let _ = writer.join();
+    let _ = child.wait();
     let _ = stream.shutdown(std::net::Shutdown::Write);
     Ok(())
 }
 
-/// Turn `git http-backend` CGI output into a complete HTTP/1.1 response.
-fn wrap_cgi_response(raw: &[u8]) -> Vec<u8> {
-    let Some(sep) = raw.windows(4).position(|w| w == b"\r\n\r\n") else {
-        let mut out = b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n".to_vec();
-        out.extend_from_slice(raw);
-        return out;
-    };
-    let header_end = sep + 4;
-    let headers = &raw[..header_end];
-    let body = &raw[header_end..];
-    let headers_text = String::from_utf8_lossy(headers);
-    let mut lines: Vec<String> = headers_text
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(str::to_string)
-        .collect();
-    if !lines
-        .iter()
-        .any(|l| l.to_ascii_lowercase().starts_with("content-length:"))
-    {
-        lines.push(format!("Content-Length: {}", body.len()));
+fn read_request_head(reader: &mut impl BufRead) -> Result<Option<RequestHead>> {
+    let mut line = String::new();
+    if reader.read_line(&mut line)? == 0 {
+        return Ok(None);
     }
-    if !lines
-        .iter()
-        .any(|l| l.to_ascii_lowercase().starts_with("connection:"))
-    {
-        lines.push("Connection: close".to_string());
+    let mut parts = line.split_whitespace();
+    let method = parts.next().unwrap_or("GET").to_string();
+    let path = parts.next().unwrap_or("/").to_string();
+    let mut headers = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            break;
+        }
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = trimmed.split_once(':') {
+            headers.push((name.trim().to_string(), value.trim().to_string()));
+        }
     }
-    let mut out = b"HTTP/1.1 200 OK\r\n".to_vec();
-    for line in lines {
-        out.extend_from_slice(line.as_bytes());
-        out.extend_from_slice(b"\r\n");
-    }
-    out.extend_from_slice(b"\r\n");
-    out.extend_from_slice(body);
-    out
+    Ok(Some(RequestHead {
+        method,
+        path,
+        headers,
+    }))
 }
 
-/// Hermetic CGI environment for `git http-backend` (inherits only `PATH` and `HOME`).
+/// Decode a `Transfer-Encoding: chunked` body (git sends these for large POSTs).
+fn read_chunked_body(reader: &mut impl BufRead) -> Result<Vec<u8>> {
+    let mut body = Vec::new();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        reader.read_line(&mut line).context("read chunk size")?;
+        let size_hex = line.trim().split(';').next().unwrap_or("0");
+        let size = usize::from_str_radix(size_hex, 16)
+            .with_context(|| format!("bad chunk size {size_hex:?}"))?;
+        if size == 0 {
+            // Trailers, then the blank line that ends the body.
+            loop {
+                line.clear();
+                if reader.read_line(&mut line)? == 0 || line.trim().is_empty() {
+                    break;
+                }
+            }
+            return Ok(body);
+        }
+        let start = body.len();
+        body.resize(start + size, 0);
+        reader
+            .read_exact(&mut body[start..])
+            .context("read chunk")?;
+        line.clear();
+        reader.read_line(&mut line)?;
+    }
+}
+
+/// The CGI reply's head: `Status:` becomes the HTTP status line, everything else a header.
+fn read_cgi_head(reader: &mut impl BufRead) -> Result<(String, Vec<(String, String)>)> {
+    let mut status = "200 OK".to_string();
+    let mut headers = Vec::new();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            break;
+        }
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            break;
+        }
+        let Some((name, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let (name, value) = (name.trim(), value.trim());
+        if name.eq_ignore_ascii_case("Status") {
+            status = value.to_string();
+        } else if !name.eq_ignore_ascii_case("Connection") {
+            headers.push((name.to_string(), value.to_string()));
+        }
+    }
+    Ok((status, headers))
+}
+
+/// Hermetic CGI environment for `git http-backend` (inherits only `PATH` and `HOME`). Request
+/// headers become `HTTP_*` variables, so `Git-Protocol` (v2) and gzip bodies work as on a real
+/// server, and `REMOTE_USER` enables push the way an authenticated server does.
 fn configure_git_http_backend_cgi(
     cmd: &mut Command,
     project_root: &Path,
     path_info: &str,
     query: &str,
-    method: &str,
+    head: &RequestHead,
     content_length: usize,
-    content_type: &str,
 ) {
     cmd.env_clear();
     if let Ok(path) = env::var("PATH") {
@@ -242,18 +270,35 @@ fn configure_git_http_backend_cgi(
     if let Ok(home) = env::var("HOME") {
         cmd.env("HOME", home);
     }
-    cmd.env("GIT_HTTP_EXPORT_ALL", "1")
+    cmd.env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            crate::bench_env::empty_global_config_path(),
+        )
+        .env("GIT_HTTP_EXPORT_ALL", "1")
         .env("GIT_PROJECT_ROOT", project_root)
         .env("PATH_INFO", path_info)
         .env("QUERY_STRING", query)
-        .env("REQUEST_METHOD", method)
+        .env("REQUEST_METHOD", &head.method)
         .env("SERVER_PROTOCOL", "HTTP/1.1")
-        .env("GATEWAY_INTERFACE", "CGI/1.1");
+        .env("GATEWAY_INTERFACE", "CGI/1.1")
+        .env("REMOTE_ADDR", "127.0.0.1")
+        .env("REMOTE_USER", "bench");
     if content_length > 0 {
         cmd.env("CONTENT_LENGTH", content_length.to_string());
     }
-    if !content_type.is_empty() {
+    if let Some(content_type) = head.header("Content-Type") {
         cmd.env("CONTENT_TYPE", content_type);
+    }
+    for (name, value) in &head.headers {
+        if name.eq_ignore_ascii_case("Content-Type")
+            || name.eq_ignore_ascii_case("Content-Length")
+            || name.eq_ignore_ascii_case("Transfer-Encoding")
+        {
+            continue;
+        }
+        let var = format!("HTTP_{}", name.to_ascii_uppercase().replace('-', "_"));
+        cmd.env(var, value);
     }
 }
 
@@ -333,13 +378,25 @@ mod tests {
     use std::process::Command;
 
     #[test]
-    fn wrap_cgi_adds_status_and_content_length() {
-        let raw = b"Content-Type: text/plain\r\n\r\nhello";
-        let wrapped = wrap_cgi_response(raw);
-        let text = String::from_utf8_lossy(&wrapped);
-        assert!(text.starts_with("HTTP/1.1 200 OK"));
-        assert!(text.contains("Content-Length: 5"));
-        assert!(text.ends_with("hello"));
+    fn cgi_head_maps_status_and_drops_connection() {
+        let raw: &[u8] = b"Status: 404 Not Found\r\nContent-Type: text/plain\r\nConnection: keep-alive\r\n\r\nmissing";
+        let mut reader = std::io::BufReader::new(raw);
+        let (status, headers) = read_cgi_head(&mut reader).expect("cgi head");
+        assert_eq!(status, "404 Not Found");
+        assert_eq!(
+            headers,
+            vec![("Content-Type".to_string(), "text/plain".to_string())]
+        );
+        let mut rest = String::new();
+        reader.read_to_string(&mut rest).expect("body");
+        assert_eq!(rest, "missing");
+    }
+
+    #[test]
+    fn chunked_body_is_decoded() {
+        let raw: &[u8] = b"5\r\nhello\r\n7;ext=1\r\n, world\r\n0\r\n\r\n";
+        let body = read_chunked_body(&mut std::io::BufReader::new(raw)).expect("chunked");
+        assert_eq!(body, b"hello, world");
     }
 
     #[test]
