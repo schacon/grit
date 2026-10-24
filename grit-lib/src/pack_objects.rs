@@ -5,8 +5,11 @@
 
 use crate::environment::RepositoryOptions;
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
+use std::path::Path;
+use std::sync::Arc;
 
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
@@ -20,6 +23,7 @@ use crate::objects::{
     ObjectKind, OidHashMap, OidHashSet, TreeRefIter,
 };
 use crate::odb::Odb;
+use crate::parallel::{try_par_map_force, ParallelHashError};
 use crate::repo::Repository;
 use crate::rev_list::ObjectFilter;
 
@@ -304,20 +308,23 @@ impl<'a> PackObjects<'a> {
                 &opts,
                 &oid_hash_map_from(&selection.blob_name_hashes),
                 self.opts.search_threads,
+                selection.walk_prefetch,
             )?;
             self.fire(PackProgress::PlannedDeltas);
             let delta_count = plan.entries.iter().filter(|e| e.base.is_some()).count() as u32;
             let pack = crate::pack_delta::serialize_pack_with_deltas(
                 self.source_odb,
                 &plan.entries,
+                &plan.payloads,
                 &opts,
                 self.opts.write_threads,
             )?;
-            w.write_all(&pack).map_err(Error::Io)?;
-            let count = u32::from_be_bytes([pack[8], pack[9], pack[10], pack[11]]);
+            w.write_all(&pack.bytes).map_err(Error::Io)?;
+            let count =
+                u32::from_be_bytes([pack.bytes[8], pack.bytes[9], pack.bytes[10], pack.bytes[11]]);
             return Ok(PackStats {
                 object_count: count,
-                pack_bytes: pack.len() as u64,
+                pack_bytes: pack.bytes.len() as u64,
                 delta_count,
                 ..Default::default()
             });
@@ -528,11 +535,6 @@ fn write_planned_entries(
     mut reuse: Option<&mut crate::pack_reuse::StreamingReuse>,
 ) -> Result<crate::pack_reuse::ReuseWriteStats> {
     let algo = odb.hash_algo();
-    let payloads: OidHashMap<&[u8]> = plan
-        .entries
-        .iter()
-        .map(|e| (e.oid, e.data.as_slice()))
-        .collect();
     let mut oid_to_offset: OidHashMap<u64> = oid_hash_map();
     let mut delta_index_by_base: OidHashMap<DeltaIndex> = oid_hash_map();
     let mut body_written = 0u64;
@@ -547,8 +549,16 @@ fn write_planned_entries(
                     continue;
                 }
             }
+            let payload = planned_object_payload(odb, entry.oid, entry, &plan.payloads)?;
             let mut chunk = Vec::new();
-            write_whole_pack_object(&mut chunk, odb, entry.oid, entry.kind, &entry.data, opts)?;
+            write_whole_pack_object(
+                &mut chunk,
+                odb,
+                entry.oid,
+                entry.kind,
+                payload.as_ref(),
+                opts,
+            )?;
             w.write_all(&chunk).map_err(Error::Io)?;
             body_written += chunk.len() as u64;
             oid_to_offset.insert(entry.oid, start);
@@ -589,31 +599,20 @@ fn write_planned_entries(
                 reuse.record_verbatim_zlib((zlib_end - zlib_start) as u64);
             }
         } else {
-            let target_data = entry.data.as_slice();
-            if target_data.is_empty() {
-                return Err(Error::CorruptObject(
-                    "delta entry missing payload".to_owned(),
-                ));
-            }
+            let target_data = planned_object_payload(odb, entry.oid, entry, &plan.payloads)?;
             let delta = if let Some(reused) = &entry.reused_delta {
                 reused.clone()
             } else {
-                let base_data: Vec<u8> = if let Some(d) = payloads.get(&base_oid) {
-                    d.to_vec()
+                let base_data = planned_object_payload(odb, base_oid, entry, &plan.payloads)?;
+                if target_data.starts_with(base_data.as_ref())
+                    && target_data.len() > base_data.len()
+                {
+                    encode_prefix_extension_delta(base_data.as_ref(), &target_data)?
                 } else {
-                    odb.read(&base_oid)?.data
-                };
-                if target_data.starts_with(&base_data) && target_data.len() > base_data.len() {
-                    encode_prefix_extension_delta(&base_data, target_data)?
-                } else {
-                    let base_ref = payloads
-                        .get(&base_oid)
-                        .copied()
-                        .unwrap_or(base_data.as_slice());
                     delta_index_by_base
                         .entry(base_oid)
-                        .or_insert_with(|| DeltaIndex::new(base_ref))
-                        .encode(target_data, 0)
+                        .or_insert_with(|| DeltaIndex::new(base_data.as_ref()))
+                        .encode(&target_data, 0)
                         .ok_or_else(|| {
                             Error::CorruptObject("failed to encode pack delta for object".into())
                         })?
@@ -663,6 +662,7 @@ pub fn build_pack_from_send_list(
         blob_name_hashes,
         None,
         None,
+        HashMap::new(),
     )
 }
 
@@ -676,6 +676,18 @@ pub fn build_pack_with_write_threads(
     opts: &PackBuildOptions,
     write_threads: Option<usize>,
 ) -> Result<Vec<u8>> {
+    build_pack_with_write_threads_full(odb, wants, haves, opts, write_threads)
+        .map(|pack| pack.bytes)
+}
+
+/// Like [`build_pack_with_write_threads`], retaining trusted pack index rows for local install.
+pub(crate) fn build_pack_with_write_threads_full(
+    odb: &Odb,
+    wants: &[ObjectId],
+    haves: &[ObjectId],
+    opts: &PackBuildOptions,
+    write_threads: Option<usize>,
+) -> Result<SerializedDeltaPack> {
     let empty_shallow = empty_object_id_hash_set();
     let have_closure = reachable_closure(odb, haves, empty_shallow, true, empty_shallow)?;
     let selection = crate::pack_object_select::enumerate_pack_objects(
@@ -690,7 +702,7 @@ pub fn build_pack_with_write_threads(
             exclude_objects: Some(&have_closure),
         },
     )?;
-    build_pack_from_send_list_with_parallel_threads(
+    build_pack_from_send_list_full(
         odb,
         &selection.send,
         &selection.have_closure,
@@ -698,6 +710,7 @@ pub fn build_pack_with_write_threads(
         &selection.blob_name_hashes,
         None,
         write_threads,
+        selection.walk_prefetch,
     )
 }
 
@@ -732,6 +745,7 @@ pub fn build_pack_with_parallel_threads(
         &selection.blob_name_hashes,
         search_threads,
         write_threads,
+        selection.walk_prefetch,
     )
 }
 
@@ -752,10 +766,12 @@ pub fn build_pack_from_send_list_with_write_threads(
         blob_name_hashes,
         None,
         write_threads,
+        HashMap::new(),
     )
 }
 
 /// Serialize a precomputed object list with explicit delta-search and write parallelism.
+#[allow(clippy::too_many_arguments)]
 pub fn build_pack_from_send_list_with_parallel_threads(
     odb: &Odb,
     send: &[ObjectId],
@@ -764,9 +780,38 @@ pub fn build_pack_from_send_list_with_parallel_threads(
     blob_name_hashes: &HashMap<ObjectId, u32>,
     search_threads: Option<usize>,
     write_threads: Option<usize>,
+    walk_prefetch: HashMap<ObjectId, Object>,
 ) -> Result<Vec<u8>> {
+    build_pack_from_send_list_full(
+        odb,
+        send,
+        have_closure,
+        opts,
+        blob_name_hashes,
+        search_threads,
+        write_threads,
+        walk_prefetch,
+    )
+    .map(|pack| pack.bytes)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_pack_from_send_list_full(
+    odb: &Odb,
+    send: &[ObjectId],
+    have_closure: &HashSet<ObjectId>,
+    opts: &PackBuildOptions,
+    blob_name_hashes: &HashMap<ObjectId, u32>,
+    search_threads: Option<usize>,
+    write_threads: Option<usize>,
+    walk_prefetch: HashMap<ObjectId, Object>,
+) -> Result<SerializedDeltaPack> {
     if !opts.delta {
-        return serialize_pack(odb, send, opts);
+        let bytes = serialize_pack(odb, send, opts)?;
+        return Ok(SerializedDeltaPack {
+            bytes,
+            index_rows: Vec::new(),
+        });
     }
     let blob_name_hashes_oid = oid_hash_map_from(blob_name_hashes);
     let plan = plan_deltas(
@@ -776,8 +821,15 @@ pub fn build_pack_from_send_list_with_parallel_threads(
         opts,
         &blob_name_hashes_oid,
         search_threads,
+        walk_prefetch,
     )?;
-    crate::pack_delta::serialize_pack_with_deltas(odb, &plan.entries, opts, write_threads)
+    crate::pack_delta::serialize_pack_with_deltas(
+        odb,
+        &plan.entries,
+        &plan.payloads,
+        opts,
+        write_threads,
+    )
 }
 
 /// Build a pack for local fetch: enumerate haves on `have_odb`, read payloads from `source_odb`.
@@ -982,6 +1034,103 @@ pub(crate) struct PlannedEntry {
 /// The full delta plan: the ordered entries to emit.
 pub(crate) struct DeltaPlan {
     pub(crate) entries: Vec<PlannedEntry>,
+    /// Blob payloads loaded during planning, shared across entries to avoid clones and rereads.
+    pub(crate) payloads: OidHashMap<Arc<[u8]>>,
+}
+
+/// A delta pack built in-process, with index rows that match the emitted stream.
+pub(crate) struct SerializedDeltaPack {
+    pub bytes: Vec<u8>,
+    pub index_rows: Vec<(ObjectId, u64, u32)>,
+}
+
+/// Resolve an object's uncompressed bytes for pack writing.
+pub(crate) fn planned_object_payload<'a>(
+    odb: &'a Odb,
+    oid: ObjectId,
+    entry: &'a PlannedEntry,
+    plan_payloads: &'a OidHashMap<Arc<[u8]>>,
+) -> Result<Cow<'a, [u8]>> {
+    if entry.oid == oid && !entry.data.is_empty() {
+        return Ok(Cow::Borrowed(&entry.data));
+    }
+    if let Some(bytes) = plan_payloads.get(&oid) {
+        return Ok(Cow::Borrowed(bytes.as_ref()));
+    }
+    Ok(Cow::Owned(odb.read(&oid)?.data))
+}
+
+fn load_objects_for_plan(
+    odb: &Odb,
+    send: &[ObjectId],
+    blob_only: bool,
+    search_threads: Option<usize>,
+    walk_prefetch: &mut HashMap<ObjectId, Object>,
+) -> Result<OidHashMap<Object>> {
+    let mut objects = oid_hash_map_with_capacity(send.len().max(1));
+    for &oid in send {
+        let Some(obj) = walk_prefetch.remove(&oid) else {
+            continue;
+        };
+        let keep = if blob_only {
+            obj.kind == ObjectKind::Blob && !obj.data.is_empty()
+        } else {
+            true
+        };
+        if keep {
+            objects.insert(oid, obj);
+        } else {
+            walk_prefetch.insert(oid, obj);
+        }
+    }
+    if blob_only {
+        let mut blob_oids = Vec::new();
+        for &oid in send {
+            if objects.contains_key(&oid) {
+                continue;
+            }
+            let info = odb.read_info(&oid)?;
+            if info.kind == ObjectKind::Blob && info.size > 0 {
+                blob_oids.push(oid);
+            }
+        }
+        let par = crate::pack_delta::pack_delta_search_parallel_options(odb, search_threads)?;
+        if par.threads.get() <= 1 || blob_oids.len() < 32 {
+            for oid in blob_oids {
+                objects.insert(oid, odb.read(&oid)?);
+            }
+        } else {
+            let pairs =
+                try_par_map_force(&blob_oids, par, |oid| odb.read(oid).map(|obj| (*oid, obj)))
+                    .map_err(|e| match e {
+                        ParallelHashError::Task(err) => err,
+                    })?;
+            for (oid, obj) in pairs {
+                objects.insert(oid, obj);
+            }
+        }
+    } else {
+        for &oid in send {
+            if objects.contains_key(&oid) {
+                continue;
+            }
+            objects.insert(oid, odb.read(&oid)?);
+        }
+    }
+    Ok(objects)
+}
+
+fn objects_dir_has_local_packs(objects_dir: &Path) -> bool {
+    let pack_dir = objects_dir.join("pack");
+    if !pack_dir.is_dir() {
+        return false;
+    }
+    std::fs::read_dir(&pack_dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .any(|e| e.path().extension().is_some_and(|ext| ext == "pack"))
 }
 
 /// Select blob deltas for `send` and produce an ordered emit plan.
@@ -1008,6 +1157,7 @@ pub(crate) struct DeltaPlan {
 /// When `opts.thin`, a blob may also delta against a base reachable from the
 /// peer's `haves` (`have_closure`) even though that base is not emitted; such a
 /// base is referenced via REF_DELTA.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn plan_deltas(
     odb: &Odb,
     send: &[ObjectId],
@@ -1015,17 +1165,26 @@ pub(crate) fn plan_deltas(
     opts: &PackBuildOptions,
     blob_name_hashes: &OidHashMap<u32>,
     search_threads: Option<usize>,
+    mut walk_prefetch: HashMap<ObjectId, Object>,
 ) -> Result<DeltaPlan> {
     // Reuse-only repacks (`window == 0`) stream from disk at serialize time; avoid
     // materializing every payload during planning.
     let lazy_payloads = opts.window == 0 && !opts.thin && opts.reuse_deltas && opts.reuse_objects;
+    let has_local_packs = objects_dir_has_local_packs(odb.objects_dir());
+    let blob_only_planning =
+        !lazy_payloads && opts.window > 0 && opts.delta && !opts.thin && !has_local_packs;
     let send_cap = send.len().max(1);
-    let mut objects: OidHashMap<Object> = oid_hash_map_with_capacity(send_cap);
-    if !lazy_payloads {
-        for &oid in send {
-            objects.insert(oid, odb.read(&oid)?);
-        }
-    }
+    let mut objects: OidHashMap<Object> = if lazy_payloads {
+        oid_hash_map_with_capacity(send_cap)
+    } else {
+        load_objects_for_plan(
+            odb,
+            send,
+            blob_only_planning,
+            search_threads,
+            &mut walk_prefetch,
+        )?
+    };
 
     let in_pack: OidHashSet = send.iter().copied().collect();
 
@@ -1043,7 +1202,7 @@ pub(crate) fn plan_deltas(
     > = HashMap::new();
 
     // On-disk delta reuse runs even with `--window=0` (no new deltas), matching Git pack-objects.
-    if opts.reuse_deltas && odb.hash_algo() == HashAlgo::Sha1 {
+    if opts.reuse_deltas && odb.hash_algo() == HashAlgo::Sha1 && has_local_packs {
         let objects_dir = odb.objects_dir();
         let in_pack_std: HashSet<ObjectId> = in_pack.iter().copied().collect();
         let empty_resolved: HashMap<ObjectId, Object> = HashMap::new();
@@ -1079,14 +1238,24 @@ pub(crate) fn plan_deltas(
         .map(|(_, b)| *b)
         .collect();
 
+    let mut delta_encodings: HashMap<ObjectId, Vec<u8>> = HashMap::new();
     if opts.window > 0 && opts.max_depth > 0 {
         // Without a readable pack directory, every pair is simply tried.
-        let packed = if opts.reuse_deltas {
-            let blobs: OidHashSet = objects
-                .iter()
-                .filter(|(_, obj)| obj.kind == ObjectKind::Blob && !obj.data.is_empty())
-                .map(|(oid, _)| *oid)
-                .collect();
+        let packed = if opts.reuse_deltas && has_local_packs {
+            let blobs: OidHashSet = if lazy_payloads {
+                send.iter()
+                    .filter_map(|oid| {
+                        let info = odb.read_info(oid).ok()?;
+                        (info.kind == ObjectKind::Blob && info.size > 0).then_some(*oid)
+                    })
+                    .collect()
+            } else {
+                objects
+                    .iter()
+                    .filter(|(_, obj)| obj.kind == ObjectKind::Blob && !obj.data.is_empty())
+                    .map(|(oid, _)| *oid)
+                    .collect()
+            };
             crate::pack::locate_packed_objects(odb.objects_dir(), &blobs).ok()
         } else {
             None
@@ -1106,9 +1275,10 @@ pub(crate) fn plan_deltas(
                 hash_len: odb.hash_algo().len(),
             },
             &mut delta_to_base,
+            &mut delta_encodings,
         );
         let skip_targets: OidHashSet = delta_to_base.keys().copied().collect();
-        let window_found = crate::pack_delta::search_windowed_blob_deltas(
+        let (window_found, mut window_encodings) = crate::pack_delta::search_windowed_blob_deltas(
             odb,
             crate::pack_delta::DeltaSearchInput {
                 objects: &objects,
@@ -1123,7 +1293,13 @@ pub(crate) fn plan_deltas(
             search_threads,
         )?;
         for (target, base) in window_found {
-            delta_to_base.entry(target).or_insert(base);
+            if delta_to_base.contains_key(&target) {
+                continue;
+            }
+            delta_to_base.insert(target, base);
+            if let Some(bytes) = window_encodings.remove(&target) {
+                delta_encodings.insert(target, bytes);
+            }
         }
 
         if opts.thin {
@@ -1143,7 +1319,9 @@ pub(crate) fn plan_deltas(
                 if delta_to_base.contains_key(&t) || reuse_delta_bases.contains(&t) {
                     continue;
                 }
-                let obj = &objects[&t];
+                let Some(obj) = objects.get(&t) else {
+                    continue;
+                };
                 if obj.kind != ObjectKind::Blob || obj.data.is_empty() {
                     continue;
                 }
@@ -1205,6 +1383,49 @@ pub(crate) fn plan_deltas(
         // A reused delta whose target was snipped (or whose base ceased to be the
         // chosen base) reverts to a freshly-computed full/delta object.
         reused_zlib.retain(|t, _| delta_to_base.contains_key(t));
+        delta_encodings.retain(|t, _| delta_to_base.contains_key(t));
+    }
+
+    let mut payloads: OidHashMap<Arc<[u8]>> = oid_hash_map_with_capacity(objects.len().max(1));
+    for (oid, obj) in &objects {
+        payloads.insert(*oid, Arc::from(obj.data.as_slice()));
+    }
+    if !lazy_payloads {
+        let mut missing = Vec::new();
+        for &oid in send {
+            if payloads.contains_key(&oid) {
+                continue;
+            }
+            if let Some(obj) = walk_prefetch.remove(&oid) {
+                if !obj.data.is_empty() {
+                    payloads.insert(oid, Arc::from(obj.data.into_boxed_slice()));
+                    continue;
+                }
+                walk_prefetch.insert(oid, obj);
+            }
+            let info = odb.read_info(&oid)?;
+            if info.size > 0 {
+                missing.push(oid);
+            }
+        }
+        if missing.is_empty() {
+            // All send payloads already loaded during planning.
+        } else if missing.len() < 32 {
+            for oid in missing {
+                let obj = odb.read(&oid)?;
+                payloads.insert(oid, Arc::from(obj.data.as_slice()));
+            }
+        } else {
+            let par = crate::pack_delta::pack_delta_search_parallel_options(odb, search_threads)?;
+            let pairs =
+                try_par_map_force(&missing, par, |oid| odb.read(oid).map(|obj| (*oid, obj)))
+                    .map_err(|e| match e {
+                        ParallelHashError::Task(err) => err,
+                    })?;
+            for (oid, obj) in pairs {
+                payloads.insert(oid, Arc::from(obj.data.as_slice()));
+            }
+        }
     }
 
     // Emit in the original discovery order so commits precede their trees/blobs.
@@ -1214,24 +1435,22 @@ pub(crate) fn plan_deltas(
     // the base has not yet been written.
     let mut entries: Vec<PlannedEntry> = Vec::with_capacity(send.len());
     for &oid in send {
-        let (kind, data) = if lazy_payloads {
-            let info = odb.read_info(&oid)?;
-            (info.kind, Vec::new())
+        let kind = if let Some(obj) = objects.get(&oid) {
+            obj.kind
         } else {
-            let obj = &objects[&oid];
-            (obj.kind, obj.data.clone())
+            odb.read_info(&oid)?.kind
         };
         entries.push(PlannedEntry {
             oid,
             kind,
-            data,
+            data: Vec::new(),
             base: delta_to_base.get(&oid).copied(),
-            reused_delta: None,
+            reused_delta: delta_encodings.get(&oid).cloned(),
             reused_delta_zlib: reused_zlib.get(&oid).cloned(),
         });
     }
 
-    Ok(DeltaPlan { entries })
+    Ok(DeltaPlan { entries, payloads })
 }
 
 /// Load delta-island marks for the objects being packed, honoring

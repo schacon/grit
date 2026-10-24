@@ -49,8 +49,8 @@ use crate::odb::UnreachablePackRetention;
 use crate::pack_bitmap::{PackBitmapWriteOptions, PackBitmapWriter};
 use crate::pack_object_select::{enumerate_pack_objects, PackEnumerateOptions};
 use crate::pack_objects::{
-    build_pack_from_send_list_with_parallel_threads, build_pack_with_write_threads,
-    PackBuildOptions,
+    build_pack_from_send_list_full, build_pack_from_send_list_with_parallel_threads,
+    build_pack_with_write_threads_full, PackBuildOptions, SerializedDeltaPack,
 };
 use crate::pack_rev::write_pack_rev_sidecar_for_index_path;
 use crate::progress::{NeverCancel, NullProgress};
@@ -782,13 +782,20 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         });
     }
 
-    let pack_bytes = if skip_repack {
-        Vec::new()
+    let built_pack = if skip_repack {
+        SerializedDeltaPack {
+            bytes: Vec::new(),
+            index_rows: Vec::new(),
+        }
     } else if run_incremental {
-        pack_loose_objects_incremental(odb, &pack_opts, opts.threads)?
+        SerializedDeltaPack {
+            bytes: pack_loose_objects_incremental(odb, &pack_opts, opts.threads)?,
+            index_rows: Vec::new(),
+        }
     } else {
         build_repack_pack(odb, &roots, opts.keep_unreachable, &pack_opts, opts.threads)?
     };
+    let pack_bytes = built_pack.bytes;
     if pack_bytes.is_empty() {
         return Ok(RepackDetail {
             report,
@@ -804,11 +811,15 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
     if pack_bytes.len() > pack_trailer_len {
         clear_pack_midx_state(&pack_dir)?;
 
+        let trusted_rows = (!built_pack.index_rows.is_empty()).then_some(built_pack.index_rows);
         let ingest_opts = IngestPackOptions {
             fix_thin: false,
             threads: opts.threads,
             merged_config: cfg.clone(),
             environment: opts.environment.clone(),
+            trusted_index_rows: trusted_rows.clone(),
+            // Locally built pack: trailer checked at write time; index rows match the stream.
+            skip_post_index_verify: trusted_rows.is_some(),
             ..IngestPackOptions::default()
         };
         let ingested = install_pack_bytes(pack_bytes, odb, &ingest_opts)?;
@@ -1023,6 +1034,7 @@ fn pack_loose_objects_incremental(
         &HashMap::new(),
         None,
         threads,
+        HashMap::new(),
     )
 }
 
@@ -1255,9 +1267,9 @@ fn build_repack_pack(
     keep_unreachable: bool,
     opts: &PackBuildOptions,
     threads: Option<usize>,
-) -> Result<Vec<u8>> {
+) -> Result<SerializedDeltaPack> {
     if !keep_unreachable {
-        return build_pack_with_write_threads(odb, roots, &[], opts, threads);
+        return build_pack_with_write_threads_full(odb, roots, &[], opts, threads);
     }
     let empty_shallow = HashSet::new();
     let selection = enumerate_pack_objects(
@@ -1274,7 +1286,7 @@ fn build_repack_pack(
     )?;
     let mut send = selection.send;
     append_repack_unreachable_retention(odb, &mut send)?;
-    build_pack_from_send_list_with_parallel_threads(
+    build_pack_from_send_list_full(
         odb,
         &send,
         &selection.have_closure,
@@ -1282,6 +1294,7 @@ fn build_repack_pack(
         &selection.blob_name_hashes,
         threads,
         threads,
+        selection.walk_prefetch,
     )
 }
 

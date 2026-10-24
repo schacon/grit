@@ -1503,6 +1503,7 @@ pub fn fetch_remote(
                         merged_config: Some(pack_config),
                         environment: opts.environment.clone(),
                         mark_promisor_pack: opts.mark_received_pack_promisor,
+                        trusted_index_rows: None,
                     },
                     Some(progress),
                 )?
@@ -1517,6 +1518,7 @@ pub fn fetch_remote(
                         merged_config: Some(pack_config),
                         environment: opts.environment.clone(),
                         mark_promisor_pack: opts.mark_received_pack_promisor,
+                        trusted_index_rows: None,
                     },
                     Some(progress),
                 )?
@@ -1878,6 +1880,7 @@ fn fetch_remote_object_wants(
                 merged_config: Some(pack_config),
                 environment: opts.environment.clone(),
                 mark_promisor_pack: opts.mark_received_pack_promisor,
+                trusted_index_rows: None,
             },
             Some(progress),
         )?;

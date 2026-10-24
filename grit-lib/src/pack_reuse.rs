@@ -239,6 +239,7 @@ pub fn try_write_streaming_pack(
         opts,
         &oid_hash_map_from(&blob_name_hashes),
         None,
+        HashMap::new(),
     )?;
     progress(PackProgress::PlannedDeltas);
 
