@@ -2,6 +2,20 @@
   "$id": "https://grit-scm.com/schemas/clone/v3.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "definitions": {
+    "CloneBlobsJson": {
+      "description": "Partial-clone blob filter: `\"none\"` or a byte limit.",
+      "oneOf": [
+        {
+          "const": "none",
+          "type": "string"
+        },
+        {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      ]
+    },
     "ClonePhase": {
       "description": "Timing for one step of the clone.",
       "properties": {
@@ -72,6 +86,17 @@
     "bare": {
       "description": "Whether the clone destination is a bare repository.",
       "type": "boolean"
+    },
+    "blobs": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/CloneBlobsJson"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Partial-clone blob filter when `--blobs` was used (`\"none\"` or a byte limit)."
     },
     "branch": {
       "description": "Branch checked out, or `null` when detached at a tag.",
@@ -144,6 +169,10 @@
       "format": "uint64",
       "minimum": 0.0,
       "type": "integer"
+    },
+    "partial": {
+      "description": "True when `--blobs` configured a promisor partial clone.",
+      "type": "boolean"
     },
     "path": {
       "description": "Destination directory.",

@@ -52,16 +52,53 @@ pub fn schema_id_v2(command: &str) -> String {
 }
 
 /// Commands whose live `--json` shape is versioned separately from the frozen v1 contract.
-const SCHEMA_V2_COMMANDS: &[&str] = &["merge", "pull", "pick"];
+const SCHEMA_V2_COMMANDS: &[&str] = &[
+    "config",
+    "merge",
+    "mv",
+    "pick",
+    "pull",
+    "remote",
+    "remote.add",
+    "remote.refs",
+    "remote.remove",
+    "remote.rename",
+    "remote.set-url",
+    "remote.show",
+    "tag",
+    "worktree.prune",
+];
 
 /// File name for a command schema under [`schemas_dir`].
 pub fn schema_file_name(command: &str) -> String {
-    format!("{command}.v1.json")
+    schema_file_name_for(command, committed_schema_version(command))
 }
 
 /// File name for a v2 schema document.
 pub fn schema_file_name_v2(command: &str) -> String {
-    format!("{command}.v2.json")
+    schema_file_name_for(command, 2)
+}
+
+/// File name for a command schema at `version` under [`schemas_dir`].
+pub fn schema_file_name_for(command: &str, version: u32) -> String {
+    format!("{command}.v{version}.json")
+}
+
+/// Version of the committed schema document used for validation and docs (`clone` is v3).
+#[must_use]
+pub fn committed_schema_version(command: &str) -> u32 {
+    if command == "clone" {
+        return 3;
+    }
+    if SCHEMA_V2_COMMANDS.contains(&command) {
+        return 2;
+    }
+    1
+}
+
+/// Stable `$id` URL for a command schema document at `version`.
+pub fn schema_id_for(command: &str, version: u32) -> String {
+    format!("https://grit-scm.com/schemas/{command}/v{version}.json")
 }
 
 fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
@@ -98,7 +135,9 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         pick::PickOutcome,
         pull::PullOutcome,
         push::PushOutcome,
-        reflog::{ReflogDeleteOutcome, ReflogExpireOutcome, ReflogListOutcome},
+        reflog::{
+            ReflogDeleteOutcome, ReflogExpireOutcome, ReflogListOutcome, ReflogRefsListOutcome,
+        },
         remote::RemoteOutcome,
         repack::RepackOutcome,
         reset::ResetCliOutcome,
@@ -111,8 +150,8 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         show::ShowRunResult,
         skill::SkillOutcome,
         stash::{
-            StashApplyOutcome, StashDropOutcome, StashListOutcome, StashPopOutcome,
-            StashPushOutcome, StashShowOutcome,
+            StashApplyOutcome, StashBranchOutcome, StashClearOutcome, StashDropOutcome,
+            StashListOutcome, StashPopOutcome, StashPushOutcome, StashShowOutcome,
         },
         status::StatusOutcome,
         switch::SwitchOutcome,
@@ -128,10 +167,17 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<RemoteOutcome>("remote"),
         entry::<RemoteOutcome>("remote.add"),
         entry::<RemoteOutcome>("remote.refs"),
+        entry::<RemoteOutcome>("remote.remove"),
+        entry::<RemoteOutcome>("remote.rename"),
+        entry::<RemoteOutcome>("remote.set-url"),
+        entry::<RemoteOutcome>("remote.show"),
+        entry::<RemoteOutcome>("remote.prune"),
+        entry::<RemoteOutcome>("remote.set-head"),
         entry::<LogOutcome>("log"),
         entry::<RevsOutcome>("revs"),
         entry::<MergeBaseOutcome>("merge-base"),
         entry::<ReflogListOutcome>("reflog"),
+        entry::<ReflogRefsListOutcome>("reflog.list"),
         entry::<ReflogDeleteOutcome>("reflog.delete"),
         entry::<ReflogExpireOutcome>("reflog.expire"),
         entry::<BlameOutcome>("blame"),
@@ -187,6 +233,8 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<StashApplyOutcome>("stash.apply"),
         entry::<StashPopOutcome>("stash.pop"),
         entry::<StashDropOutcome>("stash.drop"),
+        entry::<StashBranchOutcome>("stash.branch"),
+        entry::<StashClearOutcome>("stash.clear"),
         entry::<RestoreCliOutcome>("restore"),
         entry::<FetchOutcome>("fetch"),
         entry::<FetchAllOutcome>("fetch.all"),
@@ -203,6 +251,8 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<WorktreeOutcome>("worktree.prune"),
         entry::<WorktreeOutcome>("worktree.lock"),
         entry::<WorktreeOutcome>("worktree.unlock"),
+        entry::<WorktreeOutcome>("worktree.move"),
+        entry::<WorktreeOutcome>("worktree.repair"),
         entry::<AuthOutcome>("auth"),
         entry::<LogoutOutcome>("auth.logout"),
         entry::<UpdateOutcome>("update"),
@@ -246,10 +296,17 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
         "remote" => match positional.get(1).copied() {
             Some("add") => "remote.add",
             Some("refs") => "remote.refs",
+            Some("remove") => "remote.remove",
+            Some("rename") => "remote.rename",
+            Some("set-url") => "remote.set-url",
+            Some("show") => "remote.show",
+            Some("prune") => "remote.prune",
+            Some("set-head") => "remote.set-head",
             _ => "remote",
         },
         "reflog" => match positional.get(1).copied() {
             None => "reflog",
+            Some("list") => "reflog.list",
             Some("delete") => "reflog.delete",
             Some("expire") => "reflog.expire",
             _ => return None,
@@ -267,6 +324,8 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
             Some("apply") => "stash.apply",
             Some("pop") => "stash.pop",
             Some("drop") => "stash.drop",
+            Some("branch") => "stash.branch",
+            Some("clear") => "stash.clear",
             _ => return None,
         },
         "bundle" => match positional.get(1).copied() {
@@ -283,6 +342,8 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
             Some("prune") => "worktree.prune",
             Some("lock") => "worktree.lock",
             Some("unlock") => "worktree.unlock",
+            Some("move") => "worktree.move",
+            Some("repair") => "worktree.repair",
             _ => return None,
         },
         "auth" => match positional.get(1).copied() {
@@ -315,20 +376,165 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
             Some("undo") => "history.undo",
             _ => return None,
         },
-        "rebase" => "rebase",
+        "rebase" => {
+            if args.iter().any(|a| *a == "--check") {
+                "rebase.check"
+            } else {
+                "rebase"
+            }
+        }
+        "fetch" => {
+            if args.iter().any(|a| *a == "--all") {
+                "fetch.all"
+            } else {
+                "fetch"
+            }
+        }
         cmd if NO_JSON_COMMANDS.contains(&cmd) => return None,
         cmd => cmd,
     };
     Some(key.to_owned())
 }
 
-/// Load the committed schema document for `command` (v1, or v2 when listed in [`SCHEMA_V2_COMMANDS`]).
+/// Parse a `grit …` invocation from a command doc line (`$ grit …`, `` `grit …` ``, or a heading).
+pub fn parse_doc_grit_argv(line: &str) -> Option<Vec<String>> {
+    let trimmed = line.trim();
+    if trimmed.starts_with("<!--") {
+        return None;
+    }
+    let is_invocation = trimmed.starts_with("$ grit")
+        || trimmed.starts_with('#')
+        || (trimmed.starts_with('`') && trimmed.contains("grit "));
+    if !is_invocation {
+        return None;
+    }
+    let grit_start = trimmed.find("grit ")?;
+    let mut args: Vec<String> = Vec::new();
+    for word in trimmed[grit_start + 5..].split_whitespace() {
+        let cleaned = word.replace('`', "");
+        let clean = cleaned
+            .trim_end_matches(':')
+            .trim_end_matches(',')
+            .trim_end_matches('.');
+        if clean.is_empty() || clean.contains(['[', ']', '(', ')']) {
+            break;
+        }
+        args.push(clean.to_owned());
+    }
+    while args.last().is_some_and(|a| {
+        matches!(
+            a.as_str(),
+            "--json" | "--markdown" | "--filter" | "--quiet" | "--exit-code"
+        )
+    }) {
+        args.pop();
+    }
+    if args.is_empty() {
+        return None;
+    }
+    Some(args)
+}
+
+/// Resolve the schema registry key for a fenced JSON example on a command doc page.
+pub fn schema_key_for_doc_example(
+    page_command: &str,
+    text_before_example: &str,
+    instance: &serde_json::Value,
+) -> Option<String> {
+    if let Some(pos) = text_before_example.rfind("<!-- schema:") {
+        let tail = &text_before_example[pos..];
+        if let Some(end) = tail.find("-->") {
+            let inner = tail["<!-- schema:".len()..end].trim();
+            if !inner.is_empty() {
+                return Some(inner.to_owned());
+            }
+        }
+    }
+    if page_command == "worktree" {
+        if let Some(action) = instance.get("action").and_then(|v| v.as_str()) {
+            return Some(format!("worktree.{action}"));
+        }
+    }
+    if page_command == "history" {
+        if let Some(op) = instance.get("operation").and_then(|v| v.as_str()) {
+            return Some(format!("history.{op}"));
+        }
+    }
+    if page_command == "auth" && instance.get("logged_out").is_some() {
+        return Some("auth.logout".into());
+    }
+    if page_command == "ignore" {
+        return Some("ignore.check".into());
+    }
+    if page_command == "reflog" {
+        if instance.get("deleted").is_some() {
+            return Some("reflog.delete".into());
+        }
+        if instance.get("entries_pruned").is_some() {
+            return Some("reflog.expire".into());
+        }
+        if instance.get("refs").is_some() && instance.get("entries").is_none() {
+            return Some("reflog.list".into());
+        }
+    }
+    if page_command == "rebase" {
+        if instance.get("check").and_then(|v| v.as_bool()) == Some(true) {
+            return Some("rebase.check".into());
+        }
+    }
+    if page_command == "stash" {
+        if instance.is_array() {
+            return Some("stash.list".into());
+        }
+        if instance.get("cleared").is_some() {
+            return Some("stash.clear".into());
+        }
+        if instance.get("branch").is_some() && instance.get("base").is_some() {
+            return Some("stash.branch".into());
+        }
+        if instance.get("dropped").is_some() {
+            return Some("stash.pop".into());
+        }
+        if let Some(obj) = instance.as_object() {
+            if obj.len() == 1 && obj.contains_key("index") {
+                return Some("stash.drop".into());
+            }
+        }
+        if instance.get("index").is_some() && instance.get("conflicts").is_some() {
+            return Some("stash.apply".into());
+        }
+        if instance.get("stat").is_some() || instance.get("patch").is_some() {
+            return Some("stash.show".into());
+        }
+        if instance.get("stashed") == Some(&serde_json::Value::Bool(false)) {
+            return Some("stash".into());
+        }
+        if instance.get("dry_run").and_then(|v| v.as_bool()) == Some(true) {
+            return Some("stash".into());
+        }
+        if instance.get("oid").is_some() || instance.get("staged_hunks").is_some() {
+            return Some("stash".into());
+        }
+    }
+    for line in text_before_example.lines().rev().take(40) {
+        if let Some(argv) = parse_doc_grit_argv(line) {
+            if argv.first().is_some_and(|c| c != page_command) && !line.contains("--json") {
+                continue;
+            }
+            if let Some(key) =
+                schema_command_key(&argv.iter().map(String::as_str).collect::<Vec<_>>())
+            {
+                return Some(key);
+            }
+        }
+    }
+    schema_command_key(&[page_command])
+}
+
+/// Load the committed live schema document for `command`.
 pub fn load_committed_schema(command: &str) -> serde_json::Value {
-    let path = if SCHEMA_V2_COMMANDS.contains(&command) {
-        schemas_dir().join(schema_file_name_v2(command))
-    } else {
-        schemas_dir().join(schema_file_name(command))
-    };
+    let version = committed_schema_version(command);
+    let path = schemas_dir().join(schema_file_name_for(command, version));
     let text =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("read schema {}: {e}", path.display()));
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse schema {}: {e}", path.display()))
@@ -348,10 +554,11 @@ pub fn write_all_schemas(dir: &Path) {
         panic!("create schemas dir: {e}");
     }
     for entry in schema_registry() {
-        if SCHEMA_V2_COMMANDS.contains(&entry.command) {
+        let version = committed_schema_version(entry.command);
+        if version >= 2 {
             let schema = (entry.schema)();
-            let json = root_schema_to_document_v2(entry.command, schema);
-            let path = dir.join(schema_file_name_v2(entry.command));
+            let json = root_schema_to_document_at_version(entry.command, version, schema);
+            let path = dir.join(schema_file_name_for(entry.command, version));
             let text = match serde_json::to_string_pretty(&json) {
                 Ok(t) => t,
                 Err(e) => panic!("serialize schema: {e}"),
@@ -366,7 +573,7 @@ pub fn write_all_schemas(dir: &Path) {
         if entry.command == "add" {
             patch_add_outcome_optional_map_fields(&mut json);
         }
-        let path = dir.join(schema_file_name(entry.command));
+        let path = dir.join(schema_file_name_for(entry.command, 1));
         let text = match serde_json::to_string_pretty(&json) {
             Ok(t) => t,
             Err(e) => panic!("serialize schema: {e}"),
@@ -378,9 +585,17 @@ pub fn write_all_schemas(dir: &Path) {
 }
 
 fn root_schema_to_document_v2(command: &str, root: RootSchema) -> serde_json::Value {
+    root_schema_to_document_at_version(command, 2, root)
+}
+
+fn root_schema_to_document_at_version(
+    command: &str,
+    version: u32,
+    root: RootSchema,
+) -> serde_json::Value {
     let mut value = root_schema_to_document(command, root);
     if let Some(obj) = value.as_object_mut() {
-        obj.insert("$id".into(), schema_id_v2(command).into());
+        obj.insert("$id".into(), schema_id_for(command, version).into());
     }
     value
 }
@@ -581,7 +796,6 @@ fn snapshot_args_lookup(name: &str) -> Option<&'static [&'static str]> {
         .find_map(|(stem, args)| (*stem == name).then_some(*args))
 }
 
-/// Map snapshot stem to grit argv used to produce it (for schema validation).
 pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static str])] {
     &[
         ("skill", &["skill"]),
@@ -629,7 +843,7 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
             "history_reword",
             &["history", "reword", "HEAD~1", "-m", "reworded subject"],
         ),
-        ("history_drop", &["history", "drop", "HEAD~1"]),
+        ("history_drop", &["history", "drop", "HEAD~1", "--dry-run"]),
         (
             "history_squash",
             &["history", "squash", "HEAD~2..HEAD", "--update-refs", "head"],
@@ -649,6 +863,11 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
             "blame_tracked_line_range",
             &["blame", "tracked.txt", "-L", "1,2"],
         ),
+        ("blame_tracked_group", &["blame", "tracked.txt", "--group"]),
+        (
+            "blame_tracked_group_line_range",
+            &["blame", "tracked.txt", "-L", "1,2", "--group"],
+        ),
         ("branch_list", &["branch"]),
         ("branch_create", &["branch", "wip"]),
         ("branch_delete", &["branch", "-d", "delete-me"]),
@@ -656,7 +875,10 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
         ("tag_lightweight", &["tag", "v1.0"]),
         ("tag_annotated", &["tag", "-m", "release note", "v2.0"]),
         ("tag_delete", &["tag", "-d", "drop-me"]),
-        ("notes_list", &["notes"]),
+        ("notes", &["notes"]),
+        ("notes_list", &["notes", "list"]),
+        ("hooks", &["hooks"]),
+        ("stash", &["stash"]),
         ("notes_show", &["notes", "show", "HEAD"]),
         ("notes_add", &["notes", "add", "HEAD", "-m", "hello notes"]),
         ("notes_remove", &["notes", "remove", "HEAD"]),
@@ -669,6 +891,21 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
             "remote_add",
             &["remote", "add", "upstream", "/tmp/upstream.git"],
         ),
+        (
+            "remote_set_url",
+            &["remote", "set-url", "origin", "https://example.com/new.git"],
+        ),
+        ("remote_rename", &["remote", "rename", "origin", "upstream"]),
+        (
+            "remote_remove",
+            &["remote", "remove", "origin", "--dry-run"],
+        ),
+        ("remote_prune", &["remote", "prune", "origin", "--dry-run"]),
+        (
+            "remote_set_head",
+            &["remote", "set-head", "origin", "--auto", "--dry-run"],
+        ),
+        ("remote_show", &["remote", "show", "origin", "--no-query"]),
         (
             "bundle_create",
             &["bundle", "create", "snap.bundle", "HEAD"],
@@ -724,6 +961,9 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
         ("stash_apply", &["stash", "apply"]),
         ("stash_pop", &["stash", "pop"]),
         ("stash_drop", &["stash", "drop"]),
+        ("stash_branch", &["stash", "branch", "from-stash"]),
+        ("stash_clear", &["stash", "clear", "--force"]),
+        ("stash_clear_preview", &["stash", "clear"]),
         ("ignore_check", &["ignore", "check", "noise.log"]),
         (
             "ignore_check_all",
@@ -744,10 +984,56 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
             &["worktree", "lock", "linked-wt", "--reason", "hold"],
         ),
         ("worktree_unlock", &["worktree", "unlock", "linked-wt"]),
+        (
+            "worktree_move",
+            &["worktree", "move", "linked-wt", "moved-wt"],
+        ),
+        ("worktree_repair", &["worktree", "repair", "moved-wt"]),
         ("hooks_list", &["hooks", "list"]),
         ("hooks_run", &["hooks", "run", "pre-commit"]),
         ("hooks_run_exit_17", &["hooks", "run", "pre-commit"]),
         ("patch_id", &["patch-id", "HEAD"]),
+        ("auth_logout", &["auth", "logout"]),
+        ("fetch_all", &["fetch", "--all"]),
+        (
+            "history_move",
+            &[
+                "history",
+                "move",
+                "HEAD~1",
+                "--before",
+                "HEAD~2",
+                "--dry-run",
+            ],
+        ),
+        ("history_fixup", &["history", "fixup", "HEAD~1"]),
+        ("history_absorb", &["history", "absorb", "--dry-run"]),
+        (
+            "history_rebase",
+            &["history", "rebase", "HEAD~2", "--dry-run"],
+        ),
+        (
+            "history_split",
+            &[
+                "history",
+                "split",
+                "HEAD~1",
+                "-m",
+                "split part",
+                "--",
+                "tracked.txt",
+            ],
+        ),
+        ("history_undo", &["history", "undo", "--dry-run"]),
+        ("rebase_check", &["rebase", "HEAD~2", "--check"]),
+        ("reflog_delete", &["reflog", "delete", "HEAD@{1}"]),
+        ("reflog_expire", &["reflog", "expire", "--expire", "now"]),
+        ("reflog_list", &["reflog", "list"]),
+        ("worktree_prune", &["worktree", "prune"]),
+        ("error_usage", &["branch", "--delete"]),
+        ("error_invalid_pattern", &["log", "--author", "["]),
+        ("error_would_overwrite", &["switch", "br"]),
+        ("error_conflict", &["history", "drop", "HEAD~1"]),
         ("auth_render", &[]),
         ("update_render", &[]),
     ]
@@ -763,6 +1049,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn clone_committed_schema_uses_v3_contract() {
+        let doc = load_committed_schema("clone");
+        assert_eq!(
+            doc.get("$id").and_then(|v| v.as_str()),
+            Some("https://grit-scm.com/schemas/clone/v3.json")
+        );
+        assert!(
+            doc.get("properties").and_then(|p| p.get("bare")).is_some(),
+            "clone live schema must include `bare`"
+        );
+    }
+
+    #[test]
     fn json_schemas_are_current() {
         let dir = schemas_dir();
         if env::var("GRIT_UPDATE_SCHEMAS").as_deref() == Ok("1") {
@@ -772,22 +1071,22 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         write_all_schemas(tmp.path());
         for entry in schema_registry() {
-            if SCHEMA_V2_COMMANDS.contains(&entry.command) {
-                let committed = dir.join(schema_file_name_v2(entry.command));
-                let generated = tmp.path().join(schema_file_name_v2(entry.command));
+            let version = committed_schema_version(entry.command);
+            let file_name = schema_file_name_for(entry.command, version);
+            let committed = dir.join(&file_name);
+            let generated = tmp.path().join(&file_name);
+            if version >= 2 {
                 let committed_text = fs::read_to_string(&committed)
                     .unwrap_or_else(|e| panic!("read {}: {e}", committed.display()));
                 let generated_text = fs::read_to_string(&generated)
                     .unwrap_or_else(|e| panic!("read {}: {e}", generated.display()));
                 assert_eq!(
                     committed_text, generated_text,
-                    "v2 schema drift for `{}`; run GRIT_UPDATE_SCHEMAS=1 cargo test json_schemas_are_current -p grit-cli",
+                    "v{version} schema drift for `{}`; run GRIT_UPDATE_SCHEMAS=1 cargo test json_schemas_are_current -p grit-cli",
                     entry.command
                 );
                 continue;
             }
-            let committed = dir.join(schema_file_name(entry.command));
-            let generated = tmp.path().join(schema_file_name(entry.command));
             let committed_text = fs::read_to_string(&committed)
                 .unwrap_or_else(|e| panic!("read {}: {e}", committed.display()));
             let generated_text = fs::read_to_string(&generated)
