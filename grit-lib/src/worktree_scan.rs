@@ -13,7 +13,6 @@
 //! probes are parallelized. A later shared thread pool can replace the scoped helper without
 //! changing callers.
 
-use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -538,27 +537,15 @@ fn retain_status_diff_lookup(
                 }
             }
             if parallel_blob_work {
-                if stat_matches
-                    && !racy
+                // Keep everything the visit pass must hash or report; drop only entries whose
+                // stat data proves them clean (the same test the visit pass applies).
+                return !(stat_matches
                     && (!trust_filemode || worktree_mode == ie.mode)
                     && crate::diff::index_entry_skips_worktree_content_hash_after_stat_match(
                         ie,
                         index_mtime,
                         stat_policy,
-                    )
-                {
-                    return false;
-                }
-                if trust_filemode && stat_matches && worktree_mode != ie.mode {
-                    return true;
-                }
-                if for_status && !ie.stat_cache_unset() && stat.worktree_size() != ie.size {
-                    return true;
-                }
-                if !(stat_matches && (!trust_filemode || worktree_mode == ie.mode) && !racy) {
-                    return true;
-                }
-                return false;
+                    ));
             }
             true
         }
@@ -1046,17 +1033,6 @@ pub(crate) fn collect_blob_lookup_batches(
         vec![batch]
     };
     Ok(batches)
-}
-
-/// Entry indices retained in sparse preload batches (empty when [`BlobScanSparseMode::Dense`]).
-#[must_use]
-pub(crate) fn blob_lookup_batch_entry_indices(
-    batches: &[Vec<(usize, BlobDiskLookup)>],
-) -> HashSet<usize> {
-    batches
-        .iter()
-        .flat_map(|batch| batch.iter().map(|(index, _)| *index))
-        .collect()
 }
 
 /// Like [`for_each_blob_by_directory`], optionally preloading disk lookups in parallel.

@@ -231,6 +231,54 @@ fn racy_same_size_edit_stays_modified_after_status_rewrites_index() {
     assert_eq!(git_status_porcelain(root), format!(" M {rel}\n"));
 }
 
+/// Git's racy-write smudge leaves `size == 0` on a non-empty blob; an empty worktree file with
+/// matching timestamps must still be hashed and reported modified.
+fn assert_smudged_empty_file_is_modified(files: usize, threads: usize) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_committed_repo(root, files, true);
+    git_in(root, &["config", "core.trustctime", "false"]);
+    let rel = "d1/s1/f0001.txt";
+    let abs = root.join(rel);
+    fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&abs)
+        .expect("truncate in place");
+    set_file_mtime(&abs, FileTime::from_unix_time(OLD_MTIME, 0)).expect("mtime");
+
+    let repo = open(root);
+    let mut index = repo.load_index().expect("index");
+    let entry = index
+        .entries
+        .iter_mut()
+        .find(|e| e.path == rel.as_bytes())
+        .expect("entry");
+    assert!(!entry.oid.is_empty_blob());
+    entry.size = 0;
+    repo.write_index(&mut index).expect("write smudged index");
+
+    for run in 0..2 {
+        let (unstaged, _) = status_counting_reads(&repo, threads);
+        assert_eq!(
+            unstaged,
+            vec![rel.to_owned()],
+            "run {run}, threads {threads}"
+        );
+    }
+    assert_eq!(git_status_porcelain(root), format!(" M {rel}\n"));
+}
+
+#[test]
+fn serial_status_hashes_smudged_entry_whose_file_is_empty() {
+    assert_smudged_empty_file_is_modified(24, 1);
+}
+
+#[test]
+fn parallel_status_hashes_smudged_entry_whose_file_is_empty() {
+    assert_smudged_empty_file_is_modified(PARALLEL_STAT_MIN_ENTRIES + 24, 4);
+}
+
 #[test]
 fn untracked_walk_matches_git_around_submodules_and_tracked_dirs() {
     let tmp = tempfile::tempdir().expect("tempdir");

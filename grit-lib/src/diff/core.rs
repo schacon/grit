@@ -4847,9 +4847,9 @@ fn diff_index_to_worktree_inner(
     }
 
     use crate::worktree_scan::{
-        blob_lookup_batch_entry_indices, collect_blob_lookup_batches, group_blob_entries_by_dir,
-        stat_scan_thread_count, visit_blob_lookup_batches, BlobDiskLookup, BlobScanSparseMode,
-        WorktreeBlobScanOptions, PARALLEL_STAT_MIN_ENTRIES,
+        collect_blob_lookup_batches, group_blob_entries_by_dir, stat_scan_thread_count,
+        visit_blob_lookup_batches, BlobDiskLookup, BlobScanSparseMode, WorktreeBlobScanOptions,
+        PARALLEL_STAT_MIN_ENTRIES,
     };
     let preload_index = config
         .get_bool("core.preloadIndex")
@@ -4883,7 +4883,8 @@ fn diff_index_to_worktree_inner(
         && hash_threads > 1
         && (materialize_dirty_blobs || options.for_status);
     let mut staging_hash_jobs: Vec<StagingHashJob> = Vec::new();
-    let mut stat_refresh_verified = vec![false; index.entries.len()];
+    // Entries the stat refresh just hashed and found matching their recorded blob.
+    let mut refresh_content_verified = vec![false; index.entries.len()];
     // Parallel preload must lstat ancestor directories without following symlinks. When a
     // tracked directory is replaced by a symlink, indexed paths under it are deletions even if
     // the link target still holds a file at the same relative path with an unchanged stat.
@@ -4919,7 +4920,6 @@ fn diff_index_to_worktree_inner(
         },
         sparse,
     )?;
-    let retained_indices = blob_lookup_batch_entry_indices(&blob_stat_batches);
     visit_blob_lookup_batches(blob_stat_batches, |entry_index, lookup| {
         let path_owned = crate::repo_relpath::storage_string(&index.entries[entry_index].path);
         let path_str_ref = path_owned.as_str();
@@ -4961,9 +4961,6 @@ fn diff_index_to_worktree_inner(
                         && !ie_ref.stat_cache_unset();
                     let racy = entry_is_racy_with_policy(ie_ref, index_mtime, stat_policy);
                     let skip_refresh_clean_status = options.for_status && stat_matches && !racy;
-                    if skip_refresh_clean_status && index_stat_cache_trustworthy(index_mtime) {
-                        stat_refresh_verified[entry_index] = true;
-                    }
                     if !skip_refresh_for_status_diff && !skip_refresh_clean_status {
                         let path_owned = path_str_ref.to_owned();
                         let path_bytes = index.entries[entry_index].path.as_slice();
@@ -4991,7 +4988,7 @@ fn diff_index_to_worktree_inner(
                             index_stat_refresh_changed = true;
                         }
                         if refresh.content_verified {
-                            stat_refresh_verified[entry_index] = true;
+                            refresh_content_verified[entry_index] = true;
                         }
                         if index.fsmonitor_last_update.is_some()
                             && stat_matches_blob_stat(
@@ -5009,9 +5006,7 @@ fn diff_index_to_worktree_inner(
                 if parallel_blob_work {
                     let worktree_mode = stat.git_mode;
                     let stat_same = stat_matches_blob_stat(ie, &stat, stat_policy);
-                    let racy = entry_is_racy_with_policy(ie, index_mtime, stat_policy);
                     if stat_same
-                        && !racy
                         && (!trust_filemode || worktree_mode == ie.mode)
                         && index_entry_skips_worktree_content_hash_after_stat_match(
                             ie,
@@ -5040,9 +5035,7 @@ fn diff_index_to_worktree_inner(
                         options.for_status,
                         &mut result,
                     ) {
-                    } else if !(stat_same && (!trust_filemode || worktree_mode == ie.mode) && !racy)
-                        && !stat_refresh_verified[entry_index]
-                    {
+                    } else if !refresh_content_verified[entry_index] {
                         let file_path = index_entry_worktree_abs_bytes(
                             work_tree,
                             &index.entries[entry_index].path,
@@ -5066,7 +5059,7 @@ fn diff_index_to_worktree_inner(
                         == (ie.mode == crate::index::MODE_SYMLINK);
                     if !stat.is_dir
                         && (!trust_filemode || stat.git_mode == ie.mode)
-                        && ((stat_refresh_verified[entry_index] && same_file_type)
+                        && ((refresh_content_verified[entry_index] && same_file_type)
                             || (stat_matches_blob_stat(ie, &stat, stat_policy)
                                 && index_entry_skips_worktree_content_hash_after_stat_match(
                                     ie,
@@ -5105,24 +5098,6 @@ fn diff_index_to_worktree_inner(
         }
         Ok(())
     })?;
-    if parallel_blob_work
-        && refresh_index_stat_in_pass
-        && options.for_status
-        && index_stat_cache_trustworthy(index_mtime)
-    {
-        for &entry_index in &blob_dirs.indices {
-            if retained_indices.contains(&entry_index) {
-                continue;
-            }
-            let ie = &index.entries[entry_index];
-            if !index_entry_needs_worktree_diff_pass1(ie) {
-                continue;
-            }
-            if !entry_is_racy_with_policy(ie, index_mtime, stat_policy) {
-                stat_refresh_verified[entry_index] = true;
-            }
-        }
-    }
     if parallel_blob_work && !staging_hash_jobs.is_empty() {
         parallel_process_blob_worktree_jobs(
             odb,
