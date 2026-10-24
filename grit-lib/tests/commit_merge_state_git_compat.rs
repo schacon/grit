@@ -131,6 +131,71 @@ fn init_grit_conflict_merge(root: &Path) -> Repository {
     repo
 }
 
+fn init_git_conflict_merge_custom_marker_size(root: &Path) -> Repository {
+    git(root, &["init", "-q", "-b", "main", "."]);
+    git(root, &["config", "user.name", "T"]);
+    git(root, &["config", "user.email", "t@e.com"]);
+    git(root, &["config", "core.logAllRefUpdates", "true"]);
+
+    fs::write(root.join(".gitattributes"), "f conflict-marker-size=10\n").unwrap();
+    git(root, &["add", ".gitattributes"]);
+    git(root, &["commit", "-qm", "attrs"]);
+
+    fs::write(root.join("f"), b"base\n").unwrap();
+    git(root, &["add", "f"]);
+    git(root, &["commit", "-qm", "base"]);
+
+    git(root, &["checkout", "-qb", "side"]);
+    fs::write(root.join("f"), b"side\n").unwrap();
+    git(root, &["commit", "-qam", "side"]);
+
+    git(root, &["checkout", "-q", "main"]);
+    fs::write(root.join("f"), b"main\n").unwrap();
+    git(root, &["commit", "-qam", "main"]);
+
+    let merge_out = Command::new("git")
+        .current_dir(root)
+        .args(["merge", "side"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git merge");
+    assert!(!merge_out.status.success(), "expected merge conflict");
+
+    Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open grit repo")
+}
+
+#[test]
+fn commit_auto_stage_rejects_custom_conflict_marker_size() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let repo = init_git_conflict_merge_custom_marker_size(root);
+
+    let body = fs::read_to_string(root.join("f")).expect("conflicted worktree");
+    assert!(
+        body.contains("<<<<<<<<<<"),
+        "git must emit custom-width markers: {body}"
+    );
+
+    let err = commit_with_scope(
+        &repo,
+        &commit_req("marker-commit"),
+        CommitScope::AutoStage,
+        &mut NullProgress,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, Error::IndexUnmerged),
+        "auto-stage commit must refuse custom-width markers: {err}"
+    );
+    assert!(repo
+        .index_handle()
+        .load()
+        .expect("index")
+        .has_unmerged_entries());
+    assert!(repo.git_dir().join("MERGE_HEAD").exists());
+}
+
 #[test]
 fn commit_with_auto_stage_rejects_unresolved_conflict_markers() {
     let tmp = tempfile::tempdir().expect("tempdir");

@@ -370,8 +370,11 @@ pub(crate) fn worktree_metadata_needs_conflict_marker_inspection(
 /// Uses the same lexer as rerere preimage normalization so literal marker-like
 /// text in unrelated files is not treated as an unresolved conflict unless it
 /// forms a parseable conflict hunk.
-pub(crate) fn worktree_bytes_have_unresolved_conflict_markers(data: &[u8]) -> bool {
-    let marker_size = conflict_marker_size("");
+pub(crate) fn worktree_bytes_have_unresolved_conflict_markers(
+    data: &[u8],
+    marker_size: usize,
+) -> bool {
+    let marker_size = if marker_size == 0 { 7 } else { marker_size };
     let Ok(content) = std::str::from_utf8(data) else {
         return data.windows(marker_size + 1).any(|w| {
             w.len() > marker_size
@@ -387,7 +390,6 @@ pub(crate) fn worktree_bytes_have_unresolved_conflict_markers(data: &[u8]) -> bo
             .any(|line| is_cmarker(line, b'<', marker_size)),
     }
 }
-
 /// Compute the rerere conflict identifier for `content` using `algo`.
 ///
 /// Returns `None` when the text does not contain parseable conflict markers.
