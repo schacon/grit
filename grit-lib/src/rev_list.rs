@@ -337,7 +337,7 @@ fn parse_size_suffix(s: &str) -> Option<u64> {
         _ => (s, 1u64),
     };
     let num: u64 = num_str.parse().ok()?;
-    Some(num * multiplier)
+    num.checked_mul(multiplier)
 }
 
 /// Raw substrings between `+` in a `combine:` value (still percent-encoded).

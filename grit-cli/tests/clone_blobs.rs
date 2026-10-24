@@ -169,6 +169,33 @@ fn git_cat_file_ok(repo: &std::path::Path, oid: &str) -> bool {
 }
 
 #[test]
+fn clone_blobs_overflowing_suffix_exit_2() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let bare = setup_filtering_bare(base.path());
+    let url = format!("file://{}", bare.canonicalize().unwrap().display());
+    let dest = base.path().join("overflow");
+    let out = Command::new(GRIT)
+        .args([
+            "clone",
+            "--blobs",
+            "18446744073709551615g",
+            "--json",
+            url.as_str(),
+            dest.to_str().unwrap(),
+        ])
+        .output()
+        .expect("grit clone");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json error");
+    assert!(v.get("error").is_some());
+}
+
+#[test]
 fn clone_blobs_invalid_size_exit_2() {
     let base = tempfile::tempdir().expect("tempdir");
     let bare = setup_filtering_bare(base.path());

@@ -254,14 +254,20 @@ pub fn setup_synth10k_pull_rebase_remote(setup: &DailySetup<'_>) -> Result<Daily
     })
 }
 
+fn configure_blobless_upload_pack(git: &Path, bare: &Path) -> Result<()> {
+    run_git(git, bare, &["config", "uploadpack.allowFilter", "true"])?;
+    run_git(
+        git,
+        bare,
+        &["config", "uploadpack.allowAnySHA1InWant", "true"],
+    )?;
+    Ok(())
+}
+
 pub fn setup_git_git_file_remote_blobless(setup: &DailySetup<'_>) -> Result<DailyHeadlineContext> {
     let ctx = setup_git_git_file_remote(setup)?;
     let remote = ctx.remote.as_ref().context("remote state")?;
-    run_git(
-        setup.git,
-        &remote.bare,
-        &["config", "uploadpack.allowFilter", "true"],
-    )?;
+    configure_blobless_upload_pack(setup.git, &remote.bare)?;
     Ok(ctx)
 }
 
@@ -1099,11 +1105,7 @@ pub fn verify_clone_blobless(ctx: &DailyHeadlineContext, cwd: &Path) -> Result<(
         .file_name()
         .and_then(|s| s.to_str())
         .context("clone dest name")?;
-    run_git(
-        &ctx.git,
-        &remote.bare,
-        &["config", "uploadpack.allowFilter", "true"],
-    )?;
+    configure_blobless_upload_pack(&ctx.git, &remote.bare)?;
     prepare_network_clone(&remote.bare)?;
     run_git(
         &ctx.git,

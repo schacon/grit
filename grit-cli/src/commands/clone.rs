@@ -58,10 +58,51 @@ impl std::fmt::Display for CloneUsageError {
 impl std::error::Error for CloneUsageError {}
 
 /// JSON value for `--blobs`: the string `"none"` or a byte limit.
-#[derive(Clone, Copy, Debug, JsonSchema)]
+#[derive(Clone, Copy, Debug)]
 pub enum CloneBlobsJson {
     None,
     Limit(u64),
+}
+
+impl JsonSchema for CloneBlobsJson {
+    fn schema_name() -> String {
+        "CloneBlobsJson".to_string()
+    }
+
+    fn json_schema(_gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        use schemars::schema::{Metadata, SchemaObject, SubschemaValidation};
+        SchemaObject {
+            metadata: Some(Box::new(Metadata {
+                description: Some(
+                    "Partial-clone blob filter: `\"none\"` or a byte limit.".to_owned(),
+                ),
+                ..Default::default()
+            })),
+            subschemas: Some(Box::new(SubschemaValidation {
+                one_of: Some(vec![
+                    SchemaObject {
+                        instance_type: Some(schemars::schema::InstanceType::String.into()),
+                        const_value: Some(serde_json::Value::String("none".to_owned())),
+                        ..Default::default()
+                    }
+                    .into(),
+                    SchemaObject {
+                        instance_type: Some(schemars::schema::InstanceType::Integer.into()),
+                        format: Some("uint64".to_owned()),
+                        number: Some(Box::new(schemars::schema::NumberValidation {
+                            minimum: Some(0.0),
+                            ..Default::default()
+                        })),
+                        ..Default::default()
+                    }
+                    .into(),
+                ]),
+                ..Default::default()
+            })),
+            ..Default::default()
+        }
+        .into()
+    }
 }
 
 impl CloneBlobsJson {
@@ -127,7 +168,8 @@ pub struct CloneOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blobs: Option<CloneBlobsJson>,
     /// True when `--blobs` configured a promisor partial clone.
-    #[serde(skip_serializing_if = "CloneOutcome::partial_not_set")]
+    #[serde(default, skip_serializing_if = "CloneOutcome::partial_not_set")]
+    #[schemars(default)]
     pub partial: bool,
     /// Objects received during the fetch.
     pub objects: u64,
@@ -168,6 +210,14 @@ impl CloneOutcome {
     fn partial_not_set(partial: &bool) -> bool {
         !*partial
     }
+
+    fn partial_clone_summary(blobs: Option<CloneBlobsJson>) -> &'static str {
+        match blobs {
+            Some(CloneBlobsJson::None) => "blobless clone; blobs are fetched on demand",
+            Some(CloneBlobsJson::Limit(_)) => "partial clone; large blobs are fetched on demand",
+            None => "partial clone",
+        }
+    }
 }
 
 impl HumanRender for CloneOutcome {
@@ -206,8 +256,9 @@ fn render_summary(o: &CloneOutcome, w: &mut dyn Write, color: bool) -> Result<()
     if o.partial {
         outln!(
             w,
-            "  {}  blobless clone; blobs are fetched on demand",
-            paint(color, DIM, "partial")
+            "  {}  {}",
+            paint(color, DIM, "partial"),
+            CloneOutcome::partial_clone_summary(o.blobs)
         );
     }
     outln!(w);
@@ -436,7 +487,8 @@ impl MarkdownRender for CloneOutcome {
         if self.partial {
             outln!(
                 w,
-                "- **partial**: blobless clone; blobs are fetched on demand"
+                "- **partial**: {}",
+                CloneOutcome::partial_clone_summary(self.blobs)
             );
             if let Some(blobs) = self.blobs {
                 match blobs {

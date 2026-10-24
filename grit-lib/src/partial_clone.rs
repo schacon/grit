@@ -205,6 +205,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn from_blobs_cli_rejects_overflowing_suffix() {
+        assert!(ObjectFilterSpec::from_blobs_cli("18446744073709551615g").is_err());
+    }
+
+    #[test]
     fn from_blobs_cli_none_and_suffixes() {
         assert_eq!(
             ObjectFilterSpec::from_blobs_cli("none").expect("none"),
