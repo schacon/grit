@@ -1264,8 +1264,8 @@ mod tests {
             );
         }
         assert_eq!(
-            checked, 100,
-            "expected 100 committed schema files under content/schemas"
+            checked, 101,
+            "expected 101 committed schema files under content/schemas"
         );
     }
 
@@ -1379,13 +1379,7 @@ mod tests {
             "schema index must list every committed schema document exactly"
         );
         let file_count: usize = on_disk.values().map(|v| v.len()).sum();
-<<<<<<< New base: fix: remote rename review — config cascade, schemas, bench prepare
-        assert_eq!(file_count, 100, "expected 100 schema files indexed");
-||||||| Common ancestor
-        assert_eq!(file_count, 95, "expected 95 schema files indexed");
-=======
-        assert_eq!(file_count, 96, "expected 96 schema files indexed");
->>>>>>> Current commit: fix: require local remote section; schema index and rename snapshot
+        assert_eq!(file_count, 101, "expected 101 schema files indexed");
     }
 
     fn load_snapshot_json_stdout(name: &str, snapshot_dir: &Path) -> Value {
