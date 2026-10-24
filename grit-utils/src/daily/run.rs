@@ -133,6 +133,15 @@ fn select_plans(opts: &DailyRunOptions) -> Vec<DailyHeadlinePlan> {
     filter_plans(areas::all_daily_plans(), opts)
 }
 
+/// Sorted ids of every scenario with an executable daily plan (for `grit-bench daily --list`).
+#[must_use]
+pub fn list_daily_scenario_ids() -> Vec<&'static str> {
+    let mut ids: Vec<&'static str> = areas::all_daily_plans().iter().map(|p| p.spec.id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
 /// Reject `--only` ids that are unknown, filtered out, or registered without an executable plan.
 fn validate_only_ids(
     only: &[String],

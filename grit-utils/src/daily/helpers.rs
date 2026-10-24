@@ -22,10 +22,10 @@ use crate::shell::shell_quote;
 use crate::worktree_fixture::{
     ensure_worktree_bench_repo, record_matrix_path_targets, set_worktree_bench_cwd,
     shell_git_add_modified_set, shell_git_add_modified_set_and_commit, shell_git_apply_cached,
-    shell_git_commit_paths_only, shell_grit_add_modified_set, shell_grit_add_patch_file,
-    shell_grit_commit_paths, shell_mv_file, shell_redirect_devnull, shell_restore_modified_set,
-    shell_rm_dir_dry_run_git, shell_rm_dir_dry_run_grit, shell_rm_dir_git, shell_rm_dir_grit,
-    shell_git_stash_push_paths, shell_grit_stash_push_paths,
+    shell_git_commit_paths_only, shell_git_stash_push_paths, shell_grit_add_modified_set,
+    shell_grit_add_patch_file, shell_grit_commit_paths, shell_grit_stash_push_paths, shell_mv_file,
+    shell_redirect_devnull, shell_restore_modified_set, shell_rm_dir_dry_run_git,
+    shell_rm_dir_dry_run_grit, shell_rm_dir_git, shell_rm_dir_grit,
 };
 
 /// Shortlog/compare target for git-git matrix rows (tag present on pinned git.git).

@@ -734,6 +734,12 @@ impl From<SynthTierArg> for SynthTier {
 
 #[derive(clap::Args)]
 struct DailyRunArgs {
+    /// Print executable daily scenario ids (one per line) and exit
+    #[arg(
+        long,
+        conflicts_with_all = ["only", "area", "smoke", "output", "baseline_grit", "offline"]
+    )]
+    list: bool,
     /// Run only these scenario ids (comma-separated)
     #[arg(long, value_delimiter = ',')]
     only: Option<Vec<String>>,
@@ -1282,6 +1288,12 @@ fn main() -> Result<()> {
                 return Ok(());
             }
             None => {
+                if run.list {
+                    for id in grit_utils::daily::list_daily_scenario_ids() {
+                        println!("{id}");
+                    }
+                    return Ok(());
+                }
                 let git = resolve_binary("git", cli.git.as_deref())?;
                 let grit = resolve_binary("grit", cli.grit.as_deref())?;
                 let measure_helper = std::env::current_exe().context("grit-bench exe path")?;

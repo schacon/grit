@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 
 use super::helpers::{
     ctx, many_refs_kind, setup_hot_path_pick_merge, setup_registry_worktree, sh_devnull, sh_script,
-    synth10k_kind, with_scratch,
+    with_scratch,
 };
 use super::plan::{DailyHeadlineContext, DailyPrepare, DailySetup};
 use super::runner::BenchArgv;
@@ -74,9 +74,7 @@ pub fn setup_many_refs_loose(setup: &DailySetup<'_>) -> Result<DailyHeadlineCont
 }
 
 pub fn setup_synth10k(setup: &DailySetup<'_>) -> Result<DailyHeadlineContext> {
-    let repo = setup_registry_worktree(setup, synth10k_kind(setup.smoke))?;
-    set_worktree_bench_cwd(&repo)?;
-    Ok(ctx(repo, setup))
+    super::helpers::setup_shape_worktree(setup, super::registry::RepoShape::Synth10k)
 }
 
 pub fn setup_small(setup: &DailySetup<'_>) -> Result<DailyHeadlineContext> {
@@ -1078,9 +1076,8 @@ pub fn prepare_stash_pop_index(ctx: &DailyHeadlineContext) -> DailyPrepare {
             &ctx.git.display().to_string(),
         ],
     );
-    let paths_q = shell_quote_path(
-        &crate::fixture::scratch_dir().join(".grit-bench-worktree-paths"),
-    );
+    let paths_q =
+        shell_quote_path(&crate::fixture::scratch_dir().join(".grit-bench-worktree-paths"));
     let push = shell_command(
         &ctx.git,
         &["stash", "push", "-q", "-m", "daily-bench-index"],
@@ -1102,11 +1099,27 @@ echo bench >> "$first"
 }
 
 pub fn prepare_reset_keep(ctx: &DailyHeadlineContext) -> DailyPrepare {
-    use crate::worktree_fixture::RESET_KEEP_LOCAL_FILE;
     let reset = prepare_daily_reset_script(&ctx.git);
     let repo_q = shell_quote_path(&ctx.repo);
-    let script = format!("set -eu\n{reset}\ncd {repo_q} && echo bench > {RESET_KEEP_LOCAL_FILE}");
+    let target_q =
+        shell_quote_path(&crate::fixture::scratch_dir().join(".grit-bench-reset-keep-path"));
+    let script = format!(
+        r#"set -eu
+{reset}
+cd {repo_q}
+target=$(cat {target_q})
+echo bench-local >> "$target"
+"#
+    );
     DailyPrepare::Shell(BenchArgv::new("/bin/sh", ["-c", script.as_str()]))
+}
+
+/// Hyperfine prepare hook: reset fixture and apply unstaged edit on unchanged tracked path.
+pub fn run_prepare_reset_keep(git: &Path) -> Result<()> {
+    run_prepare_daily_reset(git)?;
+    crate::worktree_fixture::apply_reset_keep_local_edit(
+        &crate::worktree_fixture::active_worktree_repo(),
+    )
 }
 
 pub fn prepare_clean_only_ignored(ctx: &DailyHeadlineContext) -> DailyPrepare {

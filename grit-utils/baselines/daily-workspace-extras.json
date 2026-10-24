@@ -1,6 +1,6 @@
 {
   "schema": "grit-daily-bench/1",
-  "generated_at": "2026-10-23T23:18:02.747682022Z",
+  "generated_at": "2026-10-24T00:15:01.100960233Z",
   "machine": {
     "cpu_model": "Intel(R) Xeon(R) Processor",
     "physical_cores": 4,
@@ -15,7 +15,7 @@
   "tools": {
     "git": "git version 2.43.0",
     "grit": "grit 0.5.17",
-    "grit_commit": "a84ce451a9e04379d8e8b92aeefa9702f14db1a1"
+    "grit_commit": "c43bfe90ae7575b5978201accb5b59f6d155cd4e"
   },
   "scenarios": [
     {
@@ -23,128 +23,128 @@
       "area": "worktree",
       "description": "Preview ignored untracked removal: grit clean --only-ignored vs git clean -n -X",
       "git": {
-        "median_wall_ms": 2.300447,
-        "peak_rss_bytes": 6762496,
+        "median_wall_ms": 2.218401,
+        "peak_rss_bytes": 6434816,
         "runs": 1
       },
       "grit": {
-        "median_wall_ms": 4.566358,
-        "peak_rss_bytes": 13266944,
+        "median_wall_ms": 4.381326,
+        "peak_rss_bytes": 15040512,
         "runs": 1
       },
-      "ratio": 1.984987265518397
+      "ratio": 1.974992798867292
     },
     {
       "id": "config/get-origin@small",
       "area": "config",
       "description": "Read config with provenance: grit config --json <key> vs git config --show-origin --show-scope --get <key>",
       "git": {
-        "median_wall_ms": 1.162178,
-        "peak_rss_bytes": 5943296,
+        "median_wall_ms": 1.143469,
+        "peak_rss_bytes": 5902336,
         "runs": 1
       },
       "grit": {
-        "median_wall_ms": 5.462113,
-        "peak_rss_bytes": 13291520,
+        "median_wall_ms": 7.611826000000001,
+        "peak_rss_bytes": 13258752,
         "runs": 1
       },
-      "ratio": 4.699893647960984
+      "ratio": 6.656783874333279
     },
     {
       "id": "init/branch@small",
       "area": "worktree",
       "description": "Initialize repo with branch name: grit init -b trunk vs git init -b trunk",
       "git": {
-        "median_wall_ms": 3.293109,
-        "peak_rss_bytes": 6590464,
+        "median_wall_ms": 3.2946590000000002,
+        "peak_rss_bytes": 6254592,
         "runs": 1
       },
       "grit": {
-        "median_wall_ms": 7.5641739999999995,
-        "peak_rss_bytes": 12087296,
+        "median_wall_ms": 9.335391,
+        "peak_rss_bytes": 12029952,
         "runs": 1
       },
-      "ratio": 2.296970431285451
+      "ratio": 2.83349232803759
     },
     {
       "id": "reset/keep@synth-10k",
       "area": "worktree",
       "description": "Reset branch with unrelated local edits: grit reset --keep HEAD~1 vs git reset --keep HEAD~1",
       "git": {
-        "median_wall_ms": 4.395634,
-        "peak_rss_bytes": 7409664,
+        "median_wall_ms": 4.3614559999999996,
+        "peak_rss_bytes": 7450624,
         "runs": 1
       },
       "grit": {
-        "median_wall_ms": 8.71572,
-        "peak_rss_bytes": 18022400,
+        "median_wall_ms": 5.656020000000001,
+        "peak_rss_bytes": 18018304,
         "runs": 1
       },
-      "ratio": 1.98281294575481
+      "ratio": 1.2968192273405947
     },
     {
       "id": "rm/dry-run@synth-10k",
       "area": "worktree",
       "description": "Preview remove directory: grit rm --dry-run <dir> vs git rm -n -r <dir>",
       "git": {
-        "median_wall_ms": 4.384703,
-        "peak_rss_bytes": 7237632,
+        "median_wall_ms": 4.348408,
+        "peak_rss_bytes": 7303168,
         "runs": 1
       },
       "grit": {
-        "median_wall_ms": 8.661517,
-        "peak_rss_bytes": 16543744,
+        "median_wall_ms": 7.575661,
+        "peak_rss_bytes": 16433152,
         "runs": 1
       },
-      "ratio": 1.9753942285258546
+      "ratio": 1.7421688581200292
     },
     {
       "id": "stash/pop-index@synth-10k",
       "area": "worktree",
       "description": "Restore index from stash: grit stash pop --index vs git stash pop --index",
       "git": {
-        "median_wall_ms": 17.396746,
-        "peak_rss_bytes": 13307904,
+        "median_wall_ms": 19.001327,
+        "peak_rss_bytes": 12955648,
         "runs": 1
       },
       "grit": {
-        "median_wall_ms": 14.013376,
-        "peak_rss_bytes": 17690624,
+        "median_wall_ms": 11.865872,
+        "peak_rss_bytes": 17752064,
         "runs": 1
       },
-      "ratio": 0.8055170777339624
+      "ratio": 0.6244759642313402
     },
     {
       "id": "stash/push-paths@synth-10k",
       "area": "worktree",
       "description": "Stash ~1% pathspec: grit stash push -- <paths> vs git stash push -- <paths>",
       "git": {
-        "median_wall_ms": 18.996831,
-        "peak_rss_bytes": 15437824,
+        "median_wall_ms": 23.259672,
+        "peak_rss_bytes": 15433728,
         "runs": 1
       },
       "grit": {
-        "median_wall_ms": 14.777653,
-        "peak_rss_bytes": 20197376,
+        "median_wall_ms": 14.123198,
+        "peak_rss_bytes": 20045824,
         "runs": 1
       },
-      "ratio": 0.7779009562173818
+      "ratio": 0.6071967824825734
     },
     {
       "id": "worktree/list@synth-10k",
       "area": "worktrees",
       "description": "List ~20 linked worktrees: grit worktree list --json vs git worktree list --porcelain",
       "git": {
-        "median_wall_ms": 2.215487,
-        "peak_rss_bytes": 6307840,
+        "median_wall_ms": 2.228001,
+        "peak_rss_bytes": 6516736,
         "runs": 1
       },
       "grit": {
-        "median_wall_ms": 5.433434,
-        "peak_rss_bytes": 13783040,
+        "median_wall_ms": 7.598623,
+        "peak_rss_bytes": 14045184,
         "runs": 1
       },
-      "ratio": 2.452478394140882
+      "ratio": 3.4105114854077714
     }
   ]
 }
