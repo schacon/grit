@@ -55,6 +55,7 @@ fn exit_codes_page_matches_enum() {
         "branch_no_upstream",
         "branch_error",
         "hook_failed",
+        "revision_not_found",
     ] {
         assert!(
             text.contains(&format!("`{slug}`")),
@@ -118,4 +119,9 @@ fn exit_status_for_every_error_kind_cli() {
     assert_eq!(code, 1, "index_locked");
     let v: Value = serde_json::from_str(stdout.trim()).expect("index_locked");
     assert_eq!(v["kind"].as_str(), Some("index_locked"));
+
+    let (code, stdout) = grit(root.path(), &["merge", "nonexistent", "--json"]);
+    assert_eq!(code, 1, "revision_not_found");
+    let v: Value = serde_json::from_str(stdout.trim()).expect("revision_not_found");
+    assert_eq!(v["kind"].as_str(), Some("revision_not_found"));
 }

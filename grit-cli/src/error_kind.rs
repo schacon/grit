@@ -46,6 +46,8 @@ pub enum ErrorKind {
     BranchError,
     /// A hook exited non-zero (`hook.name`, `hook.status`, `hook.stdout`, `hook.stderr`).
     HookFailed,
+    /// A branch, tag, commit id or revision expression names nothing.
+    RevisionNotFound,
 }
 
 impl ErrorKind {
@@ -92,6 +94,7 @@ impl ErrorKind {
             Self::BranchNoUpstream => "branch_no_upstream",
             Self::BranchError => "branch_error",
             Self::HookFailed => "hook_failed",
+            Self::RevisionNotFound => "revision_not_found",
         }
     }
 
@@ -119,6 +122,7 @@ impl ErrorKind {
             Self::BranchNoUpstream,
             Self::BranchError,
             Self::HookFailed,
+            Self::RevisionNotFound,
         ]
     }
 }
