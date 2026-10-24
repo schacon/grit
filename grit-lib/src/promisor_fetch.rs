@@ -28,7 +28,7 @@ const MAX_LAZY_READ_RETRIES: u32 = 5;
 /// Maximum nested promisor lazy-fetch depth on one thread (matches Git's promisor-remote guard).
 const MAX_LAZY_FETCH_NEST: u32 = 5;
 
-thread_local! {
+thread_local! { // hygiene: per-thread promisor lazy-fetch nesting depth (Git parity guard)
     static PROMISOR_LAZY_NEST: Cell<u32> = const { Cell::new(0) };
 }
 

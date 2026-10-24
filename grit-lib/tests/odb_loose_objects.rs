@@ -8,7 +8,9 @@ use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use grit_lib::config::environment::Environment;
 use grit_lib::error::Error;
-use grit_lib::objects::odb::{hash_algo_for_git_dir, hash_algo_for_objects_dir, Odb, WriteOptions};
+use grit_lib::objects::odb::{
+    hash_algo_for_git_dir, hash_algo_for_objects_dir, Odb, WriteOptions, BULK_NEW_LOOSE_WRITE,
+};
 use grit_lib::objects::{HashAlgo, ObjectId, ObjectKind};
 use grit_test_support::objects::{
     flip_byte_at, git_fsck, git_supports_sha256, write_loose_object, HashAlgo as FixtureAlgo,
@@ -590,6 +592,36 @@ fn write_local_materializes_loose_when_object_only_in_cruft_pack() {
         "write_local must materialize a loose copy when cruft pack cannot be freshened"
     );
     assert_eq!(odb.read(&oid).unwrap().data, data);
+}
+
+#[test]
+fn bulk_trust_new_loose_materializes_loose_when_object_only_in_cruft_pack() {
+    let repo = init_repo(HashAlgo::Sha1);
+    let odb = Odb::new(&repo.objects_dir());
+    let data = b"cruft-pack bulk add rescue\n";
+    let oid = odb.write(ObjectKind::Blob, data).expect("write loose blob");
+
+    let repack = Command::new("git")
+        .current_dir(repo.path())
+        .args(["repack", "--cruft", "-d"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git repack --cruft");
+    assert!(repack.status.success());
+    odb.invalidate_packs();
+
+    assert!(!odb.object_path(&oid).is_file());
+    assert!(odb.exists_local(&oid));
+
+    let again = odb
+        .write_with_options(ObjectKind::Blob, data, BULK_NEW_LOOSE_WRITE)
+        .expect("bulk write after cruft repack");
+    assert_eq!(again, oid);
+    assert!(
+        odb.object_path(&oid).is_file(),
+        "trust_new_loose must not treat cruft-pack membership as duplicate-write skip"
+    );
 }
 
 #[test]

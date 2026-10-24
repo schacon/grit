@@ -562,47 +562,63 @@ fn hash_algo_digest_hex(algo: HashAlgo, data: &[u8]) -> Result<String> {
     Ok(algo.digest(data)?.to_hex())
 }
 
-fn unique_loose_tmp_path(prefix_dir: &Path) -> PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    prefix_dir.join(format!("tmp_{}_{seq}", std::process::id()))
+fn publish_loose_tmp_path(prefix_dir: &Path, oid: &ObjectId, attempt: u32) -> PathBuf {
+    let base = oid.loose_tmp_path_in_prefix(prefix_dir);
+    let stem = base.file_name().and_then(|n| n.to_str()).unwrap_or("tmp");
+    let thread = format!("{:?}", std::thread::current().id()).replace(['/', '\\', ' '], "_");
+    prefix_dir.join(format!("{stem}.{}.{thread}.{attempt}", std::process::id()))
 }
 
 fn publish_zlib_loose_object(
     path: &Path,
     prefix_dir: &Path,
-    _oid: &ObjectId,
+    oid: &ObjectId,
     zlib_store: &[u8],
     prefix_dir_ready: bool,
 ) -> Result<()> {
-    if !prefix_dir_ready {
-        fs::create_dir_all(prefix_dir).map_err(Error::Io)?;
+    if path.is_file() {
+        set_loose_object_mode(path);
+        return Ok(());
     }
-    let tmp_path = unique_loose_tmp_path(prefix_dir);
-    if let Err(e) = fs::write(&tmp_path, zlib_store) {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(Error::Io(e));
-    }
-    match fs::rename(&tmp_path, path) {
-        Ok(()) => {
-            set_loose_object_mode(path);
+    const MAX_ATTEMPTS: u32 = 4;
+    for attempt in 0..MAX_ATTEMPTS {
+        if !prefix_dir_ready {
+            fs::create_dir_all(prefix_dir).map_err(Error::Io)?;
         }
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-            let _ = fs::remove_file(&tmp_path);
-            if !path.is_file() {
-                return Err(Error::Io(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    "loose object path exists but is not a file",
-                )));
+        let tmp_path = publish_loose_tmp_path(prefix_dir, oid, attempt);
+        match fs::write(&tmp_path, zlib_store) {
+            Ok(()) => match fs::rename(&tmp_path, path) {
+                Ok(()) => {
+                    set_loose_object_mode(path);
+                    return Ok(());
+                }
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                    let _ = fs::remove_file(&tmp_path);
+                    if path.is_file() {
+                        set_loose_object_mode(path);
+                        return Ok(());
+                    }
+                }
+                Err(e) => {
+                    let _ = fs::remove_file(&tmp_path);
+                    if e.kind() == io::ErrorKind::NotFound && attempt + 1 < MAX_ATTEMPTS {
+                        continue;
+                    }
+                    return Err(Error::Io(e));
+                }
+            },
+            Err(e) => {
+                let _ = fs::remove_file(&tmp_path);
+                if e.kind() == io::ErrorKind::NotFound && attempt + 1 < MAX_ATTEMPTS {
+                    continue;
+                }
+                return Err(Error::Io(e));
             }
         }
-        Err(e) => {
-            let _ = fs::remove_file(&tmp_path);
-            return Err(Error::Io(e));
-        }
     }
-    Ok(())
+    Err(Error::Io(io::Error::other(
+        "exhausted loose object publish retries",
+    )))
 }
 
 fn set_loose_object_mode(path: &Path) {

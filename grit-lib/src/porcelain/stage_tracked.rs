@@ -9,8 +9,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::diff::{
-    entry_is_racy, index_entry_worktree_abs, materialize_worktree_blob, read_submodule_head_oid,
-    symlink_target_bytes, SymlinkDirCache,
+    entry_is_racy, hash_worktree_file, index_entry_worktree_abs, materialize_worktree_blob,
+    read_submodule_head_oid, symlink_target_bytes, SymlinkDirCache,
 };
 use crate::error::{Error, Result};
 use crate::hash::Parallelism;
@@ -24,7 +24,7 @@ pub use crate::porcelain::bulk_index::IndexStagingThresholds;
 use crate::precompose_config::effective_core_precomposeunicode_with_config;
 use crate::repo::Repository;
 use crate::unicode_normalization::resolve_worktree_path_for_staging;
-use crate::worktree_batch::{prepare_and_store_worktree_blobs_parallel, WorktreeBlobReadInput};
+use crate::worktree_batch::WorktreeBlobReadInput;
 use crate::worktree_rules::WorktreeRules;
 use crate::worktree_scan::{
     collect_blob_lookup_batches, group_blob_entries_by_dir, group_blob_entries_by_dir_for_paths,
@@ -731,7 +731,7 @@ fn refresh_present_tracked_path(
             let file_attrs = rules.file_attrs(rel_path, false);
             let conv = rules.conversion();
             let filter_fp = Some(rules.filter_process());
-            let staged_oid = materialize_worktree_blob(
+            let staged_oid = hash_worktree_file(
                 repo.odb(),
                 abs_path,
                 &meta,
@@ -741,13 +741,39 @@ fn refresh_present_tracked_path(
                 Some(idx_e),
                 filter_fp,
             )?;
-            if !idx_intent_to_add
-                && staged_oid == idx_oid
-                && (wt_mode == idx_mode || !trust_filemode)
-            {
-                return Ok(false);
+            if !idx_intent_to_add && staged_oid == idx_oid {
+                let mode_for_index = if trust_filemode { wt_mode } else { idx_mode };
+                if mode_for_index == idx_mode || !trust_filemode {
+                    let entry = entry_from_stat(abs_path, raw_path, staged_oid, mode_for_index)?;
+                    if entry.ctime_sec != idx_e.ctime_sec
+                        || entry.ctime_nsec != idx_e.ctime_nsec
+                        || entry.mtime_sec != idx_e.mtime_sec
+                        || entry.mtime_nsec != idx_e.mtime_nsec
+                        || entry.size != idx_e.size
+                        || entry.ino != idx_e.ino
+                        || entry.dev != idx_e.dev
+                        || entry.uid != idx_e.uid
+                        || entry.gid != idx_e.gid
+                    {
+                        index.stage_file(entry);
+                        return Ok(true);
+                    }
+                    return Ok(false);
+                }
+                let entry = entry_from_stat(abs_path, raw_path, staged_oid, wt_mode)?;
+                index.stage_file(entry);
+                return Ok(true);
             }
-            staged_oid
+            materialize_worktree_blob(
+                repo.odb(),
+                abs_path,
+                &meta,
+                conv,
+                &file_attrs,
+                rel_path,
+                Some(idx_e),
+                filter_fp,
+            )?
         }
         Err(_) => {
             let meta = fs::symlink_metadata(abs_path).map_err(Error::Io)?;
@@ -803,20 +829,17 @@ fn restage_deferred_jobs(
             cached_meta: None,
         });
     }
-    if !batch_inputs.is_empty() {
-        repo.odb().ensure_all_loose_prefix_dirs()?;
-    }
-    let prepared = prepare_and_store_worktree_blobs_parallel(
+    let prepared = crate::worktree_batch::prepare_worktree_blobs_parallel(
         repo.odb(),
         &batch_inputs,
         rules.conversion(),
         parallelism,
         Some(rules.filter_process()),
-        BULK_TRACKED_RESTAGE_LOOSE_WRITE,
     )?;
 
     let mut replacements = Vec::new();
     let mut modified = Vec::new();
+    let mut needs_loose_write = false;
     for (job, prep) in jobs.iter().zip(prepared.iter()) {
         let raw_path = job.raw_path.as_slice();
         let Some(idx_e) = index.get(raw_path, 0) else {
@@ -829,14 +852,51 @@ fn restage_deferred_jobs(
         let idx_mode = idx_e.mode;
         let idx_oid = idx_e.oid;
         let mode_for_index = if trust_filemode { prep.mode } else { idx_mode };
-        if prep.oid == idx_oid && (mode_for_index == idx_mode || !trust_filemode) {
-            continue;
-        }
         let abs_path =
             abs_path_for_stage_tracked(work_tree, raw_path, precompose_unicode, ignorecase);
+        if prep.oid == idx_oid && (mode_for_index == idx_mode || !trust_filemode) {
+            let entry = entry_from_stat(&abs_path, raw_path, prep.oid, mode_for_index)?;
+            if entry.ctime_sec != idx_e.ctime_sec
+                || entry.ctime_nsec != idx_e.ctime_nsec
+                || entry.mtime_sec != idx_e.mtime_sec
+                || entry.mtime_nsec != idx_e.mtime_nsec
+                || entry.size != idx_e.size
+                || entry.ino != idx_e.ino
+                || entry.dev != idx_e.dev
+                || entry.uid != idx_e.uid
+                || entry.gid != idx_e.gid
+            {
+                replacements.push(entry);
+                modified.push(raw_path.to_vec());
+            }
+            continue;
+        }
+        needs_loose_write = true;
         let entry = entry_from_stat(&abs_path, raw_path, prep.oid, mode_for_index)?;
         modified.push(raw_path.to_vec());
         replacements.push(entry);
+    }
+    if needs_loose_write {
+        repo.odb().ensure_all_loose_prefix_dirs()?;
+        for prep in &prepared {
+            let raw_path = prep.index_relpath.as_bytes();
+            let Some(idx_e) = index.get(raw_path, 0) else {
+                continue;
+            };
+            let mode_for_index = if trust_filemode {
+                prep.mode
+            } else {
+                idx_e.mode
+            };
+            if prep.oid == idx_e.oid && (mode_for_index == idx_e.mode || !trust_filemode) {
+                continue;
+            }
+            repo.odb().write_loose_zlib_prehashed(
+                &prep.oid,
+                &prep.zlib_store,
+                BULK_TRACKED_RESTAGE_LOOSE_WRITE,
+            )?;
+        }
     }
     if !replacements.is_empty() {
         index.replace_stage0_entries_batch(replacements);
