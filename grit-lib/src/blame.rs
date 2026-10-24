@@ -1009,6 +1009,9 @@ fn attribute_line_from_copy_cache(
         return false;
     };
     let line_text = cur_lines.line(current_idx);
+    if blame_copy_content_score(line_text) < BLAME_DEFAULT_COPY_SCORE {
+        return false;
+    }
     let used_key = line_text.to_owned();
     let used_count = used.get(&used_key).copied().unwrap_or(0);
     let Some(pb) = by_content
@@ -2073,6 +2076,7 @@ fn compute_blame_with_session(
     line_range: Option<RangeInclusive<usize>>,
     session: &mut BlameSession<'_>,
 ) -> Result<Vec<BlameLine>> {
+    let blamed_path = file_path.to_owned();
     let mut commit_cache = BlameCommitCache::default();
     let start_commit = get_blame_commit(
         odb,
@@ -2384,8 +2388,8 @@ fn compute_blame_with_session(
                     t.final_lineno,
                     t.current_idx + 1,
                     final_lines[t.final_lineno - 1].clone(),
-                    &current_path,
-                    None,
+                    &blamed_path,
+                    t.source_path.clone(),
                     t.ignored,
                     false,
                     false,
@@ -2612,6 +2616,7 @@ fn compute_blame_with_session(
                 &current_blob_oid,
                 &current_path,
             )? {
+                note_blame_source_path(&mut pending, &renamed_path);
                 current_path = renamed_path;
                 session.set_bloom_path(&current_path);
                 current_oid = parent_oid;
@@ -2629,6 +2634,7 @@ fn compute_blame_with_session(
                 let p_blob_oid = entry.old_oid;
                 let p_blob_mode = mode_from_diff_entry_mode(&entry.old_mode);
                 if p_blob_oid == current_blob_oid {
+                    note_blame_source_path(&mut pending, &old_path);
                     current_path = old_path;
                     session.set_bloom_path(&current_path);
                     current_oid = parent_oid;
@@ -2645,6 +2651,13 @@ fn compute_blame_with_session(
                 // If copy detection is enabled, try to track lines to source
                 // files in the parent tree.
                 if copy_depth >= 1 {
+                    let allowed = copy_allowed_parent_paths(
+                        odb,
+                        &parent_commit.tree,
+                        &commit.tree,
+                        copy_depth,
+                        true,
+                    )?;
                     let cur_lines_arc = session.load_blob_lines(
                         current_blob_oid,
                         &current_path,
@@ -2658,22 +2671,14 @@ fn compute_blame_with_session(
                         if path == current_path || !is_regular_mode(mode) {
                             continue;
                         }
-                        // Single -C only searches for files that disappeared
-                        // in the current commit. Deeper -C levels may search
-                        // broader history.
-                        if copy_depth == 1
-                            && session.resolve_path_in_tree(commit.tree, &path)?.is_some()
-                        {
+                        if !path_allowed_for_copy_search(&path, allowed.as_ref()) {
                             continue;
                         }
 
                         let source_lines_arc = session.load_blob_lines(oid, &path, mode)?;
                         let source_lines = BlameSession::line_refs(source_lines_arc.as_ref());
-                        let overlap = cur_lines
-                            .iter()
-                            .filter(|line| source_lines.iter().any(|src| src == *line))
-                            .count();
-                        if overlap == 0 {
+                        let overlap = blame_copy_overlap_score(&cur_lines, &source_lines);
+                        if overlap < BLAME_DEFAULT_COPY_SCORE {
                             continue;
                         }
 
@@ -2706,32 +2711,36 @@ fn compute_blame_with_session(
                             let line_text = cur_lines.get(t.current_idx).copied().unwrap_or("");
                             let used_key = line_text.to_owned();
                             let used_count = used.get(&used_key).copied().unwrap_or(0);
-                            if let Some((source_path, pb)) = by_content
-                                .get(line_text)
-                                .and_then(|candidates| candidates.get(used_count))
-                            {
-                                used.insert(used_key, used_count + 1);
-                                result.push(blame_line_from_parent(
-                                    pb,
-                                    t.final_lineno,
-                                    final_lines[t.final_lineno - 1].clone(),
-                                    pb.source_file.clone().or_else(|| Some(source_path.clone())),
-                                    pb.ignored || t.ignored,
-                                    pb.unblamable,
-                                ));
-                            } else {
-                                result.push(blame_line_at_path(
-                                    current_oid,
-                                    t.final_lineno,
-                                    t.current_idx + 1,
-                                    final_lines[t.final_lineno - 1].clone(),
-                                    &current_path,
-                                    None,
-                                    t.ignored,
-                                    false,
-                                    false,
-                                ));
+                            if blame_copy_content_score(line_text) >= BLAME_DEFAULT_COPY_SCORE {
+                                if let Some((source_path, pb)) = by_content
+                                    .get(line_text)
+                                    .and_then(|candidates| candidates.get(used_count))
+                                {
+                                    used.insert(used_key, used_count + 1);
+                                    result.push(blame_line_from_parent(
+                                        pb,
+                                        t.final_lineno,
+                                        final_lines[t.final_lineno - 1].clone(),
+                                        pb.source_file
+                                            .clone()
+                                            .or_else(|| Some(source_path.clone())),
+                                        pb.ignored || t.ignored,
+                                        pb.unblamable,
+                                    ));
+                                    continue;
+                                }
                             }
+                            result.push(blame_line_at_path(
+                                current_oid,
+                                t.final_lineno,
+                                t.current_idx + 1,
+                                final_lines[t.final_lineno - 1].clone(),
+                                &blamed_path,
+                                t.source_path.clone(),
+                                t.ignored,
+                                false,
+                                false,
+                            ));
                         }
                         if !deferred_queue.is_empty() {
                             continue 'blame_loop;
@@ -2747,8 +2756,8 @@ fn compute_blame_with_session(
                         t.final_lineno,
                         t.current_idx + 1,
                         final_lines[t.final_lineno - 1].clone(),
-                        &current_path,
-                        None,
+                        &blamed_path,
+                        t.source_path.clone(),
                         t.ignored,
                         false,
                         false,
@@ -2860,8 +2869,20 @@ fn compute_blame_with_session(
                 let line_map = maps.line_map.as_slice();
                 let stop_blame_on_current = maps.stop_blame_on_current.as_slice();
                 let mut inserted_copy_source: Option<CopySourceBlameCache> = None;
-                if copy_depth >= 3 {
+                let inserted_line_duplicates_parent = pending.iter().any(|t| {
+                    t.current_idx < cur_lines_arc.len()
+                        && (0..par_lines_arc.len())
+                            .any(|i| cur_lines_arc.line(t.current_idx) == par_lines_arc.line(i))
+                });
+                if copy_depth >= 1 && !inserted_line_duplicates_parent {
                     let cur_line_refs = BlameSession::line_refs(cur_lines_arc.as_ref());
+                    let allowed = copy_allowed_parent_paths(
+                        odb,
+                        &parent_commit.tree,
+                        &commit.tree,
+                        copy_depth,
+                        false,
+                    )?;
                     if let Some((source_path, source_blame)) = find_copy_source_blame(
                         odb,
                         parent_oid,
@@ -2874,6 +2895,7 @@ fn compute_blame_with_session(
                         use_textconv,
                         copy_depth - 1,
                         false,
+                        allowed.as_ref(),
                         first_parent_only,
                         grafts,
                         indent_heuristic,
@@ -2966,13 +2988,28 @@ fn compute_blame_with_session(
                                 .unwrap_or(false)
                                 && !is_ignored
                             {
+                                let duplicates_earlier_parent_line =
+                                    (0..par_lines_arc.len()).any(|i| {
+                                        i != t.current_idx
+                                            && cur_lines_arc.line(t.current_idx)
+                                                == par_lines_arc.line(i)
+                                    });
+                                if duplicates_earlier_parent_line {
+                                    still_pending.push(TrackedLine {
+                                        final_lineno: t.final_lineno,
+                                        current_idx: parent_idx,
+                                        ignored: t.ignored,
+                                        source_path: t.source_path.clone(),
+                                    });
+                                    continue;
+                                }
                                 result.push(blame_line_at_path(
                                     current_oid,
                                     t.final_lineno,
                                     t.current_idx + 1,
                                     final_lines[t.final_lineno - 1].clone(),
-                                    &current_path,
-                                    None,
+                                    &blamed_path,
+                                    t.source_path.clone(),
                                     t.ignored,
                                     false,
                                     false,
@@ -3014,6 +3051,18 @@ fn compute_blame_with_session(
                                 ));
                             }
                         } else {
+                            let line_text = cur_lines_arc.line(t.current_idx);
+                            if let Some(parent_idx) = (0..par_lines_arc.len())
+                                .find(|&i| par_lines_arc.line(i) == line_text)
+                            {
+                                still_pending.push(TrackedLine {
+                                    final_lineno: t.final_lineno,
+                                    current_idx: parent_idx,
+                                    ignored: t.ignored,
+                                    source_path: t.source_path.clone(),
+                                });
+                                continue;
+                            }
                             if attribute_line_from_copy_cache(
                                 &mut inserted_copy_source,
                                 cur_lines_arc.as_ref(),
@@ -3030,8 +3079,8 @@ fn compute_blame_with_session(
                                 t.final_lineno,
                                 t.current_idx + 1,
                                 final_lines[t.final_lineno - 1].clone(),
-                                &current_path,
-                                None,
+                                &blamed_path,
+                                t.source_path.clone(),
                                 t.ignored,
                                 false,
                                 false,
@@ -3071,6 +3120,7 @@ fn compute_blame_with_session(
                 current_blob_mode = p_blob_mode;
                 walk_lines = Some((p_blob_oid, Arc::clone(&par_lines_arc)));
                 if parent_blob_path != current_path {
+                    note_blame_source_path(&mut pending, &parent_blob_path);
                     current_path = parent_blob_path;
                     session.set_bloom_path(&current_path);
                 }
@@ -3084,6 +3134,73 @@ fn compute_blame_with_session(
 
 fn mode_from_diff_entry_mode(mode: &str) -> u32 {
     u32::from_str_radix(mode, 8).unwrap_or(0o100644)
+}
+
+/// Git's default minimum line score for copy detection (`blame.h`).
+const BLAME_DEFAULT_COPY_SCORE: usize = 40;
+
+fn blame_copy_content_score(line: &str) -> usize {
+    line.chars().filter(|c| c.is_ascii_alphanumeric()).count()
+}
+
+fn blame_copy_overlap_score(cur: &[&str], src: &[&str]) -> usize {
+    cur.iter()
+        .filter_map(|line| {
+            let score = blame_copy_content_score(line);
+            if score >= BLAME_DEFAULT_COPY_SCORE && src.iter().any(|s| s == line) {
+                Some(score)
+            } else {
+                None
+            }
+        })
+        .sum()
+}
+
+fn copy_changed_parent_paths(
+    odb: &Odb,
+    parent_tree: &ObjectId,
+    child_tree: &ObjectId,
+) -> Result<HashSet<String>> {
+    let mut out = HashSet::new();
+    for entry in diff_trees(odb, Some(parent_tree), Some(child_tree), "")? {
+        if let Some(path) = entry.old_path {
+            out.insert(path);
+        }
+        if let Some(path) = entry.new_path {
+            out.insert(path);
+        }
+    }
+    Ok(out)
+}
+
+fn copy_allowed_parent_paths(
+    odb: &Odb,
+    parent_tree: &ObjectId,
+    child_tree: &ObjectId,
+    copy_depth: usize,
+    blaming_new_file: bool,
+) -> Result<Option<HashSet<String>>> {
+    if copy_depth >= 3 {
+        return Ok(None);
+    }
+    if copy_depth >= 2 && blaming_new_file {
+        return Ok(None);
+    }
+    Ok(Some(copy_changed_parent_paths(
+        odb,
+        parent_tree,
+        child_tree,
+    )?))
+}
+
+fn path_allowed_for_copy_search(path: &str, allowed: Option<&HashSet<String>>) -> bool {
+    allowed.is_none_or(|set| set.contains(path))
+}
+
+fn note_blame_source_path(pending: &mut [TrackedLine], path: &str) {
+    for t in pending.iter_mut() {
+        t.source_path.get_or_insert_with(|| path.to_owned());
+    }
 }
 
 fn find_rename_entry_for_path(
@@ -3136,6 +3253,7 @@ fn find_copy_source_blame(
     use_textconv: bool,
     copy_depth: usize,
     include_current_path: bool,
+    allowed_paths: Option<&HashSet<String>>,
     first_parent_only: bool,
     grafts: &HashMap<ObjectId, Vec<ObjectId>>,
     indent_heuristic: bool,
@@ -3147,6 +3265,9 @@ fn find_copy_source_blame(
     let mut candidates: Vec<(String, ObjectId, u32)> = Vec::new();
     for (path, oid, mode) in entries {
         if (!include_current_path && path == exclude_path) || !is_regular_mode(mode) {
+            continue;
+        }
+        if !path_allowed_for_copy_search(&path, allowed_paths) {
             continue;
         }
         candidates.push((path, oid, mode));
@@ -3168,10 +3289,7 @@ fn find_copy_source_blame(
             let content =
                 read_blob_content_for_blame(odb, oid, path, *mode, textconv_ctx, use_textconv)?;
             let parsed: Vec<&str> = content_lines(&content);
-            let score = current_lines
-                .iter()
-                .filter(|line| parsed.iter().any(|src| src == *line))
-                .count();
+            let score = blame_copy_overlap_score(current_lines, &parsed);
             Ok((path.clone(), score))
         },
     )?;
@@ -3188,7 +3306,7 @@ fn find_copy_source_blame(
     let Some(source_path) = best_path else {
         return Ok(None);
     };
-    if best_score == 0 {
+    if best_score < BLAME_DEFAULT_COPY_SCORE {
         return Ok(None);
     }
 
@@ -3480,6 +3598,54 @@ pub fn resolve_blame_line_range(
     resolve_line_range(spec, &content, &file_path, &config, matcher.as_ref(), 1)
 }
 
+/// Copy detection depth for blame, matching Git's repeated `-C` flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CopyDetection {
+    /// No copy detection (default).
+    #[default]
+    Off,
+    /// `-C` once: copies from files removed in the same commit.
+    FromModifiedFiles,
+    /// `-C -C`: also search existing parent files when the blamed path is new in the commit.
+    FromCreatingCommit,
+    /// `-C -C -C`: search all parent files for copies (including appended lines).
+    FromAnyCommit,
+}
+
+impl CopyDetection {
+    /// Number of `-C` flags this level represents (`0` when [`CopyDetection::Off`]).
+    #[must_use]
+    pub const fn count(self) -> usize {
+        match self {
+            Self::Off => 0,
+            Self::FromModifiedFiles => 1,
+            Self::FromCreatingCommit => 2,
+            Self::FromAnyCommit => 3,
+        }
+    }
+
+    /// Build from a CLI `-C` repetition count (Git allows at most three).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibError::Message`] when `count` is greater than three.
+    pub fn from_count(count: usize) -> Result<Self> {
+        match count {
+            0 => Ok(Self::Off),
+            1 => Ok(Self::FromModifiedFiles),
+            2 => Ok(Self::FromCreatingCommit),
+            3 => Ok(Self::FromAnyCommit),
+            _ => Err(LibError::Message(
+                "blame copy detection: at most three -C flags are supported".into(),
+            )),
+        }
+    }
+
+    const fn depth(self) -> usize {
+        self.count()
+    }
+}
+
 /// Options for [`blame_file`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BlameOptions {
@@ -3493,6 +3659,8 @@ pub struct BlameOptions {
     pub ignore: IgnoreRevs,
     /// Whitespace rules when comparing lines between revisions (`-w` / ignore-all-space today).
     pub whitespace: crate::diff::WhitespaceMode,
+    /// Copy detection depth (Git `-C`, `-C -C`, `-C -C -C`).
+    pub copy_detection: CopyDetection,
 }
 
 /// One blamed line returned by [`blame_file`].
@@ -3618,6 +3786,7 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
     let mut session = BlameSession::new(repo.odb(), None, false, &thread_policy);
     session.whitespace = options.whitespace;
     session.commit_graph = repo.caches().commit_graph_chain(repo.odb().objects_dir());
+    let copy_depth = options.copy_detection.depth();
     let (lines, commits) = repo.odb().with_pack_read_context(
         || -> Result<(Vec<BlameAttributedLine>, HashMap<ObjectId, BlameCommitInfo>)> {
             let raw = compute_blame_with_session(
@@ -3628,7 +3797,7 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
                 diff_algorithm,
                 None,
                 false,
-                0,
+                copy_depth,
                 options.first_parent_only,
                 &grafts,
                 indent_heuristic,
@@ -4040,6 +4209,22 @@ mod tests {
         )?;
         assert_eq!(result.lines.len(), 1);
         assert_eq!(result.lines[0].content, "hello");
+        Ok(())
+    }
+
+    #[test]
+    fn copy_detection_from_count_maps_git_levels() -> Result<()> {
+        assert_eq!(CopyDetection::from_count(0)?, CopyDetection::Off);
+        assert_eq!(
+            CopyDetection::from_count(1)?,
+            CopyDetection::FromModifiedFiles
+        );
+        assert_eq!(
+            CopyDetection::from_count(2)?,
+            CopyDetection::FromCreatingCommit
+        );
+        assert_eq!(CopyDetection::from_count(3)?, CopyDetection::FromAnyCommit);
+        assert!(CopyDetection::from_count(4).is_err());
         Ok(())
     }
 

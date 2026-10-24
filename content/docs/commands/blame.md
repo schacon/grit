@@ -9,7 +9,7 @@ order: 2
 
 ```text
 grit blame [<rev>] [--rev <commit>] [-L RANGE] [--first-parent] [--group] [-w]
-  [--ignore-rev <REV>]... [--ignore-revs-file <FILE>]... [--] <file>
+  [-C]... [--ignore-rev <REV>]... [--ignore-revs-file <FILE>]... [--] <file>
 ```
 
 ## Description
@@ -33,6 +33,7 @@ When a commit renamed or moved the file (including rename-and-edit in the same c
 | `--ignore-rev <REV>` | Treat this commit as transparent while walking history (repeatable). Unknown revisions are an error. |
 | `--ignore-revs-file <FILE>` | Read full-length commit oids to ignore, one per line (`#` comments, blank lines skipped). Repeatable; `""` clears entries loaded from config or earlier files. Missing files are an error. Relative paths are resolved from the repository root. Config `blame.ignoreRevsFile` (multi-valued) is applied before CLI files. |
 | `-w`, `--ignore-all-space` | Ignore whitespace when comparing lines between revisions (same rules as [`grit diff -w`](../diff/)). Whitespace-only edits do not move blame to a newer commit. |
+| `-C`, `--copy-detection` | Detect lines copied from other files (repeat up to three times for deeper search, matching `git blame -C` / `-C -C` / `-C -C -C`). A fourth `-C` is rejected with exit code 2. |
 
 Human output prefixes ignored lines with `?` and lines that cannot be blamed past an ignored commit with `*` (same markers Git uses when `blame.markIgnoredLines` / `blame.markUnblamableLines` are enabled).
 
@@ -80,6 +81,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `lines[].content` | string | Line text. |
 | `lines[].ignored` | boolean | Present and `true` when the line was attributed through an ignored revision. |
 | `lines[].unblamable` | boolean | Present and `true` when the line was added in an ignored revision and cannot be blamed further back. |
+| `lines[].original_path` | string | Present when copy detection (`-C`) attributed the line from a different path than the file being blamed (Git porcelain `filename` for that hunk). |
 | `commits` | object | Map of commit oid → metadata for every line. |
 | `commits.<oid>.author` | object | Author with `name`, `email`, and `date` (RFC 3339 — same shape as [`grit show`](../show/)). Author date is only here, not repeated on each line or hunk. |
 | `commits.<oid>.summary` | string | First line of the commit message. |

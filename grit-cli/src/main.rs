@@ -889,6 +889,9 @@ enum Command {
         /// Ignore whitespace when comparing lines (`git blame -w`).
         #[arg(short = 'w', long = "ignore-all-space")]
         ignore_all_space: bool,
+        /// Detect lines copied from other files (`git blame -C`; repeat up to three times).
+        #[arg(short = 'C', long = "copy-detection", action = clap::ArgAction::Count)]
+        copy_detection: u8,
     },
     /// Show changes as a diff. No argument: uncommitted changes; with a commit:
     /// the change that commit introduced; with two commits (or `A..B`) diff their trees.
@@ -2494,6 +2497,7 @@ fn dispatch(
             ignore_revs_file,
             group,
             ignore_all_space,
+            copy_detection,
         } => emit_success(
             &commands::blame::run(
                 rev_pos,
@@ -2505,6 +2509,7 @@ fn dispatch(
                 ignore_revs_file,
                 group,
                 ignore_all_space,
+                copy_detection,
                 ctx.now,
             )?,
             opts,
