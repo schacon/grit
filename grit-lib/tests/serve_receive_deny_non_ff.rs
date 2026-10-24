@@ -10,7 +10,7 @@ use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::objects::{HashAlgo, ObjectId};
 use grit_lib::refs::resolve_ref;
 use grit_lib::remote::serve::{
-    receive_pack, ProtocolVersion, ReceiveOutcome, ReceivePolicy, ServeOptions,
+    receive_pack, ProtocolVersion, ReceiveOutcome, ReceivePolicy, RefUpdateRefusal, ServeOptions,
 };
 use grit_lib::repo::Repository;
 
@@ -281,8 +281,8 @@ fn non_fast_forward_branch_update_is_refused() {
         ),
     );
     assert_eq!(
-        outcome.updates[0].error.as_deref(),
-        Some("non-fast-forward")
+        outcome.updates[0].error,
+        Some(RefUpdateRefusal::NonFastForward)
     );
     assert_eq!(resolve_ref(&f.bare, "refs/heads/main").unwrap(), two);
 
@@ -291,7 +291,10 @@ fn non_fast_forward_branch_update_is_refused() {
         &f.repo,
         &push_body(Some(two), one, "refs/heads/main", &empty_pack(&f.source)),
     );
-    assert_eq!(rewind.updates[0].error.as_deref(), Some("non-fast-forward"));
+    assert_eq!(
+        rewind.updates[0].error,
+        Some(RefUpdateRefusal::NonFastForward)
+    );
     assert_eq!(resolve_ref(&f.bare, "refs/heads/main").unwrap(), two);
     git(&f.bare, &["fsck", "--strict"]);
 }
@@ -350,6 +353,6 @@ fn branch_update_to_a_non_commit_is_refused_as_bad_ref() {
         &f.repo,
         &push_body(Some(one), tree, "refs/heads/main", &empty_pack(&f.source)),
     );
-    assert_eq!(outcome.updates[0].error.as_deref(), Some("bad ref"));
+    assert_eq!(outcome.updates[0].error, Some(RefUpdateRefusal::BadRef));
     assert_eq!(resolve_ref(&f.bare, "refs/heads/main").unwrap(), one);
 }
