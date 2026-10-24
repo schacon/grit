@@ -523,11 +523,20 @@ fn pack_is_thin_inner(data: &[u8], algo: HashAlgo) -> Result<bool> {
 /// Resolve delta chains only far enough to test ref-delta bases (no full pack materialization).
 fn pack_is_thin_with_ofs_deltas(
     data: &[u8],
-    _algo: HashAlgo,
+    algo: HashAlgo,
     ref_delta_bases: Vec<ObjectId>,
 ) -> Result<bool> {
-    let tmp = tempfile::tempdir().map_err(|e| Error::Io(e))?;
-    let odb = Odb::new(tmp.path());
+    let tmp = tempfile::tempdir().map_err(Error::Io)?;
+    let git_dir = tmp.path().join(".git");
+    std::fs::create_dir_all(git_dir.join("objects")).map_err(Error::Io)?;
+    if algo == HashAlgo::Sha256 {
+        std::fs::write(
+            git_dir.join("config"),
+            "[extensions]\n\tobjectformat = sha256\n",
+        )
+        .map_err(Error::Io)?;
+    }
+    let odb = Odb::new(&git_dir.join("objects")).with_config_git_dir(git_dir);
     match crate::pack_index_build::build_pack_index_records(
         data,
         &odb,

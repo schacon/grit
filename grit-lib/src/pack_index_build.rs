@@ -433,7 +433,13 @@ impl WholeHashQueue {
         let mut guard = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         loop {
             let cur = self.inflight_bytes.load(Ordering::Relaxed);
-            if cur.saturating_add(bytes) <= self.inflight_limit {
+            let allowed = if bytes > self.inflight_limit {
+                // One worker may inflate a valid object larger than the total budget.
+                cur == 0
+            } else {
+                cur.saturating_add(bytes) <= self.inflight_limit
+            };
+            if allowed {
                 self.inflight_bytes.fetch_add(bytes, Ordering::Relaxed);
                 return;
             }
@@ -1134,6 +1140,18 @@ mod line_coverage_tests {
         assert!(cap
             .max_by_phase
             .contains_key(&ProgressPhase::IndexingObjects));
+    }
+
+    #[test]
+    fn parallel_index_whole_object_larger_than_inflight_budget() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let odb = Odb::new(tmp.path());
+        let mut pb = PackBuilder::new(HashAlgo::Sha1);
+        pb.add_full(PK::Blob, &vec![0xAB_u8; 20 * 1024 * 1024]);
+        let pack = pb.build().bytes;
+        let records = build_pack_index_records(&pack, &odb, Parallelism::resolve(Some(2)), false)
+            .unwrap_or_else(|e| panic!("20 MiB whole object with 2 threads: {e}"));
+        assert_eq!(records.len(), 1);
     }
 
     #[test]

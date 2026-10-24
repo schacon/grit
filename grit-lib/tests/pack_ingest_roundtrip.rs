@@ -1361,9 +1361,6 @@ fn rss_harness_index_then_verify() {
     verify_pack_and_collect(Path::new(&idx)).expect("verify");
 }
 
-/// Manual RSS harness: `GRIT_CARGO_PACK=/path/to.pack cargo test --release rss_harness_mmap_build_index -- --ignored --exact`
-#[test]
-#[ignore = "manual RSS harness (set GRIT_CARGO_PACK)"]
 /// Manual RSS harness: `GRIT_CARGO_PACK=/path/to.pack cargo test --release rss_harness_build_index_records_only -- --ignored --exact`
 #[test]
 #[ignore = "manual RSS harness (set GRIT_CARGO_PACK)"]
