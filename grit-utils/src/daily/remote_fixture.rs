@@ -1098,9 +1098,10 @@ fn verify_blobless_clone_tree(git: &Path, dest: &Path, default_branch: &str) -> 
     Ok(())
 }
 
-pub fn verify_clone_blobless(ctx: &DailyHeadlineContext, cwd: &Path) -> Result<()> {
+pub fn verify_clone_blobless(ctx: &DailyHeadlineContext, _cwd: &Path) -> Result<()> {
     let remote = remote_state(ctx)?;
     let dest = remote.meta.clone_dest.clone();
+    let clone_cwd = dest.parent().context("clone dest parent directory")?;
     let dest_name = dest
         .file_name()
         .and_then(|s| s.to_str())
@@ -1109,7 +1110,7 @@ pub fn verify_clone_blobless(ctx: &DailyHeadlineContext, cwd: &Path) -> Result<(
     prepare_network_clone(&remote.bare)?;
     run_git(
         &ctx.git,
-        cwd,
+        clone_cwd,
         &[
             "clone",
             "-q",
@@ -1123,7 +1124,7 @@ pub fn verify_clone_blobless(ctx: &DailyHeadlineContext, cwd: &Path) -> Result<(
     prepare_network_clone(&remote.bare)?;
     run_grit(
         &ctx.grit,
-        cwd,
+        clone_cwd,
         &[
             "clone",
             "--blobs",
@@ -1318,20 +1319,50 @@ pub fn clone_bench_script_shallow(tool: &Path, url: &str, dest: &Path) -> String
     format!("rm -rf {dest_q} && {tool_q} clone -q --depth 1 {url_q} {dest_name}")
 }
 
-pub fn clone_blobless_bench_script_git(tool: &Path, url: &str, dest: &Path) -> String {
+fn clone_bench_script_in_dest_parent(
+    tool: &Path,
+    url: &str,
+    dest: &Path,
+    extra_clone_args: &str,
+) -> String {
     let tool_q = shell_quote(&tool.to_string_lossy());
     let url_q = shell_quote(url);
     let dest_q = shell_quote(&dest.to_string_lossy());
+    let parent_q = shell_quote(
+        &dest
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_string_lossy(),
+    );
     let dest_name = dest.file_name().and_then(|s| s.to_str()).unwrap_or("clone");
-    format!("rm -rf {dest_q} && {tool_q} clone -q --filter=blob:none {url_q} {dest_name}")
+    format!(
+        "rm -rf {dest_q} && cd {parent_q} && {tool_q} clone {extra_clone_args} {url_q} {dest_name}"
+    )
+}
+
+pub fn clone_blobless_bench_script_git(tool: &Path, url: &str, dest: &Path) -> String {
+    clone_bench_script_in_dest_parent(tool, url, dest, "-q --filter=blob:none")
 }
 
 pub fn clone_blobless_bench_script_grit(tool: &Path, url: &str, dest: &Path) -> String {
-    let tool_q = shell_quote(&tool.to_string_lossy());
-    let url_q = shell_quote(url);
-    let dest_q = shell_quote(&dest.to_string_lossy());
-    let dest_name = dest.file_name().and_then(|s| s.to_str()).unwrap_or("clone");
-    format!("rm -rf {dest_q} && {tool_q} clone --blobs none {url_q} {dest_name}")
+    clone_bench_script_in_dest_parent(tool, url, dest, "--blobs none")
+}
+
+#[cfg(test)]
+mod blobless_path_tests {
+    use super::*;
+
+    /// Clone commands must run in `clone_dest.parent()` so the checkout lands on the
+    /// absolute sidecar path (not nested under `client_repo`).
+    #[test]
+    fn clone_dest_sidecar_not_under_client_repo() {
+        let client = PathBuf::from("/tmp/daily-remote-git-git/remote.git-client");
+        let dest = PathBuf::from("/tmp/daily-remote-git-git/remote-clone");
+        let parent = dest.parent().expect("parent");
+        let name = dest.file_name().and_then(|s| s.to_str()).expect("name");
+        assert_eq!(parent.join(name), dest);
+        assert_ne!(client.join(name), dest);
+    }
 }
 
 pub fn clone_bench_script_grit_shallow(tool: &Path, url: &str, dest: &Path) -> String {
