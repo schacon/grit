@@ -289,9 +289,9 @@ fn outcome_from_result(
         lines_json.push(BlameLineJson {
             commit: commit_hex.clone(),
             original_line: line.original_line,
-            original_path: line.original_path.clone(),
             final_line: line.final_line,
             content: content.clone(),
+            original_path: line.original_path.clone(),
             ignored: line.ignored.then_some(true),
             unblamable: line.unblamable.then_some(true),
         });

@@ -5,6 +5,7 @@ use grit_lib::porcelain::hunk_select::HunkSelectError;
 use grit_lib::remote::clone::CloneError;
 
 use crate::commands;
+use crate::commands::blame::BlameUsageError;
 use crate::commands::branch::BranchUsageError;
 use crate::commands::bundle::MissingPrerequisites;
 use crate::commands::history::RebaseExecExit;
@@ -82,6 +83,12 @@ impl ExitStatus {
         if err
             .chain()
             .any(|cause| cause.downcast_ref::<BranchUsageError>().is_some())
+        {
+            return Self::Usage;
+        }
+        if err
+            .chain()
+            .any(|cause| cause.downcast_ref::<BlameUsageError>().is_some())
         {
             return Self::Usage;
         }

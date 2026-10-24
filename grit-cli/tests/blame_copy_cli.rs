@@ -87,10 +87,15 @@ fn copy_detection_rejects_more_than_three_flags() {
         .args(["blame", "-C", "-C", "-C", "-C", "uno"]);
     git_env(&mut cmd);
     let out = cmd.output().expect("grit");
-    assert!(!out.status.success());
+    assert!(
+        out.status.code() == Some(2),
+        "expected usage exit 2, got {:?} stderr={}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("three") || stderr.contains("-C"),
+        stderr.contains("three") && stderr.contains("-C"),
         "unexpected stderr: {stderr}"
     );
 }

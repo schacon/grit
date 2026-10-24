@@ -81,7 +81,6 @@ Pass `--json` for stable, scripting-friendly output:
 | `lines[].content` | string | Line text. |
 | `lines[].ignored` | boolean | Present and `true` when the line was attributed through an ignored revision. |
 | `lines[].unblamable` | boolean | Present and `true` when the line was added in an ignored revision and cannot be blamed further back. |
-| `lines[].original_path` | string | Present when copy detection (`-C`) attributed the line from a different path than the file being blamed (Git porcelain `filename` for that hunk). |
 | `commits` | object | Map of commit oid → metadata for every line. |
 | `commits.<oid>.author` | object | Author with `name`, `email`, and `date` (RFC 3339 — same shape as [`grit show`](../show/)). Author date is only here, not repeated on each line or hunk. |
 | `commits.<oid>.summary` | string | First line of the commit message. |
