@@ -18,8 +18,8 @@ use crate::promisor::{read_promisor_missing_oids, repo_treats_promisor_packs};
 use crate::reflog::read_reflog;
 use crate::repo::Repository;
 use crate::rev_parse::{
-    peel_to_commit_for_merge_base, resolve_revision, resolve_upstream_symbolic_name,
-    upstream_suffix_info,
+    load_graft_parents, peel_to_commit_for_merge_base, resolve_revision,
+    resolve_upstream_symbolic_name, upstream_suffix_info,
 };
 use crate::shallow::load_shallow_boundaries;
 
@@ -1314,7 +1314,7 @@ const MARK_BASE: u8 = 1 << 3;
 const MARK_QUEUED: u8 = 1 << 4;
 
 #[cfg(test)]
-mod intersect_walk_test_hooks {
+pub(crate) mod intersect_walk_test_hooks {
     use std::cell::Cell;
 
     thread_local! {
@@ -1877,6 +1877,8 @@ struct CommitGraphCache<'r> {
     closures: OidHashMap<OidHashSet>,
     promisor_stop: OidHashSet,
     shallow_boundaries: OidHashSet,
+    /// Parent overrides from `.git/info/grafts` (same as Git and [`crate::rev_list::CommitGraph`]).
+    graft_parents: OidHashMap<Vec<ObjectId>>,
     /// Commit-graph file, when present: supplies parents + committer time without
     /// decompressing commit objects. Commits absent from it (or octopus merges)
     /// fall back to [`Self::parents_of`]'s object read.
@@ -1908,14 +1910,20 @@ impl<'r> CommitGraphCache<'r> {
             .commit_graph_chain(&repo.git_dir().join("objects"))
             .map(|arc| (*arc).clone());
         let shallow_boundaries = oid_hash_set_from(&load_shallow_boundaries(repo.git_dir()));
+        let graft_parents = load_graft_parents(repo.git_dir()).into_iter().collect();
         Self {
             repo,
             closures: oid_hash_map(),
             promisor_stop,
             shallow_boundaries,
+            graft_parents,
             graph,
             single_pack: None,
         }
+    }
+
+    fn grafted_parents(&self, oid: ObjectId, parents: Vec<ObjectId>) -> Vec<ObjectId> {
+        self.graft_parents.get(&oid).cloned().unwrap_or(parents)
     }
 
     fn with_linkage<R>(
@@ -1968,11 +1976,12 @@ impl<'r> CommitGraphCache<'r> {
         #[cfg(test)]
         intersect_walk_test_hooks::record_commit_parent_lookup();
         if self.promisor_stop.contains(&oid) {
+            let parents = self.grafted_parents(oid, Vec::new());
             self.with_linkage(|link| {
-                link.parents.insert(oid, Vec::new());
+                link.parents.insert(oid, parents.clone());
                 link.times.insert(oid, 0);
             });
-            return Ok(Vec::new());
+            return Ok(parents);
         }
         if self.shallow_boundaries.contains(&oid) {
             let commit_oid =
@@ -1988,11 +1997,12 @@ impl<'r> CommitGraphCache<'r> {
             }
             let commit = CommitRef::parse(&object.data)?;
             let time = commit.committer_timestamp();
+            let parents = self.grafted_parents(oid, Vec::new());
             self.with_linkage(|link| {
                 link.times.insert(oid, time);
-                link.parents.insert(oid, Vec::new());
+                link.parents.insert(oid, parents.clone());
             });
-            return Ok(Vec::new());
+            return Ok(parents);
         }
         // Fast path: parents + committer time from the commit-graph file (no
         // object decompression). Misses (not in graph / octopus) fall through.
@@ -2006,6 +2016,7 @@ impl<'r> CommitGraphCache<'r> {
                         .filter(|p| !self.promisor_stop.contains(p))
                         .collect()
                 };
+                let parents = self.grafted_parents(oid, parents);
                 self.with_linkage(|link| {
                     link.times.insert(oid, ctime);
                     link.parents.insert(oid, parents.clone());
@@ -2046,6 +2057,7 @@ impl<'r> CommitGraphCache<'r> {
                 .filter(|p| !self.promisor_stop.contains(p))
                 .collect()
         };
+        let parents = self.grafted_parents(oid, parents);
         self.with_linkage(|link| {
             link.times.insert(oid, time);
             link.parents.insert(oid, parents.clone());
@@ -2859,6 +2871,21 @@ mod tests {
         let ahead = commits_reachable_excluding_ancestors_of(&repo, &[c3], &[c1], None)?;
         assert_eq!(ahead, vec![c3, c2]);
 
+        Ok(())
+    }
+
+    #[test]
+    fn commits_reachable_excluding_honors_grafts() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_test_bare(&dir)?;
+        let root = write_commit_same_time(&repo.odb(), &[], "root", 100)?;
+        let mid = write_commit_same_time(&repo.odb(), &[root], "mid", 200)?;
+        let tip = write_commit_same_time(&repo.odb(), &[mid], "tip", 300)?;
+        let graft_path = repo.git_dir().join("info/grafts");
+        fs::create_dir_all(graft_path.parent().expect("graft parent")).map_err(Error::Io)?;
+        fs::write(&graft_path, format!("{tip} {root}\n")).map_err(Error::Io)?;
+        let out = commits_reachable_excluding_ancestors_of(&repo, &[tip], &[root], None)?;
+        assert_eq!(out, vec![tip]);
         Ok(())
     }
 
