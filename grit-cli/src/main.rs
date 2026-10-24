@@ -827,6 +827,9 @@ enum Command {
         /// With `--json`, emit grouped `hunks[]` instead of per-line `lines[]`.
         #[arg(long)]
         group: bool,
+        /// Ignore whitespace when comparing lines (`git blame -w`).
+        #[arg(short = 'w', long = "ignore-all-space")]
+        ignore_all_space: bool,
     },
     /// Show changes as a diff. No argument: uncommitted changes; with a commit:
     /// the change that commit introduced; with two commits (or `A..B`) diff their trees.
@@ -2250,6 +2253,7 @@ fn dispatch(
             ignore_rev,
             ignore_revs_file,
             group,
+            ignore_all_space,
         } => emit_success(
             &commands::blame::run(
                 rev_pos,
@@ -2260,6 +2264,7 @@ fn dispatch(
                 ignore_rev,
                 ignore_revs_file,
                 group,
+                ignore_all_space,
                 ctx.now,
             )?,
             opts,

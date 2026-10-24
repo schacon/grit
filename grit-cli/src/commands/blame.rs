@@ -1,15 +1,17 @@
 //! `grit blame` — show who last modified each line of a file.
 
+use std::collections::BTreeMap;
+use std::io::Write;
+
 use anyhow::{bail, Context, Result};
 use grit_lib::blame::{
     blame_file, resolve_blame_line_range, BlameOptions, BlameResult, IgnoreRevs, IgnoreRevsSources,
 };
+use grit_lib::diff::WhitespaceMode;
 use grit_lib::objects::ObjectId;
 use grit_lib::revwalk::rev_parse::resolve_revision_as_commit;
 use schemars::JsonSchema;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::io::Write;
 
 use crate::context::{self, relative_date_from};
 use crate::markdown;
@@ -162,6 +164,7 @@ pub fn run(
     ignore_rev: Vec<String>,
     ignore_revs_file: Vec<String>,
     group: bool,
+    ignore_all_space: bool,
     now: time::OffsetDateTime,
 ) -> Result<BlameOutcome> {
     let (rev_pos, file) = match (rev_pos, file) {
@@ -204,6 +207,11 @@ pub fn run(
         },
     )?;
 
+    let mut whitespace = WhitespaceMode::default();
+    if ignore_all_space {
+        whitespace = WhitespaceMode::ignore_all_space();
+    }
+
     let result = blame_file(
         &repo,
         &file,
@@ -212,6 +220,7 @@ pub fn run(
             line_range: range,
             first_parent_only: first_parent,
             ignore,
+            whitespace,
         },
     )?;
 
