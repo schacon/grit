@@ -1320,7 +1320,7 @@ impl Odb {
     /// The empty tree object is treated as present without a loose file (matches Git).
     #[must_use]
     pub fn exists_local(&self, oid: &ObjectId) -> bool {
-        if oid.is_canonical_empty_tree() {
+        if self.is_empty_tree(oid) {
             return true;
         }
         if self.custom_primary.is_some() {
@@ -1414,7 +1414,7 @@ impl Odb {
     pub fn exists(&self, oid: &ObjectId) -> bool {
         #[cfg(test)]
         self.exists_probe.fetch_add(1, Ordering::Relaxed);
-        if oid.is_well_known_empty_tree() {
+        if self.is_empty_tree(oid) {
             return true;
         }
         if self.overlay_read(oid).is_some() {
@@ -1479,7 +1479,7 @@ impl Odb {
     /// Returns `true` if an on-disk object was found and touched.
     #[must_use]
     pub fn freshen_object(&self, oid: &ObjectId) -> bool {
-        if oid.is_well_known_empty_tree() {
+        if self.is_empty_tree(oid) {
             return false;
         }
 
@@ -1596,7 +1596,7 @@ impl Odb {
     /// Like [`Self::exists`], but the well-known empty tree counts as present only when
     /// materialized on disk (see [`Self::write_local`]).
     fn object_exists_for_write_skip(&self, oid: &ObjectId) -> bool {
-        if oid.is_well_known_empty_tree() {
+        if self.is_empty_tree(oid) {
             self.exists_materialized_local(oid)
         } else {
             self.exists(oid)
@@ -1642,7 +1642,7 @@ impl Odb {
     /// - [`Error::Zlib`] — decompression failed.
     /// - [`Error::CorruptObject`] — header is malformed.
     pub fn read(&self, oid: &ObjectId) -> Result<Object> {
-        if oid.is_well_known_empty_tree() {
+        if self.is_empty_tree(oid) {
             return Ok(Object {
                 kind: ObjectKind::Tree,
                 data: Vec::new(),
@@ -1825,7 +1825,7 @@ impl Odb {
     ///
     /// Same as [`Self::read`].
     pub fn read_into(&self, oid: &ObjectId, buf: &mut Vec<u8>) -> Result<ObjectKind> {
-        if oid.is_well_known_empty_tree() {
+        if self.is_empty_tree(oid) {
             buf.clear();
             return Ok(ObjectKind::Tree);
         }
@@ -2040,7 +2040,7 @@ impl Odb {
     /// - [`Error::Zlib`] — decompression failed while reading a loose or pack header.
     /// - [`Error::CorruptObject`] — malformed object or pack headers.
     pub fn read_info(&self, oid: &ObjectId) -> Result<ObjectInfo> {
-        if oid.is_well_known_empty_tree() {
+        if self.is_empty_tree(oid) {
             return Ok(ObjectInfo {
                 kind: ObjectKind::Tree,
                 size: 0,
@@ -2332,6 +2332,23 @@ impl Odb {
     /// Returns [`Error::HashCollision`] when sha1dc detects a chosen-prefix collision.
     pub fn hash(&self, kind: ObjectKind, data: &[u8]) -> Result<ObjectId> {
         hash_object_data_with(self.hash_algo(), kind, data)
+    }
+
+    /// Object id of the empty tree for this store's hash algorithm.
+    ///
+    /// Hashes the canonical empty tree payload only; nothing is written to disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::HashCollision`] when sha1dc detects a chosen-prefix collision.
+    pub fn empty_tree_oid(&self) -> Result<ObjectId> {
+        self.hash(ObjectKind::Tree, b"")
+    }
+
+    /// Whether `oid` is this repository's empty tree (virtually present when not on disk).
+    #[must_use]
+    pub fn is_empty_tree(&self, oid: &ObjectId) -> bool {
+        empty_tree_oid_matches(self.hash_algo(), oid)
     }
 
     /// Write an object to the loose store and return its [`ObjectId`].
@@ -2654,6 +2671,19 @@ impl Odb {
 /// the given hash algorithm.
 fn hash_object_data_with(algo: HashAlgo, kind: ObjectKind, data: &[u8]) -> Result<ObjectId> {
     hash::hash_object(algo, kind, data)
+}
+
+/// Whether `oid` is Git's empty tree for `algo` (including the legacy SHA-1 typo OID).
+#[must_use]
+pub(crate) fn empty_tree_oid_matches(algo: HashAlgo, oid: &ObjectId) -> bool {
+    if hash_object_data_with(algo, ObjectKind::Tree, b"")
+        .ok()
+        .as_ref()
+        == Some(oid)
+    {
+        return true;
+    }
+    algo == HashAlgo::Sha1 && oid.is_well_known_empty_tree()
 }
 
 /// Build canonical blob store bytes (`"blob <len>\\0<payload>"`).
@@ -3297,6 +3327,36 @@ mod tests {
         assert!(odb.exists(&legacy));
         assert!(odb.exists_local(&canon));
         assert!(!odb.freshen_object(&canon));
+    }
+
+    #[test]
+    fn sha256_empty_tree_virtual_read_without_loose_file() {
+        use crate::objects::HashAlgo;
+        use std::sync::Arc;
+
+        let dir = TempDir::new().unwrap();
+        let objects = dir.path().join("objects");
+        fs::create_dir_all(&objects).unwrap();
+        let store = Arc::new(MemoryStore::new(HashAlgo::Sha256));
+        let odb = OdbBuilder::files(&objects)
+            .primary(store)
+            .alternates(false)
+            .build();
+        let empty = odb.empty_tree_oid().expect("hash empty tree");
+        assert!(!odb.exists_materialized_local(&empty));
+        assert!(odb.exists_local(&empty));
+        assert!(odb.is_empty_tree(&empty));
+        let obj = odb.read(&empty).expect("virtual read empty tree");
+        assert_eq!(obj.kind, ObjectKind::Tree);
+        assert!(obj.data.is_empty());
+    }
+
+    #[test]
+    fn empty_tree_oid_and_object_id_empty_tree_match_sha1() {
+        let odb = Odb::new(std::path::Path::new("/nonexistent/objects"));
+        let from_odb = odb.empty_tree_oid().expect("empty tree oid");
+        assert_eq!(from_odb, ObjectId::empty_tree());
+        assert!(odb.is_empty_tree(&ObjectId::empty_tree()));
     }
 
     #[test]

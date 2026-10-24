@@ -17,7 +17,7 @@ use super::{
     LooseStore, MidxObjects, MidxObjectsStatus, ObjectStore, ObjectStream, PackedObjects,
     WritableObjectStore,
 };
-use crate::odb::WriteOptions;
+use crate::odb::{empty_tree_oid_matches, WriteOptions};
 
 /// Read/write object storage backed by one `objects/` directory tree.
 pub struct FilesSource {
@@ -165,7 +165,7 @@ impl FilesSource {
         oid: &ObjectId,
         buf: &mut Vec<u8>,
     ) -> Result<Option<ObjectKind>> {
-        if oid.is_well_known_empty_tree() {
+        if empty_tree_oid_matches(self.hash_algo(), oid) {
             buf.clear();
             return Ok(Some(ObjectKind::Tree));
         }
@@ -216,7 +216,7 @@ impl FilesSource {
     }
 
     fn try_read_object(&self, oid: &ObjectId) -> Result<Option<Object>> {
-        if oid.is_well_known_empty_tree() {
+        if empty_tree_oid_matches(self.hash_algo(), oid) {
             return Ok(Some(Object {
                 kind: ObjectKind::Tree,
                 data: Vec::new(),
@@ -263,7 +263,7 @@ impl FilesSource {
     }
 
     fn try_read_info(&self, oid: &ObjectId) -> Result<Option<ObjectInfo>> {
-        if oid.is_well_known_empty_tree() {
+        if empty_tree_oid_matches(self.hash_algo(), oid) {
             return Ok(Some(ObjectInfo {
                 kind: ObjectKind::Tree,
                 size: 0,
@@ -424,7 +424,7 @@ impl ObjectStore for FilesSource {
     }
 
     fn contains(&self, oid: &ObjectId) -> Result<bool> {
-        if oid.is_canonical_empty_tree() {
+        if empty_tree_oid_matches(self.hash_algo(), oid) {
             return Ok(true);
         }
         if self.loose.object_path(oid).is_file() {
@@ -439,7 +439,7 @@ impl ObjectStore for FilesSource {
     }
 
     fn open_stream(&self, oid: &ObjectId) -> Result<Option<ObjectStream<'_>>> {
-        if oid.is_well_known_empty_tree() {
+        if empty_tree_oid_matches(self.hash_algo(), oid) {
             return Ok(Some(ObjectStream {
                 kind: ObjectKind::Tree,
                 size: 0,
