@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::bitmap_walk::{BitmapWalkError, ReachabilityQuery, ReachableSet};
 use crate::environment::RepositoryOptions;
 use crate::error::Result;
-use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use crate::objects::{parse_commit, parse_tag, parse_tree, Object, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::pack_bitmap::BitmapIndex;
 use crate::pack_name_hash::pack_name_hash;
@@ -15,6 +15,7 @@ use crate::rev_list::{MissingAction, ObjectFilter};
 
 /// Objects to emit in a negotiated pack plus peer-held closure for thin deltas.
 #[derive(Debug, Clone)]
+#[allow(clippy::type_complexity)]
 pub struct PackObjectSelection {
     /// Objects reachable from `wants` but not from `haves`, in valid pack order.
     pub send: Vec<ObjectId>,
@@ -22,6 +23,8 @@ pub struct PackObjectSelection {
     pub have_closure: HashSet<ObjectId>,
     /// Git pack name-hash per blob (from bitmap cache or tree walk).
     pub blob_name_hashes: HashMap<ObjectId, u32>,
+    /// Objects already loaded during a tree walk (avoids rereading loose objects for pack build).
+    pub walk_prefetch: HashMap<ObjectId, Object>,
 }
 
 /// Parameters for [`enumerate_pack_objects`].
@@ -140,6 +143,7 @@ fn try_bitmap_enumeration(
         send,
         have_closure,
         blob_name_hashes,
+        walk_prefetch: HashMap::new(),
     }))
 }
 
@@ -180,8 +184,9 @@ fn walk_enumeration(
     } else {
         reachable_closure_walk(odb, haves, &HashSet::new(), true, have_shallow)?
     };
-    let (send, blob_name_hashes) = if opts.filter.is_some() {
-        rev_list_filtered_objects(odb, wants, haves, opts.filter)?
+    let (send, blob_name_hashes, walk_prefetch) = if opts.filter.is_some() {
+        let (send, blob_name_hashes) = rev_list_filtered_objects(odb, wants, haves, opts.filter)?;
+        (send, blob_name_hashes, HashMap::new())
     } else {
         collect_reachable_excluding_with_name_hashes(
             odb,
@@ -195,6 +200,7 @@ fn walk_enumeration(
         send,
         have_closure,
         blob_name_hashes,
+        walk_prefetch,
     })
 }
 
@@ -257,17 +263,23 @@ fn rev_list_filtered_objects(
     Ok((ordered, HashMap::new()))
 }
 
+#[allow(clippy::type_complexity)]
 fn collect_reachable_excluding_with_name_hashes(
     odb: &Odb,
     roots: &[ObjectId],
     exclude: &HashSet<ObjectId>,
     skip_missing: bool,
     shallow_grafts: &HashSet<ObjectId>,
-) -> Result<(Vec<ObjectId>, HashMap<ObjectId, u32>)> {
+) -> Result<(
+    Vec<ObjectId>,
+    HashMap<ObjectId, u32>,
+    HashMap<ObjectId, Object>,
+)> {
     let mut visited: HashSet<ObjectId> = HashSet::new();
     let mut ordered: Vec<ObjectId> = Vec::new();
     let mut queue: VecDeque<(ObjectId, String)> = VecDeque::new();
     let mut blob_name_hashes: HashMap<ObjectId, u32> = HashMap::new();
+    let mut walk_prefetch: HashMap<ObjectId, Object> = HashMap::new();
 
     let enqueue = |oid: ObjectId,
                    path: String,
@@ -365,7 +377,8 @@ fn collect_reachable_excluding_with_name_hashes(
             }
             ObjectKind::Blob => {}
         }
+        walk_prefetch.insert(oid, obj);
     }
 
-    Ok((ordered, blob_name_hashes))
+    Ok((ordered, blob_name_hashes, walk_prefetch))
 }

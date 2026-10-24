@@ -811,13 +811,15 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
     if pack_bytes.len() > pack_trailer_len {
         clear_pack_midx_state(&pack_dir)?;
 
+        let trusted_rows = (!built_pack.index_rows.is_empty()).then_some(built_pack.index_rows);
         let ingest_opts = IngestPackOptions {
             fix_thin: false,
             threads: opts.threads,
             merged_config: cfg.clone(),
             environment: opts.environment.clone(),
-            trusted_index_rows: (!built_pack.index_rows.is_empty())
-                .then_some(built_pack.index_rows),
+            trusted_index_rows: trusted_rows.clone(),
+            // Locally built pack: trailer checked at write time; index rows match the stream.
+            skip_post_index_verify: trusted_rows.is_some(),
             ..IngestPackOptions::default()
         };
         let ingested = install_pack_bytes(pack_bytes, odb, &ingest_opts)?;
@@ -1032,6 +1034,7 @@ fn pack_loose_objects_incremental(
         &HashMap::new(),
         None,
         threads,
+        HashMap::new(),
     )
 }
 
@@ -1291,6 +1294,7 @@ fn build_repack_pack(
         &selection.blob_name_hashes,
         threads,
         threads,
+        selection.walk_prefetch,
     )
 }
 

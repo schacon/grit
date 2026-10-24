@@ -703,7 +703,9 @@ pub(crate) fn serialize_pack_with_deltas(
     write_threads: Option<usize>,
 ) -> Result<crate::pack_objects::SerializedDeltaPack> {
     let par_opts = pack_write_parallel_options(odb, write_threads)?;
-    let prepared = prepare_entries_parallel(odb, entries, plan_payloads, opts, &par_opts)?;
+    let compression = pack_zlib_compression(odb)?;
+    let prepared =
+        prepare_entries_parallel(odb, entries, plan_payloads, opts, &par_opts, compression)?;
     write_prepared_pack(odb, entries, &prepared, opts)
 }
 
@@ -713,11 +715,12 @@ fn prepare_entries_parallel(
     plan_payloads: &OidHashMap<Arc<[u8]>>,
     opts: &PackBuildOptions,
     par_opts: &ParallelOptions,
+    compression: Compression,
 ) -> Result<Vec<PreparedEntry>> {
     let delta_indices = Arc::new(build_delta_indices(odb, entries, plan_payloads)?);
 
     let prepare = |entry: &PlannedEntry| -> Result<PreparedEntry> {
-        prepare_one_entry(odb, entry, plan_payloads, &delta_indices, opts)
+        prepare_one_entry(odb, entry, plan_payloads, &delta_indices, opts, compression)
     };
 
     if par_opts.threads.get() <= 1 {
@@ -774,11 +777,28 @@ fn prepare_one_entry(
     plan_payloads: &OidHashMap<Arc<[u8]>>,
     delta_indices: &HashMap<ObjectId, Arc<DeltaIndex>>,
     opts: &PackBuildOptions,
+    compression: Compression,
 ) -> Result<PreparedEntry> {
     match entry.base {
-        None => prepare_whole(odb, entry, plan_payloads, opts),
-        Some(base_oid) => prepare_delta(odb, entry, base_oid, plan_payloads, delta_indices, opts),
+        None => prepare_whole(odb, entry, plan_payloads, opts, compression),
+        Some(base_oid) => prepare_delta(
+            odb,
+            entry,
+            base_oid,
+            plan_payloads,
+            delta_indices,
+            compression,
+        ),
     }
+}
+
+fn pack_zlib_compression(odb: &Odb) -> Result<Compression> {
+    let level = pack_config(odb)?.pack_objects_zlib_level()?;
+    Ok(match level {
+        0 => Compression::fast(),
+        1..=9 => Compression::new(level as u32),
+        _ => Compression::default(),
+    })
 }
 
 fn prepare_whole(
@@ -786,6 +806,7 @@ fn prepare_whole(
     entry: &PlannedEntry,
     plan_payloads: &OidHashMap<Arc<[u8]>>,
     opts: &PackBuildOptions,
+    compression: Compression,
 ) -> Result<PreparedEntry> {
     if opts.reuse_objects && odb.hash_algo() == HashAlgo::Sha1 {
         if let Some(raw) = crate::pack::packed_full_object_slice(odb.objects_dir(), &entry.oid)? {
@@ -797,7 +818,7 @@ fn prepare_whole(
         }
     }
     let payload = object_payload(odb, entry.oid, entry, plan_payloads)?.into_owned();
-    let zlib = zlib_compress(&payload)?;
+    let zlib = zlib_compress(&payload, compression)?;
     Ok(PreparedEntry {
         body: PreparedBody::Zlib(zlib),
         payload_len: payload.len(),
@@ -811,7 +832,7 @@ fn prepare_delta(
     base_oid: ObjectId,
     plan_payloads: &OidHashMap<Arc<[u8]>>,
     delta_indices: &HashMap<ObjectId, Arc<DeltaIndex>>,
-    _opts: &PackBuildOptions,
+    compression: Compression,
 ) -> Result<PreparedEntry> {
     if let Some((delta_size, pack_bytes, zlib_start, zlib_end)) = &entry.reused_delta_zlib {
         let delta_len = usize::try_from(*delta_size)
@@ -841,7 +862,7 @@ fn prepare_delta(
         }
     };
 
-    let zlib = zlib_compress(&delta)?;
+    let zlib = zlib_compress(&delta, compression)?;
     Ok(PreparedEntry {
         body: PreparedBody::Zlib(zlib),
         payload_len: delta.len(),
@@ -915,8 +936,8 @@ fn write_prepared_pack(
     })
 }
 
-fn zlib_compress(data: &[u8]) -> Result<Vec<u8>> {
-    let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+fn zlib_compress(data: &[u8], compression: Compression) -> Result<Vec<u8>> {
+    let mut enc = ZlibEncoder::new(Vec::with_capacity(data.len() / 3 + 64), compression);
     enc.write_all(data).map_err(Error::Io)?;
     enc.finish().map_err(Error::Io)
 }
@@ -1185,8 +1206,15 @@ mod tests {
             signed_entry_threshold: None,
         };
         let payloads = oid_hash_map();
-        let got =
-            prepare_entries_parallel(&odb, &[entry], &payloads, &opts, &par).expect("prepare");
+        let got = prepare_entries_parallel(
+            &odb,
+            &[entry],
+            &payloads,
+            &opts,
+            &par,
+            Compression::default(),
+        )
+        .expect("prepare");
         assert_eq!(got.len(), 1);
     }
 }

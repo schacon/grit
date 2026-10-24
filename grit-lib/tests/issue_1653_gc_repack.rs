@@ -102,11 +102,7 @@ fn issue_1653_loose_gc_pack_near_git_size_and_fsck_clean() {
 
     let repo = Repository::discover(Some(grit_dir.path()), &RepositoryOptions::empty())
         .expect("open grit repo");
-    gc(
-        &repo,
-        &GcOptions::with_reflog_policy(1_700_000_000, false),
-    )
-    .expect("grit gc");
+    gc(&repo, &GcOptions::with_reflog_policy(1_700_000_000, false)).expect("grit gc");
 
     git(git_dir.path(), &["gc", "-q"]);
 
@@ -118,4 +114,40 @@ fn issue_1653_loose_gc_pack_near_git_size_and_fsck_clean() {
         "issue #1653: grit pack {grit_pack} vs git pack {git_pack} (ratio {:.2})",
         grit_pack as f64 / git_pack as f64
     );
+}
+
+#[test]
+#[ignore = "profiling: cargo test -p grit-lib --release --test issue_1653_gc_repack repack_build_phase_profile -- --ignored --nocapture"]
+fn repack_build_phase_profile() {
+    use std::time::Instant;
+
+    use grit_lib::maintenance::collect_maintenance_object_roots;
+    use grit_lib::objects::index_pack::{install_pack_bytes, IngestPackOptions};
+    use grit_lib::objects::pack_objects::{build_pack_with_write_threads, PackBuildOptions};
+
+    let dir = TempDir::new().expect("tempdir");
+    populate_loose_history(dir.path(), 120);
+    let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
+    let odb = repo.odb();
+    let roots = collect_maintenance_object_roots(&repo).expect("roots");
+    let pack_opts = PackBuildOptions::for_local_copy(None);
+
+    let t0 = Instant::now();
+    let pack_bytes =
+        build_pack_with_write_threads(odb, &roots, &[], &pack_opts, None).expect("build");
+    let build_ms = t0.elapsed().as_millis();
+
+    let t1 = Instant::now();
+    install_pack_bytes(
+        pack_bytes,
+        odb,
+        &IngestPackOptions {
+            skip_post_index_verify: true,
+            ..IngestPackOptions::default()
+        },
+    )
+    .expect("install");
+    let install_ms = t1.elapsed().as_millis();
+
+    eprintln!("build_ms={build_ms} install_no_trusted_ms={install_ms}");
 }

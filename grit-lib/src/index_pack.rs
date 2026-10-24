@@ -356,12 +356,13 @@ pub fn install_pack_path_with_progress(
             })?;
             let trailer = pack_bytes[pack_bytes.len() - hb..].to_vec();
             if let Some(rows) = &opts.trusted_index_rows {
-                if rows.len() != u32::from_be_bytes([
-                    pack_bytes[8],
-                    pack_bytes[9],
-                    pack_bytes[10],
-                    pack_bytes[11],
-                ]) as usize
+                if rows.len()
+                    != u32::from_be_bytes([
+                        pack_bytes[8],
+                        pack_bytes[9],
+                        pack_bytes[10],
+                        pack_bytes[11],
+                    ]) as usize
                 {
                     return Err(Error::CorruptObject(
                         "trusted index row count does not match pack header".to_owned(),
