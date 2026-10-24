@@ -58,9 +58,9 @@ impl CloneError {
     #[must_use]
     pub fn should_cleanup_failed_clone(&self) -> bool {
         match self {
-            Self::DestNotEmpty(_) | Self::InvalidCloneDepth | Self::RemoteRefNotFound(_) => false,
+            Self::DestNotEmpty(_) | Self::InvalidCloneDepth => false,
             Self::Remote(RemoteError::InvalidRemoteName(_)) => false,
-            Self::Library(_) | Self::Remote(_) => true,
+            Self::RemoteRefNotFound(_) | Self::Library(_) | Self::Remote(_) => true,
         }
     }
 
