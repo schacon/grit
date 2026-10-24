@@ -686,9 +686,10 @@ fn refresh_present_tracked_path(
     let idx_intent_to_add = idx_e.intent_to_add();
     let idx_oid = idx_e.oid;
 
-    if idx_mode == 0o160000 {
+    if idx_mode == 0o160000 && stat.is_dir {
         return refresh_gitlink(repo, index, raw_path, abs_path, idx_e);
     }
+    // Gitlink in the index but a non-directory in the work tree (e.g. regular file): stage as blob below.
 
     if stat.is_dir {
         if abs_path.join(".git").exists() {
@@ -873,10 +874,16 @@ fn restage_deferred_jobs(
         );
         let idx_mode = idx_e.mode;
         let idx_oid = idx_e.oid;
-        let mode_for_index = if trust_filemode { prep.mode } else { idx_mode };
+        let type_changed = git_entry_type(prep.mode) != git_entry_type(idx_mode);
+        let mode_for_index = if trust_filemode || type_changed {
+            prep.mode
+        } else {
+            idx_mode
+        };
         let abs_path =
             abs_path_for_stage_tracked(work_tree, raw_path, precompose_unicode, ignorecase);
-        if prep.oid == idx_oid && (mode_for_index == idx_mode || !trust_filemode) {
+        if prep.oid == idx_oid && (mode_for_index == idx_mode || (!trust_filemode && !type_changed))
+        {
             let entry = entry_from_stat(&abs_path, raw_path, prep.oid, mode_for_index)?;
             if entry.ctime_sec != idx_e.ctime_sec
                 || entry.ctime_nsec != idx_e.ctime_nsec
@@ -905,12 +912,15 @@ fn restage_deferred_jobs(
             let Some(idx_e) = index.get(raw_path, 0) else {
                 continue;
             };
-            let mode_for_index = if trust_filemode {
+            let type_changed = git_entry_type(prep.mode) != git_entry_type(idx_e.mode);
+            let mode_for_index = if trust_filemode || type_changed {
                 prep.mode
             } else {
                 idx_e.mode
             };
-            if prep.oid == idx_e.oid && (mode_for_index == idx_e.mode || !trust_filemode) {
+            if prep.oid == idx_e.oid
+                && (mode_for_index == idx_e.mode || (!trust_filemode && !type_changed))
+            {
                 continue;
             }
             repo.odb().write_loose_zlib_prehashed(
@@ -1756,6 +1766,37 @@ mod tests {
         let staged = index.get(b"sub", 0).expect("stage-0 gitlink");
         assert_eq!(staged.mode, MODE_GITLINK);
         assert_eq!(staged.oid, theirs_oid);
+    }
+
+    #[test]
+    fn gitlink_replaced_by_regular_file_stages_blob() {
+        let (_dir, repo) = init_repo();
+        let wt = repo.work_tree().unwrap();
+        fs::write(
+            repo.git_dir().join("config"),
+            "[core]\n\trepositoryformatversion = 0\n\tfilemode = false\n\tbare = false\n",
+        )
+        .unwrap();
+        repo.reload_config().unwrap();
+        let gitlink_oid = repo.odb().write(ObjectKind::Commit, b"tree 0000000000000000000000000000000000000000\nauthor t <t@t> 0 +0000\ncommitter t <t@t> 0 +0000\n\nsub\n").unwrap();
+        let mut index = Index::new();
+        index
+            .entries
+            .push(conflict_index_entry("sub", 0, gitlink_oid, MODE_GITLINK));
+        repo.write_index(&mut index).unwrap();
+
+        fs::write(wt.join("sub"), b"plain file\n").unwrap();
+
+        let summary = stage_tracked_modifications(&repo, wt).unwrap();
+        assert_eq!(summary.modified, vec![b"sub".to_vec()]);
+
+        let index = repo.load_index().unwrap();
+        let staged = index.get(b"sub", 0).expect("stage-0 blob");
+        assert_eq!(
+            staged.mode, MODE_REGULAR,
+            "core.filemode=false must not preserve gitlink mode on type change"
+        );
+        assert_ne!(staged.oid, gitlink_oid);
     }
 
     #[test]
