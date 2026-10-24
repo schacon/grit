@@ -348,7 +348,7 @@ fn resolve_checkout_workers(config: &ConfigSet, override_threads: Option<usize>)
                 Parallelism::resolve(None).threads()
             }
         }
-        CheckoutWorkersSetting::Auto => Parallelism::resolve(Some(0)).threads(),
+        CheckoutWorkersSetting::Auto => Parallelism::resolve(None).threads(),
         CheckoutWorkersSetting::Count(n) => Parallelism::resolve(Some(n)).threads(),
     }
 }
@@ -521,13 +521,28 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
+    fn checkout_workers_two_respects_cpu_cap_on_windows() {
+        let cfg = config_from("[checkout]\n\tworkers = 2\n");
+        let opts = ThreadPolicy::default().resolve(ParallelOp::Checkout, &cfg);
+        assert_eq!(
+            opts.threads.get(),
+            2.min(
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(1)
+            )
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
     fn checkout_thread_override_beats_workers_config_on_windows() {
         let cfg = config_from("[checkout]\n\tworkers = 2\n");
-        let policy = ThreadPolicy::with_threads_override(Some(6));
+        let policy = ThreadPolicy::with_threads_override(Some(4));
         let opts = policy.resolve(ParallelOp::Checkout, &cfg);
         assert_eq!(
             opts.threads.get(),
-            6.min(
+            4.min(
                 std::thread::available_parallelism()
                     .map(|n| n.get())
                     .unwrap_or(1)
