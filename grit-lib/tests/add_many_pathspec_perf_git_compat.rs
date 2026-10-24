@@ -108,7 +108,12 @@ fn dirty_paths(root: &std::path::Path, paths: &[String]) {
     }
 }
 
-fn median_grit_add(root: &std::path::Path, grit: &std::path::Path, paths: &[String], runs: usize) -> Duration {
+fn median_grit_add(
+    root: &std::path::Path,
+    grit: &std::path::Path,
+    paths: &[String],
+    runs: usize,
+) -> Duration {
     let root_s = root.to_str().expect("utf-8");
     let null = || Stdio::null();
     for _ in 0..runs {
@@ -146,8 +151,16 @@ fn median_grit_add(root: &std::path::Path, grit: &std::path::Path, paths: &[Stri
         let mut cmd = Command::new(grit);
         cmd.arg("add").current_dir(root);
         cmd.args(paths);
-        let st = cmd.stdout(null()).stderr(null()).status().expect("grit add");
-        assert!(st.success());
+        let out = cmd
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .expect("grit add");
+        assert!(
+            out.status.success(),
+            "grit add failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         samples.push(t0.elapsed());
     }
     median(samples)
@@ -167,7 +180,11 @@ fn median_git_add(root: &std::path::Path, paths: &[String], runs: usize) -> Dura
         let mut cmd = Command::new("git");
         cmd.args(["-C", root_s, "add"]);
         cmd.args(paths);
-        let st = cmd.stdout(null()).stderr(null()).status().expect("git add warm");
+        let st = cmd
+            .stdout(null())
+            .stderr(null())
+            .status()
+            .expect("git add warm");
         assert!(st.success());
     }
     let mut samples = Vec::new();
@@ -216,8 +233,7 @@ fn add_many_literal_pathspecs_matches_git_and_scales() {
     dirty_paths(root, std::slice::from_ref(&changed[0]));
     let grit_one_spec = median_grit_add(root, &grit, &changed[..1], WARM_RUNS);
     let grit_many_specs = median_grit_add(root, &grit, &changed, WARM_RUNS);
-    let overhead_scaling =
-        grit_many_specs.as_secs_f64() / grit_one_spec.as_secs_f64().max(1e-9);
+    let overhead_scaling = grit_many_specs.as_secs_f64() / grit_one_spec.as_secs_f64().max(1e-9);
     eprintln!(
         "48k overhead (1 dirty file, 1 vs {LITERAL_PATHS} pathspecs): \
          grit {grit_one_spec:?} vs {grit_many_specs:?}, scaling {overhead_scaling:.2}×"
