@@ -9,6 +9,7 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use grit_lib::diff::{count_changes_with_algorithm, diff_trees};
+use grit_lib::refs::branch_tracking::TipComparison;
 use grit_lib::revwalk::filter::CommitFilterBuilder;
 use grit_lib::revwalk::merge_base::merge_bases_first_vs_rest;
 use grit_lib::revwalk::rev_list::{rev_list, OrderingMode, RevListOptions};
@@ -292,6 +293,32 @@ fn bench_merge_base_deep(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_ahead_behind_deep(c: &mut Criterion) {
+    let fx = HistoryBenchFixtures::global();
+    let mid = grit_lib::refs::resolve_ref(fx.repo.git_dir(), "refs/heads/bench/b00100")
+        .expect("mid-history branch ref");
+    let mut group = c.benchmark_group("revwalk/ahead_behind_deep");
+    for (graph_label, use_graph) in [("no_commit_graph", false), ("commit_graph", true)] {
+        group.bench_with_input(
+            BenchmarkId::new("tip_comparison", graph_label),
+            &use_graph,
+            |b, with_graph| {
+                if *with_graph {
+                    fx.ensure_commit_graph();
+                } else {
+                    fx.remove_commit_graph();
+                }
+                b.iter(|| {
+                    let cmp =
+                        TipComparison::compute(&fx.repo, fx.head, mid, 10).expect("ahead/behind");
+                    black_box((cmp.ahead, cmp.behind))
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 fn bench_rev_parse(c: &mut Criterion) {
     let fx = HistoryBenchFixtures::global();
     let head_hex = fx.head.to_string();
@@ -407,6 +434,7 @@ criterion_group!(
     bench_revwalk_limit_near_full_history,
     bench_revwalk_log_limit,
     bench_merge_base_deep,
+    bench_ahead_behind_deep,
     bench_rev_parse,
     bench_tree_diff,
     bench_blob_diff

@@ -396,10 +396,11 @@ pub fn count_symmetric_ahead_behind(
 
 /// Symmetric ahead/behind between `head` and `target`, plus bounded newest OIDs on each side.
 ///
-/// Matches `git rev-list --left-right --count HEAD...TARGET` for the counts. The returned
+/// Matches `git rev-list --left-right --count HEAD...TARGET` for the counts. Both sides are
+/// counted in one two-sided walk that stops at the common frontier, so the cost scales with
+/// the commits since the histories diverged rather than with total history. The returned
 /// OID lists contain up to `retain_newest_ahead` / `retain_newest_behind` commits reachable
-/// from `head` / `target` but not the other tip (newest first), without materializing full
-/// ancestor closures.
+/// from `head` / `target` but not the other tip (newest first, `git rev-list` order).
 ///
 /// # Errors
 ///
@@ -414,29 +415,33 @@ pub fn ahead_behind_of_target_commits(
     if head == target {
         return Ok((0, 0, Vec::new(), Vec::new()));
     }
-    let target_is_ancestor = is_ancestor(repo, target, head)?;
-    let head_is_ancestor = is_ancestor(repo, head, target)?;
-
-    let (ahead, ahead_oids) = if head_is_ancestor && !target_is_ancestor {
-        (0, Vec::new())
-    } else {
-        walk_commits_reachable_excluding_ancestors_of(
+    let mut cache = CommitGraphCache::new(repo);
+    let paint = SidePaint::compute(&mut cache, &[head], &[target])?;
+    let ahead = paint.count_only(PAINT_LEFT);
+    let behind = paint.count_only(PAINT_RIGHT);
+    let behind_paint = (retain_newest_behind > 0 && behind > 0).then(|| paint.swapped());
+    let ahead_oids = if retain_newest_ahead > 0 && ahead > 0 {
+        // Reuse the paint so the ordered walk only filters, never re-walks history.
+        let mut state = ReachableWalkState::new(repo, &[head], &[target])?;
+        state.paint = Some(paint);
+        state.emit_until(
             repo,
-            std::slice::from_ref(&head),
-            &[target],
-            ReachableWalkLimit::CountAllRetainNewest(retain_newest_ahead),
+            Some(retain_newest_ahead),
+            ReachableWalkCommitterCutoffs::default(),
         )?
+    } else {
+        Vec::new()
     };
-
-    let (behind, behind_oids) = if target_is_ancestor && !head_is_ancestor {
-        (0, Vec::new())
-    } else {
-        walk_commits_reachable_excluding_ancestors_of(
+    let behind_oids = if let Some(behind_paint) = behind_paint {
+        let mut state = ReachableWalkState::new(repo, &[target], &[head])?;
+        state.paint = Some(behind_paint);
+        state.emit_until(
             repo,
-            std::slice::from_ref(&target),
-            &[head],
-            ReachableWalkLimit::CountAllRetainNewest(retain_newest_behind),
+            Some(retain_newest_behind),
+            ReachableWalkCommitterCutoffs::default(),
         )?
+    } else {
+        Vec::new()
     };
     Ok((ahead, behind, ahead_oids, behind_oids))
 }
@@ -517,8 +522,9 @@ pub struct ReachableWalkState {
     seeded: OidHashSet,
     seq: u64,
     hide: Vec<ObjectId>,
-    /// Commits excluded because they are a hide tip or an ancestor of one.
-    hide_set: OidHashSet,
+    /// Which pending commits reach a hide tip; computed on first use so restored
+    /// snapshots rebuild it from their heap.
+    paint: Option<SidePaint>,
 }
 
 /// Serializable snapshot of [`ReachableWalkState`] for resuming a bounded walk.
@@ -549,11 +555,6 @@ impl ReachableWalkState {
     pub fn new(repo: &Repository, tips: &[ObjectId], hide: &[ObjectId]) -> Result<Self> {
         let hide_vec: Vec<ObjectId> = hide.to_vec();
         let mut cache = CommitGraphCache::new(repo);
-        let mut hide_set = oid_hash_set();
-        for &hide_tip in hide {
-            hide_set.insert(hide_tip);
-            hide_set.extend(cache.ancestor_closure(hide_tip)?);
-        }
         let mut state = Self {
             heap: BinaryHeap::new(),
             done: oid_hash_set(),
@@ -562,10 +563,10 @@ impl ReachableWalkState {
             seeded: oid_hash_set(),
             seq: 0,
             hide: hide_vec,
-            hide_set,
+            paint: None,
         };
         for &tip in tips {
-            if state.hide_set.contains(&tip) {
+            if state.hide.contains(&tip) {
                 continue;
             }
             if state.queued.insert(tip) {
@@ -600,7 +601,7 @@ impl ReachableWalkState {
                 .collect(),
             seeded: seeded.into_iter().collect(),
             seq,
-            hide_set: oid_hash_set(),
+            paint: None,
             hide,
         }
     }
@@ -652,20 +653,41 @@ impl ReachableWalkState {
         true
     }
 
-    fn ensure_hide_set(&mut self, cache: &mut CommitGraphCache<'_>) -> Result<()> {
-        if self.hide.is_empty() || !self.hide_set.is_empty() {
+    /// Paint pending commits against the hide tips. Must run before the heap is
+    /// popped: every commit still to be emitted is an ancestor of a heap entry.
+    fn ensure_paint(&mut self, cache: &mut CommitGraphCache<'_>) -> Result<()> {
+        if self.paint.is_some() || self.hide.is_empty() {
             return Ok(());
         }
-        for &hide_tip in &self.hide {
-            self.hide_set.insert(hide_tip);
-            self.hide_set.extend(cache.ancestor_closure(hide_tip)?);
-        }
+        let pending: Vec<ObjectId> = self.heap.iter().map(|key| key.oid).collect();
+        self.paint = Some(SidePaint::compute(cache, &pending, &self.hide)?);
         Ok(())
     }
 
     fn is_hidden(&mut self, cache: &mut CommitGraphCache<'_>, oid: ObjectId) -> Result<bool> {
-        self.ensure_hide_set(cache)?;
-        Ok(self.hide_set.contains(&oid))
+        if self.hide.is_empty() {
+            return Ok(false);
+        }
+        if self.hide.contains(&oid) {
+            return Ok(true);
+        }
+        self.ensure_paint(cache)?;
+        let Some(paint) = &self.paint else {
+            return Ok(false);
+        };
+        if let Some(reached) = paint.reached_by(oid, PAINT_RIGHT) {
+            return Ok(reached);
+        }
+        // Tag tips were painted under their peeled commit.
+        if self.seeded.contains(&oid) {
+            let peeled = peel_to_commit_for_merge_base(cache.repo, oid).unwrap_or(oid);
+            if let Some(reached) = paint.reached_by(peeled, PAINT_RIGHT) {
+                return Ok(reached);
+            }
+        }
+        // Unpainted commits sit below the frontier where every path is reachable
+        // from a hide tip.
+        Ok(true)
     }
 
     fn push_on_heap(
@@ -694,6 +716,12 @@ impl ReachableWalkState {
             };
             *count = count.saturating_sub(1);
             if *count == 0 && !self.seeded.contains(&parent) && self.queued.insert(parent) {
+                // Ancestors of hidden commits are hidden too; keeping them off the
+                // heap stops the walk at the hide frontier instead of the root.
+                if self.is_hidden(cache, parent)? {
+                    self.done.insert(parent);
+                    continue;
+                }
                 self.push_on_heap(cache, parent, false)?;
             }
         }
@@ -705,6 +733,7 @@ impl ReachableWalkState {
         cache: &mut CommitGraphCache<'_>,
         cutoffs: ReachableWalkCommitterCutoffs,
     ) -> Result<Option<ObjectId>> {
+        self.ensure_paint(cache)?;
         loop {
             let Some(key) = self.heap.pop() else {
                 return Ok(None);
@@ -1511,6 +1540,152 @@ fn commit_rank_for_walk(cache: &mut CommitGraphCache<'_>, oid: ObjectId) -> u64 
         }
     }
     UNRANKED_COMMIT
+}
+
+/// Commit is reachable from the left tips of a [`SidePaint`].
+const PAINT_LEFT: u8 = 1;
+/// Commit is reachable from the right tips of a [`SidePaint`].
+const PAINT_RIGHT: u8 = 2;
+const PAINT_BOTH: u8 = PAINT_LEFT | PAINT_RIGHT;
+
+/// Two-sided reachability paint (Git's `ahead_behind` walk).
+///
+/// One walk from both sides at once, newest generation (then committer date)
+/// first, marking each commit with the sides that reach it. The walk stops once
+/// every queued commit is reachable from both sides: everything below that
+/// frontier is common history. Commits never painted are therefore reachable
+/// from both sides (or from neither).
+///
+/// With commit-graph generations the result is exact; for commits outside the
+/// graph, ordering falls back to committer dates like Git does.
+#[derive(Clone, Debug, Default)]
+struct SidePaint {
+    sides: OidHashMap<u8>,
+}
+
+impl SidePaint {
+    /// Paint ancestors of `left` and `right` down to their common frontier.
+    ///
+    /// # Errors
+    ///
+    /// Propagates commit read and parse errors from the walk.
+    fn compute(
+        cache: &mut CommitGraphCache<'_>,
+        left: &[ObjectId],
+        right: &[ObjectId],
+    ) -> Result<Self> {
+        let mut walk = PaintWalk::default();
+        for (tips, side) in [(left, PAINT_LEFT), (right, PAINT_RIGHT)] {
+            for &tip in tips {
+                let tip = peel_to_commit_for_merge_base(cache.repo, tip).unwrap_or(tip);
+                walk.mark(cache, tip, side)?;
+            }
+        }
+        while walk.open > 0 {
+            let Some(node) = walk.heap.pop() else {
+                break;
+            };
+            if walk.queued.remove(&node.oid) == Some(true) {
+                walk.open -= 1;
+            }
+            walk.popped.insert(node.oid);
+            let side = walk.sides.get(&node.oid).copied().unwrap_or(0);
+            for parent in cache.parents_of(node.oid)? {
+                walk.mark(cache, parent, side)?;
+            }
+        }
+        Ok(Self { sides: walk.sides })
+    }
+
+    /// Number of painted commits reachable from `side` only.
+    fn count_only(&self, side: u8) -> usize {
+        self.sides.values().filter(|&&s| s == side).count()
+    }
+
+    /// The same paint with left and right exchanged, for walking from the right tips.
+    fn swapped(&self) -> Self {
+        let sides = self
+            .sides
+            .iter()
+            .map(|(&oid, &s)| {
+                let flipped = match s {
+                    PAINT_LEFT => PAINT_RIGHT,
+                    PAINT_RIGHT => PAINT_LEFT,
+                    other => other,
+                };
+                (oid, flipped)
+            })
+            .collect();
+        Self { sides }
+    }
+
+    /// Whether `side` reaches `oid`, or [`None`] when the walk never painted it.
+    fn reached_by(&self, oid: ObjectId, side: u8) -> Option<bool> {
+        self.sides.get(&oid).map(|s| s & side != 0)
+    }
+}
+
+/// Queue state for [`SidePaint::compute`].
+#[derive(Default)]
+struct PaintWalk {
+    sides: OidHashMap<u8>,
+    /// Queued commits, each flagged whether it keeps the walk going.
+    queued: OidHashMap<bool>,
+    popped: OidHashSet,
+    heap: BinaryHeap<PaintKey>,
+    seq: u64,
+    /// Queued commits that still keep the walk going (see [`Self::mark`]).
+    open: usize,
+}
+
+impl PaintWalk {
+    /// Add `side` to `oid`, queueing it when its paint grows.
+    ///
+    /// A queued commit keeps the walk going while it is not reachable from both
+    /// sides, or when it was already popped: a commit popped before the other
+    /// side reached it (equal or skewed dates) has to pass the new side on to
+    /// the ancestors it already painted.
+    fn mark(&mut self, cache: &mut CommitGraphCache<'_>, oid: ObjectId, side: u8) -> Result<()> {
+        let before = self.sides.get(&oid).copied().unwrap_or(0);
+        let after = before | side;
+        if after == before {
+            return Ok(());
+        }
+        self.sides.insert(oid, after);
+        let repaint = self.popped.contains(&oid);
+        if let Some(is_open) = self.queued.get_mut(&oid) {
+            if *is_open && after == PAINT_BOTH && !repaint {
+                *is_open = false;
+                self.open -= 1;
+            }
+            return Ok(());
+        }
+        let is_open = after != PAINT_BOTH || repaint;
+        self.queued.insert(oid, is_open);
+        if is_open {
+            self.open += 1;
+        }
+        let rank = commit_rank_for_walk(cache, oid);
+        let committed_at = cache.commit_time(oid)?;
+        self.heap.push(PaintKey {
+            rank,
+            committed_at,
+            seq: std::cmp::Reverse(self.seq),
+            oid,
+        });
+        self.seq += 1;
+        Ok(())
+    }
+}
+
+/// [`PaintWalk`] heap order: highest generation, then newest committer date,
+/// then first queued (Git's priority queue is stable for ties).
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+struct PaintKey {
+    rank: u64,
+    committed_at: i64,
+    seq: std::cmp::Reverse<u64>,
+    oid: ObjectId,
 }
 
 /// Newest committer timestamp first, matching `git merge-base` stdout ordering.
