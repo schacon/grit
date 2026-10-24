@@ -5327,6 +5327,9 @@ pub grit_lib::error::Error::NothingToCommit
 pub grit_lib::error::Error::ObjectHeaderTooLong
 pub grit_lib::error::Error::ObjectHeaderTooLong::oid: alloc::string::String
 pub grit_lib::error::Error::ObjectNotFound(alloc::string::String)
+pub grit_lib::error::Error::OdbObjectsDirMismatch
+pub grit_lib::error::Error::OdbObjectsDirMismatch::builder: std::path::PathBuf
+pub grit_lib::error::Error::OdbObjectsDirMismatch::repository: std::path::PathBuf
 pub grit_lib::error::Error::PackedRefsUnexpectedLine
 pub grit_lib::error::Error::PackedRefsUnexpectedLine::line: alloc::string::String
 pub grit_lib::error::Error::PackedRefsUnexpectedLine::path: alloc::string::String
@@ -14761,6 +14764,9 @@ pub grit_lib::prelude::Error::NothingToCommit
 pub grit_lib::prelude::Error::ObjectHeaderTooLong
 pub grit_lib::prelude::Error::ObjectHeaderTooLong::oid: alloc::string::String
 pub grit_lib::prelude::Error::ObjectNotFound(alloc::string::String)
+pub grit_lib::prelude::Error::OdbObjectsDirMismatch
+pub grit_lib::prelude::Error::OdbObjectsDirMismatch::builder: std::path::PathBuf
+pub grit_lib::prelude::Error::OdbObjectsDirMismatch::repository: std::path::PathBuf
 pub grit_lib::prelude::Error::PackedRefsUnexpectedLine
 pub grit_lib::prelude::Error::PackedRefsUnexpectedLine::line: alloc::string::String
 pub grit_lib::prelude::Error::PackedRefsUnexpectedLine::path: alloc::string::String
