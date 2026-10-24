@@ -134,6 +134,8 @@ function loadBundle(baselines: string[]): Bundle {
     const file = path.resolve(REPO_ROOT, rel);
     if (!fs.existsSync(file)) fail(`missing ${rel}`);
     const report = JSON.parse(fs.readFileSync(file, "utf8"));
+    // Daily census reports can sit outside `baselines/daily/`; they feed the daily matrix, not this bundle.
+    if (report.schema === DAILY_BENCH_SCHEMA) continue;
     if (report.schema_version !== SCHEMA_VERSION) fail(`${rel} has unsupported schema_version ${report.schema_version}`);
     for (const key of ["timestamp", "machine", "tools", "scenarios"]) {
       if (!(key in report)) fail(`${rel} missing ${key}`);

@@ -1,20 +1,19 @@
 /**
- * Committed v1 JSON Schemas for `grit --json` outcomes (`content/schemas/*.v1.json`).
+ * Committed versioned JSON Schemas for `grit --json` outcomes (`content/schemas/<command>.v<N>.json`).
  */
 import fs from "node:fs";
 import path from "node:path";
 import type { Site } from "./docs";
 import { docsContentDir, readRepoFile, REPO_ROOT, SITE_URL } from "./repo";
 
-const FILE_V1 = /^(.+)\.v1\.json$/;
-const FILE_V2 = /^(.+)\.v2\.json$/;
+const SCHEMA_FILE = /^(.+)\.v(\d+)\.json$/;
 
 /** Public URL for a command path schema document (`status`, `stash.list`, …). */
 export function schemaPublicUrl(command: string): string {
   return `${SITE_URL}/schemas/${command}/v1.json`;
 }
 
-/** Public URL for a committed schema file (v1 or v2). */
+/** Public URL for a committed schema file. */
 export function schemaPublicUrlFor(schema: SchemaFile): string {
   return `${SITE_URL}/schemas/${schema.command}/v${schema.version}.json`;
 }
@@ -26,7 +25,12 @@ export function schemaHref(command: string): string {
 
 /** Site-relative href for a v2 schema document. */
 export function schemaHrefV2(command: string): string {
-  return `/schemas/${command}/v2.json`;
+  return schemaHrefFor(command, 2);
+}
+
+/** Site-relative href for a schema document of any version. */
+export function schemaHrefFor(command: string, version: number): string {
+  return `/schemas/${command}/v${version}.json`;
 }
 
 export function schemasContentDir(): string {
@@ -35,43 +39,39 @@ export function schemasContentDir(): string {
 
 export interface SchemaFile {
   command: string;
-  version: 1 | 2;
+  version: number;
   relPath: string;
   body: string;
 }
 
 let cache: SchemaFile[] | undefined;
 
-function loadSchemaFiles(suffix: string, version: 1 | 2, pattern: RegExp): SchemaFile[] {
-  const dir = schemasContentDir();
+function loadSchemaFiles(): SchemaFile[] {
   return fs
-    .readdirSync(dir)
-    .filter((n) => n.endsWith(suffix))
+    .readdirSync(schemasContentDir())
+    .filter((n) => n.endsWith(".json"))
     .sort()
     .map((name) => {
-      const m = pattern.exec(name);
+      const m = SCHEMA_FILE.exec(name);
       if (!m) throw new Error(`unexpected schema file name ${name}`);
-      const command = m[1];
       const relPath = path.join("content", "schemas", name);
-      return { command, version, relPath, body: readRepoFile(relPath) };
-    });
+      return { command: m[1], version: Number(m[2]), relPath, body: readRepoFile(relPath) };
+    })
+    .sort((a, b) => a.command.localeCompare(b.command) || a.version - b.version);
 }
 
-/** Every committed v1 schema file, sorted by command path. */
+/** Every committed schema file, sorted by command path then version. */
 export function loadSchemas(): SchemaFile[] {
   if (cache) return cache;
   if (!fs.existsSync(schemasContentDir())) {
     throw new Error(`missing schemas directory ${schemasContentDir()}`);
   }
-  cache = [
-    ...loadSchemaFiles(".v1.json", 1, FILE_V1),
-    ...loadSchemaFiles(".v2.json", 2, FILE_V2),
-  ];
+  cache = loadSchemaFiles();
   return cache;
 }
 
 /** Lookup one schema by command path and version. */
-export function findSchema(command: string, version: 1 | 2): SchemaFile | undefined {
+export function findSchema(command: string, version: number): SchemaFile | undefined {
   return loadSchemas().find((s) => s.command === command && s.version === version);
 }
 
@@ -85,7 +85,7 @@ export function schemaDocSlug(command: string): string {
   return command.split(".")[0];
 }
 
-const SCHEMA_LINK = /\/schemas\/([a-z0-9_.-]+)\/v([12])\.json/g;
+const SCHEMA_LINK = /\/schemas\/([a-z0-9_.-]+)\/v(\d+)\.json/g;
 
 function markdownSources(): string[] {
   const contentDir = docsContentDir();
@@ -99,58 +99,33 @@ function markdownSources(): string[] {
   return paths.filter((p) => fs.existsSync(p));
 }
 
-/** Collect schema command paths linked from docs Markdown sources. */
-export function linkedSchemaCommands(_site: Site): { v1: Set<string>; v2: Set<string> } {
-  const v1 = new Set<string>();
-  const v2 = new Set<string>();
+/** Collect schema hrefs (`/schemas/<command>/v<N>.json`) linked from docs Markdown sources. */
+export function linkedSchemaHrefs(_site: Site): Set<string> {
+  const linked = new Set<string>();
   for (const file of markdownSources()) {
     const text = fs.readFileSync(file, "utf8");
-    for (const m of text.matchAll(SCHEMA_LINK)) {
-      if (m[2] === "2") v2.add(m[1]);
-      else v1.add(m[1]);
-    }
+    for (const m of text.matchAll(SCHEMA_LINK)) linked.add(schemaHrefFor(m[1], Number(m[2])));
   }
-  return { v1, v2 };
+  return linked;
 }
 
 /**
- * Every schema must be linked from a docs page; every `/schemas/.../v1.json` link
+ * Every schema must be linked from a docs page; every `/schemas/.../v<N>.json` link
  * must match a committed schema file.
  */
 export function validateSchemaLinks(site: Site): string[] {
-  const onDiskV1 = new Set(
-    loadSchemas().filter((s) => s.version === 1).map((s) => s.command),
-  );
-  const onDiskV2 = new Set(
-    loadSchemas().filter((s) => s.version === 2).map((s) => s.command),
-  );
-  const linked = linkedSchemaCommands(site);
+  const onDisk = new Map(loadSchemas().map((s) => [schemaHrefFor(s.command, s.version), s]));
+  const linked = linkedSchemaHrefs(site);
   const problems: string[] = [];
-  for (const command of onDiskV1) {
-    if (!linked.v1.has(command)) {
+  for (const [href, schema] of onDisk) {
+    if (!linked.has(href)) {
       problems.push(
-        `content/schemas/${command}.v1.json: no docs page links ${schemaHref(command)} (expected on /docs/${schemaDocSlug(command)}/)`,
+        `${schema.relPath}: no docs page links ${href} (expected on /docs/${schemaDocSlug(schema.command)}/)`,
       );
     }
   }
-  for (const command of onDiskV2) {
-    if (!linked.v2.has(command)) {
-      problems.push(
-        `content/schemas/${command}.v2.json: no docs page links ${schemaHrefV2(command)} (expected on /docs/${schemaDocSlug(command)}/)`,
-      );
-    }
-  }
-  for (const command of linked.v1) {
-    if (!onDiskV1.has(command)) {
-      problems.push(`docs link ${schemaHref(command)} but content/schemas/${command}.v1.json is missing`);
-    }
-  }
-  for (const command of linked.v2) {
-    if (!onDiskV2.has(command)) {
-      problems.push(
-        `docs link ${schemaHrefV2(command)} but content/schemas/${command}.v2.json is missing`,
-      );
-    }
+  for (const href of linked) {
+    if (!onDisk.has(href)) problems.push(`docs link ${href} but no matching file in content/schemas`);
   }
   return problems.sort();
 }

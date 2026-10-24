@@ -13,11 +13,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ slug?: 
   if (!slug || slug.length !== 2) {
     return new Response("Not found", { status: 404 });
   }
-  const version = slug[1] === "v2.json" ? 2 : slug[1] === "v1.json" ? 1 : null;
-  if (version === null) {
+  const match = /^v(\d+)\.json$/.exec(slug[1]);
+  if (!match) {
     return new Response("Not found", { status: 404 });
   }
-  const schema = findSchema(slug[0], version);
+  const schema = findSchema(slug[0], Number(match[1]));
   if (!schema) return new Response("Not found", { status: 404 });
   return jsonSchema(schema.body);
 }

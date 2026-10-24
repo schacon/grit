@@ -78,7 +78,7 @@ Install a [`PromisorFetcher`](rustdoc:grit_lib::objects::promisor::PromisorFetch
 
 When a fetcher is installed and [`fetch.promisorLazy`](rustdoc:grit_lib::objects::promisor::PROMISOR_LAZY_FETCH_CONFIG) is true (the default), an ODB read miss in a partial-clone repository triggers one batched fetch (with recursion protection) and retries the read. With no fetcher, or when lazy fetch is disabled, reads return [`Error::PromisedObjectMissing`](rustdoc:grit_lib::error::Error::PromisedObjectMissing). Set `fetch.promisorLazy=false` in config, or `GRIT_NO_LAZY_FETCH=1` / `GIT_NO_LAZY_FETCH=1` in the environment, to opt out.
 
-[`Repository::prefetch_promised`](rustdoc:grit_lib::repo::Repository::prefetch_promised) batch-fetches object ids before bulk reads. Tree-to-tree checkout (including clone checkout and [`grit switch`](../switch/)) collects missing blob oids from the diff and prefetches them in a single request when a fetcher is present.
+[`Repository::prefetch_promised`](rustdoc:grit_lib::repo::Repository::prefetch_promised) batch-fetches object ids before bulk reads. Tree-to-tree checkout (including clone checkout and [`grit switch`](../commands/switch.md)) collects missing blob oids from the diff and prefetches them in a single request when a fetcher is present.
 
 [`CloneOptions::promisor_fetcher`](rustdoc:grit_lib::remote::clone::CloneOptions) carries the fetcher through to the opened repository so blobless clone checkout can prefetch without a separate reopen.
 
