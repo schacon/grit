@@ -2629,7 +2629,7 @@ fn dispatch(
                 if intent_to_add {
                     bail!("--hunks and --lines cannot be used with --intent-to-add");
                 }
-                match commands::add::run_hunks(&pathspecs, &hunks, &lines, dry_run) {
+                match commands::add::run_hunks(&pathspecs, &hunks, &lines, None, dry_run) {
                     Ok(outcome) => emit_success(&outcome, opts, ctx),
                     Err(err) => Ok(finish_hunk_error(
                         &err,

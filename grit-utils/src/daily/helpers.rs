@@ -411,6 +411,17 @@ pub fn add_hunks_bench(ctx: &DailyHeadlineContext) -> (BenchArgv, BenchArgv) {
     )
 }
 
+pub fn add_patch_file_large_bench(ctx: &DailyHeadlineContext) -> (BenchArgv, BenchArgv) {
+    (
+        sh_script(crate::worktree_fixture::shell_grit_add_patch_file_half(
+            &ctx.grit,
+        )),
+        sh_script(crate::worktree_fixture::shell_git_apply_hunks_half(
+            &ctx.git,
+        )),
+    )
+}
+
 pub fn restore_hunks_bench(ctx: &DailyHeadlineContext) -> (BenchArgv, BenchArgv) {
     (
         sh_script(crate::worktree_fixture::shell_grit_restore_hunks(&ctx.grit)),

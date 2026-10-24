@@ -1,5 +1,6 @@
 //! Diff target selection and [`FileDiff`] assembly for porcelain and the CLI.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -23,6 +24,7 @@ use crate::index::MODE_TREE;
 use crate::objects::odb::Odb;
 use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
 use crate::parallel::{par_map, ParallelOp, ThreadPolicy};
+use crate::pathspec::{exact_literal_pathspec_set, PathspecMatchContext};
 use crate::porcelain::pathspec_match::{
     ensure_pathspec_matches_known_in_repository, pathspec_matches_known_in_repository,
 };
@@ -383,11 +385,8 @@ pub(crate) fn collect_tree_structured_for_target(
             )?
         }
         DiffTarget::WorktreeVsIndex => {
-            let changes = filter_file_changes(
-                unstaged_changes(repo, rename_threshold, None)?,
-                repo,
-                pathspecs,
-            );
+            let changes =
+                filter_file_changes(unstaged_changes(repo, rename_threshold)?, repo, pathspecs);
             tree_structured_from_worktree_changes(
                 repo,
                 changes,
@@ -487,11 +486,8 @@ pub(crate) fn collect_files_for_target(
             file_diffs_from_worktree_changes(changes, &config, &thread_policy, opts.clone())?
         }
         DiffTarget::WorktreeVsIndex => {
-            let changes = filter_file_changes(
-                unstaged_changes(repo, rename_threshold, None)?,
-                repo,
-                pathspecs,
-            );
+            let changes =
+                filter_file_changes(unstaged_changes(repo, rename_threshold)?, repo, pathspecs);
             file_diffs_from_worktree_changes(changes, &config, &thread_policy, opts.clone())?
         }
         DiffTarget::Commit(oid) => {
@@ -576,18 +572,18 @@ struct WorktreeDiffSide<'a> {
 }
 
 #[derive(Clone)]
-struct FileChange {
-    path: String,
-    old_path: Option<String>,
-    status: DiffStatus,
-    old_mode: String,
-    new_mode: String,
-    old_oid: ObjectId,
-    new_oid: ObjectId,
-    old_bytes: SideBytes,
-    new_bytes: SideBytes,
-    binary: bool,
-    content_changed: bool,
+pub(crate) struct FileChange {
+    pub(crate) path: String,
+    pub(crate) old_path: Option<String>,
+    pub(crate) status: DiffStatus,
+    pub(crate) old_mode: String,
+    pub(crate) new_mode: String,
+    pub(crate) old_oid: ObjectId,
+    pub(crate) new_oid: ObjectId,
+    pub(crate) old_bytes: SideBytes,
+    pub(crate) new_bytes: SideBytes,
+    pub(crate) binary: bool,
+    pub(crate) content_changed: bool,
 }
 
 fn tree_structured_from_worktree_changes(
@@ -907,7 +903,7 @@ fn filter_tree_diff(
         .collect()
 }
 
-fn pathspec_restrict_set(pathspecs: &[String]) -> Option<Arc<std::collections::BTreeSet<String>>> {
+fn pathspec_restrict_set(pathspecs: &[String]) -> Option<Arc<BTreeSet<String>>> {
     if pathspecs.is_empty() {
         None
     } else {
@@ -915,10 +911,14 @@ fn pathspec_restrict_set(pathspecs: &[String]) -> Option<Arc<std::collections::B
     }
 }
 
-fn unstaged_changes(
+fn unstaged_changes(repo: &Repository, rename_threshold: u32) -> Result<Vec<FileChange>> {
+    unstaged_changes_inner(repo, rename_threshold, None)
+}
+
+fn unstaged_changes_inner(
     repo: &Repository,
     rename_threshold: u32,
-    restrict_to_paths: Option<Arc<std::collections::BTreeSet<String>>>,
+    restrict_to_paths: Option<Arc<BTreeSet<String>>>,
 ) -> Result<Vec<FileChange>> {
     let work_tree = repo
         .work_tree()
@@ -930,15 +930,19 @@ fn unstaged_changes(
         .unwrap_or_else(|e| e.into_inner())
         .config_arc();
     let diff_index_mtime = index_mtime_for_diff(&index, None);
-    let limited = restrict_to_paths.is_some();
+    let narrow = restrict_to_paths.is_some();
     let diff_opts = DiffIndexToWorktreeOptions {
         repository_git_dir: Some(repo.git_dir().to_path_buf()),
         index_mtime: diff_index_mtime,
         config: Some(config_arc.clone()),
         thread_policy: Some(repo.thread_policy()),
         refresh_index_stat_in_pass: false,
-        for_status: !limited,
-        refresh_fsmonitor: !limited && fsmonitor_enabled(config_arc.as_ref()),
+        for_status: !narrow,
+        refresh_fsmonitor: if narrow {
+            false
+        } else {
+            fsmonitor_enabled(config_arc.as_ref())
+        },
         worktree_rules: Some(Arc::clone(&rules_arc)),
         command_runner: Some(repo.command_runner()),
         restrict_to_paths,
@@ -1485,6 +1489,157 @@ pub(crate) type UnstagedDiffWithPeers = (
     std::collections::HashMap<String, Vec<StructuredHunk>>,
 );
 
+pub(crate) type UnstagedRawWithPeers = (
+    Vec<FileChange>,
+    std::collections::HashMap<String, Vec<StructuredHunk>>,
+);
+
+/// Raw unstaged [`FileChange`] rows plus staged peer hunks (no structured diff built yet).
+pub(crate) fn unstaged_raw_changes_with_peer_hunks(
+    repo: &Repository,
+    pathspecs: &[String],
+    opts: DiffOptions,
+) -> Result<UnstagedRawWithPeers> {
+    let rename_threshold = opts.renames.threshold_percent().unwrap_or(101);
+    let peer_hunks =
+        staged_peer_hunks_for_pathspecs(repo, pathspecs, opts.clone(), rename_threshold)?;
+    let restrict = exact_file_literal_pathspec_arc(repo, pathspecs)?;
+    let unstaged = if let Some(paths) = restrict {
+        unstaged_changes_inner(repo, rename_threshold, Some(paths))?
+    } else {
+        filter_file_changes(unstaged_changes(repo, rename_threshold)?, repo, pathspecs)
+    };
+    Ok((unstaged, peer_hunks))
+}
+
+fn blob_oid_in_tree(repo: &Repository, tree: ObjectId, path: &str) -> Result<Option<ObjectId>> {
+    use crate::objects::parse_tree;
+    let mut cur = tree;
+    let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    for (i, name) in components.iter().enumerate() {
+        let raw = repo.odb().read(&cur)?;
+        let entries = parse_tree(&raw.data)?;
+        let name_bytes = name.as_bytes();
+        let Some(entry) = entries.iter().find(|e| e.name.as_slice() == name_bytes) else {
+            return Ok(None);
+        };
+        if i + 1 == components.len() {
+            return Ok(Some(entry.oid));
+        }
+        if entry.mode != crate::index::MODE_TREE {
+            return Ok(None);
+        }
+        cur = entry.oid;
+    }
+    Ok(None)
+}
+
+fn path_has_staged_delta_vs_head_with_index(
+    repo: &Repository,
+    index: &Index,
+    head_tree: Option<ObjectId>,
+    path: &str,
+) -> Result<bool> {
+    let path_bytes = path.as_bytes();
+    if index.get(path_bytes, 2).is_some() || index.get(path_bytes, 3).is_some() {
+        return Ok(true);
+    }
+    let head_blob = match head_tree {
+        Some(tree) => blob_oid_in_tree(repo, tree, path)?,
+        None => None,
+    };
+    let Some(idx_entry) = index.get(path_bytes, 0) else {
+        return Ok(head_blob.is_some());
+    };
+    match head_blob {
+        None => Ok(true),
+        Some(h) => Ok(idx_entry.oid != h),
+    }
+}
+
+fn exact_file_literal_pathspec_arc(
+    repo: &Repository,
+    pathspecs: &[String],
+) -> Result<Option<Arc<std::collections::BTreeSet<String>>>> {
+    let Some(literal_paths) =
+        exact_literal_pathspec_set(pathspecs, PathspecMatchContext::default())
+    else {
+        return Ok(None);
+    };
+    let index = repo.index_handle().load()?;
+    let head = resolve_head(repo.git_dir())?;
+    let head_tree = match head.oid() {
+        Some(oid) => Some(commit_tree(repo, oid)?),
+        None => None,
+    };
+    if literal_paths
+        .iter()
+        .all(|p| path_is_exact_tracked_file(repo, &index, head_tree, p).unwrap_or(false))
+    {
+        Ok(Some(Arc::new(literal_paths)))
+    } else {
+        Ok(None)
+    }
+}
+
+fn path_is_exact_tracked_file(
+    repo: &Repository,
+    index: &Index,
+    head_tree: Option<ObjectId>,
+    path: &str,
+) -> Result<bool> {
+    let path_bytes = path.as_bytes();
+    if let Some(entry) = index.get(path_bytes, 0) {
+        return Ok(entry.mode != MODE_TREE);
+    }
+    match head_tree {
+        Some(tree) => Ok(blob_oid_in_tree(repo, tree, path)?.is_some()),
+        None => Ok(false),
+    }
+}
+
+fn staged_peer_hunks_for_pathspecs(
+    repo: &Repository,
+    pathspecs: &[String],
+    opts: DiffOptions,
+    rename_threshold: u32,
+) -> Result<std::collections::HashMap<String, Vec<StructuredHunk>>> {
+    if let Some(literal_paths) =
+        exact_literal_pathspec_set(pathspecs, PathspecMatchContext::default())
+    {
+        let index = repo.index_handle().load()?;
+        let head = resolve_head(repo.git_dir())?;
+        let head_tree = match head.oid() {
+            Some(oid) => Some(commit_tree(repo, oid)?),
+            None => None,
+        };
+        let all_exact_files = literal_paths
+            .iter()
+            .all(|p| path_is_exact_tracked_file(repo, &index, head_tree, p).unwrap_or(false));
+        if all_exact_files
+            && literal_paths.iter().all(|p| {
+                path_has_staged_delta_vs_head_with_index(repo, &index, head_tree, p)
+                    .map(|delta| !delta)
+                    .unwrap_or(false)
+            })
+        {
+            return Ok(std::collections::HashMap::new());
+        }
+    }
+    let staged = filter_file_changes(
+        staged_changes(repo, rename_threshold, None)?,
+        repo,
+        pathspecs,
+    );
+    Ok(staged
+        .iter()
+        .map(|fc| {
+            let structured = structured_for_file_change(fc, opts.clone());
+            (fc.path.clone(), structured.hunks)
+        })
+        .collect())
+}
+
 /// Unstaged [`FileDiff`] rows plus staged hunks on the same path (for stable hunk ids).
 pub(crate) fn unstaged_file_diffs_with_peer_hunks(
     repo: &Repository,
@@ -1506,11 +1661,7 @@ pub(crate) fn unstaged_file_diffs_with_peer_hunks(
             (fc.path.clone(), structured.hunks)
         })
         .collect();
-    let unstaged = filter_file_changes(
-        unstaged_changes(repo, rename_threshold, None)?,
-        repo,
-        pathspecs,
-    );
+    let unstaged = filter_file_changes(unstaged_changes(repo, rename_threshold)?, repo, pathspecs);
     let files = file_diffs_from_worktree_changes(unstaged, &config, &thread_policy, opts)?;
     Ok((files, peer_hunks))
 }
@@ -1521,8 +1672,6 @@ pub(crate) struct HunkDiffBundle {
     pub unstaged: Vec<FileDiff>,
     /// Staged hunks on the same path (for peer-aware ids).
     pub peer_hunks: std::collections::HashMap<String, Vec<StructuredHunk>>,
-    /// Index vs `HEAD` rows (for wrong-side id checks).
-    pub staged_files: Vec<FileDiff>,
 }
 
 /// Load unstaged diffs, staged peer hunks, and staged-side file rows in one pass.
@@ -1550,16 +1699,12 @@ pub(crate) fn hunk_diff_bundle(
         .iter()
         .map(|f| (f.path.clone(), f.hunks.clone()))
         .collect();
-    let unstaged_fc = filter_file_changes(
-        unstaged_changes(repo, rename_threshold, None)?,
-        repo,
-        pathspecs,
-    );
+    let unstaged_fc =
+        filter_file_changes(unstaged_changes(repo, rename_threshold)?, repo, pathspecs);
     let unstaged = file_diffs_from_worktree_changes(unstaged_fc, &config, &thread_policy, opts)?;
     Ok(HunkDiffBundle {
         unstaged,
         peer_hunks,
-        staged_files,
     })
 }
 

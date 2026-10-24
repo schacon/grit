@@ -19,7 +19,9 @@ use crate::merge_trees::{
     merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
 };
 use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
-use crate::porcelain::hunk_select::{resolve_selection, stage_hunks, HunkSelection};
+use crate::porcelain::hunk_select::{
+    diff_options_for_hunk_select, resolve_selection, stage_hunks, HunkSelection,
+};
 use crate::porcelain::index_from_tree::index_from_tree;
 use crate::repo::Repository;
 use crate::state::resolve_head;
@@ -151,7 +153,8 @@ pub fn fixup_selection_paths(
     selection: &HunkSelection,
     pathspecs: &[String],
 ) -> Result<Vec<String>, HistoryError> {
-    let patches = resolve_selection(repo, DiffSide::Unstaged, selection, pathspecs)?;
+    let diff_opts = diff_options_for_hunk_select(repo).map_err(library_err)?;
+    let patches = resolve_selection(repo, DiffSide::Unstaged, selection, pathspecs, diff_opts)?;
     let mut paths: Vec<String> = patches
         .iter()
         .filter_map(|p| p.effective_path().map(str::to_owned))
@@ -178,7 +181,15 @@ pub fn apply_fixup_hunk_selection(
 ) -> Result<AppliedRewrite, HistoryError> {
     let paths = fixup_selection_paths(repo, selection, pathspecs)?;
     let snapshot = capture_hunk_fixup_apply_snapshot(repo, &paths)?;
-    if let Err(err) = stage_hunks(repo, DiffSide::Unstaged, selection, pathspecs, false) {
+    let diff_opts = diff_options_for_hunk_select(repo).map_err(library_err)?;
+    if let Err(err) = stage_hunks(
+        repo,
+        DiffSide::Unstaged,
+        selection,
+        pathspecs,
+        diff_opts,
+        false,
+    ) {
         return Err(err.into());
     }
     match apply_fixup_rewrite(repo, plan, apply_opts, &paths) {
@@ -424,7 +435,8 @@ fn index_tree_for_fixup_selection(
     selection: &HunkSelection,
     pathspecs: &[String],
 ) -> Result<ObjectId, HistoryError> {
-    let patches = resolve_selection(repo, DiffSide::Unstaged, selection, pathspecs)
+    let diff_opts = diff_options_for_hunk_select(repo).map_err(library_err)?;
+    let patches = resolve_selection(repo, DiffSide::Unstaged, selection, pathspecs, diff_opts)
         .map_err(HistoryError::HunkSelect)?;
     if patches.is_empty() {
         return Err(HistoryError::NothingStaged);
@@ -548,6 +560,7 @@ mod hunk_selection_restore_tests {
     use super::*;
     use crate::config::environment::RepositoryOptions;
     use crate::diff::hunk_id::hunk_ids_with_duplicate_peers;
+    use crate::diff::DiffOptions;
     use crate::history::RefScope;
     use crate::objects::ObjectId;
     use crate::porcelain::hunk_select::{unstaged_file_diffs, LineRange};
@@ -625,6 +638,7 @@ mod hunk_selection_restore_tests {
                 ranges: Vec::new(),
             },
             &[],
+            DiffOptions::default(),
             false,
         )
         .expect("stage line-5");
@@ -655,7 +669,15 @@ mod hunk_selection_restore_tests {
         let plan = fixup(&grit, target, &opts).expect("plan");
         let paths = fixup_selection_paths(&grit, &selection, &[]).expect("paths");
         let snapshot = capture_hunk_fixup_apply_snapshot(&grit, &paths).expect("snap");
-        stage_hunks(&grit, DiffSide::Unstaged, &selection, &[], false).expect("stage line-18");
+        stage_hunks(
+            &grit,
+            DiffSide::Unstaged,
+            &selection,
+            &[],
+            DiffOptions::default(),
+            false,
+        )
+        .expect("stage line-18");
         let apply_opts = ApplyOptions {
             identity: "Fixup <f@grit.test>".into(),
             reflog_message: "history fixup".into(),

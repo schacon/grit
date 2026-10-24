@@ -8,7 +8,7 @@ order: 1
 ## Synopsis
 
 ```text
-grit add [-u | --update] [--dry-run] [--hunks <id,...>] [--lines <path:start-end>] [--patch-file <file|->] [--executable | --non-executable] [--pathspec-from-file <file|->] [--pathspec-file-nul] [<path>...]
+grit add [-u | --update] [--dry-run] [--hunks <id,...>] [--lines <path:start-end>] [-U<n> | --unified <n>] [--patch-file <file|->] [--executable | --non-executable] [--pathspec-from-file <file|->] [--pathspec-file-nul] [<path>...]
 ```
 
 ## Description
@@ -30,6 +30,7 @@ On filesystems where Grit sets `core.filemode=false` (typical on Windows), every
 | `--dry-run` | List paths that would be staged without updating the index or writing objects. |
 | `--hunks` | Stage only the listed hunk ids from `grit diff --json` (`hunks[].id`). Comma-separated ids; pass the flag again to add more. Optional `-- paths` narrow the diff scan. Cannot be combined with `--patch-file`, `-u` / `--update`, or `-N` / `--intent-to-add`. |
 | `--lines` | Stage only new-side line ranges from `grit diff --json` (`lines[].new`). Use `path:start-end` or `path:line` (1-based, inclusive); comma-separate or repeat the flag. Mix with `--hunks`. Same restrictions as `--hunks`. |
+| `-U`, `--unified` | With `--hunks` only: unified context lines for hunk boundaries (same meaning as `grit diff -U`; default 3 when omitted). Use the same value as the diff that produced the ids. |
 | `--patch-file` | Apply a unified diff to the index only (like `git apply --cached`). Use `-` for stdin. Cannot be combined with `--hunks`, paths, `-u` / `--update`, or `-N` / `--intent-to-add`. |
 | `-N`, `--intent-to-add` | Record intent-to-add entries (empty blob, extended flag) instead of hashing content. |
 | `-f`, `--force` | Stage ignored paths when named explicitly (instead of erroring with pathspec ignored). |
@@ -77,48 +78,21 @@ $ grit add --lines f.txt:10-15 -- f.txt
 Staged 1 change.
 ```
 
-Mark a script executable when the filesystem does not track the execute bit:
-
-```console
-$ grit add --executable scripts/deploy.sh
-Staged 1 change.
-```
-
-## JSON output
-
-Schema: [v1](/schemas/add/v1.json)
-
-Pass `--json` for stable, scripting-friendly output:
-
-| Field | Type | Meaning |
-| ----- | ---- | ------- |
-| `added` | string[] | New paths staged (untracked → index). |
-| `modified` | string[] | Tracked paths updated in the index. |
-| `removed` | string[] | Tracked paths removed from the index (deleted in the worktree). |
-| `dry_run` | boolean | True when `--dry-run` was passed. |
-| `intent_to_add` | string[] | Paths recorded with intent-to-add (`-N` / `--intent-to-add`). |
-| `count` | number | Total paths in `added`, `modified`, and `removed`. |
-| `staged` | number | Same as `count` (kept for older scripts). |
-| `staged_hunks` | object | When `--hunks` was used: map of path → array of staged hunk id strings. |
-| `staged_lines` | object | When `--lines` was used: map of path → array of range strings (`start` or `start-end`). |
-
 Example:
 
 ```json
 {
-  "added": [],
-  "modified": [
-    "tracked.txt"
-  ],
+  "added": ["src/new.rs"],
+  "modified": ["README.md"],
   "removed": [],
   "intent_to_add": [],
   "dry_run": false,
-  "count": 1,
-  "staged": 1,
-  "staged_hunks": {},
-  "staged_lines": {}
+  "count": 2,
+  "staged": 2
 }
 ```
+
+When `--hunks` or `--lines` staged something, `staged_hunks` or `staged_lines` maps path → ids or ranges appear on stdout; they are omitted when empty.
 
 Grit computes blob object ids with the same plain SHA-1 digests as Git. SHAttered test vectors (for example blobs in the `git/git` history) stage and commit normally; grit does not reject them during ingestion.
 
@@ -136,18 +110,6 @@ When there is nothing to stage and you ran `grit add` with no paths:
 ```text
 Nothing to stage — working tree clean.
 ```
-
-
-## Exit status
-
-| Code | Meaning |
-| ---: | --- |
-| `0` | Success ([`success`](../exit-codes/)). |
-| `1` | Command failed ([`failure`](../exit-codes/)). |
-| `2` | Invalid flags or arguments ([`usage`](../exit-codes/)). |
-
-See [Exit codes](../exit-codes/) for shared rules and structured `--json` `kind` values.
-
 
 ## See also
 

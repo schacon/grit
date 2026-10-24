@@ -413,6 +413,7 @@ pub fn prepare_add_hunks_large(git: &Path) -> Result<()> {
             ranges: Vec::new(),
         },
         &pathspec,
+        grit_lib::diff::DiffOptions::default(),
     )
     .map_err(|e| anyhow::anyhow!("resolve hunk selection: {e}"))?;
     let mut patch_text = String::new();
@@ -533,6 +534,7 @@ pub fn prepare_add_lines_large(git: &Path) -> Result<()> {
             }],
         },
         &pathspec,
+        grit_lib::diff::DiffOptions::default(),
     )
     .map_err(|e| anyhow::anyhow!("resolve line selection: {e}"))?;
     let mut patch_text = String::new();
@@ -604,6 +606,17 @@ pub fn shell_git_apply_hunks_half(git: &Path) -> String {
             .to_string_lossy(),
     );
     format!("{prog_q} apply --cached {patch_q} > /dev/null 2>&1")
+}
+
+/// Shell snippet: `grit add --patch-file` using the prebuilt half-hunk patch.
+pub fn shell_grit_add_patch_file_half(grit: &Path) -> String {
+    let prog_q = shell_quote(&grit.to_string_lossy());
+    let patch_q = shell_quote(
+        &scratch_dir()
+            .join(HUNKS_HALF_PATCH_MARKER)
+            .to_string_lossy(),
+    );
+    format!("{prog_q} add --patch-file {patch_q} > /dev/null 2>&1")
 }
 
 const RM_DIR_MARKER: &str = ".grit-bench-rm-dir";

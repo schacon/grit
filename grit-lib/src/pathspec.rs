@@ -1135,6 +1135,25 @@ pub(crate) fn sorted_paths_match_pathspec<S: AsRef<str>>(
     has_path_with_prefix(&format!("{spec}/"))
 }
 
+/// Repository-relative paths when every spec is a plain literal file path (no trailing `/`).
+///
+/// Used to narrow index/worktree diffs to a small path set without scanning the full index.
+pub(crate) fn exact_literal_pathspec_set(
+    specs: &[String],
+    ctx: PathspecMatchContext,
+) -> Option<std::collections::BTreeSet<String>> {
+    if specs.is_empty() {
+        return None;
+    }
+    if !specs
+        .iter()
+        .all(|s| is_plain_literal_pathspec(s, ctx) && !s.ends_with('/'))
+    {
+        return None;
+    }
+    Some(specs.iter().cloned().collect())
+}
+
 /// Whether `spec` matches exactly the path `spec` and everything under directory `spec`
 /// (no magic, no wildcards, no `./`, and no context that changes trailing-`/` handling).
 fn is_plain_literal_pathspec(spec: &str, ctx: PathspecMatchContext) -> bool {
@@ -2373,6 +2392,31 @@ mod tree_entry_pathspec_tests {
         assert!(matches_pathspec_list("sub/file", &specs));
         assert!(!matches_pathspec_list("sub2/file", &specs));
         assert!(pathspec_exclude_matches(":/!sub2", "sub2/file"));
+    }
+}
+
+#[cfg(test)]
+mod exact_literal_pathspec_set_tests {
+    use super::*;
+
+    #[test]
+    fn exact_literal_pathspec_set_accepts_file_paths() {
+        let ctx = PathspecMatchContext::default();
+        let set = exact_literal_pathspec_set(&["large.txt".to_string()], ctx).expect("set");
+        assert_eq!(set.len(), 1);
+        assert!(set.contains("large.txt"));
+    }
+
+    #[test]
+    fn exact_literal_pathspec_set_rejects_directory_trailing_slash() {
+        let ctx = PathspecMatchContext::default();
+        assert!(exact_literal_pathspec_set(&["src/".to_string()], ctx).is_none());
+    }
+
+    #[test]
+    fn exact_literal_pathspec_set_rejects_glob_magic() {
+        let ctx = PathspecMatchContext::default();
+        assert!(exact_literal_pathspec_set(&[":(glob)*.rs".to_string()], ctx).is_none());
     }
 }
 

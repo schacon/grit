@@ -12279,6 +12279,7 @@ pub enum grit_lib::porcelain::hunk_select::HunkSelectError
 pub grit_lib::porcelain::hunk_select::HunkSelectError::Apply(grit_lib::error::ApplyError)
 pub grit_lib::porcelain::hunk_select::HunkSelectError::Binary
 pub grit_lib::porcelain::hunk_select::HunkSelectError::Binary::path: alloc::string::String
+pub grit_lib::porcelain::hunk_select::HunkSelectError::PatchBuild
 pub grit_lib::porcelain::hunk_select::HunkSelectError::RangeOutOfBounds
 pub grit_lib::porcelain::hunk_select::HunkSelectError::RangeOutOfBounds::end: usize
 pub grit_lib::porcelain::hunk_select::HunkSelectError::RangeOutOfBounds::max_line: usize
@@ -12286,7 +12287,7 @@ pub grit_lib::porcelain::hunk_select::HunkSelectError::RangeOutOfBounds::path: a
 pub grit_lib::porcelain::hunk_select::HunkSelectError::RangeOutOfBounds::start: usize
 pub grit_lib::porcelain::hunk_select::HunkSelectError::RangeSelectsNothing
 pub grit_lib::porcelain::hunk_select::HunkSelectError::RangeSelectsNothing::path: alloc::string::String
-pub grit_lib::porcelain::hunk_select::HunkSelectError::Repo(alloc::string::String)
+pub grit_lib::porcelain::hunk_select::HunkSelectError::Repository(alloc::string::String)
 pub grit_lib::porcelain::hunk_select::HunkSelectError::StaleId
 pub grit_lib::porcelain::hunk_select::HunkSelectError::StaleId::current_ids: alloc::vec::Vec<grit_lib::diff::hunk_id::HunkId>
 pub grit_lib::porcelain::hunk_select::HunkSelectError::StaleId::id: grit_lib::diff::hunk_id::HunkId
@@ -12452,12 +12453,14 @@ impl core::marker::Unpin for grit_lib::porcelain::hunk_select::WorktreeReverseAp
 impl core::marker::UnsafeUnpin for grit_lib::porcelain::hunk_select::WorktreeReverseApplyOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::hunk_select::WorktreeReverseApplyOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::hunk_select::WorktreeReverseApplyOptions
+pub fn grit_lib::porcelain::hunk_select::diff_options_for_hunk_select(&grit_lib::repo::Repository) -> core::result::Result<grit_lib::diff::DiffOptions, grit_lib::error::Error>
+pub fn grit_lib::porcelain::hunk_select::list_unstaged_hunk_ids(&grit_lib::repo::Repository, &[alloc::string::String], grit_lib::diff::DiffOptions) -> core::result::Result<alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<grit_lib::diff::hunk_id::HunkId>>, grit_lib::error::Error>
 pub fn grit_lib::porcelain::hunk_select::parse_hunk_id_list(&[alloc::string::String]) -> core::result::Result<grit_lib::porcelain::hunk_select::HunkSelection, grit_lib::porcelain::hunk_select::HunkSelectError>
 pub fn grit_lib::porcelain::hunk_select::report_unstaged_hunk_selection(&grit_lib::repo::Repository, &grit_lib::porcelain::hunk_select::HunkSelection, &[alloc::string::String]) -> core::result::Result<grit_lib::porcelain::hunk_select::HunkSelectionReport, grit_lib::porcelain::hunk_select::HunkSelectError>
-pub fn grit_lib::porcelain::hunk_select::resolve_selection(&grit_lib::repo::Repository, grit_lib::diff::hunk_id::DiffSide, &grit_lib::porcelain::hunk_select::HunkSelection, &[alloc::string::String]) -> core::result::Result<alloc::vec::Vec<grit_lib::apply::FilePatch>, grit_lib::porcelain::hunk_select::HunkSelectError>
+pub fn grit_lib::porcelain::hunk_select::resolve_selection(&grit_lib::repo::Repository, grit_lib::diff::hunk_id::DiffSide, &grit_lib::porcelain::hunk_select::HunkSelection, &[alloc::string::String], grit_lib::diff::DiffOptions) -> core::result::Result<alloc::vec::Vec<grit_lib::apply::FilePatch>, grit_lib::porcelain::hunk_select::HunkSelectError>
 pub fn grit_lib::porcelain::hunk_select::restore_hunks(&grit_lib::repo::Repository, &grit_lib::porcelain::hunk_select::HunkSelection, &[alloc::string::String], bool, bool, bool) -> core::result::Result<grit_lib::porcelain::hunk_select::RestoreHunksOutcome, grit_lib::porcelain::hunk_select::HunkSelectError>
 pub fn grit_lib::porcelain::hunk_select::reverse_apply_patches_to_worktree(&grit_lib::repo::Repository, &[grit_lib::apply::FilePatch], &grit_lib::porcelain::hunk_select::WorktreeReverseApplyOptions) -> core::result::Result<(), grit_lib::error::ApplyError>
-pub fn grit_lib::porcelain::hunk_select::stage_hunks(&grit_lib::repo::Repository, grit_lib::diff::hunk_id::DiffSide, &grit_lib::porcelain::hunk_select::HunkSelection, &[alloc::string::String], bool) -> core::result::Result<grit_lib::porcelain::hunk_select::StageHunksOutcome, grit_lib::porcelain::hunk_select::HunkSelectError>
+pub fn grit_lib::porcelain::hunk_select::stage_hunks(&grit_lib::repo::Repository, grit_lib::diff::hunk_id::DiffSide, &grit_lib::porcelain::hunk_select::HunkSelection, &[alloc::string::String], grit_lib::diff::DiffOptions, bool) -> core::result::Result<grit_lib::porcelain::hunk_select::StageHunksOutcome, grit_lib::porcelain::hunk_select::HunkSelectError>
 pub fn grit_lib::porcelain::hunk_select::unstaged_file_diffs(&grit_lib::repo::Repository, &[alloc::string::String]) -> core::result::Result<alloc::vec::Vec<(grit_lib::diff::FileDiff, alloc::vec::Vec<grit_lib::diff::structured::StructuredHunk>)>, grit_lib::error::Error>
 pub mod grit_lib::porcelain::index_mode
 pub enum grit_lib::porcelain::index_mode::StageExecutableHint

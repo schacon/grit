@@ -698,6 +698,7 @@ fn fixup_hunks_preserves_preexisting_staged_on_same_path() {
             ranges: Vec::new(),
         },
         &[],
+        grit_lib::diff::DiffOptions::default(),
         false,
     )
     .expect("stage first hunk");
@@ -779,6 +780,7 @@ fn fixup_lines_preserves_preexisting_staged_and_consumes_selected_line() {
             ranges: Vec::new(),
         },
         &[],
+        grit_lib::diff::DiffOptions::default(),
         false,
     )
     .expect("stage line-5 hunk");
@@ -859,6 +861,7 @@ fn fixup_lines_same_structured_hunk_preserves_unselected_and_staged() {
             }],
         },
         &[],
+        grit_lib::diff::DiffOptions::default(),
         false,
     )
     .expect("stage line-18 only");
@@ -948,6 +951,7 @@ fn fixup_lines_pre_staged_same_hunk_preserves_unselected_and_staged() {
             }],
         },
         &[],
+        grit_lib::diff::DiffOptions::default(),
         false,
     )
     .expect("stage line-5 only");
@@ -1120,6 +1124,7 @@ fn fixup_lines_insertion_with_pre_staged_restores_shifted_unselected_below() {
             }],
         },
         &[],
+        grit_lib::diff::DiffOptions::default(),
         false,
     )
     .expect("stage line-3");
@@ -1165,8 +1170,14 @@ fn fixup_hunk_selection_plans_against_index_worktree_base_non_head_target() {
         ids: vec![ids[0].clone()],
         ranges: Vec::new(),
     };
-    grit_lib::porcelain::hunk_select::resolve_selection(&grit, DiffSide::Unstaged, &selection, &[])
-        .expect("resolve");
+    grit_lib::porcelain::hunk_select::resolve_selection(
+        &grit,
+        DiffSide::Unstaged,
+        &selection,
+        &[],
+        grit_lib::diff::DiffOptions::default(),
+    )
+    .expect("resolve");
     plan_and_apply_hunks(
         &grit,
         wt,

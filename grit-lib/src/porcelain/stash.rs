@@ -45,8 +45,8 @@ use crate::porcelain::checkout::smudge_bytes_for_worktree_path;
 use crate::porcelain::clean::{is_nested_git_worktree, path_in_nested_git_worktree};
 use crate::porcelain::commit::write_commit_object;
 use crate::porcelain::hunk_select::{
-    resolve_selection, reverse_apply_patches_to_worktree, HunkSelection,
-    WorktreeReverseApplyOptions,
+    diff_options_for_hunk_select, resolve_selection, reverse_apply_patches_to_worktree,
+    HunkSelection, WorktreeReverseApplyOptions,
 };
 use crate::porcelain::index_from_tree::{index_from_tree, index_from_tree_with_worktree_stats};
 use crate::porcelain::restore::{restore_paths, RestoreOptions, RestoreSource};
@@ -1217,7 +1217,8 @@ fn resolve_partial_stash_patches(
     let Some(sel) = options.selection.as_ref() else {
         return Ok(None);
     };
-    let patches = resolve_selection(repo, DiffSide::Unstaged, sel, &options.pathspecs)?;
+    let diff_opts = diff_options_for_hunk_select(repo)?;
+    let patches = resolve_selection(repo, DiffSide::Unstaged, sel, &options.pathspecs, diff_opts)?;
     Ok(Some(patches))
 }
 

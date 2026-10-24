@@ -27,7 +27,9 @@ use crate::objects::odb::Odb;
 use crate::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
 use crate::pathspec::{pathspec_is_exclude, ResolvedPathspecs};
 use crate::porcelain::add::{stage_on_index, StageMode, StageOptions};
-use crate::porcelain::hunk_select::{resolve_selection, HunkSelectError, HunkSelection};
+use crate::porcelain::hunk_select::{
+    diff_options_for_hunk_select, resolve_selection, HunkSelectError, HunkSelection,
+};
 use crate::porcelain::index_from_tree::index_from_tree_with_seeded_worktree_stats;
 use crate::porcelain::pathspec_match::KnownPathspecChecker;
 use crate::progress::ProgressSink;
@@ -341,6 +343,7 @@ fn commit_patch_scope(
                 crate::diff::hunk_id::DiffSide::Unstaged,
                 &selection,
                 pathspecs,
+                diff_options_for_hunk_select(repo).map_err(CommitPatchError::Commit)?,
             )?
         }
         CommitPatchInput::Patches(patches) => {
@@ -2804,6 +2807,7 @@ mod tests {
                 ranges: Vec::new(),
             },
             &[],
+            DiffOptions::default(),
         )
         .unwrap();
         let patch_text = patch.iter().map(format_patch_for_git).collect::<String>();
@@ -2882,6 +2886,7 @@ mod tests {
                 ranges: Vec::new(),
             },
             &[],
+            DiffOptions::default(),
         )
         .unwrap();
         let before_tip = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();

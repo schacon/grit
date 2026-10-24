@@ -10,7 +10,8 @@ use grit_lib::diff::DiffSide;
 use grit_lib::error::Error as LibError;
 use grit_lib::porcelain::add::{stage as stage_paths, StageMode, StageOptions, StageOutcome};
 use grit_lib::porcelain::hunk_select::{
-    parse_hunk_id_list, stage_hunks, HunkSelectError, LineRange, StageHunksOutcome,
+    diff_options_for_hunk_select, parse_hunk_id_list, stage_hunks, HunkSelectError, LineRange,
+    StageHunksOutcome,
 };
 use grit_lib::porcelain::index_mode::StageExecutableHint;
 use grit_lib::progress::NullProgress;
@@ -39,9 +40,11 @@ pub struct AddOutcome {
     pub count: usize,
     /// How many paths were staged (alias of `count` for scripts written before path lists).
     pub staged: usize,
-    /// Hunk ids staged per path when `--hunks` was used (empty object when unused).
+    /// Hunk ids staged per path when `--hunks` was used (omitted when empty).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub staged_hunks: BTreeMap<String, Vec<String>>,
-    /// Line ranges staged per path when `--lines` was used (`start-end` strings).
+    /// Line ranges staged per path when `--lines` was used (`start-end` strings; omitted when empty).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub staged_lines: BTreeMap<String, Vec<String>>,
     /// Whether the invocation had no path arguments (stages everything).
     #[serde(skip)]
@@ -133,15 +136,25 @@ impl AddOutcome {
 
 /// Exit code for `--hunks` / `--lines` failures (unknown, stale, or wrong-side ids).
 pub fn hunks_exit_code(err: &anyhow::Error) -> i32 {
-    if err
-        .chain()
-        .any(|cause| cause.downcast_ref::<HunkSelectError>().is_some())
-    {
-        2
+    if let Some(sel) = err.downcast_ref::<HunkSelectError>() {
+        match sel {
+            HunkSelectError::UnknownId { .. }
+            | HunkSelectError::StaleId { .. }
+            | HunkSelectError::WrongSide { .. } => 2,
+            HunkSelectError::Binary { .. }
+            | HunkSelectError::RangeOutOfBounds { .. }
+            | HunkSelectError::RangeSelectsNothing { .. }
+            | HunkSelectError::Apply(_)
+            | HunkSelectError::Repository(_)
+            | HunkSelectError::PatchBuild => 1,
+        }
     } else {
         1
     }
 }
+
+/// Default unified context lines when staging hunks (matches `grit diff --json` without `-U`).
+const HUNK_CONTEXT_LINES: usize = 3;
 
 /// Parse `<path>:<start>-<end>` or `<path>:<line>` tokens from `--lines`.
 pub fn parse_line_range_list(tokens: &[String]) -> Result<Vec<LineRange>> {
@@ -190,18 +203,25 @@ pub fn run_hunks(
     args: &PathspecArgs,
     hunks: &[String],
     lines: &[String],
+    unified_context: Option<usize>,
     dry_run: bool,
 ) -> Result<AddOutcome> {
     let repo = context::discover()?;
     let resolved = args.resolve(&repo)?;
     let (pathspecs, _) = resolved.into_pathspec_lists();
-    let mut id_selection = parse_hunk_id_list(hunks).map_err(map_hunk_error)?;
-    id_selection.ranges = parse_line_range_list(lines)?;
+    let mut selection = parse_hunk_id_list(hunks).map_err(map_hunk_error)?;
+    selection.ranges = parse_line_range_list(lines)?;
+    let mut diff_options = diff_options_for_hunk_select(&repo).map_err(anyhow::Error::new)?;
+    diff_options.context_lines = HUNK_CONTEXT_LINES;
+    if let Some(n) = unified_context {
+        diff_options.context_lines = n;
+    }
     let outcome = stage_hunks(
         &repo,
         DiffSide::Unstaged,
-        &id_selection,
+        &selection,
         &pathspecs,
+        diff_options,
         dry_run,
     )
     .map_err(map_hunk_error)?;
