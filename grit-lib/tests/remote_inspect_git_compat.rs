@@ -7,8 +7,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::objects::ObjectId;
+use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::remote::{InspectOptions, RemoteBranchStateKind};
-use grit_lib::repo::Repository;
+use grit_lib::repo::{InitOptions, Repository};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -186,6 +188,169 @@ fn inspect_tracked_uses_fetch_refspec_destination() {
             .all(|b| b.state == RemoteBranchStateKind::Tracked),
         "expected all branches tracked with custom refspec: {:?}",
         summary.branches
+    );
+}
+
+#[test]
+fn inspect_packed_loose_and_exact_refspec_states_like_git() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let upstream = tmp.path().join("upstream");
+    std::fs::create_dir_all(&upstream).expect("upstream");
+    git(&upstream, &["init", "-q", "-b", "main"]);
+    git(&upstream, &["commit", "--allow-empty", "-q", "-m", "init"]);
+    for branch in ["packed1", "packed2", "loose1", "gone", "dropped", "solo"] {
+        git(&upstream, &["branch", branch]);
+    }
+    git(
+        tmp.path(),
+        &["clone", "-q", upstream.to_str().unwrap(), "client"],
+    );
+    let client = tmp.path().join("client");
+    git(
+        &client,
+        &[
+            "config",
+            "--replace-all",
+            "remote.origin.fetch",
+            "+refs/heads/solo:refs/solo-track",
+        ],
+    );
+    git(
+        &client,
+        &[
+            "config",
+            "--add",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    );
+    git(&client, &["fetch", "-q", "origin"]);
+    git(&client, &["pack-refs", "--all"]);
+    git(
+        &client,
+        &["update-ref", "refs/remotes/origin/loose1", "HEAD"],
+    );
+    git(
+        &client,
+        &["update-ref", "-d", "refs/remotes/origin/dropped"],
+    );
+    git(&upstream, &["branch", "-D", "gone"]);
+    git(&upstream, &["branch", "fresh"]);
+
+    let git_text = git(&client, &["remote", "show", "origin"]);
+    let expected = parse_git_remote_show(&git_text);
+    let repo = open_repo(&client);
+    let summary = repo
+        .remotes()
+        .inspect("origin", &InspectOptions::default(), None)
+        .expect("inspect");
+    assert_eq!(grit_branch_set(&summary), expected.branches, "{git_text}");
+
+    let state_of = |name: &str| {
+        summary
+            .branches
+            .iter()
+            .find(|b| b.name == name)
+            .map(|b| b.state)
+    };
+    assert_eq!(state_of("packed1"), Some(RemoteBranchStateKind::Tracked));
+    assert_eq!(state_of("loose1"), Some(RemoteBranchStateKind::Tracked));
+    assert_eq!(state_of("solo"), Some(RemoteBranchStateKind::Tracked));
+    assert_eq!(state_of("dropped"), Some(RemoteBranchStateKind::New));
+    assert_eq!(state_of("fresh"), Some(RemoteBranchStateKind::New));
+    assert_eq!(state_of("gone"), Some(RemoteBranchStateKind::Stale));
+}
+
+#[test]
+fn inspect_tracked_with_non_directory_destination_prefix_like_git() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let upstream = tmp.path().join("upstream");
+    std::fs::create_dir_all(&upstream).expect("upstream");
+    git(&upstream, &["init", "-q", "-b", "main"]);
+    git(&upstream, &["commit", "--allow-empty", "-q", "-m", "init"]);
+    git(&upstream, &["branch", "topic"]);
+    git(
+        tmp.path(),
+        &["clone", "-q", upstream.to_str().unwrap(), "client"],
+    );
+    let client = tmp.path().join("client");
+    git(
+        &client,
+        &[
+            "config",
+            "--replace-all",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin-*",
+        ],
+    );
+    git(&client, &["fetch", "-q", "origin"]);
+    git(&client, &["pack-refs", "--all"]);
+    git(&client, &["update-ref", "refs/remotes/origin-main", "HEAD"]);
+
+    let git_text = git(&client, &["remote", "show", "origin"]);
+    let expected = parse_git_remote_show(&git_text);
+    let repo = open_repo(&client);
+    let summary = repo
+        .remotes()
+        .inspect("origin", &InspectOptions::default(), None)
+        .expect("inspect");
+    assert_eq!(grit_branch_set(&summary), expected.branches, "{git_text}");
+    assert!(
+        summary
+            .branches
+            .iter()
+            .filter(|b| b.name == "main" || b.name == "topic")
+            .all(|b| b.state == RemoteBranchStateKind::Tracked),
+        "packed and loose refs under refs/remotes/origin-* must be tracked: {:?}",
+        summary.branches
+    );
+}
+
+#[test]
+fn inspect_tracked_with_non_directory_destination_prefix_reftable() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let upstream = tmp.path().join("upstream");
+    std::fs::create_dir_all(&upstream).expect("upstream");
+    git(&upstream, &["init", "-q", "-b", "main"]);
+    git(&upstream, &["commit", "--allow-empty", "-q", "-m", "init"]);
+    git(&upstream, &["branch", "topic"]);
+    let head = ObjectId::from_hex(git(&upstream, &["rev-parse", "HEAD"]).trim()).expect("oid");
+
+    let client = tmp.path().join("client");
+    let repo = Repository::init(
+        &client,
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(RefStorageFormat::Reftable),
+    )
+    .expect("init reftable client");
+    let config_path = repo.git_dir().join("config");
+    let mut config = std::fs::read_to_string(&config_path).expect("read config");
+    config.push_str(&format!(
+        "[remote \"origin\"]\n\turl = {}\n\tfetch = +refs/heads/*:refs/remotes/origin-*\n",
+        upstream.display()
+    ));
+    std::fs::write(&config_path, config).expect("write config");
+    for name in ["refs/remotes/origin-main", "refs/remotes/origin-topic"] {
+        grit_lib::refs::write_ref(&repo.git_dir(), name, &head).expect("write tracking ref");
+    }
+
+    let repo = open_repo(&client);
+    let summary = repo
+        .remotes()
+        .inspect("origin", &InspectOptions::default(), None)
+        .expect("inspect");
+    let states: BTreeSet<(String, RemoteBranchStateKind)> = summary
+        .branches
+        .iter()
+        .map(|b| (b.name.clone(), b.state))
+        .collect();
+    assert_eq!(
+        states,
+        BTreeSet::from([
+            ("main".to_owned(), RemoteBranchStateKind::Tracked),
+            ("topic".to_owned(), RemoteBranchStateKind::Tracked),
+        ])
     );
 }
 
