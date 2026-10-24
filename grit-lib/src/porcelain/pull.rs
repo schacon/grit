@@ -28,7 +28,7 @@ use crate::porcelain::stash::{
 };
 use crate::porcelain::worktree_guard::prepare_tree_checkout;
 use crate::remote::fetch::Progress;
-use crate::remote::transfer::{resolve_fetch_prune, FetchOptions, TagMode};
+use crate::remote::transfer::{resolve_fetch_prune, FetchOptions, TagMode, TransferStats};
 use crate::remote::{HttpClientFactory, RemoteError, DEFAULT_REMOTE};
 use crate::repo::Repository;
 use crate::revwalk::history::{
@@ -132,6 +132,9 @@ pub struct PullOutcome {
     pub behind: Option<usize>,
     /// Populated when [`PullOptions::check`] is set; the repository is unchanged.
     pub check: Option<PullCheck>,
+    /// Objects and pack bytes the fetch step received (zero when nothing was
+    /// transferred or the upstream is local, `remote = .`).
+    pub transfer: TransferStats,
 }
 
 /// Errors from [`pull`].
@@ -378,13 +381,15 @@ where
         None
     };
 
+    let mut transfer = TransferStats::default();
     let core: std::result::Result<PullOutcome, PullError> = (|| {
         if remote_name != "." {
             let remote = resolve_remote_argument(config.as_ref(), &remote_name)
                 .map_err(PullError::Remote)?;
-            remote
+            transfer = remote
                 .fetch(repo, fetch_opts, progress, http_factory)
-                .map_err(PullError::Remote)?;
+                .map_err(PullError::Remote)?
+                .transfer;
         }
 
         if fetch_dry_run {
@@ -400,6 +405,7 @@ where
                 ahead: None,
                 behind: None,
                 check: None,
+                transfer: TransferStats::default(),
             });
         }
 
@@ -428,6 +434,10 @@ where
             ),
         }
     })();
+    let core = core.map(|outcome| PullOutcome {
+        transfer,
+        ..outcome
+    });
 
     match core {
         Err(err) => {
@@ -535,6 +545,7 @@ fn pull_check_outcome(
             fast_forward_possible,
             would,
         }),
+        transfer: TransferStats::default(),
     })
 }
 
@@ -602,6 +613,7 @@ fn adopt_unborn_upstream(
         ahead: None,
         behind: None,
         check: None,
+        transfer: TransferStats::default(),
     })
 }
 
@@ -632,6 +644,7 @@ fn integrate_fetched_upstream(
                     ahead: Some(ahead),
                     behind: Some(behind),
                     check: None,
+                    transfer: TransferStats::default(),
                 });
             }
             PullMode::Rebase => {
@@ -710,6 +723,7 @@ fn rebase_fetched_upstream(
                 ahead: None,
                 behind: None,
                 check: None,
+                transfer: TransferStats::default(),
             });
         }
         Err(other) => return Err(map_history_error(other)),
@@ -736,6 +750,7 @@ fn rebase_fetched_upstream(
             ahead: None,
             behind: None,
             check: None,
+            transfer: TransferStats::default(),
         });
     }
 
@@ -791,6 +806,7 @@ fn map_integrate_outcome(outcome: IntegrateBranchOutcome, label: &str) -> PullOu
             ahead: None,
             behind: None,
             check: None,
+            transfer: TransferStats::default(),
         },
         IntegrateBranchOutcome::FastForward { oid, change_id } => PullOutcome {
             result: PullResult::FastForward,
@@ -802,6 +818,7 @@ fn map_integrate_outcome(outcome: IntegrateBranchOutcome, label: &str) -> PullOu
             ahead: None,
             behind: None,
             check: None,
+            transfer: TransferStats::default(),
         },
         IntegrateBranchOutcome::Merged { oid, change_id } => PullOutcome {
             result: PullResult::Merged,
@@ -813,6 +830,7 @@ fn map_integrate_outcome(outcome: IntegrateBranchOutcome, label: &str) -> PullOu
             ahead: None,
             behind: None,
             check: None,
+            transfer: TransferStats::default(),
         },
         IntegrateBranchOutcome::Conflicts { details, .. } => PullOutcome {
             result: PullResult::Conflicts,
@@ -824,6 +842,7 @@ fn map_integrate_outcome(outcome: IntegrateBranchOutcome, label: &str) -> PullOu
             ahead: None,
             behind: None,
             check: None,
+            transfer: TransferStats::default(),
         },
         IntegrateBranchOutcome::Squashed | IntegrateBranchOutcome::Stopped => {
             unreachable!("pull does not use squash or no-commit merge modes")
@@ -1018,6 +1037,26 @@ mod tests {
         assert_eq!(outcome.result, PullResult::FastForward);
         assert_eq!(outcome.oid, Some(tip));
         assert_eq!(git(dir, &["rev-parse", "main"]), tip.to_hex());
+        assert_eq!(outcome.transfer, TransferStats::default());
+    }
+
+    #[test]
+    fn pull_reports_objects_received_by_its_fetch() {
+        let tmp = TempDir::new().expect("tempdir");
+        let (origin, clone) = origin_and_clone(&tmp);
+        commit(&origin, "b.txt", "two");
+
+        let repo = open(&clone);
+        let outcome =
+            pull(&repo, &pull_options(&repo), &mut NoProgress, None).expect("pull succeeds");
+        assert_eq!(outcome.result, PullResult::FastForward);
+        // One new commit, its root tree and the added blob.
+        assert_eq!(outcome.transfer.objects, 3, "{:?}", outcome.transfer);
+        assert!(outcome.transfer.bytes > 0, "{:?}", outcome.transfer);
+
+        let again = pull(&repo, &pull_options(&repo), &mut NoProgress, None).expect("second pull");
+        assert_eq!(again.result, PullResult::UpToDate);
+        assert_eq!(again.transfer.objects, 0, "{:?}", again.transfer);
     }
 
     #[test]

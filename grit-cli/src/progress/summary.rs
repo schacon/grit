@@ -1,0 +1,600 @@
+//! End-of-transfer overview shared by clone, fetch and pull: a time bar that
+//! splits the run across its phases, then what was received and how fast.
+
+use std::io::Write;
+use std::time::Duration;
+
+use anyhow::Result;
+use grit_lib::objects::index_pack::ObjectKindCounts;
+use grit_lib::progress::{ProgressPhase, ProgressUnit};
+use grit_lib::remote::transfer::TransferStats;
+use schemars::JsonSchema;
+use serde::Serialize;
+
+use super::{
+    format_bytes, format_duration, format_rate, group_digits, paint, phase_label, phase_palette,
+    rate, PhaseRecord, BOLD, DIM,
+};
+use crate::output::outln;
+
+/// Glyphs for the time bar when color is off, so phases stay distinguishable.
+const PLAIN_SEGMENTS: [char; 4] = ['█', '▓', '▒', '░'];
+pub(crate) const TIME_BAR_WIDTH: usize = 40;
+/// Shortest receiving time worth reporting a transfer rate for.
+const MIN_TIMED_RECEIVE: Duration = Duration::from_millis(10);
+
+/// Objects received, by type.
+#[derive(Serialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ObjectTypes {
+    pub commits: u64,
+    pub trees: u64,
+    pub blobs: u64,
+    /// Annotated tag objects (not refs).
+    pub tags: u64,
+}
+
+impl From<ObjectKindCounts> for ObjectTypes {
+    fn from(k: ObjectKindCounts) -> Self {
+        Self {
+            commits: k.commits,
+            trees: k.trees,
+            blobs: k.blobs,
+            tags: k.tags,
+        }
+    }
+}
+
+/// What a transfer received and where its time went, for the human summary.
+#[derive(Clone, Debug, Default)]
+pub struct TransferSummary {
+    /// Wall-clock time of the whole command, measured from the progress sink's start.
+    pub elapsed: Duration,
+    /// Finished progress phases, in order.
+    pub records: Vec<PhaseRecord>,
+    /// Objects received.
+    pub objects: u64,
+    /// Pack bytes received.
+    pub bytes: u64,
+    /// Objects received by type, when the pack was indexed locally.
+    pub object_types: Option<ObjectTypes>,
+}
+
+impl TransferSummary {
+    /// Summary of `stats`, timed by `records` over `elapsed`.
+    #[must_use]
+    pub fn new(stats: TransferStats, records: Vec<PhaseRecord>, elapsed: Duration) -> Self {
+        Self {
+            elapsed,
+            records,
+            objects: stats.objects,
+            bytes: stats.bytes,
+            object_types: stats.kinds.map(ObjectTypes::from),
+        }
+    }
+
+    /// Whether anything was received (an up-to-date fetch has nothing to show).
+    #[must_use]
+    pub fn received_anything(&self) -> bool {
+        self.objects > 0 || self.bytes > 0
+    }
+
+    /// Write the `time`, `data` and `objects` rows, skipping rows with nothing to say.
+    pub fn render_rows(&self, w: &mut dyn Write, color: bool) -> Result<()> {
+        let total = format_duration(self.elapsed);
+        if !self.records.is_empty() {
+            let (bar, legend) = time_bar(&self.records, self.elapsed, color);
+            outln!(w, "  {}  {bar}  {total}", row_label(color, "time"));
+            outln!(w, "  {}  {legend}", row_label(color, ""));
+        }
+
+        // Report bytes off the wire, as the live Receiving lines did. The stored
+        // pack can be larger: a thin fetch pack gets its missing delta bases
+        // appended. Local copies have no Receiving phase, so use the pack size.
+        let receiving: Vec<&PhaseRecord> = self
+            .records
+            .iter()
+            .filter(|r| {
+                r.phase == ProgressPhase::ReceivingObjects
+                    && r.unit == ProgressUnit::Bytes
+                    && r.count > 0
+            })
+            .collect();
+        let wire: u64 = receiving.iter().map(|r| r.count).sum();
+        let received = if wire > 0 { wire } else { self.bytes };
+        if received > 0 {
+            let mut data = vec![format!("{} received", format_bytes(received))];
+            let busy: Duration = receiving.iter().map(|r| r.elapsed).sum();
+            // A small pack can land in one read; its rate would be meaningless.
+            if busy >= MIN_TIMED_RECEIVE {
+                let avg = rate(wire, busy);
+                let peak = receiving.iter().map(|r| r.peak_rate).fold(0.0, f64::max);
+                data.push(format!("{} avg", format_rate(avg)));
+                // Sampling can miss the burst entirely; a peak under the average says nothing.
+                if peak >= avg {
+                    data.push(format!("{} peak", format_rate(peak)));
+                }
+            }
+            outln!(w, "  {}  {}", row_label(color, "data"), join(&data, color));
+        }
+
+        if self.objects > 0 {
+            let mut objects = vec![group_digits(self.objects)];
+            if let Some(t) = self.object_types {
+                for (n, one, many) in [
+                    (t.commits, "commit", "commits"),
+                    (t.trees, "tree", "trees"),
+                    (t.blobs, "blob", "blobs"),
+                    (t.tags, "tag", "tags"),
+                ] {
+                    if n > 0 {
+                        objects.push(plural(n, one, many));
+                    }
+                }
+            }
+            outln!(
+                w,
+                "  {}  {}",
+                row_label(color, "objects"),
+                join(&objects, color)
+            );
+        }
+        Ok(())
+    }
+}
+
+/// The line printed on stderr before a fetch or pull starts drawing progress:
+/// `<verb> <remote> <url>`, leaving out the URL when it is the remote argument
+/// itself (a literal URL or path rather than a configured remote name).
+#[must_use]
+pub fn transfer_header(verb: &str, remote: &str, url: Option<&str>, color: bool) -> String {
+    let mut line = format!(
+        "{} {}",
+        paint(color, BOLD, verb),
+        paint(color, BOLD, remote)
+    );
+    if let Some(url) = url.filter(|u| !u.is_empty() && *u != remote) {
+        line.push(' ');
+        line.push_str(&paint(color, DIM, url));
+    }
+    line
+}
+
+/// Whether the human summary on stdout should use ANSI color.
+#[must_use]
+pub fn stdout_color() -> bool {
+    grit_lib::porcelain::terminal::stdout_supports_color() && std::env::var_os("NO_COLOR").is_none()
+}
+
+/// A dimmed, padded label for one summary row.
+#[must_use]
+pub fn row_label(color: bool, text: &str) -> String {
+    paint(color, DIM, &format!("{text:<8}"))
+}
+
+/// `n` with digit grouping and the singular or plural noun.
+#[must_use]
+pub fn plural(n: u64, one: &str, many: &str) -> String {
+    format!("{} {}", group_digits(n), if n == 1 { one } else { many })
+}
+
+/// Join row parts with a dimmed middle dot.
+#[must_use]
+pub fn join(parts: &[String], color: bool) -> String {
+    parts.join(&paint(color, DIM, " · "))
+}
+
+/// One stretch of the timeline: a progress phase, or a gap between them.
+pub(crate) struct Segment {
+    pub(crate) name: &'static str,
+    duration: Duration,
+    phase: Option<ProgressPhase>,
+}
+
+/// Lay the phases out on the command's timeline, naming the gaps: before the
+/// first byte arrives (connecting, ref negotiation, the server building the
+/// pack), between phases, and after the last one (writing refs and config).
+pub(crate) fn timeline(records: &[PhaseRecord], total: Duration) -> Vec<Segment> {
+    const MIN_GAP: Duration = Duration::from_millis(5);
+    let mut segments = Vec::new();
+    let mut cursor = Duration::ZERO;
+    for rec in records {
+        let gap = rec.started_at.saturating_sub(cursor);
+        if gap > MIN_GAP {
+            segments.push(Segment {
+                name: if segments.is_empty() {
+                    "connect"
+                } else {
+                    "other"
+                },
+                duration: gap,
+                phase: None,
+            });
+        }
+        segments.push(Segment {
+            name: phase_label(rec.phase),
+            duration: rec.elapsed,
+            phase: Some(rec.phase),
+        });
+        cursor = rec.started_at + rec.elapsed;
+    }
+    let tail = total.saturating_sub(cursor);
+    if tail > MIN_GAP {
+        segments.push(Segment {
+            name: "finish",
+            duration: tail,
+            phase: None,
+        });
+    }
+    segments
+}
+
+/// A bar splitting the total time across the timeline, plus its legend.
+pub(crate) fn time_bar(records: &[PhaseRecord], total: Duration, color: bool) -> (String, String) {
+    const GAP_SHADE: u8 = 240;
+    let segments = timeline(records, total);
+    let total_secs = total.as_secs_f64().max(f64::EPSILON);
+    let mut bar = String::new();
+    let mut legend = Vec::new();
+    let mut used = 0usize;
+    let mut phase_index = 0usize;
+    for seg in &segments {
+        let share = seg.duration.as_secs_f64() / total_secs;
+        let cells = ((share * TIME_BAR_WIDTH as f64).round() as usize)
+            .max(usize::from(share > 0.0))
+            .min(TIME_BAR_WIDTH - used);
+        let (glyph, shade) = match seg.phase {
+            Some(phase) => {
+                let glyph = PLAIN_SEGMENTS[phase_index % PLAIN_SEGMENTS.len()];
+                phase_index += 1;
+                (glyph, phase_palette(phase)[3])
+            }
+            None => ('·', GAP_SHADE),
+        };
+        let (cell, marker) = if color {
+            ('█', '■')
+        } else {
+            (glyph, glyph)
+        };
+        let run: String = std::iter::repeat_n(cell, cells).collect();
+        bar.push_str(&if color {
+            format!("\x1b[38;5;{shade}m{run}\x1b[0m")
+        } else {
+            run
+        });
+        used += cells;
+        // Small gaps stay in the bar but out of the legend.
+        if seg.phase.is_none() && share < 0.03 {
+            continue;
+        }
+        let name = seg.name.to_lowercase();
+        let dur = format_duration(seg.duration);
+        legend.push(if color {
+            format!("\x1b[38;5;{shade}m{marker}\x1b[0m {name} {dur}")
+        } else {
+            format!("{marker} {name} {dur}")
+        });
+    }
+    if used < TIME_BAR_WIDTH {
+        bar.push_str(&" ".repeat(TIME_BAR_WIDTH - used));
+    }
+    (bar, legend.join("  "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rec(
+        phase: ProgressPhase,
+        unit: ProgressUnit,
+        start_ms: u64,
+        ms: u64,
+        count: u64,
+    ) -> PhaseRecord {
+        PhaseRecord {
+            phase,
+            unit,
+            count,
+            started_at: Duration::from_millis(start_ms),
+            elapsed: Duration::from_millis(ms),
+            samples: vec![1.0, 2.0],
+            peak_rate: 4.0 * 1024.0 * 1024.0,
+        }
+    }
+
+    #[test]
+    fn timeline_names_gaps_between_phases() {
+        let records = vec![
+            rec(
+                ProgressPhase::ReceivingObjects,
+                ProgressUnit::Bytes,
+                500,
+                1000,
+                10,
+            ),
+            rec(
+                ProgressPhase::IndexingObjects,
+                ProgressUnit::Objects,
+                1500,
+                200,
+                10,
+            ),
+            rec(
+                ProgressPhase::CheckingOutFiles,
+                ProgressUnit::Files,
+                1900,
+                50,
+                10,
+            ),
+        ];
+        let names: Vec<&str> = timeline(&records, Duration::from_secs(2))
+            .iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "connect",
+                "Receiving",
+                "Indexing",
+                "other",
+                "Checkout",
+                "finish"
+            ]
+        );
+    }
+
+    #[test]
+    fn time_bar_fills_its_width_and_lists_phases() {
+        let records = vec![
+            rec(
+                ProgressPhase::ReceivingObjects,
+                ProgressUnit::Bytes,
+                0,
+                1500,
+                10,
+            ),
+            rec(
+                ProgressPhase::CheckingOutFiles,
+                ProgressUnit::Files,
+                1500,
+                500,
+                10,
+            ),
+        ];
+        let (bar, legend) = time_bar(&records, Duration::from_secs(2), false);
+        assert_eq!(bar.chars().count(), TIME_BAR_WIDTH);
+        assert_eq!(bar.chars().filter(|&c| c == '█').count(), 30);
+        assert!(legend.contains("receiving 1.5s"), "{legend}");
+        assert!(legend.contains("checkout 500ms"), "{legend}");
+    }
+
+    #[test]
+    fn summary_from_stats_keeps_counts_and_types() {
+        let stats = TransferStats {
+            objects: 7,
+            bytes: 2048,
+            kinds: Some(ObjectKindCounts {
+                commits: 2,
+                trees: 2,
+                blobs: 3,
+                tags: 0,
+            }),
+        };
+        let summary = TransferSummary::new(stats, Vec::new(), Duration::from_secs(1));
+        assert!(summary.received_anything());
+        assert_eq!(summary.objects, 7);
+        assert_eq!(summary.bytes, 2048);
+        assert_eq!(
+            summary.object_types,
+            Some(ObjectTypes {
+                commits: 2,
+                trees: 2,
+                blobs: 3,
+                tags: 0
+            })
+        );
+        assert!(!TransferSummary::default().received_anything());
+    }
+
+    #[test]
+    fn rows_report_time_data_and_objects_without_color() {
+        let summary = TransferSummary {
+            elapsed: Duration::from_secs(2),
+            records: vec![rec(
+                ProgressPhase::ReceivingObjects,
+                ProgressUnit::Bytes,
+                0,
+                1000,
+                2 * 1024 * 1024,
+            )],
+            objects: 1_234,
+            bytes: 2 * 1024 * 1024,
+            object_types: Some(ObjectTypes {
+                commits: 100,
+                trees: 400,
+                blobs: 734,
+                tags: 0,
+            }),
+        };
+        let mut out = Vec::new();
+        summary.render_rows(&mut out, false).expect("render");
+        let text = String::from_utf8(out).expect("utf8");
+        let rows: Vec<&str> = text.lines().collect();
+        assert_eq!(rows.len(), 4, "{text}");
+        assert!(rows[0].starts_with("  time      "), "{text}");
+        assert!(rows[0].ends_with("  2.0s"), "{text}");
+        assert!(
+            rows[2].contains("2.00 MiB received · 2.00 MiB/s avg · 4.00 MiB/s peak"),
+            "{text}"
+        );
+        assert!(
+            rows[3].contains("1,234 · 100 commits · 400 trees · 734 blobs"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("0 tags"),
+            "zero type counts are omitted: {text}"
+        );
+        assert!(!text.contains('\x1b'), "no escapes without color: {text}");
+    }
+
+    #[test]
+    fn data_row_reports_wire_bytes_not_the_completed_thin_pack() {
+        let summary = TransferSummary {
+            elapsed: Duration::from_secs(2),
+            records: vec![rec(
+                ProgressPhase::ReceivingObjects,
+                ProgressUnit::Bytes,
+                0,
+                1000,
+                1024 * 1024,
+            )],
+            objects: 10,
+            // The stored pack grew when its delta bases were appended.
+            bytes: 3 * 1024 * 1024,
+            object_types: None,
+        };
+        let mut out = Vec::new();
+        summary.render_rows(&mut out, false).expect("render");
+        let text = String::from_utf8(out).expect("utf8");
+        assert!(
+            text.contains("1.00 MiB received · 1.00 MiB/s avg"),
+            "{text}"
+        );
+        assert!(!text.contains("3.00 MiB"), "{text}");
+    }
+
+    #[test]
+    fn data_row_sums_receiving_phases_across_remotes() {
+        let mut second = rec(
+            ProgressPhase::ReceivingObjects,
+            ProgressUnit::Bytes,
+            1500,
+            1000,
+            3 * 1024 * 1024,
+        );
+        second.peak_rate = 8.0 * 1024.0 * 1024.0;
+        let summary = TransferSummary {
+            elapsed: Duration::from_secs(3),
+            records: vec![
+                rec(
+                    ProgressPhase::ReceivingObjects,
+                    ProgressUnit::Bytes,
+                    0,
+                    1000,
+                    1024 * 1024,
+                ),
+                second,
+            ],
+            objects: 20,
+            bytes: 4 * 1024 * 1024,
+            object_types: None,
+        };
+        let mut out = Vec::new();
+        summary.render_rows(&mut out, false).expect("render");
+        let text = String::from_utf8(out).expect("utf8");
+        assert!(
+            text.contains("4.00 MiB received · 2.00 MiB/s avg · 8.00 MiB/s peak"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn data_row_omits_rates_for_an_untimed_burst() {
+        let mut burst = rec(
+            ProgressPhase::ReceivingObjects,
+            ProgressUnit::Bytes,
+            0,
+            0,
+            201 * 1024,
+        );
+        burst.peak_rate = 0.0;
+        let summary = TransferSummary {
+            elapsed: Duration::from_secs(1),
+            records: vec![burst],
+            objects: 249,
+            bytes: 201 * 1024,
+            object_types: None,
+        };
+        let mut out = Vec::new();
+        summary.render_rows(&mut out, false).expect("render");
+        let text = String::from_utf8(out).expect("utf8");
+        assert!(text.contains("  data      201 KiB received\n"), "{text}");
+    }
+
+    #[test]
+    fn data_row_drops_a_peak_below_the_average() {
+        let mut recv = rec(
+            ProgressPhase::ReceivingObjects,
+            ProgressUnit::Bytes,
+            0,
+            1000,
+            2 * 1024 * 1024,
+        );
+        recv.peak_rate = 1024.0;
+        let summary = TransferSummary {
+            elapsed: Duration::from_secs(2),
+            records: vec![recv],
+            objects: 5,
+            bytes: 2 * 1024 * 1024,
+            object_types: None,
+        };
+        let mut out = Vec::new();
+        summary.render_rows(&mut out, false).expect("render");
+        let text = String::from_utf8(out).expect("utf8");
+        assert!(text.contains("2.00 MiB/s avg\n"), "{text}");
+        assert!(!text.contains("peak"), "{text}");
+    }
+
+    #[test]
+    fn data_row_falls_back_to_pack_size_for_local_copies() {
+        let summary = TransferSummary {
+            elapsed: Duration::from_millis(10),
+            records: vec![rec(
+                ProgressPhase::CopyingObjects,
+                ProgressUnit::Objects,
+                0,
+                5,
+                3,
+            )],
+            objects: 3,
+            bytes: 293,
+            object_types: None,
+        };
+        let mut out = Vec::new();
+        summary.render_rows(&mut out, false).expect("render");
+        let text = String::from_utf8(out).expect("utf8");
+        assert!(text.contains("  data      293 B received\n"), "{text}");
+    }
+
+    #[test]
+    fn header_names_the_remote_and_its_url_once() {
+        assert_eq!(
+            transfer_header(
+                "Fetching",
+                "origin",
+                Some("https://example.com/r.git"),
+                false
+            ),
+            "Fetching origin https://example.com/r.git"
+        );
+        assert_eq!(
+            transfer_header("Fetching", "../r.git", Some("../r.git"), false),
+            "Fetching ../r.git"
+        );
+        assert_eq!(
+            transfer_header("Pulling", "origin", None, false),
+            "Pulling origin"
+        );
+    }
+
+    #[test]
+    fn rows_are_empty_when_nothing_was_received() {
+        let mut out = Vec::new();
+        TransferSummary::default()
+            .render_rows(&mut out, false)
+            .expect("render");
+        assert!(out.is_empty());
+    }
+}

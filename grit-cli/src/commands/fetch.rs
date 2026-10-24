@@ -2,13 +2,14 @@
 
 use crate::commands::fetch_args::FetchArgs;
 use crate::output::OutputMode;
+use crate::progress::summary::{stdout_color, transfer_header, TransferSummary};
 use crate::progress::TerminalProgress;
 use anyhow::{Context, Result};
 use grit_lib::config::ConfigSet;
 use grit_lib::remote::fetch_request::{resolve_fetch_invocation, resolve_remote_argument};
 use grit_lib::remote::transfer::{
     resolve_fetch_prune, resolve_fetch_tags, FetchDepth, FetchOptions,
-    FetchOutcome as LibFetchOutcome, TagMode, UpdateMode,
+    FetchOutcome as LibFetchOutcome, TagMode, TransferStats, UpdateMode,
 };
 use grit_lib::remote::{DefaultHttpClientFactory, RemoteError, DEFAULT_REMOTE};
 use schemars::JsonSchema;
@@ -34,6 +35,10 @@ pub struct FetchOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub shallow: Option<FetchShallowDelta>,
+    /// What was received and where the time went, for the human summary.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub transfer: TransferSummary,
 }
 
 /// Shallow boundaries added or removed by this fetch (`--json` only).
@@ -49,6 +54,10 @@ pub struct FetchAllOutcome {
     pub remotes: Vec<FetchAllRemoteOutcome>,
     pub updated: usize,
     pub dry_run: bool,
+    /// Totals across every remote, for the human summary.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub transfer: TransferSummary,
 }
 
 /// One remote's result inside [`FetchAllOutcome`].
@@ -101,10 +110,11 @@ impl HumanRender for FetchAllOutcome {
                     .iter()
                     .any(|u| u.status == FetchUpdateStatus::Rejected),
                 shallow: None,
+                transfer: TransferSummary::default(),
             };
             one.render_human(w, ctx)?;
         }
-        Ok(())
+        render_transfer(&self.transfer, w)
     }
 }
 
@@ -126,6 +136,7 @@ impl MarkdownRender for FetchAllOutcome {
                     .iter()
                     .any(|u| u.status == FetchUpdateStatus::Rejected),
                 shallow: None,
+                transfer: TransferSummary::default(),
             };
             one.render_markdown(w, ctx)?;
         }
@@ -223,8 +234,18 @@ impl HumanRender for FetchOutcome {
                 self.remote
             );
         }
-        Ok(())
+        render_transfer(&self.transfer, w)
     }
+}
+
+/// The time bar and data/objects rows under a fetch's ref list, when the
+/// fetch received anything.
+fn render_transfer(transfer: &TransferSummary, w: &mut dyn Write) -> Result<()> {
+    if !transfer.received_anything() {
+        return Ok(());
+    }
+    outln!(w);
+    transfer.render_rows(w, stdout_color())
 }
 
 impl MarkdownRender for FetchOutcome {
@@ -261,12 +282,12 @@ fn run_one(args: &FetchArgs, mode: OutputMode) -> Result<FetchOutcome> {
     let tags = resolve_fetch_tags(&config, &remote_name, args.tag_mode_override());
 
     let factory = DefaultHttpClientFactory;
-    let progress = if args.quiet {
+    // No checkout follows a fetch, so the overall bar ends with the pack.
+    let mut progress = if args.quiet {
         TerminalProgress::quiet(mode)
     } else {
-        TerminalProgress::new(mode)
+        TerminalProgress::new(mode).with_overall(false)
     };
-    let mut progress = progress;
     if matches!(args.depth, Some(0)) {
         return Err(anyhow::anyhow!("--depth requires a positive integer"));
     }
@@ -279,6 +300,18 @@ fn run_one(args: &FetchArgs, mode: OutputMode) -> Result<FetchOutcome> {
     }
     if args.deepen.is_some() && fetch_depth.is_none() {
         return Err(anyhow::anyhow!("--deepen requires a positive integer"));
+    }
+    let url = config.get(&format!("remote.{remote_name}.url"));
+    if progress.is_drawing() {
+        eprintln!(
+            "{}",
+            transfer_header(
+                "Fetching",
+                &remote_name,
+                url.as_deref(),
+                progress.uses_color()
+            )
+        );
     }
     let result = match fetch_once(
         &repo,
@@ -293,10 +326,7 @@ fn run_one(args: &FetchArgs, mode: OutputMode) -> Result<FetchOutcome> {
     ) {
         Ok(result) => result,
         Err(err) => {
-            let url = config
-                .get(&format!("remote.{remote_name}.url"))
-                .unwrap_or_default();
-            if auth::offer_reauth(&err, &url)? {
+            if auth::offer_reauth(&err, url.as_deref().unwrap_or_default())? {
                 fetch_once(
                     &repo,
                     &config,
@@ -316,6 +346,11 @@ fn run_one(args: &FetchArgs, mode: OutputMode) -> Result<FetchOutcome> {
 
     let (updates, updated, rejected) = map_updates(&result, args.dry_run);
     let shallow = shallow_json(&result, fetch_depth.is_some());
+    let transfer = TransferSummary::new(
+        result.transfer,
+        progress.phases().to_vec(),
+        progress.elapsed(),
+    );
 
     Ok(FetchOutcome {
         remote: remote_name,
@@ -324,6 +359,7 @@ fn run_one(args: &FetchArgs, mode: OutputMode) -> Result<FetchOutcome> {
         dry_run: args.dry_run,
         rejected,
         shallow,
+        transfer,
     })
 }
 
@@ -372,9 +408,11 @@ fn run_all(args: &FetchArgs, mode: OutputMode) -> Result<FetchAllOutcome> {
 
     let mut remotes = Vec::new();
     let mut total_updated = 0usize;
+    let mut received = TransferStats::default();
     for (name, result) in raw {
         match result {
             Ok(outcome) => {
+                received += outcome.transfer;
                 let (updates, updated, _rejected) = map_updates(&outcome, args.dry_run);
                 total_updated += updated;
                 remotes.push(FetchAllRemoteOutcome {
@@ -398,6 +436,7 @@ fn run_all(args: &FetchArgs, mode: OutputMode) -> Result<FetchAllOutcome> {
         remotes,
         updated: total_updated,
         dry_run: args.dry_run,
+        transfer: TransferSummary::new(received, progress.phases().to_vec(), progress.elapsed()),
     })
 }
 

@@ -2,7 +2,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Result;
 use grit_lib::remote::clone::{
@@ -16,21 +16,11 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::output::{outln, progress, HumanRender, MarkdownRender, OutputMode, RenderContext};
-use crate::progress::{
-    format_bytes, format_duration, format_rate, group_digits, paint, phase_label, phase_palette,
-    PhaseRecord, TerminalProgress, BOLD, DIM,
+use crate::progress::summary::{
+    join, plural, row_label, stdout_color, ObjectTypes, TransferSummary,
 };
+use crate::progress::{format_bytes, format_duration, paint, TerminalProgress, BOLD, DIM};
 use grit_lib::progress::{ProgressPhase, ProgressUnit};
-
-/// Objects received, by type.
-#[derive(Serialize, JsonSchema, Clone, Copy)]
-pub struct ObjectTypes {
-    pub commits: u64,
-    pub trees: u64,
-    pub blobs: u64,
-    /// Annotated tag objects (not refs).
-    pub tags: u64,
-}
 
 /// Timing for one step of the clone.
 #[derive(Serialize, JsonSchema)]
@@ -198,12 +188,10 @@ pub struct CloneOutcome {
     /// Remote branch names that have commits when `no_checkout_reason` is `unborn_default_branch`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branches_with_commits: Option<Vec<String>>,
+    /// Timing and transfer totals for the human summary.
     #[serde(skip)]
     #[schemars(skip)]
-    pub elapsed: Duration,
-    #[serde(skip)]
-    #[schemars(skip)]
-    records: Vec<PhaseRecord>,
+    pub transfer: TransferSummary,
 }
 
 impl CloneOutcome {
@@ -227,20 +215,11 @@ impl HumanRender for CloneOutcome {
     }
 }
 
-/// Whether the human summary on stdout should use ANSI color.
-fn stdout_color() -> bool {
-    grit_lib::porcelain::terminal::stdout_supports_color() && std::env::var_os("NO_COLOR").is_none()
-}
-
-/// Glyphs for the time bar when color is off, so phases stay distinguishable.
-const PLAIN_SEGMENTS: [char; 4] = ['█', '▓', '▒', '░'];
-const TIME_BAR_WIDTH: usize = 40;
-
 /// The end-of-clone overview: where it went, how long each step took, and
 /// what was transferred.
 fn render_summary(o: &CloneOutcome, w: &mut dyn Write, color: bool) -> Result<()> {
-    let label = |text: &str| paint(color, DIM, &format!("{text:<8}"));
-    let total = format_duration(o.elapsed);
+    let label = |text: &str| row_label(color, text);
+    let total = format_duration(o.transfer.elapsed);
     if color {
         // Separate the summary from the progress lines above it on a terminal.
         outln!(w);
@@ -263,41 +242,7 @@ fn render_summary(o: &CloneOutcome, w: &mut dyn Write, color: bool) -> Result<()
     }
     outln!(w);
 
-    if !o.records.is_empty() {
-        let (bar, legend) = time_bar(&o.records, o.elapsed, color);
-        outln!(w, "  {}  {bar}  {total}", label("time"));
-        outln!(w, "  {}  {legend}", label(""));
-    }
-
-    if o.bytes > 0 {
-        let mut data = vec![format!("{} received", format_bytes(o.bytes))];
-        if let Some(recv) = o
-            .records
-            .iter()
-            .find(|r| r.unit == ProgressUnit::Bytes && r.count > 0)
-        {
-            data.push(format!("{} avg", format_rate(recv.avg_rate())));
-            data.push(format!("{} peak", format_rate(recv.peak_rate)));
-        }
-        outln!(w, "  {}  {}", label("data"), join(&data, color));
-    }
-
-    if o.objects > 0 {
-        let mut objects = vec![group_digits(o.objects)];
-        if let Some(t) = o.object_types {
-            for (n, one, many) in [
-                (t.commits, "commit", "commits"),
-                (t.trees, "tree", "trees"),
-                (t.blobs, "blob", "blobs"),
-                (t.tags, "tag", "tags"),
-            ] {
-                if n > 0 {
-                    objects.push(plural(n, one, many));
-                }
-            }
-        }
-        outln!(w, "  {}  {}", label("objects"), join(&objects, color));
-    }
+    o.transfer.render_rows(w, color)?;
 
     outln!(
         w,
@@ -337,111 +282,6 @@ fn checkout_label(o: &CloneOutcome) -> String {
     }
 }
 
-fn plural(n: u64, one: &str, many: &str) -> String {
-    format!("{} {}", group_digits(n), if n == 1 { one } else { many })
-}
-
-fn join(parts: &[String], color: bool) -> String {
-    parts.join(&paint(color, DIM, " · "))
-}
-
-/// One stretch of the clone's timeline: a progress phase, or a gap between them.
-struct Segment {
-    name: &'static str,
-    duration: Duration,
-    phase: Option<ProgressPhase>,
-}
-
-/// Lay the phases out on the clone's timeline, naming the gaps: before the
-/// first byte arrives (connecting, ref negotiation, the server building the
-/// pack), between phases, and after the last one (writing refs and config).
-fn timeline(records: &[PhaseRecord], total: Duration) -> Vec<Segment> {
-    const MIN_GAP: Duration = Duration::from_millis(5);
-    let mut segments = Vec::new();
-    let mut cursor = Duration::ZERO;
-    for rec in records {
-        let gap = rec.started_at.saturating_sub(cursor);
-        if gap > MIN_GAP {
-            segments.push(Segment {
-                name: if segments.is_empty() {
-                    "connect"
-                } else {
-                    "other"
-                },
-                duration: gap,
-                phase: None,
-            });
-        }
-        segments.push(Segment {
-            name: phase_label(rec.phase),
-            duration: rec.elapsed,
-            phase: Some(rec.phase),
-        });
-        cursor = rec.started_at + rec.elapsed;
-    }
-    let tail = total.saturating_sub(cursor);
-    if tail > MIN_GAP {
-        segments.push(Segment {
-            name: "finish",
-            duration: tail,
-            phase: None,
-        });
-    }
-    segments
-}
-
-/// A bar splitting the total time across the timeline, plus its legend.
-fn time_bar(records: &[PhaseRecord], total: Duration, color: bool) -> (String, String) {
-    const GAP_SHADE: u8 = 240;
-    let segments = timeline(records, total);
-    let total_secs = total.as_secs_f64().max(f64::EPSILON);
-    let mut bar = String::new();
-    let mut legend = Vec::new();
-    let mut used = 0usize;
-    let mut phase_index = 0usize;
-    for seg in &segments {
-        let share = seg.duration.as_secs_f64() / total_secs;
-        let cells = ((share * TIME_BAR_WIDTH as f64).round() as usize)
-            .max(usize::from(share > 0.0))
-            .min(TIME_BAR_WIDTH - used);
-        let (glyph, shade) = match seg.phase {
-            Some(phase) => {
-                let glyph = PLAIN_SEGMENTS[phase_index % PLAIN_SEGMENTS.len()];
-                phase_index += 1;
-                (glyph, phase_palette(phase)[3])
-            }
-            None => ('·', GAP_SHADE),
-        };
-        let (cell, marker) = if color {
-            ('█', '■')
-        } else {
-            (glyph, glyph)
-        };
-        let run: String = std::iter::repeat_n(cell, cells).collect();
-        bar.push_str(&if color {
-            format!("\x1b[38;5;{shade}m{run}\x1b[0m")
-        } else {
-            run
-        });
-        used += cells;
-        // Small gaps stay in the bar but out of the legend.
-        if seg.phase.is_none() && share < 0.03 {
-            continue;
-        }
-        let name = seg.name.to_lowercase();
-        let dur = format_duration(seg.duration);
-        legend.push(if color {
-            format!("\x1b[38;5;{shade}m{marker}\x1b[0m {name} {dur}")
-        } else {
-            format!("{marker} {name} {dur}")
-        });
-    }
-    if used < TIME_BAR_WIDTH {
-        bar.push_str(&" ".repeat(TIME_BAR_WIDTH - used));
-    }
-    (bar, legend.join("  "))
-}
-
 fn phase_json_name(phase: ProgressPhase) -> &'static str {
     match phase {
         ProgressPhase::ReceivingObjects => "receiving",
@@ -464,7 +304,7 @@ fn unit_json_name(unit: ProgressUnit) -> &'static str {
 impl MarkdownRender for CloneOutcome {
     fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         let size = format_bytes(self.bytes);
-        let secs = self.elapsed.as_secs_f64();
+        let secs = self.transfer.elapsed.as_secs_f64();
         outln!(w, "## Clone complete");
         outln!(w);
         outln!(w, "- **path**: `{}`", self.path);
@@ -731,8 +571,8 @@ fn clone_into(
             (reason, tips)
         }
     };
-    let records = term_progress.phases().to_vec();
     let elapsed = started.elapsed();
+    let transfer = TransferSummary::new(outcome.transfer, term_progress.phases().to_vec(), elapsed);
 
     let (branch, detached, tag) = match &outcome.head {
         CloneHead::Branch(name) => (Some(name.clone()), false, None),
@@ -756,15 +596,11 @@ fn clone_into(
         branches: outcome.branches,
         tags: outcome.tags,
         files,
-        object_types: outcome.transfer.kinds.map(|k| ObjectTypes {
-            commits: k.commits,
-            trees: k.trees,
-            blobs: k.blobs,
-            tags: k.tags,
-        }),
+        object_types: transfer.object_types,
         worktree_bytes,
         seconds: elapsed.as_secs_f64(),
-        phases: records
+        phases: transfer
+            .records
             .iter()
             .map(|r| ClonePhase {
                 phase: phase_json_name(r.phase).to_owned(),
@@ -773,8 +609,7 @@ fn clone_into(
                 seconds: r.elapsed.as_secs_f64(),
             })
             .collect(),
-        elapsed,
-        records,
+        transfer,
         no_checkout_reason,
         branches_with_commits,
         bare: outcome.bare,
@@ -784,6 +619,8 @@ fn clone_into(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::progress::PhaseRecord;
+    use std::time::Duration;
 
     fn rec(
         phase: ProgressPhase,
@@ -799,11 +636,17 @@ mod tests {
             started_at: Duration::from_millis(start_ms),
             elapsed: Duration::from_millis(ms),
             samples: vec![1.0, 2.0],
-            peak_rate: 4096.0,
+            peak_rate: 4.0 * 1024.0 * 1024.0,
         }
     }
 
     fn outcome(records: Vec<PhaseRecord>) -> CloneOutcome {
+        let object_types = Some(ObjectTypes {
+            commits: 100,
+            trees: 400,
+            blobs: 734,
+            tags: 0,
+        });
         CloneOutcome {
             url: "https://example.com/r.git".to_owned(),
             path: "r".to_owned(),
@@ -821,88 +664,21 @@ mod tests {
             branches: 1,
             tags: 3,
             files: 42,
-            object_types: Some(ObjectTypes {
-                commits: 100,
-                trees: 400,
-                blobs: 734,
-                tags: 0,
-            }),
+            object_types,
             worktree_bytes: 512 * 1024,
             seconds: 2.0,
             phases: Vec::new(),
-            elapsed: Duration::from_secs(2),
-            records,
+            transfer: TransferSummary {
+                elapsed: Duration::from_secs(2),
+                records,
+                objects: 1_234,
+                bytes: 2 * 1024 * 1024,
+                object_types,
+            },
             no_checkout_reason: None,
             branches_with_commits: None,
             bare: false,
         }
-    }
-
-    #[test]
-    fn timeline_names_gaps_between_phases() {
-        let records = vec![
-            rec(
-                ProgressPhase::ReceivingObjects,
-                ProgressUnit::Bytes,
-                500,
-                1000,
-                10,
-            ),
-            rec(
-                ProgressPhase::IndexingObjects,
-                ProgressUnit::Objects,
-                1500,
-                200,
-                10,
-            ),
-            rec(
-                ProgressPhase::CheckingOutFiles,
-                ProgressUnit::Files,
-                1900,
-                50,
-                10,
-            ),
-        ];
-        let names: Vec<&str> = timeline(&records, Duration::from_secs(2))
-            .iter()
-            .map(|s| s.name)
-            .collect();
-        assert_eq!(
-            names,
-            [
-                "connect",
-                "Receiving",
-                "Indexing",
-                "other",
-                "Checkout",
-                "finish"
-            ]
-        );
-    }
-
-    #[test]
-    fn time_bar_fills_its_width_and_lists_phases() {
-        let records = vec![
-            rec(
-                ProgressPhase::ReceivingObjects,
-                ProgressUnit::Bytes,
-                0,
-                1500,
-                10,
-            ),
-            rec(
-                ProgressPhase::CheckingOutFiles,
-                ProgressUnit::Files,
-                1500,
-                500,
-                10,
-            ),
-        ];
-        let (bar, legend) = time_bar(&records, Duration::from_secs(2), false);
-        assert_eq!(bar.chars().count(), TIME_BAR_WIDTH);
-        assert_eq!(bar.chars().filter(|&c| c == '█').count(), 30);
-        assert!(legend.contains("receiving 1.5s"), "{legend}");
-        assert!(legend.contains("checkout 500ms"), "{legend}");
     }
 
     #[test]
@@ -922,7 +698,7 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("2.00 MiB received · 2.00 MiB/s avg · 4.00 KiB/s peak"),
+            text.contains("2.00 MiB received · 2.00 MiB/s avg · 4.00 MiB/s peak"),
             "{text}"
         );
         assert!(
@@ -948,6 +724,10 @@ mod tests {
         o.bytes = 0;
         o.files = 0;
         o.object_types = None;
+        o.transfer = TransferSummary {
+            elapsed: Duration::from_secs(2),
+            ..TransferSummary::default()
+        };
         let mut out = Vec::new();
         render_summary(&o, &mut out, false).expect("render");
         let text = String::from_utf8(out).expect("utf8");

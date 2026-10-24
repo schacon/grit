@@ -9,6 +9,7 @@ use crate::commands::fetch::map_remote_error;
 use crate::commands::fetch_args::FetchArgs;
 use crate::context;
 use crate::output::OutputMode;
+use crate::progress::summary::transfer_header;
 use crate::progress::TerminalProgress;
 use anyhow::{Context, Result};
 use grit_lib::config::ConfigSet;
@@ -72,20 +73,30 @@ pub fn run(args: &PullRunArgs, mode: OutputMode) -> Result<PullOutcome> {
     };
     let remote_name = invocation.remote;
     let factory = DefaultHttpClientFactory;
-    let progress = if args.fetch.quiet {
+    // The work-tree update after the fetch reports no progress, so the overall
+    // bar covers the transfer only.
+    let mut progress = if args.fetch.quiet {
         TerminalProgress::quiet(mode)
     } else {
-        TerminalProgress::new(mode)
+        TerminalProgress::new(mode).with_overall(false)
     };
-    let mut progress = progress;
+    let url = config.get(&format!("remote.{remote_name}.url"));
+    if progress.is_drawing() && remote_name != "." {
+        eprintln!(
+            "{}",
+            transfer_header(
+                "Pulling",
+                &remote_name,
+                url.as_deref(),
+                progress.uses_color()
+            )
+        );
+    }
     let lib = match pull(&repo, &options, &mut progress, Some(&factory)) {
         Ok(outcome) => outcome,
         Err(PullError::Remote(remote_err)) => {
-            let url = config
-                .get(&format!("remote.{remote_name}.url"))
-                .unwrap_or_default();
             let mapped = map_remote_error(remote_err);
-            if auth::offer_reauth(&mapped, &url)? {
+            if auth::offer_reauth(&mapped, url.as_deref().unwrap_or_default())? {
                 pull(&repo, &options, &mut progress, Some(&factory))?
             } else {
                 return Err(mapped);
@@ -98,7 +109,10 @@ pub fn run(args: &PullRunArgs, mode: OutputMode) -> Result<PullOutcome> {
             });
         }
     };
-    Ok(map_outcome(lib))
+    let mut outcome = map_outcome(lib);
+    outcome.transfer.records = progress.phases().to_vec();
+    outcome.transfer.elapsed = progress.elapsed();
+    Ok(outcome)
 }
 
 /// Exit code for `grit pull --check` (0 when up-to-date or fast-forward is possible).

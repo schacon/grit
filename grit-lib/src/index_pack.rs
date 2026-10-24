@@ -80,6 +80,15 @@ impl ObjectKindCounts {
     }
 }
 
+impl std::ops::AddAssign for ObjectKindCounts {
+    fn add_assign(&mut self, other: Self) {
+        self.commits += other.commits;
+        self.trees += other.trees;
+        self.blobs += other.blobs;
+        self.tags += other.tags;
+    }
+}
+
 impl FromIterator<ObjectKind> for ObjectKindCounts {
     fn from_iter<I: IntoIterator<Item = ObjectKind>>(iter: I) -> Self {
         let mut counts = Self::default();
