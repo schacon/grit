@@ -725,6 +725,9 @@ mod history_squash;
 #[path = "history_undo.rs"]
 mod history_undo;
 #[cfg(feature = "full-tests")]
+#[path = "hooks_path_relative.rs"]
+mod hooks_path_relative;
+#[cfg(feature = "full-tests")]
 #[path = "hooks_spawn.rs"]
 mod hooks_spawn;
 #[cfg(feature = "full-tests")]

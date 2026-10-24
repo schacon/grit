@@ -144,6 +144,9 @@ mod commit_hook_output;
 #[cfg(feature = "full-tests")]
 #[path = "commit_hook_spawn_errors.rs"]
 mod commit_hook_spawn_errors;
+#[cfg(feature = "full-tests")]
+#[path = "commit_hooks_path_subdir.rs"]
+mod commit_hooks_path_subdir;
 #[path = "commit_hunks.rs"]
 mod commit_hunks;
 #[cfg(feature = "full-tests")]
