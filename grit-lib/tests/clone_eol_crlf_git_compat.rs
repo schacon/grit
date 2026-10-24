@@ -158,3 +158,46 @@ fn checkout_populated_tree_smudge_when_gitattributes_sorts_before_target() {
     checkout_between_trees(&repo, None, &tree).expect("checkout");
     assert_worktree_crlf(dest.path());
 }
+
+#[test]
+fn populated_tree_fallback_still_applies_eol_gitattributes() {
+    let upstream = tempfile::tempdir().expect("upstream");
+    assert!(git(upstream.path(), &["init", "-q", "-b", "main", "."]));
+    std::fs::write(
+        upstream.path().join(".gitattributes"),
+        b"*.txt text eol=crlf\n",
+    )
+    .expect("attrs");
+    std::fs::write(upstream.path().join("f.txt"), b"a\nb\n").expect("file");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("f.txt", upstream.path().join("link")).expect("symlink");
+    #[cfg(not(unix))]
+    return;
+    assert!(git(upstream.path(), &["add", "."]));
+    assert!(git(
+        upstream.path(),
+        &[
+            "-c",
+            "user.name=a",
+            "-c",
+            "user.email=a@e.invalid",
+            "commit",
+            "-qm",
+            "x"
+        ]
+    ));
+
+    let dest = tempfile::tempdir().expect("dest");
+    grit_clone_and_checkout(upstream.path(), dest.path());
+    let tree = tree_of_head(dest.path());
+    let repo =
+        Repository::discover(Some(dest.path()), &RepositoryOptions::empty()).expect("open clone");
+
+    let mut index = Index::new();
+    repo.index_handle().write(&mut index).expect("clear index");
+    std::fs::remove_file(dest.path().join("f.txt")).expect("remove f.txt");
+    std::fs::remove_file(dest.path().join("link")).expect("remove link");
+
+    checkout_between_trees(&repo, None, &tree).expect("populate via slow chunk path");
+    assert_worktree_crlf(dest.path());
+}

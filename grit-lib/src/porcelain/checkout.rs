@@ -16,6 +16,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use crate::config::ConfigSet;
 use crate::crlf::{self, ConversionConfig};
@@ -208,16 +209,18 @@ fn checkout_populated_tree(
     let mut loaded_index = repo.load_index()?;
     let index_mut = &mut loaded_index;
 
-    let rules = if tree_contains_dot_gitattributes(repo.odb(), tree_oid, "", protect)? {
-        let mut prospective = Index::new();
-        for entry in crate::porcelain::merge::tree_to_index_entries(repo, tree_oid, "")? {
-            prospective.add_or_replace(entry);
-        }
-        prospective.sort();
-        WorktreeRules::from_checkout_prospective_index(repo, &prospective, config.clone())?
-    } else {
-        checkout_worktree_rules(repo, index_mut, &[], config.clone())?
-    };
+    let rules = Rc::new(
+        if tree_contains_dot_gitattributes(repo.odb(), tree_oid, "", protect)? {
+            let mut prospective = Index::new();
+            for entry in crate::porcelain::merge::tree_to_index_entries(repo, tree_oid, "")? {
+                prospective.add_or_replace(entry);
+            }
+            prospective.sort();
+            WorktreeRules::from_checkout_prospective_index(repo, &prospective, config.clone())?
+        } else {
+            checkout_worktree_rules(repo, index_mut, &[], config.clone())?
+        },
+    );
     let conv = rules.conversion().clone();
 
     let mut walk = PopulatedTreeWalk::new(repo.odb(), tree_oid, protect)?;
@@ -225,6 +228,7 @@ fn checkout_populated_tree(
     let mut apply = CheckoutApplyOptions {
         parallel_prepare_blobs: false,
         checkout_result_tree: Some(*tree_oid),
+        precomputed_worktree_rules: Some(Rc::clone(&rules)),
         ..CheckoutApplyOptions::default()
     };
     let mut deferred_index_flush = false;
@@ -233,8 +237,9 @@ fn checkout_populated_tree(
         deferred_index_flush = chunk.len() == POPULATED_TREE_CHECKOUT_CHUNK;
         apply.defer_index_disk_write = deferred_index_flush;
         let changes: Vec<DiffEntry> = chunk.iter().map(populated_blob_to_added_diff).collect();
+        prefetch_promisor_blobs_for_checkout(repo, &changes)?;
         let mut chunk_progress = ChunkProgressSink(progress);
-        if bulk_write_checkout_eligible(&changes, &rules)
+        if bulk_write_checkout_eligible(&changes, rules.as_ref())
             && tree_changes_are_all_additions(&changes)
         {
             checkout_bulk_added_tree_changes(
@@ -242,7 +247,7 @@ fn checkout_populated_tree(
                 work_tree,
                 &changes,
                 index_mut,
-                &rules,
+                rules.as_ref(),
                 &config,
                 &conv,
                 apply.clone(),
@@ -318,9 +323,9 @@ pub fn checkout_between_trees(
 
 /// Like [`checkout_between_trees`], reporting checkout progress to `progress`.
 ///
-/// Populated-tree checkouts emit [`ProgressPhase::CheckingOutFiles`] with an
-/// unknown total; the slow diff-based path reports a total equal to the number
-/// of tree changes.
+/// Populated-tree checkouts emit [`ProgressPhase::CheckingOutFiles`] with the
+/// exact blob count from the destination tree; tree-to-tree diffs report the
+/// number of path changes.
 pub fn checkout_between_trees_with_progress(
     repo: &Repository,
     from: Option<&ObjectId>,
@@ -540,7 +545,7 @@ pub fn checkout_tree_changes(repo: &Repository, changes: &[DiffEntry]) -> Result
 }
 
 /// Options for [`checkout_tree_changes_with_index_opts`].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub(crate) struct CheckoutApplyOptions {
     /// Read blob ODB objects in parallel when preparing write jobs.
     ///
@@ -562,6 +567,8 @@ pub(crate) struct CheckoutApplyOptions {
     pub checkout_result_tree: Option<crate::objects::ObjectId>,
     /// Apply checkout to the worktree but defer index disk writes until the caller finishes.
     pub defer_index_disk_write: bool,
+    /// Pre-built attribute/conversion context (populated-tree checkout with `.gitattributes`).
+    pub precomputed_worktree_rules: Option<Rc<WorktreeRules>>,
 }
 
 /// Like [`checkout_tree_changes`], but updates `index` in place instead of loading from disk.
@@ -1487,7 +1494,15 @@ fn checkout_bulk_deleted_tree_changes(
     Ok(())
 }
 
+#[cfg(test)]
+thread_local! {
+    static PREFETCH_PROMISOR_FOR_CHECKOUT_CALLS: std::cell::RefCell<usize> =
+        const { std::cell::RefCell::new(0) };
+}
+
 fn prefetch_promisor_blobs_for_checkout(repo: &Repository, changes: &[DiffEntry]) -> Result<()> {
+    #[cfg(test)]
+    PREFETCH_PROMISOR_FOR_CHECKOUT_CALLS.with(|c| *c.borrow_mut() += 1);
     let config = repo.config()?;
     if !crate::promisor::repo_treats_promisor_packs(repo.git_dir(), config.as_ref()) {
         return Ok(());
@@ -1559,40 +1574,30 @@ fn checkout_tree_changes_with_progress(
     );
 
     if !apply.skip_bulk_checkout_fast_path {
-        let bulk_rules = checkout_worktree_rules(repo, index_mut, attr_changes, config.clone())?;
+        let precomputed_rules = apply.precomputed_worktree_rules.clone();
+        let owned_bulk_rules;
+        let bulk_rules: &WorktreeRules = if let Some(ref precomputed) = precomputed_rules {
+            precomputed.as_ref()
+        } else {
+            owned_bulk_rules =
+                checkout_worktree_rules(repo, index_mut, attr_changes, config.clone())?;
+            &owned_bulk_rules
+        };
         let conv = bulk_rules.conversion().clone();
 
-        if bulk_mod_delete_checkout_eligible(changes, &bulk_rules) {
+        if bulk_mod_delete_checkout_eligible(changes, bulk_rules) {
             return checkout_bulk_mod_delete_tree_changes(
-                repo,
-                work_tree,
-                changes,
-                index_mut,
-                &bulk_rules,
-                &config,
-                &conv,
-                apply,
-                precompose,
-                ignorecase,
-                progress,
+                repo, work_tree, changes, index_mut, bulk_rules, &config, &conv, apply, precompose,
+                ignorecase, progress,
             );
         }
-        if bulk_write_checkout_eligible(changes, &bulk_rules)
+        if bulk_write_checkout_eligible(changes, bulk_rules)
             && (tree_changes_are_all_additions(changes)
                 || tree_changes_are_all_modifications(changes))
         {
             return checkout_bulk_added_tree_changes(
-                repo,
-                work_tree,
-                changes,
-                index_mut,
-                &bulk_rules,
-                &config,
-                &conv,
-                apply,
-                precompose,
-                ignorecase,
-                progress,
+                repo, work_tree, changes, index_mut, bulk_rules, &config, &conv, apply, precompose,
+                ignorecase, progress,
             );
         }
         if changes.len() >= BULK_DELETE_CHECKOUT_MIN && tree_changes_are_all_deletions(changes) {
@@ -1678,7 +1683,8 @@ fn checkout_tree_changes_with_progress(
     let mut dir_cache = LeadingDirCache::with_protect(protect);
     let mut plan: Vec<CheckoutPlanSlot> = Vec::with_capacity(changes.len());
     let mut write_jobs: Vec<CheckoutWriteJob> = Vec::new();
-    let mut rules: Option<WorktreeRules> = None;
+    let mut rules: Option<Rc<WorktreeRules>> =
+        apply.precomputed_worktree_rules.as_ref().map(Rc::clone);
     let mut conv: Option<ConversionConfig> = None;
     let mut delayed = DelayedProcessCheckout::default();
     let mut pending_delayed: Vec<DelayedCheckoutTarget> = Vec::new();
@@ -1813,14 +1819,14 @@ fn checkout_tree_changes_with_progress(
                 continue;
             };
             if rules.is_none() {
-                rules = Some(checkout_worktree_rules(
+                rules = Some(Rc::new(checkout_worktree_rules(
                     repo,
                     index,
                     attr_changes,
                     config.clone(),
-                )?);
+                )?));
             }
-            let rules = rules.as_ref().ok_or_else(|| {
+            let rules = rules.as_deref().ok_or_else(|| {
                 Error::PathError("internal error: missing checkout rules for write".into())
             })?;
             if conv.is_none() {
@@ -3475,6 +3481,7 @@ mod tests {
                 skip_bulk_checkout_fast_path: false,
                 checkout_result_tree: None,
                 defer_index_disk_write: false,
+                ..CheckoutApplyOptions::default()
             },
             None,
         )
@@ -3555,6 +3562,7 @@ mod tests {
                 skip_bulk_checkout_fast_path: false,
                 checkout_result_tree: None,
                 defer_index_disk_write: false,
+                ..CheckoutApplyOptions::default()
             },
             None,
         )
@@ -3568,5 +3576,36 @@ mod tests {
                 .get(format!("new/f{i:02}.txt").as_bytes(), 0)
                 .is_some());
         }
+    }
+
+    #[test]
+    fn populated_tree_prefetches_promisor_blobs_once_per_chunk() {
+        PREFETCH_PROMISOR_FOR_CHECKOUT_CALLS.with(|c| *c.borrow_mut() = 0);
+        let tmp = TempDir::new().expect("tempdir");
+        let repo = init_repository(
+            tmp.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let wt = repo.work_tree().expect("wt");
+        for i in 0..=POPULATED_TREE_CHECKOUT_CHUNK {
+            let rel = format!("f{i:05}.txt");
+            std::fs::write(wt.join(&rel), format!("body {i}\n")).expect("write");
+        }
+        let tree = commit_all(&repo, "many");
+        let mut index = crate::index::Index::new();
+        repo.index_handle().write(&mut index).expect("clear index");
+        for i in 0..=POPULATED_TREE_CHECKOUT_CHUNK {
+            std::fs::remove_file(wt.join(format!("f{i:05}.txt"))).expect("remove");
+        }
+        checkout_between_trees(&repo, None, &tree).expect("populate");
+        let calls = PREFETCH_PROMISOR_FOR_CHECKOUT_CALLS.with(|c| *c.borrow());
+        assert!(
+            calls >= 2,
+            "expected promisor prefetch at least once per populated-tree chunk, got {calls}"
+        );
     }
 }
