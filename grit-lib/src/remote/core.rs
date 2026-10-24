@@ -386,6 +386,7 @@ impl Remote {
         repo: &Repository,
         mut opts: FetchOptions,
         progress: &mut dyn Progress,
+        cancel: &dyn crate::progress::Cancel,
         http_factory: Option<&dyn HttpClientFactory>,
     ) -> RemoteResult<FetchOutcome> {
         repo.odb().require_files_primary("fetch")?;
@@ -416,6 +417,7 @@ impl Remote {
             &self.fetch_url,
             &mut opts,
             progress,
+            cancel,
             http_factory,
             connect,
         )
@@ -530,6 +532,7 @@ impl Remote {
         url: &RemoteUrl,
         opts: &mut FetchOptions,
         progress: &mut dyn Progress,
+        cancel: &dyn crate::progress::Cancel,
         http_factory: Option<&dyn HttpClientFactory>,
         connect: ConnectOptions,
     ) -> RemoteResult<FetchOutcome> {
@@ -560,7 +563,13 @@ impl Remote {
                         &connect,
                     )
                     .map_err(RemoteError::Library)?;
-                    return Ok(fetch_remote(repo.git_dir(), &mut *conn, opts, progress)?);
+                    return Ok(fetch_remote(
+                        repo.git_dir(),
+                        &mut *conn,
+                        opts,
+                        progress,
+                        cancel,
+                    )?);
                 }
                 Ok(fetch_local_with_progress(
                     repo.git_dir(),
@@ -573,17 +582,35 @@ impl Remote {
                 let client: Arc<dyn HttpClient> = Arc::from(http_client(http_factory, repo)?);
                 let transport = SmartHttpTransport::new(client);
                 let mut conn = transport.connect(u, Service::UploadPack, &connect)?;
-                Ok(fetch_remote(repo.git_dir(), &mut *conn, opts, progress)?)
+                Ok(fetch_remote(
+                    repo.git_dir(),
+                    &mut *conn,
+                    opts,
+                    progress,
+                    cancel,
+                )?)
             }
             RemoteUrl::Git(u) => {
                 let mut conn =
                     GitDaemonTransport::new().connect(u, Service::UploadPack, &connect)?;
-                Ok(fetch_remote(repo.git_dir(), &mut *conn, opts, progress)?)
+                Ok(fetch_remote(
+                    repo.git_dir(),
+                    &mut *conn,
+                    opts,
+                    progress,
+                    cancel,
+                )?)
             }
             RemoteUrl::Ssh(u) => {
                 let transport = ssh_transport(Some(repo), Some(&opts.environment));
                 let mut conn = transport.connect(u, Service::UploadPack, &connect)?;
-                Ok(fetch_remote(repo.git_dir(), &mut *conn, opts, progress)?)
+                Ok(fetch_remote(
+                    repo.git_dir(),
+                    &mut *conn,
+                    opts,
+                    progress,
+                    cancel,
+                )?)
             }
         }
     }

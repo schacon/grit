@@ -123,6 +123,7 @@ fn grit_clone_filtered(url: &str, dest: &Path, filter: ObjectFilterSpec) -> Path
             ..CloneOptions::new(url, dest.to_path_buf())
         },
         &mut NoProgress,
+        &NeverCancel,
         None,
     )
     .expect("clone");
@@ -275,7 +276,7 @@ fn refetch_reapplies_stored_filter() {
         ..Default::default()
     };
     remote
-        .fetch(&repo, fetch_opts, &mut NoProgress, None)
+        .fetch(&repo, fetch_opts, &mut NoProgress, &NeverCancel, None)
         .expect("refetch");
     clear_pack_cache();
     let objects = git_dir.join("objects");

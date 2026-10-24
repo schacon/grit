@@ -20,7 +20,7 @@ use crate::progress::summary::{
     join, plural, row_label, stdout_color, ObjectTypes, TransferSummary,
 };
 use crate::progress::{format_bytes, format_duration, paint, TerminalProgress, BOLD, DIM};
-use grit_lib::progress::{ProgressPhase, ProgressUnit};
+use grit_lib::progress::{NeverCancel, ProgressPhase, ProgressUnit};
 
 /// Timing for one step of the clone.
 #[derive(Serialize, JsonSchema)]
@@ -546,7 +546,12 @@ fn clone_into(
         checkout: !run.no_checkout,
     };
     let single_branch = clone_effective_single_branch(&clone_opts);
-    let outcome = clone_repo(clone_opts, &mut *term_progress, Some(&factory))?;
+    let outcome = clone_repo(
+        clone_opts,
+        &mut *term_progress,
+        &NeverCancel,
+        Some(&factory),
+    )?;
 
     let files = outcome.files;
     let worktree_bytes = outcome.worktree_bytes;
