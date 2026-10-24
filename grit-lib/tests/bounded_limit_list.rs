@@ -333,6 +333,86 @@ fn range_with_newer_hide_tip_tolerates_missing_history_behind_it() {
     }
 }
 
+/// Rewrite the committer date git stored for `oid` in the repository's commit-graph file.
+fn rewrite_commit_graph_date(git_dir: &Path, oid: grit_lib::objects::ObjectId, date: u32) {
+    let path = git_dir.join("objects/info/commit-graph");
+    let mut bytes = fs::read(&path).expect("read commit-graph");
+    let chunk_count = bytes[6] as usize;
+    let chunk_offset = |id: &[u8; 4]| {
+        (0..chunk_count)
+            .map(|i| 8 + i * 12)
+            .find(|&at| &bytes[at..at + 4] == id)
+            .map(|at| {
+                let mut offset = [0u8; 8];
+                offset.copy_from_slice(&bytes[at + 4..at + 12]);
+                u64::from_be_bytes(offset) as usize
+            })
+            .expect("chunk present")
+    };
+    let (oid_lookup, commit_data) = (chunk_offset(b"OIDL"), chunk_offset(b"CDAT"));
+    let position = (0..)
+        .find(|i| &bytes[oid_lookup + i * 20..oid_lookup + (i + 1) * 20] == oid.as_bytes())
+        .expect("commit in graph");
+    // Each CDAT row ends with generation and date; the low 32 bits hold the date.
+    let date_at = commit_data + position * 36 + 32;
+    bytes[date_at..date_at + 4].copy_from_slice(&date.to_be_bytes());
+    fs::remove_file(&path).expect("remove read-only commit-graph");
+    fs::write(&path, bytes).expect("write commit-graph");
+}
+
+#[test]
+fn range_with_commit_graph_disabled_reads_commit_objects() {
+    let dir = tempdir().expect("tempdir");
+    let repo = open_bare(dir.path()).expect("repo");
+    let root = write_commit(repo.odb(), &[], "root", 10, 10).expect("root");
+    let older = write_commit(repo.odb(), &[root], "older", 20, 20).expect("older");
+    let newer = write_commit(repo.odb(), &[root], "newer", 30, 30).expect("newer");
+    let merge = write_commit(repo.odb(), &[older, newer], "merge", 40, 40).expect("merge");
+    support::git(
+        dir.path(),
+        &["update-ref", "refs/heads/main", &merge.to_hex()],
+    );
+    support::git(dir.path(), &["commit-graph", "write", "--reachable"]);
+    rewrite_commit_graph_date(dir.path(), older, 1_000);
+
+    let walk = |use_commit_graph: bool, max_count: Option<usize>| {
+        let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");
+        rev_list(
+            &repo,
+            &[merge.to_hex()],
+            &[root.to_hex()],
+            &RevListOptions {
+                use_commit_graph,
+                max_count,
+                ..Default::default()
+            },
+        )
+        .expect("rev-list")
+        .commits
+    };
+    assert_eq!(
+        walk(true, None),
+        vec![merge, older, newer],
+        "the rewritten graph date is what the commit-graph walk sees"
+    );
+    let spec = format!("{root}..{merge}");
+    let git_from_objects: Vec<grit_lib::objects::ObjectId> = support::git(
+        dir.path(),
+        &["-c", "core.commitGraph=false", "rev-list", &spec],
+    )
+    .lines()
+    .map(|line| line.trim().parse().expect("oid"))
+    .collect();
+    assert_eq!(git_from_objects, vec![merge, newer, older]);
+    for max_count in [None, Some(10)] {
+        assert_eq!(
+            walk(false, max_count),
+            git_from_objects,
+            "use_commit_graph: false orders by commit object dates (max_count {max_count:?})"
+        );
+    }
+}
+
 #[test]
 fn unlimited_ranges_match_git_on_tied_and_skewed_history() {
     let dir = tempdir().expect("tempdir");

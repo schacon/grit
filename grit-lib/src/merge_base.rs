@@ -657,6 +657,8 @@ pub struct ReachableWalkState {
     /// Which pending commits reach a hide tip; computed on first use so restored
     /// snapshots rebuild it from their heap.
     paint: Option<SidePaint>,
+    /// Read parents and dates from the on-disk commit-graph when one is present.
+    use_commit_graph: bool,
 }
 
 /// Serializable snapshot of [`ReachableWalkState`] for resuming a bounded walk.
@@ -683,7 +685,18 @@ impl ReachableWalkState {
     ///
     /// Propagates commit read errors while seeding the heap.
     pub fn new(repo: &Repository, tips: &[ObjectId], hide: &[ObjectId]) -> Result<Self> {
-        let mut cache = CommitGraphCache::new(repo);
+        Self::with_commit_graph(repo, tips, hide, true)
+    }
+
+    /// Like [`Self::new`]; `use_commit_graph: false` parses every commit object instead of
+    /// reading the on-disk commit-graph ([`crate::rev_list::RevListOptions::use_commit_graph`]).
+    pub(crate) fn with_commit_graph(
+        repo: &Repository,
+        tips: &[ObjectId],
+        hide: &[ObjectId],
+        use_commit_graph: bool,
+    ) -> Result<Self> {
+        let mut cache = CommitGraphCache::with_commit_graph(repo, use_commit_graph);
         let mut state = Self {
             heap: BinaryHeap::new(),
             done: oid_hash_set(),
@@ -692,6 +705,7 @@ impl ReachableWalkState {
             seq: 0,
             hide: hide.to_vec(),
             paint: None,
+            use_commit_graph,
         };
         for &tip in tips {
             if state.hide.contains(&tip) {
@@ -726,6 +740,7 @@ impl ReachableWalkState {
             seq,
             paint: None,
             hide,
+            use_commit_graph: true,
         }
     }
 
@@ -891,7 +906,7 @@ impl ReachableWalkState {
         limit: Option<usize>,
         cutoffs: ReachableWalkCommitterCutoffs,
     ) -> Result<Vec<ObjectId>> {
-        let mut cache = CommitGraphCache::new(repo);
+        let mut cache = CommitGraphCache::with_commit_graph(repo, self.use_commit_graph);
         let mut out = Vec::new();
         while let Some(oid) = self.pop_next_emit(&mut cache, cutoffs)? {
             out.push(oid);
@@ -1298,6 +1313,23 @@ pub fn commits_reachable_excluding_ancestors_of_cutoffs(
         repo, tips, hide, walk_limit, cutoffs,
     )?;
     Ok(oids)
+}
+
+/// [`commits_reachable_excluding_ancestors_of_cutoffs`] that can skip the on-disk commit-graph
+/// and parse every commit object instead.
+pub(crate) fn commits_reachable_excluding_ancestors_of_with_graph(
+    repo: &Repository,
+    tips: &[ObjectId],
+    hide: &[ObjectId],
+    limit: Option<usize>,
+    cutoffs: ReachableWalkCommitterCutoffs,
+    use_commit_graph: bool,
+) -> Result<Vec<ObjectId>> {
+    if tips.is_empty() {
+        return Ok(Vec::new());
+    }
+    ReachableWalkState::with_commit_graph(repo, tips, hide, use_commit_graph)?
+        .emit_until(repo, limit, cutoffs)
 }
 
 /// Return commits that are not reachable from any other input commit.
@@ -2068,6 +2100,11 @@ struct CommitGraphCache<'r> {
 
 impl<'r> CommitGraphCache<'r> {
     fn new(repo: &'r Repository) -> Self {
+        Self::with_commit_graph(repo, true)
+    }
+
+    /// `use_commit_graph: false` leaves [`Self::graph`] empty so every lookup parses the commit.
+    fn with_commit_graph(repo: &'r Repository, use_commit_graph: bool) -> Self {
         let cfg = repo.config().map(|c| (*c).clone()).unwrap_or_default();
         // Stop ancestry traversal only at genuinely-missing promisor objects, not
         // at every member of a promisor pack. The clone base commit lives in a
@@ -2084,10 +2121,13 @@ impl<'r> CommitGraphCache<'r> {
         } else {
             oid_hash_set()
         };
-        let graph = repo
-            .caches()
-            .commit_graph_chain(&repo.git_dir().join("objects"))
-            .map(|arc| (*arc).clone());
+        let graph = if use_commit_graph {
+            repo.caches()
+                .commit_graph_chain(&repo.git_dir().join("objects"))
+                .map(|arc| (*arc).clone())
+        } else {
+            None
+        };
         let shallow_boundaries = oid_hash_set_from(&load_shallow_boundaries(repo.git_dir()));
         let graft_parents = load_graft_parents(repo.git_dir()).into_iter().collect();
         Self {

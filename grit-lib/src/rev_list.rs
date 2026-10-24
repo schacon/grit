@@ -21,7 +21,7 @@ use crate::ident::{committer_unix_seconds_for_ordering, parse_signature_times};
 use crate::ignore::{parse_sparse_patterns_from_blob, path_in_sparse_checkout};
 use crate::index::{CacheTreeNode, Index, MODE_GITLINK, MODE_TREE};
 use crate::merge_base::{
-    commits_reachable_excluding_ancestors_of_cutoffs, ReachableWalkCommitterCutoffs,
+    commits_reachable_excluding_ancestors_of_with_graph, ReachableWalkCommitterCutoffs,
 };
 use crate::objects::{
     oid_hash_map, oid_hash_set, parse_commit, parse_tag, parse_tree, CommitData, ObjectId,
@@ -6820,21 +6820,23 @@ fn try_bounded_limit_list(
             repo, include[0], need, cutoffs,
         )? {
             Some(list) => list,
-            None => commits_reachable_excluding_ancestors_of_cutoffs(
+            None => commits_reachable_excluding_ancestors_of_with_graph(
                 repo,
                 include,
                 exclude,
                 Some(need),
                 cutoffs,
+                options.use_commit_graph,
             )?,
         }
     } else {
-        commits_reachable_excluding_ancestors_of_cutoffs(
+        commits_reachable_excluding_ancestors_of_with_graph(
             repo,
             include,
             exclude,
             Some(need),
             cutoffs,
+            options.use_commit_graph,
         )?
     };
     if options.skip > 0 {
