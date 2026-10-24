@@ -21,6 +21,12 @@ grit.status.scan: close time.busy=18.3ms time.idle=3.13µs
 …
 ```
 
+Set **`GRIT_TRACE`** to an **absolute path** instead to append the same tree to that file, like `GIT_TRACE2_PERF`. That keeps the trace when stderr is discarded or captured; the daily benchmark uses it to record where grit's time goes.
+
+```console
+$ GRIT_TRACE=/tmp/grit-trace.txt grit push > /dev/null 2>&1
+```
+
 Filter noise with the usual **`RUST_LOG`** / tracing env filter (for example `RUST_LOG=info`).
 
 Library embedders can enable the same spans by building `grit-lib` with the Cargo feature **`tracing`**, installing any `tracing` subscriber, and calling the same code paths. `grit-lib` does not install a global subscriber.
