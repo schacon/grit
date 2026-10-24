@@ -1341,7 +1341,7 @@ mod line_coverage_tests {
 
     /// Blob history shaped like a real pack: a long ofs chain with side branches (one
     /// nested), a ref-delta hanging off the middle of the chain by oid, and an ofs
-    /// child of that ref-delta. Returns the pack and every object's content.
+    /// child of that ref-delta. Returns the pack and the content of every object.
     fn branching_chain_pack(odb: &Odb) -> (Vec<u8>, Vec<Vec<u8>>) {
         let mut pb = PackBuilder::new(HashAlgo::Sha1);
         let mut contents = vec![b"root of the history: shared prefix\n".repeat(8)];
