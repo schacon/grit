@@ -49,25 +49,15 @@ use std::time::{Duration, Instant};
 use grit_lib::error::{Error, Result as GritResult};
 use grit_lib::progress::NeverCancel;
 use grit_lib::objects::odb::Odb;
-use grit_lib::progress::NeverCancel;
 use grit_lib::objects::ObjectId;
-use grit_lib::progress::NeverCancel;
 use grit_lib::refs::resolve_ref;
-use grit_lib::progress::NeverCancel;
 use grit_lib::remote::fetch::{fetch_remote, NoProgress};
-use grit_lib::progress::NeverCancel;
 use grit_lib::remote::pkt_line;
-use grit_lib::progress::NeverCancel;
 use grit_lib::remote::push::{push_http, push_remote};
-use grit_lib::progress::NeverCancel;
 use grit_lib::remote::push_report::PushRefStatus;
-use grit_lib::progress::NeverCancel;
 use grit_lib::remote::transfer::{FetchDepth, FetchOptions, PushOptions, PushRefSpec, TagMode};
-use grit_lib::progress::NeverCancel;
 use grit_lib::remote::transport::http::{http_client_arc, HttpClient};
-use grit_lib::progress::NeverCancel;
 use grit_lib::remote::transport::{
-use grit_lib::progress::NeverCancel;
     read_advertisement, ConnectOptions, Connection, GitDaemonTransport, Service, SshTransport,
     Transport,
 };

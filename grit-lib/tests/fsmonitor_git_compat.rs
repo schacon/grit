@@ -545,6 +545,7 @@ fn grit_git_fsmonitor_hook_round_trip_index_and_status() {
         &grit_repo,
         &grit_lib::porcelain::status::StatusOptions::default(),
         &mut grit_lib::progress::NullProgress,
+        &NeverCancel,
     )
     .expect("grit status");
 

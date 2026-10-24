@@ -27,15 +27,10 @@ use std::process::Command;
 use grit_lib::objects::odb::Odb;
 use grit_lib::progress::NeverCancel;
 use grit_lib::objects::ObjectId;
-use grit_lib::progress::NeverCancel;
 use grit_lib::refs::resolve_ref;
-use grit_lib::progress::NeverCancel;
 use grit_lib::remote::fetch::{fetch_remote, NoProgress};
-use grit_lib::progress::NeverCancel;
 use grit_lib::remote::transfer::{FetchOptions, TagMode, UpdateMode};
-use grit_lib::progress::NeverCancel;
 use grit_lib::remote::transport::{ConnectOptions, Service, SshTransport, Transport};
-use grit_lib::progress::NeverCancel;
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
