@@ -246,22 +246,22 @@ A clean `grit pick` / `grit revert` of a commit touching 2000 paths spent most o
 ./target/release/grit-bench hot-paths --sizes 10000,100000 --format json --output grit-utils/baselines/hot-paths-after.json
 ```
 
-## Tags on many refs (2026-10-23)
+## Tags on many refs (2026-10-24)
 
 On the many-refs fixture (11 668 packed refs, 3 333 of them tags, half annotated with loose tag objects), `grit tag` spent almost all of its time classifying tags. Every tag ref cost an object-header read, and every annotated tag cost a second header read plus a full read of the tag object to peel it. That meant thousands of loose-object inflates, whose zlib setup alone was a fifth of the run.
 
-- **Listing from peel lines.** `packed-refs` written with the `peeled` or `fully-peeled` trait already records each annotated tag's peeled object, which is how Git avoids those reads. [`list_tags`](rustdoc:grit_lib::porcelain::tag::list_tags) now trusts those lines when the packed record matches the ref's current value, and only checks the peeled object's type, through the commit-graph or a pack header. Loose refs that shadow a packed record, and files without a peel trait, still peel through the objects. Lookups are made in name order, so they follow a cursor through the file instead of a binary search per tag. `--json` output is byte-identical.
+- **Listing from peel lines.** `packed-refs` written with the `peeled` or `fully-peeled` trait already records each annotated tag's peeled object, which is how Git avoids those reads. [`list_tags_with_detail`](rustdoc:grit_lib::porcelain::tag::list_tags_with_detail) uses [`TagDetail::Names`](rustdoc:grit_lib::porcelain::tag::TagDetail::Names) for the human names-only path and [`TagDetail::Kind`](rustdoc:grit_lib::porcelain::tag::TagDetail::Kind) for classification from peel records. Loose overrides and files without a peel trait fall back to objects. [`TagDetail::Annotation`](rustdoc:grit_lib::porcelain::tag::TagDetail::Annotation), used by `--json` and `--markdown`, still reads tag objects and preserves their documented fields.
 - **Creating through the repository's ref store.** `create_tag` checked for an existing tag, and wrote the new one, through helpers that each opened a fresh ref store and so re-read and re-indexed `packed-refs`. The existence check, the write and the CLI's `HEAD` lookup now share the repository's store and its cached view. The packed-refs line index is built in one `memchr` pass.
 
-`grit-bench daily` rows (20 runs per side, release build), grit before → after in one sitting against system `git 2.43.0`, committed in **`daily-tag-many-refs-before.json`** and **`daily-tag-many-refs-after.json`**. The daily harness reports medians in steps of about 1 ms, so hyperfine means (60–150 runs) are given for the create rows:
+`grit-bench daily` rows (20 runs per side, release build), current main before → after in one sitting against system `git 2.43.0`, committed in **`daily-tag-many-refs-before.json`** and **`daily-tag-many-refs-after.json`**:
 
 | Scenario | Git ms | Grit ms before → after | Grit ÷ Git before → after |
 | --- | ---: | ---: | ---: |
-| `tag/list@many-refs` | 3.29 | 32.76 → **7.60** | 9.95× → **2.30×** |
-| `tag/create@many-refs` (hyperfine) | 1.1 | 3.4 → **2.9** | — |
-| `branch/create@many-refs` (hyperfine) | — | 3.2 → 3.2 | — |
+| `tag/list@many-refs` (human names) | 3.28 | 13.25 → **5.44** | 4.03× → **1.66×** |
+| `tag/create@many-refs` | 2.21 | 4.36 → **4.35** | 1.97× → **1.97×** |
+| `branch/create@many-refs` | 2.21 | 4.35 → **4.35** | 1.97× → **1.96×** |
 
-Branch list, branch delete, `ls-remote` and `log` decorations on the same fixture are unchanged within noise. Heap peaks (valgrind massif) are unchanged: 773 KiB for tag create, 901 → 920 KiB for tag list. Peak RSS moves by a few hundred KiB between any two builds, because of binary layout and mapped `packed-refs` pages. The remaining gap to Git is mostly process start-up (`grit --version` takes 1.7 ms against Git's 0.8 ms), which is tracked under the binary-diet follow-up in **Methodology** below.
+The annotation-rich JSON path is not slower: hyperfine (20 runs) measured **11.6 → 10.6 ms**. Branch create is unchanged within noise, guarding the shared packed-ref path. Peak RSS for human tag listing fell from **21.1 to 15.3 MiB** in the daily rows; create remained within noise. The remaining gap to Git is mostly process start-up and CLI setup, tracked under the binary-diet follow-up in **Methodology** below.
 
 ```bash
 cargo build --release -p grit-cli -p grit-utils
