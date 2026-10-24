@@ -1146,9 +1146,20 @@ fn matching_dir_entry<'a>(
         .find(|entry| dir_entry_name_matches(index_file_name, entry))
 }
 
+#[cfg(windows)]
+fn symlink_metadata_blob_lookup(target_abs: &Path) -> BlobDiskLookup {
+    match symlink_metadata_path(target_abs) {
+        Ok(meta) => BlobDiskLookup::Present(BlobDiskStat::from_metadata(&meta)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(20) => {
+            BlobDiskLookup::Missing
+        }
+        Err(e) => BlobDiskLookup::Io(e),
+    }
+}
+
 /// Prefer `DirEntry::metadata` from the directory scan (no extra handle open on Windows);
 /// fall back to path `symlink_metadata` when the name was not listed or dir-entry stat fails
-/// (#1518). Index disagreements with the scan stat are corrected later by
+/// (#1518, #1622). Index disagreements with the scan stat are corrected later by
 /// [`align_lookup_stat_with_index_path_windows`].
 #[cfg(windows)]
 fn blob_lookup_from_dir_entry_or_path(
@@ -1157,17 +1168,14 @@ fn blob_lookup_from_dir_entry_or_path(
 ) -> BlobDiskLookup {
     if let Some(entry) = dir_entry {
         match dir_entry_metadata(entry) {
-            Ok(m) => return BlobDiskLookup::Present(BlobDiskStat::from_metadata(&m)),
-            Err(e) if e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(20) => {}
-            Err(e) => return BlobDiskLookup::Io(e),
+            Ok(m) => BlobDiskLookup::Present(BlobDiskStat::from_metadata(&m)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(20) => {
+                symlink_metadata_blob_lookup(&target_abs())
+            }
+            Err(e) => BlobDiskLookup::Io(e),
         }
-    }
-    match symlink_metadata_path(&target_abs()) {
-        Ok(meta) => BlobDiskLookup::Present(BlobDiskStat::from_metadata(&meta)),
-        Err(e) if e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(20) => {
-            BlobDiskLookup::Missing
-        }
-        Err(e) => BlobDiskLookup::Io(e),
+    } else {
+        symlink_metadata_blob_lookup(&target_abs())
     }
 }
 
