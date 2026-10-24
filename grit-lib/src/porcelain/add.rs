@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 use crate::hash::{try_par_hash_with, ParallelHashError, Parallelism};
 use crate::ignore::IgnoreMatcher;
 use crate::index::{
-    entry_from_metadata, index_file_mtime, Index, IndexEntry, MODE_GITLINK, MODE_TREE,
+    entry_from_metadata, index_file_mtime, Index, IndexEntry, MODE_GITLINK, MODE_REGULAR, MODE_TREE,
 };
 use crate::objects::ObjectId;
 use crate::odb::BULK_NEW_LOOSE_WRITE;
@@ -618,6 +618,18 @@ fn stage_unmerged_paths_matching_pathspecs(
         if dry_run {
             modified.push(rel.to_owned());
             continue;
+        }
+        let idx_mode = index
+            .entries
+            .iter()
+            .find(|e| e.path == *raw_path)
+            .map(|e| e.mode)
+            .unwrap_or(MODE_REGULAR);
+        if crate::rerere::worktree_metadata_needs_conflict_marker_inspection(&meta, idx_mode) {
+            let wt_bytes = fs::read(&abs).map_err(Error::Io)?;
+            if crate::rerere::worktree_bytes_have_unresolved_conflict_markers(&wt_bytes) {
+                continue;
+            }
         }
         let file_attrs = rules.file_attrs(rel, false);
         let mode = mode_from_metadata(&meta);
