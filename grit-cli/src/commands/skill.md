@@ -187,13 +187,17 @@ Copy these sequences in order. Each step assumes **`--json`** unless noted. Read
 $ grit diff --unstaged --json -- partial.txt
 <!-- step exit=0 fields=oid -->
 $ grit commit --hunks $HUNK0 -m "commit one hunk" --json
+<!-- step exit=0 -->
+$ grit add -- staged-only.txt
 <!-- step exit=0 fields=oid -->
 $ grit commit --staged -m "commit staged index only" --json
+<!-- step exit=0 -->
+$ grit add -- partial-other.txt
 <!-- step exit=0 fields=oid -->
 $ grit commit -m "commit one path" --json -- partial-other.txt
 ```
 
-Stage only what you need first (`grit add -- partial.txt` leaves other edits unstaged). **`--staged`** commits the index without auto-staging the worktree. Trailing **`-- paths`** commits a subset like Git's commit-only mode.
+Use **`grit add -- partial.txt`** (or path-scoped staging) before the diff when other paths are dirty. **`--staged`** commits only what is already in the index; **`-- paths`** commits a subset without auto-staging the rest of the tree.
 
 ### Work through a merge conflict
 
@@ -225,11 +229,15 @@ $ grit rebase origin/main --json
 $ grit push --force-with-lease --json
 <!-- step exit=0 -->
 $ grit fetch origin --json
+<!-- step exit=0 fields=result -->
+$ grit rebase --check origin/main --json
+<!-- step exit=0 fields=result -->
+$ grit rebase origin/main --json
 <!-- step exit=0 fields=rejected -->
 $ grit push --force-with-lease --json
 ```
 
-After rewriting history, always **fetch** before **`--force-with-lease`**. Exit **1** with **`"rejected": true`** means the remote moved or the lease is stale — fetch again, reconcile, then retry. Use **`--force`** only when you intentionally overwrite remote work.
+After rewriting history, always **fetch** before **`--force-with-lease`**. Exit **1** with **`"rejected": true`** means the remote moved or the lease is stale — **fetch**, then **`rebase --check`** and **`rebase`** onto the updated upstream (do not push again until local history includes what you just fetched), then retry **`--force-with-lease`**. Use **`--force`** only when you intentionally overwrite remote work.
 
 ### Fetch a pull request ref
 

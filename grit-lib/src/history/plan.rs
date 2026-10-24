@@ -1634,7 +1634,7 @@ fn logical_change_id_for_commit(
     crate::change_id::logical_change_id_for_commit(repo, oid).map_err(library_err)
 }
 
-fn plan_ref_updates(
+pub(crate) fn plan_ref_updates(
     scoped_refs: &[(String, ObjectId)],
     mapping: &HashMap<ObjectId, ObjectId>,
 ) -> Vec<PlannedRefUpdate> {
@@ -1657,7 +1657,7 @@ fn resolve_mapped_tip(tip: ObjectId, mapping: &HashMap<ObjectId, ObjectId>) -> O
     mapping.get(&tip).copied().unwrap_or(tip)
 }
 
-fn head_effect(
+pub(crate) fn head_effect(
     repo: &Repository,
     mapping: &HashMap<ObjectId, ObjectId>,
 ) -> Result<HeadEffect, HistoryError> {

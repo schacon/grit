@@ -15,10 +15,12 @@ use crate::revwalk::rev_list::{rev_list, OrderingMode, RevListOptions};
 
 use super::error::HistoryError;
 use super::plan::{
-    collect_scoped_refs, commit_parents, plan_rewrite_with_order,
+    collect_scoped_refs, commit_parents, head_effect, plan_ref_updates, plan_rewrite_with_order,
     plan_rewrite_with_order_resumable, ResumablePlanOutcome,
 };
-use super::types::{CommitEdit, HistoryEdits, RefScope, RewriteOptions, RewritePlan};
+use super::types::{
+    CommitEdit, HistoryEdits, RefScope, RewriteOptions, RewritePlan, RewrittenCommit,
+};
 
 #[cfg(any(test, feature = "unstable-bench-helpers"))]
 thread_local! { // hygiene: patch-id compute counter for tests and unstable-bench-helpers
@@ -156,6 +158,20 @@ pub fn plan_rebase(
 ) -> Result<RebasePlan, HistoryError> {
     let fork = rebase_fork(repo, request.upstream, request.branch_tip)?;
     let effective_onto = request.onto.unwrap_or(request.upstream);
+    if request.branch_tip == effective_onto {
+        return Ok(RebasePlan::UpToDate);
+    }
+    let range = commits_in_rebase_range(repo, fork, &[request.branch_tip])?;
+    if range.is_empty()
+        && is_ancestor(repo, request.branch_tip, effective_onto).map_err(library_err)?
+    {
+        return Ok(RebasePlan::Plan(plan_rebase_fast_forward(
+            repo,
+            request.branch_tip,
+            effective_onto,
+            opts,
+        )?));
+    }
     if is_rebase_up_to_date(
         repo,
         fork,
@@ -212,6 +228,28 @@ pub(crate) fn rebase_fork(
                 branch_tip.to_hex()
             ),
         })
+}
+
+fn plan_rebase_fast_forward(
+    repo: &Repository,
+    branch_tip: ObjectId,
+    onto: ObjectId,
+    opts: &RebaseOntoOptions,
+) -> Result<RewritePlan, HistoryError> {
+    let scoped = collect_scoped_refs(repo, &opts.rewrite, branch_tip)?;
+    let mapping = HashMap::from([(branch_tip, onto)]);
+    let ref_updates = plan_ref_updates(&scoped, &mapping);
+    let head = head_effect(repo, &mapping)?;
+    Ok(RewritePlan {
+        commits: vec![RewrittenCommit {
+            old: branch_tip,
+            new: Some(onto),
+            change_id: None,
+            subject: None,
+        }],
+        ref_updates,
+        head,
+    })
 }
 
 fn is_rebase_up_to_date(
@@ -346,6 +384,16 @@ pub(crate) fn plan_rebase_resumable(
 ) -> Result<Result<ResumablePlanOutcome, RebasePlan>, HistoryError> {
     let fork = rebase_fork(repo, request.upstream, request.branch_tip)?;
     let effective_onto = request.onto.unwrap_or(request.upstream);
+    if request.branch_tip == effective_onto {
+        return Ok(Err(RebasePlan::UpToDate));
+    }
+    let range = commits_in_rebase_range(repo, fork, &[request.branch_tip])?;
+    if range.is_empty()
+        && is_ancestor(repo, request.branch_tip, effective_onto).map_err(library_err)?
+    {
+        let plan = plan_rebase_fast_forward(repo, request.branch_tip, effective_onto, opts)?;
+        return Ok(Ok(ResumablePlanOutcome::Complete(plan)));
+    }
     if is_rebase_up_to_date(
         repo,
         fork,
@@ -822,6 +870,51 @@ mod tests {
             map.is_empty(),
             "partial path overlap must not reuse a commit with extra changes"
         );
+    }
+
+    #[test]
+    fn plan_rebase_fast_forwards_when_tip_is_ancestor_of_upstream() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = Repository::init(
+            dir.path(),
+            &crate::repo::InitOptions::new()
+                .with_initial_branch("main".to_owned())
+                .with_ref_storage(crate::RefStorageFormat::Files),
+        )
+        .expect("init");
+        let id = ident(1);
+        let tree_a = blob_tree(&repo, "f.txt", b"a\n").expect("tree");
+        let first = write_commit(&repo, tree_a, &[], "first", &id).expect("first");
+        let tree_b = blob_tree(&repo, "f.txt", b"b\n").expect("tree b");
+        let second = write_commit(&repo, tree_b, &[first], "second", &id).expect("second");
+        let tree_c = blob_tree(&repo, "f.txt", b"c\n").expect("tree c");
+        let upstream = write_commit(&repo, tree_c, &[second], "third", &id).expect("third");
+        let opts = RebaseOntoOptions::new(RewriteOptions {
+            scope: RefScope::Head,
+            empty: crate::revwalk::history::EmptyPolicy::Drop,
+            committer: id.clone(),
+            preserve_committer: false,
+            sign: false,
+        });
+        std::fs::write(repo.git_dir().join("HEAD"), b"ref: refs/heads/main\n").expect("head");
+        std::fs::write(
+            repo.git_dir().join("refs/heads/main"),
+            format!("{second}\n"),
+        )
+        .expect("main");
+        let request = RebaseRequest {
+            upstream,
+            onto: None,
+            branch_tip: second,
+        };
+        let plan = plan_rebase(&repo, &request, &opts).expect("plan");
+        match plan {
+            RebasePlan::Plan(rewrite) => {
+                assert_eq!(rewrite.commits.len(), 1);
+                assert_eq!(rewrite.commits[0].new, Some(upstream));
+            }
+            other => panic!("expected fast-forward plan, got {other:?}"),
+        }
     }
 
     #[test]

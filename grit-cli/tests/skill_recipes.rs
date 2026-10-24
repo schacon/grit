@@ -232,11 +232,9 @@ fn run_precise_commit(recipe: &Recipe) {
     for (i, step) in recipe.steps.iter().enumerate() {
         if i == 2 {
             fs::write(ctx.cwd.join("staged-only.txt"), "staged\n").unwrap();
-            grit_ok(&ctx.cwd, &["add", "staged-only.txt"]);
         }
-        if i == 3 {
+        if i == 4 {
             fs::write(ctx.cwd.join("partial-other.txt"), "gamma\n").unwrap();
-            grit_ok(&ctx.cwd, &["add", "partial-other.txt"]);
         }
         ctx.run_step(step);
     }
@@ -313,17 +311,37 @@ fn run_rebase_push_lease(recipe: &Recipe) {
         repos_to_fsck: vec![seed.clone(), bare.clone(), side.clone()],
     };
 
+    let mut race_commit = None;
     for (i, step) in recipe.steps.iter().enumerate() {
         if i == 3 {
             // Remote moved again after rebase; first --force-with-lease should reject.
             fs::write(side.join("race.txt"), "race\n").unwrap();
             git(&side, &["add", "race.txt"]);
             git(&side, &["commit", "-m", "race"]);
+            race_commit = Some(git_out(&side, &["rev-parse", "HEAD"]));
             git(&side, &["push", "origin", "main"]);
         }
         ctx.run_step(step);
     }
     fsck_all(&ctx.repos_to_fsck);
+
+    let race = race_commit.expect("race commit");
+    let remote_tip = git_out(&bare, &["rev-parse", "refs/heads/main"]);
+    assert!(
+        git_merge_base_is_ancestor(&bare, &race, &remote_tip),
+        "race commit {race} must remain an ancestor of remote main {remote_tip} after lease retry"
+    );
+}
+
+fn git_merge_base_is_ancestor(repo: &Path, ancestor: &str, descendant: &str) -> bool {
+    Command::new("git")
+        .args(["merge-base", "--is-ancestor", ancestor, descendant])
+        .current_dir(repo)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn run_fetch_pr(recipe: &Recipe) {
