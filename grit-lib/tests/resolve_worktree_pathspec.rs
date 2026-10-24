@@ -3,8 +3,8 @@
 //! Resolving argv pathspecs must cost no config reload or `.git` filesystem probe per path:
 //! `grit add <98 paths>` on macOS repeated both for every argument.
 
-use grit_lib::pathspec::{PathspecResolveError, ResolvedPathspecs};
 use grit_lib::repo::{InitOptions, Repository};
+use grit_lib::worktree::pathspec::{PathspecResolveError, ResolvedPathspecs};
 use std::fs;
 
 fn init_repo() -> (tempfile::TempDir, Repository) {
