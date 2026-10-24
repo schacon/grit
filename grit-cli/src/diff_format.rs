@@ -101,6 +101,30 @@ pub struct DiffFormatArgs {
     pub function_context: bool,
 }
 
+/// Per-commit diff output for [`crate::commands::shortlog`] (`--stat`, `--name-only` only).
+#[derive(Debug, Default, Args, Clone, Copy)]
+#[group(id = "shortlog_diff_output_format")]
+pub struct ShortlogDiffFormatArgs {
+    /// Summary with change bars per file (like `git log --stat`).
+    #[arg(long = "stat", conflicts_with = "name_only")]
+    pub stat: bool,
+    /// Paths only, one per line.
+    #[arg(long = "name-only", conflicts_with = "stat")]
+    pub name_only: bool,
+}
+
+impl ShortlogDiffFormatArgs {
+    /// Convert to the shared [`DiffFormatArgs`] shape used by commit diff loading.
+    #[must_use]
+    pub fn to_diff_format(self) -> DiffFormatArgs {
+        DiffFormatArgs {
+            stat: self.stat,
+            name_only: self.name_only,
+            ..DiffFormatArgs::default()
+        }
+    }
+}
+
 impl DiffFormatArgs {
     /// Whether any diff output format flag was set (for commands where the default is no diff).
     #[must_use]

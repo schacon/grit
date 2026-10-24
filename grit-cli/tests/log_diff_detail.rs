@@ -155,6 +155,29 @@ fn log_name_status_matches_git_log_name_status() {
 }
 
 #[test]
+fn log_stat_human_includes_per_file_stat_lines() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("a.txt"), b"a\n").expect("write");
+    commit_all(dir.path(), "one");
+    std::fs::write(dir.path().join("a.txt"), b"a\nb\n").expect("write");
+    commit_all(dir.path(), "two");
+
+    let out = grit(dir.path(), &["log", "--stat", "--limit", "1"]);
+    assert!(out.ok(), "{}", out.dump("log --stat human"));
+    assert!(
+        out.stdout.contains("a.txt"),
+        "expected stat path in human output: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains('|') || out.stdout.contains("insertion"),
+        "expected stat bar or summary line: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn log_stat_numbers_match_git_log_numstat() {
     let dir = tempfile::tempdir().expect("tempdir");
     init_repo(dir.path());

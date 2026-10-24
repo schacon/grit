@@ -390,15 +390,16 @@ pub fn count_symmetric_ahead_behind(
     local: ObjectId,
     other: ObjectId,
 ) -> Result<(usize, usize)> {
-    let (ahead, behind, _) = ahead_behind_of_target_commits(repo, local, other, 0)?;
+    let (ahead, behind, _, _) = ahead_behind_of_target_commits(repo, local, other, 0, 0)?;
     Ok((ahead, behind))
 }
 
-/// Symmetric ahead/behind between `head` and `target`, plus bounded newest-ahead OIDs.
+/// Symmetric ahead/behind between `head` and `target`, plus bounded newest OIDs on each side.
 ///
 /// Matches `git rev-list --left-right --count HEAD...TARGET` for the counts. The returned
-/// OID list contains up to `retain_newest_ahead` commits reachable from `head` but not
-/// from `target` (newest first), without materializing full ancestor closures.
+/// OID lists contain up to `retain_newest_ahead` / `retain_newest_behind` commits reachable
+/// from `head` / `target` but not the other tip (newest first), without materializing full
+/// ancestor closures.
 ///
 /// # Errors
 ///
@@ -408,9 +409,10 @@ pub fn ahead_behind_of_target_commits(
     head: ObjectId,
     target: ObjectId,
     retain_newest_ahead: usize,
-) -> Result<(usize, usize, Vec<ObjectId>)> {
+    retain_newest_behind: usize,
+) -> Result<(usize, usize, Vec<ObjectId>, Vec<ObjectId>)> {
     if head == target {
-        return Ok((0, 0, Vec::new()));
+        return Ok((0, 0, Vec::new(), Vec::new()));
     }
     let target_is_ancestor = is_ancestor(repo, target, head)?;
     let head_is_ancestor = is_ancestor(repo, head, target)?;
@@ -426,18 +428,17 @@ pub fn ahead_behind_of_target_commits(
         )?
     };
 
-    let behind = if target_is_ancestor && !head_is_ancestor {
-        0
+    let (behind, behind_oids) = if target_is_ancestor && !head_is_ancestor {
+        (0, Vec::new())
     } else {
         walk_commits_reachable_excluding_ancestors_of(
             repo,
             std::slice::from_ref(&target),
             &[head],
-            ReachableWalkLimit::CountAllRetainNewest(0),
+            ReachableWalkLimit::CountAllRetainNewest(retain_newest_behind),
         )?
-        .0
     };
-    Ok((ahead, behind, ahead_oids))
+    Ok((ahead, behind, ahead_oids, behind_oids))
 }
 
 /// Commits reachable from `tips` that are not ancestors of any `hide` tip, in committer-date order
@@ -2523,13 +2524,26 @@ mod tests {
 
         clear_commit_linkage(&repo);
         reset_commit_parent_lookups();
-        let (ahead, behind, retained) = ahead_behind_of_target_commits(&repo, tip, upstream, 1)?;
+        let (ahead, behind, retained, _) =
+            ahead_behind_of_target_commits(&repo, tip, upstream, 1, 0)?;
         assert_eq!((ahead, behind), (1, 0));
         assert_eq!(retained, vec![tip]);
         let lookups = commit_parent_lookups();
         assert!(
             lookups <= 6500,
             "one-commit-ahead status must not re-check ancestry per walked commit ({lookups})"
+        );
+
+        clear_commit_linkage(&repo);
+        reset_commit_parent_lookups();
+        let (ahead2, behind2, _, behind_retained) =
+            ahead_behind_of_target_commits(&repo, upstream, tip, 0, 1)?;
+        assert_eq!((ahead2, behind2), (0, 1));
+        assert_eq!(behind_retained, vec![tip]);
+        let lookups = commit_parent_lookups();
+        assert!(
+            lookups <= 6500,
+            "one-commit-behind status must not re-check ancestry per walked commit ({lookups})"
         );
         Ok(())
     }
@@ -2681,7 +2695,7 @@ mod tests {
         let (ahead, behind) = count_symmetric_ahead_behind(&repo, c3, c1)?;
         assert_eq!(ahead, 2);
         assert_eq!(behind, 0);
-        let (ahead2, behind2, retained) = ahead_behind_of_target_commits(&repo, c3, c1, 1)?;
+        let (ahead2, behind2, retained, _) = ahead_behind_of_target_commits(&repo, c3, c1, 1, 0)?;
         assert_eq!((ahead2, behind2), (2, 0));
         assert_eq!(retained.len(), 1);
         assert_eq!(retained[0], c3);

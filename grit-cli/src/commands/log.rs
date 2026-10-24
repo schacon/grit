@@ -233,17 +233,7 @@ impl MarkdownRender for LogOutcome {
             markdown::print_commit_list(w, &self.commit_rows, ctx)?;
         }
         if self.format.any_format_flag() {
-            for (row, diff) in self.commit_rows.iter().zip(&self.commit_diffs) {
-                if let Some(outcome) = diff {
-                    if outcome.files.is_empty() {
-                        continue;
-                    }
-                    outln!(w);
-                    let oid = row.oid.to_hex();
-                    outln!(w, "### `{oid}`");
-                    outcome.render_markdown(w, ctx)?;
-                }
-            }
+            render_commit_diffs_markdown(w, &self.commit_rows, &self.commit_diffs, ctx)?;
         }
         if let Some(next) = &self.next {
             outln!(w);
@@ -579,76 +569,44 @@ fn build_author_group_outcome_from_groups(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_commit_outcome(
+pub(crate) type LoadedCommitList = (Vec<LogCommit>, Vec<CommitSummary>, Vec<Option<DiffOutcome>>);
+
+/// Per-commit diff sections after a commit list in Markdown (log, shortlog, …).
+pub(crate) fn render_commit_diffs_markdown(
+    w: &mut dyn Write,
+    rows: &[CommitSummary],
+    diffs: &[Option<DiffOutcome>],
+    ctx: &RenderContext,
+) -> Result<()> {
+    for (row, diff) in rows.iter().zip(diffs) {
+        let Some(outcome) = diff else {
+            continue;
+        };
+        if outcome.files.is_empty() {
+            continue;
+        }
+        outln!(w);
+        outln!(w, "### `{}`", row.oid.to_hex());
+        outcome.render_markdown(w, ctx)?;
+    }
+    Ok(())
+}
+
+/// Load commit rows for a fixed OID list, optionally attaching per-commit diff detail.
+pub(crate) fn load_commits_with_format_for_oids(
     repo: &grit_lib::repo::Repository,
     oids: &[ObjectId],
-    parsed: &mut OidHashMap<CommitData>,
     format: DiffFormatArgs,
     path_args: &[String],
-    next: Option<String>,
-    truncated: bool,
-    display: LogDisplayOptions,
-    output_mode: OutputMode,
-    continuation_args: Option<String>,
-    graph: LogGraphBuild,
-) -> Result<LogOutcome> {
-    let env = repo.environment();
-    let now = context::wall_clock_now(env).unix_timestamp();
-    let json_output = output_mode == OutputMode::Json;
-    let graph_human_oneline = display.graph
-        && output_mode == OutputMode::Human
-        && display.oneline
-        && !format.any_format_flag()
-        && !display.decorate;
-    let need_refs = display.decorate || json_output;
-    let head_branch = if display.oneline || display.decorate {
-        resolve_current_branch(repo)?
-    } else {
-        None
-    };
-
-    if graph_human_oneline {
-        let graph_lines = build_graph_oneline_lines(repo, oids, display, &graph)?;
-        return Ok(LogOutcome {
-            commits: Vec::new(),
-            groups: None,
-            next,
-            truncated,
-            commit_rows: Vec::new(),
-            author_group_rows: Vec::new(),
-            display,
-            head_branch: None,
-            oneline_lines: Vec::new(),
-            graph_lines,
-            graph_note: None,
-            continuation_args,
-            format,
-            commit_diffs: Vec::new(),
-        });
-    }
+    parsed: &mut OidHashMap<CommitData>,
+) -> Result<LoadedCommitList> {
+    let now = context::wall_clock_now(repo.environment()).unix_timestamp();
+    let (commit_json_rows, commit_rows) = CommitJsonLoader::for_listed_commits()
+        .load_with_summaries_reusing(repo, oids, now, parsed)?;
 
     let detail = format.detail_for_log();
-
-    let (commit_json_rows, commit_rows) = if need_refs {
-        CommitJsonLoader::for_listed_commits()
-            .load_with_summaries_reusing(repo, oids, now, parsed)?
-    } else {
-        let summaries = CommitJsonLoader::load_summaries_only(repo, oids, parsed)?;
-        let json_rows = summaries
-            .iter()
-            .map(|s| CommitJson::from_summary(s, now))
-            .collect();
-        (json_rows, summaries)
-    };
-
     let config = repo.config().context("could not load config")?;
     let thread_policy = repo.thread_policy();
-    let pathspecs = if path_args.is_empty() {
-        Vec::new()
-    } else {
-        resolve_commit_diff_pathspecs(repo, path_args)?
-    };
 
     let mut commit_inputs = Vec::with_capacity(oids.len());
     if detail.is_some() {
@@ -661,6 +619,12 @@ fn build_commit_outcome(
             });
         }
     }
+
+    let pathspecs = if path_args.is_empty() {
+        Vec::new()
+    } else {
+        resolve_commit_diff_pathspecs(repo, path_args)?
+    };
 
     let many_results = if let Some(detail) = detail {
         let mut diff_options = DiffOptions::from_config(config.as_ref());
@@ -714,6 +678,79 @@ fn build_commit_outcome(
             commit_diffs.push(None);
         }
     }
+    Ok((commits, commit_rows, commit_diffs))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_commit_outcome(
+    repo: &grit_lib::repo::Repository,
+    oids: &[ObjectId],
+    parsed: &mut OidHashMap<CommitData>,
+    format: DiffFormatArgs,
+    path_args: &[String],
+    next: Option<String>,
+    truncated: bool,
+    display: LogDisplayOptions,
+    output_mode: OutputMode,
+    continuation_args: Option<String>,
+    graph: LogGraphBuild,
+) -> Result<LogOutcome> {
+    let env = repo.environment();
+    let now = context::wall_clock_now(env).unix_timestamp();
+    let json_output = output_mode == OutputMode::Json;
+    let graph_human_oneline = display.graph
+        && output_mode == OutputMode::Human
+        && display.oneline
+        && !format.any_format_flag()
+        && !display.decorate;
+    let need_refs = display.decorate || json_output;
+    let need_commit_details = need_refs || format.any_format_flag();
+    let head_branch = if display.oneline || display.decorate {
+        resolve_current_branch(repo)?
+    } else {
+        None
+    };
+
+    if graph_human_oneline {
+        let graph_lines = build_graph_oneline_lines(repo, oids, display, &graph)?;
+        return Ok(LogOutcome {
+            commits: Vec::new(),
+            groups: None,
+            next,
+            truncated,
+            commit_rows: Vec::new(),
+            author_group_rows: Vec::new(),
+            display,
+            head_branch: None,
+            oneline_lines: Vec::new(),
+            graph_lines,
+            graph_note: None,
+            continuation_args,
+            format,
+            commit_diffs: Vec::new(),
+        });
+    }
+
+    let (commits, commit_rows, commit_diffs) = if need_commit_details {
+        load_commits_with_format_for_oids(repo, oids, format, path_args, parsed)?
+    } else {
+        let summaries = CommitJsonLoader::load_summaries_only(repo, oids, parsed)?;
+        let json_rows = summaries
+            .iter()
+            .map(|s| CommitJson::from_summary(s, now))
+            .collect::<Vec<_>>();
+        let commits: Vec<LogCommit> = json_rows
+            .into_iter()
+            .map(|commit| LogCommit {
+                commit,
+                files: None,
+                totals: None,
+                stat: None,
+            })
+            .collect();
+        let diffs = (0..commits.len()).map(|_| None).collect();
+        (commits, summaries, diffs)
+    };
 
     let head_branch_ref = head_branch.as_deref();
     let oneline_lines = if display.oneline && !display.graph {

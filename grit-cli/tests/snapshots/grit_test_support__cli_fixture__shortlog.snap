@@ -10,7 +10,7 @@ expression: payload
   },
   "json": {
     "exit": 0,
-    "stdout": "{\"branch\":\"main\",\"target\":\"main\",\"ahead\":0,\"commits\":[],\"truncated\":false,\"next\":null}\n",
+    "stdout": "{\"branch\":\"main\",\"target\":\"main\",\"ahead\":0,\"behind\":0,\"commits\":[],\"truncated\":false,\"next\":null}\n",
     "stderr": ""
   },
   "markdown": {

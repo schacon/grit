@@ -762,6 +762,20 @@ pub fn shortlog_ahead_bench(ctx: &DailyHeadlineContext) -> (BenchArgv, BenchArgv
     )
 }
 
+pub fn shortlog_behind_bench(ctx: &DailyHeadlineContext) -> (BenchArgv, BenchArgv) {
+    let ahead_range = ctx.shortlog_git_range.as_deref().unwrap_or("master..HEAD");
+    let (base, tip) = ahead_range.split_once("..").unwrap_or(("master", "HEAD"));
+    let behind_range = format!("{tip}..{base}");
+    let git_q = shell_quote(&ctx.git.to_string_lossy());
+    let script = format!(
+        "set -eu; {git_q} rev-list --left-right --count {tip}...{base} >/dev/null; {git_q} log -n 20 {behind_range} >/dev/null"
+    );
+    (
+        sh_devnull(&ctx.grit, &["shortlog", "--behind", "-n", "20"]),
+        sh_script(script),
+    )
+}
+
 pub fn patch_id_head_bench(ctx: &DailyHeadlineContext) -> (BenchArgv, BenchArgv) {
     (
         sh_devnull(&ctx.grit, &["patch-id", "HEAD"]),

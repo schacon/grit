@@ -372,6 +372,13 @@ pub const MATRIX_SCENARIOS: &[ScenarioSpec] = &[
         description: "Ahead-of-target commits: grit shortlog vs git log <target>..HEAD --oneline",
     },
     ScenarioSpec {
+        id: "shortlog/behind@git-git",
+        area: Area::Revwalk,
+        headline: false,
+        name: None,
+        description: "Behind-target listing: grit shortlog --behind -n 20 vs git rev-list --left-right --count and git log -n 20 HEAD..target",
+    },
+    ScenarioSpec {
         id: "patch-id/commit@git-git",
         area: Area::Revwalk,
         headline: false,
