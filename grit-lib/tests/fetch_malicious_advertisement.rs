@@ -7,11 +7,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use grit_lib::objects::ObjectId;
+use grit_lib::progress::NeverCancel;
 use grit_lib::refs::resolve_ref;
+use grit_lib::progress::NeverCancel;
 use grit_lib::remote::fetch::{fetch_remote, NoProgress};
+use grit_lib::progress::NeverCancel;
 use grit_lib::remote::pkt_line;
+use grit_lib::progress::NeverCancel;
 use grit_lib::remote::transfer::{FetchOptions, TagMode};
+use grit_lib::progress::NeverCancel;
 use grit_lib::remote::transport::{read_advertisement, Connection};
+use grit_lib::progress::NeverCancel;
 
 const MALICIOUS: &str = "refs/heads/../../../config";
 

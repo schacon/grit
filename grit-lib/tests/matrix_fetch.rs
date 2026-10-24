@@ -55,6 +55,7 @@ use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::resolve_ref;
 use grit_lib::remote::fetch::{fetch_remote, NoProgress};
+use grit_lib::progress::NeverCancel;
 use grit_lib::remote::transfer::{FetchDepth, FetchOptions, FetchOutcome, TagMode, UpdateMode};
 use grit_lib::remote::transport::http::ureq_client::UreqHttpClient;
 use grit_lib::remote::transport::http::{http_client_arc, http_fetch};
