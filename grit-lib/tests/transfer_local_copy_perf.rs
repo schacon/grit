@@ -87,6 +87,58 @@ fn for_local_copy_build_pack_reuse_bounded_on_repacked_fixture() {
     );
 }
 
+/// Repacked history: `for_repack_rewrite` stays within budget on a deterministic fixture.
+#[test]
+fn for_repack_rewrite_build_pack_reuse_bounded_on_repacked_fixture() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path();
+    git(dir, &["init", "-q", "-b", "main", "."]);
+    let mut body = String::from("shared prefix\n");
+    for i in 0..80 {
+        body.push_str(&format!("rev-{i}\n"));
+        body.push_str(&"x".repeat(2048));
+        std::fs::write(dir.join("blob.txt"), &body).unwrap();
+        git(dir, &["add", "blob.txt"]);
+        git(dir, &["commit", "-qm", &format!("c{i}")]);
+    }
+    git(
+        dir,
+        &[
+            "repack",
+            "-q",
+            "-a",
+            "-d",
+            "-f",
+            "--window=10",
+            "--depth=50",
+        ],
+    );
+    let git_dir = dir.join(".git");
+    let rev_out = Command::new("git")
+        .current_dir(dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("rev-parse");
+    let tip_hex = String::from_utf8_lossy(&rev_out.stdout);
+    let tip = ObjectId::from_hex(tip_hex.trim()).expect("tip");
+    let odb = open_odb(&git_dir);
+    let opts = PackBuildOptions::for_repack_rewrite(None);
+
+    let t0 = Instant::now();
+    let pack = build_pack(&odb, &[tip], &[], &opts).expect("build_pack");
+    let elapsed = t0.elapsed().as_secs_f64();
+
+    assert!(
+        pack.len() > 512,
+        "expected a non-trivial delta pack, got {} bytes",
+        pack.len()
+    );
+    assert!(
+        elapsed < 30.0,
+        "for_repack_rewrite pack build took {elapsed:.2}s (budget 30s)"
+    );
+}
+
 /// When `/tmp/cargo.mirror` exists, repack-rewrite pack build must stay within a CI budget.
 #[test]
 #[cfg_attr(debug_assertions, ignore = "release-only: cargo mirror perf budget")]

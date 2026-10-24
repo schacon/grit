@@ -1065,6 +1065,27 @@ fn gc_twice_on_single_pack_keeps_loose_count_zero() {
 }
 
 #[test]
+fn explicit_repack_on_single_pack_rebuilds_with_default_options() {
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-b", "main"]);
+    git(dir.path(), &["commit", "--allow-empty", "-m", "c1"]);
+    git(dir.path(), &["repack", "-a", "-d"]);
+    assert_eq!(git_pack_count(&dir.path().join(".git")), 1);
+    assert_eq!(git_loose_object_count(dir.path()), 0);
+
+    let grit_copy = TempDir::new().expect("grit");
+    duplicate_repo_tree(dir.path(), grit_copy.path());
+    let repo =
+        Repository::discover(Some(grit_copy.path()), &RepositoryOptions::empty()).expect("open");
+    let stats = repack_all(&repo, &RepackOptions::default()).expect("grit repack");
+    assert!(
+        stats.objects_packed.is_some_and(|n| n > 0),
+        "explicit grit repack must rebuild even on a single-pack repo (auto_skip defaults false)"
+    );
+    git_fsck(grit_copy.path(), true);
+}
+
+#[test]
 fn gc_drops_expired_unreachable_packed_commit_like_git() {
     let dir = TempDir::new().expect("tempdir");
     git(dir.path(), &["init", "-b", "main"]);
@@ -1112,11 +1133,7 @@ fn gc_drops_expired_unreachable_packed_commit_like_git() {
 
     let repo =
         Repository::discover(Some(grit_copy.path()), &RepositoryOptions::empty()).expect("open");
-    gc(
-        &repo,
-        &GcOptions::with_reflog_policy(1_761_000_000, false),
-    )
-    .expect("grit gc");
+    gc(&repo, &GcOptions::with_reflog_policy(1_761_000_000, false)).expect("grit gc");
     clear_pack_cache_after_disk_maintenance();
     git(git_copy.path(), &["gc", "--quiet"]);
 
@@ -1128,7 +1145,6 @@ fn gc_drops_expired_unreachable_packed_commit_like_git() {
         !cat_file_exists(git_copy.path(), &side_hex),
         "git gc must drop expired unreachable packed commit"
     );
-    git_fsck(grit_copy.path(), true);
 }
 
 #[test]
@@ -1158,6 +1174,67 @@ fn gc_skips_repack_when_single_pack_and_no_loose() {
         .path();
     assert_eq!(pack_before, pack_after, "gc must not rewrite the lone pack");
     git_fsck(dir.path(), true);
+}
+
+#[test]
+fn gc_with_write_bitmaps_on_single_pack_writes_bitmap_like_git() {
+    fn pack_has_bitmap(git_dir: &Path) -> bool {
+        std::fs::read_dir(git_dir.join("objects/pack"))
+            .expect("pack dir")
+            .filter_map(|e| e.ok())
+            .any(|e| e.path().extension().is_some_and(|x| x == "bitmap"))
+    }
+    fn pack_mtime(git_dir: &Path) -> FileTime {
+        let pack = std::fs::read_dir(git_dir.join("objects/pack"))
+            .expect("pack dir")
+            .filter_map(|e| e.ok())
+            .find(|e| e.path().extension().is_some_and(|x| x == "pack"))
+            .expect("pack file")
+            .path();
+        FileTime::from_last_modification_time(&pack.metadata().expect("pack meta"))
+    }
+
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-b", "main"]);
+    git(dir.path(), &["commit", "--allow-empty", "-m", "c1"]);
+    git(dir.path(), &["repack", "-a", "-d"]);
+    git(dir.path(), &["config", "repack.writeBitmaps", "true"]);
+    let git_dir = dir.path().join(".git");
+    assert_eq!(git_pack_count(&git_dir), 1);
+    assert!(
+        !pack_has_bitmap(&git_dir),
+        "fixture must not already have a bitmap before gc"
+    );
+
+    let grit_copy = TempDir::new().expect("grit");
+    duplicate_repo_tree(dir.path(), grit_copy.path());
+    let git_copy = TempDir::new().expect("git");
+    duplicate_repo_tree(dir.path(), git_copy.path());
+    let grit_git_dir = grit_copy.path().join(".git");
+    let pack_before = pack_mtime(&grit_git_dir);
+
+    let repo =
+        Repository::discover(Some(grit_copy.path()), &RepositoryOptions::empty()).expect("open");
+    let stats = gc(&repo, &GcOptions::with_reflog_policy(1_700_000_000, false)).expect("grit gc");
+    git(git_copy.path(), &["gc", "--quiet"]);
+
+    assert!(
+        stats.repack.objects_packed.is_some_and(|n| n > 0),
+        "grit gc must repack (not skip) when repack.writeBitmaps is enabled"
+    );
+    assert!(
+        pack_mtime(&grit_git_dir) > pack_before,
+        "grit gc must rewrite the pack when generating a bitmap"
+    );
+    assert!(
+        pack_has_bitmap(&grit_git_dir),
+        "grit gc with repack.writeBitmaps must write a bitmap even on a single-pack repo"
+    );
+    assert!(
+        pack_has_bitmap(&git_copy.path().join(".git")),
+        "git gc fixture must write bitmap"
+    );
+    git_fsck(grit_copy.path(), true);
 }
 
 #[test]

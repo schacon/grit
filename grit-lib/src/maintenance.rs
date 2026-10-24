@@ -774,12 +774,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
             opts.auto_skip,
             cfg.as_ref(),
         )
-        && !skipping_repack_would_retain_prunable_packed_objects(
-            odb,
-            &pack_dir,
-            &roots,
-            opts,
-        )?;
+        && !skipping_repack_would_retain_prunable_packed_objects(odb, &pack_dir, &roots, opts)?;
 
     if opts.dry_run {
         report.objects = if skip_repack {
