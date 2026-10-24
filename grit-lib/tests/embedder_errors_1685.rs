@@ -1,13 +1,16 @@
 //! Typed errors for common embedder failures (issue #1685).
 
-use grit_lib::blame;
+use grit_lib::blame::{self, compute_blame, BlameDiffAlgorithm};
 use grit_lib::error::Error;
+use grit_lib::objects::ObjectId;
+use grit_lib::parallel::ThreadPolicy;
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::porcelain::staging::stage_worktree_changes;
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::revwalk::rev_parse_error::RevParseError;
+use std::collections::{HashMap, HashSet};
 fn assert_requires_work_tree(result: Result<(), Error>) {
     assert!(
         matches!(result, Err(Error::RequiresWorkTree)),
@@ -37,8 +40,7 @@ fn bare_repo_common_failures_use_requires_work_tree() {
     );
 }
 
-#[test]
-fn blame_missing_path_is_path_not_in_revision() {
+fn repo_with_one_commit() -> (tempfile::TempDir, Repository, ObjectId) {
     let base = tempfile::tempdir().expect("tempdir");
     let repo = Repository::init(
         &base.path().join("w"),
@@ -53,17 +55,49 @@ fn blame_missing_path_is_path_not_in_revision() {
         committer: "A <a@b> 0 +0000".into(),
         ..Default::default()
     };
-    create_commit(&repo, &req, &mut NullProgress).expect("commit");
+    let outcome = create_commit(&repo, &req, &mut NullProgress).expect("commit");
+    (base, repo, outcome.oid)
+}
 
-    let err = blame::blame_file(&repo, "nope.txt", &Default::default()).unwrap_err();
+fn assert_blame_path_not_in_revision(err: Error, expected_path: &str, expected_revision: &str) {
     assert!(
         matches!(
             err,
             Error::RevParse(RevParseError::PathNotInRevision { ref path, ref revision, .. })
-                if path == "nope.txt" && revision == "HEAD"
+                if path == expected_path && revision == expected_revision
         ),
         "got {err:?}"
     );
+}
+
+#[test]
+fn blame_file_missing_path_is_path_not_in_revision() {
+    let (_base, repo, _head) = repo_with_one_commit();
+    let err = blame::blame_file(&repo, "nope.txt", &Default::default()).unwrap_err();
+    assert_blame_path_not_in_revision(err, "nope.txt", "HEAD");
+}
+
+#[test]
+fn compute_blame_missing_path_is_path_not_in_revision() {
+    let (_base, repo, head) = repo_with_one_commit();
+    let err = compute_blame(
+        repo.odb(),
+        head,
+        "missing.txt",
+        &HashSet::new(),
+        BlameDiffAlgorithm::Myers,
+        None,
+        false,
+        0,
+        false,
+        &HashMap::new(),
+        false,
+        None,
+        grit_lib::diff::WhitespaceMode::default(),
+        &ThreadPolicy::default(),
+    )
+    .unwrap_err();
+    assert_blame_path_not_in_revision(err, "missing.txt", &head.to_hex());
 }
 
 #[test]

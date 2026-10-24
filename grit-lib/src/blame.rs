@@ -1972,9 +1972,11 @@ pub fn compute_blame(
 ) -> Result<Vec<BlameLine>> {
     let mut session = BlameSession::new(odb, textconv_ctx, use_textconv, thread_policy);
     session.whitespace = whitespace;
+    let revision_label = start_oid.to_hex();
     compute_blame_with_session(
         odb,
         start_oid,
+        &revision_label,
         file_path,
         ignore_revs,
         diff_algorithm,
@@ -1987,6 +1989,14 @@ pub fn compute_blame(
         line_range,
         &mut session,
     )
+}
+
+fn blame_path_missing_in_revision(path: &str, revision: &str) -> LibError {
+    crate::revwalk::rev_parse_error::RevParseError::PathNotInRevision {
+        path: path.to_owned(),
+        revision: revision.to_owned(),
+    }
+    .into()
 }
 
 /// Advance `start_oid` along first parents while `path` resolves to `blob_oid`.
@@ -2064,6 +2074,7 @@ fn fast_forward_same_blob(
 fn compute_blame_with_session(
     odb: &Odb,
     start_oid: ObjectId,
+    revision_label: &str,
     file_path: &str,
     ignore_revs: &HashSet<ObjectId>,
     diff_algorithm: BlameDiffAlgorithm,
@@ -2087,7 +2098,7 @@ fn compute_blame_with_session(
 
     let (blob_oid, blob_mode) = session
         .resolve_path_in_tree(start_commit.tree, file_path)?
-        .ok_or_else(|| LibError::Message(format!("file '{file_path}' not found in revision")))?;
+        .ok_or_else(|| blame_path_missing_in_revision(file_path, revision_label))?;
     let start_lines = session.load_blob_lines(blob_oid, file_path, blob_mode)?;
     let num_lines = start_lines.len();
 
@@ -2294,9 +2305,11 @@ fn compute_blame_with_session(
                     let p_lines_arc =
                         session.load_blob_lines(p_blob_oid, &current_path, p_blob_mode)?;
                     let p_lines = p_lines_arc.to_vec();
+                    let parent_revision = parent_oid.to_hex();
                     let p_blame = compute_blame_with_session(
                         odb,
                         *parent_oid,
+                        &parent_revision,
                         &current_path,
                         ignore_revs,
                         diff_algorithm,
@@ -2682,9 +2695,11 @@ fn compute_blame_with_session(
                             continue;
                         }
 
+                        let parent_revision = parent_oid.to_hex();
                         let source_blame = compute_blame_with_session(
                             odb,
                             parent_oid,
+                            &parent_revision,
                             &path,
                             ignore_revs,
                             diff_algorithm,
@@ -3311,9 +3326,11 @@ fn find_copy_source_blame(
         return Ok(None);
     }
 
+    let parent_revision = parent_oid.to_hex();
     let source_blame = compute_blame_with_session(
         odb,
         parent_oid,
+        &parent_revision,
         &source_path,
         ignore_revs,
         diff_algorithm,
@@ -3792,30 +3809,13 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
     } else {
         "HEAD".into()
     };
-    let start_commit = get_blame_commit(
-        repo.odb(),
-        start_oid,
-        &mut BlameCommitCache::default(),
-        session.commit_graph.as_deref(),
-    )?;
-    if session
-        .resolve_path_in_tree(start_commit.tree, &file_path)?
-        .is_none()
-    {
-        return Err(
-            crate::revwalk::rev_parse_error::RevParseError::PathNotInRevision {
-                path: file_path,
-                revision: revision_label,
-            }
-            .into(),
-        );
-    }
     let copy_depth = options.copy_detection.depth();
     let (lines, commits) = repo.odb().with_pack_read_context(
         || -> Result<(Vec<BlameAttributedLine>, HashMap<ObjectId, BlameCommitInfo>)> {
             let raw = compute_blame_with_session(
                 repo.odb(),
                 start_oid,
+                &revision_label,
                 &file_path,
                 &ignore_revs,
                 diff_algorithm,
