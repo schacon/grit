@@ -25,28 +25,12 @@ For a given [`Odb`](rustdoc:grit_lib::objects::odb::Odb) handle:
 
 ## Building a custom repository
 
-```rust
-use std::sync::Arc;
+Pass an [`OdbBuilder`](rustdoc:grit_lib::objects::odb::OdbBuilder) rooted at the repository's `objects/` directory to [`RepositoryBuilder::odb_builder`](rustdoc:grit_lib::repo::RepositoryBuilder::odb_builder). Any path naming that directory works: one through symlinks (such as macOS `/var` → `/private/var` or `/tmp` → `/private/tmp`) or one relative to the environment's current directory. The opened [`Odb`](rustdoc:grit_lib::objects::odb::Odb) reports the canonical path. A builder rooted anywhere else fails with [`Error::OdbObjectsDirMismatch`](rustdoc:grit_lib::error::Error::OdbObjectsDirMismatch).
 
-use grit_lib::config::environment::RepositoryOptions;
-use grit_lib::objects::{HashAlgo, ObjectKind};
-use grit_lib::objects::odb::store::MemoryStore;
-use grit_lib::objects::odb::OdbBuilder;
-use grit_lib::repo::{InitOptions, Repository, RepositoryBuilder};
+<!-- include: grit-examples/src/bin/memory_primary.rs -->
 
-let dir = tempfile::tempdir()?;
-Repository::init(dir.path(), &InitOptions::default())?;
-let git_dir = dir.path().join(".git");
-let store = Arc::new(MemoryStore::new(HashAlgo::Sha1));
-let repo = RepositoryBuilder::new(RepositoryOptions::empty())
-    .odb_builder(
-        OdbBuilder::files(git_dir.join("objects"))
-            .primary(store)
-            .alternates(false),
-    )
-    .open(&git_dir, Some(dir.path()))?;
-let _blob = repo.odb.write(ObjectKind::Blob, b"hello")?;
-# Ok::<(), grit_lib::error::Error>(())
+```bash
+cargo run -p grit-examples --bin memory_primary
 ```
 
 ## What works with a custom primary
