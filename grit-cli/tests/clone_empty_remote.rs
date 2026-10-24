@@ -74,3 +74,62 @@ fn clone_empty_bare_exits_zero_and_creates_directory() -> TestResult {
 
     Ok(())
 }
+
+#[test]
+#[cfg(unix)]
+fn clone_empty_bare_over_ssh_fake_transport_exits_zero() -> TestResult {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = tempfile::tempdir()?;
+    let origin = base.path().join("origin.git");
+    fs::create_dir_all(&origin)?;
+    git_in(
+        base.path(),
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            origin.to_str().unwrap(),
+        ],
+    )?;
+
+    let fake_ssh = base.path().join("fake-ssh.sh");
+    fs::write(
+        &fake_ssh,
+        br#"#!/bin/sh
+cmd=
+for cmd in "$@"; do :; done
+case "$cmd" in
+  "git-upload-pack "*) cmd="git upload-pack ${cmd#git-upload-pack }" ;;
+esac
+eval "exec $cmd"
+"#,
+    )?;
+    let mut perms = fs::metadata(&fake_ssh)?.permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&fake_ssh, perms)?;
+
+    let abs = origin.to_str().unwrap();
+    let url = format!("ssh://localhost{abs}");
+    let dest = base.path().join("ssh-clone");
+    let out = Command::new(GRIT)
+        .args(["clone", &url, dest.to_str().unwrap()])
+        // Git/grit prefer GIT_SSH_COMMAND over GIT_SSH; clear it so the fake
+        // transport is deterministic in CI and developer shells.
+        .env_remove("GIT_SSH_COMMAND")
+        .env("GIT_SSH", &fake_ssh)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "grit clone over ssh failed: {stderr}");
+    assert!(
+        stderr.contains("remote repository is empty"),
+        "expected empty-remote note on stderr, got: {stderr}"
+    );
+    assert!(dest.join(".git").is_dir());
+
+    Ok(())
+}
