@@ -4,10 +4,25 @@ use std::collections::BTreeMap;
 use std::io::Write;
 
 use anyhow::{bail, Context, Result};
+use std::fmt;
+
+/// Invalid `grit blame` arguments (maps to exit code 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlameUsageError;
+
 use grit_lib::blame::{
-    blame_file, resolve_blame_line_range, BlameOptions, BlameResult, IgnoreRevs, IgnoreRevsSources,
+    blame_file, resolve_blame_line_range, BlameOptions, BlameResult, CopyDetection, IgnoreRevs,
+    IgnoreRevsSources,
 };
 use grit_lib::diff::WhitespaceMode;
+
+impl fmt::Display for BlameUsageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("blame copy detection: at most three -C flags are supported")
+    }
+}
+
+impl std::error::Error for BlameUsageError {}
 use grit_lib::objects::ObjectId;
 use grit_lib::revwalk::rev_parse::resolve_revision_as_commit;
 use schemars::JsonSchema;
@@ -165,6 +180,7 @@ pub fn run(
     ignore_revs_file: Vec<String>,
     group: bool,
     ignore_all_space: bool,
+    copy_detection: u8,
     now: time::OffsetDateTime,
 ) -> Result<BlameOutcome> {
     let (rev_pos, file) = match (rev_pos, file) {
@@ -207,6 +223,9 @@ pub fn run(
         },
     )?;
 
+    let copy_detection = CopyDetection::from_count(copy_detection as usize)
+        .map_err(|_| anyhow::Error::from(BlameUsageError))?;
+
     let mut whitespace = WhitespaceMode::default();
     if ignore_all_space {
         whitespace = WhitespaceMode::ignore_all_space();
@@ -221,6 +240,7 @@ pub fn run(
             first_parent_only: first_parent,
             ignore,
             whitespace,
+            copy_detection,
         },
     )?;
 
@@ -269,9 +289,9 @@ fn outcome_from_result(
         lines_json.push(BlameLineJson {
             commit: commit_hex.clone(),
             original_line: line.original_line,
-            original_path: line.original_path.clone(),
             final_line: line.final_line,
             content: content.clone(),
+            original_path: line.original_path.clone(),
             ignored: line.ignored.then_some(true),
             unblamable: line.unblamable.then_some(true),
         });

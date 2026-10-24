@@ -889,6 +889,9 @@ enum Command {
         /// Ignore whitespace when comparing lines (`git blame -w`).
         #[arg(short = 'w', long = "ignore-all-space")]
         ignore_all_space: bool,
+        /// Detect lines copied from other files (`git blame -C`; repeat up to three times).
+        #[arg(short = 'C', long = "copy-detection", action = clap::ArgAction::Count)]
+        copy_detection: u8,
     },
     /// Show changes as a diff. No argument: uncommitted changes; with a commit:
     /// the change that commit introduced; with two commits (or `A..B`) diff their trees.
@@ -2055,7 +2058,23 @@ fn run() -> Result<ExitStatus, anyhow::Error> {
     let parse_argv =
         normalize_tag_verify_argv(diff_args::normalize_diff_argv(std::env::args().collect()));
     let cli = match Cli::try_parse_from(parse_argv) {
-        Ok(cli) => cli,
+        Ok(cli) => {
+            if let Err(err) = validate_cli(&cli) {
+                let json = std::env::args().any(|a| a == "--json");
+                if json {
+                    let opts = OutputOptions {
+                        mode: OutputMode::Json,
+                        filter: extract_filter_flag(),
+                    };
+                    let message = clap_json_error_message(&err);
+                    output::emit_error(&anyhow::anyhow!(message), &opts);
+                    return Ok(ExitStatus::from_clap_code(err.exit_code()));
+                }
+                let _ = err.print();
+                return Ok(ExitStatus::from_clap_code(err.exit_code()));
+            }
+            cli
+        }
         Err(err) if err.use_stderr() => {
             let json = std::env::args().any(|a| a == "--json");
             if json {
@@ -2124,6 +2143,18 @@ fn run() -> Result<ExitStatus, anyhow::Error> {
             Ok(ExitStatus::for_error(&err))
         }
     }
+}
+
+fn validate_cli(cli: &Cli) -> Result<(), clap::Error> {
+    if let Some(Command::Blame { copy_detection, .. }) = &cli.command {
+        if *copy_detection > 3 {
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::InvalidValue,
+                "blame copy detection: at most three -C flags are supported",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Format a clap usage error for `--json`: keep missing-argument detail, omit Usage/help.
@@ -2494,6 +2525,7 @@ fn dispatch(
             ignore_revs_file,
             group,
             ignore_all_space,
+            copy_detection,
         } => emit_success(
             &commands::blame::run(
                 rev_pos,
@@ -2505,6 +2537,7 @@ fn dispatch(
                 ignore_revs_file,
                 group,
                 ignore_all_space,
+                copy_detection,
                 ctx.now,
             )?,
             opts,
