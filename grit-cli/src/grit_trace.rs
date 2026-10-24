@@ -1,6 +1,8 @@
-//! Install a minimal stderr tracing subscriber when `GRIT_TRACE` is set.
+//! Install a minimal tracing subscriber when `GRIT_TRACE` is set (to stderr, or to a file).
 
+use std::fs::OpenOptions;
 use std::io::{self, IsTerminal, Write};
+use std::path::Path;
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -12,18 +14,26 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
 /// When `GRIT_TRACE` is `1`, `true`, or `yes`, print a span tree with close durations to stderr.
+/// When it is an absolute path, append the tree to that file instead (like `GIT_TRACE2_PERF`),
+/// so the trace survives a command whose stderr is discarded.
 pub fn maybe_init_from_env() {
     let Some(raw) = std::env::var("GRIT_TRACE").ok() else {
         return;
     };
-    let enabled = matches!(raw.trim(), "1" | "true" | "yes");
-    if !enabled {
+    let raw = raw.trim();
+    let (writer, ansi): (Box<dyn Write + Send>, bool) = if matches!(raw, "1" | "true" | "yes") {
+        (Box::new(io::stderr()), io::stderr().is_terminal())
+    } else if Path::new(raw).is_absolute() {
+        match OpenOptions::new().create(true).append(true).open(raw) {
+            Ok(file) => (Box::new(file), false),
+            Err(_) => return,
+        }
+    } else {
         return;
-    }
+    };
 
-    let ansi = io::stderr().is_terminal();
     let layer = TreeLayer {
-        writer: Mutex::new(io::stderr()),
+        writer: Mutex::new(writer),
         ansi,
     };
     let _ = tracing_subscriber::registry().with(layer).try_init();
@@ -32,7 +42,7 @@ pub fn maybe_init_from_env() {
 struct SpanStart(Instant);
 
 struct TreeLayer {
-    writer: Mutex<io::Stderr>,
+    writer: Mutex<Box<dyn Write + Send>>,
     ansi: bool,
 }
 

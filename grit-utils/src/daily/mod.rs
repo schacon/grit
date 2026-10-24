@@ -13,6 +13,7 @@ pub mod revision_selection_matrix_registry;
 pub mod run;
 pub mod runner;
 pub mod schema;
+pub mod trace;
 pub mod validate;
 
 pub use run::{list_daily_scenario_ids, run_daily, DailyRunOptions};
@@ -24,6 +25,7 @@ pub use registry::{
 };
 pub use revision_selection_matrix_registry::REVISION_SELECTION_MATRIX_SCENARIOS;
 pub use schema::{
-    DailyBenchReport, DailyScenarioResult, DailyToolRun, DailyToolVersions, ScenarioId, SCHEMA_TAG,
+    DailyBenchReport, DailyCommands, DailyPhase, DailyPhases, DailyScenarioDetail,
+    DailyScenarioResult, DailyToolRun, DailyToolVersions, ScenarioId, SCHEMA_TAG,
 };
 pub use validate::validate_daily_report;

@@ -18,8 +18,10 @@ use super::runner::{
     BenchArgv, PostTimedCheck, PreTimedCheck, RunLimits, RunPolicy,
 };
 use super::schema::{
-    DailyBenchReport, DailyScenarioResult, DailyToolRun, DailyToolVersions, SCHEMA_TAG,
+    DailyBenchReport, DailyCommands, DailyScenarioDetail, DailyScenarioResult, DailyToolRun,
+    DailyToolVersions, SCHEMA_TAG,
 };
+use super::trace::{display_argv, trace_phases};
 use crate::binary::{report_grit_commit, tool_version};
 use crate::capped_run::TerminationKind;
 use crate::machine::{collect_machine_info, format_timestamp};
@@ -53,10 +55,19 @@ fn default_policy() -> RunPolicy {
 }
 
 fn tool_run(stats: &crate::schema::TimingStats, runs: u32) -> DailyToolRun {
+    let has_runs = !stats.runs_ms.is_empty();
     DailyToolRun {
         median_wall_ms: stats.median_ms,
         peak_rss_bytes: stats.peak_rss_bytes.unwrap_or(0),
         runs: Some(runs),
+        samples_ms: stats
+            .runs_ms
+            .iter()
+            .map(|ms| (ms * 1000.0).round() / 1000.0)
+            .collect(),
+        min_ms: has_runs.then_some(stats.min_ms),
+        max_ms: has_runs.then_some(stats.max_ms),
+        stddev_ms: (stats.runs_ms.len() > 1).then_some(stats.stddev_ms),
     }
 }
 
@@ -75,20 +86,13 @@ fn pending_row(spec: &ScenarioSpec) -> DailyScenarioResult {
         headline: spec.headline,
         name: spec.name.map(str::to_string),
         description: spec.description.to_string(),
-        git: DailyToolRun {
-            median_wall_ms: 0.0,
-            peak_rss_bytes: 0,
-            runs: None,
-        },
-        grit: DailyToolRun {
-            median_wall_ms: 0.0,
-            peak_rss_bytes: 0,
-            runs: None,
-        },
+        git: DailyToolRun::default(),
+        grit: DailyToolRun::default(),
         ratio: 0.0,
         baseline_grit: None,
         baseline_grit_ratio: None,
         pending: true,
+        detail: None,
     }
 }
 
@@ -216,6 +220,21 @@ fn run_baseline_samples(
     Ok(run)
 }
 
+/// Which checks guard a scenario, in words for the report.
+fn correctness_note(once: bool, before_each: bool, after_each: bool) -> Option<String> {
+    let mut parts = Vec::new();
+    if once {
+        parts.push("before timing, git and grit were each run once and their results compared");
+    }
+    if before_each {
+        parts.push("the starting state is verified before every timed run");
+    }
+    if after_each {
+        parts.push("the result is verified after every timed run");
+    }
+    (!parts.is_empty()).then(|| parts.join("; "))
+}
+
 /// Execute headline scenarios and write a daily census JSON report.
 pub fn run_daily(opts: DailyRunOptions, timestamp: OffsetDateTime) -> Result<DailyBenchReport> {
     pin_daily_scratch_root();
@@ -259,6 +278,8 @@ pub fn run_daily(opts: DailyRunOptions, timestamp: OffsetDateTime) -> Result<Dai
         let grit_cmd = (plan.build_grit)(&headline_ctx);
         let prepare_spec = (plan.prepare)(&headline_ctx);
         let prepare = prepare_argv(&opts.measure_helper, &opts.git, &prepare_spec);
+        let checked_after = post_timed_for(plan.spec.id).is_some();
+        let checked_before = pre_timed_for(plan.spec.id).is_some();
         let post_timed = post_timed_for(plan.spec.id).map(|verify| PostTimedCheck {
             ctx: &headline_ctx,
             verify,
@@ -281,6 +302,41 @@ pub fn run_daily(opts: DailyRunOptions, timestamp: OffsetDateTime) -> Result<Dai
             pre_timed,
         })
         .with_context(|| format!("benchmark {}", plan.spec.id))?;
+
+        // One more run per tool with tracing on, after the timed runs so it can't skew them.
+        let (phases, trace_note) = trace_phases(
+            &repo,
+            &git_cmd,
+            &grit_cmd,
+            prepare.as_ref(),
+            &limits,
+            &opts.measure_helper,
+        );
+        let names = [
+            (opts.git.as_path(), "git"),
+            (opts.grit.as_path(), "grit"),
+            (opts.measure_helper.as_path(), "grit-bench"),
+        ];
+        let detail = DailyScenarioDetail {
+            setup: headline_ctx.remote.as_ref().map(|r| {
+                format!(
+                    "fixture repo with a bare file:// remote ({})",
+                    r.bare.display()
+                )
+            }),
+            prepare: prepare.as_ref().map(|p| display_argv(p, &names)),
+            commands: DailyCommands {
+                git: Some(display_argv(&git_cmd, &names)),
+                grit: Some(display_argv(&grit_cmd, &names)),
+            },
+            correctness: correctness_note(
+                plan.correctness.is_some(),
+                checked_before,
+                checked_after,
+            ),
+            phases: Some(phases),
+            notes: trace_note,
+        };
 
         let git_run = tool_run(&outcome.git.stats, outcome.git.stats.runs_ms.len() as u32);
         let grit_run = tool_run(&outcome.grit.stats, outcome.grit.stats.runs_ms.len() as u32);
@@ -315,6 +371,7 @@ pub fn run_daily(opts: DailyRunOptions, timestamp: OffsetDateTime) -> Result<Dai
             baseline_grit,
             baseline_grit_ratio,
             pending: false,
+            detail: Some(detail),
         });
     }
 

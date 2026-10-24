@@ -92,12 +92,70 @@ pub struct DailyToolVersions {
 }
 
 /// One tool's timing and memory on a scenario (median wall over runs, max peak RSS).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct DailyToolRun {
     pub median_wall_ms: f64,
     pub peak_rss_bytes: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runs: Option<u32>,
+    /// Every successful timed run's wall time, in run order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub samples_ms: Vec<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stddev_ms: Option<f64>,
+}
+
+/// One timed part of a command, summed by name over one traced run (`GIT_TRACE2_PERF`
+/// regions and child processes for git, `GRIT_TRACE` spans for grit).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DailyPhase {
+    pub name: String,
+    pub ms: f64,
+    /// How many times it ran (regions and spans can repeat).
+    pub count: u32,
+    /// Nesting depth of its shallowest occurrence (0 = top level).
+    pub depth: u32,
+}
+
+/// Phase timings from one extra traced run per tool, outside the timed runs.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct DailyPhases {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub git: Vec<DailyPhase>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grit: Vec<DailyPhase>,
+}
+
+/// The exact command lines timed for each tool.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct DailyCommands {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grit: Option<String>,
+}
+
+/// How a scenario was measured, so a reader can check and reproduce it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct DailyScenarioDetail {
+    /// How the fixture repo (and any remote) is built.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup: Option<String>,
+    /// What runs before every timed run to reset state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepare: Option<String>,
+    pub commands: DailyCommands,
+    /// What was checked so both tools are known to do the same work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correctness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phases: Option<DailyPhases>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
 }
 
 /// One row in the daily matrix.
@@ -121,6 +179,8 @@ pub struct DailyScenarioResult {
     /// Remote or not-yet-implemented scenario (no timing fields required).
     #[serde(default, skip_serializing_if = "is_false")]
     pub pending: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<DailyScenarioDetail>,
 }
 
 /// Full daily census report (`grit-daily-bench/1`).
@@ -185,16 +245,19 @@ mod tests {
                     median_wall_ms: 8.0,
                     peak_rss_bytes: 12_000_000,
                     runs: Some(5),
+                    ..Default::default()
                 },
                 grit: DailyToolRun {
                     median_wall_ms: 13.0,
                     peak_rss_bytes: 14_000_000,
                     runs: Some(5),
+                    ..Default::default()
                 },
                 ratio: 13.0 / 8.0,
                 baseline_grit: None,
                 baseline_grit_ratio: None,
                 pending: false,
+                detail: None,
             }],
         }
     }
