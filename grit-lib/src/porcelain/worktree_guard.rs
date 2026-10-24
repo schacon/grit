@@ -346,16 +346,15 @@ fn switch_worktree_clean_for_paths(
                 Err(_) => {
                     stat_clean = false;
                     note_dirty(path);
-                    break;
+                    continue;
                 }
             };
             if !meta.is_dir() {
                 stat_clean = false;
                 note_dirty(path);
-                break;
             }
         }
-        if stat_clean {
+        {
             let blob_dirs = group_blob_entries_by_dir_for_paths(index, paths);
             let work_tree_owned = work_tree.to_path_buf();
             let dir_abs = |dir: &[u8]| {
@@ -386,9 +385,6 @@ fn switch_worktree_clean_for_paths(
                 file_abs,
                 |_| false,
                 |entry_index, lookup| {
-                    if !stat_clean {
-                        return Ok(());
-                    }
                     let ie = &index.entries[entry_index];
                     let path = String::from_utf8_lossy(&ie.path);
                     match lookup {
@@ -459,9 +455,6 @@ fn switch_worktree_clean_for_paths(
             BlobScanSparseMode::WorktreeGuard { stat_policy },
         )?;
         visit_blob_lookup_batches(guard_batches, |entry_index, lookup| {
-            if !stat_clean {
-                return Ok(());
-            }
             let ie = &index.entries[entry_index];
             if !indexed_path_needs_worktree_stat_check(ie) {
                 return Ok(());
@@ -518,15 +511,15 @@ fn switch_worktree_clean_for_paths(
         let meta = match fs::symlink_metadata(&abs) {
             Ok(m) => m,
             Err(_) => {
-                let mut dirty = BTreeSet::new();
-                dirty.insert(path.clone());
-                return Ok(SwitchWorktreeClean::StatDirty(dirty));
+                stat_clean = false;
+                note_dirty(path);
+                continue;
             }
         };
         if !stat_matches_with_policy(ie, &meta, stat_policy) {
-            let mut dirty = BTreeSet::new();
-            dirty.insert(path.clone());
-            return Ok(SwitchWorktreeClean::StatDirty(dirty));
+            stat_clean = false;
+            note_dirty(path);
+            continue;
         }
         let attrs = rules.file_attrs(path, false);
         let content_ok = hash_worktree_file(
@@ -541,10 +534,13 @@ fn switch_worktree_clean_for_paths(
         )
         .is_ok_and(|oid| oid == ie.oid);
         if !content_ok {
-            let mut dirty = BTreeSet::new();
-            dirty.insert(path.clone());
-            return Ok(SwitchWorktreeClean::StatDirty(dirty));
+            stat_clean = false;
+            note_dirty(path);
         }
+    }
+    if !stat_clean {
+        let dirty = dirty_paths.into_inner().unwrap_or_else(|e| e.into_inner());
+        return Ok(SwitchWorktreeClean::StatDirty(dirty));
     }
     Ok(SwitchWorktreeClean::Clean)
 }
@@ -848,8 +844,7 @@ fn switch_prepare_stat_parallel_threads(
 fn scheduled_delete_skip_file_type_probe(index: &Index, rel: &str) -> bool {
     use crate::index::{MODE_EXECUTABLE, MODE_REGULAR, MODE_SYMLINK};
     index.get(rel.as_bytes(), 0).is_some_and(|e| {
-        e.stage() == 0
-            && matches!(e.mode, MODE_REGULAR | MODE_EXECUTABLE | MODE_SYMLINK)
+        e.stage() == 0 && matches!(e.mode, MODE_REGULAR | MODE_EXECUTABLE | MODE_SYMLINK)
     })
 }
 
@@ -1088,15 +1083,19 @@ fn scan_wholesale_delete_root(
             rel_buf.push_str(&name);
             let rel = rel_buf.as_str();
             if index_aligned && delete_path_scheduled_for_removal(rel, delete_paths, ignorecase) {
-                // Indexed file deletes need no file_type (issue #1613). Directory deletes and
-                // directory prefixes still need a probe to descend for blocking special files.
+                // Indexed file deletes need no file_type (issue #1613). Always descend when
+                // other scheduled deletes live under this path; otherwise probe only when the
+                // path is not a known indexed blob (directory deletes, missing index rows).
                 let skip_probe = scheduled_delete_skip_file_type_probe(index, rel);
-                if !skip_probe
-                    && (delete_scheduled_path_needs_directory_descent(rel, delete_paths, ignorecase)
-                        || delete_paths.contains(rel)
-                        || (ignorecase
-                            && delete_paths.iter().any(|del| del.eq_ignore_ascii_case(rel))))
-                {
+                let needs_descent =
+                    delete_scheduled_path_needs_directory_descent(rel, delete_paths, ignorecase)
+                        || (!skip_probe
+                            && (delete_paths.contains(rel)
+                                || (ignorecase
+                                    && delete_paths
+                                        .iter()
+                                        .any(|del| del.eq_ignore_ascii_case(rel)))));
+                if needs_descent {
                     let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
                     if is_dir {
                         stack.push(entry.path());

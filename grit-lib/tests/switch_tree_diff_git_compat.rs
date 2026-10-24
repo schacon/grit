@@ -863,6 +863,92 @@ fn switch_refuses_dirty_conflicting_path_and_leaves_file() {
     assert_eq!(before, after, "conflicting dirty file must be untouched");
 }
 
+/// Stat drift on one tree-diff path must not hide a real local edit on another (issue #1613 review).
+#[test]
+fn switch_refuses_dirty_second_path_when_first_has_stat_drift_only_like_git() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    git(tmp.path(), &["init", "-q", "-b", "main", "."]);
+    git(tmp.path(), &["config", "user.email", "t@example.com"]);
+    git(tmp.path(), &["config", "user.name", "Test"]);
+
+    std::fs::write(tmp.path().join("a.txt"), b"main a\n").expect("write a");
+    std::fs::write(tmp.path().join("b.txt"), b"main b\n").expect("write b");
+    git(tmp.path(), &["add", "a.txt", "b.txt"]);
+    git(tmp.path(), &["commit", "-qm", "main"]);
+
+    git(tmp.path(), &["checkout", "-q", "-b", "target"]);
+    std::fs::write(tmp.path().join("a.txt"), b"target a\n").expect("write a target");
+    std::fs::write(tmp.path().join("b.txt"), b"target b\n").expect("write b target");
+    git(tmp.path(), &["commit", "-am", "target"]);
+    git(tmp.path(), &["checkout", "-q", "main"]);
+
+    let future = filetime::FileTime::from_unix_time(1_900_000_000, 0);
+    filetime::set_file_mtime(tmp.path().join("a.txt"), future).expect("future mtime on a.txt");
+    std::fs::write(tmp.path().join("b.txt"), b"dirty local b\n").expect("dirty b");
+    let b_before = std::fs::read(tmp.path().join("b.txt")).expect("read b before");
+
+    let git_switch = Command::new("git")
+        .current_dir(tmp.path())
+        .args(["switch", "target"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git switch");
+    assert!(
+        !git_switch.success(),
+        "system git must refuse switch when b.txt is dirty"
+    );
+    assert_eq!(
+        std::fs::read(tmp.path().join("b.txt")).expect("read b after git"),
+        b_before,
+        "git must preserve dirty b.txt"
+    );
+    assert_eq!(
+        git(tmp.path(), &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "main",
+        "git must stay on main"
+    );
+
+    let grit_repo = Repository::open(
+        &tmp.path().join(".git"),
+        &RepositoryOptions::empty().with_work_tree(tmp.path()),
+    )
+    .expect("open grit repo");
+    let target_oid =
+        ObjectId::from_hex(git(tmp.path(), &["rev-parse", "target"]).trim()).expect("target oid");
+
+    let git_paths = git_switch_refused_paths(tmp.path(), "target");
+    let err = switch_repository(
+        &grit_repo,
+        &SwitchOptions {
+            mode: SwitchMode::Existing {
+                branch: "target".into(),
+                oid: target_oid,
+            },
+            dry_run: false,
+        },
+    )
+    .expect_err("grit switch must refuse when b.txt is dirty");
+    match err {
+        Error::WouldOverwrite {
+            reason: OverwriteReason::LocalChanges,
+            paths,
+            ..
+        } => assert_eq!(paths, git_paths),
+        other => panic!("expected WouldOverwrite LocalChanges, got {other:?}"),
+    }
+    assert_eq!(
+        std::fs::read(tmp.path().join("b.txt")).expect("read b after grit"),
+        b_before,
+        "grit must preserve dirty b.txt"
+    );
+    assert_eq!(
+        git(tmp.path(), &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "main",
+        "grit must stay on main"
+    );
+}
+
 /// Non-racy index entry must not skip worktree validation when the target tree deletes the path.
 #[test]
 fn switch_refuses_dirty_file_deleted_on_target_like_git() {
