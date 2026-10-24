@@ -9,12 +9,13 @@ use crate::hash::{hash_object, Parallelism};
 use crate::objects::{oid_hash_map, HashAlgo, ObjectId, ObjectKind, OidHashMap};
 use crate::odb::Odb;
 use crate::pack_zlib::skip_zlib_at_with_scratch;
+use crate::parallel::run_ordered_pool_with_local;
 use crate::progress::{ProgressPhase, ProgressSink};
 use crate::unpack_objects::{
     apply_delta, apply_delta_into, type_code_to_kind, PackIndexRecord, PackReader,
 };
 use crate::zlib_inflate::ZlibInflateScratch;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -96,9 +97,6 @@ impl<'a> PackIndexReporter<'a> {
     }
 }
 
-/// Maximum ofs/ref delta chain depth when re-inflating from the pack.
-const MAX_DELTA_CHAIN_DEPTH: usize = 3000;
-
 #[derive(Clone)]
 enum BasePayload {
     /// Re-inflate from the pack when a dependent delta is resolved.
@@ -160,8 +158,9 @@ struct WholeHashed {
 const LARGE_WHOLE_OBJECT: usize = 4 * 1024 * 1024;
 /// Soft cap on total uncompressed bytes being hashed by whole-object workers at once.
 const WHOLE_INFLIGHT_BYTES_PER_THREAD: usize = 8 * 1024 * 1024;
-/// How many ready deltas to gather before starting another dependency round.
-const DELTA_RESOLVE_ROUND_CHUNK: usize = 4096;
+const DELTA_STEAL_CHUNK: usize = 4;
+/// Max ready deltas hashed per pool batch (bounds worker fan-out).
+const DELTA_RESOLVE_BATCH: usize = 256;
 /// Reused delta buffers may grow to the largest object; trim excess capacity periodically.
 const DELTA_SCRATCH_CAP: usize = 2 * 1024 * 1024;
 struct PackHeader {
@@ -877,65 +876,95 @@ fn inflate_index_base(
     ofs_bases: &HashMap<usize, IndexBase>,
     oid_bases: &OidHashMap<IndexBase>,
     odb: &Odb,
+    visited_offs: &mut HashSet<usize>,
+    visited_oids: &mut HashSet<ObjectId>,
+    at_offset: Option<usize>,
+    at_oid: Option<ObjectId>,
     op: &mut Vec<u8>,
     data: &mut Vec<u8>,
-    depth: usize,
 ) -> Result<ObjectKind> {
-    if depth > MAX_DELTA_CHAIN_DEPTH {
-        return Err(Error::CorruptObject(
-            "delta chain too deep for pack index".to_owned(),
-        ));
-    }
-    match &base.payload {
-        BasePayload::InPack {
-            zlib_offset,
-            uncompressed_size,
-        } => {
-            data.clear();
-            crate::pack_zlib::decompress_zlib_at_index_into(
-                pack,
-                *zlib_offset,
-                *uncompressed_size,
-                data,
-            )?;
-            Ok(base.kind)
+    let mut ops_chain: Vec<Vec<u8>> = Vec::new();
+    let mut current = base;
+    let mut at_off = at_offset;
+    let mut at_oid = at_oid;
+    let mut kind = current.kind;
+
+    loop {
+        if let Some(off) = at_off {
+            if !visited_offs.insert(off) {
+                return Err(Error::CorruptObject("delta chain cycle in pack".to_owned()));
+            }
         }
-        BasePayload::DeltaInPack {
-            zlib_offset,
-            uncompressed_size,
-            base_offset,
-            base_oid,
-        } => {
-            crate::pack_zlib::decompress_zlib_at_index_into(
-                pack,
-                *zlib_offset,
-                *uncompressed_size,
-                op,
-            )?;
-            let ops = op.clone();
-            let base_kind = if let Some(base_off) = base_offset {
-                let Some(inner) = ofs_bases.get(base_off) else {
-                    return Err(Error::CorruptObject("delta base not available".to_owned()));
-                };
-                inflate_index_base(pack, inner, ofs_bases, oid_bases, odb, op, data, depth + 1)?
-            } else if let Some(ref base_id) = base_oid {
-                if let Some(inner) = oid_bases.get(base_id) {
-                    inflate_index_base(pack, inner, ofs_bases, oid_bases, odb, op, data, depth + 1)?
-                } else if let Ok(obj) = odb.read(base_id) {
-                    data.clear();
-                    data.extend_from_slice(&obj.data);
-                    obj.kind
+        if let Some(oid) = at_oid {
+            if !visited_oids.insert(oid) {
+                return Err(Error::CorruptObject("delta chain cycle in pack".to_owned()));
+            }
+        }
+
+        match &current.payload {
+            BasePayload::InPack {
+                zlib_offset,
+                uncompressed_size,
+            } => {
+                data.clear();
+                crate::pack_zlib::decompress_zlib_at_index_into(
+                    pack,
+                    *zlib_offset,
+                    *uncompressed_size,
+                    data,
+                )?;
+                break;
+            }
+            BasePayload::DeltaInPack {
+                zlib_offset,
+                uncompressed_size,
+                base_offset,
+                base_oid,
+            } => {
+                crate::pack_zlib::decompress_zlib_at_index_into(
+                    pack,
+                    *zlib_offset,
+                    *uncompressed_size,
+                    op,
+                )?;
+                ops_chain.push(op.clone());
+                if let Some(base_off) = base_offset {
+                    let Some(inner) = ofs_bases.get(base_off) else {
+                        return Err(Error::CorruptObject("delta base not available".to_owned()));
+                    };
+                    current = inner;
+                    at_off = Some(*base_off);
+                    at_oid = None;
+                    kind = current.kind;
+                } else if let Some(ref base_id) = base_oid {
+                    if let Some(inner) = oid_bases.get(base_id) {
+                        current = inner;
+                        at_off = None;
+                        at_oid = Some(*base_id);
+                        kind = current.kind;
+                    } else if let Ok(obj) = odb.read(base_id) {
+                        data.clear();
+                        data.extend_from_slice(&obj.data);
+                        for delta_ops in ops_chain.iter().rev() {
+                            let patched = apply_delta(data.as_slice(), delta_ops)?;
+                            *data = patched;
+                        }
+                        return Ok(obj.kind);
+                    } else {
+                        return Err(Error::CorruptObject("delta base not available".to_owned()));
+                    }
                 } else {
                     return Err(Error::CorruptObject("delta base not available".to_owned()));
                 }
-            } else {
-                return Err(Error::CorruptObject("delta base not available".to_owned()));
-            };
-            let patched = apply_delta(data, &ops)?;
-            *data = patched;
-            Ok(base_kind)
+            }
         }
     }
+
+    for delta_ops in ops_chain.iter().rev() {
+        let patched = apply_delta(data.as_slice(), delta_ops)?;
+        *data = patched;
+    }
+    Ok(kind)
 }
 
 struct DeltaHashed {
@@ -999,25 +1028,34 @@ fn resolve_pending_deltas_parallel(
         let ofs_out_refs = state.ofs_base_refs.clone();
         let oid_out_refs = state.oid_base_refs.clone();
         let ready_count = u64::try_from(ready.len()).unwrap_or(u64::MAX);
-        let _ = threads;
-        let mut scratch = DeltaResolveScratch {
-            delta: Vec::new(),
-            base: Vec::new(),
-            result: Vec::new(),
-        };
-        for batch in ready.chunks(DELTA_RESOLVE_ROUND_CHUNK) {
-            for delta in batch {
-                let item = resolve_one_delta(
-                    &mut scratch,
-                    pack,
-                    delta,
-                    state.ofs_bases,
-                    state.oid_bases,
-                    state.odb,
-                    algo,
-                    &ofs_out_refs,
-                    &oid_out_refs,
-                )?;
+        let n_workers = threads.get().min(DELTA_RESOLVE_BATCH).clamp(1, 2);
+
+        for batch in ready.chunks(DELTA_RESOLVE_BATCH) {
+            let hashed = run_ordered_pool_with_local(
+                batch,
+                n_workers,
+                DELTA_STEAL_CHUNK,
+                || DeltaResolveScratch {
+                    delta: Vec::new(),
+                    base: Vec::new(),
+                    result: Vec::new(),
+                },
+                |scratch, delta| {
+                    resolve_one_delta(
+                        scratch,
+                        pack,
+                        delta,
+                        state.ofs_bases,
+                        state.oid_bases,
+                        state.odb,
+                        algo,
+                        &ofs_out_refs,
+                        &oid_out_refs,
+                    )
+                },
+            )?;
+
+            for item in hashed {
                 state.records.push(item.record);
                 if item.retain {
                     retain_delta_pack_base_for_delta(
@@ -1090,6 +1128,8 @@ fn resolve_one_delta(
         delta.uncompressed_size,
         &mut scratch.delta,
     )?;
+    let mut visited_offs = HashSet::new();
+    let mut visited_oids = HashSet::new();
     let base_kind = if let Some(base_off) = delta.base_offset {
         let Some(b) = ofs_bases.get(&base_off) else {
             return Err(Error::CorruptObject("delta base not available".to_owned()));
@@ -1100,9 +1140,12 @@ fn resolve_one_delta(
             ofs_bases,
             oid_bases,
             odb,
+            &mut visited_offs,
+            &mut visited_oids,
+            Some(base_off),
+            None,
             &mut scratch.result,
             &mut scratch.base,
-            0,
         )?
     } else if let Some(ref base_id) = delta.base_oid {
         if let Some(b) = oid_bases.get(base_id) {
@@ -1112,9 +1155,12 @@ fn resolve_one_delta(
                 ofs_bases,
                 oid_bases,
                 odb,
+                &mut visited_offs,
+                &mut visited_oids,
+                None,
+                Some(*base_id),
                 &mut scratch.result,
                 &mut scratch.base,
-                0,
             )?
         } else if let Ok(obj) = odb.read(base_id) {
             scratch.base.clear();
@@ -1434,6 +1480,58 @@ mod line_coverage_tests {
                     .is_err(),
                 "threads={threads}: size mismatch must fail"
             );
+        }
+    }
+
+    /// One whole blob plus `extra_deltas` unique append OFS-deltas (system git accepts these packs).
+    fn pack_one_whole_plus_append_ofs_deltas(extra_deltas: usize) -> Vec<u8> {
+        let mut pb = PackBuilder::new(HashAlgo::Sha1);
+        let mut data = b"deep-chain-seed\n".to_vec();
+        let mut idx = pb.add_full(PK::Blob, &data);
+        for _ in 0..extra_deltas {
+            let prev = data.clone();
+            data.push(b'!');
+            let delta = crate::delta_encode::encode_lcp_delta(&prev, &data).expect("append delta");
+            idx = pb.add_ofs_delta(idx, &delta, delta.len());
+        }
+        let _ = idx;
+        pb.build().bytes
+    }
+
+    fn git_index_pack_succeeds(pack: &[u8]) -> bool {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("in.pack");
+        std::fs::write(&path, pack).expect("write pack");
+        std::process::Command::new("git")
+            .current_dir(dir.path())
+            .args(["index-pack", "-v", &path.to_string_lossy()])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn deep_ofs_delta_chain_matches_git_index_pack() {
+        const EXTRA: usize = 3002;
+        const OBJECTS: usize = 1 + EXTRA;
+        let pack = pack_one_whole_plus_append_ofs_deltas(EXTRA);
+        assert_eq!(
+            u32::from_be_bytes([pack[8], pack[9], pack[10], pack[11]]) as usize,
+            OBJECTS
+        );
+        assert!(
+            git_index_pack_succeeds(&pack),
+            "system git must index a {OBJECTS}-object OFS-delta chain"
+        );
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let odb = Odb::new(tmp.path());
+        for threads in [1_usize, 2] {
+            let records =
+                build_pack_index_records(&pack, &odb, Parallelism::resolve(Some(threads)), true)
+                    .unwrap_or_else(|e| panic!("threads={threads} deep chain: {e}"));
+            assert_eq!(records.len(), OBJECTS, "threads={threads}");
         }
     }
 

@@ -877,9 +877,7 @@ pub(crate) fn decompress_zlib_at_into(
     out: &mut Vec<u8>,
 ) -> Result<usize> {
     out.clear();
-    if out.capacity() < expected_size {
-        out.reserve(expected_size - out.capacity());
-    }
+    out.reserve(expected_size);
     let slice = pack.get(offset..).ok_or_else(|| {
         Error::CorruptObject(format!(
             "pack stream truncated: need zlib at offset {offset}"
