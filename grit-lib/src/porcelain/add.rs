@@ -1289,17 +1289,11 @@ fn validate_pathspecs(
         }) || untracked.iter().any(|p| {
             let one = [p.as_str()];
             sorted_paths_match_pathspec(resolved, &one, ctx)
-        }) || pathspec_matches_index_at_any_stage(index, resolved, ctx)
-        {
+        }) {
             continue;
         }
         let matches_repo = checker.matches(resolved)?
-            || pathspec_matches_unmerged_index_entries(
-                index,
-                &unmerged_paths,
-                resolved,
-                ctx,
-            );
+            || pathspec_matches_unmerged_index_entries(index, &unmerged_paths, resolved, ctx);
         if !matches_repo {
             return Err(Error::Message(format!(
                 "pathspec '{label}' did not match any files"
