@@ -778,7 +778,7 @@ impl ReachableWalkState {
             return Ok(());
         }
         let pending: Vec<ObjectId> = self.heap.iter().map(|key| key.oid).collect();
-        self.paint = Some(SidePaint::compute(cache, &pending, &self.hide)?);
+        self.paint = Some(SidePaint::compute_hiding(cache, &pending, &self.hide)?);
         Ok(())
     }
 
@@ -1713,7 +1713,34 @@ impl SidePaint {
         left: &[ObjectId],
         right: &[ObjectId],
     ) -> Result<Self> {
-        let mut walk = PaintWalk::default();
+        Self::paint(cache, left, right, PaintWalk::default())
+    }
+
+    /// Paint `tips` against the `hide` tips of a range walk. Like Git's walk over excluded
+    /// commits, a missing object reached from `hide` is skipped rather than an error: it is
+    /// hidden whatever lies behind it.
+    ///
+    /// # Errors
+    ///
+    /// Propagates commit read and parse errors for commits not reached from `hide`.
+    fn compute_hiding(
+        cache: &mut CommitGraphCache<'_>,
+        tips: &[ObjectId],
+        hide: &[ObjectId],
+    ) -> Result<Self> {
+        let walk = PaintWalk {
+            skip_missing_right: true,
+            ..PaintWalk::default()
+        };
+        Self::paint(cache, tips, hide, walk)
+    }
+
+    fn paint(
+        cache: &mut CommitGraphCache<'_>,
+        left: &[ObjectId],
+        right: &[ObjectId],
+        mut walk: PaintWalk,
+    ) -> Result<Self> {
         for (tips, side) in [(left, PAINT_LEFT), (right, PAINT_RIGHT)] {
             for &tip in tips {
                 let Some(tip) = try_peel_to_commit_for_merge_base(cache.repo, tip)? else {
@@ -1777,6 +1804,8 @@ struct PaintWalk {
     seq: u64,
     /// Queued commits that still keep the walk going (see [`Self::mark`]).
     open: usize,
+    /// Leave unreadable commits reached from the right side unqueued instead of failing.
+    skip_missing_right: bool,
 }
 
 impl PaintWalk {
@@ -1801,13 +1830,22 @@ impl PaintWalk {
             }
             return Ok(());
         }
+        let committed_at = match cache.commit_time(oid) {
+            Ok(time) => time,
+            // Hidden either way, and unpainted ancestors count as hidden too.
+            Err(Error::ObjectNotFound(_))
+                if self.skip_missing_right && after & PAINT_RIGHT != 0 =>
+            {
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        };
         let is_open = after != PAINT_BOTH || repaint;
         self.queued.insert(oid, is_open);
         if is_open {
             self.open += 1;
         }
         let rank = commit_rank_for_walk(cache, oid);
-        let committed_at = cache.commit_time(oid)?;
         self.heap.push(PaintKey {
             rank,
             committed_at,

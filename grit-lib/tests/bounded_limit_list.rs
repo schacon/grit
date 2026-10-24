@@ -303,6 +303,37 @@ fn unlimited_range_does_not_read_history_below_excluded_tip() {
 }
 
 #[test]
+fn range_with_newer_hide_tip_tolerates_missing_history_behind_it() {
+    let dir = tempdir().expect("tempdir");
+    let repo = open_bare(dir.path()).expect("repo");
+    let missing: grit_lib::objects::ObjectId = "0000000000000000000000000000000000000001"
+        .parse()
+        .expect("oid");
+    // The hide side is newer than the range, so date order reaches behind `hide` before the
+    // positive side meets it. Git skips unreadable parents of excluded commits.
+    let below = write_commit(repo.odb(), &[missing], "below", 190, 190).expect("below");
+    let hide = write_commit(repo.odb(), &[below], "hide", 200, 200).expect("hide");
+    let mid = write_commit(repo.odb(), &[hide], "mid", 50, 50).expect("mid");
+    let tip = write_commit(repo.odb(), &[mid], "tip", 100, 100).expect("tip");
+    let spec = format!("{hide}..{tip}");
+    assert_eq!(support::git_rev_list(dir.path(), &[&spec]), vec![tip, mid]);
+
+    for max_count in [None, Some(10)] {
+        let listed = rev_list(
+            &repo,
+            &[tip.to_hex()],
+            &[hide.to_hex()],
+            &RevListOptions {
+                max_count,
+                ..Default::default()
+            },
+        )
+        .expect("range with a newer hide tip");
+        assert_eq!(listed.commits, vec![tip, mid], "max_count {max_count:?}");
+    }
+}
+
+#[test]
 fn unlimited_ranges_match_git_on_tied_and_skewed_history() {
     let dir = tempdir().expect("tempdir");
     let repo = open_bare(dir.path()).expect("repo");
