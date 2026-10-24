@@ -7,6 +7,9 @@ use anyhow::Error;
 use grit_lib::command_runner::hooks::HookError;
 use grit_lib::error::{Error as LibError, OverwriteReason};
 use grit_lib::objects::ObjectId;
+use grit_lib::porcelain::pull::PullError;
+use grit_lib::remote::clone::CloneError;
+use grit_lib::remote::RemoteError;
 use grit_lib::state::{InProgressOperation, NextStep, Operation};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -346,6 +349,27 @@ pub fn ensure_structured(err: Error) -> Error {
     err
 }
 
+/// Whether `err` carries a library failure to reach or read the remote.
+///
+/// Wrapper errors such as [`CloneError`] forward their message transparently, which hides the
+/// inner [`LibError`] from [`Error::chain`], so each wrapper is asked directly.
+fn is_remote_unreadable(err: &Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<LibError>()
+            .is_some_and(LibError::is_remote_unreadable)
+            || cause
+                .downcast_ref::<RemoteError>()
+                .is_some_and(RemoteError::is_remote_unreadable)
+            || cause
+                .downcast_ref::<CloneError>()
+                .is_some_and(CloneError::is_remote_unreadable)
+            || cause
+                .downcast_ref::<PullError>()
+                .is_some_and(PullError::is_remote_unreadable)
+    })
+}
+
 /// If `err` wraps a [`StructuredCliError`], return its JSON payload.
 pub fn structured_json_payload(err: &Error) -> Option<StructuredJsonError> {
     if let Some(e) = err.downcast_ref::<StructuredCliError>() {
@@ -353,6 +377,17 @@ pub fn structured_json_payload(err: &Error) -> Option<StructuredJsonError> {
     }
     if let Some(payload) = hook_failure_payload(err) {
         return Some(payload);
+    }
+    if is_remote_unreadable(err) {
+        return Some(StructuredJsonError {
+            error: crate::cli_messages::human_error_message(err),
+            kind: ErrorKind::RemoteUnreadable,
+            conflicts: None,
+            commit: None,
+            would_overwrite: None,
+            oid: None,
+            hook: None,
+        });
     }
     hash_collision_from_chain(err).map(|oid| {
         let hex = oid.to_hex();

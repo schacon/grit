@@ -125,3 +125,111 @@ fn exit_status_for_every_error_kind_cli() {
     let v: Value = serde_json::from_str(stdout.trim()).expect("revision_not_found");
     assert_eq!(v["kind"].as_str(), Some("revision_not_found"));
 }
+
+/// Port with nothing listening (bound, then released).
+fn closed_port() -> u16 {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+    listener.local_addr().expect("addr").port()
+}
+
+#[test]
+fn unreadable_remote_exits_128_for_every_transfer_command() {
+    let root = init_repo();
+    fs::write(root.path().join("a.txt"), "a").expect("write");
+    let (code, _) = grit(root.path(), &["commit", "-m", "seed", "--json"]);
+    assert_eq!(code, 0);
+
+    let scratch = tempfile::tempdir().expect("tempdir");
+    let missing = scratch.path().join("missing.git");
+    let missing = missing.to_str().expect("utf8").to_owned();
+    let refused = format!("http://127.0.0.1:{}/x.git", closed_port());
+    let (code, _) = grit(root.path(), &["remote", "add", "origin", &missing]);
+    assert_eq!(code, 0);
+
+    for (label, url) in [("missing path", &missing), ("refused port", &refused)] {
+        let (code, _) = grit(root.path(), &["remote", "set-url", "origin", url]);
+        assert_eq!(code, 0, "{label}: set-url");
+        let dest = scratch.path().join("dest");
+        let dest = dest.to_str().expect("utf8");
+        let cases: [&[&str]; 6] = [
+            &["clone", url, dest, "--json"],
+            &["fetch", "--json"],
+            &["pull", "--json"],
+            &["push", "--json"],
+            &["remote", "refs", "origin", "--json"],
+            &["remote", "refs", url, "--json"],
+        ];
+        for args in cases {
+            let (code, stdout) = grit(root.path(), args);
+            assert_eq!(code, 128, "{label}: {args:?} -> {stdout}");
+            let v: Value = serde_json::from_str(stdout.trim()).expect("json error");
+            assert_eq!(
+                v["kind"].as_str(),
+                Some("remote_unreadable"),
+                "{label}: {args:?}"
+            );
+            assert!(v["error"].as_str().is_some_and(|e| !e.is_empty()));
+        }
+        assert!(
+            !scratch.path().join("dest").exists(),
+            "{label}: failed clone must not leave the destination"
+        );
+    }
+
+    let (code, out) = grit(root.path(), &["fetch"]);
+    assert_eq!(code, 128, "human output keeps the exit code: {out}");
+}
+
+/// git:// peer that reads the request and hangs up without an advertisement.
+fn silent_git_daemon() -> u16 {
+    use std::io::Read;
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+        }
+    });
+    port
+}
+
+#[test]
+fn non_repository_remotes_exit_128() {
+    let root = init_repo();
+    fs::write(root.path().join("a.txt"), "a").expect("write");
+    let (code, _) = grit(root.path(), &["commit", "-m", "seed", "--json"]);
+    assert_eq!(code, 0);
+
+    let scratch = tempfile::tempdir().expect("tempdir");
+    let objects_only = scratch.path().join("fake.git");
+    fs::create_dir_all(objects_only.join("objects")).expect("mkdir");
+    let objects_only = objects_only.to_str().expect("utf8").to_owned();
+    let silent = format!("git://127.0.0.1:{}/repo.git", silent_git_daemon());
+    let (code, _) = grit(root.path(), &["remote", "add", "origin", &objects_only]);
+    assert_eq!(code, 0);
+
+    for (label, url) in [
+        ("objects-only dir", &objects_only),
+        ("silent git://", &silent),
+    ] {
+        let (code, _) = grit(root.path(), &["remote", "set-url", "origin", url]);
+        assert_eq!(code, 0, "{label}: set-url");
+        let cases: [&[&str]; 3] = [
+            &["remote", "refs", url, "--json"],
+            &["fetch", "--json"],
+            &["push", "--json"],
+        ];
+        for args in cases {
+            let (code, stdout) = grit(root.path(), args);
+            assert_eq!(code, 128, "{label}: {args:?} -> {stdout}");
+            let v: Value = serde_json::from_str(stdout.trim()).expect("json error");
+            assert_eq!(
+                v["kind"].as_str(),
+                Some("remote_unreadable"),
+                "{label}: {args:?}"
+            );
+        }
+    }
+}

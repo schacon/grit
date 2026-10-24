@@ -48,6 +48,8 @@ pub enum ErrorKind {
     HookFailed,
     /// A branch, tag, commit id or revision expression names nothing.
     RevisionNotFound,
+    /// Clone, fetch, pull, push, or `remote refs` could not reach or read the remote (exit 128).
+    RemoteUnreadable,
 }
 
 impl ErrorKind {
@@ -95,6 +97,7 @@ impl ErrorKind {
             Self::BranchError => "branch_error",
             Self::HookFailed => "hook_failed",
             Self::RevisionNotFound => "revision_not_found",
+            Self::RemoteUnreadable => "remote_unreadable",
         }
     }
 
@@ -123,6 +126,7 @@ impl ErrorKind {
             Self::BranchError,
             Self::HookFailed,
             Self::RevisionNotFound,
+            Self::RemoteUnreadable,
         ]
     }
 }
