@@ -1591,6 +1591,7 @@ mod tests {
                     reflog_to_label: "main".into(),
                 },
                 dry_run: false,
+                hooks: crate::hooks::PostOperationHooks::Run,
             },
         )
         .expect("detach");
@@ -1606,6 +1607,7 @@ mod tests {
                     oid: tip,
                 },
                 dry_run: true,
+                hooks: crate::hooks::PostOperationHooks::Run,
             },
         )
         .expect("preview");
@@ -1617,6 +1619,7 @@ mod tests {
             &SwitchOptions {
                 mode: resolve_create_branch(&repo, "topic", None).expect("create mode"),
                 dry_run: false,
+                hooks: crate::hooks::PostOperationHooks::Run,
             },
         )
         .expect("create");

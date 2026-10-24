@@ -699,7 +699,15 @@ fn switch_refuses_during_git_started_rebase_and_git_continue_still_moves_only_to
     let head_before = git_oid(wt, "HEAD");
     for dry_run in [true, false] {
         let mode = resolve_switch_target(&grit, "main").expect("resolve main");
-        let err = switch_repository(&grit, &SwitchOptions { mode, dry_run }).unwrap_err();
+        let err = switch_repository(
+            &grit,
+            &SwitchOptions {
+                mode,
+                dry_run,
+                hooks: grit_lib::PostOperationHooks::Run,
+            },
+        )
+        .unwrap_err();
         assert!(
             matches!(
                 err,
@@ -751,6 +759,7 @@ fn switch_refuses_during_merge_conflict() {
         &SwitchOptions {
             mode,
             dry_run: false,
+            hooks: grit_lib::PostOperationHooks::Run,
         },
     )
     .unwrap_err();
