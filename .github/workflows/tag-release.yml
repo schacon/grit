@@ -1,0 +1,106 @@
+name: Tag release
+run-name: Tag ${{ inputs.tag }}
+
+# The factory cuts each daily release by pushing the version bump to main and dispatching
+# this workflow with that commit. It builds grit from the commit and tags it with grit
+# itself: an annotated tag, SSH-signed, carrying a `tree-sha256` digest of the tree
+# (`grit tag --tree-sha256`). Tags pushed with GITHUB_TOKEN don't trigger other workflows,
+# so this then starts release.yml on the new tag.
+#
+# Needs the `RELEASE_TAG_SIGNING_KEY` secret: an OpenSSH private key without a passphrase.
+# The tagger defaults to "grit release <release@grit-scm.com>"; set the repository
+# variables RELEASE_TAGGER_NAME / RELEASE_TAGGER_EMAIL to change it.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create, e.g. v0.5.18"
+        required: true
+      sha:
+        description: "Full commit id to tag"
+        required: true
+      force:
+        description: "Replace the tag if it already exists (release repair)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: tag-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag }}
+      SHA: ${{ inputs.sha }}
+      FORCE: ${{ inputs.force }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check inputs
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad tag '$TAG'"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::bad commit '$SHA'"; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+
+      # Re-dispatching for a tag that already exists only makes sure its release build ran.
+      - name: Check for an existing tag
+        id: existing
+        run: |
+          if [ "$FORCE" != "true" ] && git ls-remote --exit-code origin "refs/tags/$TAG" >/dev/null; then
+            echo "$TAG already exists"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Rust
+        if: steps.existing.outputs.exists != 'true'
+        uses: dtolnay/rust-toolchain@1.99.0
+
+      - name: Build grit
+        if: steps.existing.outputs.exists != 'true'
+        run: cargo build --release -p grit-cli
+
+      - name: Tag with grit
+        if: steps.existing.outputs.exists != 'true'
+        env:
+          SIGNING_KEY: ${{ secrets.RELEASE_TAG_SIGNING_KEY }}
+          TAGGER_NAME: ${{ vars.RELEASE_TAGGER_NAME || 'grit release' }}
+          TAGGER_EMAIL: ${{ vars.RELEASE_TAGGER_EMAIL || 'release@grit-scm.com' }}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::error::The RELEASE_TAG_SIGNING_KEY secret is not set, so $TAG can't be signed."
+            exit 1
+          fi
+          key="$RUNNER_TEMP/release-signing-key"
+          (umask 077; printf '%s\n' "$SIGNING_KEY" > "$key")
+          echo "$TAGGER_EMAIL $(ssh-keygen -y -f "$key")" > "$RUNNER_TEMP/allowed_signers"
+          git config user.name "$TAGGER_NAME"
+          git config user.email "$TAGGER_EMAIL"
+          git config gpg.format ssh
+          git config user.signingkey "$key"
+          git config gpg.ssh.allowedSignersFile "$RUNNER_TEMP/allowed_signers"
+
+          grit=target/release/grit
+          force=()
+          [ "$FORCE" = "true" ] && force=(--force)
+          "$grit" tag "${force[@]}" --tree-sha256 -m "grit $TAG" "$TAG" "$SHA"
+          # Both the signature and the digest must check out before the tag leaves the runner.
+          "$grit" tag --verify "$TAG"
+          git push "${force[@]}" origin "refs/tags/$TAG"
+          rm -f "$key"
+
+      - name: Start the release build
+        run: |
+          if [ "${{ steps.existing.outputs.exists }}" = "true" ] &&
+             [ "$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --branch "$TAG" --json databaseId --jq length)" != "0" ]; then
+            echo "release.yml already ran for $TAG"
+            exit 0
+          fi
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
