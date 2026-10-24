@@ -6,6 +6,7 @@
       "description": "Author recorded on the new commit (`--json` / `--markdown`).",
       "properties": {
         "date": {
+          "description": "Author timestamp in RFC 3339 (same shape as log/show).",
           "type": "string"
         },
         "email": {

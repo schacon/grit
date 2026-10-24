@@ -128,10 +128,12 @@ pub fn command_schema_versions(command: &str) -> CommandSchemaVersions {
             current: 3,
             frozen: &[1, 2],
         },
-        "config" | "merge" | "pull" | "pick" | "mv" | "worktree.prune" => CommandSchemaVersions {
-            current: 2,
-            frozen: &[1],
-        },
+        "config" | "merge" | "pull" | "pick" | "mv" | "worktree.prune" | "tag" => {
+            CommandSchemaVersions {
+                current: 2,
+                frozen: &[1],
+            }
+        }
         _ => CommandSchemaVersions {
             current: 1,
             frozen: &[],
@@ -1266,8 +1268,8 @@ mod tests {
             );
         }
         assert_eq!(
-            checked, 102,
-            "expected 102 committed schema files under content/schemas"
+            checked, 103,
+            "expected 103 committed schema files under content/schemas"
         );
     }
 
@@ -1381,7 +1383,7 @@ mod tests {
             "schema index must list every committed schema document exactly"
         );
         let file_count: usize = on_disk.values().map(|v| v.len()).sum();
-        assert_eq!(file_count, 101, "expected 101 schema files indexed");
+        assert_eq!(file_count, 103, "expected 103 schema files indexed");
     }
 
     fn load_snapshot_json_stdout(name: &str, snapshot_dir: &Path) -> Value {
