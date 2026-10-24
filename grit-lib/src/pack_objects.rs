@@ -114,6 +114,8 @@ impl PackBuildOptions {
     /// Window and depth follow `pack.window` / `pack.depth`. Whole objects and deltas
     /// already in the repository's packs are copied as they are, and the delta search
     /// only covers blobs that are not already stored as a delta, as Git does when serving.
+    /// Like Git, `pack.depth = 0` only disables new deltas: existing on-disk deltas are
+    /// still sent.
     ///
     /// # Parameters
     /// - `cfg` — repository config, or `None` for Git's defaults.
@@ -134,7 +136,7 @@ impl PackBuildOptions {
             window,
             max_depth,
             use_ofs_delta,
-            reuse_deltas: max_depth > 0,
+            reuse_deltas: true,
             reuse_objects: true,
             use_bitmaps: true,
             ..Default::default()
@@ -1653,7 +1655,10 @@ pub(crate) mod tests {
         let opts = PackBuildOptions::for_serve(Some(&cfg), true, false);
         assert_eq!((opts.window, opts.max_depth), (4, 0));
         assert!(opts.thin && !opts.use_ofs_delta && opts.delta);
-        assert!(!opts.reuse_deltas, "depth 0 stores every object whole");
+assert!(
+            opts.reuse_deltas,
+            "like git upload-pack, depth 0 stops new deltas but still sends on-disk deltas"
+        );
 
         let defaults = PackBuildOptions::for_serve(None, false, true);
         assert_eq!(
