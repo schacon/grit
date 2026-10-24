@@ -778,3 +778,115 @@ impl Drop for ServerGuard {
         let _ = self.0.wait();
     }
 }
+
+/// Regression for issue #1656: the push client keeps stdin open after the pack;
+/// receive-pack must not block on EOF while reading the pack.
+///
+/// The fake client never closes its end of the socket until receive-pack signals
+/// completion. A read-to-EOF pack reader hangs until the 5s timeouts fire.
+#[cfg(unix)]
+#[test]
+fn receive_pack_finishes_when_push_client_keeps_stream_open() {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+    use std::sync::mpsc::{self, RecvTimeoutError};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    const DEADLINE: Duration = Duration::from_secs(5);
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bare = tmp.path().join("bare");
+    open_bare_with_runner(&bare, RecordingRunner::always_success());
+
+    let source = tmp.path().join("src");
+    std::fs::create_dir_all(&source).unwrap();
+    git(&source, &["init", "-q", "-b", "main", "."]);
+    std::fs::write(source.join("f"), "payload\n").unwrap();
+    git(&source, &["add", "f"]);
+    git(&source, &["commit", "-q", "-m", "c"]);
+    let oid = rev_parse(&source, "HEAD");
+    let pack = pack_for_commit(&source, oid);
+    let body = push_body(None, oid, "refs/heads/main", &pack);
+
+    let (server, client) = UnixStream::pair().expect("socket pair");
+    let (server_done_tx, server_done_rx) = mpsc::channel::<()>();
+    let (result_tx, result_rx) = mpsc::channel();
+
+    let writer = thread::spawn(move || {
+        let mut client = client;
+        client.write_all(&body).expect("write push body");
+        client.flush().expect("flush");
+        match server_done_rx.recv_timeout(DEADLINE) {
+            Ok(()) => {}
+            Err(RecvTimeoutError::Timeout) => {
+                panic!(
+                    "receive_pack did not finish within {DEADLINE:?} while the push client kept stdin open (EOF deadlock?)"
+                );
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                panic!("receive_pack thread exited without signalling completion");
+            }
+        }
+    });
+
+    let bare_for_server = bare.clone();
+    let server_thread = thread::spawn(move || {
+        let mut server = server;
+        let repo = open_bare_with_runner(&bare_for_server, RecordingRunner::always_success());
+        let opts = ServeOptions {
+            protocol: ProtocolVersion::V0,
+            stateless_rpc: true,
+            advertise_refs: false,
+            agent: "grit-test".to_owned(),
+            hidden_refs: Vec::new(),
+        };
+        let policy = ReceivePolicy::default();
+        let mut output = Vec::new();
+        let started = Instant::now();
+        let outcome = receive_pack(&repo, &mut server, &mut output, &opts, &policy);
+        result_tx
+            .send((outcome, output, started.elapsed()))
+            .expect("send receive_pack result");
+    });
+
+    let (outcome, output, server_elapsed) = match result_rx.recv_timeout(DEADLINE) {
+        Ok(r) => r,
+        Err(RecvTimeoutError::Timeout) => {
+            panic!(
+                "receive_pack hung for {DEADLINE:?} without client EOF (issue #1656 read-to-EOF regression)"
+            );
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+            panic!("receive_pack thread panicked or exited early")
+        }
+    };
+
+    assert!(
+        server_elapsed < Duration::from_secs(2),
+        "receive_pack took {server_elapsed:?}; should not wait for client EOF"
+    );
+
+    server_done_tx
+        .send(())
+        .expect("tell push client receive_pack finished");
+    writer.join().expect("writer thread");
+    server_thread.join().expect("server thread");
+
+    let outcome = outcome.expect("receive_pack");
+    assert!(
+        outcome.updates.iter().all(|u| u.error.is_none()),
+        "ref update failed: {:?}",
+        outcome.updates
+    );
+    assert_eq!(
+        resolve_ref(&bare, "refs/heads/main").expect("main"),
+        oid,
+        "push should land on the remote"
+    );
+    let report = String::from_utf8_lossy(&output);
+    assert!(
+        report.contains("unpack ok") && report.contains("ok refs/heads/main"),
+        "report-status should be emitted: {report}"
+    );
+}
