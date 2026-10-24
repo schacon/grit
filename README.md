@@ -32,6 +32,27 @@ There are builds for Mac and Linux (aarch64 and x86_64 for both). Linux ships bo
 
 To update your version of Grit, you can run `grit update` and it will re-run the install script.
 
+## Verifying releases
+
+Release tags (from v0.5.19) are SSH-signed and carry a `tree-sha256` digest of every file in the release. The signing key is published on GitHub as **Grit Signing Key** in [schacon's SSH signing keys](https://api.github.com/users/schacon/ssh_signing_keys). Add it to an allowed signers file and point your config at it:
+
+```sh
+$ curl -s https://api.github.com/users/schacon/ssh_signing_keys \
+    | jq -r '.[] | select(.title == "Grit Signing Key") | "scott@gitbutler.com " + .key' \
+    >> ~/.ssh/allowed_signers
+$ grit config --global gpg.ssh.allowedSignersFile ~/.ssh/allowed_signers
+```
+
+Then, in a clone of this repository, `grit tag -v <tag>` checks both the signature and that the tagged tree matches its `tree-sha256` digest:
+
+```sh
+$ grit tag -v v0.5.19
+tag v0.5.19 (4ad17ce405f40b638b4cd01c87b4587b8c67a93c): ok
+  target: d3efb57d2e68a3318b7df9237326a68f75821e8a
+  signature: good (scott@gitbutler.com)
+  tree-sha256: claimed f8c0f17e… computed f8c0f17e… (match)
+```
+
 ## The `grit` CLI
 
 The `grit` binary (from the `grit-cli` crate) is what the install script ships. It is not a Git-identical CLI; it is a simpler interface for common developer workflows built on `grit-lib`, portable to Windows.
