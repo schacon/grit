@@ -416,6 +416,7 @@ fn push_remote_rejects_protocol_v2_typed_before_touching_refs() {
         &[spec],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("a v2 push must be rejected in this phase");
     let msg = format!("{err}");
@@ -479,6 +480,7 @@ fn push_remote_unpack_failure_report_demotes_all_sent_refs() {
         &[spec],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push_remote completes and parses the report");
 
@@ -606,6 +608,7 @@ fn push_http_rejects_v2_receive_pack_advertisement_typed() {
         &[spec],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("a v2 receive-pack advertisement must be rejected");
     let msg = format!("{err}");
@@ -651,6 +654,7 @@ fn push_http_propagates_discovery_transport_error_typed() {
         &[spec],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("a discovery transport failure must surface as an error");
     let msg = format!("{err}");

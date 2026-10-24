@@ -171,7 +171,13 @@ pub fn fetch(
     let factory = DefaultHttpClientFactory;
     remote
         .remote
-        .fetch(repo, opts.clone(), &mut NoProgress, Some(&factory))
+        .fetch(
+            repo,
+            opts.clone(),
+            &mut NoProgress,
+            &grit_lib::progress::NeverCancel,
+            Some(&factory),
+        )
         .map_err(|e| anyhow::Error::msg(e.to_string()))
 }
 
@@ -185,6 +191,13 @@ pub fn push(
     let factory = DefaultHttpClientFactory;
     remote
         .remote
-        .push(repo, refs, opts.clone(), &mut NoProgress, Some(&factory))
+        .push(
+            repo,
+            refs,
+            opts.clone(),
+            &mut NoProgress,
+            &grit_lib::progress::NeverCancel,
+            Some(&factory),
+        )
         .map_err(|e| anyhow::Error::msg(e.to_string()))
 }

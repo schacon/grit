@@ -505,6 +505,7 @@ fn has_stashable_changes(
             cache_miss: UntrackedCacheMissAction::RefreshFull,
         },
         &worktree_rules,
+        None,
     )?;
     Ok(!untracked.is_empty())
 }
@@ -525,6 +526,7 @@ fn collect_untracked_paths(repo: &Repository, work_tree: &Path) -> Result<Vec<St
             cache_miss: UntrackedCacheMissAction::RefreshFull,
         },
         &worktree_rules,
+        None,
     )?;
     let expanded = expand_untracked_for_staging_with_rules(
         repo,
@@ -1893,6 +1895,7 @@ fn collect_worktree_paths_blocking_stash_untracked_restore(
             cache_miss: UntrackedCacheMissAction::RefreshFull,
         },
         &worktree_rules,
+        None,
     )?;
     paths.extend(untracked);
     paths.extend(ignored);

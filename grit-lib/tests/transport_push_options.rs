@@ -268,6 +268,7 @@ fn push_options_are_delivered_to_receive_pack_hook_over_git_daemon() {
         &[spec(main_oid, "refs/heads/main")],
         &opts,
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push_remote with push-options over git daemon");
     drop(conn);
@@ -372,6 +373,7 @@ fn push_options_are_delivered_to_receive_pack_hook_over_ssh() {
         &[spec(main_oid, "refs/heads/main")],
         &opts,
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push_remote with push-options over ssh");
     drop(conn);
@@ -452,6 +454,7 @@ fn pushing_options_to_server_without_capability_errors_typed() {
         &[spec(main_oid, "refs/heads/main")],
         &opts,
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("push with options to a server lacking the capability must fail");
     drop(conn);

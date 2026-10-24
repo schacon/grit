@@ -155,8 +155,14 @@ fn fetch_empty_bare_over_ssh_is_noop() {
         tags: TagMode::None,
         ..Default::default()
     };
-    fetch_remote(&local.join(".git"), &mut *conn, &mut opts, &mut NoProgress)
-        .expect("fetch against empty remote");
+    fetch_remote(
+        &local.join(".git"),
+        &mut *conn,
+        &mut opts,
+        &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("fetch against empty remote");
 }
 
 #[test]
@@ -241,6 +247,7 @@ fn push_to_empty_bare_over_ssh_without_hung_up_stderr() {
         &[spec],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push to empty bare");
     drop(conn);

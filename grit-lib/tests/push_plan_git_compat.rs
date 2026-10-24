@@ -112,6 +112,7 @@ fn dry_run_push_local(local_git: &Path, bare: &Path, specs: &[PushRefSpec]) {
             dry_run: true,
             ..Default::default()
         },
+        &grit_lib::progress::NeverCancel
     )
     .expect("push_local dry-run");
 }
@@ -586,7 +587,9 @@ fn real_push_matches_git_file_remote() {
         },
         &PushPlanContext::default(),
     );
-    push_local(&fx.local_git, &fx.bare, &specs, &PushOptions::default()).expect("grit push");
+    push_local(&fx.local_git, &fx.bare, &specs, &PushOptions::default(),
+        &grit_lib::progress::NeverCancel
+    ).expect("grit push");
     let grit_oid = git(&fx.bare, &["rev-parse", "refs/heads/feature"]);
     assert_eq!(expected, grit_oid.trim());
     let (ok, out) = git_try(&fx.bare, &["fsck", "--strict"]);
@@ -626,6 +629,7 @@ fn dry_run_leaves_bare_refs_unchanged() {
             dry_run: true,
             ..Default::default()
         },
+        &grit_lib::progress::NeverCancel
     )
     .expect("dry-run");
     let after = list_remote_refs(&fx.bare);

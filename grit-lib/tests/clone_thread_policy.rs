@@ -140,6 +140,7 @@ fn http_clone_honors_thread_policy_over_pack_config_for_ingest() {
             ..CloneOptions::new(url, dest)
         },
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
         Some(&DefaultHttpClientFactory),
     )
     .expect("http clone");

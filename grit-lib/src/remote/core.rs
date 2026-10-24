@@ -437,6 +437,7 @@ impl Remote {
         refs: &[PushRefSpec],
         mut opts: PushOptions,
         progress: &mut dyn Progress,
+        cancel: &dyn crate::progress::Cancel,
         http_factory: Option<&dyn HttpClientFactory>,
     ) -> RemoteResult<PushOutcome> {
         repo.odb().require_files_primary("push")?;
@@ -449,6 +450,7 @@ impl Remote {
             refs,
             &opts,
             progress,
+            cancel,
             http_factory,
             ConnectOptions {
                 protocol_version: 0,
@@ -576,6 +578,7 @@ impl Remote {
                     &remote_git,
                     opts,
                     progress,
+                    cancel,
                 )?)
             }
             RemoteUrl::Http(u) | RemoteUrl::Https(u) => {
@@ -623,13 +626,14 @@ impl Remote {
         refs: &[PushRefSpec],
         opts: &PushOptions,
         progress: &mut dyn Progress,
+        cancel: &dyn crate::progress::Cancel,
         http_factory: Option<&dyn HttpClientFactory>,
         connect: ConnectOptions,
     ) -> RemoteResult<PushOutcome> {
         match url {
             RemoteUrl::Local(_) | RemoteUrl::File(_) => {
                 let remote_git = local_git_dir_from_url(url, repo.git_dir(), repo.work_tree())?;
-                Ok(push_local(repo.git_dir(), &remote_git, refs, opts)?)
+                Ok(push_local(repo.git_dir(), &remote_git, refs, opts, cancel)?)
             }
             RemoteUrl::Http(u) | RemoteUrl::Https(u) => {
                 let client: Arc<dyn HttpClient> = Arc::from(http_client(http_factory, repo)?);
@@ -641,6 +645,7 @@ impl Remote {
                     refs,
                     opts,
                     progress,
+                    cancel,
                 )?)
             }
             RemoteUrl::Git(u) => {
@@ -652,6 +657,7 @@ impl Remote {
                     refs,
                     opts,
                     progress,
+                    cancel,
                 )?)
             }
             RemoteUrl::Ssh(u) => {
@@ -663,6 +669,7 @@ impl Remote {
                     refs,
                     opts,
                     progress,
+                    cancel,
                 )?)
             }
             RemoteUrl::Bundle(_) => Err(RemoteError::UnsupportedScheme),

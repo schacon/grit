@@ -420,6 +420,7 @@ pub fn collect_untracked_and_ignored_with_cache(
             cache_miss: UntrackedCacheMissAction::RefreshFull,
         },
         &rules,
+        None,
     )
     .map(|(untracked, ignored, _)| (untracked, ignored))
 }
@@ -436,6 +437,29 @@ pub fn collect_untracked_and_ignored_with_rules(
     pathspecs: &[String],
     rules: &crate::worktree_rules::WorktreeRules,
 ) -> Result<(Vec<String>, Vec<String>, UntrackedCollectMeta)> {
+    collect_untracked_and_ignored_with_rules_and_cancel(
+        repo,
+        index,
+        work_tree,
+        ignored_mode,
+        show_all,
+        pathspecs,
+        rules,
+        None,
+    )
+}
+
+/// Like [`collect_untracked_and_ignored_with_rules`], checking `cancel` during the walk.
+pub fn collect_untracked_and_ignored_with_rules_and_cancel(
+    repo: &Repository,
+    index: &mut Index,
+    work_tree: &Path,
+    ignored_mode: IgnoredMode,
+    show_all: bool,
+    pathspecs: &[String],
+    rules: &crate::worktree_rules::WorktreeRules,
+    cancel: Option<&dyn crate::progress::Cancel>,
+) -> Result<(Vec<String>, Vec<String>, UntrackedCollectMeta)> {
     collect_untracked_and_ignored_inner(
         repo,
         index,
@@ -449,6 +473,7 @@ pub fn collect_untracked_and_ignored_with_rules(
             cache_miss: UntrackedCacheMissAction::RefreshFull,
         },
         rules,
+        cancel,
     )
 }
 
@@ -482,6 +507,13 @@ pub struct UntrackedCollectMeta {
     pub untracked_cache_refreshed: bool,
 }
 
+fn poll_untracked_cancel(cancel: Option<&dyn crate::progress::Cancel>) -> Result<()> {
+    if cancel.is_some_and(|c| c.is_cancelled()) {
+        return Err(crate::error::Error::Cancelled);
+    }
+    Ok(())
+}
+
 /// Shared implementation of the untracked/ignored walk.
 pub(crate) fn collect_untracked_and_ignored_inner(
     repo: &Repository,
@@ -490,7 +522,9 @@ pub(crate) fn collect_untracked_and_ignored_inner(
     pathspecs: &[String],
     scan: UntrackedScan,
     rules: &crate::worktree_rules::WorktreeRules,
+    cancel: Option<&dyn crate::progress::Cancel>,
 ) -> Result<(Vec<String>, Vec<String>, UntrackedCollectMeta)> {
+    poll_untracked_cancel(cancel)?;
     let UntrackedScan {
         ignored_mode,
         show_all,
@@ -571,6 +605,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
         effective_core_precomposeunicode_with_config(Some(repo.git_dir()), Some(rules.config()));
 
     if effective_pathspecs.is_empty() {
+        poll_untracked_cancel(cancel)?;
         let (mut par_untracked, mut par_ignored) = collect_untracked_parallel_top_level(
             repo,
             index,
@@ -582,6 +617,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
             &tracked_paths,
             &rules.ignore(),
             effective_pathspecs,
+            cancel,
         )?;
         if sort_paths {
             par_untracked.sort_unstable();
@@ -590,6 +626,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
         return Ok((par_untracked, par_ignored, UntrackedCollectMeta::default()));
     }
 
+    poll_untracked_cancel(cancel)?;
     visit_untracked_node(
         repo,
         index,
@@ -608,6 +645,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
         Some(rules),
         &mut untracked,
         &mut ignored,
+        cancel,
     )?;
 
     if sort_paths {
@@ -749,7 +787,9 @@ fn collect_untracked_parallel_top_level(
     tracked_paths: &crate::path_icase::Stage0TrackedPaths,
     matcher_template: &IgnoreMatcher,
     pathspecs: &[String],
+    cancel: Option<&dyn crate::progress::Cancel>,
 ) -> Result<(Vec<String>, Vec<String>)> {
+    poll_untracked_cancel(cancel)?;
     let entries = named_entries_sorted(fs::read_dir(work_tree).map_err(crate::error::Error::Io)?);
 
     let mut root_files = Vec::new();
@@ -799,6 +839,7 @@ fn collect_untracked_parallel_top_level(
                 None,
                 local_untracked,
                 local_ignored,
+                None,
             )?;
             Ok::<(), crate::error::Error>(())
         };
@@ -839,6 +880,7 @@ fn collect_untracked_parallel_top_level(
                     None,
                     &mut untracked,
                     &mut ignored,
+                    None,
                 )?;
             }
         }
@@ -918,6 +960,7 @@ fn collect_untracked_parallel_top_level(
                 None,
                 &mut local_untracked,
                 &mut local_ignored,
+                None,
             )?;
             Ok((local_untracked, local_ignored))
         },
@@ -1070,6 +1113,7 @@ fn visit_untracked_dir_entry(
     rules: Option<&crate::worktree_rules::WorktreeRules>,
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
+    cancel: Option<&dyn crate::progress::Cancel>,
 ) -> Result<UntrackedWalkStep> {
     if name == b".git" {
         return Ok(UntrackedWalkStep::Continue);
@@ -1120,6 +1164,7 @@ fn visit_untracked_dir_entry(
             rules,
             untracked_out,
             ignored_out,
+            cancel,
         )?;
         if check_only && visible_out.is_some_and(|out| out.get()) {
             return Ok(UntrackedWalkStep::Stop);
@@ -1167,8 +1212,10 @@ fn visit_untracked_read_dir_lazy(
     rules: Option<&crate::worktree_rules::WorktreeRules>,
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
+    cancel: Option<&dyn crate::progress::Cancel>,
 ) -> Result<()> {
     for entry in entries {
+        poll_untracked_cancel(cancel)?;
         if visible_out.is_some_and(|out| out.get()) {
             return Ok(());
         }
@@ -1199,6 +1246,7 @@ fn visit_untracked_read_dir_lazy(
                 rules,
                 untracked_out,
                 ignored_out,
+                cancel,
             )?,
             UntrackedWalkStep::Stop
         ) {
@@ -1227,6 +1275,7 @@ fn visit_untracked_node(
     rules: Option<&crate::worktree_rules::WorktreeRules>,
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
+    cancel: Option<&dyn crate::progress::Cancel>,
 ) -> Result<()> {
     if check_only && visible_out.is_some_and(|out| out.get()) {
         return Ok(());
@@ -1256,6 +1305,7 @@ fn visit_untracked_node(
             rules,
             untracked_out,
             ignored_out,
+            cancel,
         );
     }
 
@@ -1292,6 +1342,7 @@ fn visit_untracked_node(
     }
 
     for (name, entry) in &named {
+        poll_untracked_cancel(cancel)?;
         if matches!(
             visit_untracked_dir_entry(
                 repo,
@@ -1312,6 +1363,7 @@ fn visit_untracked_node(
                 rules,
                 untracked_out,
                 ignored_out,
+                cancel,
             )?,
             UntrackedWalkStep::Stop
         ) {
@@ -1341,6 +1393,7 @@ fn visit_untracked_directory(
     rules: Option<&crate::worktree_rules::WorktreeRules>,
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
+    cancel: Option<&dyn crate::progress::Cancel>,
 ) -> Result<()> {
     let _ = matcher.note_directory_entered(repo, Some(index), rel);
 
@@ -1363,6 +1416,7 @@ fn visit_untracked_directory(
             rules,
             untracked_out,
             ignored_out,
+            cancel,
         )?;
         return Ok(());
     }
@@ -1428,6 +1482,7 @@ fn visit_untracked_directory(
             rules,
             untracked_out,
             ignored_out,
+            cancel,
         )?;
         return Ok(());
     }
@@ -1457,6 +1512,7 @@ fn visit_untracked_directory(
             rules,
             untracked_out,
             ignored_out,
+            cancel,
         )?;
         if found.get() {
             if !rel.is_empty() {
@@ -1490,6 +1546,7 @@ fn visit_untracked_directory(
         rules,
         &mut sub_untracked,
         &mut sub_ignored,
+        cancel,
     )?;
 
     if show_all {
@@ -2055,15 +2112,17 @@ pub fn status(
             let rules_guard = worktree_rules.lock().map_err(|e| {
                 crate::error::Error::Message(format!("worktree rules lock poisoned: {e}"))
             })?;
-            let (mut untracked, ignored, collect_meta) = collect_untracked_and_ignored_with_rules(
-                repo,
-                &mut index,
-                work_tree,
-                opts.ignored,
-                opts.untracked == UntrackedMode::All,
-                &opts.pathspecs,
-                &rules_guard,
-            )?;
+            let (mut untracked, ignored, collect_meta) =
+                collect_untracked_and_ignored_with_rules_and_cancel(
+                    repo,
+                    &mut index,
+                    work_tree,
+                    opts.ignored,
+                    opts.untracked == UntrackedMode::All,
+                    &opts.pathspecs,
+                    &rules_guard,
+                    Some(cancel),
+                )?;
             persist_index |= collect_meta.untracked_cache_refreshed;
             if opts.untracked == UntrackedMode::No {
                 untracked.clear();

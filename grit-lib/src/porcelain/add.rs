@@ -432,6 +432,7 @@ fn stage_inner_on_index(
                 &opts.pathspecs,
                 scan,
                 &rules,
+                None,
             )?;
             untracked
         } else {
@@ -449,6 +450,7 @@ fn stage_inner_on_index(
                 &opts.pathspecs,
                 scan,
                 &rules,
+                None,
             )?;
             if untracked.is_empty() {
                 untracked

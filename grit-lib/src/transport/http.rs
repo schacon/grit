@@ -656,6 +656,7 @@ impl<C: HttpClient + Clone + 'static> SmartHttpTransport<C> {
         refs: &[crate::transfer::PushRefSpec],
         opts: &crate::transfer::PushOptions,
         progress: &mut dyn Progress,
+        cancel: &dyn crate::progress::Cancel,
     ) -> Result<crate::transfer::PushOutcome> {
         use crate::push::push_remote;
         use crate::transport::{ConnectOptions, Transport};
@@ -666,7 +667,7 @@ impl<C: HttpClient + Clone + 'static> SmartHttpTransport<C> {
             ..Default::default()
         };
         let mut conn = self.connect(repo_url, Service::ReceivePack, &connect)?;
-        push_remote(local_git_dir, &mut *conn, refs, opts, progress)
+        push_remote(local_git_dir, &mut *conn, refs, opts, progress, cancel)
     }
 
     /// Perform the `info/refs` discovery for `repo_url` and `service`, returning

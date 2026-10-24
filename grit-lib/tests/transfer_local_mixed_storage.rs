@@ -218,7 +218,14 @@ fn push_to_empty_bare_packs_only_loose_objects_beside_linked_pack() {
             ..Default::default()
         })
         .collect();
-    push_local(&src.join(".git"), &remote, &specs, &PushOptions::default()).expect("push");
+    push_local(
+        &src.join(".git"),
+        &remote,
+        &specs,
+        &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("push");
 
     let mut packs = pack_object_counts(&remote.join("objects"));
     let linked = packs.iter().position(|p| *p == src_packs[0]);

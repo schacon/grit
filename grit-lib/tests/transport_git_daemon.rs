@@ -593,6 +593,7 @@ fn push_annotated_tag_on_existing_commit_over_git_daemon() {
         }],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push annotated tag");
 

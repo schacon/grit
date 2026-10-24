@@ -14,7 +14,7 @@ use crate::error::{Error, Result};
 use crate::fetch::{fetch_operation_identity, Progress};
 use crate::objects::ObjectId;
 use crate::partial_clone::{ObjectFilterSpec, PartialCloneConfig};
-use crate::progress::{Cancel, NeverCancel};
+use crate::progress::Cancel;
 use crate::promisor_fetch::PromisorFetcher;
 use crate::ref_storage::RefStorageFormat;
 use crate::refs;
@@ -974,6 +974,7 @@ fn pick_default_branch(repo: &Repository, remote_name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::progress::NeverCancel;
     use std::fs;
 
     #[test]

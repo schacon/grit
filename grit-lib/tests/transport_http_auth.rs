@@ -494,6 +494,7 @@ fn push_over_authed_http_succeeds_with_right_credentials_and_fails_typed_otherwi
             std::slice::from_ref(&spec),
             &PushOptions::default(),
             &mut NoProgress,
+            &grit_lib::progress::NeverCancel,
         )
         .expect_err("push with no credentials against an authed server must fail");
         assert!(
@@ -516,6 +517,7 @@ fn push_over_authed_http_succeeds_with_right_credentials_and_fails_typed_otherwi
         std::slice::from_ref(&spec),
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("authed push with correct credentials must succeed");
 

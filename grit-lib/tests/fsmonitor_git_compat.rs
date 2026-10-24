@@ -257,6 +257,7 @@ exit 0
         &grit_repo,
         &grit_lib::porcelain::status::StatusOptions::default(),
         &mut grit_lib::progress::NullProgress,
+        &NeverCancel,
     )
     .expect("status");
     assert!(
@@ -320,6 +321,7 @@ fn grit_status_honors_fsmonitor_hook_v1_changed_paths() {
         &grit_repo,
         &grit_lib::porcelain::status::StatusOptions::default(),
         &mut grit_lib::progress::NullProgress,
+        &NeverCancel,
     )
     .expect("status");
 
@@ -500,6 +502,7 @@ fn grit_status_does_not_skip_stat_on_fsmn_bootstrap_with_stale_valid_bits() {
         &grit_repo,
         &grit_lib::porcelain::status::StatusOptions::default(),
         &mut grit_lib::progress::NullProgress,
+        &NeverCancel,
     )
     .expect("status");
 

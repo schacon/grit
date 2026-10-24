@@ -74,9 +74,10 @@ pub use patch_log::{
     LogPatchCommitHeader, LogPatchOptions, PatchResolvedSide, PatchTextOptions,
 };
 pub use pickaxe::{Pickaxe, PickaxeError, PickaxeKind};
+pub use targets::hunk_diff_bundle;
 pub use targets::HunkDiffBundle;
 pub(crate) use targets::{
-    collect_files_for_target, hunk_diff_bundle, unstaged_file_diffs_with_peer_hunks,
+    collect_files_for_target, unstaged_file_diffs_with_peer_hunks,
     unstaged_raw_changes_with_peer_hunks, FileChange,
 };
 pub use targets::{

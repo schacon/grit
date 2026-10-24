@@ -108,6 +108,7 @@ pub fn clean_untracked(
         &opts.pathspecs,
         scan,
         &rules,
+        None,
     )?;
 
     let mut candidates = Vec::new();

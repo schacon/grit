@@ -104,6 +104,7 @@ pub fn stage_worktree_changes(repo: &Repository, pathspecs: &[String]) -> Result
             cache_miss: UntrackedCacheMissAction::RefreshFull,
         },
         &worktree_rules,
+        None,
     )?;
     let untracked = expand_untracked_for_staging_with_rules(
         repo,

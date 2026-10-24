@@ -240,6 +240,7 @@ impl<'repo> RepositoryRemotes<'repo> {
     /// # Examples
     ///
     /// ```
+    /// # use grit_lib::progress::NeverCancel;
     /// # use grit_lib::remote::fetch::NoProgress;
     /// # use grit_lib::remote::Remote;
     /// # use grit_lib::repo::Repository;
@@ -293,6 +294,7 @@ impl<'repo> RepositoryRemotes<'repo> {
 
         let mut results = Vec::new();
         for name in configured_remote_names_in_config_order(config) {
+            crate::progress::poll_cancel(progress, cancel)?;
             if remote_skip_fetch_all(config, &name) {
                 continue;
             }
@@ -317,6 +319,9 @@ impl<'repo> RepositoryRemotes<'repo> {
                 .get(&name)
                 .and_then(|remote| self.fetch(&remote, opts, progress, cancel, http_factory));
             results.push((name, outcome));
+            if cancel.is_cancelled() {
+                return Err(crate::error::Error::Cancelled);
+            }
         }
         Ok(results)
     }
@@ -330,6 +335,7 @@ impl<'repo> RepositoryRemotes<'repo> {
     /// # Examples
     ///
     /// ```
+    /// # use grit_lib::progress::NeverCancel;
     /// # use grit_lib::remote::fetch::NoProgress;
     /// # use grit_lib::remote::Remote;
     /// # use grit_lib::repo::Repository;
@@ -352,9 +358,10 @@ impl<'repo> RepositoryRemotes<'repo> {
         refs: &[PushRefSpec],
         options: PushOptions,
         progress: &mut dyn Progress,
+        cancel: &dyn crate::progress::Cancel,
         http_factory: Option<&dyn HttpClientFactory>,
     ) -> std::result::Result<PushOutcome, RemoteError> {
-        remote.push(self.repo, refs, options, progress, http_factory)
+        remote.push(self.repo, refs, options, progress, cancel, http_factory)
     }
 
     /// Summarize a configured remote: URLs, default branch, tracking branch states, pull config.
