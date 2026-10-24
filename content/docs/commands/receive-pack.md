@@ -27,7 +27,7 @@ Every ref update is checked before it's applied, and the client is told which up
 | `receive.hideRefs`, `transfer.hideRefs` | Hide refs from pushing clients and refuse updates to them. |
 | `receive.maxInputSize` | Refuse pushes whose pack is larger than this many bytes. Unlimited by default. |
 
-There is no other limit on push size. `grit-http-server` streams a push body straight into receive-pack instead of buffering it, so a push of any size works over smart HTTP, as with `git http-backend`. Fetch requests, which are small, are capped at 32 MiB (after gzip decoding).
+There is no other limit on push size. `grit-http-server` streams a push body straight into receive-pack instead of buffering it, so a push of any size works over smart HTTP, as with `git http-backend`. Fetch requests, which are small, are capped at 32 MiB (after gzip decoding). Git doesn't gzip push bodies, but if another client does, the decoded body may reach 32 MiB and beyond that at most 32 times the compressed bytes received; a body that expands further is refused with `413`, and one that isn't valid gzip with `400`.
 
 Pushes that ask for an atomic update are applied all or nothing. Server-side hooks are not supported yet.
 

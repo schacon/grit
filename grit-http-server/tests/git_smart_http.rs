@@ -301,6 +301,108 @@ fn large_push_with_content_length_body_succeeds() {
     push_large_blobs_over_grit_http_server(&[3_000_000], &["-c", "http.postBuffer=67108864"]);
 }
 
+/// POST `body` to `path` with `Content-Encoding: gzip` and return the HTTP status code.
+fn post_gzip_status(port: u16, path: &str, body: &[u8]) -> u16 {
+    use std::io::{Read, Write};
+
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(60)))
+        .expect("read timeout");
+    let head = format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Content-Type: application/x-git-receive-pack-request\r\n\
+         Content-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(head.as_bytes()).expect("write head");
+    // The server may answer and close before reading the whole body.
+    let _ = stream.write_all(body);
+    let mut response = Vec::new();
+    let _ = stream.read_to_end(&mut response);
+    let status_line = String::from_utf8_lossy(&response);
+    status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+        .unwrap_or_else(|| panic!("no HTTP status in response: {status_line:?}"))
+}
+
+/// A gzip body that decodes to `decoded_len` bytes of repeated, well-formed push
+/// commands, so the server keeps parsing until the decoder's expansion limit trips.
+fn gzip_command_flood(decoded_len: usize) -> Vec<u8> {
+    use flate2::{write::GzEncoder, Compression};
+    use std::io::Write;
+
+    let line = format!("{} {} refs/heads/flood\n", "0".repeat(40), "1".repeat(40));
+    let pkt = format!("{:04x}{line}", line.len() + 4);
+    let chunk = pkt.repeat(1024 * 1024 / pkt.len());
+    let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+    let mut written = 0;
+    while written < decoded_len {
+        enc.write_all(chunk.as_bytes()).expect("gzip write");
+        written += chunk.len();
+    }
+    enc.finish().expect("gzip finish")
+}
+
+#[test]
+fn gzip_bomb_push_is_refused_and_server_keeps_serving() {
+    let server_bin = require_binary("grit-http-server");
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().join("srv");
+    std::fs::create_dir_all(&root).unwrap();
+    let bare = root.join("project.git");
+    git(
+        tmp.path(),
+        &["init", "-q", "--bare", bare.to_str().expect("utf8 path")],
+    );
+
+    let port = require_port();
+    let child = spawn_server(&server_bin, &root, port, None);
+    let _guard = ServerGuard(child);
+    assert!(
+        wait_ready(port),
+        "grit-http-server did not become ready on port {port}"
+    );
+
+    let bomb = gzip_command_flood(64 * 1024 * 1024);
+    assert!(
+        bomb.len() < 1024 * 1024,
+        "test body must be a small request ({} bytes)",
+        bomb.len()
+    );
+    assert_eq!(
+        post_gzip_status(port, "/project.git/git-receive-pack", &bomb),
+        413,
+        "a gzip push body that expands far beyond its size must be refused"
+    );
+
+    assert_eq!(
+        post_gzip_status(port, "/project.git/git-receive-pack", b"not gzip at all"),
+        400,
+        "a push body that is not valid gzip is a client error"
+    );
+
+    let work = tmp.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    git(&work, &["init", "-q", "-b", "main", "."]);
+    std::fs::write(work.join("a.txt"), "after the bomb\n").unwrap();
+    git(&work, &["add", "a.txt"]);
+    git(&work, &["commit", "-q", "-m", "after"]);
+    let url = format!("http://127.0.0.1:{port}/project.git");
+    git(&work, &["push", "-q", url.as_str(), "main"]);
+    assert_eq!(
+        rev_parse(&bare, "refs/heads/main"),
+        rev_parse(&work, "HEAD")
+    );
+    assert!(
+        !git_ok(&bare, &["rev-parse", "-q", "--verify", "refs/heads/flood"]),
+        "the refused push must not create a ref"
+    );
+}
+
 #[test]
 fn global_receive_deny_non_fast_forward_rejects_force_push() {
     let server_bin = require_binary("grit-http-server");

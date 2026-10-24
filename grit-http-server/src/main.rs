@@ -299,8 +299,100 @@ fn streaming_body_reader(body: Body) -> impl Read + Send + 'static {
 fn decoded_reader<'a>(raw: impl Read + 'a, encoding: BodyEncoding) -> Box<dyn Read + 'a> {
     match encoding {
         BodyEncoding::Identity => Box::new(raw),
-        BodyEncoding::Gzip => Box::new(flate2::read::GzDecoder::new(raw)),
+        BodyEncoding::Gzip => Box::new(ExpansionLimitedGzip::new(raw)),
     }
+}
+
+/// Decoded bytes a streamed gzip body may always expand to, matching the fetch cap.
+const GZIP_STREAM_FREE_EXPANSION: u64 = MAX_FETCH_REQUEST_BODY as u64;
+
+/// Past [`GZIP_STREAM_FREE_EXPANSION`], how many decoded bytes a streamed gzip body may
+/// produce per compressed byte received.
+///
+/// A push carries a pack whose objects are already deflated, so gzip barely shrinks it;
+/// even a pack written without compression rarely gzips better than 10:1. Deflate can
+/// reach about 1000:1, so without this bound a small request could grow without limit.
+const GZIP_STREAM_MAX_RATIO: u64 = 32;
+
+/// A streamed gzip body expanded beyond [`GZIP_STREAM_MAX_RATIO`].
+#[derive(Debug)]
+struct GzipExpansionExceeded;
+
+impl std::fmt::Display for GzipExpansionExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "gzip request body expands more than {GZIP_STREAM_MAX_RATIO}:1"
+        )
+    }
+}
+
+impl std::error::Error for GzipExpansionExceeded {}
+
+/// Counts the bytes read through it.
+struct CountingReader<R> {
+    inner: R,
+    count: u64,
+}
+
+impl<R: Read> Read for CountingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.count = self.count.saturating_add(n as u64);
+        Ok(n)
+    }
+}
+
+/// Gzip decoder for streamed bodies that fails with [`GzipExpansionExceeded`] once the
+/// decoded output outgrows the compressed input by more than the allowed ratio.
+struct ExpansionLimitedGzip<R: Read> {
+    decoder: flate2::read::GzDecoder<CountingReader<R>>,
+    decoded: u64,
+}
+
+impl<R: Read> ExpansionLimitedGzip<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            decoder: flate2::read::GzDecoder::new(CountingReader { inner, count: 0 }),
+            decoded: 0,
+        }
+    }
+}
+
+impl<R: Read> Read for ExpansionLimitedGzip<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.decoder.read(buf)?;
+        self.decoded = self.decoded.saturating_add(n as u64);
+        let compressed = self.decoder.get_ref().count;
+        let allowed = compressed
+            .saturating_mul(GZIP_STREAM_MAX_RATIO)
+            .max(GZIP_STREAM_FREE_EXPANSION);
+        if self.decoded > allowed {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                GzipExpansionExceeded,
+            ));
+        }
+        Ok(n)
+    }
+}
+
+/// The HTTP response for a receive-pack exchange that failed.
+///
+/// A request stream that cannot be read (malformed or over-expanding gzip, a client that
+/// went away) is the client's fault; anything else is a server error.
+fn receive_pack_error_response(err: &grit_protocol::Error) -> Response {
+    let Some(io) = err.request_stream_error() else {
+        eprintln!("receive-pack error: {err}");
+        return (StatusCode::INTERNAL_SERVER_ERROR, "receive-pack failed").into_response();
+    };
+    if io
+        .get_ref()
+        .is_some_and(|inner| inner.is::<GzipExpansionExceeded>())
+    {
+        return *payload_too_large();
+    }
+    (StatusCode::BAD_REQUEST, "could not read request body").into_response()
 }
 
 /// Read-ahead for streamed request bodies, so pkt-line sized reads do not each wait
@@ -470,10 +562,7 @@ async fn receive_pack_rpc(
             )
             .body(axum::body::Body::from(data))
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
-        Ok(Err(e)) => {
-            eprintln!("receive-pack error: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, "receive-pack failed").into_response()
-        }
+        Ok(Err(e)) => receive_pack_error_response(&e),
         Err(e) => {
             eprintln!("receive-pack join error: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, "receive-pack failed").into_response()
@@ -696,5 +785,57 @@ mod body_tests {
             out == plain,
             "gzip push body must decode to the original bytes"
         );
+    }
+
+    #[test]
+    fn gzip_stream_expanding_past_ratio_fails_with_typed_error() {
+        let zeros = vec![0u8; 1024 * 1024];
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        for _ in 0..64 {
+            assert!(enc.write_all(&zeros).is_ok(), "gzip compress setup");
+        }
+        let bomb = match enc.finish() {
+            Ok(v) => v,
+            Err(e) => panic!("gzip finish failed: {e}"),
+        };
+
+        let mut reader = decoded_reader(&bomb[..], BodyEncoding::Gzip);
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut decoded = 0u64;
+        let err = loop {
+            match reader.read(&mut buf) {
+                Ok(0) => panic!("bomb decoded completely ({decoded} bytes)"),
+                Ok(n) => decoded += n as u64,
+                Err(e) => break e,
+            }
+        };
+        assert!(
+            err.get_ref()
+                .is_some_and(|inner| inner.is::<GzipExpansionExceeded>()),
+            "expected GzipExpansionExceeded, got {err}"
+        );
+        assert!(
+            decoded <= GZIP_STREAM_FREE_EXPANSION,
+            "decoding must stop at the free allowance, got {decoded} bytes"
+        );
+    }
+
+    #[test]
+    fn gzip_stream_with_low_ratio_is_not_capped() {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let plain: Vec<u8> = (0..(GZIP_STREAM_FREE_EXPANSION as usize + 8 * 1024 * 1024) / 8)
+            .flat_map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                seed.to_le_bytes()
+            })
+            .collect();
+        let gzip = gzip_bytes(&plain);
+        let mut out = Vec::new();
+        if let Err(e) = decoded_reader(&gzip[..], BodyEncoding::Gzip).read_to_end(&mut out) {
+            panic!("incompressible gzip stream must decode: {e}");
+        }
+        assert!(out == plain, "decoded bytes must match");
     }
 }
