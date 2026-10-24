@@ -132,6 +132,21 @@ fn log_range_matches_git() -> TestResult {
 }
 
 #[test]
+fn log_one_shot_limit_emits_no_next_cursor() -> TestResult {
+    let dir = std::env::temp_dir().join(format!("grit-log-one-shot-limit-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    seed_linear_repo(&dir, 20);
+    let out = grit_json(&dir, &["log", "-n", "2"]);
+    assert_eq!(out["commits"].as_array().expect("commits").len(), 2);
+    assert_eq!(out["truncated"], Value::Bool(true));
+    assert!(
+        out["next"].is_null(),
+        "one-shot -n must not emit next: {out}"
+    );
+    Ok(())
+}
+
+#[test]
 fn log_since_until_matches_git() -> TestResult {
     let dir = std::env::temp_dir().join(format!("grit-rev-select-since-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);

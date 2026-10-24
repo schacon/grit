@@ -122,10 +122,12 @@ impl LogWalkCursor {
         };
 
         let commits = state.emit_until(repo, Some(limit), query.cutoffs)?;
-        let next = state.has_pending().then(|| LogWalkCursor {
-            query: query.clone(),
-            walk: state.snapshot(),
-        });
+        let next = state
+            .has_emittable_pending(query.cutoffs)
+            .then(|| LogWalkCursor {
+                query: query.clone(),
+                walk: state.snapshot(),
+            });
         Ok(LogWalkPage { commits, next })
     }
 
@@ -542,6 +544,34 @@ mod tests {
         assert!(
             page.next.is_none(),
             "since cutoff must not leave a continuation cursor with pruned heap state"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn since_cutoff_at_limit_does_not_false_continue() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_repo(&dir)?;
+        let c1 = write_commit(&repo.odb(), &[], "c1", 100)?;
+        let c2 = write_commit(&repo.odb(), &[c1], "c2", 200)?;
+        let c3 = write_commit(&repo.odb(), &[c2], "c3", 300)?;
+        let tip = write_commit(&repo.odb(), &[c3], "tip", 400)?;
+        crate::refs::write_ref(repo.git_dir(), "refs/heads/main", &tip)?;
+        crate::refs::write_symbolic_ref(repo.git_dir(), "HEAD", "refs/heads/main")?;
+
+        let query = LogWalkQuery {
+            tips: vec![tip],
+            hide: Vec::new(),
+            cutoffs: ReachableWalkCommitterCutoffs {
+                since: Some(250),
+                until: None,
+            },
+        };
+        let page = LogWalkCursor::step(&repo, &query, None, 2)?;
+        assert_eq!(page.commits, vec![tip, c3]);
+        assert!(
+            page.next.is_none(),
+            "limit matching since-filtered count must not imply more pages"
         );
         Ok(())
     }

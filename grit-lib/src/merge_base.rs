@@ -633,6 +633,25 @@ impl ReachableWalkState {
         !self.heap.is_empty()
     }
 
+    /// Whether the walk queue may still produce commits that pass `cutoffs`.
+    ///
+    /// When `--since` excludes every queued commit (common after hitting `-n` while
+    /// older commits remain on the heap), this returns `false` even though
+    /// [`Self::has_pending`] is still true.
+    #[must_use]
+    pub fn has_emittable_pending(&self, cutoffs: ReachableWalkCommitterCutoffs) -> bool {
+        if self.heap.is_empty() {
+            return false;
+        }
+        if cutoffs
+            .since
+            .is_some_and(|since| self.heap.iter().all(|key| key.time < since))
+        {
+            return false;
+        }
+        true
+    }
+
     fn ensure_hide_set(&mut self, cache: &mut CommitGraphCache<'_>) -> Result<()> {
         if self.hide.is_empty() || !self.hide_set.is_empty() {
             return Ok(());
