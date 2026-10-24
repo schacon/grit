@@ -1780,6 +1780,9 @@ enum Command {
         /// Push annotated tags reachable from the commits being pushed.
         #[arg(long = "follow-tags")]
         follow_tags: bool,
+        /// Skip the `pre-push` hook.
+        #[arg(long = "no-verify")]
+        no_verify: bool,
         #[command(flatten)]
         quiet: quiet_args::QuietArgs,
         /// Remote name (when not using `--remote`).
@@ -4003,6 +4006,7 @@ fn dispatch(
             push_option,
             follow_tags,
             quiet,
+            no_verify,
             remote_name,
             refspecs,
         } => {
@@ -4025,6 +4029,7 @@ fn dispatch(
                 follow_tags,
                 &quiet,
                 opts.mode,
+                no_verify,
             )?;
             if outcome.rejected || quiet.shows_outcome(opts.mode) {
                 emit_success(&outcome, opts, ctx)?;

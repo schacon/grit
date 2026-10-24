@@ -25,8 +25,8 @@ use crate::refs::listing::{
 };
 use crate::repo::Repository;
 use crate::transfer::{
-    fetch_local_into, push_local_from, FetchOptions, FetchOutcome, PushOptions, PushOutcome,
-    PushRefSpec,
+    fetch_local_into, push_local_from, FetchOptions, FetchOutcome, PrePushGate, PushOptions,
+    PushOutcome, PushRefSpec,
 };
 use crate::transport::http::{HttpClient, SmartHttpTransport};
 use crate::transport::{ConnectOptions, GitDaemonTransport, Service, SshTransport, Transport};
@@ -508,11 +508,18 @@ impl Remote {
                 .and_then(|c| c.get_i64("push.bundleThreshold").and_then(|r| r.ok()))
                 .and_then(|v| u64::try_from(v).ok());
         }
+        let url = pre_push_hook_url(self.push_url());
+        let gate = PrePushGate {
+            repo,
+            remote: self.name.as_deref().unwrap_or(&url),
+            url: &url,
+        };
         self.dispatch_push(
             repo,
             self.push_url(),
             refs,
             &opts,
+            (!opts.no_verify).then_some(&gate),
             progress,
             cancel,
             http_factory,
@@ -710,15 +717,26 @@ impl Remote {
         url: &RemoteUrl,
         refs: &[PushRefSpec],
         opts: &PushOptions,
+        pre_push: Option<&PrePushGate<'_>>,
         progress: &mut dyn Progress,
         cancel: &dyn crate::progress::Cancel,
         http_factory: Option<&dyn HttpClientFactory>,
         connect: ConnectOptions,
     ) -> RemoteResult<PushOutcome> {
+        let mut over_wire = |conn: &mut dyn crate::transport::Connection| {
+            push_remote_from(repo, conn, refs, opts, progress, cancel, pre_push)
+        };
         match url {
             RemoteUrl::Local(_) | RemoteUrl::File(_) => {
                 let remote_git = local_git_dir_from_url(url, repo.git_dir(), repo.work_tree())?;
-                Ok(push_local_from(repo, &remote_git, refs, opts, cancel)?)
+                Ok(push_local_from(
+                    repo,
+                    &remote_git,
+                    refs,
+                    opts,
+                    cancel,
+                    pre_push,
+                )?)
             }
             RemoteUrl::Http(u) | RemoteUrl::Https(u) => {
                 let client: Arc<dyn HttpClient> = Arc::from(http_client(http_factory, repo)?);
@@ -735,21 +753,18 @@ impl Remote {
                         client: client.as_ref(),
                         repo_url: u,
                     }),
+                    pre_push,
                 )?)
             }
             RemoteUrl::Git(u) => {
                 let mut conn =
                     GitDaemonTransport::new().connect(u, Service::ReceivePack, &connect)?;
-                Ok(push_remote_from(
-                    repo, &mut *conn, refs, opts, progress, cancel,
-                )?)
+                Ok(over_wire(&mut *conn)?)
             }
             RemoteUrl::Ssh(u) => {
                 let transport = ssh_transport(Some(repo), None);
                 let mut conn = transport.connect(u, Service::ReceivePack, &connect)?;
-                Ok(push_remote_from(
-                    repo, &mut *conn, refs, opts, progress, cancel,
-                )?)
+                Ok(over_wire(&mut *conn)?)
             }
             RemoteUrl::Bundle(_) => Err(RemoteError::UnsupportedScheme),
         }
@@ -786,6 +801,14 @@ impl Remote {
             }
             RemoteUrl::Local(_) | RemoteUrl::File(_) | RemoteUrl::Bundle(_) => unreachable!(),
         }
+    }
+}
+
+/// The push URL as the `pre-push` hook sees it: `file://` URLs keep their scheme.
+fn pre_push_hook_url(url: &RemoteUrl) -> String {
+    match url {
+        RemoteUrl::File(path) => format!("file://{}", path.to_string_lossy()),
+        other => other.to_url_string(),
     }
 }
 

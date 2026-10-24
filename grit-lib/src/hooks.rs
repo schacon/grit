@@ -1215,6 +1215,88 @@ pub fn run_hook_in_git_dir(
     .unwrap_or_else(|_| declined())
 }
 
+/// One ref update a push is about to make, as reported to the `pre-push` hook.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrePushRef {
+    /// Local source as named by the push (`refs/heads/main`, `HEAD`, …). `None` when the
+    /// source was a bare object id, or for a deletion.
+    pub local_ref: Option<String>,
+    /// Object the remote ref will point at; `None` for a deletion.
+    pub local_oid: Option<ObjectId>,
+    /// Destination ref on the remote (`refs/heads/main`).
+    pub remote_ref: String,
+    /// Current value of [`Self::remote_ref`] on the remote; `None` when it does not exist.
+    pub remote_oid: Option<ObjectId>,
+}
+
+impl PrePushRef {
+    /// The hook's stdin line: `<local ref> SP <local oid> SP <remote ref> SP <remote oid> LF`.
+    ///
+    /// A missing object id is written as the all-zero id of width `algo`; a deletion's local
+    /// ref is `(delete)` and a bare object id source repeats the id.
+    fn stdin_line(&self, algo: crate::objects::HashAlgo) -> String {
+        let zero = "0".repeat(algo.hex_len());
+        let hex = |oid: Option<ObjectId>| oid.map_or_else(|| zero.clone(), |o| o.to_hex());
+        let local_ref = match (&self.local_ref, self.local_oid) {
+            (Some(name), _) => name.clone(),
+            (None, Some(oid)) => oid.to_hex(),
+            (None, None) => "(delete)".to_owned(),
+        };
+        format!(
+            "{local_ref} {} {} {}\n",
+            hex(self.local_oid),
+            self.remote_ref,
+            hex(self.remote_oid)
+        )
+    }
+}
+
+/// Run the client-side `pre-push` hook before a push sends anything.
+///
+/// The hook receives `remote` (the remote's name, or its URL for an unnamed remote) and `url`
+/// as arguments, and one [`PrePushRef`] line per update on stdin. It runs even when `refs` is
+/// empty. Output follows [`Repository::hook_stdio`]; under [`HookStdio::Inherit`] the hook's
+/// stdout goes to stderr with its stderr, so a caller's own stdout (for example JSON output)
+/// stays clean.
+///
+/// Returns the hook's captured output (empty under [`HookStdio::Inherit`] or when no hook is
+/// installed).
+///
+/// # Errors
+///
+/// [`HookError::Failed`] when the hook exits non-zero (the push must not proceed),
+/// [`HookError::Spawn`] when it cannot be started, and [`HookError::Internal`] when the
+/// configuration cannot be loaded or `hook.*` entries are invalid.
+pub fn run_pre_push_hook(
+    repo: &Repository,
+    remote: &str,
+    url: &str,
+    refs: &[PrePushRef],
+) -> Result<HookOutput, HookError> {
+    let config = repo
+        .config()
+        .map_err(|e| HookError::Internal(e.to_string()))?;
+    let algo = repo.odb().hash_algo();
+    let stdin: String = refs.iter().map(|r| r.stdin_line(algo)).collect();
+    let result = run_hook_opts(
+        Some(repo),
+        "pre-push",
+        &[remote, url],
+        config.as_ref(),
+        RunHookOptions {
+            stdout_to_stderr: true,
+            stdin_data: Some(stdin.as_bytes()),
+            ..repo_hook_options(repo, "pre-push")
+        },
+    )?;
+    let output = match &result {
+        HookResult::Success { output } => output.clone(),
+        HookResult::NotFound | HookResult::Failed { .. } => HookOutput::default(),
+    };
+    result.check("pre-push")?;
+    Ok(output)
+}
+
 /// `reference-transaction` hook with phase `committed` after updating `HEAD` and (on a branch)
 /// the branch ref to `new_oid`.
 ///

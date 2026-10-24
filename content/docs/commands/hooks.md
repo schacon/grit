@@ -36,6 +36,8 @@ In `--json` mode the same message is the `error` field. [`grit commit`](commit.m
 
 [`grit commit`](commit.md) runs `pre-commit` and `commit-msg` automatically before writing the commit object, then `post-commit` after the branch moves. Use `grit commit --no-verify` to skip the first two (same as Git). JSON commit output lists hook basenames that actually ran in `hooks_run`.
 
+[`grit push`](push.md) runs `pre-push` before sending anything and stops when it exits non-zero; `grit push --no-verify` skips it.
+
 Other commands run the hooks Git runs after them, with Git's arguments:
 
 | Hook | Run by | Arguments and stdin |

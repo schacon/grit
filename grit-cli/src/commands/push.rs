@@ -170,6 +170,7 @@ struct PushWireOptions<'a> {
     atomic: bool,
     push_options: &'a [String],
     remote_ref_tips: Option<Vec<ObjectId>>,
+    no_verify: bool,
 }
 
 /// Positional `[<remote>] [<refspec>...]` plus flags.
@@ -188,6 +189,7 @@ pub fn run(
     follow_tags: bool,
     quiet: &QuietArgs,
     mode: OutputMode,
+    no_verify: bool,
 ) -> Result<PushOutcome> {
     let repo = context::discover()?;
     let config = ConfigSet::load(&crate::context::environment(), Some(repo.git_dir()), true)
@@ -222,6 +224,7 @@ pub fn run(
         atomic,
         push_options,
         remote_ref_tips: plan_ctx.remote_tips,
+        no_verify,
     };
     let mut progress = quiet.progress(mode);
     let report = match push_once(
@@ -350,6 +353,7 @@ fn push_once(
                 push_options: wire.push_options.to_vec(),
                 remote_ref_tips: wire.remote_ref_tips.clone(),
                 tracking_remote: Some(remote_name.to_owned()),
+                no_verify: wire.no_verify,
                 ..Default::default()
             },
             progress,

@@ -50,6 +50,8 @@ With `--delete`, deletes remote branches or tags (short names map like Git).
 
 In human output, messages the remote sends while it processes the push (hook output, CI links, policy text) are shown on stderr as `remote: …` lines, including when stderr is not a terminal. `-q` / `--quiet` hides them and the human summary, so a successful push prints nothing; a rejected push is still reported and exits `1`. With `--json` or `--markdown`, the same lines appear in `remote_messages` (omitted when empty).
 
+Before anything is sent, grit runs the repository's `pre-push` hook (see [`grit hooks`](../hooks/)) once the remote's current refs are known, on every transport and with `--dry-run` too. The hook gets the remote name (or the URL, for an unnamed remote) and the push URL as arguments, and one line per ref update on stdin, `<local ref> <local oid> <remote ref> <remote oid>`, in Git's format: `(delete)` and a zero object id for deletions, a zero remote object id for new refs, and no line for refs that are up to date or already rejected. If the hook exits non-zero, the push stops, the remote is left untouched and grit exits `1`. The hook's stdout is sent to stderr so `--json` and `--markdown` output stays clean. `--no-verify` skips the hook.
+
 ### Large pushes
 
 When a smart-HTTP server advertises a resumable push endpoint (the `pushBundle` capability, as [`grit serve`](../serve/) does) and the pack to send is larger than 16 MiB, grit writes the pack as a bundle and uploads it with the [TUS](https://tus.io/protocols/resumable-upload) resumable-upload protocol instead of one long request, then asks the server to apply the ref updates. The result is reported like any other push. A dropped connection is retried from the server's offset, and an interrupted push keeps its bundle and upload in `.git/grit/push-bundles/`: run the same `grit push` again and it skips building the pack and sends only the rest.
@@ -80,6 +82,7 @@ For GitHub over HTTPS, if a push fails because you aren't signed in, `grit` offe
 | `-o`, `--push-option` | Server-side push option (repeatable; smart HTTP only). |
 | `--follow-tags` | Push annotated tags reachable from the commits being pushed. |
 | `-q`, `--quiet` | Suppress remote messages and the human summary of a successful push. |
+| `--no-verify` | Skip the `pre-push` hook. |
 | `--remote` | Hidden alias for the remote name (prefer the positional `<remote>`). |
 
 ## Examples
@@ -119,6 +122,16 @@ When the remote moved since your last fetch:
 ```console
 $ grit push --force-with-lease
   rejected origin refs/heads/main: stale remote ref — run `grit fetch` and try again
+```
+
+When the `pre-push` hook refuses the push (nothing is sent):
+
+```console
+$ grit push
+pre-push: secrets found in config/prod.env
+error: hook pre-push failed with exit status 1
+$ echo $?
+1
 ```
 
 When the delete target is not on the remote:
@@ -185,6 +198,14 @@ Example:
 }
 ```
 
+When the `pre-push` hook fails, stdout is a single error object and the exit status is `1`:
+
+```json
+{
+  "error": "hook pre-push failed with exit status 1"
+}
+```
+
 ## Markdown output
 
 Pass [`--markdown`](../global-options/) for agent-friendly output.
@@ -206,7 +227,7 @@ Markdown uses headings, bullet lists, and fenced blocks; pipe characters inside 
 | Code | Meaning |
 | ---: | --- |
 | `0` | Success ([`success`](../exit-codes/)). |
-| `1` | Command failed ([`failure`](../exit-codes/)). |
+| `1` | Command failed, a ref was rejected, or the `pre-push` hook exited non-zero ([`failure`](../exit-codes/)). |
 | `2` | Invalid flags or arguments ([`usage`](../exit-codes/)). |
 | `128` | Could not reach or read the remote: missing repository, DNS or connection failure, HTTP error status ([`remote_unreadable`](../exit-codes/)). |
 

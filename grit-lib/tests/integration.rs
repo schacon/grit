@@ -1148,6 +1148,9 @@ mod porcelain_v2_git_compat;
 #[path = "post_operation_hooks.rs"]
 mod post_operation_hooks;
 #[cfg(feature = "full-tests")]
+#[path = "pre_push_hook.rs"]
+mod pre_push_hook;
+#[cfg(feature = "full-tests")]
 #[path = "precompose_system_git_roundtrip.rs"]
 mod precompose_system_git_roundtrip;
 #[cfg(feature = "full-tests")]

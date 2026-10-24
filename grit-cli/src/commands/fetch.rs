@@ -541,6 +541,7 @@ pub(crate) fn map_remote_error(err: RemoteError) -> anyhow::Error {
         RemoteError::Library(grit_lib::error::Error::HashCollision { oid }) => {
             crate::json_error::map_lib_error(grit_lib::error::Error::HashCollision { oid })
         }
+        RemoteError::Library(hook @ grit_lib::error::Error::Hook(_)) => anyhow::Error::new(hook),
         RemoteError::Library(lib) if lib.is_remote_unreadable() => anyhow::Error::new(lib),
         RemoteError::Library(lib) => anyhow::Error::msg(RemoteError::Library(lib).to_string()),
         other => anyhow::Error::msg(other.to_string()),

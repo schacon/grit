@@ -731,6 +731,10 @@ pub struct PushRefSpec {
     /// is rejected as stale (used for "create only" pushes whose lease is the
     /// ref's absence). Independent of [`Self::expected_old`].
     pub expect_absent: bool,
+    /// Local ref as the `pre-push` hook names it, when that differs from
+    /// [`Self::src_ref`]: `HEAD` for a `HEAD:<dst>` push, where `src_ref` holds the
+    /// branch `HEAD` points at. `None` uses `src_ref`.
+    pub hook_src_ref: Option<String>,
 }
 
 /// Local ref name carried on a push spec for status reporting.
@@ -813,6 +817,62 @@ pub struct PushOptions {
     /// receive-pack request. `None` uses `push.bundleThreshold` from config,
     /// else 16 MiB.
     pub resumable_threshold: Option<u64>,
+    /// Skip the client-side `pre-push` hook.
+    ///
+    /// [`crate::remote::Remote::push`] runs the hook (see
+    /// [`crate::hooks::run_pre_push_hook`]) after reading the remote's refs and before sending
+    /// anything, dry runs included, and fails with [`Error::Hook`] when it exits non-zero. The
+    /// lower-level [`push_local`] and [`crate::push::push_remote`] have no repository or
+    /// remote name to give the hook and never run it.
+    pub no_verify: bool,
+}
+
+/// The client-side `pre-push` hook for one push, run once every update has been decided.
+pub(crate) struct PrePushGate<'a> {
+    /// Repository whose hooks run.
+    pub(crate) repo: &'a crate::repo::Repository,
+    /// First hook argument: remote name, or the URL for an unnamed remote.
+    pub(crate) remote: &'a str,
+    /// Second hook argument: the push URL.
+    pub(crate) url: &'a str,
+}
+
+impl PrePushGate<'_> {
+    /// Run the hook over the updates the push would make; refs that are up to date or
+    /// already rejected locally are left out, as Git does.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Hook`] when the hook fails or cannot run.
+    pub(crate) fn check<'r>(
+        &self,
+        updates: impl IntoIterator<Item = (&'r PushRefSpec, &'r PushRefResult)>,
+    ) -> Result<()> {
+        let refs: Vec<crate::hooks::PrePushRef> = updates
+            .into_iter()
+            .filter(|(_, r)| {
+                !matches!(
+                    r.status,
+                    PushRefStatus::UpToDate
+                        | PushRefStatus::RejectNonFastForward
+                        | PushRefStatus::RejectStale
+                        | PushRefStatus::RejectRemoteRefMissing
+                )
+            })
+            .map(|(spec, r)| crate::hooks::PrePushRef {
+                local_ref: if r.deletion {
+                    None
+                } else {
+                    spec.hook_src_ref.clone().or_else(|| r.local_ref.clone())
+                },
+                local_oid: r.new_oid,
+                remote_ref: r.remote_ref.clone(),
+                remote_oid: r.old_oid,
+            })
+            .collect();
+        crate::hooks::run_pre_push_hook(self.repo, self.remote, self.url, &refs)?;
+        Ok(())
+    }
 }
 
 /// The structured result of a push. Reuses [`PushRefResult`] for per-ref status.
@@ -1941,6 +2001,8 @@ pub(crate) fn fetch_local_into(
 /// Both repositories must use the same object hash algorithm; the hash width is
 /// threaded through [`Odb::hash_algo`] so SHA-256 repos work.
 ///
+/// The client-side `pre-push` hook is not run here; [`crate::remote::Remote::push`] runs it.
+///
 /// # Errors
 ///
 /// Returns an error if either repository cannot be opened, if a source object is
@@ -1957,16 +2019,19 @@ pub fn push_local(
     cancel: &dyn crate::progress::Cancel,
 ) -> Result<PushOutcome> {
     let local = crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty())?;
-    push_local_from(&local, remote_git_dir, refs, opts, cancel)
+    push_local_from(&local, remote_git_dir, refs, opts, cancel, None)
 }
 
-/// Like [`push_local`], reading the objects to send through `local`'s object store.
+/// Like [`push_local`], reading the objects to send through `local`'s object store and
+/// running `pre_push` after every update is decided and before anything is written to the
+/// remote.
 pub(crate) fn push_local_from(
     local: &crate::repo::Repository,
     remote_git_dir: &Path,
     refs: &[PushRefSpec],
     opts: &PushOptions,
     cancel: &dyn crate::progress::Cancel,
+    pre_push: Option<&PrePushGate<'_>>,
 ) -> Result<PushOutcome> {
     let local_git_dir = local.git_dir();
     let mut progress_sink = crate::progress::NullProgress;
@@ -1993,6 +2058,9 @@ pub(crate) fn push_local_from(
     let mut decisions: Vec<PushDecision> = Vec::with_capacity(refs.len());
     for spec in refs {
         decisions.push(decide_push(spec, local_odb, remote_git_dir, Some(local))?);
+    }
+    if let Some(gate) = pre_push {
+        gate.check(refs.iter().zip(decisions.iter().map(|d| &d.result)))?;
     }
 
     let push_wants: Vec<ObjectId> = decisions

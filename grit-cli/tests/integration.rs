@@ -420,6 +420,9 @@ mod push_force_lease;
 #[path = "push_json_flags.rs"]
 mod push_json_flags;
 #[cfg(feature = "full-tests")]
+#[path = "push_pre_push_hook.rs"]
+mod push_pre_push_hook;
+#[cfg(feature = "full-tests")]
 #[path = "push_remote_hook_sideband.rs"]
 mod push_remote_hook_sideband;
 #[cfg(feature = "full-tests")]
