@@ -1904,18 +1904,13 @@ fn write_ref_at_storage(
     }
     let content = format!("{oid}\n");
     // Write via lock file for atomicity (`O_CREAT|O_EXCL`), with optional backoff
-    // per `core.filesRefLockTimeout`. Callers (e.g. fetch) map a held lock to
-    // "cannot lock ref … File exists." and skip that ref while updating the rest.
+    // per `core.filesRefLockTimeout`. A held lock surfaces as `Error::LockHeld`.
     let lock_path = lock_path_for_ref(&path);
     use crate::lockfile::{LockError, LockFile, LockWait};
     use std::io::Write as _;
     let wait = LockWait::files_ref_lock_for_git_dir(git_dir);
     let mut lock = LockFile::acquire(&lock_path, wait).map_err(|err| match err {
-        LockError::Held { path } => {
-            Error::Io(crate::lockfile::lock_held_as_ref_present(LockError::Held {
-                path,
-            }))
-        }
+        held @ LockError::Held { .. } => Error::from(held),
         LockError::Io { source, .. } => crate::git_dir::io_error::map_git_dir_io(
             git_dir,
             &lock_path,
@@ -1936,11 +1931,7 @@ fn write_ref_at_storage(
             crate::git_dir::GitDirPathOperation::UpdateRef,
             source,
         ),
-        LockError::Held { path } => {
-            Error::Io(crate::lockfile::lock_held_as_ref_present(LockError::Held {
-                path,
-            }))
-        }
+        held @ LockError::Held { .. } => Error::from(held),
     })?;
     Ok(())
 }
@@ -1998,8 +1989,7 @@ pub(crate) fn prune_loose_ref_cas(
     let lock_path = lock_path_for_ref(&path);
     use crate::lockfile::{LockFile, LockWait};
     let wait = LockWait::files_ref_lock_for_git_dir(git_dir);
-    let _lock = LockFile::acquire(&lock_path, wait)
-        .map_err(|err| Error::Io(crate::lockfile::lock_held_as_ref_present(err)))?;
+    let _lock = LockFile::acquire(&lock_path, wait)?;
     let outcome = (|| -> Result<bool> {
         if !path.is_file() {
             return Ok(true);
@@ -2333,10 +2323,7 @@ pub fn delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
     let path = storage_dir.join(&stor);
     let lock = lock_path_for_ref(&path);
     if fs::symlink_metadata(&lock).is_ok() {
-        return Err(Error::Io(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            format!("ref lock present: {}", lock.display()),
-        )));
+        return Err(Error::from(crate::lockfile::LockError::Held { path: lock }));
     }
 
     // Remove the packed-refs entry *first* (acquiring the packed-refs lock). Git deletes the
@@ -3524,11 +3511,7 @@ impl BranchCommitRefLock {
         use crate::lockfile::{LockError, LockFile, LockWait};
         let wait = LockWait::files_ref_lock_for_git_dir(git_dir);
         let lock = LockFile::acquire(&lock_path, wait).map_err(|err| match err {
-            LockError::Held { path } => {
-                Error::Io(crate::lockfile::lock_held_as_ref_present(LockError::Held {
-                    path,
-                }))
-            }
+            held @ LockError::Held { .. } => Error::from(held),
             LockError::Io { source, path } => crate::git_dir::io_error::map_git_dir_io(
                 git_dir,
                 path.as_path(),
@@ -3689,11 +3672,7 @@ fn finish_branch_commit_ref_lock_files(
             crate::git_dir::GitDirPathOperation::UpdateRef,
             source,
         ),
-        LockError::Held { path } => {
-            Error::Io(crate::lockfile::lock_held_as_ref_present(LockError::Held {
-                path,
-            }))
-        }
+        held @ LockError::Held { .. } => Error::from(held),
     })?;
     Ok(())
 }

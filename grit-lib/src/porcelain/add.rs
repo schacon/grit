@@ -241,7 +241,7 @@ pub(crate) fn stage_on_index_with_pathspec_ignore_exempt(
 ///
 /// # Errors
 ///
-/// Returns [`Error::IndexLocked`] when another process
+/// Returns [`Error::LockHeld`] when another process
 /// still holds `index.lock` after the `core.filesRefLockTimeout` wait (nothing is staged;
 /// the caller may retry), [`Error::Message`] when an explicit pathspec matches nothing,
 /// [`Error::PathspecIgnored`] when a path exists but is excluded by ignore rules,

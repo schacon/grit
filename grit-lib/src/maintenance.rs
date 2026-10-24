@@ -1489,7 +1489,7 @@ fn live_gc_pid_holder(path: &Path, host: &str, now_unix: i64) -> Option<GcLockHo
     let holder = read_gc_pid(path)?;
     let pid = holder.pid?;
     let same_host = holder.host.as_deref() == Some(host);
-    if same_host && !crate::index::is_process_running(pid) {
+    if same_host && !crate::lockfile::is_process_running(pid) {
         return None;
     }
     Some(holder)

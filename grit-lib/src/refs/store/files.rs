@@ -716,6 +716,7 @@ impl FilesRefStore {
                 operation,
                 source,
             } => RefStoreError::git_dir_path_io(path, operation, source),
+            Error::RefStore(store_err) => store_err,
             other => RefStoreError::Corrupt(other.to_string()),
         }
     }

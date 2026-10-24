@@ -204,7 +204,7 @@ pub fn would_overwrite_error(
     })
 }
 
-/// Build a structured CLI error for [`LibError::IndexLocked`] (`human` is the library message).
+/// Build a structured CLI error for [`LibError::LockHeld`] (`human` is the library message).
 pub fn index_locked(human: String) -> Error {
     Error::new(StructuredCliError {
         payload: StructuredJsonError::new(human.clone(), ErrorKind::IndexLocked),
@@ -263,7 +263,7 @@ pub fn revision_not_found(spec: &str) -> Error {
 pub fn map_lib_error(err: LibError) -> Error {
     match err {
         LibError::HashCollision { oid } => hash_collision(oid),
-        locked @ LibError::IndexLocked { .. } => index_locked(locked.to_string()),
+        locked @ LibError::LockHeld { .. } => index_locked(locked.to_string()),
         LibError::RevisionNotFound(spec) => revision_not_found(&spec),
         LibError::UnbornHead => crate::unborn_errors::unborn_head_from_cwd()
             .unwrap_or_else(|| crate::unborn_errors::unborn_head_error(None)),
@@ -338,7 +338,7 @@ pub fn ensure_structured(err: Error) -> Error {
     if let Some(locked) = err
         .chain()
         .find_map(|cause| match cause.downcast_ref::<LibError>() {
-            Some(locked @ LibError::IndexLocked { .. }) => Some(locked.to_string()),
+            Some(locked @ LibError::LockHeld { .. }) => Some(locked.to_string()),
             _ => None,
         })
     {

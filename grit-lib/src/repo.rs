@@ -2109,12 +2109,10 @@ impl Repository {
     fn opportunistic_index_write_skippable(err: &crate::error::Error) -> bool {
         use crate::error::Error;
         match err {
-            Error::IndexLocked { .. } => true,
+            Error::LockHeld { .. } => true,
             Error::Io(e) => matches!(
                 e.kind(),
-                std::io::ErrorKind::AlreadyExists
-                    | std::io::ErrorKind::PermissionDenied
-                    | std::io::ErrorKind::ReadOnlyFilesystem
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
             ),
             _ => false,
         }
@@ -2264,7 +2262,7 @@ impl Repository {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::IndexLocked`] when another process still holds the lock after the
+    /// Returns [`Error::LockHeld`] when another process still holds the lock after the
     /// `core.filesRefLockTimeout` wait, and propagates index read and parse failures
     /// (including [`std::io::ErrorKind::NotFound`] when there is no index file yet).
     pub(crate) fn lock_and_load_index(&self) -> Result<(crate::index::IndexLock, Index)> {

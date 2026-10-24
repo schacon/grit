@@ -721,15 +721,6 @@ pub enum PathOutsideRepoError {
     },
 }
 
-/// Process recorded as the holder of a lock file (see [`Error::IndexLocked`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LockHolder {
-    /// Process id read from the lock's pid sidecar file.
-    pub pid: u64,
-    /// Whether that process was still running when the lock was found.
-    pub running: bool,
-}
-
 fn maintenance_running_message(holder: &crate::maintenance::GcLockHolder) -> String {
     match (holder.pid, holder.host.as_deref()) {
         (Some(pid), Some(host)) => {
@@ -738,27 +729,6 @@ fn maintenance_running_message(holder: &crate::maintenance::GcLockHolder) -> Str
         (Some(pid), None) => format!("repository maintenance is already running (process {pid})"),
         _ => "repository maintenance is already running".to_owned(),
     }
-}
-
-fn index_locked_message(lock_path: &std::path::Path, holder: Option<&LockHolder>) -> String {
-    let detail = match holder {
-        Some(LockHolder { pid, running: true }) => {
-            format!("Lock is held by process {pid}, which is still running.")
-        }
-        Some(LockHolder {
-            pid,
-            running: false,
-        }) => format!(
-            "Lock was created by process {pid}, which is no longer running; the lock is stale and can be removed."
-        ),
-        None => "Another process may be writing the index, or a crashed process left the lock \
-                 behind; remove it only if no other process is running."
-            .to_owned(),
-    };
-    format!(
-        "cannot lock the index: '{}' already exists. {detail}",
-        lock_path.display()
-    )
 }
 
 fn restore_unmerged_message(paths: &[String]) -> String {
@@ -935,6 +905,21 @@ pub enum Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// A lock file (for example `.git/index.lock` or `refs/heads/main.lock`) already exists, so
+    /// another process is updating the same file or a crashed one left the lock behind.
+    ///
+    /// Operations that return this before changing anything leave the repository untouched.
+    /// The lock file belongs to whoever created it and is never removed. Retry once the other
+    /// process finishes, or delete `path` when no process owns it (a `holder` with
+    /// `running: false` means the lock is stale).
+    #[error("lock file {} already exists", path.display())]
+    LockHeld {
+        /// The lock file that could not be created.
+        path: std::path::PathBuf,
+        /// Owner recorded in the lock's pid sidecar (`core.lockfilePid`), when one was written.
+        holder: Option<crate::lockfile::LockHolder>,
+    },
+
     /// A zlib compression or decompression failure.
     #[error("zlib error: {0}")]
     Zlib(String),
@@ -1009,18 +994,6 @@ pub enum Error {
     MaintenanceRunning {
         /// Process recorded in `gc.pid`.
         holder: crate::maintenance::GcLockHolder,
-    },
-
-    /// The index lock file already exists, so the index cannot be written.
-    ///
-    /// Operations that return this before changing anything leave the repository untouched. The
-    /// lock file belongs to whoever created it and is never removed.
-    #[error("{}", index_locked_message(lock_path, holder.as_ref()))]
-    IndexLocked {
-        /// Existing lock file (usually `.git/index.lock`).
-        lock_path: std::path::PathBuf,
-        /// Process recorded in the lock's pid sidecar, when one was written (`core.lockfilePid`).
-        holder: Option<LockHolder>,
     },
 
     /// Explicit [`crate::porcelain::add::stage`] refused paths that still contain conflict markers.
@@ -1902,6 +1875,21 @@ impl From<crate::refs::store::RefStoreError> for Error {
                 source: crate::refs::store::RefStoreError::git_dir_io_source(os_error),
             },
             other => Error::RefStore(other),
+        }
+    }
+}
+
+impl From<crate::lockfile::LockError> for Error {
+    /// [`LockError::Held`](crate::lockfile::LockError::Held) becomes [`Error::LockHeld`] with the
+    /// recorded [`LockHolder`](crate::lockfile::LockHolder), and I/O failures become [`Error::Io`].
+    fn from(err: crate::lockfile::LockError) -> Self {
+        use crate::lockfile::{LockError, LockHolder};
+        match err {
+            LockError::Held { path } => Self::LockHeld {
+                holder: LockHolder::read(&path),
+                path,
+            },
+            LockError::Io { source, .. } => Self::Io(source),
         }
     }
 }

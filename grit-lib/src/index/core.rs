@@ -25,6 +25,7 @@ use crate::hash::verify_trailer;
 
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
+use crate::lockfile::pid_path_for_lock;
 use crate::objects::{parse_tree, HashAlgo, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
 use crate::repo::Repository;
@@ -1516,22 +1517,10 @@ impl Index {
         let pid_path = pid_path_for_lock(&tmp_path);
         let lockfile_pid_enabled = lockfile_pid_enabled(path, config);
 
-        use crate::lockfile::{LockError, LockFile, LockWait};
+        use crate::lockfile::{LockFile, LockWait};
         let wait = LockWait::files_ref_lock(config);
-        let (tmp_path, mut lock_file) = LockFile::acquire(&tmp_path, wait)
-            .map_err(|err| match err {
-                LockError::Held { .. } => index_locked_error(&tmp_path),
-                LockError::Io { source, .. } => Error::Io(source),
-            })?
-            .into_open_file()
-            .map_err(|err| match err {
-                LockError::Io { source, .. } => Error::Io(source),
-                LockError::Held { path } => {
-                    Error::Io(crate::lockfile::lock_held_as_ref_present(LockError::Held {
-                        path,
-                    }))
-                }
-            })?;
+        let (tmp_path, mut lock_file) =
+            LockFile::acquire(&tmp_path, wait).and_then(LockFile::into_open_file)?;
 
         let mut wrote_pid_file = false;
         if lockfile_pid_enabled {
@@ -3587,19 +3576,6 @@ fn lockfile_pid_enabled(index_path: &Path, config: Option<&ConfigSet>) -> bool {
         .unwrap_or(false)
 }
 
-fn pid_path_for_lock(lock_path: &Path) -> std::path::PathBuf {
-    let file_name = lock_path
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "index.lock".to_owned());
-    let pid_name = if let Some(base) = file_name.strip_suffix(".lock") {
-        format!("{base}~pid.lock")
-    } else {
-        format!("{file_name}~pid.lock")
-    };
-    lock_path.with_file_name(pid_name)
-}
-
 fn write_lock_pid_file(pid_path: &Path) -> io::Result<()> {
     use std::io::Write as _;
     let mut file = fs::OpenOptions::new()
@@ -3655,29 +3631,18 @@ impl IndexLock {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::IndexLocked`] when the lock file is still present after the
-    /// `core.filesRefLockTimeout` wait, and [`Error::Io`] when it cannot be created.
+    /// Returns [`Error::LockHeld`] (with the pid sidecar's [`LockHolder`](crate::lockfile::LockHolder)
+    /// when one was written) when `index.lock` already exists after the
+    /// `core.filesRefLockTimeout` budget, or [`Error::Io`] for other filesystem failures.
     pub fn acquire(index_path: &Path, config: Option<&ConfigSet>) -> Result<Self> {
         let lock_path = index_path.with_extension("lock");
         let pid_path = pid_path_for_lock(&lock_path);
         let lockfile_pid_enabled = lockfile_pid_enabled(index_path, config);
 
-        use crate::lockfile::{LockError, LockFile, LockWait};
+        use crate::lockfile::{LockFile, LockWait};
         let wait = LockWait::files_ref_lock(config);
-        let (lock_path, file) = LockFile::acquire(&lock_path, wait)
-            .map_err(|err| match err {
-                LockError::Held { .. } => index_locked_error(&lock_path),
-                LockError::Io { source, .. } => Error::Io(source),
-            })?
-            .into_open_file()
-            .map_err(|err| match err {
-                LockError::Io { source, .. } => Error::Io(source),
-                LockError::Held { path } => {
-                    Error::Io(crate::lockfile::lock_held_as_ref_present(LockError::Held {
-                        path,
-                    }))
-                }
-            })?;
+        let (lock_path, file) =
+            LockFile::acquire(&lock_path, wait).and_then(LockFile::into_open_file)?;
 
         let mut wrote_pid = false;
         if lockfile_pid_enabled {
@@ -3707,76 +3672,6 @@ impl Drop for IndexLock {
         let _ = fs::remove_file(&self.lock_path);
         if self.wrote_pid {
             let _ = fs::remove_file(&self.pid_path);
-        }
-    }
-}
-
-/// Human-readable explanation of a held lock for the index at `index_path`.
-///
-/// Same text as the [`Error::IndexLocked`] returned when that lock blocks a write, including
-/// whether the process recorded in the pid sidecar is still running.
-pub fn format_index_lock_blocked_detail(index_path: &Path) -> String {
-    index_locked_error(&index_path.with_extension("lock")).to_string()
-}
-
-/// [`Error::IndexLocked`] for an existing `lock_path`, reading its pid sidecar when present.
-fn index_locked_error(lock_path: &Path) -> Error {
-    let holder = read_lock_pid(&pid_path_for_lock(lock_path)).map(|pid| crate::error::LockHolder {
-        pid,
-        running: is_process_running(pid),
-    });
-    Error::IndexLocked {
-        lock_path: lock_path.to_path_buf(),
-        holder,
-    }
-}
-
-fn read_lock_pid(pid_path: &Path) -> Option<u64> {
-    let raw = fs::read_to_string(pid_path).ok()?;
-    let trimmed = raw.trim();
-    if let Some(v) = trimmed.strip_prefix("pid ") {
-        return v.trim().parse::<u64>().ok();
-    }
-    trimmed.parse::<u64>().ok()
-}
-
-pub(crate) fn is_process_running(pid: u64) -> bool {
-    if pid == 0 || pid > i32::MAX as u64 {
-        return false;
-    }
-    #[cfg(windows)]
-    {
-        use windows_sys::Win32::Foundation::CloseHandle;
-        use windows_sys::Win32::System::Threading::{
-            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-        };
-        // SAFETY: `OpenProcess` is called with a numeric pid and a read-only access mask.
-        unsafe {
-            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid as u32);
-            if handle.is_null() {
-                return false;
-            }
-            CloseHandle(handle);
-            true
-        }
-    }
-    #[cfg(all(unix, target_os = "linux"))]
-    {
-        let proc_path = std::path::PathBuf::from(format!("/proc/{pid}"));
-        proc_path.exists()
-    }
-    #[cfg(all(unix, not(target_os = "linux")))]
-    {
-        use rustix::io::Errno;
-        use rustix::process::{test_kill_process, Pid};
-        let Some(pid) = Pid::from_raw(pid as i32) else {
-            return false;
-        };
-        match test_kill_process(pid) {
-            Ok(()) => true,
-            Err(Errno::SRCH) => false,
-            Err(Errno::PERM) => true,
-            Err(_) => false,
         }
     }
 }
@@ -5541,7 +5436,7 @@ mod tests {
         let lock = IndexLock::acquire(&path, None).unwrap();
         assert!(matches!(
             IndexLock::acquire(&path, None),
-            Err(Error::IndexLocked { .. })
+            Err(Error::LockHeld { .. })
         ));
         drop(lock);
         idx.write(&path).unwrap(); // idx is mut in each test scope
@@ -5566,22 +5461,22 @@ mod tests {
         let write_err = Index::new().write(&path).unwrap_err();
         for err in [acquire_err, write_err] {
             match &err {
-                Error::IndexLocked {
-                    lock_path: p,
-                    holder,
-                } => {
+                Error::LockHeld { path: p, holder } => {
                     assert_eq!(p, &lock_path);
                     assert_eq!(
                         *holder,
-                        Some(crate::error::LockHolder {
+                        Some(crate::lockfile::LockHolder {
                             pid: u64::from(std::process::id()),
                             running: true,
                         })
                     );
                 }
-                other => panic!("expected IndexLocked, got {other:?}"),
+                other => panic!("expected LockHeld, got {other:?}"),
             }
-            assert_eq!(err.to_string(), format_index_lock_blocked_detail(&path));
+            assert!(
+                err.to_string().contains(&lock_path.display().to_string()),
+                "{err}"
+            );
         }
         assert_eq!(fs::read(&lock_path).unwrap(), b"foreign");
         assert!(!path.exists());

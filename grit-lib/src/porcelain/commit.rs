@@ -2342,14 +2342,14 @@ mod tests {
 
         let err = commit_with_scope(repo, &commit_req("x"), scope, &mut NullProgress).unwrap_err();
         match &err {
-            Error::IndexLocked {
-                lock_path: reported,
+            Error::LockHeld {
+                path: reported,
                 holder,
             } => {
                 assert_eq!(reported, &lock_path);
                 assert_eq!(*holder, None);
             }
-            other => panic!("expected Error::IndexLocked, got {other:?}"),
+            other => panic!("expected Error::LockHeld, got {other:?}"),
         }
         assert!(err.to_string().contains("index.lock"), "{err}");
 
@@ -2422,7 +2422,10 @@ mod tests {
             &mut NullProgress,
         )
         .unwrap_err();
-        assert!(matches!(err, Error::IndexLocked { .. }), "{err:?}");
+        assert!(
+            matches!(&err, Error::LockHeld { path, .. } if *path == repo.git_dir().join("index.lock")),
+            "{err:?}"
+        );
         assert_eq!(
             resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap(),
             tip_before

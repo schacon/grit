@@ -88,7 +88,7 @@ impl StageTrackedSummary {
 /// A [`StageTrackedSummary`] listing modified and removed index paths (sorted).
 ///
 /// # Errors
-/// [`Error::IndexLocked`] when another process holds `index.lock` past the
+/// [`Error::LockHeld`] when another process holds `index.lock` past the
 /// `core.filesRefLockTimeout` wait, I/O failures, object write failures, or a missing index
 /// when one is required.
 pub fn stage_tracked_modifications(
