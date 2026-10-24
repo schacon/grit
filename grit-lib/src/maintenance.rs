@@ -92,9 +92,13 @@ pub struct RepackOptions {
     /// When [`Self::write_bitmap`] is true and the repository already has pack files, bitmaps are
     /// written via a multi-pack-index sidecar instead of a per-pack `.bitmap` on the new pack alone.
     pub incremental: bool,
-    /// When true, [`gc`] may skip repack on a single pack with no loose objects when every
+    /// When true, [`gc()`] may skip repack on a single pack with no loose objects when every
     /// packed object is still reachable and none would be dropped by the active prune policy.
+    /// Explicit [`repack_all`] / [`repack`] leave this false so maintenance still runs.
     pub auto_skip: bool,
+    /// When true, rebuild deltas from scratch ([`PackBuildOptions::for_local_copy`])
+    /// even if pack files already exist (Git `git repack -f`).
+    pub force_recompress: bool,
 }
 
 impl Default for RepackOptions {
@@ -112,6 +116,7 @@ impl Default for RepackOptions {
             environment: Environment::empty(),
             incremental: false,
             auto_skip: false,
+            force_recompress: false,
         }
     }
 }
@@ -746,30 +751,35 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
     let pack_opts = opts.pack_build.unwrap_or_else(|| {
         if opts.incremental {
             PackBuildOptions::for_local_copy(cfg.as_ref())
-        } else if packs_before > 0 && loose_before == 0 {
+        } else if packs_before > 0 && loose_before == 0 && !opts.force_recompress {
             // Repack consolidated on-disk pack(s) with nothing loose: reuse pack bytes
             // (Git `--window=0`), not a full delta search over every stored object.
             PackBuildOptions::for_repack_rewrite(cfg.as_ref())
         } else {
-            // First pack from loose objects only: delta consolidation like `git repack` on loose.
+            // Loose objects and/or forced full recompression: delta consolidation like Git
+            // `repack -adf` on loose or `-f` on existing packs.
             PackBuildOptions::for_local_copy(cfg.as_ref())
         }
     });
 
     let run_incremental = opts.incremental;
 
-    let skip_repack = should_auto_skip_repack(
-        loose_before,
-        packs_before,
-        run_incremental,
-        opts.auto_skip,
-        cfg.as_ref(),
-    ) && !skipping_repack_would_retain_prunable_packed_objects(
-        odb,
-        &pack_dir,
-        &roots,
-        opts,
-    )?;
+    let skip_repack = !opts.force_recompress
+        && !opts.write_bitmap
+        && !opts.write_commit_graph
+        && should_auto_skip_repack(
+            loose_before,
+            packs_before,
+            run_incremental,
+            opts.auto_skip,
+            cfg.as_ref(),
+        )
+        && !skipping_repack_would_retain_prunable_packed_objects(
+            odb,
+            &pack_dir,
+            &roots,
+            opts,
+        )?;
 
     if opts.dry_run {
         report.objects = if skip_repack {
@@ -940,7 +950,7 @@ pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats
     }
     let detail = repack_detail(repo, opts)?;
     let report = detail.report;
-    stats.objects_packed = Some(report.objects);
+    stats.objects_packed = (report.packs_written > 0).then_some(report.objects);
     stats.removed_pack_files = report.packs_removed;
     stats.pruned_loose = detail.prune_packed_loose;
     stats.unreachable_loose_pruned = detail.unreachable_loose.pruned;
@@ -1577,7 +1587,7 @@ mod tests {
         assert!(should_auto_skip_repack(0, 1, false, true, None));
         assert!(!should_auto_skip_repack(3, 1, false, true, None));
         assert!(!should_auto_skip_repack(0, 2, false, true, None));
-        assert!(!should_auto_skip_repack(0, 51, false, true, None));
+        assert!(!should_auto_skip_repack(0, 2, false, false, None));
     }
 
     #[test]
