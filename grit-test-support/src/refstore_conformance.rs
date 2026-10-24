@@ -1,9 +1,30 @@
-//! Generic conformance tests for [`grit_lib::refs::store::RefStore`] backends.
+//! Reusable conformance checks for [`RefStore`] backends.
+//!
+//! Every built-in backend (files, reftable, memory) runs this suite, so a custom store that
+//! passes it agrees with them on compare-and-swap, directory/file conflicts, name validation,
+//! symbolic-ref dereferencing, reflogs and transaction locking. Wire a factory that returns a
+//! fresh, **empty** store (no refs, no reflogs, no `HEAD`) into [`run_suite`]:
+//!
+//! ```no_run
+//! use std::sync::Arc;
+//!
+//! use grit_lib::refs::store::{MemoryRefStore, RefStore};
+//! use grit_test_support::refstore_conformance::run_suite;
+//!
+//! run_suite(|| Arc::new(MemoryRefStore::new()) as Arc<dyn RefStore>);
+//! ```
+//!
+//! Each case is also exposed as its own function taking a fresh empty store, so test harnesses
+//! can name failures precisely. The helpers in [`grit_lib::refs::store::backend`] implement the
+//! semantics these cases check.
+
+#![allow(clippy::expect_used, clippy::panic)]
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::thread;
 
+use grit_lib::error::Error;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::reflog::ReflogEntry;
 use grit_lib::refs::store::{
@@ -11,7 +32,114 @@ use grit_lib::refs::store::{
     RefUpdate, RefUpdateFlags, ReflogUpdate,
 };
 
-type StoreFactory = Arc<dyn Fn() -> Arc<dyn RefStore> + Send + Sync>;
+/// One conformance case: receives a fresh empty store and panics on a violation.
+pub type Case = fn(Arc<dyn RefStore>);
+
+/// Every case in the suite, with its name, in the order [`run_suite`] runs them.
+pub const CASES: &[(&str, Case)] = &[
+    ("cas_success", cas_success),
+    ("cas_failure", cas_failure),
+    ("create_only_missing", create_only_missing),
+    ("delete_missing_ref", delete_missing_ref),
+    (
+        "resolve_missing_ref_is_not_found",
+        resolve_missing_ref_is_not_found,
+    ),
+    (
+        "unsafe_names_rejected_at_prepare",
+        unsafe_names_rejected_at_prepare,
+    ),
+    (
+        "unsafe_rename_names_rejected_at_prepare",
+        unsafe_rename_names_rejected_at_prepare,
+    ),
+    ("null_oid_rejected_at_prepare", null_oid_rejected_at_prepare),
+    (
+        "pseudoref_and_log_only_null_oid_accepted",
+        pseudoref_and_log_only_null_oid_accepted,
+    ),
+    ("df_conflict_in_batch", df_conflict_in_batch),
+    (
+        "df_conflict_against_stored_ancestor",
+        df_conflict_against_stored_ancestor,
+    ),
+    (
+        "df_conflict_against_stored_descendant",
+        df_conflict_against_stored_descendant,
+    ),
+    (
+        "df_conflict_not_freed_by_delete_in_batch",
+        df_conflict_not_freed_by_delete_in_batch,
+    ),
+    (
+        "symref_deref_state_and_reflog",
+        symref_deref_state_and_reflog,
+    ),
+    (
+        "symref_deref_reflog_on_symref_and_target",
+        symref_deref_reflog_on_symref_and_target,
+    ),
+    (
+        "symref_log_only_reflog_on_symref_and_target",
+        symref_log_only_reflog_on_symref_and_target,
+    ),
+    (
+        "symref_no_deref_state_and_reflog",
+        symref_no_deref_state_and_reflog,
+    ),
+    ("symbolic_iteration_peel", symbolic_iteration_peel),
+    ("direct_update_reflog_oids", direct_update_reflog_oids),
+    ("delete_with_reflog_oids", delete_with_reflog_oids),
+    ("symref_deref_delete", symref_deref_delete),
+    (
+        "symref_head_deref_delete_recreate_branch",
+        symref_head_deref_delete_recreate_branch,
+    ),
+    ("symref_no_deref_delete", symref_no_deref_delete),
+    (
+        "symref_unborn_referent_created",
+        symref_unborn_referent_created,
+    ),
+    (
+        "symref_dual_deref_conflicting_target_rejected",
+        symref_dual_deref_conflicting_target_rejected,
+    ),
+    (
+        "batch_apply_rejected_leaves_store_unchanged",
+        batch_apply_rejected_leaves_store_unchanged,
+    ),
+    ("empty_reflog_exists", empty_reflog_exists),
+    ("prefix_iteration_order", prefix_iteration_order),
+    ("abort_leaves_state_unchanged", abort_leaves_state_unchanged),
+    ("abort_releases_lock", abort_releases_lock),
+    (
+        "dropped_prepared_transaction_releases_lock",
+        dropped_prepared_transaction_releases_lock,
+    ),
+    ("concurrent_prepare_lock_held", concurrent_prepare_lock_held),
+    ("reflog_roundtrip", reflog_roundtrip),
+    ("reentrant_callbacks", reentrant_callbacks),
+];
+
+/// Run every case in [`CASES`], calling `factory` once per case for a fresh empty store.
+///
+/// # Panics
+///
+/// Panics with the case name when the store violates a case.
+pub fn run_suite(factory: impl Fn() -> Arc<dyn RefStore>) {
+    for (name, case) in CASES {
+        let store = factory();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| case(store)));
+        if let Err(payload) = outcome {
+            let detail = payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .unwrap_or("non-string panic");
+            panic!("ref store conformance case `{name}` failed: {detail}");
+        }
+    }
+}
 
 fn oid(byte: u8) -> ObjectId {
     let mut bytes = [0u8; 20];
@@ -39,15 +167,19 @@ fn update(name: &str, new_value: Option<RawRef>, expected: Expected) -> RefUpdat
     }
 }
 
-fn seed_direct(store: &dyn RefStore, name: &str, value: ObjectId) {
-    let txn = RefTransaction::new()
-        .update(update(name, Some(RawRef::Direct(value)), Expected::Missing))
-        .expect("txn");
+fn commit_txn(store: &dyn RefStore, txn: RefTransaction) {
     store
         .prepare(txn)
         .expect("prepare")
         .commit()
         .expect("commit");
+}
+
+fn seed_direct(store: &dyn RefStore, name: &str, value: ObjectId) {
+    let txn = RefTransaction::new()
+        .update(update(name, Some(RawRef::Direct(value)), Expected::Missing))
+        .expect("txn");
+    commit_txn(store, txn);
 }
 
 fn seed_symref(store: &dyn RefStore, name: &str, target: &str) {
@@ -58,11 +190,7 @@ fn seed_symref(store: &dyn RefStore, name: &str, target: &str) {
             Expected::Missing,
         ))
         .expect("txn");
-    store
-        .prepare(txn)
-        .expect("prepare")
-        .commit()
-        .expect("commit");
+    commit_txn(store, txn);
 }
 
 fn prepare_err(store: &dyn RefStore, txn: RefTransaction) -> RefStoreError {
@@ -72,35 +200,106 @@ fn prepare_err(store: &dyn RefStore, txn: RefTransaction) -> RefStoreError {
     }
 }
 
-pub fn run_refstore_conformance(factory: StoreFactory) {
-    cas_success(&factory);
-    cas_failure(&factory);
-    create_only_missing(&factory);
-    delete_missing_ref(&factory);
-    resolve_missing_ref_is_not_found(&factory);
-    df_conflict_in_batch(&factory);
-    df_conflict_against_store(&factory);
-    symref_deref_state_and_reflog(&factory);
-    symref_no_deref_state_and_reflog(&factory);
-    symbolic_iteration_peel(&factory);
-    direct_update_reflog_oids(&factory);
-    delete_with_reflog_oids(&factory);
-    symref_deref_delete(&factory);
-    symref_head_deref_delete_recreate_branch(&factory);
-    symref_no_deref_delete(&factory);
-    symref_unborn_referent_created(&factory);
-    symref_dual_deref_conflicting_target_rejected(&factory);
-    batch_apply_rejected_leaves_store_unchanged(&factory);
-    empty_reflog_exists(&factory);
-    prefix_iteration_order(&factory);
-    abort_leaves_state_unchanged(&factory);
-    concurrent_prepare_lock_held(&factory);
-    reflog_roundtrip(&factory);
-    unsafe_names_rejected_at_prepare(&factory);
-    unsafe_rename_names_rejected_at_prepare(&factory);
-    null_oid_rejected_at_prepare(&factory);
-    pseudoref_and_log_only_null_oid_accepted(&factory);
-    reentrant_callbacks(&factory);
+fn newest_reflog_entry(store: &dyn RefStore, name: &str) -> Option<ReflogEntry> {
+    let mut last = None;
+    store
+        .for_each_reflog_entry(name, true, &mut |e| {
+            last = Some(e.clone());
+            ControlFlow::Break(())
+        })
+        .expect("reflog");
+    last
+}
+
+/// A compare-and-swap update with the right old value commits.
+pub fn cas_success(store: Arc<dyn RefStore>) {
+    seed_direct(store.as_ref(), "refs/heads/main", oid(1));
+    let txn = RefTransaction::new()
+        .update(update(
+            "refs/heads/main",
+            Some(RawRef::Direct(oid(2))),
+            Expected::Oid(oid(1)),
+        ))
+        .expect("txn");
+    commit_txn(store.as_ref(), txn);
+    assert_eq!(
+        store.read_raw("refs/heads/main").expect("read"),
+        Some(RawRef::Direct(oid(2)))
+    );
+}
+
+/// A compare-and-swap update with a stale old value fails in `prepare` and changes nothing.
+pub fn cas_failure(store: Arc<dyn RefStore>) {
+    seed_direct(store.as_ref(), "refs/heads/x", oid(1));
+    let txn = RefTransaction::new()
+        .update(update(
+            "refs/heads/x",
+            Some(RawRef::Direct(oid(2))),
+            Expected::Oid(oid(9)),
+        ))
+        .expect("txn");
+    let err = prepare_err(store.as_ref(), txn);
+    assert!(matches!(err, RefStoreError::ExpectedMismatch { .. }));
+    assert_eq!(
+        store.read_raw("refs/heads/x").expect("read"),
+        Some(RawRef::Direct(oid(1)))
+    );
+}
+
+/// [`Expected::Missing`] creates a ref once and rejects the second create.
+pub fn create_only_missing(store: Arc<dyn RefStore>) {
+    seed_direct(store.as_ref(), "refs/heads/new", oid(3));
+    assert_eq!(
+        store.read_raw("refs/heads/new").expect("read"),
+        Some(RawRef::Direct(oid(3)))
+    );
+
+    let txn = RefTransaction::new()
+        .update(update(
+            "refs/heads/new",
+            Some(RawRef::Direct(oid(4))),
+            Expected::Missing,
+        ))
+        .expect("txn");
+    assert!(matches!(
+        prepare_err(store.as_ref(), txn),
+        RefStoreError::ExpectedMismatch { .. }
+    ));
+}
+
+/// Deleting an absent ref with [`Expected::Exists`] fails.
+pub fn delete_missing_ref(store: Arc<dyn RefStore>) {
+    let txn = RefTransaction::new()
+        .update(update("refs/heads/gone", None, Expected::Exists))
+        .expect("txn");
+    assert!(matches!(
+        prepare_err(store.as_ref(), txn),
+        RefStoreError::ExpectedMismatch { .. }
+    ));
+}
+
+/// Resolving a missing ref, or a symref whose target is missing, names the missing ref.
+pub fn resolve_missing_ref_is_not_found(store: Arc<dyn RefStore>) {
+    let missing = store.resolve("refs/heads/absent").expect_err("missing ref");
+    assert!(
+        matches!(
+            missing,
+            Error::RefStore(RefStoreError::NotFound { ref name }) if name == "refs/heads/absent"
+        ),
+        "{missing:?}"
+    );
+
+    seed_symref(store.as_ref(), "refs/heads/alias", "refs/heads/unborn");
+    let dangling = store
+        .resolve("refs/heads/alias")
+        .expect_err("dangling symref");
+    assert!(
+        matches!(
+            dangling,
+            Error::RefStore(RefStoreError::NotFound { ref name }) if name == "refs/heads/unborn"
+        ),
+        "{dangling:?}"
+    );
 }
 
 const UNSAFE_NAMES: &[&str] = &[
@@ -112,6 +311,7 @@ const UNSAFE_NAMES: &[&str] = &[
     "",
     "heads/x",
     "refs/heads/../../config",
+    "refs/",
 ];
 
 fn all_ref_names(store: &dyn RefStore) -> Vec<String> {
@@ -125,8 +325,9 @@ fn all_ref_names(store: &dyn RefStore) -> Vec<String> {
     names
 }
 
-fn unsafe_names_rejected_at_prepare(factory: &StoreFactory) {
-    let store = factory();
+/// Names Git refuses to store fail `prepare` with [`RefStoreError::InvalidRefName`], alone or
+/// in a batch, store nothing and leave no lock behind.
+pub fn unsafe_names_rejected_at_prepare(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/main", oid(1));
     for &name in UNSAFE_NAMES {
         let txn = RefTransaction::new()
@@ -161,7 +362,6 @@ fn unsafe_names_rejected_at_prepare(factory: &StoreFactory) {
     ));
     assert_eq!(all_ref_names(store.as_ref()), vec!["refs/heads/main"]);
 
-    // A rejected prepare must not leave a lock behind.
     let txn = RefTransaction::new()
         .update(update(
             "refs/heads/main",
@@ -169,15 +369,11 @@ fn unsafe_names_rejected_at_prepare(factory: &StoreFactory) {
             Expected::Oid(oid(1)),
         ))
         .expect("txn");
-    store
-        .prepare(txn)
-        .expect("prepare after rejection")
-        .commit()
-        .expect("commit");
+    commit_txn(store.as_ref(), txn);
 }
 
-fn unsafe_rename_names_rejected_at_prepare(factory: &StoreFactory) {
-    let store = factory();
+/// Unsafe destination names in reflog and case-only renames fail `prepare`.
+pub fn unsafe_rename_names_rejected_at_prepare(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/topic", oid(1));
     let reflog_rename = RefTransaction::new().with_reflog_rename(RefReflogRename {
         from: "refs/heads/topic".to_owned(),
@@ -203,8 +399,8 @@ fn unsafe_rename_names_rejected_at_prepare(factory: &StoreFactory) {
     assert_eq!(all_ref_names(store.as_ref()), vec!["refs/heads/topic"]);
 }
 
-fn null_oid_rejected_at_prepare(factory: &StoreFactory) {
-    let store = factory();
+/// Storing the null object id as a direct value fails with [`RefStoreError::NullOid`].
+pub fn null_oid_rejected_at_prepare(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/main", oid(1));
     seed_symref(store.as_ref(), "HEAD", "refs/heads/main");
     for name in ["refs/heads/z", "refs/heads/main", "HEAD"] {
@@ -230,8 +426,8 @@ fn null_oid_rejected_at_prepare(factory: &StoreFactory) {
     assert_eq!(store.read_raw("refs/heads/z").expect("z"), None);
 }
 
-fn pseudoref_and_log_only_null_oid_accepted(factory: &StoreFactory) {
-    let store = factory();
+/// Root pseudorefs are storable, and a reflog-only update may carry the null id.
+pub fn pseudoref_and_log_only_null_oid_accepted(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/main", oid(1));
     seed_symref(store.as_ref(), "HEAD", "refs/heads/main");
     seed_direct(store.as_ref(), "ORIG_HEAD", oid(2));
@@ -250,12 +446,10 @@ fn pseudoref_and_log_only_null_oid_accepted(factory: &StoreFactory) {
         log_only: true,
         no_deref: true,
     };
-    let txn = RefTransaction::new().update(log_only).expect("txn");
-    store
-        .prepare(txn)
-        .expect("log-only null oid prepares")
-        .commit()
-        .expect("commit");
+    commit_txn(
+        store.as_ref(),
+        RefTransaction::new().update(log_only).expect("txn"),
+    );
     assert_eq!(
         store.read_raw("HEAD").expect("head"),
         Some(RawRef::Symbolic("refs/heads/main".to_owned()))
@@ -266,113 +460,8 @@ fn pseudoref_and_log_only_null_oid_accepted(factory: &StoreFactory) {
     );
 }
 
-fn cas_success(factory: &StoreFactory) {
-    let store = factory();
-    seed_direct(store.as_ref(), "refs/heads/main", oid(1));
-    let txn = RefTransaction::new()
-        .update(update(
-            "refs/heads/main",
-            Some(RawRef::Direct(oid(2))),
-            Expected::Oid(oid(1)),
-        ))
-        .expect("txn");
-    let prepared = store.prepare(txn).expect("prepare");
-    prepared.commit().expect("commit");
-    assert_eq!(
-        store.read_raw("refs/heads/main").expect("read"),
-        Some(RawRef::Direct(oid(2)))
-    );
-}
-
-fn cas_failure(factory: &StoreFactory) {
-    let store = factory();
-    seed_direct(store.as_ref(), "refs/heads/x", oid(1));
-    let txn = RefTransaction::new()
-        .update(update(
-            "refs/heads/x",
-            Some(RawRef::Direct(oid(2))),
-            Expected::Oid(oid(9)),
-        ))
-        .expect("txn");
-    let err = prepare_err(store.as_ref(), txn);
-    assert!(matches!(err, RefStoreError::ExpectedMismatch { .. }));
-    assert_eq!(
-        store.read_raw("refs/heads/x").expect("read"),
-        Some(RawRef::Direct(oid(1)))
-    );
-}
-
-fn create_only_missing(factory: &StoreFactory) {
-    let store = factory();
-    let txn = RefTransaction::new()
-        .update(update(
-            "refs/heads/new",
-            Some(RawRef::Direct(oid(3))),
-            Expected::Missing,
-        ))
-        .expect("txn");
-    store
-        .prepare(txn)
-        .expect("prepare")
-        .commit()
-        .expect("commit");
-    assert_eq!(
-        store.read_raw("refs/heads/new").expect("read"),
-        Some(RawRef::Direct(oid(3)))
-    );
-
-    let txn2 = RefTransaction::new()
-        .update(update(
-            "refs/heads/new",
-            Some(RawRef::Direct(oid(4))),
-            Expected::Missing,
-        ))
-        .expect("txn");
-    assert!(matches!(
-        prepare_err(store.as_ref(), txn2),
-        RefStoreError::ExpectedMismatch { .. }
-    ));
-}
-
-fn delete_missing_ref(factory: &StoreFactory) {
-    let store = factory();
-    let txn = RefTransaction::new()
-        .update(update("refs/heads/gone", None, Expected::Exists))
-        .expect("txn");
-    assert!(matches!(
-        prepare_err(store.as_ref(), txn),
-        RefStoreError::ExpectedMismatch { .. }
-    ));
-}
-
-fn resolve_missing_ref_is_not_found(factory: &StoreFactory) {
-    let store = factory();
-    let missing = store.resolve("refs/heads/absent").expect_err("missing ref");
-    assert!(
-        matches!(
-            missing,
-            grit_lib::error::Error::RefStore(RefStoreError::NotFound { ref name })
-                if name == "refs/heads/absent"
-        ),
-        "{missing:?}"
-    );
-
-    seed_symref(store.as_ref(), "refs/heads/alias", "refs/heads/unborn");
-    let dangling = store
-        .resolve("refs/heads/alias")
-        .expect_err("dangling symref");
-    assert!(
-        matches!(
-            dangling,
-            grit_lib::error::Error::RefStore(RefStoreError::NotFound { ref name })
-                if name == "refs/heads/unborn"
-        ),
-        "{dangling:?}"
-    );
-}
-
-fn df_conflict_in_batch(factory: &StoreFactory) {
-    let store = factory();
+/// Two refs in one batch where one is a directory prefix of the other conflict.
+pub fn df_conflict_in_batch(store: Arc<dyn RefStore>) {
     let txn = RefTransaction::new()
         .update(update(
             "refs/heads/p",
@@ -390,10 +479,11 @@ fn df_conflict_in_batch(factory: &StoreFactory) {
         prepare_err(store.as_ref(), txn),
         RefStoreError::NameUnavailable { .. }
     ));
+    assert_eq!(store.read_raw("refs/heads/p").expect("read"), None);
 }
 
-fn df_conflict_against_store(factory: &StoreFactory) {
-    let store = factory();
+/// Creating `a/b` while `a` is stored conflicts.
+pub fn df_conflict_against_stored_ancestor(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/parent", oid(1));
     let txn = RefTransaction::new()
         .update(update(
@@ -406,10 +496,57 @@ fn df_conflict_against_store(factory: &StoreFactory) {
         prepare_err(store.as_ref(), txn),
         RefStoreError::NameUnavailable { .. }
     ));
+    assert_eq!(
+        store.read_raw("refs/heads/parent/leaf").expect("read"),
+        None
+    );
 }
 
-fn symref_deref_state_and_reflog(factory: &StoreFactory) {
-    let store = factory();
+/// Creating `a` while `a/b` is stored conflicts.
+pub fn df_conflict_against_stored_descendant(store: Arc<dyn RefStore>) {
+    seed_direct(store.as_ref(), "refs/heads/a/b", oid(1));
+    let txn = RefTransaction::new()
+        .update(update(
+            "refs/heads/a",
+            Some(RawRef::Direct(oid(2))),
+            Expected::Missing,
+        ))
+        .expect("txn");
+    assert!(matches!(
+        prepare_err(store.as_ref(), txn),
+        RefStoreError::NameUnavailable { .. }
+    ));
+    assert_eq!(store.read_raw("refs/heads/a").expect("read"), None);
+    assert_eq!(
+        store.read_raw("refs/heads/a/b").expect("read"),
+        Some(RawRef::Direct(oid(1)))
+    );
+}
+
+/// Deleting `a/b` and creating `a` in the same batch still conflicts (as in Git).
+pub fn df_conflict_not_freed_by_delete_in_batch(store: Arc<dyn RefStore>) {
+    seed_direct(store.as_ref(), "refs/heads/a/b", oid(1));
+    let txn = RefTransaction::new()
+        .update(update("refs/heads/a/b", None, Expected::Oid(oid(1))))
+        .expect("delete")
+        .update(update(
+            "refs/heads/a",
+            Some(RawRef::Direct(oid(2))),
+            Expected::Missing,
+        ))
+        .expect("create");
+    assert!(matches!(
+        prepare_err(store.as_ref(), txn),
+        RefStoreError::NameUnavailable { .. }
+    ));
+    assert_eq!(
+        store.read_raw("refs/heads/a/b").expect("read"),
+        Some(RawRef::Direct(oid(1)))
+    );
+}
+
+/// A direct update through a symref moves the target and logs old/new on the symref.
+pub fn symref_deref_state_and_reflog(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/target", oid(10));
     seed_symref(store.as_ref(), "refs/heads/sym", "refs/heads/target");
 
@@ -419,12 +556,10 @@ fn symref_deref_state_and_reflog(factory: &StoreFactory) {
         Expected::Any,
     );
     upd.reflog = Some(sample_log());
-    let txn = RefTransaction::new().update(upd).expect("txn");
-    store
-        .prepare(txn)
-        .expect("prepare")
-        .commit()
-        .expect("commit");
+    commit_txn(
+        store.as_ref(),
+        RefTransaction::new().update(upd).expect("txn"),
+    );
 
     assert_eq!(
         store.read_raw("refs/heads/sym").expect("sym"),
@@ -435,20 +570,70 @@ fn symref_deref_state_and_reflog(factory: &StoreFactory) {
         Some(RawRef::Direct(oid(12)))
     );
 
-    let mut last: Option<ReflogEntry> = None;
-    store
-        .for_each_reflog_entry("refs/heads/sym", true, &mut |e| {
-            last = Some(e.clone());
-            ControlFlow::Break(())
-        })
-        .expect("reflog");
-    let entry = last.expect("entry");
+    let entry = newest_reflog_entry(store.as_ref(), "refs/heads/sym").expect("entry");
     assert_eq!(entry.old_oid, oid(10));
     assert_eq!(entry.new_oid, oid(12));
 }
 
-fn symref_no_deref_state_and_reflog(factory: &StoreFactory) {
-    let store = factory();
+/// Updating `HEAD` through its symref appends the same entry to `HEAD` and the branch log.
+pub fn symref_deref_reflog_on_symref_and_target(store: Arc<dyn RefStore>) {
+    seed_direct(store.as_ref(), "refs/heads/main", oid(1));
+    seed_symref(store.as_ref(), "HEAD", "refs/heads/main");
+
+    let mut upd = update("HEAD", Some(RawRef::Direct(oid(2))), Expected::Oid(oid(1)));
+    upd.reflog = Some(sample_log());
+    commit_txn(
+        store.as_ref(),
+        RefTransaction::new().update(upd).expect("txn"),
+    );
+
+    assert_eq!(
+        store.read_raw("refs/heads/main").expect("main"),
+        Some(RawRef::Direct(oid(2)))
+    );
+    for name in ["HEAD", "refs/heads/main"] {
+        let entry = newest_reflog_entry(store.as_ref(), name)
+            .unwrap_or_else(|| panic!("{name} has no reflog entry"));
+        assert_eq!(entry.old_oid, oid(1), "{name}");
+        assert_eq!(entry.new_oid, oid(2), "{name}");
+        assert_eq!(entry.message, "commit: msg", "{name}");
+    }
+}
+
+/// A `log_only` update through `HEAD` changes no ref and logs on `HEAD` and the branch.
+pub fn symref_log_only_reflog_on_symref_and_target(store: Arc<dyn RefStore>) {
+    seed_direct(store.as_ref(), "refs/heads/main", oid(1));
+    seed_symref(store.as_ref(), "HEAD", "refs/heads/main");
+
+    let mut upd = update("HEAD", Some(RawRef::Direct(oid(2))), Expected::Any);
+    upd.reflog = Some(ReflogUpdate {
+        old_oid: Some(oid(1)),
+        new_oid: Some(oid(2)),
+        ..sample_log()
+    });
+    upd.flags.log_only = true;
+    commit_txn(
+        store.as_ref(),
+        RefTransaction::new().update(upd).expect("txn"),
+    );
+
+    assert_eq!(
+        store.read_raw("refs/heads/main").expect("main"),
+        Some(RawRef::Direct(oid(1)))
+    );
+    assert_eq!(
+        store.read_raw("HEAD").expect("head"),
+        Some(RawRef::Symbolic("refs/heads/main".to_owned()))
+    );
+    for name in ["HEAD", "refs/heads/main"] {
+        let entry = newest_reflog_entry(store.as_ref(), name)
+            .unwrap_or_else(|| panic!("{name} has no reflog entry"));
+        assert_eq!((entry.old_oid, entry.new_oid), (oid(1), oid(2)), "{name}");
+    }
+}
+
+/// With `no_deref`, a direct update replaces the symref itself and logs a zero old id.
+pub fn symref_no_deref_state_and_reflog(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/t2", oid(11));
     seed_symref(store.as_ref(), "refs/heads/s2", "refs/heads/t2");
 
@@ -459,12 +644,10 @@ fn symref_no_deref_state_and_reflog(factory: &StoreFactory) {
     );
     upd.reflog = Some(sample_log());
     upd.flags.no_deref = true;
-    let txn = RefTransaction::new().update(upd).expect("txn");
-    store
-        .prepare(txn)
-        .expect("prepare")
-        .commit()
-        .expect("commit");
+    commit_txn(
+        store.as_ref(),
+        RefTransaction::new().update(upd).expect("txn"),
+    );
 
     assert_eq!(
         store.read_raw("refs/heads/s2").expect("s2"),
@@ -475,20 +658,13 @@ fn symref_no_deref_state_and_reflog(factory: &StoreFactory) {
         Some(RawRef::Direct(oid(11)))
     );
 
-    let mut last: Option<ReflogEntry> = None;
-    store
-        .for_each_reflog_entry("refs/heads/s2", true, &mut |e| {
-            last = Some(e.clone());
-            ControlFlow::Break(())
-        })
-        .expect("reflog");
-    let entry = last.expect("entry");
+    let entry = newest_reflog_entry(store.as_ref(), "refs/heads/s2").expect("entry");
     assert!(entry.old_oid.is_zero());
     assert_eq!(entry.new_oid, oid(12));
 }
 
-fn symbolic_iteration_peel(factory: &StoreFactory) {
-    let store = factory();
+/// Iteration reports the peeled id of a symbolic ref.
+pub fn symbolic_iteration_peel(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/main", oid(1));
     seed_symref(store.as_ref(), "HEAD", "refs/heads/main");
 
@@ -502,71 +678,48 @@ fn symbolic_iteration_peel(factory: &StoreFactory) {
     assert_eq!(peeled, Some(oid(1)));
 }
 
-fn direct_update_reflog_oids(factory: &StoreFactory) {
-    let store = factory();
+/// A direct update logs the previous and new ids.
+pub fn direct_update_reflog_oids(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/r", oid(1));
 
     let mut upd = update("refs/heads/r", Some(RawRef::Direct(oid(2))), Expected::Any);
     upd.reflog = Some(sample_log());
-    let txn = RefTransaction::new().update(upd).expect("txn");
-    store
-        .prepare(txn)
-        .expect("prepare")
-        .commit()
-        .expect("commit");
+    commit_txn(
+        store.as_ref(),
+        RefTransaction::new().update(upd).expect("txn"),
+    );
 
-    let mut last: Option<ReflogEntry> = None;
-    store
-        .for_each_reflog_entry("refs/heads/r", true, &mut |e| {
-            last = Some(e.clone());
-            ControlFlow::Break(())
-        })
-        .expect("reflog");
-    let entry = last.expect("entry");
+    let entry = newest_reflog_entry(store.as_ref(), "refs/heads/r").expect("entry");
     assert_eq!(entry.old_oid, oid(1));
     assert_eq!(entry.new_oid, oid(2));
 }
 
-fn delete_with_reflog_oids(factory: &StoreFactory) {
-    let store = factory();
+/// A delete with a reflog line logs the old id and a zero new id.
+pub fn delete_with_reflog_oids(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/del", oid(5));
 
     let mut upd = update("refs/heads/del", None, Expected::Any);
     upd.reflog = Some(sample_log());
-    let txn = RefTransaction::new().update(upd).expect("txn");
-    store
-        .prepare(txn)
-        .expect("prepare")
-        .commit()
-        .expect("commit");
+    commit_txn(
+        store.as_ref(),
+        RefTransaction::new().update(upd).expect("txn"),
+    );
 
     assert_eq!(store.read_raw("refs/heads/del").expect("read"), None);
-
-    let mut last: Option<ReflogEntry> = None;
-    store
-        .for_each_reflog_entry("refs/heads/del", true, &mut |e| {
-            last = Some(e.clone());
-            ControlFlow::Break(())
-        })
-        .expect("reflog");
-    let entry = last.expect("entry");
+    let entry = newest_reflog_entry(store.as_ref(), "refs/heads/del").expect("entry");
     assert_eq!(entry.old_oid, oid(5));
     assert!(entry.new_oid.is_zero());
 }
 
-fn symref_deref_delete(factory: &StoreFactory) {
-    let store = factory();
+/// Deleting through a symref removes the target and keeps the symref.
+pub fn symref_deref_delete(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/target", oid(1));
     seed_symref(store.as_ref(), "refs/heads/sym", "refs/heads/target");
 
     let txn = RefTransaction::new()
         .update(update("refs/heads/sym", None, Expected::Any))
         .expect("txn");
-    store
-        .prepare(txn)
-        .expect("prepare")
-        .commit()
-        .expect("commit");
+    commit_txn(store.as_ref(), txn);
 
     assert_eq!(
         store.read_raw("refs/heads/sym").expect("sym"),
@@ -575,8 +728,8 @@ fn symref_deref_delete(factory: &StoreFactory) {
     assert_eq!(store.read_raw("refs/heads/target").expect("target"), None);
 }
 
-fn symref_head_deref_delete_recreate_branch(factory: &StoreFactory) {
-    let store = factory();
+/// Deleting `HEAD`'s branch through `HEAD` and recreating it in the same batch is allowed.
+pub fn symref_head_deref_delete_recreate_branch(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/main", oid(1));
     seed_symref(store.as_ref(), "HEAD", "refs/heads/main");
 
@@ -589,11 +742,7 @@ fn symref_head_deref_delete_recreate_branch(factory: &StoreFactory) {
             Expected::Missing,
         ))
         .expect("recreate main");
-    store
-        .prepare(txn)
-        .expect("prepare ordered batch")
-        .commit()
-        .expect("commit");
+    commit_txn(store.as_ref(), txn);
 
     assert_eq!(
         store.read_raw("HEAD").expect("head"),
@@ -605,19 +754,17 @@ fn symref_head_deref_delete_recreate_branch(factory: &StoreFactory) {
     );
 }
 
-fn symref_no_deref_delete(factory: &StoreFactory) {
-    let store = factory();
+/// With `no_deref`, deleting a symref removes only the symref.
+pub fn symref_no_deref_delete(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/target", oid(1));
     seed_symref(store.as_ref(), "refs/heads/sym", "refs/heads/target");
 
     let mut upd = update("refs/heads/sym", None, Expected::Any);
     upd.flags.no_deref = true;
-    let txn = RefTransaction::new().update(upd).expect("txn");
-    store
-        .prepare(txn)
-        .expect("prepare")
-        .commit()
-        .expect("commit");
+    commit_txn(
+        store.as_ref(),
+        RefTransaction::new().update(upd).expect("txn"),
+    );
 
     assert_eq!(store.read_raw("refs/heads/sym").expect("sym"), None);
     assert_eq!(
@@ -626,18 +773,14 @@ fn symref_no_deref_delete(factory: &StoreFactory) {
     );
 }
 
-fn symref_unborn_referent_created(factory: &StoreFactory) {
-    let store = factory();
+/// Updating `HEAD` on an unborn branch creates the branch.
+pub fn symref_unborn_referent_created(store: Arc<dyn RefStore>) {
     seed_symref(store.as_ref(), "HEAD", "refs/heads/unborn");
 
     let txn = RefTransaction::new()
         .update(update("HEAD", Some(RawRef::Direct(oid(7))), Expected::Any))
         .expect("txn");
-    store
-        .prepare(txn)
-        .expect("prepare")
-        .commit()
-        .expect("commit");
+    commit_txn(store.as_ref(), txn);
 
     assert_eq!(
         store.read_raw("HEAD").expect("head"),
@@ -657,11 +800,7 @@ fn symref_unborn_referent_created(factory: &StoreFactory) {
         .expect("first")
         .update(update("HEAD", Some(RawRef::Direct(oid(8))), Expected::Any))
         .expect("head");
-    store
-        .prepare(txn2)
-        .expect("prepare")
-        .commit()
-        .expect("commit");
+    commit_txn(store.as_ref(), txn2);
     assert_eq!(
         store.read_raw("refs/heads/first").expect("first"),
         Some(RawRef::Direct(oid(1)))
@@ -672,8 +811,8 @@ fn symref_unborn_referent_created(factory: &StoreFactory) {
     );
 }
 
-fn symref_dual_deref_conflicting_target_rejected(factory: &StoreFactory) {
-    let store = factory();
+/// Two symrefs dereferencing to the same target in one batch are a duplicate update.
+pub fn symref_dual_deref_conflicting_target_rejected(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/target", oid(1));
     seed_symref(store.as_ref(), "refs/heads/sym1", "refs/heads/target");
     seed_symref(store.as_ref(), "refs/heads/sym2", "refs/heads/target");
@@ -703,8 +842,8 @@ fn symref_dual_deref_conflicting_target_rejected(factory: &StoreFactory) {
     );
 }
 
-fn batch_apply_rejected_leaves_store_unchanged(factory: &StoreFactory) {
-    let store = factory();
+/// A batch whose later update fails its check leaves every ref unchanged.
+pub fn batch_apply_rejected_leaves_store_unchanged(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/target", oid(1));
     seed_symref(store.as_ref(), "refs/heads/sym", "refs/heads/target");
 
@@ -731,8 +870,8 @@ fn batch_apply_rejected_leaves_store_unchanged(factory: &StoreFactory) {
     );
 }
 
-fn empty_reflog_exists(factory: &StoreFactory) {
-    let store = factory();
+/// An empty reflog (created or replaced with no entries) still exists.
+pub fn empty_reflog_exists(store: Arc<dyn RefStore>) {
     store.create_reflog("refs/heads/empty").expect("create");
     assert!(store.reflog_exists("refs/heads/empty").expect("exists"));
 
@@ -751,8 +890,8 @@ fn empty_reflog_exists(factory: &StoreFactory) {
     assert_eq!(count, 0);
 }
 
-fn prefix_iteration_order(factory: &StoreFactory) {
-    let store = factory();
+/// Prefix iteration is sorted and treats the prefix as a string prefix.
+pub fn prefix_iteration_order(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/b", oid(1));
     seed_direct(store.as_ref(), "refs/heads/a", oid(1));
     seed_direct(store.as_ref(), "refs/tags/v1", oid(1));
@@ -776,8 +915,8 @@ fn prefix_iteration_order(factory: &StoreFactory) {
     assert_eq!(limited, vec!["refs/heads/a"]);
 }
 
-fn abort_leaves_state_unchanged(factory: &StoreFactory) {
-    let store = factory();
+/// Aborting a prepared transaction changes nothing.
+pub fn abort_leaves_state_unchanged(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/stay", oid(5));
     let txn = RefTransaction::new()
         .update(update(
@@ -786,16 +925,67 @@ fn abort_leaves_state_unchanged(factory: &StoreFactory) {
             Expected::Any,
         ))
         .expect("txn");
-    let prepared = store.prepare(txn).expect("prepare");
-    prepared.abort().expect("abort");
+    store.prepare(txn).expect("prepare").abort().expect("abort");
     assert_eq!(
         store.read_raw("refs/heads/stay").expect("read"),
         Some(RawRef::Direct(oid(5)))
     );
 }
 
-fn concurrent_prepare_lock_held(factory: &StoreFactory) {
-    let store = factory();
+/// After `abort`, the next `prepare` succeeds.
+pub fn abort_releases_lock(store: Arc<dyn RefStore>) {
+    let txn = RefTransaction::new()
+        .update(update(
+            "refs/heads/one",
+            Some(RawRef::Direct(oid(1))),
+            Expected::Missing,
+        ))
+        .expect("txn");
+    store.prepare(txn).expect("prepare").abort().expect("abort");
+    seed_direct(store.as_ref(), "refs/heads/one", oid(2));
+    assert_eq!(
+        store.read_raw("refs/heads/one").expect("read"),
+        Some(RawRef::Direct(oid(2)))
+    );
+}
+
+/// Dropping a prepared transaction without `commit` or `abort` releases its locks and
+/// changes nothing.
+pub fn dropped_prepared_transaction_releases_lock(store: Arc<dyn RefStore>) {
+    seed_direct(store.as_ref(), "refs/heads/kept", oid(1));
+    let txn = RefTransaction::new()
+        .update(update(
+            "refs/heads/kept",
+            Some(RawRef::Direct(oid(2))),
+            Expected::Oid(oid(1)),
+        ))
+        .expect("txn");
+    drop(store.prepare(txn).expect("prepare"));
+    assert_eq!(
+        store.read_raw("refs/heads/kept").expect("read"),
+        Some(RawRef::Direct(oid(1)))
+    );
+
+    let retry = RefTransaction::new()
+        .update(update(
+            "refs/heads/kept",
+            Some(RawRef::Direct(oid(3))),
+            Expected::Oid(oid(1)),
+        ))
+        .expect("retry");
+    match store.prepare(retry) {
+        Ok(prepared) => prepared.commit().expect("commit after drop"),
+        Err(err) => panic!("prepare after dropping a prepared transaction failed: {err:?}"),
+    }
+    assert_eq!(
+        store.read_raw("refs/heads/kept").expect("read"),
+        Some(RawRef::Direct(oid(3)))
+    );
+}
+
+/// While one transaction is prepared, `prepare` on another thread fails with
+/// [`RefStoreError::LockHeld`].
+pub fn concurrent_prepare_lock_held(store: Arc<dyn RefStore>) {
     seed_direct(store.as_ref(), "refs/heads/c", oid(1));
 
     let txn = RefTransaction::new()
@@ -811,9 +1001,9 @@ fn concurrent_prepare_lock_held(factory: &StoreFactory) {
     let err = thread::spawn(move || {
         let txn2 = RefTransaction::new()
             .update(update(
-                "refs/heads/d",
+                "refs/heads/c",
                 Some(RawRef::Direct(oid(3))),
-                Expected::Missing,
+                Expected::Any,
             ))
             .expect("txn");
         match store2.prepare(txn2) {
@@ -823,13 +1013,17 @@ fn concurrent_prepare_lock_held(factory: &StoreFactory) {
     })
     .join()
     .expect("thread");
-    assert!(matches!(err, RefStoreError::LockHeld { .. }));
+    assert!(matches!(err, RefStoreError::LockHeld { .. }), "{err:?}");
 
-    drop(prepared);
+    prepared.commit().expect("commit");
+    assert_eq!(
+        store.read_raw("refs/heads/c").expect("read"),
+        Some(RawRef::Direct(oid(2)))
+    );
 }
 
-fn reflog_roundtrip(factory: &StoreFactory) {
-    let store = factory();
+/// Reflogs replace, iterate in both directions, delete and list.
+pub fn reflog_roundtrip(store: Arc<dyn RefStore>) {
     store.create_reflog("refs/heads/r").expect("create");
     let entries = vec![
         ReflogEntry {
@@ -892,10 +1086,10 @@ fn reflog_roundtrip(factory: &StoreFactory) {
     assert_eq!(reflog_refs, vec!["refs/heads/rr"]);
 }
 
-/// Iteration callbacks may read and write the store they are iterating; a backend that holds
+/// Iteration callbacks may read and write the store they are iterating. A backend that holds
 /// a lock across the callback deadlocks, so the body runs on a thread with a deadline.
-fn reentrant_callbacks(factory: &StoreFactory) {
-    let store = factory();
+pub fn reentrant_callbacks(store: Arc<dyn RefStore>) {
+    let format = store.format();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let worker = thread::spawn(move || {
         reentrant_callbacks_body(store.as_ref());
@@ -909,10 +1103,7 @@ fn reentrant_callbacks(factory: &StoreFactory) {
             }
         }
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            panic!(
-                "{:?}: callback re-entering the store deadlocked",
-                factory().format()
-            )
+            panic!("{format:?}: callback re-entering the store deadlocked")
         }
     }
 }
