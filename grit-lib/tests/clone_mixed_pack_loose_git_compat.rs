@@ -101,6 +101,7 @@ fn clone_local_mixed_packed_tree_and_loose_blob() {
             branch: None,
             single_branch: None,
             tags: None,
+            promisor_fetcher: None,
         },
         &mut NoProgress,
         None,

@@ -89,6 +89,7 @@ fn clone_local_repacked_plus_loose_reports_full_transfer_stats() {
             branch: None,
             single_branch: None,
             tags: None,
+            promisor_fetcher: None,
         },
         &mut NoProgress,
         None,

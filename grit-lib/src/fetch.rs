@@ -231,6 +231,7 @@ fn append_shallow_request_v0(
 /// block carries the client's `shallow <oid>` grafts and the `deepen*` args, and
 /// the server precedes the pack with a `shallow-info` section that this reads
 /// into the returned [`ShallowUpdate`].
+#[allow(clippy::too_many_arguments)]
 fn negotiate_pack(
     local_git_dir: &Path,
     conn: &mut dyn Connection,
@@ -239,6 +240,7 @@ fn negotiate_pack(
     local_shallow: &[ObjectId],
     wire_filter: Option<&str>,
     progress: &mut dyn Progress,
+    skip_local_haves: bool,
 ) -> Result<(Option<std::path::PathBuf>, ShallowUpdate)> {
     crate::trace::trace_span!("grit.fetch.negotiate");
     let local_repo = crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty())?;
@@ -253,6 +255,7 @@ fn negotiate_pack(
     // usable negotiation base (its objects bottom out at grafts), so we skip
     // offering `have`s. Mirrors `fetch-pack.c`'s shallow handling.
     let shallow_request = opts.has_deepen_request() || !local_shallow.is_empty();
+    let skip_haves = shallow_request || skip_local_haves;
 
     // Capture the advertised refs before borrowing the writer (avoids aliasing
     // the connection's reader/writer with its accessors). v0/v1 shallow servers
@@ -289,7 +292,7 @@ fn negotiate_pack(
     // Match `git fetch-pack`: with a single unique OID, repeat the bare want.
     // git-daemon expects this. (Not done for shallow requests, which append
     // shallow/deepen lines instead.)
-    if wants.len() == 1 && !shallow_request {
+    if wants.len() == 1 && !skip_haves {
         pkt_line::write_line_to_vec(&mut req, &format!("want {}", first_want.to_hex()))?;
     }
     if let Some(spec) = wire_filter {
@@ -325,7 +328,7 @@ fn negotiate_pack(
         }
     }
     tips.sort_by_key(ObjectId::to_hex);
-    if !shallow_request {
+    if !skip_haves {
         for t in tips {
             negotiator.add_tip(t)?;
         }
@@ -366,6 +369,8 @@ fn negotiate_pack(
         let (sh, unsh) = crate::shallow::read_shallow_info_section(&mut conn.reader())?;
         shallow_update.shallow = sh;
         shallow_update.unshallow = unsh;
+    } else if skip_local_haves && conn.stateless_rpc() {
+        read_ack_round(conn.reader(), &mut negotiator)?;
     } else if conn.stateless_rpc() {
         // Stateless HTTP completes a POST for the want block; consume its response
         // before the first have round posts again (otherwise the next POST drains it).
@@ -377,23 +382,25 @@ fn negotiate_pack(
     let mut flush_at: usize = INITIAL_FLUSH;
     let mut pending: Vec<u8> = Vec::new();
     let mut flushes: i32 = 0;
-    while let Some(oid) = negotiator.next_have()? {
-        pkt_line::write_line_to_vec(&mut pending, &format!("have {}", oid.to_hex()))?;
-        count += 1;
-        if flush_at <= count {
-            pending.extend_from_slice(b"0000");
-            conn.writer().write_all(&pending)?;
-            conn.writer().flush()?;
-            pending.clear();
-            flush_at = next_flush_count(count);
-            flushes += 1;
-            // Duplex: keep one window ahead. Stateless: every POST must be read
-            // before the next POST replaces the response.
-            if count == INITIAL_FLUSH && !conn.stateless_rpc() {
-                continue;
+    if !skip_haves {
+        while let Some(oid) = negotiator.next_have()? {
+            pkt_line::write_line_to_vec(&mut pending, &format!("have {}", oid.to_hex()))?;
+            count += 1;
+            if flush_at <= count {
+                pending.extend_from_slice(b"0000");
+                conn.writer().write_all(&pending)?;
+                conn.writer().flush()?;
+                pending.clear();
+                flush_at = next_flush_count(count);
+                flushes += 1;
+                // Duplex: keep one window ahead. Stateless: every POST must be read
+                // before the next POST replaces the response.
+                if count == INITIAL_FLUSH && !conn.stateless_rpc() {
+                    continue;
+                }
+                read_ack_round(conn.reader(), &mut negotiator)?;
+                flushes -= 1;
             }
-            read_ack_round(conn.reader(), &mut negotiator)?;
-            flushes -= 1;
         }
     }
     if !pending.is_empty() {
@@ -762,6 +769,7 @@ fn negotiate_pack_v2(
     deepen: &V2DeepenArgs,
     wire_filter: Option<&str>,
     progress: &mut dyn Progress,
+    skip_local_haves: bool,
 ) -> Result<(Option<std::path::PathBuf>, ShallowUpdate)> {
     if wants.is_empty() {
         return Ok((None, ShallowUpdate::default()));
@@ -777,8 +785,8 @@ fn negotiate_pack_v2(
 
     // The ordered `have` list, built from the local ref tips with the skipping
     // negotiator (shared with the stateless-HTTP v2 path). Empty for a shallow
-    // request.
-    let haves = if shallow_request {
+    // request or promisor object-want fetch (Git `negotiationAlgorithm=noop`).
+    let haves = if shallow_request || skip_local_haves {
         Vec::new()
     } else {
         v2_local_haves(local_git_dir, wants)?
@@ -1227,6 +1235,9 @@ pub fn fetch_remote(
             opts.filter = crate::partial_clone::stored_remote_filter(&local_cfg, remote);
         }
     }
+    if !opts.object_wants.is_empty() {
+        return fetch_remote_object_wants(local_git_dir, conn, opts, progress);
+    }
     let local_odb = open_odb(local_git_dir);
 
     // 1. Remote refs + default branch.
@@ -1431,6 +1442,7 @@ pub fn fetch_remote(
                 &deepen,
                 wire_filter,
                 progress,
+                false,
             )?
         } else {
             negotiate_pack(
@@ -1441,6 +1453,7 @@ pub fn fetch_remote(
                 &local_shallow,
                 wire_filter,
                 progress,
+                false,
             )?
         };
         shallow_update = su;
@@ -1746,6 +1759,143 @@ pub fn fetch_remote(
     Ok(FetchOutcome {
         updates,
         default_branch,
+        new_shallow: crate::shallow::dedupe_shallow_list(shallow_update.shallow),
+        new_unshallow: shallow_update.unshallow,
+        transfer,
+    })
+}
+
+/// Promisor on-demand fetch: negotiate a pack for [`FetchOptions::object_wants`] only.
+fn fetch_remote_object_wants(
+    local_git_dir: &Path,
+    conn: &mut dyn Connection,
+    opts: &mut FetchOptions,
+    progress: &mut dyn Progress,
+) -> Result<FetchOutcome> {
+    use crate::net_trace::net_trace;
+
+    let t_begin = std::time::Instant::now();
+    let local_odb = open_odb(local_git_dir);
+    let wants: Vec<ObjectId> = opts
+        .object_wants
+        .iter()
+        .copied()
+        .filter(|oid| !local_odb.exists_stored(oid))
+        .collect();
+    if wants.is_empty() {
+        return Ok(FetchOutcome {
+            updates: Vec::new(),
+            default_branch: None,
+            new_shallow: Vec::new(),
+            new_unshallow: Vec::new(),
+            transfer: crate::transfer::TransferStats::default(),
+        });
+    }
+
+    let v2_caps = if conn.protocol_version() >= 2 {
+        Some(conn.capabilities().to_vec())
+    } else {
+        None
+    };
+    let v0_caps = if v2_caps.is_none() {
+        Some(conn.capabilities().join(" "))
+    } else {
+        None
+    };
+    let (wire_filter, _filter_sent) = crate::partial_clone::wire_filter_for_capabilities(
+        opts.filter.as_ref(),
+        v2_caps.as_deref(),
+        v0_caps.as_deref(),
+    );
+    if opts.promisor_object_fetch {
+        opts.mark_received_pack_promisor = true;
+    } else {
+        opts.mark_received_pack_promisor = opts.filter.is_some();
+    }
+    let wire_filter = wire_filter.as_deref();
+    let local_shallow = crate::shallow::load_shallow_oids(local_git_dir)?;
+    let mut transfer = crate::transfer::TransferStats::default();
+
+    net_trace!(
+        opts.network_trace,
+        opts.diagnostics.as_ref(),
+        "fetch_remote_object_wants: {} object(s) [+{:?} since begin]",
+        wants.len(),
+        t_begin.elapsed()
+    );
+
+    let (pack_path, shallow_update) = if let Some(caps) = v2_caps.as_ref() {
+        validate_fetch_depth_server(opts, None, Some(caps))?;
+        let deepen = V2DeepenArgs::from_opts(opts, &local_shallow);
+        negotiate_pack_v2(
+            local_git_dir,
+            conn,
+            caps,
+            &local_odb,
+            &wants,
+            &deepen,
+            wire_filter,
+            progress,
+            true,
+        )?
+    } else {
+        negotiate_pack(
+            local_git_dir,
+            conn,
+            &wants,
+            opts,
+            &local_shallow,
+            wire_filter,
+            progress,
+            true,
+        )?
+    };
+    if let Some(path) = pack_path {
+        let pack_config =
+            crate::config::ConfigSet::load(&opts.environment, Some(local_git_dir), true)?;
+        let index_threads = crate::parallel::index_pack_threads_for_ingest(
+            opts.thread_policy,
+            &pack_config,
+            opts.index_pack_threads,
+        )?;
+        let ingested = crate::index_pack::ingest_received_pack_path_with_progress(
+            path,
+            &local_odb,
+            &crate::index_pack::IngestPackOptions {
+                fix_thin: true,
+                skip_post_index_verify: true,
+                threads: index_threads,
+                merged_config: Some(pack_config),
+                environment: opts.environment.clone(),
+                mark_promisor_pack: opts.mark_received_pack_promisor,
+            },
+            Some(progress),
+        )?;
+        let bytes = std::fs::metadata(&ingested.pack_path)
+            .map_err(crate::error::Error::Io)?
+            .len();
+        transfer = crate::transfer::TransferStats {
+            objects: u64::try_from(ingested.object_ids.len()).unwrap_or(u64::MAX),
+            bytes,
+            kinds: Some(ingested.object_counts),
+        };
+    }
+
+    if v2_caps.is_some() && !wants.is_empty() {
+        conn.finish_send();
+    }
+
+    if !opts.dry_run {
+        crate::shallow::apply_shallow_updates(
+            local_git_dir,
+            &shallow_update.shallow,
+            &shallow_update.unshallow,
+        )?;
+    }
+
+    Ok(FetchOutcome {
+        updates: Vec::new(),
+        default_branch: None,
         new_shallow: crate::shallow::dedupe_shallow_list(shallow_update.shallow),
         new_unshallow: shallow_update.unshallow,
         transfer,

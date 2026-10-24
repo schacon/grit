@@ -239,6 +239,33 @@ fn object_in_local_packs(objects_dir: &Path, oid: &ObjectId) -> bool {
     false
 }
 
+/// True when `oid` is present as loose or in any local pack index (including promisor).
+///
+/// Does not consult alternates, trigger lazy fetch, or rescan `pack/` on miss beyond the
+/// cached index listing (same as [`local_object_materialized_without_rescan`]).
+pub(crate) fn local_object_stored_without_rescan(objects_dir: &Path, oid: &ObjectId) -> bool {
+    let Ok(indexes) = pack::read_local_pack_indexes_cached(objects_dir) else {
+        return oid.loose_path_in(objects_dir).is_file();
+    };
+    for idx in &indexes {
+        if idx.contains(oid).unwrap_or(false) {
+            return true;
+        }
+    }
+    oid.loose_path_in(objects_dir).is_file()
+}
+
+/// Like [`local_object_stored_without_rescan`], but rescan `pack/` once on miss.
+pub(crate) fn local_object_stored(objects_dir: &Path, oid: &ObjectId) -> bool {
+    if local_object_stored_without_rescan(objects_dir, oid) {
+        return true;
+    }
+    if pack::reprepare_pack_directory_on_miss(objects_dir).ok() == Some(true) {
+        return local_object_stored_without_rescan(objects_dir, oid);
+    }
+    false
+}
+
 /// In-memory object map keyed by [`ObjectId`].
 ///
 /// Intended to replace the legacy [`Odb`](super::Odb) overlay hash map in a later step.

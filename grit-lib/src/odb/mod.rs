@@ -1335,6 +1335,30 @@ impl Odb {
         })
     }
 
+    /// Whether `oid` is stored locally in loose storage or any pack (including promisor).
+    ///
+    /// Unlike [`Self::exists_local`], objects present only in promisor-marked packs count
+    /// as stored. Does not trigger lazy fetch or consult alternates.
+    #[must_use]
+    pub fn exists_stored(&self, oid: &ObjectId) -> bool {
+        if oid.is_canonical_empty_tree() {
+            return true;
+        }
+        if self.overlay_read(oid).is_some() {
+            return true;
+        }
+        if self.custom_primary.is_some() {
+            return self
+                .primary_writable()
+                .ok()
+                .and_then(|primary| primary.contains(oid).ok())
+                .unwrap_or(false);
+        }
+        self.with_pack_store_for(&self.objects_dir, || {
+            store::local_object_stored(&self.objects_dir, oid)
+        })
+    }
+
     /// Whether `oid` is stored on disk in this repository's object store (loose or
     /// non-promisor pack), without treating the canonical empty tree as virtually
     /// present.
@@ -1680,7 +1704,116 @@ impl Odb {
             return Err(err);
         }
 
-        Err(Error::ObjectNotFound(oid.to_hex()))
+        self.read_after_promisor_miss(oid)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn read_after_promisor_miss(&self, oid: &ObjectId) -> Result<Object> {
+        let mut lazy_retries = 0u32;
+        loop {
+            let Some(res) = self.resolve_promisor_miss(oid, lazy_retries)? else {
+                return Err(Error::ObjectNotFound(oid.to_hex()));
+            };
+            match res {
+                crate::promisor_fetch::PromisorMissResolution::RetryAfterFetch => {
+                    lazy_retries += 1;
+                    if let Some(obj) = self.try_read_once(oid)? {
+                        return Ok(obj);
+                    }
+                }
+                crate::promisor_fetch::PromisorMissResolution::NotPromisorRepo => {
+                    return Err(Error::ObjectNotFound(oid.to_hex()));
+                }
+                crate::promisor_fetch::PromisorMissResolution::PromisedMissing(err) => {
+                    return Err(err);
+                }
+            }
+        }
+    }
+
+    fn try_read_once(&self, oid: &ObjectId) -> Result<Option<Object>> {
+        if oid.is_well_known_empty_tree() {
+            return Ok(Some(Object {
+                kind: ObjectKind::Tree,
+                data: Vec::new(),
+            }));
+        }
+
+        if let Some(obj) = self.session_cached_loose_read(oid) {
+            return Ok(Some(obj));
+        }
+
+        if let Some(obj) = self.overlay_read(oid) {
+            return Ok(Some(obj));
+        }
+        if let Some(obj) = self.try_read_packed_in_batch_context(oid)? {
+            return Ok(Some(self.finish_session_loose_read(oid, obj)?));
+        }
+
+        let use_midx = self.multi_pack_index_reads_enabled();
+        if use_midx {
+            self.ensure_midx_prepared();
+        }
+
+        self.sync_delta_base_cache_limit();
+
+        let primary = self.primary_writable()?;
+        let files_primary = self.primary().ok();
+        let mut unreadable_local_loose = None;
+        let read_primary = || primary.read(oid);
+        match if PackStore::read_context_matches_objects_dir(&self.objects_dir) {
+            read_primary()
+        } else {
+            self.with_pack_store_for(&self.objects_dir, read_primary)
+        } {
+            Ok(Some(obj)) => return Ok(Some(self.finish_session_loose_read(oid, obj)?)),
+            Ok(None) => {}
+            Err(err)
+                if files_primary
+                    .as_ref()
+                    .is_some_and(|p| p.local_loose_exists_but_unreadable(oid, &err)) =>
+            {
+                unreadable_local_loose = Some(err);
+            }
+            Err(err) => return Err(err),
+        }
+
+        if let Some(obj) = self.try_read_extra_sources(oid)? {
+            return Ok(Some(self.finish_session_loose_read(oid, obj)?));
+        }
+
+        if self.alternates_enabled {
+            match self.sources()?.read(oid) {
+                Ok(Some(obj)) => return Ok(Some(self.finish_session_loose_read(oid, obj)?)),
+                Ok(None) => {}
+                Err(err) => return Err(err),
+            }
+        }
+
+        if let Some(err) = unreadable_local_loose {
+            return Err(err);
+        }
+
+        Ok(None)
+    }
+
+    fn resolve_promisor_miss(
+        &self,
+        oid: &ObjectId,
+        lazy_retries: u32,
+    ) -> Result<Option<crate::promisor_fetch::PromisorMissResolution>> {
+        let (Some(caches), Some(env)) = (&self.shared_config_state, &self.shared_environment)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(crate::promisor_fetch::resolve_promisor_read_miss(
+            caches,
+            self,
+            oid,
+            env.as_ref(),
+            lazy_retries,
+        )?))
     }
 
     /// Read and decompress an object into `buf`, reusing its capacity across calls.
@@ -1757,7 +1890,105 @@ impl Odb {
             return Err(err);
         }
 
-        Err(Error::ObjectNotFound(oid.to_hex()))
+        self.read_into_after_promisor_miss(oid, buf)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn read_into_after_promisor_miss(
+        &self,
+        oid: &ObjectId,
+        buf: &mut Vec<u8>,
+    ) -> Result<ObjectKind> {
+        let mut lazy_retries = 0u32;
+        loop {
+            let Some(res) = self.resolve_promisor_miss(oid, lazy_retries)? else {
+                return Err(Error::ObjectNotFound(oid.to_hex()));
+            };
+            match res {
+                crate::promisor_fetch::PromisorMissResolution::RetryAfterFetch => {
+                    lazy_retries += 1;
+                    if let Some(kind) = self.try_read_into_once(oid, buf)? {
+                        return Ok(kind);
+                    }
+                }
+                crate::promisor_fetch::PromisorMissResolution::NotPromisorRepo => {
+                    return Err(Error::ObjectNotFound(oid.to_hex()));
+                }
+                crate::promisor_fetch::PromisorMissResolution::PromisedMissing(err) => {
+                    return Err(err);
+                }
+            }
+        }
+    }
+
+    fn try_read_into_once(&self, oid: &ObjectId, buf: &mut Vec<u8>) -> Result<Option<ObjectKind>> {
+        if oid.is_well_known_empty_tree() {
+            buf.clear();
+            return Ok(Some(ObjectKind::Tree));
+        }
+
+        if let Some(obj) = self.session_cached_loose_read(oid) {
+            buf.clear();
+            buf.extend_from_slice(&obj.data);
+            return Ok(Some(obj.kind));
+        }
+
+        if let Some(obj) = self.overlay_read(oid) {
+            buf.clear();
+            buf.extend_from_slice(&obj.data);
+            return Ok(Some(obj.kind));
+        }
+
+        if let Some(kind) = self.try_read_packed_in_batch_context_into(oid, buf)? {
+            return Ok(Some(kind));
+        }
+
+        let use_midx = self.multi_pack_index_reads_enabled();
+        if use_midx {
+            self.ensure_midx_prepared();
+        }
+
+        self.sync_delta_base_cache_limit();
+
+        let primary = self.primary_writable()?;
+        let files_primary = self.primary().ok();
+        let mut unreadable_local_loose = None;
+        let mut read_primary = || primary.read_into(oid, buf);
+        match if PackStore::read_context_matches_objects_dir(&self.objects_dir) {
+            read_primary()
+        } else {
+            self.with_pack_store_for(&self.objects_dir, read_primary)
+        } {
+            Ok(Some(kind)) => return Ok(Some(kind)),
+            Ok(None) => {}
+            Err(err)
+                if files_primary
+                    .as_ref()
+                    .is_some_and(|p| p.local_loose_exists_but_unreadable(oid, &err)) =>
+            {
+                unreadable_local_loose = Some(err);
+            }
+            Err(err) => return Err(err),
+        }
+
+        if let Some(kind) = self.try_read_into_extra_sources(oid, buf)? {
+            return Ok(Some(kind));
+        }
+
+        if self.alternates_enabled {
+            match self.sources()?.read_into(oid, buf) {
+                Ok(Some(kind)) => return Ok(Some(kind)),
+                Ok(None) => {}
+                Err(err) => return Err(err),
+            }
+        }
+
+        if let Some(err) = unreadable_local_loose {
+            return Err(err);
+        }
+
+        Ok(None)
     }
 
     fn try_read_into_extra_sources(
@@ -1865,7 +2096,92 @@ impl Odb {
             return Err(err);
         }
 
-        Err(Error::ObjectNotFound(oid.to_hex()))
+        self.read_info_after_promisor_miss(oid)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn read_info_after_promisor_miss(&self, oid: &ObjectId) -> Result<ObjectInfo> {
+        let mut lazy_retries = 0u32;
+        loop {
+            let Some(res) = self.resolve_promisor_miss(oid, lazy_retries)? else {
+                return Err(Error::ObjectNotFound(oid.to_hex()));
+            };
+            match res {
+                crate::promisor_fetch::PromisorMissResolution::PromisedMissing(err) => {
+                    return Err(err);
+                }
+                crate::promisor_fetch::PromisorMissResolution::NotPromisorRepo => {
+                    return Err(Error::ObjectNotFound(oid.to_hex()));
+                }
+                crate::promisor_fetch::PromisorMissResolution::RetryAfterFetch => {
+                    lazy_retries += 1;
+                    if let Some(info) = self.try_read_info_once(oid)? {
+                        return Ok(info);
+                    }
+                }
+            }
+        }
+    }
+
+    fn try_read_info_once(&self, oid: &ObjectId) -> Result<Option<ObjectInfo>> {
+        if oid.is_well_known_empty_tree() {
+            return Ok(Some(ObjectInfo {
+                kind: ObjectKind::Tree,
+                size: 0,
+            }));
+        }
+
+        if let Some(obj) = self.overlay_read(oid) {
+            return Ok(Some(ObjectInfo {
+                kind: obj.kind,
+                size: u64::try_from(obj.data.len())
+                    .map_err(|_| Error::CorruptObject("object size overflow".to_owned()))?,
+            }));
+        }
+
+        if let Some(info) = self.try_read_info_packed_in_batch_context(oid)? {
+            return Ok(Some(info));
+        }
+
+        let use_midx = self.multi_pack_index_reads_enabled();
+        if use_midx {
+            self.ensure_midx_prepared();
+        }
+
+        let primary = self.primary_writable()?;
+        let files_primary = self.primary().ok();
+        let mut unreadable_local_loose = None;
+        match primary.read_info(oid) {
+            Ok(Some(info)) => return Ok(Some(info)),
+            Ok(None) => {}
+            Err(err)
+                if files_primary
+                    .as_ref()
+                    .is_some_and(|p| p.local_loose_exists_but_unreadable(oid, &err)) =>
+            {
+                unreadable_local_loose = Some(err);
+            }
+            Err(err) => return Err(err),
+        }
+
+        if let Some(info) = self.try_read_info_extra_sources(oid)? {
+            return Ok(Some(info));
+        }
+
+        if self.alternates_enabled {
+            match self.sources()?.read_info(oid) {
+                Ok(Some(info)) => return Ok(Some(info)),
+                Ok(None) => {}
+                Err(err) => return Err(err),
+            }
+        }
+
+        if let Some(err) = unreadable_local_loose {
+            return Err(err);
+        }
+
+        Ok(None)
     }
 
     /// Open a stream over `oid`'s uncompressed payload (overlay, primary, then alternates).

@@ -549,6 +549,9 @@ fn clone_into(
         filter: None,
         single_branch: run.single_branch,
         tags: resolved_clone_tags(run),
+        promisor_fetcher: Some(std::sync::Arc::new(
+            grit_lib::objects::promisor::DefaultPromisorFetcher::new(std::sync::Arc::new(factory)),
+        )),
     };
     let single_branch = clone_effective_single_branch(&clone_opts);
     let outcome = clone_repo(clone_opts, &mut *term_progress, Some(&factory))?;

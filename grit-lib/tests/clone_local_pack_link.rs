@@ -79,6 +79,7 @@ fn clone_local_repacked_source_links_pack_and_reports_index_stats() {
             branch: None,
             single_branch: None,
             tags: None,
+            promisor_fetcher: None,
         },
         &mut NoProgress,
         None,
