@@ -15,6 +15,7 @@ use grit_lib::index::Index;
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
+use grit_lib::PARALLEL_STAT_MIN_ENTRIES;
 use grit_test_support::git;
 
 fn sparse_directory_placeholder_count(index: &Index) -> usize {
@@ -692,4 +693,137 @@ fn worktree_guard_with_git_index_file_stat_refresh_does_not_rewrite_default_inde
         default_after, default_before,
         "worktree guard stat refresh with GIT_INDEX_FILE must not rewrite default index"
     );
+}
+
+/// Racily clean parallel-sized indexes must still detect a same-size edit when stat seconds
+/// match (Git `ie_match_stat` + `is_racy_timestamp` content check; issue #1702 review).
+#[test]
+fn status_on_racy_parallel_index_reports_same_size_stat_match_edit() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_root = tmp.path();
+    git(repo_root, &["init", "-q", "-b", "main", "."]);
+    git(repo_root, &["config", "user.email", "t@example.com"]);
+    git(repo_root, &["config", "user.name", "Test"]);
+    git(repo_root, &["config", "core.filemode", "false"]);
+
+    const LINE: &str = "0123456789abcdef0123456789abcdef\n";
+    let file_count = PARALLEL_STAT_MIN_ENTRIES + 1;
+    for i in 0..file_count {
+        let name = format!("f{i:05}.txt");
+        fs::write(repo_root.join(&name), LINE).expect("write");
+    }
+    git(repo_root, &["add", "-A"]);
+    git(repo_root, &["commit", "-qm", "seed"]);
+
+    let index_path = repo_root.join(".git/index");
+    let index_mtime = fs::metadata(&index_path)
+        .expect("index metadata")
+        .modified()
+        .expect("index mtime");
+    let pinned = filetime::FileTime::from_system_time(index_mtime);
+    for path in git(repo_root, &["ls-files", "-z"])
+        .split('\0')
+        .filter(|p| !p.is_empty())
+    {
+        filetime::set_file_mtime(repo_root.join(path), pinned).expect("pin worktree mtime");
+    }
+    filetime::set_file_mtime(&index_path, pinned).expect("pin index mtime");
+
+    let dirty_rel = "f00000.txt";
+    let same_len = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\n";
+    assert_eq!(same_len.len(), LINE.len());
+    fs::write(repo_root.join(dirty_rel), same_len).expect("same-size edit");
+    filetime::set_file_mtime(repo_root.join(dirty_rel), pinned).expect("re-pin dirty mtime");
+
+    let git_porcelain = git(repo_root, &["status", "--porcelain"]);
+    assert!(
+        git_porcelain.lines().any(|l| l.contains(dirty_rel)),
+        "system git must report the same-size racy edit: {git_porcelain:?}"
+    );
+
+    let grit_repo = Repository::open(
+        &repo_root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(repo_root),
+    )
+    .expect("open grit repo");
+    let model = status(&grit_repo, &StatusOptions::default(), &mut NullProgress)
+        .expect("status on racy parallel index");
+    assert!(
+        model
+            .unstaged
+            .iter()
+            .any(|e| e.old_path.as_deref() == Some(dirty_rel)),
+        "grit status must report the same-size racy edit (unstaged {:?})",
+        model.unstaged
+    );
+}
+
+/// Racily clean git indexes (index mtime equals entry mtimes) with large blobs must stay clean
+/// without re-reading every byte on repeated status runs (issue #1702).
+#[test]
+fn status_on_racy_git_index_with_large_blobs_persists_and_warms() {
+    if cfg!(coverage) || std::env::var_os("CARGO_LLVM_COV").is_some() {
+        eprintln!("SKIP: timing oracle under llvm-cov instrumentation");
+        return;
+    }
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_root = tmp.path();
+    git(repo_root, &["init", "-q", "-b", "main", "."]);
+    git(repo_root, &["config", "user.email", "t@example.com"]);
+    git(repo_root, &["config", "user.name", "Test"]);
+
+    const FILE_COUNT: usize = 48;
+    const PAYLOAD_LEN: usize = 256 * 1024;
+    let payload: Vec<u8> = (0..PAYLOAD_LEN).map(|i| (i % 251) as u8).collect();
+    for i in 0..FILE_COUNT {
+        let name = format!("f{i:02}.bin");
+        fs::write(repo_root.join(&name), &payload).expect("write blob");
+    }
+    git(repo_root, &["add", "-A"]);
+    git(repo_root, &["commit", "-qm", "big"]);
+
+    let index_path = repo_root.join(".git/index");
+    let index_mtime = fs::metadata(&index_path)
+        .expect("index metadata")
+        .modified()
+        .expect("index mtime");
+    let pinned = filetime::FileTime::from_system_time(index_mtime);
+    for path in git(repo_root, &["ls-files", "-z"])
+        .split('\0')
+        .filter(|p| !p.is_empty())
+    {
+        filetime::set_file_mtime(repo_root.join(path), pinned).expect("pin worktree mtime");
+    }
+    filetime::set_file_mtime(&index_path, pinned).expect("pin index mtime");
+
+    let grit_repo = Repository::open(
+        &repo_root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(repo_root),
+    )
+    .expect("open grit repo");
+
+    let first_start = Instant::now();
+    let model = status(&grit_repo, &StatusOptions::default(), &mut NullProgress)
+        .expect("first status on racy large index");
+    let first_elapsed = first_start.elapsed();
+    assert!(
+        model.unstaged.is_empty(),
+        "racy git index with large blobs must be clean in grit status"
+    );
+
+    let second_start = Instant::now();
+    let _second =
+        status(&grit_repo, &StatusOptions::default(), &mut NullProgress).expect("second status");
+    let second_elapsed = second_start.elapsed();
+
+    assert!(
+        second_elapsed <= first_elapsed,
+        "warm status must not re-verify every large blob (first {first_elapsed:?}, second {second_elapsed:?})"
+    );
+    if first_elapsed > Duration::from_millis(80) {
+        assert!(
+            second_elapsed * 3 + Duration::from_millis(5) < first_elapsed,
+            "second status should avoid full content re-read on warm index (first {first_elapsed:?}, second {second_elapsed:?})"
+        );
+    }
 }
