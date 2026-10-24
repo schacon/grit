@@ -1871,6 +1871,23 @@ mod tests {
         }
     }
 
+    fn conflict_marker_lines(size: usize) -> (String, String, String) {
+        (
+            format!("{} HEAD", "<".repeat(size)),
+            "=".repeat(size),
+            format!("{} side", ">".repeat(size)),
+        )
+    }
+
+    fn write_marked_conflict_with_marker_size(root: &Path, rel: &str, size: usize) {
+        let (open, mid, close) = conflict_marker_lines(size);
+        fs::write(
+            root.join(rel),
+            format!("base\n{open}\nours\n{mid}\ntheirs\n{close}\n"),
+        )
+        .unwrap();
+    }
+
     fn write_three_stage_conflict_index(
         repo: &Repository,
         index: &mut Index,
@@ -1957,6 +1974,57 @@ mod tests {
             matches!(err, Error::IndexUnmerged),
             "dry-run explicit add must not claim success: {err}"
         );
+    }
+
+    #[test]
+    fn explicit_add_rejects_custom_conflict_marker_size() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        fs::write(root.join(".gitattributes"), "f conflict-marker-size=10\n").unwrap();
+        let repo = init_repo(root);
+        let mut index = Index::new();
+        write_three_stage_conflict_index(&repo, &mut index, "f", b"base\n", b"ours\n", b"theirs\n");
+        write_index(&repo, &mut index);
+        write_marked_conflict_with_marker_size(root, "f", 10);
+
+        let err = stage(
+            &repo,
+            &StageOptions {
+                pathspecs: vec!["f".to_owned()],
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, Error::IndexUnmerged),
+            "must honor conflict-marker-size=10: {err}"
+        );
+        assert!(repo.load_index().unwrap().has_unmerged_entries());
+    }
+
+    #[test]
+    fn explicit_add_dry_run_rejects_custom_conflict_marker_size() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        fs::write(root.join(".gitattributes"), "f conflict-marker-size=10\n").unwrap();
+        let repo = init_repo(root);
+        let mut index = Index::new();
+        write_three_stage_conflict_index(&repo, &mut index, "f", b"base\n", b"ours\n", b"theirs\n");
+        write_index(&repo, &mut index);
+        write_marked_conflict_with_marker_size(root, "f", 10);
+
+        let err = stage(
+            &repo,
+            &StageOptions {
+                pathspecs: vec!["f".to_owned()],
+                dry_run: true,
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::IndexUnmerged), "{err}");
     }
 
     #[test]
