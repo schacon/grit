@@ -280,6 +280,90 @@ fn diff_json_attr_pathspec_matches_git() {
     }
 }
 
+fn init_committed_repo(dir: &std::path::Path, files: &[(&str, &str)], config: &[(&str, &str)]) {
+    assert_eq!(git(dir, &["init", "-q", "-b", "main"]).0, 0);
+    for (key, value) in config {
+        assert_eq!(git(dir, &["config", key, value]).0, 0);
+    }
+    for (path, content) in files {
+        std::fs::write(dir.join(path), content).unwrap();
+    }
+    assert_eq!(git(dir, &["add", "."]).0, 0);
+    let (code, _, err) = git(
+        dir,
+        &[
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@e.com",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    assert_eq!(code, 0, "git commit: {err}");
+}
+
+#[test]
+fn diff_json_attr_pathspec_macros_and_ignorecase_match_git() {
+    let cases: [(&[(&str, &str)], &[(&str, &str)], &str, &str); 2] = [
+        (
+            &[
+                (".gitattributes", "[attr]rusty diff=rust\n*.rs rusty\n"),
+                ("macro.rs", "m\n"),
+                ("plain.txt", "p\n"),
+            ],
+            &[],
+            ":(attr:diff=rust)",
+            "macro.rs",
+        ),
+        (
+            &[
+                (".gitattributes", "*.UPPER diff=upper\n"),
+                ("case.upper", "c\n"),
+                ("plain.txt", "p\n"),
+            ],
+            &[("core.ignorecase", "true")],
+            ":(attr:diff=upper)",
+            "case.upper",
+        ),
+    ];
+    for (files, config, spec, selected) in cases {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        init_committed_repo(root, files, config);
+        for (path, _) in files.iter().filter(|(p, _)| !p.starts_with('.')) {
+            std::fs::write(root.join(path), "changed\n").unwrap();
+        }
+
+        let (g_code, g_out, g_err) = git(root, &["diff", "HEAD", "--name-only", "--", spec]);
+        assert_eq!(g_code, 0, "git stderr={g_err}");
+        assert_eq!(g_out.lines().collect::<Vec<_>>(), [selected], "git {spec}");
+
+        let (code, stdout, stderr) = grit(root, &["diff", "--json", "--", spec]);
+        assert_eq!(code, 0, "{spec}: stdout={stdout} stderr={stderr}");
+        assert_eq!(json_paths(&stdout), [selected], "grit {spec}");
+    }
+}
+
+#[test]
+fn diff_rejects_empty_attr_pathspec_like_git() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    init_committed_repo(root, &[("a.txt", "a\n")], &[]);
+    std::fs::write(root.join("a.txt"), "changed\n").unwrap();
+
+    let (g_code, _, _) = git(root, &["diff", "--name-only", "--", ":(attr:)"]);
+    assert_eq!(g_code, 128, "git rejects an empty attr clause");
+
+    let (code, stdout, stderr) = grit(root, &["diff", "--json", "--", ":(attr:)"]);
+    assert_ne!(code, 0, "stdout={stdout} stderr={stderr}");
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    let error = v["error"].as_str().expect("error message");
+    assert!(error.contains(":(attr:)"), "error={error}");
+    assert!(v.get("files").is_none(), "stdout={stdout}");
+}
+
 #[test]
 fn diff_revision_then_bare_path_without_double_dash() {
     let dir = tempfile::tempdir().expect("tempdir");

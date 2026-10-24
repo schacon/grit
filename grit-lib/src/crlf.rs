@@ -372,7 +372,7 @@ fn merge_gitattributes_text(
     merge_parsed_into(merged, parsed, attr_base.is_empty());
 }
 
-fn config_ignorecase(config: &ConfigSet) -> bool {
+pub(crate) fn config_ignorecase(config: &ConfigSet) -> bool {
     config
         .get_bool("core.ignorecase")
         .unwrap_or(Ok(false))
@@ -650,11 +650,22 @@ pub fn path_gitattribute_value(
     is_dir: bool,
     attr_name: &str,
 ) -> Option<String> {
-    let match_path = attr_path_for_match(path, is_dir);
-    collect_attrs_for_path(rules, &MacroTable::default(), &match_path, false)
+    path_gitattribute_values(rules, &MacroTable::default(), false, path, is_dir)
         .get(attr_name)
         .map(|v| v.display().to_string())
         .filter(|s| s != "unspecified")
+}
+
+/// Every attribute assigned to `path` after macro expansion, with `icase` selecting
+/// case-insensitive pattern matching (`core.ignorecase`).
+pub(crate) fn path_gitattribute_values(
+    rules: &[AttrRule],
+    macros: &MacroTable,
+    icase: bool,
+    path: &str,
+    is_dir: bool,
+) -> std::collections::HashMap<String, crate::attributes::AttrValue> {
+    collect_attrs_for_path(rules, macros, &attr_path_for_match(path, is_dir), icase)
 }
 
 /// Whether `rule` matches `rel_path` given directory vs file context (Git `path_matches`).

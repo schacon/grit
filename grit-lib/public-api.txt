@@ -5123,6 +5123,30 @@ impl core::marker::Unpin for grit_lib::error::ApplyError
 impl core::marker::UnsafeUnpin for grit_lib::error::ApplyError
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::error::ApplyError
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::error::ApplyError
+#[non_exhaustive] pub enum grit_lib::error::AttrPathspecError
+pub grit_lib::error::AttrPathspecError::DanglingEscape
+pub grit_lib::error::AttrPathspecError::Empty
+pub grit_lib::error::AttrPathspecError::InvalidName(alloc::string::String)
+pub grit_lib::error::AttrPathspecError::MultipleAttrClauses
+pub grit_lib::error::AttrPathspecError::UnsupportedEscape
+impl core::clone::Clone for grit_lib::error::AttrPathspecError
+pub fn grit_lib::error::AttrPathspecError::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::error::AttrPathspecError
+impl core::cmp::PartialEq for grit_lib::error::AttrPathspecError
+pub fn grit_lib::error::AttrPathspecError::eq(&self, &Self) -> bool
+impl core::error::Error for grit_lib::error::AttrPathspecError
+impl core::fmt::Debug for grit_lib::error::AttrPathspecError
+pub fn grit_lib::error::AttrPathspecError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::error::AttrPathspecError
+pub fn grit_lib::error::AttrPathspecError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::error::AttrPathspecError
+impl core::marker::Freeze for grit_lib::error::AttrPathspecError
+impl core::marker::Send for grit_lib::error::AttrPathspecError
+impl core::marker::Sync for grit_lib::error::AttrPathspecError
+impl core::marker::Unpin for grit_lib::error::AttrPathspecError
+impl core::marker::UnsafeUnpin for grit_lib::error::AttrPathspecError
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::error::AttrPathspecError
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::error::AttrPathspecError
 pub enum grit_lib::error::BadNumericSource
 pub grit_lib::error::BadNumericSource::InvalidUnit
 pub grit_lib::error::BadNumericSource::OutOfRange
@@ -5301,6 +5325,9 @@ pub grit_lib::error::Error::IndexPathPrefixConflict::file: std::path::PathBuf
 pub grit_lib::error::Error::IndexUnmerged
 pub grit_lib::error::Error::InitBareWithSeparateGitDir
 pub grit_lib::error::Error::InitObjectFormatChange
+pub grit_lib::error::Error::InvalidAttrPathspec
+pub grit_lib::error::Error::InvalidAttrPathspec::reason: grit_lib::error::AttrPathspecError
+pub grit_lib::error::Error::InvalidAttrPathspec::spec: alloc::string::String
 pub grit_lib::error::Error::InvalidHead
 pub grit_lib::error::Error::InvalidIdentity(grit_lib::ident::CommitIdentityError)
 pub grit_lib::error::Error::InvalidNotesRef(alloc::string::String)
@@ -11615,6 +11642,30 @@ pub fn grit_lib::path_validate::component_is_dotgit_alias(&[u8], grit_lib::path_
 pub fn grit_lib::path_validate::validate_component(&[u8], grit_lib::path_validate::EntryMode, grit_lib::path_validate::ProtectOptions, grit_lib::path_validate::PathValidationKind) -> core::result::Result<(), grit_lib::path_validate::PathComponentError>
 pub fn grit_lib::path_validate::validate_path(&[u8], grit_lib::path_validate::EntryMode, grit_lib::path_validate::ProtectOptions, grit_lib::path_validate::PathValidationKind) -> core::result::Result<(), grit_lib::path_validate::PathComponentError>
 pub mod grit_lib::pathspec
+#[non_exhaustive] pub enum grit_lib::pathspec::AttrPathspecError
+pub grit_lib::pathspec::AttrPathspecError::DanglingEscape
+pub grit_lib::pathspec::AttrPathspecError::Empty
+pub grit_lib::pathspec::AttrPathspecError::InvalidName(alloc::string::String)
+pub grit_lib::pathspec::AttrPathspecError::MultipleAttrClauses
+pub grit_lib::pathspec::AttrPathspecError::UnsupportedEscape
+impl core::clone::Clone for grit_lib::error::AttrPathspecError
+pub fn grit_lib::error::AttrPathspecError::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::error::AttrPathspecError
+impl core::cmp::PartialEq for grit_lib::error::AttrPathspecError
+pub fn grit_lib::error::AttrPathspecError::eq(&self, &Self) -> bool
+impl core::error::Error for grit_lib::error::AttrPathspecError
+impl core::fmt::Debug for grit_lib::error::AttrPathspecError
+pub fn grit_lib::error::AttrPathspecError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::error::AttrPathspecError
+pub fn grit_lib::error::AttrPathspecError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::error::AttrPathspecError
+impl core::marker::Freeze for grit_lib::error::AttrPathspecError
+impl core::marker::Send for grit_lib::error::AttrPathspecError
+impl core::marker::Sync for grit_lib::error::AttrPathspecError
+impl core::marker::Unpin for grit_lib::error::AttrPathspecError
+impl core::marker::UnsafeUnpin for grit_lib::error::AttrPathspecError
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::error::AttrPathspecError
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::error::AttrPathspecError
 #[non_exhaustive] pub enum grit_lib::pathspec::PathspecFromFileParseError
 pub grit_lib::pathspec::PathspecFromFileParseError::InvalidCStyleQuoting
 pub grit_lib::pathspec::PathspecFromFileParseError::InvalidCStyleQuoting::line: alloc::string::String
@@ -11823,7 +11874,7 @@ pub fn grit_lib::pathspec::resolve_pathspec(&str, &std::path::Path, core::option
 pub fn grit_lib::pathspec::resolve_pathspec_in_worktree(&str, &str, &std::path::Path, core::option::Option<&str>) -> core::result::Result<alloc::string::String, grit_lib::pathspec::PathOutsideRepository>
 pub fn grit_lib::pathspec::resolve_pathspec_with_argv_precompose(&str, &std::path::Path, core::option::Option<&str>, bool) -> alloc::string::String
 pub fn grit_lib::pathspec::simple_length(&str) -> usize
-pub fn grit_lib::pathspec::validate_attr_pathspecs(&[alloc::string::String]) -> core::result::Result<(), alloc::string::String>
+pub fn grit_lib::pathspec::validate_attr_pathspecs(&[alloc::string::String]) -> grit_lib::error::Result<()>
 pub fn grit_lib::pathspec::validate_global_pathspec_flags() -> core::result::Result<(), alloc::string::String>
 pub mod grit_lib::porcelain
 pub mod grit_lib::porcelain::add
@@ -14796,6 +14847,9 @@ pub grit_lib::prelude::Error::IndexPathPrefixConflict::file: std::path::PathBuf
 pub grit_lib::prelude::Error::IndexUnmerged
 pub grit_lib::prelude::Error::InitBareWithSeparateGitDir
 pub grit_lib::prelude::Error::InitObjectFormatChange
+pub grit_lib::prelude::Error::InvalidAttrPathspec
+pub grit_lib::prelude::Error::InvalidAttrPathspec::reason: grit_lib::error::AttrPathspecError
+pub grit_lib::prelude::Error::InvalidAttrPathspec::spec: alloc::string::String
 pub grit_lib::prelude::Error::InvalidHead
 pub grit_lib::prelude::Error::InvalidIdentity(grit_lib::ident::CommitIdentityError)
 pub grit_lib::prelude::Error::InvalidNotesRef(alloc::string::String)
@@ -25682,6 +25736,30 @@ pub fn grit_lib::worktree::ignore::path_in_sparse_checkout(&str, &[alloc::string
 pub fn grit_lib::worktree::ignore::path_matches_sparse_pattern_list(&str, &[alloc::string::String]) -> core::option::Option<bool>
 pub fn grit_lib::worktree::ignore::submodule_containing_path(&str, &grit_lib::index::Index) -> core::option::Option<alloc::string::String>
 pub mod grit_lib::worktree::pathspec
+#[non_exhaustive] pub enum grit_lib::worktree::pathspec::AttrPathspecError
+pub grit_lib::worktree::pathspec::AttrPathspecError::DanglingEscape
+pub grit_lib::worktree::pathspec::AttrPathspecError::Empty
+pub grit_lib::worktree::pathspec::AttrPathspecError::InvalidName(alloc::string::String)
+pub grit_lib::worktree::pathspec::AttrPathspecError::MultipleAttrClauses
+pub grit_lib::worktree::pathspec::AttrPathspecError::UnsupportedEscape
+impl core::clone::Clone for grit_lib::error::AttrPathspecError
+pub fn grit_lib::error::AttrPathspecError::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::error::AttrPathspecError
+impl core::cmp::PartialEq for grit_lib::error::AttrPathspecError
+pub fn grit_lib::error::AttrPathspecError::eq(&self, &Self) -> bool
+impl core::error::Error for grit_lib::error::AttrPathspecError
+impl core::fmt::Debug for grit_lib::error::AttrPathspecError
+pub fn grit_lib::error::AttrPathspecError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::error::AttrPathspecError
+pub fn grit_lib::error::AttrPathspecError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::error::AttrPathspecError
+impl core::marker::Freeze for grit_lib::error::AttrPathspecError
+impl core::marker::Send for grit_lib::error::AttrPathspecError
+impl core::marker::Sync for grit_lib::error::AttrPathspecError
+impl core::marker::Unpin for grit_lib::error::AttrPathspecError
+impl core::marker::UnsafeUnpin for grit_lib::error::AttrPathspecError
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::error::AttrPathspecError
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::error::AttrPathspecError
 #[non_exhaustive] pub enum grit_lib::worktree::pathspec::PathspecFromFileParseError
 pub grit_lib::worktree::pathspec::PathspecFromFileParseError::InvalidCStyleQuoting
 pub grit_lib::worktree::pathspec::PathspecFromFileParseError::InvalidCStyleQuoting::line: alloc::string::String
@@ -25890,7 +25968,7 @@ pub fn grit_lib::worktree::pathspec::resolve_pathspec(&str, &std::path::Path, co
 pub fn grit_lib::worktree::pathspec::resolve_pathspec_in_worktree(&str, &str, &std::path::Path, core::option::Option<&str>) -> core::result::Result<alloc::string::String, grit_lib::pathspec::PathOutsideRepository>
 pub fn grit_lib::worktree::pathspec::resolve_pathspec_with_argv_precompose(&str, &std::path::Path, core::option::Option<&str>, bool) -> alloc::string::String
 pub fn grit_lib::worktree::pathspec::simple_length(&str) -> usize
-pub fn grit_lib::worktree::pathspec::validate_attr_pathspecs(&[alloc::string::String]) -> core::result::Result<(), alloc::string::String>
+pub fn grit_lib::worktree::pathspec::validate_attr_pathspecs(&[alloc::string::String]) -> grit_lib::error::Result<()>
 pub fn grit_lib::worktree::pathspec::validate_global_pathspec_flags() -> core::result::Result<(), alloc::string::String>
 pub mod grit_lib::worktree::wildmatch
 pub const grit_lib::worktree::wildmatch::WM_CASEFOLD: u32

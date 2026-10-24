@@ -5,8 +5,11 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::error::Error;
 use grit_lib::repo::Repository;
-use grit_lib::worktree::pathspec::pathspec_has_attr_magic;
+use grit_lib::worktree::pathspec::{
+    pathspec_has_attr_magic, validate_attr_pathspecs, AttrPathspecError,
+};
 use tempfile::TempDir;
 
 fn git(root: &Path, args: &[&str]) -> String {
@@ -181,6 +184,166 @@ fn pathspec_matcher_matches_paths_and_renames() {
     assert!(plain_matcher.matches("src/b.rs"));
     assert!(!plain_matcher.matches("src/sub/a.rs"));
     assert!(plain_matcher.matches_change("lib/x.rs", Some("src/b.rs")));
+}
+
+fn init_repo_with(files: &[(&str, &str)], config: &[(&str, &str)]) -> TempDir {
+    let dir = TempDir::new().expect("tempdir");
+    let root = dir.path();
+    git(root, &["init", "-q", "-b", "main", "."]);
+    for (key, value) in config {
+        git(root, &["config", key, value]);
+    }
+    for (path, content) in files {
+        let full = root.join(path);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(full, content).unwrap();
+    }
+    git(root, &["add", "."]);
+    git(root, &["commit", "-qm", "init"]);
+    dir
+}
+
+fn assert_cases_match_git(root: &Path, cases: &[&[&str]]) {
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let all = git_ls_files(root, &[]);
+    for specs in cases {
+        let expected = git_ls_files(root, specs);
+        assert!(
+            !expected.is_empty(),
+            "fixture sanity: git selects {specs:?}"
+        );
+        assert_eq!(
+            grit_matches(&repo, &all, specs),
+            expected,
+            "pathspecs {specs:?}"
+        );
+    }
+}
+
+#[test]
+fn attr_pathspecs_expand_attribute_macros_like_git() {
+    let dir = init_repo_with(
+        &[
+            (
+                ".gitattributes",
+                "[attr]rusty diff=rust linguist-generated\n*.rs rusty\n*.dat binary\n*.cfg diff=\n",
+            ),
+            ("macro.rs", "m\n"),
+            ("empty.cfg", "e\n"),
+            ("plain.txt", "p\n"),
+            ("blob.dat", "d\n"),
+        ],
+        &[],
+    );
+    assert_cases_match_git(
+        dir.path(),
+        &[
+            &[":(attr:diff=rust)"],
+            &[":(attr:rusty)"],
+            &[":(attr:linguist-generated)"],
+            &[":(attr:binary)"],
+            &[":(attr:diff=)"],
+            &[":(attr:-diff)"],
+            &[":(attr:-text)"],
+            &[":(attr:!diff)"],
+            &[":(exclude,attr:diff=rust)"],
+        ],
+    );
+}
+
+#[test]
+fn attr_pathspecs_follow_core_ignorecase_like_git() {
+    let dir = init_repo_with(
+        &[
+            (".gitattributes", "*.UPPER diff=upper\n"),
+            ("case.upper", "c\n"),
+            ("other.txt", "o\n"),
+        ],
+        &[("core.ignorecase", "true")],
+    );
+    assert_cases_match_git(
+        dir.path(),
+        &[
+            &[":(attr:diff=upper)"],
+            &[":(attr:!diff)"],
+            &[":(exclude,attr:diff=upper)"],
+        ],
+    );
+
+    let sensitive = init_repo_with(
+        &[
+            (".gitattributes", "*.UPPER diff=upper\n"),
+            ("case.upper", "c\n"),
+        ],
+        &[("core.ignorecase", "false")],
+    );
+    let repo =
+        Repository::discover(Some(sensitive.path()), &RepositoryOptions::empty()).expect("open");
+    let spec = vec![":(attr:diff=upper)".to_owned()];
+    assert!(!repo.paths_match_pathspecs("case.upper", &spec).unwrap());
+    assert!(git_ls_files(sensitive.path(), &[":(attr:diff=upper)"]).is_empty());
+}
+
+#[test]
+fn malformed_attr_pathspecs_are_rejected_like_git() {
+    let dir = init_attr_repo();
+    let root = dir.path();
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let cases: &[(&str, AttrPathspecError)] = &[
+        (":(attr:)", AttrPathspecError::Empty),
+        (
+            ":(attr:diff,attr:text)",
+            AttrPathspecError::MultipleAttrClauses,
+        ),
+        (
+            ":(exclude,attr:diff,attr:-text)",
+            AttrPathspecError::MultipleAttrClauses,
+        ),
+        (
+            ":(attr:bad/name)",
+            AttrPathspecError::InvalidName("bad/name".to_owned()),
+        ),
+        (
+            ":(attr:-a=b)",
+            AttrPathspecError::InvalidName("a=b".to_owned()),
+        ),
+    ];
+    for (spec, reason) in cases {
+        let out = Command::new("git")
+            .current_dir(root)
+            .args(["ls-files", "--", spec])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .expect("run git");
+        assert_eq!(out.status.code(), Some(128), "git must reject {spec}");
+
+        let specs = vec![(*spec).to_owned()];
+        match repo.pathspec_matcher(&specs) {
+            Err(Error::InvalidAttrPathspec {
+                spec: got,
+                reason: why,
+            }) => {
+                assert_eq!(got, *spec);
+                assert_eq!(&why, reason, "{spec}");
+            }
+            other => panic!("{spec}: expected InvalidAttrPathspec, got {other:?}"),
+        }
+        assert!(repo.paths_match_pathspecs("src/b.rs", &specs).is_err());
+        assert!(validate_attr_pathspecs(&specs).is_err());
+        assert!(pathspec_has_attr_magic(spec), "{spec}");
+    }
+    assert!(validate_attr_pathspecs(&[":(attr:diff=rust)".to_owned(), "src".to_owned()]).is_ok());
+
+    // Whitespace alone is an attr clause with no requirements: Git accepts it as a plain pattern.
+    let all = git_ls_files(root, &[]);
+    for spec in [":(attr:  )src", ":(attr: )"] {
+        assert_eq!(
+            grit_matches(&repo, &all, &[spec]),
+            git_ls_files(root, &[spec]),
+            "{spec}"
+        );
+    }
 }
 
 #[test]

@@ -1188,12 +1188,14 @@ impl Repository {
     /// `:(attr:...)`, which is evaluated against this repository's attributes: the work-tree
     /// stack (global file, root and nested `.gitattributes`, `info/attributes`), or
     /// `info/attributes` and the global file for a bare repository. Attributes are read only
-    /// when a spec carries attr magic, once per matcher, from the per-handle cache. Paths and
-    /// specs follow `core.precomposeunicode`.
+    /// when a spec carries attr magic, once per matcher, from the per-handle cache; `[attr]`
+    /// macros are expanded and `core.ignorecase` makes attribute patterns case-insensitive.
+    /// Paths and specs follow `core.precomposeunicode`.
     ///
     /// # Errors
     ///
-    /// Only when a spec carries attr magic: the error from loading the attribute files (for
+    /// Only when a spec carries attr magic: [`Error::InvalidAttrPathspec`] for a malformed or
+    /// repeated `attr:` clause, or the error from loading config or the attribute files (for
     /// example an unreadable `core.attributesFile` setting or a poisoned cache lock).
     pub fn pathspec_matcher<'s>(
         &self,
@@ -1205,17 +1207,20 @@ impl Repository {
             .any(|spec| crate::pathspec::pathspec_has_attr_magic(spec))
         {
             return Ok(crate::pathspec::PathspecMatcher::new(
-                specs, precompose, None,
+                specs, precompose, None, false,
             ));
         }
+        crate::pathspec::validate_attr_pathspecs(specs)?;
         let attrs = match self.work_tree() {
             Some(work_tree) => self.caches().gitattributes_stack_shared(self, work_tree)?,
             None => self.caches().gitattributes_bare_shared(self)?,
         };
+        let icase = crate::crlf::config_ignorecase(self.config()?.as_ref());
         Ok(crate::pathspec::PathspecMatcher::new(
             specs,
             precompose,
             Some(attrs),
+            icase,
         ))
     }
 
