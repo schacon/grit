@@ -9467,6 +9467,7 @@ pub struct grit_lib::objects::odb::WriteOptions
 pub grit_lib::objects::odb::WriteOptions::assume_loose_only_existence: bool
 pub grit_lib::objects::odb::WriteOptions::silent: bool
 pub grit_lib::objects::odb::WriteOptions::trust_new_loose: bool
+pub grit_lib::objects::odb::WriteOptions::loose_prefix_dirs_ready: bool
 impl core::clone::Clone for grit_lib::objects::odb::WriteOptions
 pub fn grit_lib::objects::odb::WriteOptions::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::objects::odb::WriteOptions
@@ -9486,6 +9487,7 @@ impl core::marker::UnsafeUnpin for grit_lib::objects::odb::WriteOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::odb::WriteOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::odb::WriteOptions
 pub const grit_lib::objects::odb::BULK_NEW_LOOSE_WRITE: grit_lib::objects::odb::WriteOptions
+pub const grit_lib::objects::odb::BULK_TRACKED_RESTAGE_LOOSE_WRITE: grit_lib::objects::odb::WriteOptions
 pub trait grit_lib::objects::odb::ObjectStore: core::marker::Send + core::marker::Sync + core::fmt::Debug
 pub fn grit_lib::objects::odb::ObjectStore::contains(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
 pub fn grit_lib::objects::odb::ObjectStore::for_each_object(&self, &mut dyn core::ops::function::FnMut(&grit_lib::objects::ObjectId) -> core::ops::control_flow::ControlFlow<()>) -> grit_lib::error::Result<()>

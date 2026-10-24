@@ -120,6 +120,70 @@ fn assert_serial_parallel_index_match(sha256: bool) {
     );
 }
 
+fn write_identical_flat_files(root: &Path, count: usize, payload: &[u8]) {
+    let pinned = FileTime::from_unix_time(1_700_000_000, 0);
+    for i in 0..count {
+        let path = root.join(format!("f{i}.txt"));
+        fs::write(&path, payload).expect("write");
+        filetime::set_file_mtime(&path, pinned).expect("pin mtime");
+    }
+}
+
+/// Parallel loose writes must not race when many paths hash to the same blob OID.
+#[test]
+fn parallel_bulk_add_identical_content_no_loose_write_race() {
+    const N: usize = 5_000;
+    const THREADS: usize = 4;
+    const ROUNDS: usize = 20;
+    let payload = b"identical payload for shared blob oid\n";
+    for round in 0..ROUNDS {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        write_identical_flat_files(root, N, payload);
+        let repo = init_grit_repo(root, false, Some(THREADS));
+        stage_all(&repo);
+        assert!(
+            git_fsck_ok(root),
+            "git fsck after identical-content add (round {round})"
+        );
+    }
+}
+
+/// Issue #1651: bulk first-time add on an empty index with `core.preloadIndex=false`.
+#[test]
+fn bulk_untracked_add_empty_index_preload_off_serial_parallel_match() {
+    const N: usize = 5_000;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_wide_tree(root, N);
+    pin_all_file_mtrees(root, N);
+
+    fn disable_preload_index(repo: &Repository) {
+        let path = repo.git_dir().join("config");
+        let mut cfg = fs::read_to_string(&path).expect("read config");
+        cfg.push_str("\n[core]\n\tpreloadIndex = false\n");
+        fs::write(path, cfg).expect("write config");
+    }
+
+    let repo_serial = init_grit_repo(root, false, Some(1));
+    disable_preload_index(&repo_serial);
+    let serial_index = stage_all(&repo_serial);
+
+    reset_staging_area(&repo_serial);
+    let parallel_threads = std::thread::available_parallelism()
+        .map(|n| n.get().max(2))
+        .unwrap_or(2);
+    let repo_parallel = init_grit_repo(root, false, Some(parallel_threads));
+    disable_preload_index(&repo_parallel);
+    let parallel_index = stage_all(&repo_parallel);
+
+    assert_eq!(
+        serial_index, parallel_index,
+        "serial and parallel bulk add must match with preloadIndex=false"
+    );
+    assert!(git_fsck_ok(root));
+}
+
 #[test]
 fn parallel_add_index_matches_serial_sha1() {
     assert_serial_parallel_index_match(false);

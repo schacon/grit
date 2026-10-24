@@ -19,7 +19,7 @@ use crate::index::{
     entry_from_stat, worktree_path_from_index_rel, Index, IndexEntry, MODE_GITLINK,
 };
 use crate::objects::{ObjectId, ObjectKind};
-use crate::odb::BULK_NEW_LOOSE_WRITE;
+use crate::odb::BULK_TRACKED_RESTAGE_LOOSE_WRITE;
 pub use crate::porcelain::bulk_index::IndexStagingThresholds;
 use crate::precompose_config::effective_core_precomposeunicode_with_config;
 use crate::repo::Repository;
@@ -785,7 +785,7 @@ fn restage_deferred_jobs(
         rules.conversion(),
         parallelism,
         Some(rules.filter_process()),
-        BULK_NEW_LOOSE_WRITE,
+        BULK_TRACKED_RESTAGE_LOOSE_WRITE,
     )?;
 
     let mut replacements = Vec::new();

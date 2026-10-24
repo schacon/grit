@@ -110,7 +110,7 @@ impl LooseStore {
             .parent()
             .ok_or_else(|| Error::PathError("object path has no parent".to_owned()))?;
         let zlib = zlib_compress_store_bytes(store_bytes, self.compression)?;
-        publish_zlib_loose_object(&path, prefix_dir, oid, &zlib)?;
+        publish_zlib_loose_object(&path, prefix_dir, oid, &zlib, false)?;
         Ok(*oid)
     }
 
@@ -135,7 +135,13 @@ impl LooseStore {
         let prefix_dir = path
             .parent()
             .ok_or_else(|| Error::PathError("object path has no parent".to_owned()))?;
-        publish_zlib_loose_object(&path, prefix_dir, oid, zlib_store)?;
+        publish_zlib_loose_object(
+            &path,
+            prefix_dir,
+            oid,
+            zlib_store,
+            options.loose_prefix_dirs_ready,
+        )?;
         Ok(*oid)
     }
 
@@ -556,29 +562,46 @@ fn hash_algo_digest_hex(algo: HashAlgo, data: &[u8]) -> Result<String> {
     Ok(algo.digest(data)?.to_hex())
 }
 
+fn unique_loose_tmp_path(prefix_dir: &Path) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    prefix_dir.join(format!("tmp_{}_{seq}", std::process::id()))
+}
+
 fn publish_zlib_loose_object(
     path: &Path,
     prefix_dir: &Path,
-    oid: &ObjectId,
+    _oid: &ObjectId,
     zlib_store: &[u8],
+    prefix_dir_ready: bool,
 ) -> Result<()> {
-    fs::create_dir_all(prefix_dir).map_err(Error::Io)?;
-    let tmp_path = oid.loose_tmp_path_in_prefix(prefix_dir);
+    if !prefix_dir_ready {
+        fs::create_dir_all(prefix_dir).map_err(Error::Io)?;
+    }
+    let tmp_path = unique_loose_tmp_path(prefix_dir);
     if let Err(e) = fs::write(&tmp_path, zlib_store) {
         let _ = fs::remove_file(&tmp_path);
         return Err(Error::Io(e));
     }
     match fs::rename(&tmp_path, path) {
-        Ok(()) => {}
+        Ok(()) => {
+            set_loose_object_mode(path);
+        }
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
             let _ = fs::remove_file(&tmp_path);
+            if !path.is_file() {
+                return Err(Error::Io(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "loose object path exists but is not a file",
+                )));
+            }
         }
         Err(e) => {
             let _ = fs::remove_file(&tmp_path);
             return Err(Error::Io(e));
         }
     }
-    set_loose_object_mode(path);
     Ok(())
 }
 

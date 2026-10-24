@@ -112,6 +112,9 @@ pub struct WriteOptions {
     /// When set, skip existence probes and write when the loose path is absent
     /// (bulk add of all-new blobs).
     pub trust_new_loose: bool,
+    /// When set, skip `create_dir_all` on the loose prefix directory (call
+    /// [`Odb::ensure_all_loose_prefix_dirs`] first).
+    pub loose_prefix_dirs_ready: bool,
 }
 
 /// [`WriteOptions`] for parallel staging of new worktree blobs (bulk `git add`).
@@ -119,6 +122,15 @@ pub const BULK_NEW_LOOSE_WRITE: WriteOptions = WriteOptions {
     assume_loose_only_existence: true,
     trust_new_loose: true,
     silent: false,
+    loose_prefix_dirs_ready: true,
+};
+
+/// Parallel restage of tracked modifications (objects may already be loose or packed).
+pub const BULK_TRACKED_RESTAGE_LOOSE_WRITE: WriteOptions = WriteOptions {
+    assume_loose_only_existence: true,
+    trust_new_loose: false,
+    silent: false,
+    loose_prefix_dirs_ready: true,
 };
 
 /// True when `oid` is stored as a loose object or in a **non-promisor** local pack.
