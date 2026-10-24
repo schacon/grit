@@ -6,7 +6,9 @@ use std::sync::Arc;
 use crate::bitmap_walk::{BitmapWalkError, ReachabilityQuery, ReachableSet};
 use crate::environment::RepositoryOptions;
 use crate::error::Result;
-use crate::objects::{parse_commit, parse_tag, parse_tree, Object, ObjectId, ObjectKind};
+use crate::objects::{
+    oid_hash_set, parse_commit, parse_tag, Object, ObjectId, ObjectKind, OidHashSet, TreeRefIter,
+};
 use crate::odb::Odb;
 use crate::pack_bitmap::BitmapIndex;
 use crate::pack_name_hash::pack_name_hash;
@@ -23,7 +25,8 @@ pub struct PackObjectSelection {
     pub have_closure: HashSet<ObjectId>,
     /// Git pack name-hash per blob (from bitmap cache or tree walk).
     pub blob_name_hashes: HashMap<ObjectId, u32>,
-    /// Objects already loaded during a tree walk (avoids rereading loose objects for pack build).
+    /// Commits, trees and tags already read during a tree walk (avoids rereading loose
+    /// objects for pack build). Blobs found in trees are never read by the walk.
     pub walk_prefetch: HashMap<ObjectId, Object>,
 }
 
@@ -44,8 +47,11 @@ pub struct PackEnumerateOptions<'a> {
     /// Precomputed peer object closure to subtract from `wants` during a walk
     /// (for example when haves live in a different ODB than `wants`).
     pub exclude_objects: Option<&'a HashSet<ObjectId>>,
-    /// When false, the object walk records oids only: blob bodies are not read and
-    /// [`PackObjectSelection::walk_prefetch`] stays empty (reuse-only repacks).
+    /// When true, the commits, trees and tags read by the object walk are kept in
+    /// [`PackObjectSelection::walk_prefetch`] so the pack builder does not read them
+    /// again. They are kept only for repositories without local packs, where the
+    /// builder needs payloads up front; with packs, objects are copied from the packs
+    /// at write time. Blobs found in trees are never read by the walk.
     pub prefetch_walk_objects: bool,
 }
 
@@ -191,13 +197,17 @@ fn walk_enumeration(
         let (send, blob_name_hashes) = rev_list_filtered_objects(odb, wants, haves, opts.filter)?;
         (send, blob_name_hashes, HashMap::new())
     } else {
+        // With local packs the delta planner copies packed objects at write time
+        // instead of reusing walked payloads, so holding them would only cost memory.
+        let keep_payloads = opts.prefetch_walk_objects
+            && !crate::pack_objects::objects_dir_has_local_packs(odb.objects_dir());
         collect_reachable_excluding_with_name_hashes(
             odb,
             wants,
             &have_closure,
             false,
             opts.shallow_grafts,
-            opts.prefetch_walk_objects,
+            keep_payloads,
         )?
     };
     Ok(PackObjectSelection {
@@ -223,7 +233,7 @@ pub(crate) fn reachable_closure_walk(
         stop,
         skip_missing,
         shallow_grafts,
-        true,
+        false,
     )?
     .0;
     for oid in order {
@@ -268,6 +278,10 @@ fn rev_list_filtered_objects(
     Ok((ordered, HashMap::new()))
 }
 
+/// Walk objects reachable from `roots` in discovery order, with blob name hashes.
+///
+/// When `keep_payloads` is set, the commits, trees and tags read by the walk are
+/// returned as well so the pack builder does not read them again.
 #[allow(clippy::type_complexity)]
 fn collect_reachable_excluding_with_name_hashes(
     odb: &Odb,
@@ -275,13 +289,14 @@ fn collect_reachable_excluding_with_name_hashes(
     exclude: &HashSet<ObjectId>,
     skip_missing: bool,
     shallow_grafts: &HashSet<ObjectId>,
-    prefetch_walk_objects: bool,
+    keep_payloads: bool,
 ) -> Result<(
     Vec<ObjectId>,
     HashMap<ObjectId, u32>,
     HashMap<ObjectId, Object>,
 )> {
-    let mut visited: HashSet<ObjectId> = HashSet::new();
+    let oid_len = odb.hash_algo().len();
+    let mut visited: OidHashSet = oid_hash_set();
     let mut ordered: Vec<ObjectId> = Vec::new();
     let mut queue: VecDeque<(ObjectId, String)> = VecDeque::new();
     let mut blob_name_hashes: HashMap<ObjectId, u32> = HashMap::new();
@@ -290,7 +305,7 @@ fn collect_reachable_excluding_with_name_hashes(
     let enqueue = |oid: ObjectId,
                    path: String,
                    queue: &mut VecDeque<(ObjectId, String)>,
-                   visited: &mut HashSet<ObjectId>,
+                   visited: &mut OidHashSet,
                    ordered: &mut Vec<ObjectId>|
      -> bool {
         if !visited.insert(oid) {
@@ -308,16 +323,6 @@ fn collect_reachable_excluding_with_name_hashes(
     }
 
     while let Some((oid, path)) = queue.pop_front() {
-        if !prefetch_walk_objects {
-            let info = match odb.read_info(&oid) {
-                Ok(i) => i,
-                Err(_) if skip_missing => continue,
-                Err(e) => return Err(e),
-            };
-            if info.kind == ObjectKind::Blob {
-                continue;
-            }
-        }
         let obj = match odb.read(&oid) {
             Ok(o) => o,
             Err(_) if skip_missing => continue,
@@ -346,44 +351,34 @@ fn collect_reachable_excluding_with_name_hashes(
                 );
             }
             ObjectKind::Tree => {
-                for entry in parse_tree(&obj.data)? {
-                    if entry.mode == 0o160000 {
+                for entry in TreeRefIter::with_oid_len(&obj.data, oid_len) {
+                    let entry = entry?;
+                    if entry.mode == 0o160000 || !visited.insert(entry.oid) {
                         continue;
                     }
-                    let name = String::from_utf8_lossy(&entry.name);
+                    if !exclude.contains(&entry.oid) {
+                        ordered.push(entry.oid);
+                    }
+                    // Regular files and symlinks have no children: record them
+                    // without inflating their contents. The pack writer reads (or
+                    // copies verbatim) each one later and fails there if it is
+                    // missing. Any other mode, including directories written with
+                    // non-canonical permission bits, is read so the object's own
+                    // kind decides whether it is walked.
+                    let file_type = entry.mode & 0o170000;
+                    if file_type == 0o120000 {
+                        continue;
+                    }
+                    let name = String::from_utf8_lossy(entry.name);
                     let child_path = if path.is_empty() {
                         name.into_owned()
                     } else {
                         format!("{path}/{name}")
                     };
-                    if entry.mode == 0o040000 {
-                        enqueue(
-                            entry.oid,
-                            child_path,
-                            &mut queue,
-                            &mut visited,
-                            &mut ordered,
-                        );
-                    } else if entry.mode & 0o170000 == 0o100000 {
-                        if enqueue(
-                            entry.oid,
-                            child_path.clone(),
-                            &mut queue,
-                            &mut visited,
-                            &mut ordered,
-                        ) {
-                            blob_name_hashes
-                                .entry(entry.oid)
-                                .or_insert_with(|| pack_name_hash(&child_path));
-                        }
+                    if file_type == 0o100000 {
+                        blob_name_hashes.insert(entry.oid, pack_name_hash(&child_path));
                     } else {
-                        enqueue(
-                            entry.oid,
-                            child_path,
-                            &mut queue,
-                            &mut visited,
-                            &mut ordered,
-                        );
+                        queue.push_back((entry.oid, child_path));
                     }
                 }
             }
@@ -393,7 +388,7 @@ fn collect_reachable_excluding_with_name_hashes(
             }
             ObjectKind::Blob => {}
         }
-        if prefetch_walk_objects {
+        if keep_payloads {
             walk_prefetch.insert(oid, obj);
         }
     }
@@ -476,6 +471,77 @@ mod tests {
         assert!(
             without_prefetch.walk_prefetch.is_empty(),
             "reuse-only repack walk must not retain blob payloads"
+        );
+    }
+
+    fn tree_entry(mode: &str, name: &str, oid: ObjectId) -> Vec<u8> {
+        let mut bytes = format!("{mode} {name}\0").into_bytes();
+        bytes.extend_from_slice(oid.as_bytes());
+        bytes
+    }
+
+    /// Old tools wrote tree entries with non-canonical modes (`40755` for a
+    /// directory, `100664` for a file). Git walks them by their type bits, so the
+    /// enumeration must too, or everything below such a directory is left out.
+    #[test]
+    fn walk_descends_into_trees_with_non_canonical_modes() {
+        let tmp = tempfile::tempdir().unwrap();
+        Repository::init(tmp.path(), &InitOptions::new().with_bare(true)).unwrap();
+        let repo = Repository::open(tmp.path(), &RepositoryOptions::empty()).unwrap();
+        let odb = repo.odb();
+        let deep = odb
+            .write_loose_materialize(ObjectKind::Blob, b"deep\n")
+            .unwrap();
+        let odd = odb
+            .write_loose_materialize(ObjectKind::Blob, b"odd\n")
+            .unwrap();
+        let inner = odb
+            .write_loose_materialize(ObjectKind::Tree, &tree_entry("100644", "deep.txt", deep))
+            .unwrap();
+        let mut root = tree_entry("100664", "odd.txt", odd);
+        root.extend(tree_entry("40755", "sub", inner));
+        let root = odb
+            .write_loose_materialize(ObjectKind::Tree, &root)
+            .unwrap();
+        let commit = format!(
+            "tree {root}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\nodd modes\n"
+        );
+        let commit = odb
+            .write_loose_materialize(ObjectKind::Commit, commit.as_bytes())
+            .unwrap();
+
+        let empty = HashSet::new();
+        let selection = enumerate_pack_objects(
+            odb,
+            &[commit],
+            &[],
+            &PackEnumerateOptions {
+                filter: None,
+                shallow_grafts: &empty,
+                have_shallow_grafts: Some(&empty),
+                use_bitmaps: false,
+                exclude_objects: None,
+                prefetch_walk_objects: true,
+            },
+        )
+        .unwrap();
+
+        let ours: HashSet<ObjectId> = selection.send.iter().copied().collect();
+        let git: HashSet<ObjectId> =
+            grit_test_support::git(tmp.path(), &["rev-list", "--objects", &commit.to_hex()])
+                .lines()
+                .map(|line| ObjectId::from_hex(&line[..40]).unwrap())
+                .collect();
+        assert_eq!(ours, git, "same objects as git rev-list --objects");
+        assert!(ours.contains(&inner) && ours.contains(&deep));
+        assert_eq!(selection.send.len(), 5);
+        assert_eq!(
+            selection.blob_name_hashes.get(&deep),
+            Some(&pack_name_hash("sub/deep.txt"))
+        );
+        assert_eq!(
+            selection.blob_name_hashes.get(&odd),
+            Some(&pack_name_hash("odd.txt"))
         );
     }
 }
