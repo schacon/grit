@@ -311,7 +311,6 @@ fn add_explicit_paths_limits_worktree_stat_probes() {
 }
 
 #[test]
-#[test]
 fn commit_staged_after_single_edit_avoids_full_tree_stat_refresh() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();

@@ -340,12 +340,11 @@ fn stage_inner_on_index(
     let restrict_to_paths = if opts.pathspecs.is_empty() {
         None
     } else {
-        let matched = index_paths_matching_pathspecs(repo, index, &opts.pathspecs);
-        if matched.is_empty() {
-            None
-        } else {
-            Some(Arc::new(matched))
-        }
+        Some(Arc::new(index_paths_matching_pathspecs(
+            repo,
+            index,
+            &opts.pathspecs,
+        )))
     };
     let mut tracked_scan_summary = None;
     let (unstaged, staging_stats) = if index.entries.is_empty() {
@@ -1733,6 +1732,42 @@ mod tests {
         let b_blob = repo.odb().read(&b_oid).unwrap();
         assert_eq!(a_blob.data, b"a2\n");
         assert_eq!(b_blob.data, b"b\n");
+    }
+
+    #[test]
+    fn stage_untracked_pathspec_does_not_stage_unrelated_tracked_modifications() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        let mut index = Index::new();
+        stage_file_in_index(&repo, &mut index, "tracked.txt", b"tracked\n");
+        write_index(&repo, &mut index);
+        fs::write(root.join("tracked.txt"), b"tracked-modified\n").unwrap();
+        fs::write(root.join("new.txt"), b"fresh\n").unwrap();
+
+        let outcome = stage(
+            &repo,
+            &StageOptions {
+                pathspecs: vec!["new.txt".to_owned()],
+                pathspec_sources: vec!["new.txt".to_owned()],
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap();
+        assert_eq!(outcome.added, vec!["new.txt".to_owned()]);
+        assert!(
+            outcome.modified.is_empty(),
+            "must not stage unrelated tracked edits"
+        );
+
+        let index = repo.load_index().unwrap();
+        let tracked_oid = index.get(b"tracked.txt", 0).unwrap().oid;
+        let tracked_blob = repo.odb().read(&tracked_oid).unwrap();
+        assert_eq!(
+            tracked_blob.data, b"tracked\n",
+            "tracked.txt index entry must stay at pre-add content"
+        );
     }
 
     #[test]

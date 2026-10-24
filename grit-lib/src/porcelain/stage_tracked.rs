@@ -235,6 +235,17 @@ pub fn replay_deferred_untracked_invalidations(index: &mut Index, summary: &Stag
     }
 }
 
+/// When `restrict` is `Some`, only paths in the set are scanned (including empty = no tracked scan).
+fn tracked_scan_includes_path(restrict: Option<&BTreeSet<String>>, raw_path: &[u8]) -> bool {
+    let Some(set) = restrict else {
+        return true;
+    };
+    let path = std::str::from_utf8(raw_path)
+        .map(str::to_owned)
+        .unwrap_or_else(|_| String::from_utf8_lossy(raw_path).into_owned());
+    set.contains(&path)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn stage_tracked_modifications_in_index_body(
     repo: &Repository,
@@ -283,12 +294,18 @@ fn stage_tracked_modifications_in_index_body(
     let mut dir_symlinks = SymlinkDirCache::default();
 
     for raw_path in &unmerged_paths {
+        if !tracked_scan_includes_path(restrict_to_paths, raw_path) {
+            continue;
+        }
         let abs_path =
             abs_path_for_stage_tracked(work_tree, raw_path, precompose_unicode, ignorecase);
         refresh_unmerged_tracked_path(repo, index, raw_path, &abs_path, rules, &mut summary)?;
     }
 
     for (raw_path, idx_e) in &special_stage0 {
+        if !tracked_scan_includes_path(restrict_to_paths, raw_path) {
+            continue;
+        }
         stage_tracked_path_individual(
             repo,
             work_tree,
@@ -325,10 +342,9 @@ fn stage_tracked_modifications_in_index_body(
         )?;
         honor_fsmonitor = refresh.honor_valid_bits;
     }
-    let blob_dirs = if let Some(paths) = restrict_to_paths.filter(|p| !p.is_empty()) {
-        group_blob_entries_by_dir_for_paths(index, paths)
-    } else {
-        group_blob_entries_by_dir(index, honor_fsmonitor)
+    let blob_dirs = match restrict_to_paths {
+        Some(paths) => group_blob_entries_by_dir_for_paths(index, paths),
+        None => group_blob_entries_by_dir(index, honor_fsmonitor),
     };
     let work_tree_owned = work_tree.to_path_buf();
     let dir_abs = move |dir: &[u8]| {
