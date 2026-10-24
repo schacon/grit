@@ -3,6 +3,7 @@
 use crate::commands::merge::MergeConflictJson;
 use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
+use crate::progress::summary::{stdout_color, TransferSummary};
 use anyhow::Result;
 use grit_lib::change_id::ChangeId;
 use grit_lib::objects::ObjectId;
@@ -66,6 +67,10 @@ pub struct PullOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub check: Option<PullCheckJson>,
+    /// What the fetch step received and where the time went, for the human summary.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub transfer: TransferSummary,
 }
 
 pub fn map_outcome(outcome: LibPullOutcome) -> PullOutcome {
@@ -97,6 +102,7 @@ pub fn map_outcome(outcome: LibPullOutcome) -> PullOutcome {
         ahead: outcome.ahead,
         behind: outcome.behind,
         check: outcome.check.map(map_check),
+        transfer: TransferSummary::new(outcome.transfer, Vec::new(), Default::default()),
     }
 }
 
@@ -206,6 +212,10 @@ impl HumanRender for PullOutcome {
                     self.branch
                 );
             }
+        }
+        if self.transfer.received_anything() {
+            outln!(w);
+            self.transfer.render_rows(w, stdout_color())?;
         }
         Ok(())
     }

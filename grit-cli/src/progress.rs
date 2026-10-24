@@ -1,7 +1,7 @@
 //! Terminal progress for fetch, pull and clone: one live line per phase with a
 //! scrolling, colored throughput graph, kept on screen as a summary line when
-//! the phase finishes. Clone adds an overall bar under the live line that
-//! estimates how far the whole operation is and how long is left.
+//! the phase finishes. Clone, fetch and pull add an overall bar under the live
+//! line that estimates how far the whole operation is and how long is left.
 //!
 //! Phase timings are recorded even when nothing is drawn (non-TTY stderr,
 //! `--json`, `--markdown`) so commands can report them in their outcome.
@@ -17,6 +17,8 @@ use grit_lib::remote::sideband_lines::{RemoteLine, SidebandLines};
 use terminal_size::{terminal_size, Width};
 
 use crate::output::OutputMode;
+
+pub mod summary;
 
 /// Minimum time between in-place redraws.
 const MIN_REDRAW: Duration = Duration::from_millis(80);
@@ -210,6 +212,12 @@ impl TerminalProgress {
     #[must_use]
     pub fn uses_color(&self) -> bool {
         self.color
+    }
+
+    /// Time since the sink was created, on the same clock as [`PhaseRecord::started_at`].
+    #[must_use]
+    pub fn elapsed(&self) -> Duration {
+        self.since_start()
     }
 
     /// Phases finished so far, in order.

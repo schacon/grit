@@ -8382,6 +8382,8 @@ impl core::iter::traits::collect::FromIterator<grit_lib::objects::ObjectKind> fo
 pub fn grit_lib::objects::index_pack::ObjectKindCounts::from_iter<I: core::iter::traits::collect::IntoIterator<Item = grit_lib::objects::ObjectKind>>(I) -> Self
 impl core::marker::Copy for grit_lib::objects::index_pack::ObjectKindCounts
 impl core::marker::StructuralPartialEq for grit_lib::objects::index_pack::ObjectKindCounts
+impl core::ops::arith::AddAssign for grit_lib::objects::index_pack::ObjectKindCounts
+pub fn grit_lib::objects::index_pack::ObjectKindCounts::add_assign(&mut self, Self)
 impl core::marker::Freeze for grit_lib::objects::index_pack::ObjectKindCounts
 impl core::marker::Send for grit_lib::objects::index_pack::ObjectKindCounts
 impl core::marker::Sync for grit_lib::objects::index_pack::ObjectKindCounts
@@ -13312,6 +13314,7 @@ pub grit_lib::porcelain::pull::PullOutcome::conflicts: core::option::Option<allo
 pub grit_lib::porcelain::pull::PullOutcome::label: alloc::string::String
 pub grit_lib::porcelain::pull::PullOutcome::oid: core::option::Option<grit_lib::objects::ObjectId>
 pub grit_lib::porcelain::pull::PullOutcome::result: grit_lib::porcelain::pull::PullResult
+pub grit_lib::porcelain::pull::PullOutcome::transfer: grit_lib::remote::transfer::TransferStats
 pub grit_lib::porcelain::pull::PullOutcome::upstream: core::option::Option<alloc::string::String>
 impl core::clone::Clone for grit_lib::porcelain::pull::PullOutcome
 pub fn grit_lib::porcelain::pull::PullOutcome::clone(&self) -> Self
@@ -19679,6 +19682,8 @@ impl core::fmt::Debug for grit_lib::remote::transfer::TransferStats
 pub fn grit_lib::remote::transfer::TransferStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for grit_lib::remote::transfer::TransferStats
 impl core::marker::StructuralPartialEq for grit_lib::remote::transfer::TransferStats
+impl core::ops::arith::AddAssign for grit_lib::remote::transfer::TransferStats
+pub fn grit_lib::remote::transfer::TransferStats::add_assign(&mut self, Self)
 impl core::marker::Freeze for grit_lib::remote::transfer::TransferStats
 impl core::marker::Send for grit_lib::remote::transfer::TransferStats
 impl core::marker::Sync for grit_lib::remote::transfer::TransferStats

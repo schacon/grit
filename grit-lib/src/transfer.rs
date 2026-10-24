@@ -467,6 +467,26 @@ impl TransferStats {
     }
 }
 
+/// Totals across several transfers, such as every remote of a fetch-all.
+///
+/// Counts and bytes add up. [`TransferStats::kinds`] stays known only while every
+/// transfer that received objects reported its type breakdown.
+impl std::ops::AddAssign for TransferStats {
+    fn add_assign(&mut self, other: Self) {
+        self.kinds = match (self.kinds, other.kinds) {
+            (Some(mut mine), Some(theirs)) => {
+                mine += theirs;
+                Some(mine)
+            }
+            (mine, None) if other.objects == 0 => mine,
+            (None, theirs) if self.objects == 0 => theirs,
+            _ => None,
+        };
+        self.objects += other.objects;
+        self.bytes += other.bytes;
+    }
+}
+
 /// The structured result of a fetch, ready for the embedder's ref-store apply.
 #[derive(Clone, Debug, Default)]
 pub struct FetchOutcome {
@@ -3308,6 +3328,48 @@ mod tests {
             first_progress.is_some(),
             "expected set/inc after start during copy"
         );
+    }
+
+    #[test]
+    fn transfer_stats_add_up_and_keep_kinds_only_when_known() {
+        use crate::index_pack::ObjectKindCounts;
+        let kinds = |commits, blobs| ObjectKindCounts {
+            commits,
+            trees: 0,
+            blobs,
+            tags: 0,
+        };
+        let mut total = TransferStats::default();
+        total += TransferStats {
+            objects: 3,
+            bytes: 100,
+            kinds: Some(kinds(1, 2)),
+        };
+        // An up-to-date remote adds nothing and does not erase the breakdown.
+        total += TransferStats::default();
+        total += TransferStats {
+            objects: 2,
+            bytes: 50,
+            kinds: Some(kinds(1, 1)),
+        };
+        assert_eq!(
+            total,
+            TransferStats {
+                objects: 5,
+                bytes: 150,
+                kinds: Some(kinds(2, 3)),
+            }
+        );
+
+        // A transfer without a breakdown makes the combined breakdown unknown.
+        total += TransferStats {
+            objects: 4,
+            bytes: 10,
+            kinds: None,
+        };
+        assert_eq!(total.objects, 9);
+        assert_eq!(total.bytes, 160);
+        assert_eq!(total.kinds, None);
     }
 
     #[test]

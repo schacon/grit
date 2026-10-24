@@ -23,6 +23,10 @@ When the source is a **literal path or URL** (not a configured remote), grit doe
 
 Human output lists each local ref with its remote source and old → new oids. Pruned refs show `deleted`; rejected updates are listed and exit **1** (same as [`grit push`](../push/) rejections). When a stale remote-tracking ref blocks another update (for example `origin/gone/x` still exists locally but the remote now has `gone`), grit still applies every ref it can and reports the blocked ref as rejected; the `reason` field suggests `grit fetch --prune` or `grit remote prune <remote>` when pruning would remove the stale ref.
 
+When the fetch received objects, the ref list is followed by the same transfer summary [`grit clone`](../clone/) prints: a `time` bar splitting the run into connecting, receiving, indexing, resolving deltas and finishing; the `data` received off the wire with its average and peak rate; and the `objects` received by type. Nothing extra is printed when the fetch was already up to date. With `--all`, one summary after the last remote covers the whole run.
+
+On a terminal, stderr first shows `Fetching <remote> <url>`, then one live progress line per phase with a throughput graph and, under it, an overall bar with a time-left estimate. Finished phases stay on screen as `✓` lines. When stderr is not a TTY, or with `--json`, `--markdown` or `-q`, no progress is drawn.
+
 Tag policy follows Git: default is follow-tags (reachable annotated tags), `--tags` fetches every remote tag, `--no-tags` disables automatic tags. `remote.<name>.tagOpt` (`--tags` / `--no-tags`) applies when the CLI does not override it.
 
 `--dry-run` negotiates and reports updates without writing refs, objects, or `FETCH_HEAD`. Human output ends with **Would fetch N update(s) from …** when anything would change, or **Already up to date with …** when nothing would.
@@ -60,6 +64,18 @@ Fetched 1 update from origin.
 $ grit fetch
 Already up to date with origin.
 
+$ grit fetch origin '+refs/heads/*:refs/remotes/origin/*'
+  refs/remotes/origin/ag/bstr-migration  ← refs/heads/ag/bstr-migration  new → 4b88e08
+  refs/remotes/origin/ag/changelog  ← refs/heads/ag/changelog  new → f3146f8
+  …
+  refs/remotes/origin/ag/snafu  ← refs/heads/ag/snafu  new → 7bf7ceb
+Fetched 15 updates from origin.
+
+  time      ···································█·▓▒·  1.4s
+            · connect 1.3s  █ receiving 0ms  ▓ indexing 13ms  ▒ resolving 22ms  · finish 139ms
+  data      201 KiB received
+  objects   249 · 35 commits · 82 trees · 132 blobs
+
 $ grit fetch --prune
   refs/remotes/origin/gone1  a1b2c3d → deleted
 Fetched 1 update from origin.
@@ -69,6 +85,24 @@ $ grit fetch --dry-run --prune
   refs/remotes/origin/feature  ← refs/heads/feature  new → b52cca6
 Would fetch 2 updates from origin.
 ```
+
+On a terminal, with progress on stderr above the summary (here filling in a shallow clone, which moves no refs):
+
+```console
+$ grit fetch --unshallow
+Fetching origin https://github.com/BurntSushi/ripgrep.git
+✓ Receiving  ▇▇▄▄▄▄▅▅▅▆▆▆▆▆▆▆▆█▇▇█          4.66 MiB          381 KiB/s   12.5s
+✓ Indexing   ▆▆▆▆▆▆▆▆▆▆▆██████████    13,689 objects    82.2k objects/s   166ms
+✓ Resolving  ▃▃▃▃▃▃▃▃▃▃▃██████████      9,877 deltas     49.1k deltas/s   201ms
+Already up to date with origin.
+
+  time      ·······████████████████████████████·▓▒··  18.1s
+            · connect 3.0s  █ receiving 12.5s  ▓ indexing 166ms  ▒ resolving 201ms  · finish 2.1s
+  data      4.66 MiB received · 381 KiB/s avg · 583 KiB/s peak
+  objects   13,845 · 2,297 commits · 6,306 trees · 4,973 blobs · 269 tags
+```
+
+The rates are left out when the pack arrived in a single read, too fast to time. A fetch pack can be *thin*: grit completes it with the delta bases it already has, so `objects` can be a little higher than the `Indexing` count.
 
 Fetch a pull request ref into a local branch:
 
