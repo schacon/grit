@@ -1614,6 +1614,58 @@ mod line_coverage_tests {
         }
     }
 
+    /// One whole blob plus `extra_deltas` unique append OFS-deltas (system git accepts these packs).
+    fn pack_one_whole_plus_append_ofs_deltas(extra_deltas: usize) -> Vec<u8> {
+        let mut pb = PackBuilder::new(HashAlgo::Sha1);
+        let mut data = b"deep-chain-seed\n".to_vec();
+        let mut idx = pb.add_full(PK::Blob, &data);
+        for _ in 0..extra_deltas {
+            let prev = data.clone();
+            data.push(b'!');
+            let delta = crate::delta_encode::encode_lcp_delta(&prev, &data).expect("append delta");
+            idx = pb.add_ofs_delta(idx, &delta, delta.len());
+        }
+        let _ = idx;
+        pb.build().bytes
+    }
+
+    fn git_index_pack_succeeds(pack: &[u8]) -> bool {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("in.pack");
+        std::fs::write(&path, pack).expect("write pack");
+        std::process::Command::new("git")
+            .current_dir(dir.path())
+            .args(["index-pack", "-v", &path.to_string_lossy()])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn deep_ofs_delta_chain_matches_git_index_pack() {
+        const EXTRA: usize = 3002;
+        const OBJECTS: usize = 1 + EXTRA;
+        let pack = pack_one_whole_plus_append_ofs_deltas(EXTRA);
+        assert_eq!(
+            u32::from_be_bytes([pack[8], pack[9], pack[10], pack[11]]) as usize,
+            OBJECTS
+        );
+        assert!(
+            git_index_pack_succeeds(&pack),
+            "system git must index a {OBJECTS}-object OFS-delta chain"
+        );
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let odb = Odb::new(tmp.path());
+        for threads in [1_usize, 2] {
+            let records =
+                build_pack_index_records(&pack, &odb, Parallelism::resolve(Some(threads)), true)
+                    .unwrap_or_else(|e| panic!("threads={threads} deep chain: {e}"));
+            assert_eq!(records.len(), OBJECTS, "threads={threads}");
+        }
+    }
+
     #[test]
     fn parallel_scan_rejects_bad_trailer() {
         let mut pb = PackBuilder::new(HashAlgo::Sha1);
