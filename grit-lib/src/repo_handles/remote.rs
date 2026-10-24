@@ -318,10 +318,14 @@ impl<'repo> RepositoryRemotes<'repo> {
             let outcome = self
                 .get(&name)
                 .and_then(|remote| self.fetch(&remote, opts, progress, cancel, http_factory));
-            results.push((name, outcome));
-            if cancel.is_cancelled() {
+            if matches!(
+                &outcome,
+                Err(RemoteError::Library(crate::error::Error::Cancelled))
+            ) {
                 return Err(crate::error::Error::Cancelled);
             }
+            results.push((name, outcome));
+            crate::progress::poll_cancel(progress, cancel)?;
         }
         Ok(results)
     }

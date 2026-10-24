@@ -677,7 +677,7 @@ impl core::marker::UnsafeUnpin for grit_lib::bundle::bundle_remote::BundleCreate
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::bundle::bundle_remote::BundleCreateOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::bundle::bundle_remote::BundleCreateOptions
 pub fn grit_lib::bundle::bundle_remote::fetch_from_bundle(&std::path::Path, &std::path::Path, &grit_lib::remote::transfer::FetchOptions) -> grit_lib::error::Result<grit_lib::remote::transfer::FetchOutcome>
-pub fn grit_lib::bundle::bundle_remote::fetch_from_bundle_with_progress(&std::path::Path, &std::path::Path, &grit_lib::remote::transfer::FetchOptions, &mut dyn grit_lib::remote::fetch::Progress) -> grit_lib::error::Result<grit_lib::remote::transfer::FetchOutcome>
+pub fn grit_lib::bundle::bundle_remote::fetch_from_bundle_with_progress(&std::path::Path, &std::path::Path, &grit_lib::remote::transfer::FetchOptions, &mut dyn grit_lib::remote::fetch::Progress, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<grit_lib::remote::transfer::FetchOutcome>
 pub fn grit_lib::bundle::bundle_remote::is_bundle_path(&std::path::Path) -> bool
 pub fn grit_lib::bundle::bundle_remote::plan_create_with_options(&grit_lib::repo::Repository, &grit_lib::bundle::bundle_remote::BundleCreateOptions) -> grit_lib::error::Result<grit_lib::bundle::BundleCreatePlan>
 pub fn grit_lib::bundle::bundle_remote::resolve_bundle_spec(&grit_lib::repo::Repository, &grit_lib::bundle::bundle_remote::BundleCreateOptions) -> grit_lib::error::Result<grit_lib::bundle::BundleSpec>
@@ -686,6 +686,7 @@ pub fn grit_lib::bundle::bundle_remote::write_bundle_from_rev_specs(&grit_lib::r
 pub fn grit_lib::bundle::bundle_remote::write_bundle_with_options(&grit_lib::repo::Repository, &std::path::Path, &grit_lib::bundle::bundle_remote::BundleCreateOptions) -> grit_lib::error::Result<usize>
 #[non_exhaustive] pub enum grit_lib::bundle::BundleError
 pub grit_lib::bundle::BundleError::BadSignature
+pub grit_lib::bundle::BundleError::Cancelled
 pub grit_lib::bundle::BundleError::EmptyRefs
 pub grit_lib::bundle::BundleError::Io(alloc::string::String)
 pub grit_lib::bundle::BundleError::MalformedLine(alloc::string::String)
@@ -748,7 +749,7 @@ pub fn grit_lib::bundle::Bundle::pack_byte_offset(&self) -> u64
 pub fn grit_lib::bundle::Bundle::pack_object_count(&self) -> core::result::Result<u32, grit_lib::bundle::BundleError>
 pub fn grit_lib::bundle::Bundle::path(&self) -> &std::path::Path
 pub fn grit_lib::bundle::Bundle::unbundle(&self, &grit_lib::repo::Repository) -> core::result::Result<alloc::vec::Vec<grit_lib::bundle::UnbundledRef>, grit_lib::bundle::BundleError>
-pub fn grit_lib::bundle::Bundle::unbundle_with_progress(&self, &grit_lib::repo::Repository, &mut dyn grit_lib::progress::ProgressSink) -> core::result::Result<grit_lib::bundle::UnbundleOutcome, grit_lib::bundle::BundleError>
+pub fn grit_lib::bundle::Bundle::unbundle_with_progress(&self, &grit_lib::repo::Repository, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> core::result::Result<grit_lib::bundle::UnbundleOutcome, grit_lib::bundle::BundleError>
 pub fn grit_lib::bundle::Bundle::verify(&self, &grit_lib::repo::Repository) -> core::result::Result<grit_lib::bundle::BundleVerifyReport, grit_lib::bundle::BundleError>
 impl core::clone::Clone for grit_lib::bundle::Bundle
 pub fn grit_lib::bundle::Bundle::clone(&self) -> Self
@@ -4509,6 +4510,7 @@ impl core::marker::UnsafeUnpin for grit_lib::diff::DiffFilter
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::DiffFilter
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::DiffFilter
 pub struct grit_lib::diff::DiffIndexToWorktreeOptions
+pub grit_lib::diff::DiffIndexToWorktreeOptions::cancel_watch: core::option::Option<alloc::rcs::arc::Arc<core::sync::atomic::AtomicBool>>
 pub grit_lib::diff::DiffIndexToWorktreeOptions::command_runner: core::option::Option<alloc::rcs::arc::Arc<dyn grit_lib::command_runner::CommandRunner>>
 pub grit_lib::diff::DiffIndexToWorktreeOptions::config: core::option::Option<alloc::rcs::arc::Arc<grit_lib::config::ConfigSet>>
 pub grit_lib::diff::DiffIndexToWorktreeOptions::error_on_broken_gitlinks: bool
@@ -4971,7 +4973,7 @@ pub fn grit_lib::diff::count_git_lines(&[u8]) -> usize
 pub fn grit_lib::diff::detect_copies(&grit_lib::objects::odb::Odb, core::option::Option<&std::path::Path>, alloc::vec::Vec<grit_lib::diff::DiffEntry>, u32, bool, &[(alloc::string::String, alloc::string::String, grit_lib::objects::ObjectId)]) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
 pub fn grit_lib::diff::detect_copies_with_policy(&grit_lib::objects::odb::Odb, core::option::Option<&std::path::Path>, alloc::vec::Vec<grit_lib::diff::DiffEntry>, u32, bool, &[(alloc::string::String, alloc::string::String, grit_lib::objects::ObjectId)], &grit_lib::config::ConfigSet, &grit_lib::parallel::ThreadPolicy) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
 pub fn grit_lib::diff::detect_renames(&grit_lib::objects::odb::Odb, core::option::Option<&std::path::Path>, alloc::vec::Vec<grit_lib::diff::DiffEntry>, u32) -> alloc::vec::Vec<grit_lib::diff::DiffEntry>
-pub fn grit_lib::diff::detect_renames_with_policy(&grit_lib::objects::odb::Odb, core::option::Option<&std::path::Path>, alloc::vec::Vec<grit_lib::diff::DiffEntry>, u32, &grit_lib::config::ConfigSet, &grit_lib::parallel::ThreadPolicy) -> alloc::vec::Vec<grit_lib::diff::DiffEntry>
+pub fn grit_lib::diff::detect_renames_with_policy(&grit_lib::objects::odb::Odb, core::option::Option<&std::path::Path>, alloc::vec::Vec<grit_lib::diff::DiffEntry>, u32, &grit_lib::config::ConfigSet, &grit_lib::parallel::ThreadPolicy, core::option::Option<&core::sync::atomic::AtomicBool>) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
 pub fn grit_lib::diff::diff_commits(&grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
 pub fn grit_lib::diff::diff_commits_with_renames(&grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &grit_lib::objects::ObjectId, u32) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
 pub fn grit_lib::diff::diff_commits_with_renames_and_policy(&grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &grit_lib::objects::ObjectId, u32, &grit_lib::config::ConfigSet, &grit_lib::parallel::ThreadPolicy) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
@@ -5044,7 +5046,7 @@ pub fn grit_lib::diff::should_break_rewrite_pair(&[u8], &[u8], u64) -> bool
 pub fn grit_lib::diff::smudge_racily_clean_entries(&grit_lib::objects::odb::Odb, &std::path::Path, &mut grit_lib::index::Index, &std::path::Path, core::option::Option<(u32, u32)>, core::option::Option<&grit_lib::config::ConfigSet>, core::option::Option<&grit_lib::filter_process::FilterProcessState>) -> bool
 pub fn grit_lib::diff::stat_matches(&grit_lib::index::IndexEntry, &std::fs::Metadata) -> bool
 pub fn grit_lib::diff::stat_matches_with_policy(&grit_lib::index::IndexEntry, &std::fs::Metadata, grit_lib::index::StatMatchPolicy) -> bool
-pub fn grit_lib::diff::status_apply_rename_copy_detection(&grit_lib::objects::odb::Odb, alloc::vec::Vec<grit_lib::diff::DiffEntry>, u32, bool, core::option::Option<&grit_lib::objects::ObjectId>, &grit_lib::config::ConfigSet, &grit_lib::parallel::ThreadPolicy) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
+pub fn grit_lib::diff::status_apply_rename_copy_detection(&grit_lib::objects::odb::Odb, alloc::vec::Vec<grit_lib::diff::DiffEntry>, u32, bool, core::option::Option<&grit_lib::objects::ObjectId>, &grit_lib::config::ConfigSet, &grit_lib::parallel::ThreadPolicy, core::option::Option<&core::sync::atomic::AtomicBool>) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
 pub fn grit_lib::diff::submodule_commit_subject_line(&grit_lib::objects::CommitData) -> alloc::string::String
 pub fn grit_lib::diff::submodule_embedded_git_dir(&std::path::Path) -> core::option::Option<std::path::PathBuf>
 pub fn grit_lib::diff::submodule_head_object_broken(&std::path::Path) -> bool
@@ -6383,7 +6385,7 @@ pub fn grit_lib::index::untracked_cache::dir_flags_from_config(&grit_lib::config
 pub fn grit_lib::index::untracked_cache::ensure_untracked_cache_shell(&mut grit_lib::index::Index, &std::path::Path, &grit_lib::config::ConfigSet)
 pub fn grit_lib::index::untracked_cache::invalidate_path(&mut grit_lib::index::untracked_cache::UntrackedCache, &str)
 pub fn grit_lib::index::untracked_cache::parse_untracked_extension(&[u8]) -> core::option::Option<grit_lib::index::untracked_cache::UntrackedCache>
-pub fn grit_lib::index::untracked_cache::refresh_untracked_cache_for_status(&grit_lib::repo::Repository, &grit_lib::index::Index, &std::path::Path, &grit_lib::config::ConfigSet, &mut grit_lib::index::untracked_cache::UntrackedCache, bool, grit_lib::index::untracked_cache::UntrackedIgnoredMode) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::untracked_cache::refresh_untracked_cache_for_status(&grit_lib::repo::Repository, &grit_lib::index::Index, &std::path::Path, &grit_lib::config::ConfigSet, &mut grit_lib::index::untracked_cache::UntrackedCache, bool, grit_lib::index::untracked_cache::UntrackedIgnoredMode, core::option::Option<&core::sync::atomic::AtomicBool>) -> grit_lib::error::Result<()>
 pub fn grit_lib::index::untracked_cache::try_untracked_from_valid_cache(&grit_lib::repo::Repository, &std::path::Path, &grit_lib::config::ConfigSet, &mut grit_lib::index::untracked_cache::UntrackedCache, bool) -> grit_lib::error::Result<core::option::Option<alloc::vec::Vec<alloc::string::String>>>
 pub fn grit_lib::index::untracked_cache::untracked_cache_enabled_for_status(&grit_lib::config::ConfigSet, &grit_lib::index::Index) -> bool
 pub fn grit_lib::index::untracked_cache::untracked_cache_ident(&std::path::Path) -> alloc::vec::Vec<u8>
@@ -14339,7 +14341,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::status::Untra
 pub fn grit_lib::porcelain::status::collect_untracked_and_ignored(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &std::path::Path, grit_lib::porcelain::status::IgnoredMode, bool, &[alloc::string::String]) -> grit_lib::error::Result<(alloc::vec::Vec<alloc::string::String>, alloc::vec::Vec<alloc::string::String>)>
 pub fn grit_lib::porcelain::status::collect_untracked_and_ignored_with_cache(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &std::path::Path, grit_lib::porcelain::status::IgnoredMode, bool, &[alloc::string::String], bool) -> grit_lib::error::Result<(alloc::vec::Vec<alloc::string::String>, alloc::vec::Vec<alloc::string::String>)>
 pub fn grit_lib::porcelain::status::collect_untracked_and_ignored_with_rules(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &std::path::Path, grit_lib::porcelain::status::IgnoredMode, bool, &[alloc::string::String], &grit_lib::worktree::worktree_rules::WorktreeRules) -> grit_lib::error::Result<(alloc::vec::Vec<alloc::string::String>, alloc::vec::Vec<alloc::string::String>, grit_lib::porcelain::status::UntrackedCollectMeta)>
-pub fn grit_lib::porcelain::status::collect_untracked_and_ignored_with_rules_and_cancel(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &std::path::Path, grit_lib::porcelain::status::IgnoredMode, bool, &[alloc::string::String], &grit_lib::worktree::worktree_rules::WorktreeRules, core::option::Option<&dyn grit_lib::progress::Cancel>) -> grit_lib::error::Result<(alloc::vec::Vec<alloc::string::String>, alloc::vec::Vec<alloc::string::String>, grit_lib::porcelain::status::UntrackedCollectMeta)>
+pub fn grit_lib::porcelain::status::collect_untracked_and_ignored_with_rules_and_cancel(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &std::path::Path, grit_lib::porcelain::status::IgnoredMode, bool, &[alloc::string::String], &grit_lib::worktree::worktree_rules::WorktreeRules, core::option::Option<alloc::rcs::arc::Arc<core::sync::atomic::AtomicBool>>) -> grit_lib::error::Result<(alloc::vec::Vec<alloc::string::String>, alloc::vec::Vec<alloc::string::String>, grit_lib::porcelain::status::UntrackedCollectMeta)>
 pub fn grit_lib::porcelain::status::conflict_kind_from_stagemask(u8) -> grit_lib::porcelain::status::ConflictKind
 pub fn grit_lib::porcelain::status::conflict_kind_from_stages(bool, bool, bool) -> grit_lib::porcelain::status::ConflictKind
 pub fn grit_lib::porcelain::status::conflicts_from_index(&grit_lib::index::Index) -> alloc::vec::Vec<grit_lib::porcelain::status::Conflict>
@@ -15933,6 +15935,7 @@ impl core::fmt::Debug for grit_lib::progress::FlagCancel
 pub fn grit_lib::progress::FlagCancel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl grit_lib::progress::Cancel for grit_lib::progress::FlagCancel
 pub fn grit_lib::progress::FlagCancel::is_cancelled(&self) -> bool
+pub fn grit_lib::progress::FlagCancel::shared_watch(&self) -> core::option::Option<alloc::rcs::arc::Arc<core::sync::atomic::AtomicBool>>
 impl core::marker::Freeze for grit_lib::progress::FlagCancel
 impl core::marker::Send for grit_lib::progress::FlagCancel
 impl core::marker::Sync for grit_lib::progress::FlagCancel
@@ -15950,6 +15953,7 @@ pub fn grit_lib::progress::NeverCancel::fmt(&self, &mut core::fmt::Formatter<'_>
 impl core::marker::Copy for grit_lib::progress::NeverCancel
 impl grit_lib::progress::Cancel for grit_lib::progress::NeverCancel
 pub fn grit_lib::progress::NeverCancel::is_cancelled(&self) -> bool
+pub fn grit_lib::progress::NeverCancel::shared_watch(&self) -> core::option::Option<alloc::rcs::arc::Arc<core::sync::atomic::AtomicBool>>
 impl core::marker::Freeze for grit_lib::progress::NeverCancel
 impl core::marker::Send for grit_lib::progress::NeverCancel
 impl core::marker::Sync for grit_lib::progress::NeverCancel
@@ -16061,12 +16065,32 @@ impl core::marker::Unpin for grit_lib::progress::ReceivedObjects
 impl core::marker::UnsafeUnpin for grit_lib::progress::ReceivedObjects
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::progress::ReceivedObjects
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::progress::ReceivedObjects
+pub struct grit_lib::progress::WatchProgress<'a>
+impl<'a> grit_lib::progress::WatchProgress<'a>
+pub fn grit_lib::progress::WatchProgress<'a>::new(&'a mut dyn grit_lib::progress::ProgressSink, alloc::rcs::arc::Arc<core::sync::atomic::AtomicBool>) -> Self
+impl grit_lib::progress::ProgressSink for grit_lib::progress::WatchProgress<'_>
+pub fn grit_lib::progress::WatchProgress<'_>::finish(&mut self)
+pub fn grit_lib::progress::WatchProgress<'_>::inc(&mut self, u64)
+pub fn grit_lib::progress::WatchProgress<'_>::set(&mut self, u64)
+pub fn grit_lib::progress::WatchProgress<'_>::should_cancel(&self) -> bool
+pub fn grit_lib::progress::WatchProgress<'_>::start(&mut self, grit_lib::progress::ProgressPhase, core::option::Option<u64>)
+pub fn grit_lib::progress::WatchProgress<'_>::start_with_unit(&mut self, grit_lib::progress::ProgressPhase, grit_lib::progress::ProgressUnit, core::option::Option<u64>)
+impl<'a> core::marker::Freeze for grit_lib::progress::WatchProgress<'a>
+impl<'a> !core::marker::Send for grit_lib::progress::WatchProgress<'a>
+impl<'a> !core::marker::Sync for grit_lib::progress::WatchProgress<'a>
+impl<'a> core::marker::Unpin for grit_lib::progress::WatchProgress<'a>
+impl<'a> core::marker::UnsafeUnpin for grit_lib::progress::WatchProgress<'a>
+impl<'a> !core::panic::unwind_safe::RefUnwindSafe for grit_lib::progress::WatchProgress<'a>
+impl<'a> !core::panic::unwind_safe::UnwindSafe for grit_lib::progress::WatchProgress<'a>
 pub trait grit_lib::progress::Cancel
 pub fn grit_lib::progress::Cancel::is_cancelled(&self) -> bool
+pub fn grit_lib::progress::Cancel::shared_watch(&self) -> core::option::Option<alloc::rcs::arc::Arc<core::sync::atomic::AtomicBool>>
 impl grit_lib::progress::Cancel for grit_lib::progress::FlagCancel
 pub fn grit_lib::progress::FlagCancel::is_cancelled(&self) -> bool
+pub fn grit_lib::progress::FlagCancel::shared_watch(&self) -> core::option::Option<alloc::rcs::arc::Arc<core::sync::atomic::AtomicBool>>
 impl grit_lib::progress::Cancel for grit_lib::progress::NeverCancel
 pub fn grit_lib::progress::NeverCancel::is_cancelled(&self) -> bool
+pub fn grit_lib::progress::NeverCancel::shared_watch(&self) -> core::option::Option<alloc::rcs::arc::Arc<core::sync::atomic::AtomicBool>>
 pub trait grit_lib::progress::ProgressSink
 pub fn grit_lib::progress::ProgressSink::finish(&mut self)
 pub fn grit_lib::progress::ProgressSink::inc(&mut self, u64)
@@ -16081,6 +16105,13 @@ pub fn grit_lib::progress::NullProgress::set(&mut self, u64)
 pub fn grit_lib::progress::NullProgress::should_cancel(&self) -> bool
 pub fn grit_lib::progress::NullProgress::start(&mut self, grit_lib::progress::ProgressPhase, core::option::Option<u64>)
 pub fn grit_lib::progress::NullProgress::start_with_unit(&mut self, grit_lib::progress::ProgressPhase, grit_lib::progress::ProgressUnit, core::option::Option<u64>)
+impl grit_lib::progress::ProgressSink for grit_lib::progress::WatchProgress<'_>
+pub fn grit_lib::progress::WatchProgress<'_>::finish(&mut self)
+pub fn grit_lib::progress::WatchProgress<'_>::inc(&mut self, u64)
+pub fn grit_lib::progress::WatchProgress<'_>::set(&mut self, u64)
+pub fn grit_lib::progress::WatchProgress<'_>::should_cancel(&self) -> bool
+pub fn grit_lib::progress::WatchProgress<'_>::start(&mut self, grit_lib::progress::ProgressPhase, core::option::Option<u64>)
+pub fn grit_lib::progress::WatchProgress<'_>::start_with_unit(&mut self, grit_lib::progress::ProgressPhase, grit_lib::progress::ProgressUnit, core::option::Option<u64>)
 impl grit_lib::progress::ProgressSink for grit_lib::remote::fetch::NoProgress
 pub fn grit_lib::remote::fetch::NoProgress::finish(&mut self)
 pub fn grit_lib::remote::fetch::NoProgress::inc(&mut self, u64)
@@ -16095,7 +16126,10 @@ pub fn &mut T::set(&mut self, u64)
 pub fn &mut T::should_cancel(&self) -> bool
 pub fn &mut T::start(&mut self, grit_lib::progress::ProgressPhase, core::option::Option<u64>)
 pub fn &mut T::start_with_unit(&mut self, grit_lib::progress::ProgressPhase, grit_lib::progress::ProgressUnit, core::option::Option<u64>)
+pub fn grit_lib::progress::cancel_watch_arc(&dyn grit_lib::progress::Cancel) -> alloc::rcs::arc::Arc<core::sync::atomic::AtomicBool>
 pub fn grit_lib::progress::poll_cancel(&mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<()>
+pub fn grit_lib::progress::poll_cancel_watch(&mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel, &core::sync::atomic::AtomicBool) -> grit_lib::error::Result<()>
+pub fn grit_lib::progress::poll_watch(&core::sync::atomic::AtomicBool) -> grit_lib::error::Result<()>
 pub mod grit_lib::quote_path
 pub fn grit_lib::quote_path::format_diff_path_with_prefix(&str, &str, bool) -> alloc::string::String
 pub fn grit_lib::quote_path::quote_c_style(&str, bool) -> alloc::string::String

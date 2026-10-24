@@ -2543,8 +2543,15 @@ pub fn diff_trees_with_renames_and_policy(
 ) -> Result<Vec<DiffEntry>> {
     let mut entries = diff_trees(odb, old_tree_oid, new_tree_oid, prefix)?;
     if rename_threshold <= 100 {
-        entries =
-            detect_renames_with_policy(odb, None, entries, rename_threshold, config, thread_policy);
+        entries = detect_renames_with_policy(
+            odb,
+            None,
+            entries,
+            rename_threshold,
+            config,
+            thread_policy,
+            None,
+        )?;
     }
     Ok(entries)
 }
@@ -3252,14 +3259,15 @@ pub fn apply_rename_detection_to_diff_entries(
             &opts,
         )
     } else {
-        Ok(detect_renames_with_policy(
+        detect_renames_with_policy(
             odb,
             None,
             entries,
             rename_threshold,
             config,
             thread_policy,
-        ))
+            None,
+        )
     }
 }
 
@@ -4096,6 +4104,9 @@ pub struct DiffIndexToWorktreeOptions {
     pub restrict_to_paths: Option<std::sync::Arc<std::collections::BTreeSet<String>>>,
     /// When true with staging materialization, compute blob OIDs without writing loose objects.
     pub hash_blobs_without_write: bool,
+    /// When set, long loops abort with [`crate::error::Error::Cancelled`] once the flag is raised
+    /// (see [`crate::progress::cancel_watch_arc`] and [`crate::progress::poll_cancel_watch`]).
+    pub cancel_watch: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Default for DiffIndexToWorktreeOptions {
@@ -4117,8 +4128,19 @@ impl Default for DiffIndexToWorktreeOptions {
             fsmonitor_query_boundary: None,
             restrict_to_paths: None,
             hash_blobs_without_write: false,
+            cancel_watch: None,
         }
     }
+}
+
+#[inline]
+fn poll_diff_cancel_watch(
+    watch: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> crate::error::Result<()> {
+    if let Some(flag) = watch {
+        crate::progress::poll_watch(flag)?;
+    }
+    Ok(())
 }
 
 struct StagingHashJob {
@@ -4663,6 +4685,8 @@ fn diff_index_to_worktree_inner(
     use std::collections::BTreeMap;
 
     let mut staging_stat_cache = BTreeMap::new();
+    let cancel_watch = options.cancel_watch.as_ref();
+    poll_diff_cancel_watch(cancel_watch)?;
     let index_mtime = index_mtime_for_diff(index, options.index_mtime);
 
     let ignore_submodule_untracked = options.ignore_submodule_untracked;
@@ -4764,6 +4788,7 @@ fn diff_index_to_worktree_inner(
     let error_on_broken_gitlinks = options.error_on_broken_gitlinks;
     if options.restrict_to_paths.is_none() {
         for ie in &index.entries {
+            poll_diff_cancel_watch(cancel_watch)?;
             if ie.stage() != 0 {
                 let path = String::from_utf8_lossy(&ie.path).to_string();
                 let rank = match ie.stage() {
@@ -4809,6 +4834,7 @@ fn diff_index_to_worktree_inner(
         }
     } else {
         for ie in &index.entries {
+            poll_diff_cancel_watch(cancel_watch)?;
             if ie.stage() != 0 {
                 continue;
             }
@@ -4910,6 +4936,7 @@ fn diff_index_to_worktree_inner(
         sparse,
     )?;
     visit_blob_lookup_batches(blob_stat_batches, |entry_index, lookup| {
+        poll_diff_cancel_watch(cancel_watch)?;
         let path_owned = crate::repo_relpath::storage_string(&index.entries[entry_index].path);
         let path_str_ref = path_owned.as_str();
         if use_fsmonitor_stat_skip {
@@ -7090,7 +7117,18 @@ pub fn detect_renames(
 ) -> Vec<DiffEntry> {
     let config = ConfigSet::new();
     let policy = ThreadPolicy::default();
-    detect_renames_with_policy(odb, work_root, entries, threshold, &config, &policy)
+    detect_renames_with_policy(odb, work_root, entries, threshold, &config, &policy, None)
+        .expect("rename detection")
+}
+
+#[inline]
+fn poll_rename_cancel(
+    cancel_watch: Option<&std::sync::atomic::AtomicBool>,
+) -> crate::error::Result<()> {
+    if let Some(watch) = cancel_watch {
+        crate::progress::poll_watch(watch)?;
+    }
+    Ok(())
 }
 
 /// Like [`detect_renames`], but honors `index.threads` / `--threads` via `thread_policy`.
@@ -7102,7 +7140,9 @@ pub fn detect_renames_with_policy(
     threshold: u32,
     config: &ConfigSet,
     thread_policy: &ThreadPolicy,
-) -> Vec<DiffEntry> {
+    cancel_watch: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<Vec<DiffEntry>> {
+    poll_rename_cancel(cancel_watch)?;
     // Split entries into deleted, added, and others.
     let mut deleted: Vec<DiffEntry> = Vec::new();
     let mut added: Vec<DiffEntry> = Vec::new();
@@ -7124,7 +7164,7 @@ pub fn detect_renames_with_policy(
         if !entries_sorted_by_path(&result) {
             result.sort_by(|a, b| a.path().cmp(b.path()));
         }
-        return result;
+        return Ok(result);
     }
 
     fn is_regularish_mode(mode: &str) -> bool {
@@ -7193,6 +7233,7 @@ pub fn detect_renames_with_policy(
     // Git always runs exact rename detection, regardless of renameLimit.
     let mut exact_scores: Vec<(u32, usize, usize)> = Vec::new();
     for (di, del) in deleted.iter().enumerate() {
+        poll_rename_cancel(cancel_watch)?;
         for (ai, add) in added.iter().enumerate() {
             if del.old_oid == add.new_oid {
                 exact_scores.push((100, di, ai));
@@ -7244,6 +7285,7 @@ pub fn detect_renames_with_policy(
         let mut load_added = vec![false; remaining_added.len()];
         let mut candidate_pairs: Vec<(usize, usize)> = Vec::new();
         for (row, &di) in remaining_deleted.iter().enumerate() {
+            poll_rename_cancel(cancel_watch)?;
             let del = &deleted[di];
             if !is_regularish_mode(&del.old_mode) {
                 continue;
@@ -7363,6 +7405,7 @@ pub fn detect_renames_with_policy(
 
             let mut inexact_scores: Vec<(u32, usize, usize)> = Vec::new();
             for (row, col) in candidate_pairs {
+                poll_rename_cancel(cancel_watch)?;
                 let di = remaining_deleted[row];
                 let ai = remaining_added[col];
                 let (Some(old_table), Some(new_table)) = (&deleted_tables[row], &added_tables[col])
@@ -7402,7 +7445,7 @@ pub fn detect_renames_with_policy(
 
     result = prune_break_deletions_obviated_by_renames(result);
     result.sort_by(|a, b| a.path().cmp(b.path()));
-    result
+    Ok(result)
 }
 
 /// Detect copies among diff entries.
@@ -8066,14 +8109,15 @@ pub fn postprocess_diff_entries(
             thread_policy,
         )
     } else if opts.rename_threshold < 100 {
-        Ok(detect_renames_with_policy(
+        detect_renames_with_policy(
             odb,
             work_root,
             entries,
             opts.rename_threshold,
             config,
             thread_policy,
-        ))
+            None,
+        )
     } else {
         Ok(entries)
     }
@@ -8130,16 +8174,18 @@ pub fn status_apply_rename_copy_detection(
     head_tree: Option<&ObjectId>,
     config: &ConfigSet,
     thread_policy: &ThreadPolicy,
+    cancel_watch: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<Vec<DiffEntry>> {
     if !copies {
-        return Ok(detect_renames_with_policy(
+        return detect_renames_with_policy(
             odb,
             None,
             unstaged_raw,
             threshold,
             config,
             thread_policy,
-        ));
+            cancel_watch,
+        );
     }
     let source_tree_entries: Vec<(String, String, ObjectId)> = match head_tree {
         Some(oid) => flatten_tree(odb, oid, "")?
@@ -13077,7 +13123,8 @@ mod line_coverage_tests {
         assert!(!with_renames.is_empty());
         let config = ConfigSet::new();
         let policy = ThreadPolicy::default();
-        let detected = detect_renames_with_policy(&odb, None, raw.clone(), 50, &config, &policy);
+        let detected =
+            detect_renames_with_policy(&odb, None, raw.clone(), 50, &config, &policy, None)?;
         let source_flat = flatten_tree_entries(&odb, &old_tree)?;
         let _ = detect_copies_with_policy(
             &odb,
@@ -13115,6 +13162,7 @@ mod line_coverage_tests {
             Some(&old_tree),
             &config,
             &policy,
+            None,
         )?;
         let flat = flatten_tree_entries(&odb, &new_tree)?;
         assert!(!flat.is_empty());

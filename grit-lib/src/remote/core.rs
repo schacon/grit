@@ -544,6 +544,7 @@ impl Remote {
                 path,
                 opts,
                 progress,
+                cancel,
             )?),
             RemoteUrl::Local(_) | RemoteUrl::File(_) => {
                 let remote_git = local_git_dir_from_url(url, repo.git_dir(), repo.work_tree())?;

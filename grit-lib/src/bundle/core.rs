@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
-use std::io::{BufRead, Seek, Write};
+use std::io::{BufRead, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
@@ -186,6 +186,9 @@ pub enum BundleError {
     /// Underlying I/O failure.
     #[error("{0}")]
     Io(String),
+    /// The operation was cancelled before the bundle finished unpacking.
+    #[error("operation cancelled")]
+    Cancelled,
 }
 
 impl From<std::io::Error> for BundleError {
@@ -350,7 +353,9 @@ impl Bundle {
         &self,
         repo: &Repository,
     ) -> std::result::Result<Vec<UnbundledRef>, BundleError> {
-        Ok(self.unbundle_with_progress(repo, &mut NullProgress)?.refs)
+        Ok(self
+            .unbundle_with_progress(repo, &mut NullProgress, &crate::progress::NeverCancel)?
+            .refs)
     }
 
     /// Like [`Self::unbundle`], reporting receive and index-pack progress through `progress`.
@@ -358,12 +363,17 @@ impl Bundle {
         &self,
         repo: &Repository,
         progress: &mut dyn ProgressSink,
+        cancel: &dyn crate::progress::Cancel,
     ) -> std::result::Result<UnbundleOutcome, BundleError> {
         if !repo.odb().uses_files_primary() {
             return Err(BundleError::UnsupportedObjectStore {
                 operation: "unbundle",
             });
         }
+        crate::progress::poll_cancel(progress, cancel).map_err(|e| match e {
+            crate::error::Error::Cancelled => BundleError::Cancelled,
+            other => BundleError::Io(other.to_string()),
+        })?;
         if self.header.object_format != repo.odb().hash_algo() {
             return Err(BundleError::ObjectFormatMismatch {
                 bundle_name: self.header.object_format.name(),
@@ -385,11 +395,28 @@ impl Bundle {
             Seek::seek(&mut input, std::io::SeekFrom::Start(self.pack_offset))
                 .map_err(BundleError::from)?;
             let mut output = std::io::BufWriter::new(tmp.as_file());
-            let copied = std::io::copy(&mut input, &mut output).map_err(BundleError::from)?;
+            let mut copied = 0u64;
+            let mut buf = [0u8; 64 * 1024];
+            loop {
+                crate::progress::poll_cancel(progress, cancel).map_err(|e| match e {
+                    crate::error::Error::Cancelled => BundleError::Cancelled,
+                    other => BundleError::Io(other.to_string()),
+                })?;
+                let n = input.read(&mut buf).map_err(BundleError::from)?;
+                if n == 0 {
+                    break;
+                }
+                output.write_all(&buf[..n]).map_err(BundleError::from)?;
+                copied = copied.saturating_add(n as u64);
+                progress.set(copied);
+            }
             output.flush().map_err(BundleError::from)?;
-            progress.set(copied);
         }
         progress.finish();
+        crate::progress::poll_cancel(progress, cancel).map_err(|e| match e {
+            crate::error::Error::Cancelled => BundleError::Cancelled,
+            other => BundleError::Io(other.to_string()),
+        })?;
         let opts = IngestPackOptions {
             fix_thin: true,
             ..Default::default()

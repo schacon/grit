@@ -158,7 +158,11 @@ impl<'repo> RepositoryBundles<'repo> {
     ///
     /// Returns [`BundleError`] or ingest failures.
     pub fn unbundle(&self, path: &Path) -> std::result::Result<UnbundleOutcome, BundleError> {
-        Bundle::open(path)?.unbundle_with_progress(self.repo, &mut NullProgress)
+        Bundle::open(path)?.unbundle_with_progress(
+            self.repo,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
     }
 
     /// Like [`Self::unbundle`], reporting progress through `progress`.
@@ -167,7 +171,11 @@ impl<'repo> RepositoryBundles<'repo> {
         path: &Path,
         progress: &mut dyn ProgressSink,
     ) -> std::result::Result<UnbundleOutcome, BundleError> {
-        Bundle::open(path)?.unbundle_with_progress(self.repo, progress)
+        Bundle::open(path)?.unbundle_with_progress(
+            self.repo,
+            progress,
+            &crate::progress::NeverCancel,
+        )
     }
 
     /// Open a bundle file handle for repeated operations.
