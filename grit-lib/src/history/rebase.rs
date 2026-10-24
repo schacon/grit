@@ -773,6 +773,11 @@ mod tests {
 
     #[test]
     fn rebase_range_enumeration_is_bounded_on_deep_linear_history() {
+        use crate::merge_base::{
+            commits_reachable_excluding_ancestors_of,
+            intersect_walk_test_hooks::{commit_parent_lookups, reset_commit_parent_lookups},
+        };
+
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = Repository::init(
             dir.path(),
@@ -782,35 +787,66 @@ mod tests {
         )
         .expect("init");
         let id = ident(1);
-        let fork_tree = blob_tree(&repo, "base.txt", b"base\n").expect("fork tree");
-        let fork = write_commit(&repo, fork_tree, &[], "fork", &id).expect("fork");
-        let mut parent = fork;
+        let root_tree = blob_tree(&repo, "base.txt", b"base\n").expect("root tree");
+        let root = write_commit(&repo, root_tree, &[], "root", &id).expect("root");
+        let mut parent = root;
         for i in 0..400 {
             let path = format!("deep/{i}.txt");
             let tree = blob_tree(&repo, &path, format!("v{i}\n").as_bytes()).expect("deep tree");
             parent = write_commit(&repo, tree, &[parent], "deep", &id).expect("deep commit");
         }
-        let onto = parent;
+        let fork = parent;
+        let onto = fork;
         let mut tip = fork;
         for i in 0..20 {
             let path = format!("feat/{i}.txt");
             let tree = blob_tree(&repo, &path, format!("f{i}\n").as_bytes()).expect("feat tree");
             tip = write_commit(&repo, tree, &[tip], "feat", &id).expect("feat commit");
         }
-        let started = std::time::Instant::now();
-        let range = commits_in_rebase_range(&repo, fork, &[tip]).expect("range");
-        let elapsed = started.elapsed();
-        assert_eq!(range.len(), 20, "expected 20 commits in fork..tip");
-        assert!(
-            elapsed.as_millis() < 500,
-            "rebase range walk took {elapsed:?}, expected bounded time"
+        let emitted =
+            commits_reachable_excluding_ancestors_of(&repo, &[tip], &[fork], None).expect("walk");
+        assert_eq!(
+            emitted.len(),
+            20,
+            "hide-aware walk must emit only fork..tip, not deep history below fork"
         );
-        let check_started = std::time::Instant::now();
-        let _map = applied_by_patch(&repo, fork, onto, &range).expect("patch scan");
-        let check_elapsed = check_started.elapsed();
+        let range = commits_in_rebase_range(&repo, fork, &[tip]).expect("range");
+        assert_eq!(range.len(), 20, "expected 20 commits in fork..tip");
+        reset_commit_parent_lookups();
+        let _map = applied_by_patch(&repo, root, onto, &range).expect("patch scan");
+        let patch_lookups = commit_parent_lookups();
         assert!(
-            check_elapsed.as_millis() < 500,
-            "fork..onto patch scan took {check_elapsed:?}, expected bounded time"
+            patch_lookups <= 450,
+            "fork..onto patch scan must stay proportional to onto depth, got {patch_lookups} lookups"
+        );
+    }
+
+    #[test]
+    fn rebase_range_honors_grafts_when_enumerating_fork_to_tip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = Repository::init(
+            dir.path(),
+            &crate::repo::InitOptions::new()
+                .with_initial_branch("main".to_owned())
+                .with_ref_storage(crate::RefStorageFormat::Files),
+        )
+        .expect("init");
+        let id = ident(1);
+        let root_tree = blob_tree(&repo, "root.txt", b"r\n").expect("root tree");
+        let root = write_commit(&repo, root_tree, &[], "root", &id).expect("root");
+        let mid_tree = blob_tree(&repo, "mid.txt", b"m\n").expect("mid tree");
+        let mid = write_commit(&repo, mid_tree, &[root], "mid", &id).expect("mid");
+        let tip_tree = blob_tree(&repo, "tip.txt", b"t\n").expect("tip tree");
+        let tip = write_commit(&repo, tip_tree, &[mid], "tip", &id).expect("tip");
+        let graft_path = repo.git_dir().join("info/grafts");
+        std::fs::create_dir_all(graft_path.parent().expect("graft parent")).expect("graft dir");
+        std::fs::write(&graft_path, format!("{} {}\n", tip.to_hex(), root.to_hex()))
+            .expect("graft file");
+        let range = commits_in_rebase_range(&repo, root, &[tip]).expect("range");
+        assert_eq!(
+            range,
+            vec![tip],
+            "grafted parent link must drop mid from fork..tip"
         );
     }
 
