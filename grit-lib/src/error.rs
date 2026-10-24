@@ -1263,7 +1263,7 @@ pub enum Error {
         index: usize,
     },
 
-    /// [`create_stash`](crate::porcelain::stash::create_stash) requires at least one commit.
+    /// Pushing or creating a stash ([`crate::repo_handles::RepositoryStash::push`]) requires at least one commit.
     #[error("cannot stash without a commit")]
     StashNoInitialCommit,
 
@@ -1271,16 +1271,16 @@ pub enum Error {
     #[error("cannot stash in a bare repository")]
     StashBareRepository,
 
-    /// [`apply_stash_entry`](crate::porcelain::stash::apply_stash_entry) with `restore_index` could
+    /// [`crate::repo_handles::RepositoryStash::apply`] with `restore_index` could
     /// not merge the current index with the stashed index parent.
     #[error("conflicts in index while applying stash with --index")]
     StashIndexConflict,
 
-    /// Incompatible [`StashCreateOptions`](crate::porcelain::stash::StashCreateOptions) flags.
+    /// Incompatible [`StashPushOptions`](crate::porcelain::stash::StashPushOptions) flags.
     #[error("{0}")]
     StashOptionConflict(String),
 
-    /// Partial [`push_stash`](crate::porcelain::stash::push_stash) hunk selection failed.
+    /// Partial [`crate::repo_handles::RepositoryStash::push`] hunk selection failed.
     #[error(transparent)]
     HunkSelection(#[from] crate::porcelain::hunk_select::HunkSelectError),
 

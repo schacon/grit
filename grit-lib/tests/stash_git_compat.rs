@@ -4,13 +4,10 @@ use grit_lib::diff::DiffStatus;
 use grit_lib::error::Error;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::branch_error::BranchError;
-use grit_lib::porcelain::stash::{
-    apply_stash, clear_stashes, create_stash, drop_stash, list_stashes, pop_stash, push_stash,
-    stash_branch, stash_diff, StashCreateOptions, StashDiffOptions,
-};
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NeverCancel;
 use grit_lib::progress::NullProgress;
+use grit_lib::stash::{StashApplyOptions, StashDiffOptions, StashPushOptions};
 use std::process::Command;
 
 use grit_lib::config::environment::RepositoryOptions;
@@ -37,8 +34,8 @@ fn open_grit(root: &std::path::Path) -> Repository {
     .expect("open grit repo")
 }
 
-fn stash_options(include_untracked: bool, message: Option<&str>) -> StashCreateOptions {
-    StashCreateOptions {
+fn stash_options(include_untracked: bool, message: Option<&str>) -> StashPushOptions {
+    StashPushOptions {
         message: message.map(str::to_owned),
         include_untracked,
         identity: "Test <t@example.com> 1000000000 +0000".to_owned(),
@@ -70,7 +67,9 @@ fn grit_stash_create_matches_git_list_show_pop_and_fsck() {
     git_cmd(dir.path(), &["add", "staged.txt"]);
 
     let repo = open_grit(dir.path());
-    let oid = push_stash(&repo, &stash_options(false, Some("custom msg")))
+    let oid = repo
+        .stash()
+        .push(&stash_options(false, Some("custom msg")))
         .expect("push")
         .expect("had changes")
         .oid;
@@ -127,7 +126,8 @@ fn grit_stash_with_untracked_matches_git() {
     std::fs::write(dir.path().join("u.txt"), "untracked\n").expect("untracked");
 
     let repo = open_grit(dir.path());
-    push_stash(&repo, &stash_options(true, None))
+    repo.stash()
+        .push(&stash_options(true, None))
         .expect("push")
         .expect("stash");
 
@@ -156,12 +156,14 @@ fn git_stash_list_order_visible_to_grit_pop_and_drop() {
     git_cmd(dir.path(), &["stash", "push", "-u", "-m", "second"]);
 
     let repo = open_grit(dir.path());
-    let listed = list_stashes(&repo).expect("list");
+    let listed = repo.stash().list().expect("list");
     assert_eq!(listed.len(), 2);
     assert_eq!(listed[0].index, 0);
     assert!(listed[0].message.contains("second") || listed[1].message.contains("second"));
 
-    pop_stash(&repo, dir.path(), 0, false, "Test <t@example.com> 0 +0000").expect("pop newest");
+    repo.stash()
+        .pop(0, &StashApplyOptions::default())
+        .expect("pop newest");
 
     let git_list = git_cmd(dir.path(), &["stash", "list"]);
     assert!(
@@ -169,7 +171,7 @@ fn git_stash_list_order_visible_to_grit_pop_and_drop() {
         "after pop, only older stash remains:\n{git_list}"
     );
 
-    drop_stash(&repo, 0, "Test <t@example.com> 0 +0000").expect("drop last");
+    repo.stash().drop(0).expect("drop last");
     let list_after = git_cmd(dir.path(), &["stash", "list"]);
     assert!(list_after.trim().is_empty(), "refs/stash should be gone");
 }
@@ -187,7 +189,8 @@ fn push_stash_clears_index_when_worktree_matches_head_but_index_staged() {
     std::fs::write(dir.path().join("f"), "base\n").expect("revert worktree only");
 
     let repo = open_grit(dir.path());
-    push_stash(&repo, &stash_options(false, None))
+    repo.stash()
+        .push(&stash_options(false, None))
         .expect("push")
         .expect("had staged index change");
 
@@ -216,12 +219,10 @@ fn drop_stash_oldest_entry_rechains_reflog_like_git() {
     copy_repo(dir.path(), grit_dir.path());
     copy_repo(dir.path(), git_dir.path());
 
-    drop_stash(
-        &open_grit(grit_dir.path()),
-        2,
-        "Test <t@example.com> 0 +0000",
-    )
-    .expect("grit drop oldest");
+    (open_grit(grit_dir.path()))
+        .stash()
+        .drop(2)
+        .expect("grit drop oldest");
     git_cmd(git_dir.path(), &["stash", "drop", "stash@{2}"]);
 
     let grit_log =
@@ -252,12 +253,10 @@ fn drop_stash_middle_entry_rechains_reflog_like_git() {
     copy_repo(dir.path(), grit_dir.path());
     copy_repo(dir.path(), git_dir.path());
 
-    drop_stash(
-        &open_grit(grit_dir.path()),
-        1,
-        "Test <t@example.com> 0 +0000",
-    )
-    .expect("grit drop middle");
+    (open_grit(grit_dir.path()))
+        .stash()
+        .drop(1)
+        .expect("grit drop middle");
     git_cmd(git_dir.path(), &["stash", "drop", "stash@{1}"]);
 
     let grit_log =
@@ -300,7 +299,10 @@ fn create_stash_returns_none_when_clean() {
     git_cmd(dir.path(), &["commit", "-qm", "init"]);
 
     let repo = open_grit(dir.path());
-    let none = create_stash(&repo, &stash_options(false, None)).expect("create");
+    let none = repo
+        .stash()
+        .create(&stash_options(false, None))
+        .expect("create");
     assert!(none.is_none());
 }
 
@@ -320,10 +322,15 @@ fn pop_keeps_entry_on_conflict() {
     git_cmd(dir.path(), &["commit", "-qm", "move head"]);
 
     let repo = open_grit(dir.path());
-    let conflicts = pop_stash(&repo, dir.path(), 0, false, "Test <t@example.com> 0 +0000")
+    let conflicts = repo
+        .stash()
+        .pop(0, &StashApplyOptions::default())
         .expect("pop with conflict");
-    assert!(conflicts, "three-way conflict should keep stash entry");
-    assert_eq!(list_stashes(&repo).expect("list").len(), 1);
+    assert!(
+        conflicts.has_conflicts(),
+        "three-way conflict should keep stash entry"
+    );
+    assert_eq!(repo.stash().list().expect("list").len(), 1);
 }
 
 #[test]
@@ -341,14 +348,15 @@ fn pop_stash_with_index_restores_staged_deletion_like_git() {
     copy_repo(dir.path(), grit_dir.path());
     copy_repo(dir.path(), git_dir.path());
 
-    pop_stash(
-        &open_grit(grit_dir.path()),
-        grit_dir.path(),
-        0,
-        true,
-        "Test <t@example.com> 0 +0000",
-    )
-    .expect("grit pop --index");
+    (open_grit(grit_dir.path()))
+        .stash()
+        .pop(
+            0,
+            &StashApplyOptions {
+                restore_index: true,
+            },
+        )
+        .expect("grit pop --index");
     git_cmd(git_dir.path(), &["stash", "pop", "--index"]);
 
     let grit_p = git_cmd(grit_dir.path(), &["status", "--porcelain=v1"]);
@@ -378,14 +386,10 @@ fn pop_stash_restores_untracked_symlink_like_git() {
     copy_repo(dir.path(), grit_dir.path());
     copy_repo(dir.path(), git_dir.path());
 
-    pop_stash(
-        &open_grit(grit_dir.path()),
-        grit_dir.path(),
-        0,
-        false,
-        "Test <t@example.com> 0 +0000",
-    )
-    .expect("grit pop");
+    (open_grit(grit_dir.path()))
+        .stash()
+        .pop(0, &StashApplyOptions::default())
+        .expect("grit pop");
     git_cmd(git_dir.path(), &["stash", "pop"]);
 
     let grit_link = grit_dir.path().join("link");
@@ -415,12 +419,15 @@ fn stash_pop_with_untracked_does_not_overwrite_existing_untracked() {
     git_cmd(dir.path(), &["commit", "-qm", "init"]);
     std::fs::write(dir.path().join("u.txt"), "stashed-untracked\n").expect("untracked");
     let repo = open_grit(dir.path());
-    push_stash(&repo, &stash_options(true, Some("m")))
+    repo.stash()
+        .push(&stash_options(true, Some("m")))
         .expect("push")
         .expect("stash");
     std::fs::write(dir.path().join("u.txt"), "PRECIOUS new work\n").expect("replace");
 
-    let err = pop_stash(&repo, dir.path(), 0, false, "Test <t@example.com> 0 +0000")
+    let err = repo
+        .stash()
+        .pop(0, &StashApplyOptions::default())
         .expect_err("pop must fail");
     assert!(
         matches!(
@@ -433,16 +440,15 @@ fn stash_pop_with_untracked_does_not_overwrite_existing_untracked() {
         std::fs::read_to_string(dir.path().join("u.txt")).expect("read"),
         "PRECIOUS new work\n"
     );
-    assert_eq!(list_stashes(&repo).expect("list").len(), 1);
+    assert_eq!(repo.stash().list().expect("list").len(), 1);
 
-    let err = apply_stash(
-        &repo,
-        dir.path(),
-        &list_stashes(&repo).expect("list")[0].oid,
-        false,
-        "Test <t@example.com> 0 +0000",
-    )
-    .expect_err("apply must fail");
+    let err = repo
+        .stash()
+        .apply_commit(
+            &repo.stash().list().expect("list")[0].oid,
+            &StashApplyOptions::default(),
+        )
+        .expect_err("apply must fail");
     assert!(
         matches!(err, Error::StashCouldNotRestoreUntracked { .. }),
         "apply error: {err:?}"
@@ -485,20 +491,20 @@ fn stash_apply_with_untracked_does_not_overwrite_ignored_path() {
     git_cmd(dir.path(), &["commit", "-qm", "init"]);
     std::fs::write(dir.path().join("u.txt"), "stashed-untracked\n").expect("untracked");
     let repo = open_grit(dir.path());
-    push_stash(&repo, &stash_options(true, None))
+    repo.stash()
+        .push(&stash_options(true, None))
         .expect("push")
         .expect("stash");
     std::fs::write(dir.path().join(".gitignore"), "u.txt\n").expect("ignore");
     std::fs::write(dir.path().join("u.txt"), "precious\n").expect("ignored precious");
 
-    let err = apply_stash(
-        &repo,
-        dir.path(),
-        &list_stashes(&repo).expect("list")[0].oid,
-        false,
-        "Test <t@example.com> 0 +0000",
-    )
-    .expect_err("apply must fail on ignored collision");
+    let err = repo
+        .stash()
+        .apply_commit(
+            &repo.stash().list().expect("list")[0].oid,
+            &StashApplyOptions::default(),
+        )
+        .expect_err("apply must fail on ignored collision");
     assert!(
         matches!(
             err,
@@ -537,21 +543,21 @@ fn stash_apply_with_untracked_does_not_overwrite_newly_tracked_path() {
     git_cmd(dir.path(), &["commit", "-qm", "init"]);
     std::fs::write(dir.path().join("u.txt"), "stashed-untracked\n").expect("untracked");
     let repo = open_grit(dir.path());
-    push_stash(&repo, &stash_options(true, None))
+    repo.stash()
+        .push(&stash_options(true, None))
         .expect("push")
         .expect("stash");
     std::fs::write(dir.path().join("u.txt"), "precious\n").expect("precious");
     git_cmd(dir.path(), &["add", "u.txt"]);
     git_cmd(dir.path(), &["commit", "-qm", "track u"]);
 
-    let err = apply_stash(
-        &repo,
-        dir.path(),
-        &list_stashes(&repo).expect("list")[0].oid,
-        false,
-        "Test <t@example.com> 0 +0000",
-    )
-    .expect_err("apply must fail on tracked collision");
+    let err = repo
+        .stash()
+        .apply_commit(
+            &repo.stash().list().expect("list")[0].oid,
+            &StashApplyOptions::default(),
+        )
+        .expect_err("apply must fail on tracked collision");
     assert!(
         matches!(
             err,
@@ -591,11 +597,15 @@ fn stash_diff_matches_git_show_stat_paths() {
     std::fs::write(dir.path().join("d"), "changed\n").expect("change");
 
     let repo = open_grit(dir.path());
-    push_stash(&repo, &stash_options(false, None))
+    repo.stash()
+        .push(&stash_options(false, None))
         .expect("push")
         .expect("oid");
 
-    let diffs = stash_diff(&repo, 0, &StashDiffOptions::default()).expect("diff");
+    let diffs = repo
+        .stash()
+        .diff(0, &StashDiffOptions::default())
+        .expect("diff");
     assert!(
         diffs.iter().any(|d| d.path().contains("d")),
         "stash diff should include changed path"
@@ -615,7 +625,9 @@ fn t3903_grit_stash_read_by_git_and_reverse() {
     git_cmd(dir.path(), &["add", "new.txt"]);
 
     let repo = open_grit(dir.path());
-    let oid = push_stash(&repo, &stash_options(false, Some("grit msg")))
+    let oid = repo
+        .stash()
+        .push(&stash_options(false, Some("grit msg")))
         .expect("push")
         .expect("changes")
         .oid;
@@ -640,14 +652,15 @@ fn t3903_grit_stash_read_by_git_and_reverse() {
         .trim()
         .to_owned();
     let stash_oid = ObjectId::from_hex(&stash_hex).expect("stash oid");
-    apply_stash(
-        &open_grit(grit_dir.path()),
-        grit_dir.path(),
-        &stash_oid,
-        true,
-        "Test <t@example.com> 0 +0000",
-    )
-    .expect("grit apply git stash");
+    (open_grit(grit_dir.path()))
+        .stash()
+        .apply_commit(
+            &stash_oid,
+            &StashApplyOptions {
+                restore_index: true,
+            },
+        )
+        .expect("grit apply git stash");
     git_cmd(git_dir.path(), &["stash", "apply", "--index", "stash@{0}"]);
 
     let grit_p = git_cmd(grit_dir.path(), &["status", "--porcelain"]);
@@ -677,7 +690,9 @@ fn stash_push_u_preserves_untracked_nested_repository() {
         std::fs::write(inner.join("other.txt"), "outer-untracked\n").expect("outer untracked");
     }
 
-    push_stash(&open_grit(grit_root.path()), &stash_options(true, None))
+    (open_grit(grit_root.path()))
+        .stash()
+        .push(&stash_options(true, None))
         .expect("grit push")
         .expect("had changes");
     git_cmd(git_root.path(), &["stash", "push", "-u"]);
@@ -723,12 +738,11 @@ fn t3905_include_untracked_stash_shape_matches_git() {
         std::fs::write(root.join("untracked.txt"), "u\n").expect("untracked");
     }
 
-    push_stash(
-        &open_grit(grit_root.path()),
-        &stash_options(true, Some("with-u")),
-    )
-    .expect("grit push")
-    .expect("had changes");
+    (open_grit(grit_root.path()))
+        .stash()
+        .push(&stash_options(true, Some("with-u")))
+        .expect("grit push")
+        .expect("had changes");
     git_cmd(git_root.path(), &["stash", "push", "-u", "-m", "with-u"]);
 
     let grit_show = git_cmd(grit_root.path(), &["stash", "show", "-p", "stash@{0}"]);
@@ -767,11 +781,10 @@ fn t3908_stash_in_linked_worktree() {
     .expect("add worktree");
 
     std::fs::write(linked.join("f"), "linked change\n").expect("modify");
-    push_stash(
-        &Repository::discover(Some(linked.as_path()), &RepositoryOptions::empty())
-            .expect("discover linked"),
-        &stash_options(false, Some("from-linked")),
-    )
+    (Repository::discover(Some(linked.as_path()), &RepositoryOptions::empty())
+        .expect("discover linked"))
+    .stash()
+    .push(&stash_options(false, Some("from-linked")))
     .expect("stash from linked")
     .expect("changes");
 
@@ -797,7 +810,8 @@ fn stash_push_u_dir_replaced_by_untracked_file_leaves_clean_tree() {
     std::fs::write(dir.path().join("d"), "f\n").expect("untracked file");
 
     let repo = open_grit(dir.path());
-    push_stash(&repo, &stash_options(true, None))
+    repo.stash()
+        .push(&stash_options(true, None))
         .expect("push")
         .expect("stash oid");
 
@@ -809,7 +823,9 @@ fn stash_push_u_dir_replaced_by_untracked_file_leaves_clean_tree() {
     assert!(dir.path().join("d/c.txt").is_file());
     assert!(dir.path().join("d/e/f.txt").is_file());
 
-    pop_stash(&repo, dir.path(), 0, false, "Test <t@example.com> 0 +0000").expect("pop");
+    repo.stash()
+        .pop(0, &StashApplyOptions::default())
+        .expect("pop");
 
     let restored = git_cmd(dir.path(), &["status", "--porcelain"]);
     assert!(restored.contains("d/c.txt"), "deleted paths restored");
@@ -835,7 +851,9 @@ fn stash_push_u_tracked_file_replaced_by_untracked_dir_pop_refuses() {
     std::fs::write(dir.path().join("a.txt/x"), "in\n").expect("nested");
 
     let repo = open_grit(dir.path());
-    let stash_oid = push_stash(&repo, &stash_options(true, None))
+    let stash_oid = repo
+        .stash()
+        .push(&stash_options(true, None))
         .expect("push")
         .expect("stash oid")
         .oid;
@@ -855,13 +873,15 @@ fn stash_push_u_tracked_file_replaced_by_untracked_dir_pop_refuses() {
     );
     assert!(dir.path().join("a.txt").is_file());
 
-    let err = pop_stash(&repo, dir.path(), 0, false, "Test <t@example.com> 0 +0000")
+    let err = repo
+        .stash()
+        .pop(0, &StashApplyOptions::default())
         .expect_err("pop must fail like git when untracked dir cannot be restored");
     assert!(
         matches!(err, Error::StashCouldNotRestoreUntracked { .. }),
         "unexpected error: {err:?}"
     );
-    assert_eq!(list_stashes(&repo).expect("list").len(), 1);
+    assert_eq!(repo.stash().list().expect("list").len(), 1);
     assert_eq!(
         std::fs::read_to_string(dir.path().join("a.txt")).expect("file kept"),
         "1\n"
@@ -895,7 +915,8 @@ fn push_stash_clears_unstaged_exec_bit_only_change() {
     );
 
     let repo = open_grit(dir.path());
-    push_stash(&repo, &stash_options(false, None))
+    repo.stash()
+        .push(&stash_options(false, None))
         .expect("push")
         .expect("had mode-only change");
 
@@ -916,7 +937,9 @@ fn push_stash_clears_unstaged_exec_bit_only_change() {
         assert_eq!(mode, 0o644, "worktree must match HEAD non-executable mode");
     }
 
-    pop_stash(&repo, dir.path(), 0, false, "Test <t@example.com> 0 +0000").expect("pop");
+    repo.stash()
+        .pop(0, &StashApplyOptions::default())
+        .expect("pop");
 
     #[cfg(unix)]
     {
@@ -952,7 +975,8 @@ fn push_stash_clears_unstaged_exec_bit_in_subdirectory() {
     }
 
     let repo = open_grit(dir.path());
-    push_stash(&repo, &stash_options(false, None))
+    repo.stash()
+        .push(&stash_options(false, None))
         .expect("push")
         .expect("stash");
 
@@ -962,7 +986,9 @@ fn push_stash_clears_unstaged_exec_bit_in_subdirectory() {
         "push_stash must leave clean tree for nested path, got:\n{clean}"
     );
 
-    pop_stash(&repo, dir.path(), 0, false, "Test <t@example.com> 0 +0000").expect("pop");
+    repo.stash()
+        .pop(0, &StashApplyOptions::default())
+        .expect("pop");
 }
 
 #[test]
@@ -977,7 +1003,8 @@ fn push_stash_normalizes_crlf_worktree_under_gitattributes_eol_crlf() {
     std::fs::write(dir.path().join("f.txt"), b"a\r\nb\r\nc\r\n").expect("modify");
 
     let repo = open_grit(dir.path());
-    push_stash(&repo, &stash_options(false, None))
+    repo.stash()
+        .push(&stash_options(false, None))
         .expect("push")
         .expect("had changes");
 
@@ -1013,7 +1040,8 @@ fn push_stash_untracked_normalizes_crlf_under_gitattributes_eol_crlf() {
     std::fs::write(dir.path().join("new.txt"), b"n\r\n").expect("untracked");
 
     let repo = open_grit(dir.path());
-    push_stash(&repo, &stash_options(true, None))
+    repo.stash()
+        .push(&stash_options(true, None))
         .expect("push")
         .expect("had changes");
 
@@ -1051,7 +1079,10 @@ fn grit_stash_name_status(
     n: usize,
     include_untracked: bool,
 ) -> Vec<(char, String)> {
-    let diffs = stash_diff(repo, n, &StashDiffOptions { include_untracked }).expect("stash diff");
+    let diffs = repo
+        .stash()
+        .diff(n, &StashDiffOptions { include_untracked })
+        .expect("stash diff");
     diffs
         .into_iter()
         .map(|entry| {
@@ -1079,7 +1110,8 @@ fn stash_show_untracked_lists_u_commit_files() {
     std::fs::write(dir.path().join("untracked.txt"), "new\n").expect("untracked");
 
     let repo = open_grit(dir.path());
-    push_stash(&repo, &stash_options(true, None))
+    repo.stash()
+        .push(&stash_options(true, None))
         .expect("push")
         .expect("changes");
 
@@ -1106,12 +1138,12 @@ fn stash_branch_creates_branch_at_base_and_restores_index() {
     let base = git_cmd(dir.path(), &["rev-parse", "HEAD"])
         .trim()
         .to_owned();
-    push_stash(&repo, &stash_options(false, Some("branch me")))
+    repo.stash()
+        .push(&stash_options(false, Some("branch me")))
         .expect("push")
         .expect("changes");
 
-    let ident = "Test <t@example.com> 1000000001 +0000";
-    let outcome = stash_branch(&repo, "from-stash", 0, ident).expect("stash branch");
+    let outcome = repo.stash().branch("from-stash", 0).expect("stash branch");
     assert!(!outcome.conflicts);
     assert_eq!(outcome.base.to_hex(), base);
     assert_eq!(
@@ -1138,7 +1170,7 @@ fn stash_branch_creates_branch_at_base_and_restores_index() {
         model.staged.iter().any(|e| e.path() == "staged.txt"),
         "index must restore staged.txt"
     );
-    assert!(list_stashes(&repo).expect("list").is_empty());
+    assert!(repo.stash().list().expect("list").is_empty());
     assert!(git_cmd(dir.path(), &["stash", "list"]).trim().is_empty());
     assert_fsck_strict(dir.path());
 }
@@ -1153,10 +1185,11 @@ fn stash_branch_existing_name_is_typed_error() {
     git_cmd(dir.path(), &["branch", "taken"]);
     std::fs::write(dir.path().join("a"), "dirty\n").expect("dirty");
     let repo = open_grit(dir.path());
-    push_stash(&repo, &stash_options(false, None))
+    repo.stash()
+        .push(&stash_options(false, None))
         .expect("push")
         .expect("changes");
-    let err = stash_branch(&repo, "taken", 0, "Test <t@example.com> 0 +0000").unwrap_err();
+    let err = repo.stash().branch("taken", 0).unwrap_err();
     assert!(matches!(
         err,
         Error::Branch(BranchError::AlreadyExists { name }) if name == "taken"
@@ -1172,15 +1205,17 @@ fn stash_clear_removes_ref_and_reflog_git_agrees() {
     git_cmd(dir.path(), &["commit", "-qm", "init"]);
     let repo = open_grit(dir.path());
     std::fs::write(dir.path().join("a"), "one\n").expect("one");
-    push_stash(&repo, &stash_options(false, Some("first")))
+    repo.stash()
+        .push(&stash_options(false, Some("first")))
         .expect("push")
         .expect("changes");
     std::fs::write(dir.path().join("a"), "two\n").expect("two");
-    push_stash(&repo, &stash_options(false, Some("second")))
+    repo.stash()
+        .push(&stash_options(false, Some("second")))
         .expect("push")
         .expect("changes");
 
-    let cleared = clear_stashes(&repo).expect("clear");
+    let cleared = repo.stash().clear().expect("clear");
     assert_eq!(cleared, 2);
     assert!(git_cmd(dir.path(), &["stash", "list"]).trim().is_empty());
     let reflog = read_reflog(dir.path().join(".git").as_path(), "refs/stash").unwrap_or_default();
@@ -1205,7 +1240,7 @@ fn stash_clear_removes_ref_without_reflog_like_git() {
     );
 
     let repo = open_grit(dir.path());
-    let cleared = clear_stashes(&repo).expect("clear");
+    let cleared = repo.stash().clear().expect("clear");
     assert_eq!(
         cleared, 0,
         "reflog count is zero when ref was created without reflog"
@@ -1236,7 +1271,8 @@ fn stash_show_untracked_lists_u_path_in_base_tree_when_not_in_w_diff() {
     std::fs::write(dir.path().join("only-u.txt"), "u-only\n").expect("u-only");
 
     let repo = open_grit(dir.path());
-    push_stash(&repo, &stash_options(true, None))
+    repo.stash()
+        .push(&stash_options(true, None))
         .expect("push")
         .expect("changes");
 
