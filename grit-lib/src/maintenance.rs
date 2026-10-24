@@ -92,7 +92,8 @@ pub struct RepackOptions {
     /// When [`Self::write_bitmap`] is true and the repository already has pack files, bitmaps are
     /// written via a multi-pack-index sidecar instead of a per-pack `.bitmap` on the new pack alone.
     pub incremental: bool,
-    /// When true, skip rebuilding packs when Git `gc` would not (`gc.auto` / `gc.autoPackLimit`).
+    /// When true, [`gc`] may skip repack on a single pack with no loose objects when every
+    /// packed object is still reachable and none would be dropped by the active prune policy.
     pub auto_skip: bool,
 }
 
@@ -377,7 +378,7 @@ impl Default for GcOptions {
     fn default() -> Self {
         Self {
             repack: RepackOptions {
-                auto_skip: false,
+                auto_skip: true,
                 ..RepackOptions::default()
             },
             expire_reflog: true,
@@ -395,7 +396,7 @@ impl GcOptions {
         Self {
             repack: RepackOptions {
                 dry_run,
-                auto_skip: false,
+                auto_skip: true,
                 ..RepackOptions::default()
             },
             expire_reflog: true,
@@ -409,7 +410,7 @@ impl GcOptions {
     pub fn with_reflog_policy(now_unix: i64, expire_reflog: bool) -> Self {
         Self {
             repack: RepackOptions {
-                auto_skip: false,
+                auto_skip: true,
                 ..RepackOptions::default()
             },
             expire_reflog,
@@ -424,7 +425,7 @@ impl GcOptions {
         Self {
             repack: RepackOptions {
                 dry_run,
-                auto_skip: false,
+                auto_skip: true,
                 ..RepackOptions::default()
             },
             expire_reflog: true,
@@ -745,12 +746,12 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
     let pack_opts = opts.pack_build.unwrap_or_else(|| {
         if opts.incremental {
             PackBuildOptions::for_local_copy(cfg.as_ref())
-        } else if opts.auto_skip && packs_before > 0 {
-            // `grit gc --auto` consolidating existing packs: reuse on-disk deltas.
+        } else if packs_before > 0 && loose_before == 0 {
+            // Repack consolidated on-disk pack(s) with nothing loose: reuse pack bytes
+            // (Git `--window=0`), not a full delta search over every stored object.
             PackBuildOptions::for_repack_rewrite(cfg.as_ref())
         } else {
-            // Explicit `grit repack`, and gc when building the first pack from loose
-            // objects: match Git repack/gc delta consolidation quality.
+            // First pack from loose objects only: delta consolidation like `git repack` on loose.
             PackBuildOptions::for_local_copy(cfg.as_ref())
         }
     });
@@ -763,7 +764,12 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         run_incremental,
         opts.auto_skip,
         cfg.as_ref(),
-    );
+    ) && !skipping_repack_would_retain_prunable_packed_objects(
+        odb,
+        &pack_dir,
+        &roots,
+        opts,
+    )?;
 
     if opts.dry_run {
         report.objects = if skip_repack {
@@ -1038,34 +1044,72 @@ fn pack_loose_objects_incremental(
     )
 }
 
-/// Whether maintenance should skip rebuilding packs (Git `gc --auto` heuristics).
+/// Whether maintenance should skip rebuilding packs when [`RepackOptions::auto_skip`] is set.
 ///
-/// Unreachable or grace-protected objects in an existing pack do **not** trigger repack; only
-/// `gc.auto` (loose count) and `gc.autoPackLimit` (pack count) do, matching Git.
+/// Used by [`gc`]: skip when a single pack already holds all objects and nothing is loose.
+/// Multiple packs never skip (consolidation required), even when `gc.autoPackLimit` is zero.
 fn should_auto_skip_repack(
     loose_objects: usize,
     pack_count: usize,
     incremental: bool,
     auto_skip: bool,
-    config: Option<&ConfigSet>,
+    _config: Option<&ConfigSet>,
 ) -> bool {
     if !auto_skip || incremental {
         return false;
     }
-    if !config.is_some_and(ConfigSet::gc_auto_loose_disabled) {
-        let loose_auto = config.map(ConfigSet::gc_auto_loose_limit).unwrap_or(6700);
-        if loose_objects >= loose_auto {
-            return false;
-        }
+    if pack_count > 1 {
+        return false;
     }
-    if pack_count == 0 {
+    if pack_count == 1 {
         return loose_objects == 0;
     }
-    if config.is_some_and(ConfigSet::gc_auto_pack_limit_disabled) {
-        return true;
+    loose_objects == 0
+}
+
+/// True when skipping repack would leave unreachable objects in pack storage that repack would
+/// remove under `opts` (for example expired unreachable commits when `gc.pruneExpire=now`).
+fn skipping_repack_would_retain_prunable_packed_objects(
+    odb: &Odb,
+    pack_dir: &Path,
+    roots: &[ObjectId],
+    opts: &RepackOptions,
+) -> Result<bool> {
+    if opts.keep_unreachable {
+        return Ok(false);
     }
-    let pack_limit = config.map(ConfigSet::gc_auto_pack_limit).unwrap_or(50);
-    pack_count <= pack_limit
+    let retention = if let Some(cutoff) = opts.prune_older_than.map(offset_to_system_time) {
+        UnreachablePackRetention::KeepGraceProtected(cutoff)
+    } else {
+        UnreachablePackRetention::DropAll
+    };
+    let reachable = reachability_closure_for_roots(odb, roots)?;
+    let indexes = crate::pack::read_local_pack_indexes_cached(odb.objects_dir())?;
+    for idx in indexes {
+        if pack_has_keep_marker(pack_dir, &idx.pack_path) {
+            continue;
+        }
+        let pack_mtime = fs::metadata(&idx.pack_path)
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let drop_unreachable_from_pack = match retention {
+            UnreachablePackRetention::KeepAll => false,
+            UnreachablePackRetention::DropAll => true,
+            UnreachablePackRetention::KeepGraceProtected(cutoff) => pack_mtime < cutoff,
+        };
+        if !drop_unreachable_from_pack {
+            continue;
+        }
+        for entry in idx.iter() {
+            let Ok(oid) = ObjectId::from_bytes(entry.oid()) else {
+                continue;
+            };
+            if !reachable.contains(&oid) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Delete unreachable loose objects using `gc.pruneExpire` or an explicit cutoff.
@@ -1506,7 +1550,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn auto_skip_repack_matches_gc_auto_heuristics() {
+    fn gc_auto_skip_single_pack_without_loose() {
         let dir = TempDir::new().unwrap();
         let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
         std::fs::write(repo.work_tree().unwrap().join("a"), b"x").unwrap();
@@ -1531,18 +1575,9 @@ mod tests {
         .expect("commit");
         git_cmd(dir.path(), &["repack", "-a", "-d"]);
         assert!(should_auto_skip_repack(0, 1, false, true, None));
-        assert!(should_auto_skip_repack(3, 1, false, true, None));
-        assert!(!should_auto_skip_repack(6700, 1, false, true, None));
+        assert!(!should_auto_skip_repack(3, 1, false, true, None));
+        assert!(!should_auto_skip_repack(0, 2, false, true, None));
         assert!(!should_auto_skip_repack(0, 51, false, true, None));
-        let mut disabled = ConfigSet::new();
-        let file = ConfigFile::parse(
-            Path::new(".git/config"),
-            "[gc]\n\tautoPackLimit = 0\n",
-            ConfigScope::Local,
-        )
-        .expect("parse");
-        disabled.merge(&file);
-        assert!(should_auto_skip_repack(0, 2, false, true, Some(&disabled)));
     }
 
     #[test]
