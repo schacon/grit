@@ -14212,6 +14212,28 @@ pub fn grit_lib::porcelain::switch::resolve_revision_spec(&grit_lib::repo::Repos
 pub fn grit_lib::porcelain::switch::resolve_switch_target(&grit_lib::repo::Repository, &str) -> grit_lib::error::Result<grit_lib::porcelain::switch::SwitchMode>
 pub fn grit_lib::porcelain::switch::switch_repository(&grit_lib::repo::Repository, &grit_lib::porcelain::switch::SwitchOptions) -> grit_lib::error::Result<grit_lib::porcelain::switch::SwitchOutcome>
 pub mod grit_lib::porcelain::tag
+pub enum grit_lib::porcelain::tag::TagDetail
+pub grit_lib::porcelain::tag::TagDetail::Annotation
+pub grit_lib::porcelain::tag::TagDetail::Kind
+pub grit_lib::porcelain::tag::TagDetail::Names
+impl core::clone::Clone for grit_lib::porcelain::tag::TagDetail
+pub fn grit_lib::porcelain::tag::TagDetail::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::porcelain::tag::TagDetail
+impl core::cmp::PartialEq for grit_lib::porcelain::tag::TagDetail
+pub fn grit_lib::porcelain::tag::TagDetail::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::porcelain::tag::TagDetail
+pub fn grit_lib::porcelain::tag::TagDetail::default() -> Self
+impl core::fmt::Debug for grit_lib::porcelain::tag::TagDetail
+pub fn grit_lib::porcelain::tag::TagDetail::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::porcelain::tag::TagDetail
+impl core::marker::StructuralPartialEq for grit_lib::porcelain::tag::TagDetail
+impl core::marker::Freeze for grit_lib::porcelain::tag::TagDetail
+impl core::marker::Send for grit_lib::porcelain::tag::TagDetail
+impl core::marker::Sync for grit_lib::porcelain::tag::TagDetail
+impl core::marker::Unpin for grit_lib::porcelain::tag::TagDetail
+impl core::marker::UnsafeUnpin for grit_lib::porcelain::tag::TagDetail
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::tag::TagDetail
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::tag::TagDetail
 pub enum grit_lib::porcelain::tag::TagError
 pub grit_lib::porcelain::tag::TagError::AlreadyExists
 pub grit_lib::porcelain::tag::TagError::AlreadyExists::name: alloc::string::String
@@ -14259,6 +14281,24 @@ impl core::marker::Unpin for grit_lib::porcelain::tag::TagKind
 impl core::marker::UnsafeUnpin for grit_lib::porcelain::tag::TagKind
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::tag::TagKind
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::tag::TagKind
+pub enum grit_lib::porcelain::tag::TagList
+pub grit_lib::porcelain::tag::TagList::Names(alloc::vec::Vec<alloc::string::String>)
+pub grit_lib::porcelain::tag::TagList::Summaries(alloc::vec::Vec<grit_lib::porcelain::tag::TagSummary>)
+impl core::clone::Clone for grit_lib::porcelain::tag::TagList
+pub fn grit_lib::porcelain::tag::TagList::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::porcelain::tag::TagList
+impl core::cmp::PartialEq for grit_lib::porcelain::tag::TagList
+pub fn grit_lib::porcelain::tag::TagList::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::porcelain::tag::TagList
+pub fn grit_lib::porcelain::tag::TagList::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::porcelain::tag::TagList
+impl core::marker::Freeze for grit_lib::porcelain::tag::TagList
+impl core::marker::Send for grit_lib::porcelain::tag::TagList
+impl core::marker::Sync for grit_lib::porcelain::tag::TagList
+impl core::marker::Unpin for grit_lib::porcelain::tag::TagList
+impl core::marker::UnsafeUnpin for grit_lib::porcelain::tag::TagList
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::tag::TagList
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::tag::TagList
 pub struct grit_lib::porcelain::tag::CreateTagOutcome
 pub grit_lib::porcelain::tag::CreateTagOutcome::dry_run: bool
 pub grit_lib::porcelain::tag::CreateTagOutcome::kind: grit_lib::porcelain::tag::TagKind
@@ -14367,6 +14407,7 @@ pub fn grit_lib::porcelain::tag::creator_date(&grit_lib::repo::Repository, &grit
 pub fn grit_lib::porcelain::tag::delete_tag(&grit_lib::repo::Repository, &str, bool) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::porcelain::tag::glob_matches(&str, &str) -> bool
 pub fn grit_lib::porcelain::tag::list_tags(&grit_lib::repo::Repository, &grit_lib::refs::listing::RefQuery) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::porcelain::tag::TagSummary>>
+pub fn grit_lib::porcelain::tag::list_tags_with_detail(&grit_lib::repo::Repository, &grit_lib::refs::listing::RefQuery, grit_lib::porcelain::tag::TagDetail) -> grit_lib::error::Result<grit_lib::porcelain::tag::TagList>
 pub fn grit_lib::porcelain::tag::normalize_tag_message(&str) -> grit_lib::error::Result<alloc::string::String>
 pub fn grit_lib::porcelain::tag::parse_epoch_from_ident(&str) -> i64
 pub fn grit_lib::porcelain::tag::strip_comments(&str) -> alloc::string::String

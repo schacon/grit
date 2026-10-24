@@ -408,8 +408,10 @@ pub fn run(opts: TagRunOptions) -> Result<TagOutcome> {
             opts.reverse,
             opts.contains,
             opts.points_at,
-            opts.limit,
-            opts.list_detail,
+            ListOutputOptions {
+                limit: opts.limit,
+                detail: opts.list_detail,
+            },
         ),
         (Some(name), false) if list_by_flags => {
             patterns.push(name.clone());
@@ -420,8 +422,10 @@ pub fn run(opts: TagRunOptions) -> Result<TagOutcome> {
                 opts.reverse,
                 opts.contains,
                 opts.points_at,
-                opts.limit,
-                opts.list_detail,
+                ListOutputOptions {
+                    limit: opts.limit,
+                    detail: opts.list_detail,
+                },
             )
         }
         (Some(name), false) => create(&repo, name, &opts),
@@ -561,6 +565,11 @@ fn tag_list_requested(
         || !list_patterns.is_empty()
 }
 
+struct ListOutputOptions {
+    limit: Option<usize>,
+    detail: TagDetail,
+}
+
 fn list(
     repo: &Repository,
     patterns: Vec<String>,
@@ -568,13 +577,14 @@ fn list(
     reverse: bool,
     contains: Option<String>,
     points_at: Vec<String>,
-    limit: Option<usize>,
-    detail: TagDetail,
+    output: ListOutputOptions,
 ) -> Result<TagOutcome> {
     let mut contains_ids = Vec::new();
     if let Some(rev) = contains {
         let oid = if rev == "HEAD" {
-            match resolve_head(repo.git_dir()).context("could not resolve HEAD for --contains")? {
+            match resolve_head_for_repository(repo)
+                .context("could not resolve HEAD for --contains")?
+            {
                 HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => oid,
                 HeadState::Branch { .. } => bail!("HEAD has no commit for --contains"),
                 HeadState::Invalid => bail!("HEAD is in an unknown state"),
@@ -592,12 +602,12 @@ fn list(
                 key: sort.sort_key(),
                 reverse,
             },
-            limit,
+            limit: output.limit,
             contains: contains_ids,
             points_at: resolve_points_at(repo, &points_at)?,
             ..RefQuery::default()
         },
-        detail,
+        output.detail,
     )
 }
 

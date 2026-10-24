@@ -350,6 +350,21 @@ fn porcelain_stash_tag_status_and_worktree() {
         },
     )
     .ok();
+    for detail in [
+        grit_lib::porcelain::tag::TagDetail::Names,
+        grit_lib::porcelain::tag::TagDetail::Kind,
+        grit_lib::porcelain::tag::TagDetail::Annotation,
+    ] {
+        let _ = grit_lib::porcelain::tag::list_tags_with_detail(
+            &repo,
+            &RefQuery {
+                namespaces: vec![RefNamespace::Tags],
+                ..RefQuery::default()
+            },
+            detail,
+        )
+        .ok();
+    }
     let _ = creator_date(&repo, &tag_oid);
     let _ = resolve_commit_filter_target(&repo, tag_oid).ok();
     let _ = ref_points_at(repo.odb(), tag_oid, &tag_oid).ok();

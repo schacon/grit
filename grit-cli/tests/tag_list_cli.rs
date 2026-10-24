@@ -83,6 +83,21 @@ fn list_sort_and_filters_match_git() {
     let dir = tmp.path();
     seed_repo(dir);
 
+    let plain = Command::new(GRIT)
+        .arg("tag")
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", null_device())
+        .env("GIT_CONFIG_SYSTEM", null_device())
+        .output()
+        .expect("grit tag");
+    assert!(plain.status.success());
+    assert!(
+        String::from_utf8_lossy(&plain.stdout)
+            .lines()
+            .all(|line| line.trim().split_whitespace().count() == 1),
+        "plain human listing must contain names only"
+    );
+
     assert_eq!(
         grit_names(dir, &[]),
         git_names(dir, &["--sort=version:refname"])
