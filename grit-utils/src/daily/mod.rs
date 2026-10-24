@@ -15,7 +15,7 @@ pub mod runner;
 pub mod schema;
 pub mod validate;
 
-pub use run::{run_daily, DailyRunOptions};
+pub use run::{list_daily_scenario_ids, run_daily, DailyRunOptions};
 
 pub use coverage::all_registry_scenarios;
 pub use matrix_registry::MATRIX_SCENARIOS;

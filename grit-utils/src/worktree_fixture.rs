@@ -609,6 +609,7 @@ pub fn shell_git_apply_hunks_half(git: &Path) -> String {
 const RM_DIR_MARKER: &str = ".grit-bench-rm-dir";
 const MV_SRC_MARKER: &str = ".grit-bench-mv-src";
 const MV_DST_MARKER: &str = ".grit-bench-mv-dst";
+const RESET_KEEP_PATH_MARKER: &str = ".grit-bench-reset-keep-path";
 
 fn write_marker(name: &str, value: &str) -> Result<()> {
     fs::write(scratch_dir().join(name), format!("{value}\n")).context("write matrix marker")
@@ -638,6 +639,59 @@ pub fn record_matrix_path_targets(git: &Path, repo: &Path) -> Result<()> {
         first.file_stem().and_then(|s| s.to_str()).unwrap_or("f")
     ));
     write_marker(MV_DST_MARKER, &dst.display().to_string())?;
+    record_reset_keep_target(git, repo)?;
+    Ok(())
+}
+
+/// Pick a tracked path whose blob is unchanged between `HEAD~1` and `HEAD` for reset-keep benches.
+pub fn record_reset_keep_target(git: &Path, repo: &Path) -> Result<()> {
+    use std::collections::HashSet;
+    use std::process::Command;
+
+    let mut cmd = Command::new(git);
+    cmd.args(["diff", "--name-only", "HEAD~1", "HEAD"])
+        .current_dir(repo);
+    crate::maintenance_suite::git_env(&mut cmd);
+    let out = cmd
+        .output()
+        .context("git diff HEAD~1 HEAD for reset-keep target")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "git diff HEAD~1 HEAD failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let changed: HashSet<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+
+    let skip_modify: HashSet<String> = modified_path_list(git, repo)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| p.display().to_string())
+        .collect();
+
+    let mut tracked = list_tracked_files(git, repo)?;
+    tracked.sort_by(|a, b| a.as_os_str().cmp(b.as_os_str()));
+    let target = tracked
+        .into_iter()
+        .rev()
+        .map(|p| p.display().to_string())
+        .find(|rel| !changed.contains(rel) && !skip_modify.contains(rel))
+        .context("need a tracked path unchanged between HEAD~1 and HEAD for reset-keep bench")?;
+    write_marker(RESET_KEEP_PATH_MARKER, &target)
+}
+
+/// After daily reset, leave an unstaged edit on the pinned reset-keep tracked path.
+pub fn apply_reset_keep_local_edit(repo: &Path) -> Result<()> {
+    let rel = read_marker(RESET_KEEP_PATH_MARKER)?;
+    let path = repo.join(&rel);
+    let mut content = fs::read_to_string(&path).unwrap_or_default();
+    content.push_str("bench-local\n");
+    fs::write(&path, content).with_context(|| format!("write reset-keep local edit to {rel}"))?;
     Ok(())
 }
 
@@ -701,6 +755,40 @@ pub fn shell_rm_dir_grit(program: &Path) -> String {
     let dir = read_marker(RM_DIR_MARKER).unwrap_or_else(|_| "data/d0000".into());
     shell_redirect_devnull(program, &["rm", &dir])
 }
+
+pub fn shell_rm_dir_dry_run_git(program: &Path) -> String {
+    let dir = read_marker(RM_DIR_MARKER).unwrap_or_else(|_| "data/d0000".into());
+    shell_redirect_devnull(program, &["rm", "-n", "-r", &dir])
+}
+
+pub fn shell_rm_dir_dry_run_grit(program: &Path) -> String {
+    let dir = read_marker(RM_DIR_MARKER).unwrap_or_else(|_| "data/d0000".into());
+    shell_redirect_devnull(program, &["rm", "--dry-run", &dir])
+}
+
+fn shell_stash_push_paths_inner(program: &Path, quiet_flag: &str) -> String {
+    let prog_q = shell_quote(&program.to_string_lossy());
+    let paths_q = shell_quote(&scratch_dir().join(PATHS_MARKER).to_string_lossy());
+    format!(
+        r#"set -eu
+if [ -s {paths_q} ]; then
+  tr '\n' '\0' < {paths_q} | xargs -0 {prog_q} stash push{quiet_flag} -- > /dev/null 2>&1
+fi"#
+    )
+}
+
+/// Shell snippet: stash only the ~1% modified path set (git accepts `-q`).
+pub fn shell_git_stash_push_paths(program: &Path) -> String {
+    shell_stash_push_paths_inner(program, " -q")
+}
+
+/// Shell snippet: stash only the ~1% modified path set (grit has no `-q`).
+pub fn shell_grit_stash_push_paths(program: &Path) -> String {
+    shell_stash_push_paths_inner(program, "")
+}
+
+/// Ignored-untracked suffix for `clean --only-ignored` benchmarks.
+pub const CLEAN_BENCH_IGNORED_SUFFIX: &str = "grit-bench-ignored";
 
 pub fn shell_mv_file(program: &Path) -> String {
     let src = read_marker(MV_SRC_MARKER).unwrap_or_else(|_| "data/d0000/f0000.txt".into());
