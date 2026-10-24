@@ -2020,10 +2020,11 @@ pub fn max_verify_pack_delta_depth(records: &[VerifyObjectRecord]) -> u64 {
 pub fn apply_delta_depth_limit(map: &mut HashMap<ObjectId, ObjectId>, max_depth: usize) {
     let keys: Vec<ObjectId> = map.keys().copied().collect();
     let value_set: HashSet<ObjectId> = map.values().copied().collect();
-    let tips: Vec<ObjectId> = keys
+    let mut tips: Vec<ObjectId> = keys
         .into_iter()
         .filter(|k| !value_set.contains(k))
         .collect();
+    tips.sort();
 
     let modulus = max_depth.saturating_add(1);
     let mut snip: HashSet<ObjectId> = HashSet::new();

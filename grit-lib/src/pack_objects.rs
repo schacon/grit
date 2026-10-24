@@ -635,7 +635,8 @@ fn write_planned_entries(
                 }
                 chunk.extend_from_slice(base_oid.as_bytes());
             }
-            write_zlib(&mut chunk, &delta)?;
+            let compression = odb.pack_compression()?;
+            write_zlib(&mut chunk, &delta, compression)?;
         }
         w.write_all(&chunk).map_err(Error::Io)?;
         body_written += chunk.len() as u64;
@@ -993,7 +994,8 @@ fn write_whole_pack_object(
         }
     }
     encode_pack_object_header(buf, pack_type_code(kind), data.len());
-    write_zlib(buf, data)
+    let compression = odb.pack_compression()?;
+    write_zlib(buf, data, compression)
 }
 
 /// Append the trailing pack checksum: the hash of everything written so far, at
@@ -1483,8 +1485,8 @@ fn load_islands_for_pack(
 }
 
 /// zlib-deflate `data` and append it to `buf`.
-fn write_zlib(buf: &mut Vec<u8>, data: &[u8]) -> Result<()> {
-    let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+fn write_zlib(buf: &mut Vec<u8>, data: &[u8], compression: Compression) -> Result<()> {
+    let mut enc = ZlibEncoder::new(Vec::new(), compression);
     enc.write_all(data).map_err(Error::Io)?;
     let compressed = enc.finish().map_err(Error::Io)?;
     buf.extend_from_slice(&compressed);

@@ -94,6 +94,18 @@ pub(crate) fn extend_send_order_blob_deltas(
     if window == 0 {
         return;
     }
+    let mut blob_path_keys = std::collections::HashSet::new();
+    for &oid in send {
+        let Some(obj) = objects.get(&oid) else {
+            continue;
+        };
+        if obj.kind == ObjectKind::Blob && !obj.data.is_empty() {
+            blob_path_keys.insert(blob_name_hashes.get(&oid).copied().unwrap_or(0));
+        }
+    }
+    // Single-path histories need Git's newest-first `<` tie rule so window search can
+    // build deep chains; multi-path repacks (typical gc) use OID tie-break for stable size.
+    let tie_break_equal_len_by_oid = blob_path_keys.len() > 1;
     let mut recent_same_path: HashMap<u32, VecDeque<ObjectId>> = HashMap::new();
     let mut index_cache: HashMap<ObjectId, Arc<DeltaIndex>> = HashMap::new();
     let remember =
@@ -118,7 +130,7 @@ pub(crate) fn extend_send_order_blob_deltas(
         }
         let max_size = obj.data.len().saturating_div(2).saturating_sub(hash_len);
         if max_size > 0 {
-            let mut best_base = None;
+            let mut best_base: Option<ObjectId> = None;
             let mut best_encoding: Option<Vec<u8>> = None;
             let mut best_len = max_size.saturating_add(1);
             if let Some(candidates) = recent_same_path.get(&path_key) {
@@ -143,7 +155,22 @@ pub(crate) fn extend_send_order_blob_deltas(
                             index.encode(&obj.data, max_size)
                         };
                     if let Some(delta) = chosen {
-                        if delta.len() <= max_size && delta.len() < best_len {
+                        if delta.len() > max_size {
+                            continue;
+                        }
+                        let better = if !tie_break_equal_len_by_oid {
+                            delta.len() < best_len
+                        } else {
+                            match best_base {
+                                None => true,
+                                Some(_prev) if delta.len() < best_len => true,
+                                Some(prev) if delta.len() == best_len => {
+                                    base.as_bytes() < prev.as_bytes()
+                                }
+                                _ => false,
+                            }
+                        };
+                        if better {
                             best_len = delta.len();
                             best_base = Some(base);
                             best_encoding = Some(delta);
@@ -296,10 +323,14 @@ pub(crate) fn search_windowed_blob_deltas(
                     warmup_delta_edges,
                 );
                 if let Ok(mut guard) = merged.lock() {
-                    guard.extend(local);
+                    for (k, v) in local {
+                        guard.insert(k, v);
+                    }
                 }
                 if let Ok(mut guard) = merged_enc.lock() {
-                    guard.extend(local_enc);
+                    for (k, v) in local_enc {
+                        guard.insert(k, v);
+                    }
                 }
             });
         }
@@ -566,6 +597,33 @@ struct TryDeltaContext<'a> {
     islands: &'a DeltaIslands,
 }
 
+/// Whether a newly found delta should replace the slot's current best (Git-style tie-break).
+fn prefer_delta_candidate(
+    trg: &WindowSlot<'_>,
+    delta_len: usize,
+    src_oid: ObjectId,
+    src_depth: usize,
+) -> bool {
+    let Some(prev_len) = trg.delta_size else {
+        return true;
+    };
+    if delta_len < prev_len {
+        return true;
+    }
+    if delta_len > prev_len {
+        return false;
+    }
+    let new_depth = src_depth + 1;
+    if new_depth < trg.depth {
+        return true;
+    }
+    if new_depth > trg.depth {
+        return false;
+    }
+    trg.base
+        .is_none_or(|cur| src_oid.as_bytes() < cur.as_bytes())
+}
+
 fn try_delta_pair(
     trg: &mut WindowSlot<'_>,
     ctx: TryDeltaContext<'_>,
@@ -625,10 +683,8 @@ fn try_delta_pair(
         if delta.len() > max_size {
             return 0;
         }
-        if let Some(prev) = trg.delta_size {
-            if delta.len() == prev && src_depth + 1 >= trg.depth {
-                return 0;
-            }
+        if !prefer_delta_candidate(trg, delta.len(), src_oid, src_depth) {
+            return 0;
         }
         trg.base = Some(src_oid);
         trg.depth = src_depth + 1;
@@ -645,10 +701,8 @@ fn try_delta_pair(
     let Some(delta) = index.encode(trg.data, max_size) else {
         return 0;
     };
-    if let Some(prev) = trg.delta_size {
-        if delta.len() == prev && src_depth + 1 >= trg.depth {
-            return 0;
-        }
+    if !prefer_delta_candidate(trg, delta.len(), src_oid, src_depth) {
+        return 0;
     }
 
     trg.base = Some(src_oid);
@@ -709,6 +763,11 @@ pub(crate) fn serialize_pack_with_deltas(
     write_prepared_pack(odb, entries, &prepared, opts)
 }
 
+/// Avoid thread-pool overhead on small repacks (typical loose-object gc).
+// Parallel pack preparation pays off on large packs; on ~600-object gc repacks the
+// thread pool and index sharing often lose to a single-threaded pass.
+const MIN_ENTRIES_FOR_PARALLEL_PACK_WRITE: usize = 2048;
+
 fn prepare_entries_parallel(
     odb: &Odb,
     entries: &[PlannedEntry],
@@ -723,7 +782,7 @@ fn prepare_entries_parallel(
         prepare_one_entry(odb, entry, plan_payloads, &delta_indices, opts, compression)
     };
 
-    if par_opts.threads.get() <= 1 {
+    if par_opts.threads.get() <= 1 || entries.len() < MIN_ENTRIES_FOR_PARALLEL_PACK_WRITE {
         entries.iter().map(prepare).collect()
     } else {
         try_par_map_force(entries, *par_opts, prepare).map_err(|e| match e {
@@ -793,12 +852,7 @@ fn prepare_one_entry(
 }
 
 fn pack_zlib_compression(odb: &Odb) -> Result<Compression> {
-    let level = pack_config(odb)?.pack_objects_zlib_level()?;
-    Ok(match level {
-        0 => Compression::fast(),
-        1..=9 => Compression::new(level as u32),
-        _ => Compression::default(),
-    })
+    odb.pack_compression()
 }
 
 fn prepare_whole(
