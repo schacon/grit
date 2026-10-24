@@ -1,10 +1,11 @@
 //! `worktree move` / `worktree repair` vs system Git.
 
 use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::config::git_path::path_for_disk_compare;
 use grit_lib::repo::Repository;
 use grit_lib::worktree::{
-    add_linked_worktree, move_linked_worktree, repair_worktrees, AddLinkedWorktreeOptions,
-    MoveWorktreeOptions, WorktreeBranch,
+    add_linked_worktree, list_worktrees, move_linked_worktree, repair_worktrees,
+    AddLinkedWorktreeOptions, MoveWorktreeOptions, WorktreeBranch,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -151,6 +152,78 @@ fn worktree_repair_fixes_moved_linked_tree_git_agrees() {
     git(&moved, &["status"]);
     let porcelain = git_worktree_porcelain(&main);
     assert!(porcelain.contains(&user_path(&moved)));
+}
+
+#[test]
+fn worktree_repair_no_paths_restores_broken_gitfile_without_touching_other_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = tmp.path().join("main");
+    let repo = seed_repo(&main);
+    let wt_a = tmp.path().join("tree-a");
+    let wt_b = tmp.path().join("tree-b");
+    add_linked(&repo, wt_a.clone(), "branch-a");
+    add_linked(&repo, wt_b.clone(), "branch-b");
+
+    let canon_a = path_for_disk_compare(&wt_a);
+    let canon_b = path_for_disk_compare(&wt_b);
+    let entries = list_worktrees(&repo).expect("list");
+    let admin_a = entries
+        .iter()
+        .find(|e| e.path == canon_a)
+        .expect("admin a")
+        .admin_dir
+        .clone();
+    let admin_b = entries
+        .iter()
+        .find(|e| e.path == canon_b)
+        .expect("admin b")
+        .admin_dir
+        .clone();
+
+    let broken_gitfile = std::fs::read_to_string(wt_b.join(".git")).unwrap();
+    std::fs::write(wt_a.join(".git"), broken_gitfile).unwrap();
+
+    let gitdir_b_before = std::fs::read_to_string(admin_b.join("gitdir")).unwrap();
+    repair_worktrees(&repo, &[], false).expect("repair all");
+    repair_worktrees(&repo, &[], false).expect("repair again (order-independent idempotence)");
+
+    let gitdir_a = std::fs::read_to_string(admin_a.join("gitdir")).unwrap();
+    let gitdir_b = std::fs::read_to_string(admin_b.join("gitdir")).unwrap();
+    assert!(
+        gitdir_a.contains(&user_path(&wt_a)),
+        "admin A gitdir must point at tree-a: {gitdir_a}"
+    );
+    assert_eq!(
+        gitdir_b, gitdir_b_before,
+        "admin B gitdir must stay unchanged"
+    );
+
+    git_fsck(&main);
+    let porcelain = git_worktree_porcelain(&main);
+    assert!(porcelain.contains(&user_path(&wt_a)));
+    assert!(porcelain.contains(&user_path(&wt_b)));
+    assert_eq!(
+        porcelain.matches("worktree ").count(),
+        3,
+        "main plus two linked worktrees: {porcelain}"
+    );
+
+    let branch_a = Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .args(["branch", "--show-current"])
+        .current_dir(&wt_a)
+        .output()
+        .expect("branch a");
+    assert_eq!(String::from_utf8_lossy(&branch_a.stdout).trim(), "branch-a");
+    let branch_b = Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .args(["branch", "--show-current"])
+        .current_dir(&wt_b)
+        .output()
+        .expect("branch b");
+    assert_eq!(String::from_utf8_lossy(&branch_b.stdout).trim(), "branch-b");
 }
 
 #[test]

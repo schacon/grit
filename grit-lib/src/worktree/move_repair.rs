@@ -119,7 +119,7 @@ pub fn repair_worktrees(
             let Some(wt_path) = locate_worktree_root_for_repair(&entry)? else {
                 continue;
             };
-            repair_worktree_at_path(repo, &wt_path, dry_run, &mut repairs)?;
+            repair_worktree_links(&wt_path, &entry.admin_dir, dry_run, &mut repairs)?;
         }
         return Ok(repairs);
     }
@@ -525,8 +525,24 @@ fn repair_worktree_at_path(
     }
     let dotgit_content = fs::read_to_string(&dotgit).map_err(Error::Io)?;
     let admin_dir = resolve_admin_from_gitfile(repo, &dotgit_content, wt_path)?;
+    repair_worktree_links(wt_path, &admin_dir, dry_run, repairs)
+}
 
-    let expected_admin = absolute_path_for_gitfile_stored_path(&admin_dir);
+/// Rewrite `.git` / `gitdir` for `wt_path` using `admin_dir` as the authoritative registration.
+fn repair_worktree_links(
+    wt_path: &Path,
+    admin_dir: &Path,
+    dry_run: bool,
+    repairs: &mut Vec<WorktreeRepair>,
+) -> Result<()> {
+    let dotgit = wt_path.join(".git");
+    if dotgit.is_dir() {
+        return Err(Error::Message(
+            "unable to locate repository; .git is not a file".into(),
+        ));
+    }
+    let dotgit_content = fs::read_to_string(&dotgit).unwrap_or_default();
+    let expected_admin = absolute_path_for_gitfile_stored_path(admin_dir);
     if let Some(kind) = gitfile_repair_kind(&dotgit_content, wt_path, &expected_admin) {
         repairs.push(WorktreeRepair {
             path: wt_path.to_path_buf(),
@@ -534,20 +550,20 @@ fn repair_worktree_at_path(
         });
         if !dry_run {
             let gitdir_file = admin_dir.join("gitdir");
-            write_worktree_linking_files(&dotgit, &gitdir_file, wt_path, &admin_dir)?;
+            write_worktree_linking_files(&dotgit, &gitdir_file, wt_path, admin_dir)?;
         }
     }
 
     let gitdir_file = admin_dir.join("gitdir");
     let expected_dotgit = absolute_path_for_gitfile_stored_path(&dotgit);
     let gitdir_raw = fs::read_to_string(&gitdir_file).unwrap_or_default();
-    if let Some(kind) = gitdir_repair_kind(&gitdir_raw, &admin_dir, &expected_dotgit) {
+    if let Some(kind) = gitdir_repair_kind(&gitdir_raw, admin_dir, &expected_dotgit) {
         repairs.push(WorktreeRepair {
             path: wt_path.to_path_buf(),
             kind,
         });
         if !dry_run {
-            write_worktree_linking_files(&dotgit, &gitdir_file, wt_path, &admin_dir)?;
+            write_worktree_linking_files(&dotgit, &gitdir_file, wt_path, admin_dir)?;
         }
     }
     Ok(())
