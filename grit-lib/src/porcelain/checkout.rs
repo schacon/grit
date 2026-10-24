@@ -1770,15 +1770,19 @@ struct DelayedCheckoutTarget {
     change: DiffEntry,
 }
 
-/// Attribute/conversion context for checkout smudge using the destination index view.
+/// Attribute/conversion context for checkout smudge.
 fn checkout_worktree_rules(
     repo: &Repository,
     index: &Index,
     attr_changes: &[DiffEntry],
     config: std::sync::Arc<ConfigSet>,
 ) -> Result<WorktreeRules> {
-    let prospective_index = prospective_index_for_checkout(index, attr_changes);
-    WorktreeRules::from_checkout_prospective_index(repo, &prospective_index, config)
+    if tree_changes_touch_gitattributes(attr_changes) {
+        let prospective_index = prospective_index_for_checkout(index, attr_changes);
+        WorktreeRules::from_checkout_prospective_index(repo, &prospective_index, config)
+    } else {
+        WorktreeRules::from_parts_index_attributes_only(repo, index, config)
+    }
 }
 
 pub(crate) fn tree_changes_touch_gitattributes(changes: &[DiffEntry]) -> bool {

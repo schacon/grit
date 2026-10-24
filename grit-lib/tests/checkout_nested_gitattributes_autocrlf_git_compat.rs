@@ -58,12 +58,22 @@ fn checkout_between_trees_honours_nested_binary_with_autocrlf() {
     let clone_dir = tempfile::tempdir().expect("clone dir");
     git(
         clone_dir.path(),
-        &["clone", "-q", src.to_str().expect("utf8"), "repo"],
+        &[
+            "clone",
+            "-q",
+            "--no-checkout",
+            src.to_str().expect("utf8"),
+            "repo",
+        ],
     );
     let repo_root = clone_dir.path().join("repo");
+    // `core.autocrlf` is not part of the committed tree; grit clone applies the
+    // caller/environment config (issue #1609 repro uses system autocrlf=true).
+    git(&repo_root, &["config", "core.autocrlf", "true"]);
 
     let grit_repo =
         Repository::discover(Some(&repo_root), &RepositoryOptions::empty()).expect("open");
+    grit_repo.reload_config().expect("reload autocrlf config");
     let head_tree = tree_of_head(&repo_root);
     checkout_between_trees(&grit_repo, None, &head_tree).expect("populate checkout");
 
