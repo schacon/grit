@@ -116,10 +116,10 @@ pub fn repair_worktrees(
             if entry.admin_dir == common {
                 continue;
             }
-            if !entry.path.exists() {
+            let Some(wt_path) = locate_worktree_root_for_repair(&entry)? else {
                 continue;
-            }
-            repair_gitfile(&entry, dry_run, &mut repairs)?;
+            };
+            repair_worktree_at_path(repo, &wt_path, dry_run, &mut repairs)?;
         }
         return Ok(repairs);
     }
@@ -212,11 +212,11 @@ fn copy_dir_all(from: &Path, to: &Path) -> Result<()> {
 fn copy_tree_entry(from: &Path, to: &Path) -> Result<()> {
     let meta = fs::symlink_metadata(from).map_err(Error::Io)?;
     let file_type = meta.file_type();
-    if file_type.is_dir() {
-        copy_dir_all(from, to)?;
-    } else if file_type.is_symlink() {
+    if file_type.is_symlink() || windows_mount_reparse_point(&meta) {
         let target = fs::read_link(from).map_err(Error::Io)?;
         create_symlink(&meta, &target, to)?;
+    } else if file_type.is_dir() {
+        copy_dir_all(from, to)?;
     } else {
         if let Some(parent) = to.parent() {
             fs::create_dir_all(parent).map_err(Error::Io)?;
@@ -224,6 +224,20 @@ fn copy_tree_entry(from: &Path, to: &Path) -> Result<()> {
         fs::copy(from, to).map_err(Error::Io)?;
     }
     Ok(())
+}
+
+/// Windows directory junctions (and other mount-point reparse points) look like directories
+/// to [`std::fs::FileType::is_dir`] but must not be descended into when copying.
+#[cfg(windows)]
+fn windows_mount_reparse_point(meta: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn windows_mount_reparse_point(_meta: &fs::Metadata) -> bool {
+    false
 }
 
 fn create_symlink(source_meta: &fs::Metadata, target: &Path, link_path: &Path) -> Result<()> {
@@ -241,7 +255,8 @@ fn create_symlink(source_meta: &fs::Metadata, target: &Path, link_path: &Path) -
         use std::os::windows::fs::{symlink_dir, symlink_file, FileTypeExt};
         // Preserve the source reparse-point kind. `Metadata::is_dir()` is false for every symlink
         // on Windows; `FileTypeExt::is_symlink_dir()` reads the reparse-point kind directly.
-        if source_meta.file_type().is_symlink_dir() {
+        // Junctions are directory reparse points but not symlinks.
+        if source_meta.file_type().is_symlink_dir() || windows_mount_reparse_point(source_meta) {
             symlink_dir(target, link_path).map_err(Error::Io)?;
         } else {
             symlink_file(target, link_path).map_err(Error::Io)?;
@@ -397,29 +412,74 @@ fn map_lock_err(err: LockError) -> Error {
     }
 }
 
-fn repair_gitfile(
-    entry: &WorktreeEntry,
-    dry_run: bool,
-    repairs: &mut Vec<WorktreeRepair>,
-) -> Result<()> {
-    let dotgit = entry.path.join(".git");
-    if !dotgit.is_file() {
-        return Ok(());
+/// Resolve the on-disk worktree root for a linked registration, including after a manual move
+/// left the admin `gitdir` pointing at a stale path.
+fn locate_worktree_root_for_repair(entry: &WorktreeEntry) -> Result<Option<PathBuf>> {
+    if linked_worktree_gitfile_at(&entry.path) {
+        return Ok(Some(entry.path.clone()));
     }
-    let expected_admin = absolute_path_for_gitfile_stored_path(&entry.admin_dir);
-    let content = fs::read_to_string(&dotgit).unwrap_or_default();
-    let kind = gitfile_repair_kind(&content, &entry.path, &expected_admin);
-    if let Some(kind) = kind {
-        repairs.push(WorktreeRepair {
-            path: entry.path.clone(),
-            kind,
-        });
-        if !dry_run {
-            let gitdir_file = entry.admin_dir.join("gitdir");
-            write_worktree_linking_files(&dotgit, &gitdir_file, &entry.path, &entry.admin_dir)?;
+    if let Some(wt) = worktree_root_from_admin_gitdir(&entry.admin_dir) {
+        if linked_worktree_gitfile_at(&wt) {
+            return Ok(Some(wt));
         }
     }
-    Ok(())
+    discover_moved_worktree_sibling(entry)
+}
+
+fn linked_worktree_gitfile_at(wt_root: &Path) -> bool {
+    wt_root.is_dir() && wt_root.join(".git").is_file()
+}
+
+fn worktree_root_from_admin_gitdir(admin: &Path) -> Option<PathBuf> {
+    let gitdir_path = admin.join("gitdir");
+    let raw = fs::read_to_string(&gitdir_path).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut dotgit = PathBuf::from(trimmed);
+    if dotgit.is_relative() {
+        dotgit = admin.join(dotgit);
+    }
+    let dotgit = path_for_disk_compare(&dotgit);
+    if !dotgit.is_file() {
+        return None;
+    }
+    dotgit.parent().map(path_for_disk_compare)
+}
+
+fn discover_moved_worktree_sibling(entry: &WorktreeEntry) -> Result<Option<PathBuf>> {
+    let stale = &entry.path;
+    let Some(parent) = stale.parent() else {
+        return Ok(None);
+    };
+    if !parent.is_dir() {
+        return Ok(None);
+    }
+    let expected_admin = absolute_path_for_gitfile_stored_path(&entry.admin_dir);
+    for child in fs::read_dir(parent).map_err(Error::Io)? {
+        let child = child.map_err(Error::Io)?;
+        let path = path_for_disk_compare(&child.path());
+        if path == *stale || !path.is_dir() {
+            continue;
+        }
+        let dotgit = path.join(".git");
+        if gitfile_refers_to_admin(&dotgit, &path, &expected_admin) {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+fn gitfile_refers_to_admin(dotgit: &Path, wt_path: &Path, expected_admin: &str) -> bool {
+    if !dotgit.is_file() {
+        return false;
+    }
+    let content = fs::read_to_string(dotgit).unwrap_or_default();
+    match parse_gitfile_target(&content, wt_path) {
+        Some(admin) => absolute_path_for_gitfile_stored_path(&admin) == expected_admin,
+        None => false,
+    }
 }
 
 fn gitfile_repair_kind(

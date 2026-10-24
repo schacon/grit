@@ -154,6 +154,24 @@ fn worktree_repair_fixes_moved_linked_tree_git_agrees() {
 }
 
 #[test]
+fn worktree_repair_no_paths_finds_sibling_moved_linked_tree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = tmp.path().join("main");
+    let repo = seed_repo(&main);
+    let linked = tmp.path().join("orig");
+    add_linked(&repo, linked.clone(), "side");
+    let moved = tmp.path().join("moved");
+    std::fs::rename(&linked, &moved).unwrap();
+    let repairs = repair_worktrees(&repo, &[], false).expect("repair all");
+    assert!(!repairs.is_empty());
+    git_fsck(&main);
+    git(&moved, &["status"]);
+    let porcelain = git_worktree_porcelain(&main);
+    assert!(porcelain.contains(&user_path(&moved)));
+    assert!(!porcelain.contains("prunable"));
+}
+
+#[test]
 fn worktree_repair_fixes_moved_main_repo_git_agrees() {
     let tmp = tempfile::tempdir().unwrap();
     let main = tmp.path().join("main");
