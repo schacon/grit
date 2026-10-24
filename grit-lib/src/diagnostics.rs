@@ -172,6 +172,14 @@ pub enum Warning {
         /// Hook script basename that was skipped.
         hook_name: String,
     },
+    /// A hook whose outcome does not affect the operation (such as `post-commit`) could not be
+    /// run; the operation already completed.
+    HookNotRun {
+        /// Hook event name (`post-commit`, …).
+        hook_name: String,
+        /// Why it did not run, including the underlying OS error.
+        detail: String,
+    },
     /// Returned when midx checksum mismatch.
     MidxChecksumMismatch,
     /// Returned when midx ignoring existing checksum mismatch.

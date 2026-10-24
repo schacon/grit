@@ -59,7 +59,7 @@ With `--allow-empty`, grit records a new commit whose tree matches the parent ev
 
 When a merge is in progress (`MERGE_HEAD` is present) and every conflict is resolved in the index, `grit commit` records a **merge commit** with two parents (your branch tip and the merged tip) and clears merge state the same way Git does after `git commit`.
 
-`pre-commit` and `commit-msg` hooks run before the commit object is written when they are installed (config `hook.*` entries or scripts under the hooks directory). Pass `--no-verify` to skip both; `post-commit` still runs afterward, matching Git. Dry-run skips all hooks. See [`grit hooks`](hooks.md).
+`pre-commit` and `commit-msg` hooks run before the commit object is written when they are installed (config `hook.*` entries or scripts under the hooks directory). Pass `--no-verify` to skip both; `post-commit` still runs afterward, matching Git. A `pre-commit` or `commit-msg` hook that exits non-zero or cannot be started aborts the commit, and the error names the hook and the OS error. `post-commit` never changes the result: the commit is already written, so a non-zero exit is ignored, and a hook that cannot be started prints a warning on stderr (`hook_not_run`). Dry-run skips all hooks. See [`grit hooks`](hooks.md).
 
 ### Change ids
 

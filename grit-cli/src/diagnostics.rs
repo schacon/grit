@@ -151,6 +151,9 @@ pub fn format_warning_message(w: &Warning) -> String {
         Warning::NonExecutableHookIgnored { hook_name } => format!(
             "the '{hook_name}' hook was ignored because it is not executable (see `grit config set advice.ignoredHook false` to silence)"
         ),
+        Warning::HookNotRun { hook_name, detail } => {
+            format!("the '{hook_name}' hook did not run: {detail}")
+        }
         Warning::MidxChecksumMismatch => {
             "multi-pack-index checksum does not match; ignoring index".into()
         }
@@ -208,6 +211,7 @@ fn warning_kind(w: &Warning) -> String {
         Warning::MailmapUnreadable { .. } => "mailmap_unreadable".into(),
         Warning::ReflogNotWritten { .. } => "reflog_not_written".into(),
         Warning::NonExecutableHookIgnored { .. } => "non_executable_hook_ignored".into(),
+        Warning::HookNotRun { .. } => "hook_not_run".into(),
         Warning::MidxChecksumMismatch => "midx_checksum_mismatch".into(),
         Warning::MidxIgnoringExistingChecksumMismatch => {
             "midx_ignoring_existing_checksum_mismatch".into()

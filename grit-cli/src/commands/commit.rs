@@ -612,6 +612,7 @@ fn map_commit_error(err: Error) -> anyhow::Error {
         Error::PathspecNoMatch { spec } => anyhow::anyhow!(
             "pathspec '{spec}' did not match any file(s) known to git"
         ),
+        hook @ Error::Hook(_) => anyhow::Error::new(hook),
         other => anyhow::anyhow!("{other}"),
     }
 }
