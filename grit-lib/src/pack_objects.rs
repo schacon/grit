@@ -1466,11 +1466,18 @@ pub(crate) fn plan_deltas(
     if reuse_on_disk {
         let objects_dir = odb.objects_dir();
         let in_pack_std: HashSet<ObjectId> = in_pack.iter().copied().collect();
+        // A thin pack keeps an on-disk delta whose base the peer already holds; it is
+        // written as `REF_DELTA` and completed by the receiver.
+        let reusable_bases: Cow<'_, HashSet<ObjectId>> = if opts.thin && !have_closure.is_empty() {
+            Cow::Owned(in_pack_std.union(have_closure).copied().collect())
+        } else {
+            Cow::Borrowed(&in_pack_std)
+        };
         let empty_resolved: HashMap<ObjectId, Object> = HashMap::new();
         let candidates = crate::pack::collect_packed_delta_reuse_for_send(
             objects_dir,
             &in_pack_std,
-            &in_pack_std,
+            &reusable_bases,
             &empty_resolved,
         )?;
         for (t, (base, size, pack_bytes, zlib_start, zlib_end)) in candidates {
@@ -1481,7 +1488,7 @@ pub(crate) fn plan_deltas(
             if empty {
                 continue;
             }
-            if base != t && in_pack.contains(&base) && islands.in_same_island(&t, &base) {
+            if base != t && reusable_bases.contains(&base) && islands.in_same_island(&t, &base) {
                 delta_to_base.insert(t, base);
                 reused_zlib.insert(t, (size, pack_bytes, zlib_start, zlib_end));
             }
