@@ -15,7 +15,6 @@
 //! See `Documentation/technical/index-format.txt` in the Git source tree for
 //! the authoritative format specification.
 
-#[cfg(not(unix))]
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -2948,6 +2947,24 @@ impl Index {
         Some(&mut self.entries[pos])
     }
 
+    /// Index positions of stage-0 entries, keyed like [`index_path_outcome_key`].
+    ///
+    /// Used when ordering [`crate::porcelain::add::StageOutcome`] path lists without repeated
+    /// linear scans. Valid UTF-8 paths borrow from the index entry; invalid UTF-8 uses lossy keys.
+    pub(crate) fn stage0_path_positions<'a>(
+        &'a self,
+    ) -> std::collections::HashMap<Cow<'a, str>, usize> {
+        let stage0_count = self.entries.iter().filter(|e| e.stage() == 0).count();
+        let mut positions = std::collections::HashMap::with_capacity(stage0_count);
+        for (pos, entry) in self.entries.iter().enumerate() {
+            if entry.stage() == 0 {
+                let key = index_path_outcome_key(&entry.path);
+                positions.entry(key).or_insert(pos);
+            }
+        }
+        positions
+    }
+
     /// Merge tree contents from `treeish` into this index as virtual stage-1 entries, matching
     /// Git's `overlay_tree_on_index` used by `git ls-files --with-tree`.
     ///
@@ -4277,6 +4294,15 @@ pub(crate) fn advance_index_file_mtime_past_entries(
         FileTime::from_unix_time(i64::from(max_sec) + 1, 0)
     };
     filetime::set_file_mtime(index_path, ft).map_err(Error::Io)
+}
+
+/// String form of an index path as surfaced in porcelain outcomes (UTF-8 or lossy).
+#[must_use]
+pub(crate) fn index_path_outcome_key(path: &[u8]) -> Cow<'_, str> {
+    match std::str::from_utf8(path) {
+        Ok(s) => Cow::Borrowed(s),
+        Err(_) => Cow::Owned(String::from_utf8_lossy(path).into_owned()),
+    }
 }
 
 /// Join a repository work tree root with an index-relative path stored as raw bytes.
