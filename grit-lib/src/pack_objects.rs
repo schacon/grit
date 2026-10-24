@@ -416,6 +416,32 @@ pub fn build_pack_with_shallow_and_filter(
     filter: Option<&ObjectFilter>,
     opts: &PackBuildOptions,
 ) -> Result<Vec<u8>> {
+    let mut pack = Vec::new();
+    write_pack_with_shallow_and_filter(
+        odb,
+        wants,
+        haves,
+        have_shallow,
+        source_shallow,
+        filter,
+        opts,
+        &mut pack,
+    )?;
+    Ok(pack)
+}
+
+/// Streaming form of [`build_pack_with_shallow_and_filter`].
+#[allow(clippy::too_many_arguments)]
+fn write_pack_with_shallow_and_filter(
+    odb: &Odb,
+    wants: &[ObjectId],
+    haves: &[ObjectId],
+    have_shallow: &HashSet<ObjectId>,
+    source_shallow: &HashSet<ObjectId>,
+    filter: Option<&ObjectFilter>,
+    opts: &PackBuildOptions,
+    w: &mut dyn Write,
+) -> Result<PackStats> {
     let selection = crate::pack_object_select::enumerate_pack_objects(
         odb,
         wants,
@@ -426,19 +452,46 @@ pub fn build_pack_with_shallow_and_filter(
             have_shallow_grafts: Some(have_shallow),
             use_bitmaps: opts.use_bitmaps,
             exclude_objects: None,
-            prefetch_walk_objects: true,
+            prefetch_walk_objects: false,
         },
     )?;
-    build_pack_from_send_list(
+    if !opts.delta {
+        let bytes = serialize_pack(odb, &selection.send, opts)?;
+        w.write_all(&bytes).map_err(Error::Io)?;
+        return Ok(PackStats {
+            object_count: u32::try_from(selection.send.len()).unwrap_or(u32::MAX),
+            pack_bytes: bytes.len() as u64,
+            ..PackStats::default()
+        });
+    }
+    let plan = plan_deltas(
         odb,
         &selection.send,
         &selection.have_closure,
         opts,
-        &selection.blob_name_hashes,
+        &oid_hash_map_from(&selection.blob_name_hashes),
+        None,
+        HashMap::new(),
+    )?;
+    crate::pack_delta::write_pack_with_deltas(
+        odb,
+        &plan.entries,
+        &plan.payloads,
+        opts,
+        None,
+        w,
+        None,
     )
 }
 
 /// Stream a pack for upload-pack: pack reuse when bitmaps allow, otherwise pack-objects.
+///
+/// The whole build runs in the odb's pack read context, so planning and the pack-write
+/// workers share one set of pack caches. Filtered (partial clone) packs stream too.
+///
+/// # Errors
+///
+/// Missing wants, corrupt objects, or I/O failures while writing to `w`.
 #[allow(clippy::too_many_arguments)]
 pub fn write_upload_pack_stream(
     repo: &Repository,
@@ -451,8 +504,35 @@ pub fn write_upload_pack_stream(
     progress: &mut dyn FnMut(PackProgress),
     w: &mut dyn Write,
 ) -> Result<PackStats> {
+    repo.odb().with_pack_read_context(|| {
+        write_upload_pack_stream_in_context(
+            repo,
+            wants,
+            haves,
+            source_shallow,
+            have_shallow,
+            filter,
+            opts,
+            progress,
+            w,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_upload_pack_stream_in_context(
+    repo: &Repository,
+    wants: &[ObjectId],
+    haves: &[ObjectId],
+    source_shallow: &HashSet<ObjectId>,
+    have_shallow: &HashSet<ObjectId>,
+    filter: Option<&ObjectFilter>,
+    opts: &PackBuildOptions,
+    progress: &mut dyn FnMut(PackProgress),
+    w: &mut dyn Write,
+) -> Result<PackStats> {
     if filter.is_some() {
-        let pack = build_pack_with_shallow_and_filter(
+        return write_pack_with_shallow_and_filter(
             repo.odb(),
             wants,
             haves,
@@ -460,13 +540,8 @@ pub fn write_upload_pack_stream(
             source_shallow,
             filter,
             opts,
-        )?;
-        let len = pack.len() as u64;
-        w.write_all(&pack).map_err(Error::Io)?;
-        return Ok(PackStats {
-            pack_bytes: len,
-            ..PackStats::default()
-        });
+            w,
+        );
     }
     if opts.use_bitmaps {
         if let Some(stats) = crate::pack_reuse::try_write_streaming_pack(
