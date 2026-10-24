@@ -301,6 +301,10 @@ pub fn install_pack_path(
 }
 
 /// Like [`install_pack_path`], reporting pack indexing progress on `progress` when set.
+///
+/// When `cancel` is set, the coordinator polls it at phase boundaries; worker threads
+/// during parallel hashing only observe a shared atomic snapshot (see library guide
+/// [Parallelism](https://grit-scm.com/docs/library/parallelism)).
 pub fn install_pack_path_with_progress(
     pack_path: &Path,
     odb: &Odb,
@@ -348,11 +352,13 @@ pub fn install_pack_path_with_progress(
     cleanup_stale_install_stage(&stage);
 
     let install_result = (|| -> Result<IngestedPack> {
+        poll_ingest_cancel(&mut progress, cancel)?;
         std::fs::create_dir_all(&stage).map_err(Error::Io)?;
         if std::fs::rename(&owned, &stage_pack).is_err() {
             std::fs::copy(&owned, &stage_pack).map_err(Error::Io)?;
             let _ = std::fs::remove_file(&owned);
         }
+        poll_ingest_cancel(&mut progress, cancel)?;
         let mut indexed = PackData::open(&stage_pack)?;
         let parallelism = opts.index_parallelism(odb)?;
         record_resolved_ingest_threads(parallelism.threads().get());
@@ -364,6 +370,7 @@ pub fn install_pack_path_with_progress(
                     "received pack checksum mismatch (download may be incomplete): {e}"
                 ))
             })?;
+            poll_ingest_cancel(&mut progress, cancel)?;
             let trailer = pack_bytes[pack_bytes.len() - hb..].to_vec();
             if let Some(rows) = &opts.trusted_index_rows {
                 if rows.len()
@@ -423,11 +430,15 @@ pub fn install_pack_path_with_progress(
             }
         };
         drop(indexed);
+        poll_ingest_cancel(&mut progress, cancel)?;
         write_v2_pack_index_with_trailer(&stage_idx, &entries, &trailer, hb, Some(sort_threads))?;
+        poll_ingest_cancel(&mut progress, cancel)?;
         if !opts.skip_post_index_verify {
             verify_pack_and_collect(&stage_idx)?;
         }
+        poll_ingest_cancel(&mut progress, cancel)?;
         std::fs::rename(&stage_pack, &final_pack).map_err(Error::Io)?;
+        poll_ingest_cancel(&mut progress, cancel)?;
         std::fs::rename(&stage_idx, &idx_path).map_err(|e| {
             let _ = std::fs::remove_file(&final_pack);
             Error::Io(e)
@@ -460,6 +471,22 @@ fn pack_needs_thin_fix(records: &[PackIndexRecord], ref_bases: &[ObjectId]) -> b
     }
     let in_pack: HashSet<ObjectId> = records.iter().map(|r| r.oid).collect();
     ref_bases.iter().any(|base| !in_pack.contains(base))
+}
+
+fn poll_ingest_cancel(
+    progress: &mut Option<&mut dyn ProgressSink>,
+    cancel: Option<&dyn Cancel>,
+) -> Result<()> {
+    let Some(c) = cancel else {
+        return Ok(());
+    };
+    if let Some(p) = progress.as_mut() {
+        poll_cancel(p, c)
+    } else if c.is_cancelled() {
+        Err(Error::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 fn cleanup_stale_install_stage(stage: &Path) {
@@ -613,6 +640,87 @@ mod tests {
                 pack_index_records_with_threads(&pack, &odb, Parallelism::resolve(Some(threads)))
                     .unwrap_or_else(|e| panic!("threads={threads}: {e}"));
             assert_eq!(records.len(), 401, "threads={threads}");
+        }
+    }
+
+    #[test]
+    fn install_pack_cancelled_during_indexing_cleans_stage() {
+        use crate::progress::{FlagCancel, ProgressPhase, ProgressSink, ProgressUnit};
+        use grit_test_support::objects::{HashAlgo, ObjectKind as PK, PackBuilder};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        struct CancelAtIndexing {
+            flag: FlagCancel,
+            saw_indexing: Arc<AtomicBool>,
+        }
+
+        impl ProgressSink for CancelAtIndexing {
+            fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
+                if phase == ProgressPhase::IndexingObjects {
+                    self.saw_indexing.store(true, Ordering::Relaxed);
+                    self.flag.cancel();
+                }
+                let _ = total;
+            }
+            fn start_with_unit(
+                &mut self,
+                phase: ProgressPhase,
+                unit: ProgressUnit,
+                total: Option<u64>,
+            ) {
+                self.start(phase, total);
+                let _ = unit;
+            }
+        }
+
+        let mut pb = PackBuilder::new(HashAlgo::Sha1);
+        for i in 0..400 {
+            pb.add_full(PK::Blob, format!("blob-{i}\n").as_bytes());
+        }
+        let pack = pb.build().bytes;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pack_path = tmp.path().join("incoming.pack");
+        std::fs::write(&pack_path, &pack).expect("write pack");
+        let odb = Odb::new(tmp.path());
+        let flag = FlagCancel::new();
+        let saw = Arc::new(AtomicBool::new(false));
+        let mut progress = CancelAtIndexing {
+            flag: flag.clone(),
+            saw_indexing: Arc::clone(&saw),
+        };
+        let err = install_pack_path_with_progress(
+            &pack_path,
+            &odb,
+            &IngestPackOptions {
+                threads: Some(4),
+                ..Default::default()
+            },
+            Some(&mut progress),
+            Some(&flag),
+        )
+        .expect_err("cancel during index-pack");
+        assert!(matches!(err, Error::Cancelled), "got {err:?}");
+        assert!(saw.load(Ordering::Relaxed), "expected indexing phase");
+
+        let pack_dir = tmp.path().join("pack");
+        if pack_dir.exists() {
+            for entry in pack_dir_entries(&pack_dir) {
+                let name = entry
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default();
+                assert!(
+                    !name.ends_with(".pack") && !name.ends_with(".idx"),
+                    "leftover install artifact: {}",
+                    entry.display()
+                );
+                assert!(
+                    !entry.is_dir() || !name.contains("-install"),
+                    "leftover stage dir: {}",
+                    entry.display()
+                );
+            }
         }
     }
 

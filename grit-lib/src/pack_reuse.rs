@@ -1,9 +1,6 @@
 //! Verbatim pack reuse for bitmap-accelerated upload-pack (streaming PACK v2).
 //!
-//! ```rust
-//! use grit_lib::pack_objects::PackStats;
-//! let _ = std::any::type_name::<PackStats>();
-//! ```
+//! Pack reuse is internal to upload-pack; there is no separate public embedder API.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
