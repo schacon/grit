@@ -222,9 +222,9 @@ impl ObjectId {
     /// Whether this OID is Git's well-known empty tree (canonical or legacy typo hash).
     #[must_use]
     pub(crate) fn is_well_known_empty_tree(&self) -> bool {
-        self.as_bytes().len() == HashAlgo::Sha1.len()
-            && (self.as_bytes() == WELL_KNOWN_EMPTY_TREE_CANON
-                || self.as_bytes() == WELL_KNOWN_EMPTY_TREE_LEGACY)
+        self.is_canonical_empty_tree()
+            || (self.as_bytes().len() == HashAlgo::Sha1.len()
+                && self.as_bytes() == WELL_KNOWN_EMPTY_TREE_LEGACY)
     }
 
     /// Whether this OID is the canonical SHA-1 empty tree (`4b825dc6…4904`).
@@ -1344,6 +1344,14 @@ pub fn serialize_commit(c: &CommitData) -> Vec<u8> {
 #[cfg(test)]
 mod commit_parse_tests {
     use super::*;
+
+    #[test]
+    fn empty_tree_constant_is_canonical_sha1_digest() {
+        assert_eq!(
+            ObjectId::empty_tree().to_hex(),
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        );
+    }
 
     #[test]
     fn commit_subject_pretty_folds_first_paragraph() {

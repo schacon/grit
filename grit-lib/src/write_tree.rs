@@ -479,19 +479,7 @@ fn store_tree_payload(
 /// Returns whether `oid` is Git's canonical empty tree (including the legacy hash).
 #[must_use]
 pub fn is_empty_tree_oid(odb: &Odb, oid: &ObjectId) -> bool {
-    if odb.hash(ObjectKind::Tree, b"").ok().as_ref() == Some(oid) {
-        return true;
-    }
-    // Legacy SHA-1 empty-tree OIDs can appear in cache-trees on SHA-1 repositories.
-    if odb.hash_algo() == crate::objects::HashAlgo::Sha1 {
-        let hex = oid.to_hex();
-        const EMPTY_TREE_CANON: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-        const EMPTY_TREE_LEGACY: &str = "4b825dc642cb6eb9a060e54bf899d69f7c6948d4";
-        if hex == EMPTY_TREE_CANON || hex == EMPTY_TREE_LEGACY {
-            return true;
-        }
-    }
-    false
+    odb.is_empty_tree(oid)
 }
 
 fn ensure_empty_blob_for_intent_to_add(odb: &Odb, index: &Index) -> Result<()> {
