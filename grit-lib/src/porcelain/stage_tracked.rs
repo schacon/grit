@@ -513,7 +513,17 @@ fn refresh_unmerged_tracked_path(
         Some(meta) => {
             if crate::rerere::worktree_metadata_needs_conflict_marker_inspection(&meta, idx_mode) {
                 let wt_bytes = fs::read(abs_path).map_err(Error::Io)?;
-                if crate::rerere::worktree_bytes_have_unresolved_conflict_markers(&wt_bytes) {
+                let marker_size = std::str::from_utf8(raw_path)
+                    .map(|rel| {
+                        rules
+                            .file_attrs(rel, false)
+                            .effective_conflict_marker_size()
+                    })
+                    .unwrap_or(7);
+                if crate::rerere::worktree_bytes_have_unresolved_conflict_markers(
+                    &wt_bytes,
+                    marker_size,
+                ) {
                     return Ok(());
                 }
             }

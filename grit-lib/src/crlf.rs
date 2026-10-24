@@ -235,6 +235,23 @@ impl Default for FileAttrs {
     }
 }
 
+impl FileAttrs {
+    /// Width of conflict marker lines for this path (`conflict-marker-size` attribute).
+    ///
+    /// Matches Git: unset or invalid values default to 7; explicit `0` also maps to 7.
+    #[must_use]
+    pub(crate) fn effective_conflict_marker_size(&self) -> usize {
+        match self
+            .conflict_marker_size
+            .as_ref()
+            .and_then(|value| value.parse::<usize>().ok())
+        {
+            None | Some(0) => 7,
+            Some(n) => n,
+        }
+    }
+}
+
 /// Global conversion settings derived from config.
 #[derive(Clone)]
 pub struct ConversionConfig {
