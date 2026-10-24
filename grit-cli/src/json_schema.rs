@@ -53,7 +53,6 @@ pub fn schema_id_v2(command: &str) -> String {
 
 /// Commands whose live `--json` shape is versioned separately from the frozen v1 contract.
 const SCHEMA_V2_COMMANDS: &[&str] = &[
-    "clone",
     "config",
     "merge",
     "mv",
@@ -72,12 +71,34 @@ const SCHEMA_V2_COMMANDS: &[&str] = &[
 
 /// File name for a command schema under [`schemas_dir`].
 pub fn schema_file_name(command: &str) -> String {
-    format!("{command}.v1.json")
+    schema_file_name_for(command, committed_schema_version(command))
 }
 
 /// File name for a v2 schema document.
 pub fn schema_file_name_v2(command: &str) -> String {
-    format!("{command}.v2.json")
+    schema_file_name_for(command, 2)
+}
+
+/// File name for a command schema at `version` under [`schemas_dir`].
+pub fn schema_file_name_for(command: &str, version: u32) -> String {
+    format!("{command}.v{version}.json")
+}
+
+/// Version of the committed schema document used for validation and docs (`clone` is v3).
+#[must_use]
+pub fn committed_schema_version(command: &str) -> u32 {
+    if command == "clone" {
+        return 3;
+    }
+    if SCHEMA_V2_COMMANDS.contains(&command) {
+        return 2;
+    }
+    1
+}
+
+/// Stable `$id` URL for a command schema document at `version`.
+pub fn schema_id_for(command: &str, version: u32) -> String {
+    format!("https://grit-scm.com/schemas/{command}/v{version}.json")
 }
 
 fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
@@ -510,13 +531,10 @@ pub fn schema_key_for_doc_example(
     schema_command_key(&[page_command])
 }
 
-/// Load the committed schema document for `command` (v1, or v2 when listed in [`SCHEMA_V2_COMMANDS`]).
+/// Load the committed live schema document for `command`.
 pub fn load_committed_schema(command: &str) -> serde_json::Value {
-    let path = if SCHEMA_V2_COMMANDS.contains(&command) {
-        schemas_dir().join(schema_file_name_v2(command))
-    } else {
-        schemas_dir().join(schema_file_name(command))
-    };
+    let version = committed_schema_version(command);
+    let path = schemas_dir().join(schema_file_name_for(command, version));
     let text =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("read schema {}: {e}", path.display()));
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse schema {}: {e}", path.display()))
@@ -536,10 +554,11 @@ pub fn write_all_schemas(dir: &Path) {
         panic!("create schemas dir: {e}");
     }
     for entry in schema_registry() {
-        if SCHEMA_V2_COMMANDS.contains(&entry.command) {
+        let version = committed_schema_version(entry.command);
+        if version >= 2 {
             let schema = (entry.schema)();
-            let json = root_schema_to_document_v2(entry.command, schema);
-            let path = dir.join(schema_file_name_v2(entry.command));
+            let json = root_schema_to_document_at_version(entry.command, version, schema);
+            let path = dir.join(schema_file_name_for(entry.command, version));
             let text = match serde_json::to_string_pretty(&json) {
                 Ok(t) => t,
                 Err(e) => panic!("serialize schema: {e}"),
@@ -554,7 +573,7 @@ pub fn write_all_schemas(dir: &Path) {
         if entry.command == "add" {
             patch_add_outcome_optional_map_fields(&mut json);
         }
-        let path = dir.join(schema_file_name(entry.command));
+        let path = dir.join(schema_file_name_for(entry.command, 1));
         let text = match serde_json::to_string_pretty(&json) {
             Ok(t) => t,
             Err(e) => panic!("serialize schema: {e}"),
@@ -566,9 +585,17 @@ pub fn write_all_schemas(dir: &Path) {
 }
 
 fn root_schema_to_document_v2(command: &str, root: RootSchema) -> serde_json::Value {
+    root_schema_to_document_at_version(command, 2, root)
+}
+
+fn root_schema_to_document_at_version(
+    command: &str,
+    version: u32,
+    root: RootSchema,
+) -> serde_json::Value {
     let mut value = root_schema_to_document(command, root);
     if let Some(obj) = value.as_object_mut() {
-        obj.insert("$id".into(), schema_id_v2(command).into());
+        obj.insert("$id".into(), schema_id_for(command, version).into());
     }
     value
 }
@@ -1022,6 +1049,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn clone_committed_schema_uses_v3_contract() {
+        let doc = load_committed_schema("clone");
+        assert_eq!(
+            doc.get("$id").and_then(|v| v.as_str()),
+            Some("https://grit-scm.com/schemas/clone/v3.json")
+        );
+        assert!(
+            doc.get("properties").and_then(|p| p.get("bare")).is_some(),
+            "clone live schema must include `bare`"
+        );
+    }
+
+    #[test]
     fn json_schemas_are_current() {
         let dir = schemas_dir();
         if env::var("GRIT_UPDATE_SCHEMAS").as_deref() == Ok("1") {
@@ -1031,22 +1071,22 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         write_all_schemas(tmp.path());
         for entry in schema_registry() {
-            if SCHEMA_V2_COMMANDS.contains(&entry.command) {
-                let committed = dir.join(schema_file_name_v2(entry.command));
-                let generated = tmp.path().join(schema_file_name_v2(entry.command));
+            let version = committed_schema_version(entry.command);
+            let file_name = schema_file_name_for(entry.command, version);
+            let committed = dir.join(&file_name);
+            let generated = tmp.path().join(&file_name);
+            if version >= 2 {
                 let committed_text = fs::read_to_string(&committed)
                     .unwrap_or_else(|e| panic!("read {}: {e}", committed.display()));
                 let generated_text = fs::read_to_string(&generated)
                     .unwrap_or_else(|e| panic!("read {}: {e}", generated.display()));
                 assert_eq!(
                     committed_text, generated_text,
-                    "v2 schema drift for `{}`; run GRIT_UPDATE_SCHEMAS=1 cargo test json_schemas_are_current -p grit-cli",
+                    "v{version} schema drift for `{}`; run GRIT_UPDATE_SCHEMAS=1 cargo test json_schemas_are_current -p grit-cli",
                     entry.command
                 );
                 continue;
             }
-            let committed = dir.join(schema_file_name(entry.command));
-            let generated = tmp.path().join(schema_file_name(entry.command));
             let committed_text = fs::read_to_string(&committed)
                 .unwrap_or_else(|e| panic!("read {}: {e}", committed.display()));
             let generated_text = fs::read_to_string(&generated)
