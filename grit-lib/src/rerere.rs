@@ -353,6 +353,41 @@ fn conflict_marker_size(_path: &str) -> usize {
     7
 }
 
+/// Whether auto-staging should read worktree bytes to scan for conflict markers.
+///
+/// Only regular tracked files can carry marker payloads; gitlinks, directories, and
+/// symlinks use other staging paths (`read_submodule_head_oid`, `read_link`, …).
+pub(crate) fn worktree_metadata_needs_conflict_marker_inspection(
+    meta: &std::fs::Metadata,
+    index_mode: u32,
+) -> bool {
+    use crate::index::MODE_GITLINK;
+    index_mode != MODE_GITLINK && !meta.is_dir() && !meta.file_type().is_symlink()
+}
+
+/// Whether worktree bytes still contain Git-style merge conflict markers.
+///
+/// Uses the same lexer as rerere preimage normalization so literal marker-like
+/// text in unrelated files is not treated as an unresolved conflict unless it
+/// forms a parseable conflict hunk.
+pub(crate) fn worktree_bytes_have_unresolved_conflict_markers(data: &[u8]) -> bool {
+    let marker_size = conflict_marker_size("");
+    let Ok(content) = std::str::from_utf8(data) else {
+        return data.windows(marker_size + 1).any(|w| {
+            w.len() > marker_size
+                && w[..marker_size].iter().all(|&b| b == b'<')
+                && w[marker_size] == b' '
+        });
+    };
+    match handle_path(content, marker_size, HashAlgo::Sha1, None) {
+        1 => true,
+        0 => false,
+        _ => content
+            .lines()
+            .any(|line| is_cmarker(line, b'<', marker_size)),
+    }
+}
+
 /// Compute the rerere conflict identifier for `content` using `algo`.
 ///
 /// Returns `None` when the text does not contain parseable conflict markers.

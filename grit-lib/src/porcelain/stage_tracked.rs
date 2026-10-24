@@ -510,9 +510,15 @@ fn refresh_unmerged_tracked_path(
         })
         .unwrap_or(0o100644);
     match symlink_metadata_for_staging(abs_path)? {
-        Some(_) => {
+        Some(meta) => {
+            if crate::rerere::worktree_metadata_needs_conflict_marker_inspection(&meta, idx_mode) {
+                let wt_bytes = fs::read(abs_path).map_err(Error::Io)?;
+                if crate::rerere::worktree_bytes_have_unresolved_conflict_markers(&wt_bytes) {
+                    return Ok(());
+                }
+            }
             index.remove(raw_path);
-            if idx_mode == 0o160000 {
+            if idx_mode == MODE_GITLINK {
                 if let Some(oid) = read_submodule_head_oid(abs_path) {
                     stage_gitlink_from_stat(abs_path, raw_path, oid, index)?;
                     summary.modified.push(raw_path.to_vec());
@@ -973,9 +979,10 @@ mod tests {
 
     use crate::diff::{entry_is_racy, mode_from_metadata, stat_matches};
     use crate::index::{
-        entry_from_metadata, index_file_mtime, Index, MODE_EXECUTABLE, MODE_REGULAR,
+        entry_from_metadata, index_file_mtime, Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK,
+        MODE_REGULAR,
     };
-    use crate::objects::ObjectKind;
+    use crate::objects::{ObjectId, ObjectKind};
     use crate::odb::Odb;
     use crate::repo::{init_repository, Repository};
     use tempfile::TempDir;
@@ -1527,5 +1534,155 @@ mod tests {
         );
 
         fs::set_permissions(&blocked, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    fn conflict_index_entry(path: &str, stage: u8, oid: ObjectId, mode: u32) -> IndexEntry {
+        let path_bytes = path.as_bytes().to_vec();
+        IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid,
+            flags: (path_bytes.len().min(0xFFF) as u16) | ((stage as u16) << 12),
+            flags_extended: None,
+            path: path_bytes,
+            base_index_pos: 0,
+        }
+    }
+
+    fn open_nested_repo(nested_root: &Path) -> Repository {
+        use crate::config::environment::RepositoryOptions;
+
+        let git = nested_root.join(".git");
+        fs::create_dir_all(git.join("objects")).unwrap();
+        fs::create_dir_all(git.join("refs/heads")).unwrap();
+        fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::write(
+            git.join("config"),
+            "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        )
+        .unwrap();
+        Repository::discover(Some(nested_root), &RepositoryOptions::empty()).unwrap()
+    }
+
+    fn commit_in_nested_repo(
+        repo: &Repository,
+        rel_file: &str,
+        content: &[u8],
+        msg: &str,
+    ) -> ObjectId {
+        let wt = repo.work_tree().unwrap();
+        let abs = wt.join(rel_file);
+        if let Some(p) = abs.parent() {
+            fs::create_dir_all(p).unwrap();
+        }
+        fs::write(&abs, content).unwrap();
+        let blob = repo.odb().write(ObjectKind::Blob, content).unwrap();
+        let tree_body = format!("100644 {blob}\t{rel_file}\n");
+        let tree = repo
+            .odb()
+            .write(ObjectKind::Tree, tree_body.as_bytes())
+            .unwrap();
+        let commit_body =
+            format!("tree {tree}\nauthor t <t@t> 0 +0000\ncommitter t <t@t> 0 +0000\n\n{msg}\n");
+        repo.odb()
+            .write(ObjectKind::Commit, commit_body.as_bytes())
+            .unwrap()
+    }
+
+    fn set_branch_head(repo: &Repository, oid: ObjectId) {
+        let head_path = repo.git_dir().join("refs/heads/main");
+        fs::write(head_path, format!("{oid}\n")).unwrap();
+    }
+
+    #[test]
+    fn unmerged_gitlink_auto_stage_reads_submodule_head_not_directory() {
+        let (_dir, repo) = init_repo();
+        let wt = repo.work_tree().unwrap();
+        let sub = wt.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let sub_repo = open_nested_repo(&sub);
+        let base_oid = commit_in_nested_repo(&sub_repo, "inside.txt", b"base\n", "base");
+        let ours_oid = commit_in_nested_repo(&sub_repo, "inside.txt", b"ours\n", "ours");
+        let theirs_oid = commit_in_nested_repo(&sub_repo, "inside.txt", b"theirs\n", "theirs");
+        set_branch_head(&sub_repo, theirs_oid);
+
+        let mut index = Index::new();
+        index
+            .entries
+            .push(conflict_index_entry("sub", 1, base_oid, MODE_GITLINK));
+        index
+            .entries
+            .push(conflict_index_entry("sub", 2, ours_oid, MODE_GITLINK));
+        index
+            .entries
+            .push(conflict_index_entry("sub", 3, theirs_oid, MODE_GITLINK));
+        repo.write_index(&mut index).unwrap();
+
+        let summary = stage_tracked_modifications(&repo, wt).unwrap();
+        assert_eq!(summary.modified, vec![b"sub".to_vec()]);
+
+        let index = repo.load_index().unwrap();
+        assert!(
+            !index.has_unmerged_entries(),
+            "checked-out submodule should collapse unmerged gitlink stages"
+        );
+        let staged = index.get(b"sub", 0).expect("stage-0 gitlink");
+        assert_eq!(staged.mode, MODE_GITLINK);
+        assert_eq!(staged.oid, theirs_oid);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn unmerged_symlink_auto_stage_reads_link_target_not_file_contents() {
+        use std::os::unix::fs::symlink;
+
+        let (_dir, repo) = init_repo();
+        let wt = repo.work_tree().unwrap();
+        let target = "does-not-exist";
+        let link_path = wt.join("f");
+        let base = repo.odb().write(ObjectKind::Blob, b"base\n").unwrap();
+        let ours = repo.odb().write(ObjectKind::Blob, b"ours\n").unwrap();
+        let theirs = repo.odb().write(ObjectKind::Blob, b"theirs\n").unwrap();
+
+        let mut index = Index::new();
+        index
+            .entries
+            .push(conflict_index_entry("f", 1, base, MODE_REGULAR));
+        index
+            .entries
+            .push(conflict_index_entry("f", 2, ours, MODE_REGULAR));
+        index
+            .entries
+            .push(conflict_index_entry("f", 3, theirs, MODE_REGULAR));
+        repo.write_index(&mut index).unwrap();
+
+        symlink(target, &link_path).unwrap();
+
+        let summary = stage_tracked_modifications(&repo, wt).unwrap();
+        assert_eq!(summary.modified, vec![b"f".to_vec()]);
+
+        let index = repo.load_index().unwrap();
+        assert!(
+            !index.has_unmerged_entries(),
+            "dangling symlink resolution should collapse unmerged stages"
+        );
+        let staged = index.get(b"f", 0).expect("stage-0 symlink");
+        assert!(
+            staged.mode & 0o170000 == 0o120000,
+            "expected symlink mode, got {:o}",
+            staged.mode
+        );
+        assert_eq!(
+            repo.odb().read(&staged.oid).unwrap().data,
+            target.as_bytes()
+        );
     }
 }
