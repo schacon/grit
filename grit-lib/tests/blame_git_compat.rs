@@ -1283,13 +1283,7 @@ fn blame_git_git_builtin_add_c_matches_git_porcelain() {
     let repo = Repository::discover(Some(&root), &RepositoryOptions::empty()).expect("open");
     assert_blame_matches(&repo, &root, "builtin/add.c", None, Some((6, 8)));
     assert_blame_matches(&repo, &root, "builtin/add.c", None, Some((47, 47)));
-    assert_blame_matches(
-        &repo,
-        &root,
-        "builtin-add.c",
-        Some("ae12e59a8c"),
-        None,
-    );
+    assert_blame_matches(&repo, &root, "builtin-add.c", Some("ae12e59a8c"), None);
 }
 
 #[test]

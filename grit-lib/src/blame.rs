@@ -876,6 +876,39 @@ type CopySourceBlameCache = (
     HashMap<String, usize>,
 );
 
+/// Attribute `current_idx` through copy detection when `-C`/`-CCC` data is cached.
+fn attribute_line_from_copy_cache(
+    inserted_copy_source: &mut Option<CopySourceBlameCache>,
+    cur_lines: &BlobLines,
+    current_idx: usize,
+    t: &TrackedLine,
+    final_lines: &[String],
+    result: &mut Vec<BlameLine>,
+) -> bool {
+    let Some((source_path, by_content, used)) = inserted_copy_source.as_mut() else {
+        return false;
+    };
+    let line_text = cur_lines.line(current_idx);
+    let used_key = line_text.to_owned();
+    let used_count = used.get(&used_key).copied().unwrap_or(0);
+    let Some(pb) = by_content
+        .get(line_text)
+        .and_then(|candidates| candidates.get(used_count))
+    else {
+        return false;
+    };
+    used.insert(used_key, used_count + 1);
+    result.push(blame_line_from_parent(
+        pb,
+        t.final_lineno,
+        final_lines[t.final_lineno - 1].clone(),
+        pb.source_file.clone().or_else(|| Some(source_path.clone())),
+        pb.ignored || t.ignored,
+        pb.unblamable,
+    ));
+    true
+}
+
 /// Hook the CLI installs so blame can lazily hydrate missing objects from a
 /// promisor remote (partial clone). The lib does no transport itself; the CLI
 /// supplies a function that performs the fetch. Install via
@@ -2732,16 +2765,27 @@ fn compute_blame_with_session(
                         if diff_line_map.get(t.current_idx).and_then(|m| *m).is_none()
                             && !is_ignored
                         {
-                            result.push(BlameLine {
-                                oid: current_oid,
-                                final_lineno: t.final_lineno,
-                                orig_lineno: t.current_idx + 1,
-                                content: final_lines[t.final_lineno - 1].clone(),
-                                source_file: None,
-                                ignored: t.ignored,
-                                unblamable: false,
-                                external_contents: false,
-                            });
+                            if attribute_line_from_copy_cache(
+                                &mut inserted_copy_source,
+                                cur_lines_arc.as_ref(),
+                                t.current_idx,
+                                &t,
+                                &final_lines,
+                                &mut result,
+                            ) {
+                                continue;
+                            }
+                            result.push(blame_line_at_path(
+                                current_oid,
+                                t.final_lineno,
+                                t.current_idx + 1,
+                                final_lines[t.final_lineno - 1].clone(),
+                                &current_path,
+                                None,
+                                t.ignored,
+                                false,
+                                false,
+                            ));
                             continue;
                         }
                         if let Some(parent_idx) = line_map[t.current_idx] {
@@ -2840,29 +2884,15 @@ fn compute_blame_with_session(
                                 ));
                             }
                         } else {
-                            if let Some((source_path, by_content, used)) =
-                                inserted_copy_source.as_mut()
-                            {
-                                let line_text = cur_lines_arc.line(t.current_idx);
-                                let used_key = line_text.to_owned();
-                                let used_count = used.get(&used_key).copied().unwrap_or(0);
-                                if let Some(pb) = by_content
-                                    .get(line_text)
-                                    .and_then(|candidates| candidates.get(used_count))
-                                {
-                                    used.insert(used_key, used_count + 1);
-                                    result.push(blame_line_from_parent(
-                                        pb,
-                                        t.final_lineno,
-                                        final_lines[t.final_lineno - 1].clone(),
-                                        pb.source_file
-                                            .clone()
-                                            .or_else(|| Some(source_path.clone())),
-                                        pb.ignored || t.ignored,
-                                        pb.unblamable,
-                                    ));
-                                    continue;
-                                }
+                            if attribute_line_from_copy_cache(
+                                &mut inserted_copy_source,
+                                cur_lines_arc.as_ref(),
+                                t.current_idx,
+                                &t,
+                                &final_lines,
+                                &mut result,
+                            ) {
+                                continue;
                             }
                             // Line was introduced in current commit
                             result.push(blame_line_at_path(
