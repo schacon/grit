@@ -237,6 +237,17 @@ pub struct FetchOptions {
     pub object_wants: Vec<ObjectId>,
     /// On-demand promisor object fetch: always mark the received pack promisor.
     pub promisor_object_fetch: bool,
+    /// Initial fetch from a plain local path: hard-link the source's packfiles and
+    /// loose objects wholesale instead of walking the requested refs (Git's
+    /// `clone --local`).
+    ///
+    /// The destination then also receives objects unreachable from the fetched
+    /// refs (other refs, excluded tags, unreachable leftovers). Only honored for
+    /// a local transport with no local history, no shallow request and a source
+    /// without alternates; otherwise the fetch sends exactly the objects
+    /// reachable from the requested refs. [`crate::remote::clone::clone`] sets it
+    /// for plain-path sources (not `file://` URLs). Defaults to `false`.
+    pub link_source_objects: bool,
 }
 
 impl Default for FetchOptions {
@@ -267,6 +278,7 @@ impl Default for FetchOptions {
             mark_received_pack_promisor: false,
             object_wants: Vec::new(),
             promisor_object_fetch: false,
+            link_source_objects: false,
         }
     }
 }
@@ -308,6 +320,7 @@ impl Clone for FetchOptions {
             mark_received_pack_promisor: self.mark_received_pack_promisor,
             object_wants: self.object_wants.clone(),
             promisor_object_fetch: self.promisor_object_fetch,
+            link_source_objects: self.link_source_objects,
         }
     }
 }
@@ -939,7 +952,11 @@ fn ingest_pack_options_for_fetch(
     })
 }
 
-/// Copy objects for a local fetch: link remote packfiles when possible, then pack any remainder.
+/// Copy objects for a local fetch: link remote packfiles that hold only objects
+/// the fetch must send, then link or pack any remainder.
+///
+/// [`FetchOptions::link_source_objects`] instead links the whole source store up
+/// front, unreachable objects included (a plain-path clone).
 #[allow(clippy::too_many_arguments)]
 fn copy_objects_for_local_fetch(
     local_git_dir: &Path,
@@ -956,8 +973,8 @@ fn copy_objects_for_local_fetch(
     cancel: &dyn crate::progress::Cancel,
 ) -> Result<(HashSet<ObjectId>, TransferStats)> {
     use crate::local_object_copy::{
-        link_loose_objects, link_loose_objects_for_oids, link_remote_pack_files, linked_object_set,
-        refresh_local_odb_after_link, try_satisfy_via_object_link,
+        link_loose_objects, link_loose_objects_for_oids, link_packs_within, link_remote_pack_files,
+        linked_object_set, refresh_local_odb_after_link,
     };
 
     let remote_objects = remote_odb.objects_dir();
@@ -965,7 +982,8 @@ fn copy_objects_for_local_fetch(
     let pack_dir_before = pack_file_basenames(&local_objects.join("pack"));
     let remote_has_alternates = !crate::pack::read_alternates_recursive(remote_objects)?.is_empty();
 
-    if !remote_has_alternates
+    if fetch_opts.link_source_objects
+        && !remote_has_alternates
         && !pack_build.thin
         && try_pack_link
         && haves.is_empty()
@@ -1030,21 +1048,10 @@ fn copy_objects_for_local_fetch(
 
     if !pack_build.thin && try_pack_link {
         progress.start(ProgressPhase::CopyingObjects, Some(send.len() as u64));
-        crate::progress::poll_cancel(progress, cancel)?;
-        if try_satisfy_via_object_link(
-            remote_objects,
-            local_objects,
-            local_odb,
-            send,
-            false,
-            progress,
-            cancel,
-        )? {
-            progress.set(send.len() as u64);
-            progress.finish();
-            let oids = linked_object_set(local_odb, send);
-            let transfer = transfer_stats_for_local_operation(local_odb, &oids, &pack_dir_before)?;
-            return Ok((oids, transfer));
+        let linked = link_packs_within(remote_objects, local_objects, send, progress, cancel)?;
+        if linked > 0 {
+            refresh_local_odb_after_link(local_odb);
+            progress.set(linked as u64);
         }
         progress.finish();
     }
@@ -1115,7 +1122,8 @@ fn copy_objects_for_local_fetch(
     Ok((out, transfer))
 }
 
-/// Copy objects for a local push: link source packfiles into the remote when possible, then pack any remainder.
+/// Copy objects for a local push: link source packfiles that hold only objects
+/// the push must send into the remote, then pack any remainder.
 #[allow(clippy::too_many_arguments)]
 fn copy_objects_for_local_push(
     local_odb: &Odb,
@@ -1127,7 +1135,7 @@ fn copy_objects_for_local_push(
     opts: &PackBuildOptions,
 ) -> Result<()> {
     use crate::local_object_copy::{
-        link_loose_objects_for_oids, refresh_local_odb_after_link, try_satisfy_via_object_link,
+        link_loose_objects_for_oids, link_packs_within, refresh_local_odb_after_link,
     };
 
     let local_objects = local_odb.objects_dir();
@@ -1147,17 +1155,9 @@ fn copy_objects_for_local_push(
     let mut progress = crate::progress::NullProgress;
     let cancel = crate::progress::NeverCancel;
     if !opts.thin
-        && try_satisfy_via_object_link(
-            local_objects,
-            remote_objects,
-            remote_odb,
-            send,
-            false,
-            &mut progress,
-            &cancel,
-        )?
+        && link_packs_within(local_objects, remote_objects, send, &mut progress, &cancel)? > 0
     {
-        return Ok(());
+        refresh_local_odb_after_link(remote_odb);
     }
 
     let mut still_missing = objects_missing_from_peer(remote_odb, send);
@@ -1278,6 +1278,12 @@ fn collect_reachable_excluding_peer(
 ) -> Result<PeerSendSet> {
     use crate::pack_name_hash::pack_name_hash_extend;
 
+    if peer_boundary.is_empty() && shallow_grafts.is_empty() {
+        if let Some(send_set) = bitmap_send_set(source_odb, roots, peer_odb)? {
+            return Ok(send_set);
+        }
+    }
+
     let mut visited: HashSet<ObjectId> = HashSet::new();
     let mut ordered: Vec<ObjectId> = Vec::new();
     let mut name_hashes: HashMap<ObjectId, u32> = HashMap::new();
@@ -1371,6 +1377,42 @@ fn collect_reachable_excluding_peer(
         objects: ordered,
         name_hashes,
     })
+}
+
+/// The send set of a transfer with no peer tips, answered from the source's
+/// reachability bitmap instead of reading every commit and tree.
+///
+/// Returns `None` when the source has no usable bitmap.
+fn bitmap_send_set(
+    source_odb: &Odb,
+    roots: &[ObjectId],
+    peer_odb: &Odb,
+) -> Result<Option<PeerSendSet>> {
+    let no_haves = HashSet::new();
+    let Some((reachable, _)) = crate::pack_object_select::try_bitmap_reachable_for_upload(
+        source_odb,
+        roots,
+        &[],
+        None,
+        &no_haves,
+    )?
+    else {
+        return Ok(None);
+    };
+    peer_odb.reprepare_local_packs();
+    let objects: Vec<ObjectId> = reachable
+        .iter_grouped_by_kind()
+        .filter(|oid| !peer_odb.exists_materialized_local_without_rescan(oid))
+        .collect();
+    let name_hashes = crate::pack_object_select::name_hashes_for_send(
+        reachable.bitmap_index(),
+        &objects,
+        &no_haves,
+    );
+    Ok(Some(PeerSendSet {
+        objects,
+        name_hashes,
+    }))
 }
 
 /// `fetch_local` function.
