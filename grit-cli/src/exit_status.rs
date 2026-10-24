@@ -267,7 +267,7 @@ impl ExitStatus {
         ]
     }
 
-    /// Snake-case slug used in [`content/docs/exit-codes.md`].
+    /// Snake-case slug used in `content/docs/exit-codes.md`.
     #[must_use]
     #[allow(dead_code)]
     pub fn doc_slug(self) -> &'static str {
