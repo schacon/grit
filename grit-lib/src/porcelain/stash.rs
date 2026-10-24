@@ -1754,6 +1754,7 @@ pub(crate) fn stash_branch(repo: &Repository, name: &str, n: usize) -> Result<St
                 track_upstream: None,
             },
             dry_run: false,
+            hooks: crate::hooks::PostOperationHooks::Run,
         },
     )?;
 

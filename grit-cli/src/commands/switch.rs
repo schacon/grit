@@ -7,6 +7,7 @@ use grit_lib::porcelain::switch::{
     SwitchMode, SwitchOptions,
 };
 use grit_lib::state::{status_operation, wt_status_get_state, HeadState};
+use grit_lib::PostOperationHooks;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
@@ -36,6 +37,8 @@ pub struct SwitchOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub changed_paths: Option<usize>,
+    /// Hooks that ran after the switch (`post-checkout` when installed).
+    pub hooks_run: Vec<String>,
 }
 
 impl HumanRender for SwitchOutcome {
@@ -51,15 +54,22 @@ impl HumanRender for SwitchOutcome {
         }
         let Some(branch) = self.branch.as_deref() else {
             outln!(w, "HEAD detached at {}", self.target_label());
-            return Ok(());
+            return render_hooks_run(w, &self.hooks_run);
         };
         if self.created {
             outln!(w, "Created and switched to branch {branch}");
         } else {
             outln!(w, "Switched to branch {branch}");
         }
-        Ok(())
+        render_hooks_run(w, &self.hooks_run)
     }
+}
+
+fn render_hooks_run(w: &mut dyn Write, hooks_run: &[String]) -> Result<()> {
+    if !hooks_run.is_empty() {
+        outln!(w, "hooks: {}", hooks_run.join(", "));
+    }
+    Ok(())
 }
 
 impl SwitchOutcome {
@@ -111,16 +121,23 @@ pub fn run(
         resolve_switch_target(&repo, &spec).map_err(anyhow::Error::new)?
     };
 
-    let outcome =
-        switch_repository(&repo, &SwitchOptions { mode, dry_run }).map_err(|err| match err {
-            LibError::OperationInProgress(kind) => {
-                let operation = wt_status_get_state(repo.git_dir(), &HeadState::Invalid, false)
-                    .ok()
-                    .and_then(|state| status_operation(&state, false));
-                json_error::operation_in_progress("switch branches", kind, operation.as_ref())
-            }
-            other => json_error::map_lib_error(other),
-        })?;
+    let outcome = switch_repository(
+        &repo,
+        &SwitchOptions {
+            mode,
+            dry_run,
+            hooks: PostOperationHooks::Run,
+        },
+    )
+    .map_err(|err| match err {
+        LibError::OperationInProgress(kind) => {
+            let operation = wt_status_get_state(repo.git_dir(), &HeadState::Invalid, false)
+                .ok()
+                .and_then(|state| status_operation(&state, false));
+            json_error::operation_in_progress("switch branches", kind, operation.as_ref())
+        }
+        other => json_error::map_lib_error(other),
+    })?;
 
     let detached = outcome.is_detached();
     Ok(SwitchOutcome {
@@ -130,5 +147,10 @@ pub fn run(
         commit: detached.then(|| outcome.commit.to_hex()),
         dry_run: outcome.dry_run,
         changed_paths: outcome.dry_run.then_some(outcome.changed_paths),
+        hooks_run: outcome
+            .hooks_run
+            .iter()
+            .map(|h| h.as_str().to_owned())
+            .collect(),
     })
 }

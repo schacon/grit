@@ -72,7 +72,7 @@ pub(crate) struct PartialRewritePlan {
 /// Outcome of [`plan_rewrite_with_order_resumable`].
 pub(crate) enum ResumablePlanOutcome {
     /// Every commit in the replay order was planned.
-    Complete(RewritePlan),
+    Complete(Box<RewritePlan>),
     /// Replay stopped on a conflict; partial mapping and ODB objects are retained.
     Partial(Box<PartialRewritePlan>),
 }
@@ -279,7 +279,7 @@ pub(crate) fn plan_rewrite_with_order(
         None,
         None,
     )? {
-        ResumablePlanOutcome::Complete(plan) => Ok(plan),
+        ResumablePlanOutcome::Complete(plan) => Ok(*plan),
         ResumablePlanOutcome::Partial(_) => unreachable!("non-resumable planning cannot stop"),
     }
 }
@@ -297,11 +297,11 @@ fn plan_rewrite_with_order_impl(
 ) -> Result<ResumablePlanOutcome, HistoryError> {
     let committer_line = opts.committer_line()?;
     if edits.is_empty() {
-        return Ok(ResumablePlanOutcome::Complete(RewritePlan {
+        return Ok(ResumablePlanOutcome::Complete(Box::new(RewritePlan {
             commits: Vec::new(),
             ref_updates: Vec::new(),
             head: HeadEffect::default(),
-        }));
+        })));
     }
 
     let change_ids = ChangeIdWriteContext::from_repo(repo)?;
@@ -405,6 +405,7 @@ fn plan_rewrite_with_order_impl(
                 new: Some(*existing),
                 change_id: logical_change_id_for_commit(repo, *existing)?,
                 subject: subject_for_rewrite_row(repo, &old, Some(*existing))?,
+                reused: true,
             });
             continue;
         }
@@ -427,6 +428,7 @@ fn plan_rewrite_with_order_impl(
                 new: None,
                 change_id: None,
                 subject: subject_for_rewrite_row(repo, &old, None)?,
+                reused: false,
             });
             continue;
         }
@@ -638,17 +640,18 @@ fn plan_rewrite_with_order_impl(
                 None => None,
             },
             subject: subject_for_rewrite_row(repo, &old, new_field)?,
+            reused: false,
         });
     }
 
     let ref_updates = plan_ref_updates(&scoped_refs, &mapping);
     let head = head_effect(repo, &mapping)?;
 
-    Ok(ResumablePlanOutcome::Complete(RewritePlan {
+    Ok(ResumablePlanOutcome::Complete(Box::new(RewritePlan {
         commits: rewritten,
         ref_updates,
         head,
-    }))
+    })))
 }
 
 /// Replay a contiguous first-parent segment in a custom order (each commit onto the previous).
@@ -743,6 +746,7 @@ pub fn plan_replay_linear_segment(
                 new: Some(new),
                 change_id: logical_change_id_for_commit(repo, new)?,
                 subject: subject_for_rewrite_row(repo, &old_commit, Some(new))?,
+                reused: false,
             })
         })
         .collect::<Result<Vec<_>, HistoryError>>()?;
@@ -1680,6 +1684,7 @@ pub(crate) fn head_effect(
         head_ref,
         old_tree,
         new_tree,
+        checkout_onto: None,
     })
 }
 
@@ -1744,6 +1749,7 @@ pub fn plan_fold_range_at_head(
             new: Some(new_oid),
             change_id: squashed_change_id.clone(),
             subject: squashed_subject.clone(),
+            reused: false,
         })
         .collect();
     let scoped_refs = collect_scoped_refs(repo, opts, oldest)?;

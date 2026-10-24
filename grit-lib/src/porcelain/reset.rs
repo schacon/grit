@@ -1527,6 +1527,7 @@ mod tests {
                     oid: other,
                 },
                 dry_run: false,
+                hooks: crate::hooks::PostOperationHooks::Run,
             },
         )
         .expect_err("grit refuses the switch too");
