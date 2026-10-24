@@ -147,7 +147,12 @@ pub fn hunks_exit_code(err: &anyhow::Error) -> i32 {
 }
 
 fn map_patch_error(err: CommitPatchError) -> anyhow::Error {
-    anyhow::Error::new(err)
+    match err {
+        CommitPatchError::Commit(locked @ Error::IndexLocked { .. }) => {
+            crate::json_error::map_lib_error(locked)
+        }
+        other => anyhow::Error::new(other),
+    }
 }
 
 fn map_hunk_parse(err: grit_lib::porcelain::hunk_select::HunkSelectError) -> anyhow::Error {
@@ -613,6 +618,7 @@ fn map_commit_error(err: Error) -> anyhow::Error {
             "pathspec '{spec}' did not match any file(s) known to git"
         ),
         hook @ Error::Hook(_) => anyhow::Error::new(hook),
+        locked @ Error::IndexLocked { .. } => crate::json_error::map_lib_error(locked),
         other => anyhow::anyhow!("{other}"),
     }
 }
