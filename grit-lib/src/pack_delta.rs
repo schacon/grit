@@ -768,7 +768,11 @@ pub(crate) fn serialize_pack_with_deltas(
         &mut bytes,
         Some(&mut index_rows),
     )?;
-    Ok(crate::pack_objects::SerializedDeltaPack { bytes, index_rows })
+    Ok(crate::pack_objects::SerializedDeltaPack {
+        bytes,
+        index_rows,
+        staging_path: None,
+    })
 }
 
 /// Planned entries encoded per parallel batch while streaming a pack, which bounds
