@@ -43,6 +43,7 @@ use crate::config::{
 use crate::diagnostics::{self, DiagnosticsHandle};
 use crate::environment::{Environment, RepositoryOptions};
 use crate::error::{Error, Result};
+use crate::git_path::path_for_error_message;
 use crate::hooks::run_hook;
 use crate::index::Index;
 use crate::init_filesystem::{apply_init_filesystem_config, InitFilesystemConfigOptions};
@@ -433,7 +434,7 @@ impl Repository {
         // Check HEAD exists or is a symlink (linked worktrees have a symlink HEAD)
         let head_path = git_dir.join("HEAD");
         if !head_path.exists() && !head_path.is_symlink() {
-            return Err(Error::NotARepository(git_dir.display().to_string()));
+            return Err(not_a_repository_at(&git_dir));
         }
 
         let common_git_dir = resolve_common_dir(&git_dir).unwrap_or_else(|| git_dir.clone());
@@ -447,7 +448,7 @@ impl Repository {
         };
 
         if !objects_dir.exists() {
-            return Err(Error::NotARepository(git_dir.display().to_string()));
+            return Err(not_a_repository_at(&git_dir));
         }
 
         let work_tree = match work_tree {
@@ -1267,7 +1268,7 @@ impl Repository {
         let work_tree = options.work_tree.as_deref();
         let git_dir = git_dir
             .canonicalize()
-            .map_err(|_| Error::NotARepository(git_dir.display().to_string()))?;
+            .map_err(|_| not_a_repository_at(git_dir))?;
 
         let repo = Self::from_canonical_git_dir(options, git_dir, work_tree)?;
         repo.refresh_config_session()?;
@@ -1297,7 +1298,7 @@ impl Repository {
             opts.open_for_serving = false;
             return Self::open_internal(&opts, &git_dir);
         }
-        Err(Error::NotARepository(path.display().to_string()))
+        Err(not_a_repository_at(path))
     }
 
     fn open_with_odb_internal(
@@ -1308,7 +1309,7 @@ impl Repository {
         let work_tree = options.work_tree.as_deref();
         let git_dir = git_dir
             .canonicalize()
-            .map_err(|_| Error::NotARepository(git_dir.display().to_string()))?;
+            .map_err(|_| not_a_repository_at(git_dir))?;
 
         let environment = Arc::new(options.environment.clone());
         let command_runner = Arc::clone(&options.command_runner);
@@ -1316,7 +1317,7 @@ impl Repository {
 
         let head_path = git_dir.join("HEAD");
         if !head_path.exists() && !head_path.is_symlink() {
-            return Err(Error::NotARepository(git_dir.display().to_string()));
+            return Err(not_a_repository_at(&git_dir));
         }
 
         let common_git_dir = resolve_common_dir(&git_dir).unwrap_or_else(|| git_dir.clone());
@@ -1328,7 +1329,7 @@ impl Repository {
         };
 
         if !objects_dir.exists() {
-            return Err(Error::NotARepository(git_dir.display().to_string()));
+            return Err(not_a_repository_at(&git_dir));
         }
 
         if builder.objects_dir() != objects_dir.as_path() {
@@ -1603,7 +1604,7 @@ impl Repository {
             dir_buf.truncate(new_len);
         }
 
-        Err(Error::NotARepository(start.display().to_string()))
+        Err(not_a_repository_at(&start))
     }
 
     /// Path to the index file.
@@ -3159,7 +3160,7 @@ fn try_open_at(options: &RepositoryOptions, dir: &Path) -> Result<Option<Discove
             if ft.is_fifo() || ft.is_socket() || ft.is_block_device() || ft.is_char_device() {
                 return Err(Error::NotARepository(format!(
                     "invalid gitfile format: {} is not a regular file",
-                    dot_git.display()
+                    path_for_error_message(&dot_git)
                 )));
             }
             if ft.is_symlink() {
@@ -3172,7 +3173,7 @@ fn try_open_at(options: &RepositoryOptions, dir: &Path) -> Result<Option<Discove
                     {
                         return Err(Error::NotARepository(format!(
                             "invalid gitfile format: {} is not a regular file",
-                            dot_git.display()
+                            path_for_error_message(&dot_git)
                         )));
                     }
                 }
@@ -3281,7 +3282,7 @@ fn try_open_at(options: &RepositoryOptions, dir: &Path) -> Result<Option<Discove
             if let Ok(cfg) = crate::config::ConfigSet::load(env, None, true) {
                 if let Some(val) = cfg.get("safe.bareRepository") {
                     if val.eq_ignore_ascii_case("explicit") {
-                        return Err(Error::ForbiddenBareRepository(dir.display().to_string()));
+                        return Err(Error::ForbiddenBareRepository(path_for_error_message(dir)));
                     }
                 }
             }
@@ -3353,7 +3354,7 @@ fn ensure_safe_directory_allows(
     {
         return Ok(());
     }
-    Err(Error::DubiousOwnership(checked_s))
+    Err(Error::DubiousOwnership(path_for_error_message(checked)))
 }
 
 #[cfg(unix)]
@@ -3686,7 +3687,7 @@ fn resolve_git_dir_env_path(git_dir: &Path) -> Result<PathBuf> {
             fs::read_to_string(git_dir).map_err(|e| Error::NotARepository(e.to_string()))?;
         let base = git_dir
             .parent()
-            .ok_or_else(|| Error::NotARepository(git_dir.display().to_string()))?;
+            .ok_or_else(|| not_a_repository_at(git_dir))?;
         return parse_gitfile(&content, base);
     }
     Ok(git_dir.to_path_buf())
@@ -3710,17 +3711,21 @@ pub fn resolve_dot_git(dot_git: &Path) -> Result<PathBuf> {
     if dot_git.is_dir() {
         return dot_git
             .canonicalize()
-            .map_err(|_| Error::NotARepository(dot_git.display().to_string()));
+            .map_err(|_| not_a_repository_at(dot_git));
     }
     if dot_git.is_file() {
         let content =
             fs::read_to_string(dot_git).map_err(|e| Error::NotARepository(e.to_string()))?;
         let base = dot_git
             .parent()
-            .ok_or_else(|| Error::NotARepository(dot_git.display().to_string()))?;
+            .ok_or_else(|| not_a_repository_at(dot_git))?;
         return parse_gitfile(&content, base);
     }
-    Err(Error::NotARepository(dot_git.display().to_string()))
+    Err(not_a_repository_at(dot_git))
+}
+
+fn not_a_repository_at(path: &Path) -> Error {
+    Error::NotARepository(path_for_error_message(path))
 }
 
 /// Parse a gitfile's `"gitdir: <path>"` line.
@@ -3734,7 +3739,7 @@ fn parse_gitfile(content: &str, base: &Path) -> Result<PathBuf> {
                 base.join(rel)
             };
             if !path.exists() {
-                return Err(Error::NotARepository(path.display().to_string()));
+                return Err(not_a_repository_at(&path));
             }
             return Ok(path);
         }
