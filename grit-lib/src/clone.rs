@@ -61,7 +61,7 @@ impl CloneError {
         match self {
             Self::DestNotEmpty(_) | Self::InvalidCloneDepth => false,
             Self::Remote(RemoteError::InvalidRemoteName(_)) => false,
-            Self::RemoteRefNotFound(_) => false,
+            Self::RemoteRefNotFound(_) => true,
             Self::Library(_) | Self::Remote(_) => true,
         }
     }
