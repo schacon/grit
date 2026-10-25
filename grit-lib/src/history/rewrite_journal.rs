@@ -434,6 +434,38 @@ fn snapshot_blob_name(repo_path: &str) -> Result<String, HistoryError> {
     Ok(hex::encode(Sha1::digest(repo_path.as_bytes())))
 }
 
+fn encode_snapshot_path(path: &str) -> Result<String, HistoryError> {
+    validate_repo_relative_path(path)?;
+    Ok(hex::encode(path.as_bytes()))
+}
+
+fn decode_snapshot_path_hex(hex_str: &str) -> Result<String, HistoryError> {
+    let bytes = hex::decode(hex_str.trim()).map_err(|e| HistoryError::UndoRecordRead {
+        message: format!("worktree snapshot path-hex decode: {e}"),
+    })?;
+    let path = String::from_utf8(bytes).map_err(|e| HistoryError::UndoRecordRead {
+        message: format!("worktree snapshot path-hex utf-8: {e}"),
+    })?;
+    validate_repo_relative_path(&path).map_err(|e| match e {
+        HistoryError::UndoRecordWrite { message } => HistoryError::UndoRecordRead { message },
+        other => other,
+    })?;
+    Ok(path)
+}
+
+fn decode_snapshot_path_legacy(raw: &str) -> Result<String, HistoryError> {
+    if raw.contains('\n') || raw.contains('\r') {
+        return Err(HistoryError::UndoRecordRead {
+            message: "legacy worktree snapshot path header must not contain newlines".into(),
+        });
+    }
+    validate_repo_relative_path(raw).map_err(|e| match e {
+        HistoryError::UndoRecordWrite { message } => HistoryError::UndoRecordRead { message },
+        other => other,
+    })?;
+    Ok(raw.to_owned())
+}
+
 fn payload_kind_line(snap: &WorktreePathSnapshot) -> &'static str {
     match snap.kind {
         WorktreePathKind::Absent | WorktreePathKind::Directory => "payload: none",
@@ -457,7 +489,7 @@ fn write_worktree_snapshot_file(
         WorktreePathKind::Regular => "regular",
         WorktreePathKind::Symlink => "symlink",
     };
-    let mut body = format!("path: {path}\nkind: {kind}\n");
+    let mut body = format!("path-hex: {}\nkind: {kind}\n", encode_snapshot_path(path)?);
     body.push_str(payload_kind_line(snap));
     body.push('\n');
     #[cfg(unix)]
@@ -510,7 +542,8 @@ fn parse_worktree_snapshot_file(
             message: e.to_string(),
         })?;
     let payload = bytes[(split_at + sep.len())..].to_vec();
-    let mut repo_path: Option<String> = None;
+    let mut repo_path_hex: Option<String> = None;
+    let mut repo_path_legacy: Option<String> = None;
     let mut kind: Option<WorktreePathKind> = None;
     let mut payload_kind: Option<&str> = None;
     #[cfg(unix)]
@@ -518,7 +551,8 @@ fn parse_worktree_snapshot_file(
     for line in header.lines() {
         let mut parts = line.splitn(2, ": ");
         match parts.next().unwrap_or_default() {
-            "path" => repo_path = parts.next().map(str::to_owned),
+            "path-hex" => repo_path_hex = parts.next().map(str::to_owned),
+            "path" => repo_path_legacy = parts.next().map(str::to_owned),
             "kind" => {
                 kind = Some(match parts.next().unwrap_or_default() {
                     "absent" => WorktreePathKind::Absent,
@@ -546,9 +580,15 @@ fn parse_worktree_snapshot_file(
             _ => {}
         }
     }
-    let path = repo_path.ok_or_else(|| HistoryError::UndoRecordRead {
-        message: "worktree snapshot missing path".into(),
-    })?;
+    let path = if let Some(hex_str) = repo_path_hex {
+        decode_snapshot_path_hex(&hex_str)?
+    } else if let Some(legacy) = repo_path_legacy {
+        decode_snapshot_path_legacy(&legacy)?
+    } else {
+        return Err(HistoryError::UndoRecordRead {
+            message: "worktree snapshot missing path".into(),
+        });
+    };
     let kind = kind.ok_or_else(|| HistoryError::UndoRecordRead {
         message: format!("worktree snapshot for {path} missing kind"),
     })?;
@@ -726,6 +766,49 @@ mod tests {
         assert_eq!(
             restored.get("foo/bar").and_then(|s| s.bytes.as_deref()),
             Some(b"nested" as &[u8])
+        );
+        clear_rewrite_apply_journal(&repo).expect("clear");
+    }
+
+    #[test]
+    fn worktree_snapshot_roundtrip_git_path_with_newline_in_name() {
+        let path = "line\nbreak";
+        let (_dir, repo) = temp_repo();
+        let mut snaps = HashMap::new();
+        snaps.insert(
+            path.into(),
+            WorktreePathSnapshot {
+                kind: WorktreePathKind::Regular,
+                bytes: Some(b"payload".to_vec()),
+                #[cfg(unix)]
+                mode: 0o644,
+            },
+        );
+        let plan = RewritePlan {
+            commits: Vec::new(),
+            ref_updates: Vec::new(),
+            head: HeadEffect::default(),
+        };
+        let opts = ApplyOptions {
+            identity: "t <t@t>".into(),
+            reflog_message: "test".into(),
+            record_operation: None,
+            hooks: Default::default(),
+        };
+        write_rewrite_apply_journal(
+            &repo,
+            &plan,
+            &opts,
+            RewriteApplyKind::Standard,
+            b"INDEX",
+            &snaps,
+        )
+        .expect("write");
+        let record = read_rewrite_apply_journal(&repo).expect("read");
+        let restored = record.worktree_before.expect("snapshots");
+        assert_eq!(
+            restored.get(path).and_then(|s| s.bytes.as_deref()),
+            Some(b"payload" as &[u8])
         );
         clear_rewrite_apply_journal(&repo).expect("clear");
     }

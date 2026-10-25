@@ -94,6 +94,96 @@ fn tree_plus_file(
     write_tree_from_index(repo.odb(), &index, "")
 }
 
+fn tree_replace_file(
+    repo: &Repository,
+    base_tree: grit_lib::objects::ObjectId,
+    path: &str,
+    content: &[u8],
+) -> grit_lib::error::Result<grit_lib::objects::ObjectId> {
+    let blob = repo.odb().write(ObjectKind::Blob, content)?;
+    let raw = repo.odb().read(&base_tree)?;
+    let mut index = Index::new();
+    index.hash_algo = repo.odb().hash_algo();
+    let path_bytes = path.as_bytes();
+    for entry in parse_tree(&raw.data)? {
+        let name = String::from_utf8_lossy(&entry.name).into_owned();
+        if name == path {
+            continue;
+        }
+        index.add_or_replace(IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: entry.mode,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid: entry.oid,
+            flags: name.len().min(0xfff) as u16,
+            flags_extended: None,
+            path: name.as_bytes().to_vec(),
+            base_index_pos: 0,
+        });
+    }
+    index.add_or_replace(IndexEntry {
+        ctime_sec: 0,
+        ctime_nsec: 0,
+        mtime_sec: 0,
+        mtime_nsec: 0,
+        dev: 0,
+        ino: 0,
+        mode: MODE_REGULAR,
+        uid: 0,
+        gid: 0,
+        size: content.len() as u32,
+        oid: blob,
+        flags: path.len().min(0xfff) as u16,
+        flags_extended: None,
+        path: path_bytes.to_vec(),
+        base_index_pos: 0,
+    });
+    write_tree_from_index(repo.odb(), &index, "")
+}
+
+fn plan_reword_tree_from_commit(
+    wt: &std::path::Path,
+    target: grit_lib::objects::ObjectId,
+    path: &str,
+    content: &[u8],
+    message: &str,
+) -> grit_lib::revwalk::history::RewritePlan {
+    let grit = open_grit(wt);
+    let tree = parse_commit(&grit.odb().read(&target).expect("read").data)
+        .expect("parse")
+        .tree;
+    let new_tree = tree_replace_file(&grit, tree, path, content).expect("tree");
+    let mut edits = HistoryEdits::new();
+    edits.insert(
+        target,
+        CommitEdit::Rewrite {
+            tree: Some(new_tree),
+            message: Some(format!("{message}\n")),
+            author: None,
+            parents: None,
+        },
+    );
+    plan_rewrite(
+        &grit,
+        &edits,
+        &RewriteOptions {
+            scope: RefScope::Branches,
+            empty: EmptyPolicy::Drop,
+            committer: committer(1).parse().expect("signature"),
+            preserve_committer: false,
+            sign: true,
+        },
+    )
+    .expect("plan")
+}
+
 fn plan_reword(
     wt: &std::path::Path,
     target: grit_lib::objects::ObjectId,
@@ -728,7 +818,14 @@ fn interrupted_rewrite_apply_recovers_and_blocks_commit_until_finished() {
     assert_ne!(plan.head.old_tree, plan.head.new_tree);
     let tip_before = git_rev_parse(wt, "refs/heads/main").expect("tip");
     grit_lib::repo::set_test_inject_rewrite_apply_abort_after_refs(true);
-    let err = apply_rewrite(&grit, &plan, &apply_opts()).expect_err("injected abort after refs");
+    let err = apply_rewrite(
+        &grit,
+        &plan,
+        &apply_opts(),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect_err("injected abort after refs");
     grit_lib::repo::set_test_inject_rewrite_apply_abort_after_refs(false);
     let grit_lib::revwalk::history::HistoryError::WorktreeApply { message } = err else {
         panic!("unexpected apply error");
@@ -759,14 +856,15 @@ fn apply_rewrite_journal_accepts_git_path_with_double_dot_in_name() {
     let oids = build_commit_dag(wt, &[("b", "a"), ("c", "b")], &[("c", "refs/heads/main")]);
     commit_file(wt, "a..b", "", "track a..b");
     let grit = open_grit(wt);
-    let plan = plan_reword_with_tree(
-        wt,
-        oids["b"],
-        "side.txt",
-        b"side\n",
-        "side change",
-    );
-    apply_rewrite(&grit, &plan, &apply_opts()).expect("apply with a..b present");
+    let plan = plan_reword_with_tree(wt, oids["b"], "side.txt", b"side\n", "side change");
+    apply_rewrite(
+        &grit,
+        &plan,
+        &apply_opts(),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("apply with a..b present");
     assert!(wt.join("a..b").is_file());
     assert!(wt.join("side.txt").is_file());
 }
@@ -786,10 +884,49 @@ fn interrupted_rewrite_apply_abort_restores_empty_tracked_file() {
         "change empty in replayed tip",
     );
     grit_lib::repo::set_test_inject_rewrite_apply_abort_after_refs(true);
-    apply_rewrite(&grit, &plan, &apply_opts()).expect_err("injected abort");
+    apply_rewrite(
+        &grit,
+        &plan,
+        &apply_opts(),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect_err("injected abort");
     grit_lib::repo::set_test_inject_rewrite_apply_abort_after_refs(false);
     fs::remove_file(wt.join("empty.txt")).expect("simulate partial checkout deleting empty file");
     grit_lib::revwalk::history::abort_interrupted_rewrite_apply(&grit).expect("abort");
     assert!(wt.join("empty.txt").is_file());
     assert_eq!(fs::read(wt.join("empty.txt")).expect("read"), b"");
+}
+
+#[cfg(unix)]
+#[test]
+fn interrupted_rewrite_apply_abort_restores_newline_filename() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let newline_path = "line\nbreak";
+    build_commit_dag(wt, &[("b", "a"), ("c", "b")], &[("c", "refs/heads/main")]);
+    let grit = open_grit(wt);
+    let tip = commit_file(wt, newline_path, "before\n", "track newline filename");
+    let plan = plan_reword_tree_from_commit(
+        wt,
+        tip,
+        newline_path,
+        b"after\n",
+        "change newline-named file in replayed tip",
+    );
+    grit_lib::repo::set_test_inject_rewrite_apply_abort_after_refs(true);
+    apply_rewrite(
+        &grit,
+        &plan,
+        &apply_opts(),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect_err("injected abort");
+    grit_lib::repo::set_test_inject_rewrite_apply_abort_after_refs(false);
+    fs::remove_file(wt.join(newline_path)).expect("simulate partial checkout");
+    grit_lib::revwalk::history::abort_interrupted_rewrite_apply(&grit).expect("abort");
+    assert!(wt.join(newline_path).is_file());
+    assert_eq!(fs::read(wt.join(newline_path)).expect("read"), b"before\n");
 }
