@@ -464,4 +464,79 @@ mod http {
         .expect("http deepen");
         assert_twin_matches(&git_client, &grit_client);
     }
+
+    #[test]
+    fn absolute_depth_over_smart_http_matches_git() {
+        let Some(server_bin) = find_binary("grit-http-server") else {
+            eprintln!("SKIP: grit-http-server not built");
+            return;
+        };
+        let Some(port) = free_port() else {
+            eprintln!("SKIP: no free port");
+            return;
+        };
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bare = build_linear_bare(tmp.path(), 6);
+        let root = tmp.path().join("srv-abs");
+        std::fs::create_dir_all(&root).unwrap();
+        let served = root.join("repo.git");
+        git(
+            tmp.path(),
+            &[
+                "clone",
+                "-q",
+                "--bare",
+                bare.to_str().unwrap(),
+                served.to_str().unwrap(),
+            ],
+        );
+        let Some(child) = spawn_server(&server_bin, &root, port) else {
+            eprintln!("SKIP: could not spawn server");
+            return;
+        };
+        struct Guard(Child);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let _g = Guard(child);
+        if !wait_ready(port) {
+            eprintln!("SKIP: http server not ready");
+            return;
+        }
+
+        let url = format!("http://127.0.0.1:{port}/repo.git");
+        let git_client = shallow_clone(tmp.path(), &served, "git-http-abs", 1);
+        let grit_client = shallow_clone(tmp.path(), &served, "grit-http-abs", 1);
+        for client in [&git_client, &grit_client] {
+            git(client, &["remote", "set-url", "origin", &url]);
+        }
+        assert_twin_matches(&git_client, &grit_client);
+        assert_eq!(rev_list_count(&git_client), 1);
+
+        let client = http_client_arc(UreqHttpClient::new());
+        for depth in [1u32, 2, 3] {
+            git_fetch(
+                &git_client,
+                &["fetch", "--depth", &depth.to_string(), "origin"],
+            );
+            let mut opts = FetchOptions {
+                refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
+                tags: TagMode::Following,
+                fetch_depth: FetchDepth::depth(depth),
+                ..Default::default()
+            };
+            http_fetch(
+                client.clone(),
+                &grit_client.join(".git"),
+                &url,
+                &mut opts,
+                &mut NoProgress,
+            )
+            .expect("http absolute depth fetch");
+            assert_twin_matches(&git_client, &grit_client);
+        }
+    }
 }

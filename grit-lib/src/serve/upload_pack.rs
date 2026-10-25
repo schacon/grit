@@ -333,6 +333,9 @@ fn read_v0_request(
     if wants.is_empty() {
         return Ok(None);
     }
+    if caps.contains("deepen-relative") {
+        shallow.deepen_relative = true;
+    }
     let format = caps.iter().find_map(|c| c.strip_prefix("object-format="));
     check_object_format(repo, format)?;
     Ok(Some(V0Request {
