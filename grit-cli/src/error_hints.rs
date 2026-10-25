@@ -167,6 +167,17 @@ fn guide_lib(err: &LibError) -> Option<Error> {
                 ..StructuredJsonError::new(err.to_string(), ErrorKind::DirtyWorktree)
             },
         })),
+        LibError::RestorePathUnmerged { paths } => {
+            let words = shell_words(paths);
+            Some(guided(
+                ErrorKind::UnmergedPaths,
+                err.to_string(),
+                Some(format!(
+                    "take one side with `grit restore --ours {words}` or `grit restore --theirs {words}`, or bring the conflict markers back with `grit restore --merge {words}`"
+                )),
+                Some(paths.clone()),
+            ))
+        }
         LibError::Branch(BranchError::NotFound { name }) => Some(guided(
             ErrorKind::BranchNotFound,
             format!("no branch named '{name}'"),
@@ -378,6 +389,23 @@ mod tests {
             paths: strings(&["a b"]),
         }));
         assert!(p.hint.expect("hint").contains("grit add 'a b'"));
+    }
+
+    #[test]
+    fn restore_of_unmerged_paths_names_each_side() {
+        let p = payload(Error::new(LibError::RestorePathUnmerged {
+            paths: strings(&["a b"]),
+        }));
+        assert_eq!(p.kind, ErrorKind::UnmergedPaths);
+        assert_eq!(p.paths, Some(strings(&["a b"])));
+        assert_eq!(p.error, "path 'a b' is unmerged");
+        let hint = p.hint.expect("hint");
+        for side in ["--ours", "--theirs", "--merge"] {
+            assert!(
+                hint.contains(&format!("grit restore {side} 'a b'")),
+                "{hint}"
+            );
+        }
     }
 
     #[test]

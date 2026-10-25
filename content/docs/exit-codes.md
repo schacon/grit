@@ -60,5 +60,5 @@ $ grit push --json
 | `remote_no_url` | The remote is configured but has no URL. Hint: `grit remote set-url <name> <url>`. |
 | `auth_required` | An HTTPS remote wants credentials and none were available. The `error` names the repository URL; the hint is `grit auth` for github.com, otherwise a `credential.helper`. |
 | `auth_rejected` | The remote refused the credentials that were sent. |
-| `unmerged_paths` | `grit merge --continue` while conflicts are unresolved, or resolved but not staged with `commit.autoStage=false` (`paths`). The hint names the files and `grit merge --continue` / `grit merge --abort` (or `grit add`). |
+| `unmerged_paths` | `grit merge --continue` while conflicts are unresolved, or resolved but not staged with `commit.autoStage=false` (`paths`). The hint names the files and `grit merge --continue` / `grit merge --abort` (or `grit add`). Also a plain `grit restore` of a conflicted path; the hint names `grit restore --ours` / `--theirs` / `--merge`. |
 | `dirty_worktree` | Staged or unstaged changes block a merge, pick, revert, switch or `rebase --exec` (`paths`). Hint: `grit commit` or `grit stash`. |

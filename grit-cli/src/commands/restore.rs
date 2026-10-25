@@ -1,6 +1,7 @@
 //! `grit restore` — restore working tree and/or index paths.
 
 use anyhow::{Context, Result};
+use grit_lib::error::Error as LibError;
 use grit_lib::porcelain::hunk_select::{
     parse_hunk_id_list, restore_hunks, HunkSelectError, RestoreHunksOutcome,
 };
@@ -190,6 +191,13 @@ pub fn run(
         remerge,
     };
 
-    let outcome = restore_paths(&repo, &opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let outcome = restore_paths(&repo, &opts).map_err(map_restore_error)?;
     Ok(outcome.into())
+}
+
+fn map_restore_error(err: LibError) -> anyhow::Error {
+    match err {
+        unmerged @ LibError::RestorePathUnmerged { .. } => anyhow::Error::from(unmerged),
+        other => anyhow::anyhow!("{other}"),
+    }
 }
