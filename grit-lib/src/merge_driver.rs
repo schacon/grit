@@ -217,7 +217,8 @@ pub(crate) fn run_external_merge_driver(
     if status.status.success {
         Ok(MergeDriverOutcome::Clean(merged))
     } else if status.status.code.is_some_and(|c| c <= 128) {
-        Ok(MergeDriverOutcome::Conflict)
+        // Git always keeps post-driver content from %A, even when the driver exits non-zero.
+        Ok(MergeDriverOutcome::ConflictWithMarkers(merged))
     } else {
         Err(Error::Io(std::io::Error::other(format!(
             "merge driver terminated with exit {:?}",
@@ -299,15 +300,11 @@ pub(crate) fn try_merge_driver(
     let Some(driver_name) = effective_merge_driver_name(attrs, config.as_ref()) else {
         return Ok(None);
     };
-    if driver_name == "union" && favor == MergeFavor::None {
-        return Ok(None);
-    }
     let kind = resolve_merge_driver(config.as_ref(), &driver_name);
     let marker_size = attrs.effective_conflict_marker_size();
     let base_bytes = base.unwrap_or(b"");
     match kind {
         MergeDriverKind::Text => Ok(None),
-        MergeDriverKind::Union if favor == MergeFavor::None => Ok(None),
         MergeDriverKind::Binary => Ok(Some((
             match favor {
                 MergeFavor::Ours => MergeDriverOutcome::Clean(ours.to_vec()),
@@ -348,10 +345,10 @@ pub(crate) fn try_merge_driver(
                 labels,
             )?;
             let content = match &outcome {
-                MergeDriverOutcome::Clean(c) => c.clone(),
-                MergeDriverOutcome::Conflict | MergeDriverOutcome::ConflictWithMarkers(_) => {
-                    ours.to_vec()
+                MergeDriverOutcome::Clean(c) | MergeDriverOutcome::ConflictWithMarkers(c) => {
+                    c.clone()
                 }
+                MergeDriverOutcome::Conflict => ours.to_vec(),
             };
             Ok(Some((outcome, content)))
         }

@@ -870,6 +870,17 @@ fn attrs_force_binary(attrs: Option<&FileAttrs>) -> bool {
     })
 }
 
+fn add_add_executable_mode_conflict(
+    ours: &IndexEntry,
+    theirs: &IndexEntry,
+    favor: MergeFavor,
+) -> bool {
+    matches!(ours.mode, 0o100644 | 0o100755)
+        && matches!(theirs.mode, 0o100644 | 0o100755)
+        && ours.mode != theirs.mode
+        && favor == MergeFavor::None
+}
+
 pub(crate) fn stage_entry(index: &mut Index, path: &[u8], src: &IndexEntry, stage: u8) {
     let mut e = src.clone();
     e.path = path.to_vec();
@@ -1107,7 +1118,7 @@ fn add_add_content_conflict(
         ours: presentation.label_ours,
         theirs: &label_theirs,
     };
-    if let Some((outcome, _content)) = try_merge_driver(
+    if let Some((outcome, content)) = try_merge_driver(
         repo,
         &file_attrs,
         &path_str,
@@ -1123,6 +1134,19 @@ fn add_add_content_conflict(
         ws.ignore_cr_at_eol,
         driver_labels,
     )? {
+        if add_add_executable_mode_conflict(ours, theirs, favor) {
+            let worktree_bytes = match &outcome {
+                MergeDriverOutcome::Clean(c) | MergeDriverOutcome::ConflictWithMarkers(c) => {
+                    c.as_slice()
+                }
+                MergeDriverOutcome::Conflict => content.as_slice(),
+            };
+            let conflict_oid = repo.odb().write(ObjectKind::Blob, worktree_bytes)?;
+            conflict_content.insert(path.to_vec(), conflict_oid);
+            stage_entry(index, path, ours, 2);
+            stage_entry(index, path, theirs, 3);
+            return Ok(());
+        }
         return finish_merge_driver_result(
             repo,
             index,
