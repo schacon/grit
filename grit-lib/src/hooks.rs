@@ -4,11 +4,12 @@
 //! traditional script in the hooks directory (`core.hooksPath` or `.git/hooks/`).
 
 use crate::command_runner::{
-    system_command_runner, CommandEnvironment, CommandRunner, CommandSpec, CommandStdin,
-    CommandStdio, RunningCommand, ShellInvocation,
+    git_for_windows_tool_dirs, prepend_to_child_path, system_command_runner, CommandEnvironment,
+    CommandRunner, CommandSpec, CommandStdin, CommandStdio, RunningCommand, ScriptInterpreter,
+    ShellInvocation,
 };
 use crate::config::{parse_path, ConfigSet};
-use crate::git_path::path_without_verbatim_prefix;
+use crate::git_path::{path_without_verbatim_prefix, strip_verbatim_path_prefix_str};
 use crate::objects::ObjectId;
 use crate::repo::Repository;
 use crate::state::HeadState;
@@ -484,17 +485,50 @@ fn shebang_interpreter(head: &[u8]) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// Variables naming one repository path, which hooks hand on to `git` and shell tools.
+const HOOK_PATH_VARS: [&str; 5] = [
+    "GIT_DIR",
+    "GIT_COMMON_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+];
+
+/// Strip Windows `\\?\` prefixes from the path-valued `GIT_*` variables in `set`.
+///
+/// Repository paths are canonicalized, which makes them verbatim on Windows, but Git for
+/// Windows does not open a verbatim `GIT_INDEX_FILE` (it reads an empty index instead) and
+/// MSYS tools cannot open such paths at all.
+fn strip_verbatim_prefix_from_path_vars(set: &mut [(OsString, OsString)]) {
+    for (key, value) in set.iter_mut() {
+        if !HOOK_PATH_VARS.iter().any(|var| key == *var) {
+            continue;
+        }
+        let Some(s) = value.to_str() else {
+            continue;
+        };
+        let stripped = strip_verbatim_path_prefix_str(s);
+        if stripped.len() != s.len() {
+            let stripped = OsString::from(stripped.into_owned());
+            *value = stripped;
+        }
+    }
+}
+
 /// Shell for `hook.<name>.command` entries and for scripts the OS will not execute directly.
 ///
 /// See [`crate::command_runner::shell_program`]: `/bin/sh` on Unix, `sh` resolved against the
 /// hook's `PATH` on Windows.
-fn hook_shell(env: &CommandEnvironment) -> PathBuf {
-    crate::command_runner::shell_program(env)
+fn hook_shell(env: &CommandEnvironment) -> ScriptInterpreter {
+    crate::command_runner::shell_interpreter(env)
 }
 
 /// Interpreter from the `#!` line of `script` (Windows cannot execute scripts directly).
 #[cfg(windows)]
-fn script_shebang_interpreter(script: &Path, env: &CommandEnvironment) -> Option<PathBuf> {
+fn script_shebang_interpreter(
+    script: &Path,
+    env: &CommandEnvironment,
+) -> Option<ScriptInterpreter> {
     use std::io::Read;
     let mut head = [0u8; 256];
     let mut file = fs::File::open(script).ok()?;
@@ -538,6 +572,21 @@ impl HookSpawnContext<'_> {
         }
     }
 
+    /// Spec running `interpreter` with `invocation`; an interpreter from a Git for Windows
+    /// tree also gets that tree's tool directories in front of `PATH`, as Git gives hooks.
+    fn interpreter_spec(
+        &self,
+        interpreter: ScriptInterpreter,
+        invocation: ShellInvocation,
+        args: &[&str],
+    ) -> CommandSpec {
+        let mut spec = self.spec(interpreter.program, Some(invocation), args);
+        if let Some(root) = &interpreter.git_root {
+            prepend_to_child_path(&mut spec.env, &git_for_windows_tool_dirs(root));
+        }
+        spec
+    }
+
     fn spawn(&self, spec: &CommandSpec, hook_name: &str) -> Result<RunningCommand, HookError> {
         self.runner.spawn(spec).map_err(|source| HookError::Spawn {
             hook_name: hook_name.to_owned(),
@@ -559,12 +608,12 @@ impl HookSpawnContext<'_> {
         args: &[&str],
     ) -> Result<RunningCommand, HookError> {
         let argv0 = path_without_verbatim_prefix(argv0);
-        let via_shell = |shell: PathBuf| {
+        let via_shell = |shell: ScriptInterpreter| {
             let invocation = ShellInvocation::ScriptPath {
                 script_path: argv0.to_path_buf(),
                 args: args.iter().map(OsString::from).collect(),
             };
-            self.spec(shell, Some(invocation), args)
+            self.interpreter_spec(shell, invocation, args)
         };
         #[cfg(windows)]
         if let Some(interpreter) = script_shebang_interpreter(script, self.env) {
@@ -598,7 +647,7 @@ impl HookSpawnContext<'_> {
             args: args.iter().map(OsString::from).collect(),
         };
         self.spawn(
-            &self.spec(hook_shell(self.env), Some(invocation), args),
+            &self.interpreter_spec(hook_shell(self.env), invocation, args),
             hook_name,
         )
     }
@@ -944,10 +993,13 @@ pub fn run_hook_opts(
         }
     }
 
-    let hook_env = match repo {
+    let mut hook_env = match repo {
         Some(r) => CommandEnvironment::from_repository_environment(r.environment(), &merged_env),
         None => hook_command_env(git_dir_for_configured, &merged_env),
     };
+    if cfg!(windows) {
+        strip_verbatim_prefix_from_path_vars(&mut hook_env.set);
+    }
 
     let capture = opts.stdio == HookStdio::Capture;
     let (stdout, stderr) = match opts.stdio {
@@ -1373,7 +1425,91 @@ mod tests {
     fn hook_shell_is_bin_sh_on_unix() {
         let mut env = CommandEnvironment::default();
         env.set.push(("PATH".into(), "/nonexistent".into()));
-        assert_eq!(hook_shell(&env), PathBuf::from("/bin/sh"));
+        assert_eq!(hook_shell(&env), ScriptInterpreter::bare("/bin/sh"));
+    }
+
+    #[test]
+    fn interpreter_from_git_tree_gets_its_tool_dirs_on_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("Git");
+        touch(&root.join("cmd").join(exe("git")));
+        touch(&root.join("mingw64").join("bin").join(exe("git")));
+        touch(&root.join("usr").join("bin").join(exe("sh")));
+        let mut env = CommandEnvironment::default();
+        env.set
+            .push(("PATH".into(), root.join("cmd").into_os_string()));
+        let runner = crate::command_runner::RecordingRunner::always_success();
+        let ctx = HookSpawnContext {
+            runner: runner.as_ref(),
+            cwd: tmp.path(),
+            env: &env,
+            stdin_piped: false,
+            stdout: CommandStdio::Inherit,
+            stderr: CommandStdio::Inherit,
+        };
+        let dash_c = || ShellInvocation::DashC {
+            script: "true".into(),
+            argv0: Some("hook".into()),
+            args: Vec::new(),
+        };
+        let interpreter = crate::command_runner::resolve_script_interpreter(
+            "sh",
+            Some(root.join("cmd").as_os_str()),
+        );
+        let spec = ctx.interpreter_spec(interpreter, dash_c(), &[]);
+        assert_eq!(spec.program, root.join("usr").join("bin").join(exe("sh")));
+        let expected = std::env::join_paths([
+            root.join("mingw64").join("bin"),
+            root.join("usr").join("bin"),
+            root.join("cmd"),
+        ])
+        .expect("join");
+        assert_eq!(
+            crate::command_runner::child_path_var(&spec.env),
+            Some(expected)
+        );
+
+        let bare = ctx.interpreter_spec(ScriptInterpreter::bare("/bin/sh"), dash_c(), &[]);
+        assert_eq!(
+            crate::command_runner::child_path_var(&bare.env),
+            Some(root.join("cmd").into_os_string()),
+            "interpreters outside a Git tree keep PATH as is"
+        );
+    }
+
+    #[test]
+    fn verbatim_prefixes_are_stripped_from_path_vars() {
+        let mut set: Vec<(OsString, OsString)> = vec![
+            ("GIT_INDEX_FILE".into(), r"\\?\C:\repo\.git\index".into()),
+            ("GIT_DIR".into(), r"\\?\UNC\server\share\repo\.git".into()),
+            ("GIT_WORK_TREE".into(), r"C:\repo".into()),
+            (
+                "GIT_OBJECT_DIRECTORY".into(),
+                r"\\?\C:\repo\.git\objects".into(),
+            ),
+            ("GIT_PREFIX".into(), r"\\?\kept".into()),
+        ];
+        strip_verbatim_prefix_from_path_vars(&mut set);
+        let value = |key: &str| {
+            set.iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.clone())
+                .expect("present")
+        };
+        assert_eq!(
+            value("GIT_INDEX_FILE"),
+            OsString::from(r"C:\repo\.git\index")
+        );
+        assert_eq!(
+            value("GIT_DIR"),
+            OsString::from(r"\\server\share\repo\.git")
+        );
+        assert_eq!(value("GIT_WORK_TREE"), OsString::from(r"C:\repo"));
+        assert_eq!(
+            value("GIT_OBJECT_DIRECTORY"),
+            OsString::from(r"C:\repo\.git\objects")
+        );
+        assert_eq!(value("GIT_PREFIX"), OsString::from(r"\\?\kept"));
     }
 
     #[test]

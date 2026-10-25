@@ -521,17 +521,10 @@ const SHELL_NAME: &str = "sh";
 /// `PATH` as a child spawned with `env` will see it: the last explicit `PATH` in
 /// [`CommandEnvironment::set`], else the process `PATH` when the child inherits it.
 pub(crate) fn child_path_var(env: &CommandEnvironment) -> Option<OsString> {
-    let is_path = |key: &OsString| {
-        if cfg!(windows) {
-            key.eq_ignore_ascii_case("PATH")
-        } else {
-            key == "PATH"
-        }
-    };
     env.set
         .iter()
         .rev()
-        .find(|(k, _)| is_path(k))
+        .find(|(k, _)| is_path_var(k))
         .map(|(_, v)| v.clone())
         .or_else(|| {
             env.inherit_process
@@ -546,10 +539,15 @@ pub(crate) fn child_path_var(env: &CommandEnvironment) -> Option<OsString> {
 /// `/bin/sh` on Unix, as Git uses. Windows has no `/bin/sh`, so `sh` is resolved against
 /// the child's `PATH` with [`resolve_script_interpreter`].
 pub(crate) fn shell_program(env: &CommandEnvironment) -> PathBuf {
+    shell_interpreter(env).program
+}
+
+/// [`shell_program`] together with the Git for Windows tree it was found in.
+pub(crate) fn shell_interpreter(env: &CommandEnvironment) -> ScriptInterpreter {
     if cfg!(windows) {
         resolve_script_interpreter(SHELL_NAME, child_path_var(env).as_deref())
     } else {
-        PathBuf::from("/bin/sh")
+        ScriptInterpreter::bare("/bin/sh")
     }
 }
 
@@ -581,31 +579,46 @@ fn is_wsl_launcher_dir(dir: &Path) -> bool {
     })
 }
 
+/// Program that runs a script, and the Git for Windows installation it belongs to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ScriptInterpreter {
+    pub(crate) program: PathBuf,
+    /// Installation root (e.g. `C:\Program Files\Git`) when `program` was found inside one.
+    pub(crate) git_root: Option<PathBuf>,
+}
+
+impl ScriptInterpreter {
+    pub(crate) fn bare(program: impl Into<PathBuf>) -> Self {
+        Self {
+            program: program.into(),
+            git_root: None,
+        }
+    }
+}
+
 /// Resolve the interpreter `name` (`sh`, `bash`, …) for running a script or shell command.
 ///
 /// Looks first in the Git for Windows tree that owns a `git` found on `path_var`
 /// (`<root>/usr/bin`, `<root>/bin`), as Git for Windows puts those ahead of `PATH` for the
 /// commands it runs, then on `path_var` itself, skipping the WSL launcher directories. Falls
 /// back to the bare name so the OS search applies.
-pub(crate) fn resolve_script_interpreter(name: &str, path_var: Option<&OsStr>) -> PathBuf {
+pub(crate) fn resolve_script_interpreter(
+    name: &str,
+    path_var: Option<&OsStr>,
+) -> ScriptInterpreter {
     let Some(path_var) = path_var else {
-        return PathBuf::from(name);
+        return ScriptInterpreter::bare(name);
     };
     let in_git_tree = || {
         let git = find_program_in_path("git", path_var)?;
-        let bin_dir = git.parent()?.to_path_buf();
-        let roots: Vec<PathBuf> = bin_dir
-            .ancestors()
-            .skip(1)
-            .take(2)
-            .map(Path::to_path_buf)
-            .collect();
-        find_program_in_dirs(
-            name,
-            roots
-                .iter()
-                .flat_map(|root| [root.join("usr").join("bin"), root.join("bin")]),
-        )
+        git.parent()?.ancestors().skip(1).take(2).find_map(|root| {
+            let program =
+                find_program_in_dirs(name, [root.join("usr").join("bin"), root.join("bin")])?;
+            Some(ScriptInterpreter {
+                program,
+                git_root: Some(root.to_path_buf()),
+            })
+        })
     };
     in_git_tree()
         .or_else(|| {
@@ -613,8 +626,55 @@ pub(crate) fn resolve_script_interpreter(name: &str, path_var: Option<&OsStr>) -
                 name,
                 std::env::split_paths(path_var).filter(|dir| !is_wsl_launcher_dir(dir)),
             )
+            .map(ScriptInterpreter::bare)
         })
-        .unwrap_or_else(|| PathBuf::from(name))
+        .unwrap_or_else(|| ScriptInterpreter::bare(name))
+}
+
+/// Directories of a Git for Windows installation that its `git` puts at the front of `PATH`
+/// for the commands it runs: the MinGW `bin` of the installed architecture, then `usr/bin`
+/// with the MSYS tools (`grep`, `sed`, `env`, …) that shell scripts expect. Only existing
+/// directories are returned.
+pub(crate) fn git_for_windows_tool_dirs(root: &Path) -> Vec<PathBuf> {
+    const MINGW_PREFIXES: [&str; 4] = ["mingw64", "clangarm64", "ucrt64", "mingw32"];
+    let mingw_bin = MINGW_PREFIXES
+        .iter()
+        .map(|prefix| root.join(prefix).join("bin"))
+        .find(|dir| dir.is_dir());
+    mingw_bin
+        .into_iter()
+        .chain(std::iter::once(root.join("usr").join("bin")))
+        .filter(|dir| dir.is_dir())
+        .collect()
+}
+
+/// Put `dirs` in front of the `PATH` a child spawned with `env` will see (see
+/// [`child_path_var`]), setting it explicitly in [`CommandEnvironment::set`].
+///
+/// Leaves `env` unchanged when `dirs` is empty or cannot be joined into a `PATH` value.
+pub(crate) fn prepend_to_child_path(env: &mut CommandEnvironment, dirs: &[PathBuf]) {
+    if dirs.is_empty() {
+        return;
+    }
+    let Ok(mut path) = std::env::join_paths(dirs) else {
+        return;
+    };
+    if let Some(current) = child_path_var(env).filter(|p| !p.is_empty()) {
+        path.push(if cfg!(windows) { ";" } else { ":" });
+        path.push(current);
+    }
+    match env.set.iter_mut().rev().find(|(k, _)| is_path_var(k)) {
+        Some((_, value)) => *value = path,
+        None => env.set.push((OsString::from("PATH"), path)),
+    }
+}
+
+fn is_path_var(key: &OsStr) -> bool {
+    if cfg!(windows) {
+        key.eq_ignore_ascii_case("PATH")
+    } else {
+        key == "PATH"
+    }
 }
 
 impl CommandRunner for SystemCommandRunner {
@@ -860,7 +920,7 @@ mod tests {
         touch(&bin.join(exe("bash")));
         let path_var = bin.clone().into_os_string();
         assert_eq!(
-            resolve_script_interpreter("bash", Some(&path_var)),
+            resolve_script_interpreter("bash", Some(&path_var)).program,
             bin.join(exe("bash"))
         );
     }
@@ -875,7 +935,7 @@ mod tests {
             touch(&root.join("usr").join("bin").join(exe("sh")));
             let path_var = git_bin.into_os_string();
             assert_eq!(
-                resolve_script_interpreter("sh", Some(&path_var)),
+                resolve_script_interpreter("sh", Some(&path_var)).program,
                 root.join("usr").join("bin").join(exe("sh")),
                 "git under {git_dir:?}"
             );
@@ -892,7 +952,7 @@ mod tests {
         touch(&root.join("usr").join("bin").join(exe("bash")));
         let path_var = std::env::join_paths([other, root.join("cmd")]).expect("join");
         assert_eq!(
-            resolve_script_interpreter("bash", Some(&path_var)),
+            resolve_script_interpreter("bash", Some(&path_var)).program,
             root.join("usr").join("bin").join(exe("bash"))
         );
     }
@@ -909,12 +969,12 @@ mod tests {
         let path_var =
             std::env::join_paths([system32.clone(), apps.clone(), msys.clone()]).expect("join");
         assert_eq!(
-            resolve_script_interpreter("bash", Some(&path_var)),
+            resolve_script_interpreter("bash", Some(&path_var)).program,
             msys.join(exe("bash"))
         );
         let only_wsl = std::env::join_paths([system32, apps]).expect("join");
         assert_eq!(
-            resolve_script_interpreter("bash", Some(&only_wsl)),
+            resolve_script_interpreter("bash", Some(&only_wsl)).program,
             PathBuf::from("bash")
         );
     }
@@ -924,10 +984,13 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let path_var = tmp.path().as_os_str().to_os_string();
         assert_eq!(
-            resolve_script_interpreter("sh", Some(&path_var)),
+            resolve_script_interpreter("sh", Some(&path_var)).program,
             PathBuf::from("sh")
         );
-        assert_eq!(resolve_script_interpreter("sh", None), PathBuf::from("sh"));
+        assert_eq!(
+            resolve_script_interpreter("sh", None),
+            ScriptInterpreter::bare("sh")
+        );
     }
 
     #[test]
@@ -977,6 +1040,100 @@ mod tests {
             shell_program(&env),
             root.join("usr").join("bin").join(exe("sh"))
         );
+    }
+
+    #[test]
+    fn resolve_script_interpreter_reports_the_git_for_windows_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("Git");
+        touch(&root.join("cmd").join(exe("git")));
+        touch(&root.join("usr").join("bin").join(exe("sh")));
+        let path_var = root.join("cmd").into_os_string();
+        assert_eq!(
+            resolve_script_interpreter("sh", Some(&path_var)).git_root,
+            Some(root)
+        );
+
+        let other = tmp.path().join("other-bin");
+        touch(&other.join(exe("bash")));
+        let path_var = other.clone().into_os_string();
+        assert_eq!(
+            resolve_script_interpreter("bash", Some(&path_var)),
+            ScriptInterpreter::bare(other.join(exe("bash")))
+        );
+    }
+
+    #[test]
+    fn git_for_windows_tool_dirs_lists_mingw_then_usr_bin() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("Git");
+        assert!(git_for_windows_tool_dirs(&root).is_empty());
+
+        touch(&root.join("usr").join("bin").join(exe("grep")));
+        assert_eq!(
+            git_for_windows_tool_dirs(&root),
+            vec![root.join("usr").join("bin")]
+        );
+
+        touch(&root.join("clangarm64").join("bin").join(exe("git")));
+        touch(&root.join("mingw64").join("bin").join(exe("git")));
+        assert_eq!(
+            git_for_windows_tool_dirs(&root),
+            vec![
+                root.join("mingw64").join("bin"),
+                root.join("usr").join("bin")
+            ]
+        );
+    }
+
+    #[test]
+    fn prepend_to_child_path_puts_dirs_first() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let first = PathBuf::from("first");
+        let second = PathBuf::from("second");
+        let mut env = CommandEnvironment::default();
+        env.set.push(("HOME".into(), "home".into()));
+        env.set.push(("PATH".into(), "inherited".into()));
+        prepend_to_child_path(&mut env, &[first.clone(), second.clone()]);
+        assert_eq!(
+            child_path_var(&env),
+            Some(OsString::from(format!("first{sep}second{sep}inherited")))
+        );
+        assert_eq!(env.set.len(), 2);
+        assert_eq!(env.set[0].1, OsString::from("home"));
+
+        let mut empty_path = CommandEnvironment::default();
+        empty_path.set.push(("PATH".into(), "".into()));
+        prepend_to_child_path(&mut empty_path, std::slice::from_ref(&first));
+        assert_eq!(child_path_var(&empty_path), Some(OsString::from("first")));
+
+        let mut no_path = CommandEnvironment::default();
+        prepend_to_child_path(&mut no_path, std::slice::from_ref(&first));
+        assert_eq!(
+            no_path.set,
+            vec![(OsString::from("PATH"), OsString::from("first"))]
+        );
+
+        let mut unchanged = CommandEnvironment::default();
+        unchanged.set.push(("PATH".into(), "inherited".into()));
+        prepend_to_child_path(&mut unchanged, &[]);
+        assert_eq!(
+            child_path_var(&unchanged),
+            Some(OsString::from("inherited"))
+        );
+    }
+
+    #[test]
+    fn prepend_to_child_path_extends_the_inherited_process_path() {
+        let mut env = CommandEnvironment::inherit_process_only();
+        let inherited = child_path_var(&env);
+        prepend_to_child_path(&mut env, &[PathBuf::from("first")]);
+        let mut expected = OsString::from("first");
+        if let Some(inherited) = inherited.filter(|p| !p.is_empty()) {
+            expected.push(if cfg!(windows) { ";" } else { ":" });
+            expected.push(inherited);
+        }
+        assert_eq!(child_path_var(&env), Some(expected));
     }
 
     #[cfg(unix)]
