@@ -8154,7 +8154,7 @@ pub mod grit_lib::objects::handle
 pub struct grit_lib::objects::handle::Objects<'repo>
 impl<'repo> grit_lib::objects::handle::Objects<'repo>
 pub fn grit_lib::objects::handle::Objects<'repo>::commit_tree(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
-pub fn grit_lib::objects::handle::Objects<'repo>::contains(&self, &grit_lib::objects::ObjectId) -> bool
+pub fn grit_lib::objects::handle::Objects<'repo>::contains(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
 pub fn grit_lib::objects::handle::Objects<'repo>::hash(&self, grit_lib::objects::ObjectKind, &[u8]) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::handle::Objects<'repo>::new(&'repo grit_lib::repo::Repository) -> Self
 pub fn grit_lib::objects::handle::Objects<'repo>::read(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<grit_lib::objects::Object>
@@ -9471,6 +9471,7 @@ pub fn grit_lib::objects::odb::Odb::append_alternate_objects_line(&std::path::Pa
 pub fn grit_lib::objects::odb::Odb::append_file_alternate(&self, &std::path::Path) -> grit_lib::error::Result<()>
 pub fn grit_lib::objects::odb::Odb::approximate_object_count(&self) -> grit_lib::error::Result<usize>
 pub fn grit_lib::objects::odb::Odb::config_git_dir(&self) -> core::option::Option<&std::path::Path>
+pub fn grit_lib::objects::odb::Odb::contains(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
 pub fn grit_lib::objects::odb::Odb::count_loose_objects(&self) -> grit_lib::error::Result<usize>
 pub fn grit_lib::objects::odb::Odb::disable_mem_overlay(&self)
 pub fn grit_lib::objects::odb::Odb::empty_tree_oid(&self) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
@@ -10883,7 +10884,7 @@ impl<'a> core::panic::unwind_safe::UnwindSafe for grit_lib::objects::ObjectRef<'
 pub struct grit_lib::objects::Objects<'repo>
 impl<'repo> grit_lib::objects::handle::Objects<'repo>
 pub fn grit_lib::objects::handle::Objects<'repo>::commit_tree(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
-pub fn grit_lib::objects::handle::Objects<'repo>::contains(&self, &grit_lib::objects::ObjectId) -> bool
+pub fn grit_lib::objects::handle::Objects<'repo>::contains(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
 pub fn grit_lib::objects::handle::Objects<'repo>::hash(&self, grit_lib::objects::ObjectKind, &[u8]) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::handle::Objects<'repo>::new(&'repo grit_lib::repo::Repository) -> Self
 pub fn grit_lib::objects::handle::Objects<'repo>::read(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<grit_lib::objects::Object>
@@ -15605,6 +15606,7 @@ pub fn grit_lib::objects::odb::Odb::append_alternate_objects_line(&std::path::Pa
 pub fn grit_lib::objects::odb::Odb::append_file_alternate(&self, &std::path::Path) -> grit_lib::error::Result<()>
 pub fn grit_lib::objects::odb::Odb::approximate_object_count(&self) -> grit_lib::error::Result<usize>
 pub fn grit_lib::objects::odb::Odb::config_git_dir(&self) -> core::option::Option<&std::path::Path>
+pub fn grit_lib::objects::odb::Odb::contains(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
 pub fn grit_lib::objects::odb::Odb::count_loose_objects(&self) -> grit_lib::error::Result<usize>
 pub fn grit_lib::objects::odb::Odb::disable_mem_overlay(&self)
 pub fn grit_lib::objects::odb::Odb::empty_tree_oid(&self) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
@@ -17070,7 +17072,7 @@ impl core::marker::UnsafeUnpin for grit_lib::refs::refs_fsck::RefsFsckIssue
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::refs_fsck::RefsFsckIssue
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::refs_fsck::RefsFsckIssue
 pub fn grit_lib::refs::refs_fsck::format_refs_fsck_line(&grit_lib::refs::refs_fsck::RefsFsckIssue) -> alloc::string::String
-pub fn grit_lib::refs::refs_fsck::refs_fsck(&grit_lib::repo::Repository, &grit_lib::objects::odb::Odb, &grit_lib::config::ConfigSet, bool) -> core::io::error::Result<alloc::vec::Vec<grit_lib::refs::refs_fsck::RefsFsckIssue>>
+pub fn grit_lib::refs::refs_fsck::refs_fsck(&grit_lib::repo::Repository, &grit_lib::objects::odb::Odb, &grit_lib::config::ConfigSet, bool) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::refs::refs_fsck::RefsFsckIssue>>
 pub mod grit_lib::refs::refspec
 pub enum grit_lib::refs::refspec::RefspecError
 pub grit_lib::refs::refspec::RefspecError::Invalid(alloc::string::String)

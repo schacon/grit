@@ -602,19 +602,21 @@ fn apply_commands_with_hooks(
         .commands
         .iter()
         .map(|c| {
-            match check_command(
-                repo,
-                lookup_odb.as_ref(),
-                c,
-                opts,
-                policy,
-                current_branch.as_deref(),
-            ) {
-                Some(reason) => c.refused(reason),
-                None => c.accepted(),
-            }
+            Ok(
+                match check_command(
+                    repo,
+                    lookup_odb.as_ref(),
+                    c,
+                    opts,
+                    policy,
+                    current_branch.as_deref(),
+                )? {
+                    Some(reason) => c.refused(reason),
+                    None => c.accepted(),
+                },
+            )
         })
-        .collect();
+        .collect::<Result<_>>()?;
 
     let atomic = request.caps.contains("atomic");
     if atomic && results.iter().any(|r| r.error.is_some()) {
@@ -849,6 +851,11 @@ fn relay_hook_sideband(out: &mut Option<&mut dyn Write>, captured: &[u8]) -> Res
 }
 
 /// Decide whether one command may be applied. Returns the refusal reason.
+///
+/// # Errors
+///
+/// Propagates [`crate::odb::Odb::contains`] failures for the pushed object, so a
+/// backend outage is not reported as [`RefUpdateRefusal::MissingObjects`].
 fn check_command(
     repo: &Repository,
     lookup: Option<&Odb>,
@@ -856,41 +863,41 @@ fn check_command(
     opts: &ServeOptions,
     policy: &ReceivePolicy,
     current_branch: Option<&str>,
-) -> Option<RefUpdateRefusal> {
+) -> Result<Option<RefUpdateRefusal>> {
     if !cmd.refname.starts_with("refs/") || !crate::refs::is_valid_storable_ref_name(&cmd.refname) {
-        return Some(RefUpdateRefusal::InvalidRefName);
+        return Ok(Some(RefUpdateRefusal::InvalidRefName));
     }
     if crate::hide_refs::ref_is_hidden(&cmd.refname, &cmd.refname, &opts.hidden_refs) {
-        return Some(RefUpdateRefusal::HiddenRef);
+        return Ok(Some(RefUpdateRefusal::HiddenRef));
     }
     let current = crate::refs::resolve_ref(repo.git_dir(), &cmd.refname).ok();
     if current != cmd.old {
-        return Some(RefUpdateRefusal::StaleInfo);
+        return Ok(Some(RefUpdateRefusal::StaleInfo));
     }
     let is_current_branch = current_branch == Some(cmd.refname.as_str());
 
     let Some(new) = cmd.new else {
         if policy.deny_deletes {
-            return Some(RefUpdateRefusal::DeletionProhibited);
+            return Ok(Some(RefUpdateRefusal::DeletionProhibited));
         }
         if is_current_branch && policy.deny_current_branch {
-            return Some(RefUpdateRefusal::CurrentBranchDeletion);
+            return Ok(Some(RefUpdateRefusal::CurrentBranchDeletion));
         }
-        return None;
+        return Ok(None);
     };
     let odb = lookup.unwrap_or(repo.odb());
-    if !odb.exists(&new) {
-        return Some(RefUpdateRefusal::MissingObjects);
+    if !odb.contains(&new)? {
+        return Ok(Some(RefUpdateRefusal::MissingObjects));
     }
     if is_current_branch && policy.deny_current_branch {
-        return Some(RefUpdateRefusal::CurrentBranch);
+        return Ok(Some(RefUpdateRefusal::CurrentBranch));
     }
     if let (Some(old), true) = (current, policy.deny_non_fast_forwards) {
         if cmd.refname.starts_with("refs/heads/") {
-            return check_fast_forward(repo, odb, old, new);
+            return Ok(check_fast_forward(repo, odb, old, new));
         }
     }
-    None
+    Ok(None)
 }
 
 /// Refusal reason when moving a branch from `old` to `new` would discard history.

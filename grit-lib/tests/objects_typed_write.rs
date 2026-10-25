@@ -95,7 +95,7 @@ fn write_rejects_unsorted_tree_and_leaves_no_object() {
         .objects()
         .hash(ObjectKind::Tree, &unsorted)
         .expect("hash");
-    assert!(!repo.objects().contains(&would_be));
+    assert!(!repo.objects().contains(&would_be).unwrap());
     git_fsck_strict(dir.path());
 }
 
@@ -146,7 +146,7 @@ fn write_literally_stores_bytes_fsck_rejects() {
         .objects()
         .write_literally(ObjectKind::Tree, &unsorted)
         .expect("literal write");
-    assert!(repo.objects().contains(&oid));
+    assert!(repo.objects().contains(&oid).unwrap());
     assert_eq!(repo.objects().read(&oid).expect("read").data, unsorted);
 }
 
