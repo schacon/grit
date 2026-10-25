@@ -56,17 +56,15 @@ pub enum MergeResult {
     Squashed,
     Stopped,
     RefusedNotFf,
-    #[allow(dead_code)]
-    SetUpstream,
 }
 
 /// Result of `grit merge` (and the merge half of `grit pull`).
 #[derive(Serialize, JsonSchema)]
 pub struct MergeOutcome {
     pub result: MergeResult,
-    /// The merge source label (for `set_upstream`, the branch being set).
+    /// The merge source label.
     pub branch: String,
-    /// Resulting commit (fast-forward target, merge commit, or adopted upstream).
+    /// Resulting commit (fast-forward target or merge commit).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub oid: Option<String>,
@@ -74,10 +72,6 @@ pub struct MergeOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub change_id: Option<String>,
-    /// For `set_upstream` (unborn `grit pull`): the upstream the branch was set to.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(skip_serializing_if = "Option::is_none")]
-    pub upstream: Option<String>,
     /// Structured conflicts when `result` is `conflicts`.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
@@ -136,7 +130,6 @@ impl MergeOutcome {
             branch: label.to_owned(),
             oid: None,
             change_id: None,
-            upstream: None,
             conflicts: None,
             next_steps: None,
             alternatives: None,
@@ -164,7 +157,6 @@ impl MergeOutcome {
             branch: label.to_owned(),
             oid: Some(oid.to_hex()),
             change_id: change_id.as_ref().map(|id| id.as_str().to_owned()),
-            upstream: None,
             conflicts: None,
             next_steps: None,
             alternatives: None,
@@ -180,7 +172,6 @@ impl MergeOutcome {
             branch: label.to_owned(),
             oid: Some(oid.to_hex()),
             change_id: change_id.as_ref().map(|id| id.as_str().to_owned()),
-            upstream: None,
             conflicts: None,
             next_steps: None,
             alternatives: None,
@@ -202,7 +193,6 @@ impl MergeOutcome {
             branch: label.to_owned(),
             oid: Some(oid.to_hex()),
             change_id: change_id.as_ref().map(|id| id.as_str().to_owned()),
-            upstream: None,
             conflicts: None,
             next_steps: None,
             alternatives: None,
@@ -218,7 +208,6 @@ impl MergeOutcome {
             branch: label.to_owned(),
             oid: None,
             change_id: None,
-            upstream: None,
             conflicts: None,
             next_steps: None,
             alternatives: None,
@@ -234,7 +223,6 @@ impl MergeOutcome {
             branch: label.to_owned(),
             oid: Some(tree.to_hex()),
             change_id: None,
-            upstream: None,
             conflicts: None,
             next_steps: None,
             alternatives: None,
@@ -256,7 +244,6 @@ impl MergeOutcome {
             branch: label.to_owned(),
             oid: None,
             change_id: None,
-            upstream: None,
             conflicts,
             next_steps: None,
             alternatives: None,
@@ -280,7 +267,6 @@ impl MergeOutcome {
             branch: label.to_owned(),
             oid: None,
             change_id: None,
-            upstream: None,
             conflicts: Some(block.conflicts),
             next_steps: Some(block.next_steps),
             alternatives: block.alternatives,
@@ -296,7 +282,6 @@ impl MergeOutcome {
             branch: label.to_owned(),
             oid: None,
             change_id: None,
-            upstream: None,
             conflicts: None,
             next_steps: Some(vec![
                 "grit commit".into(),
@@ -315,7 +300,6 @@ impl MergeOutcome {
             branch: label.to_owned(),
             oid: None,
             change_id: None,
-            upstream: None,
             conflicts: None,
             next_steps: Some(vec!["grit commit".into(), "grit merge --abort".into()]),
             alternatives: None,
@@ -331,7 +315,6 @@ impl MergeOutcome {
             branch: label.to_owned(),
             oid: None,
             change_id: None,
-            upstream: None,
             conflicts: None,
             next_steps: None,
             alternatives: None,
@@ -353,30 +336,6 @@ impl MergeOutcome {
             branch: String::new(),
             oid: None,
             change_id: None,
-            upstream: None,
-            conflicts: None,
-            next_steps: None,
-            alternatives: None,
-            check: false,
-            dry_run: None,
-            parents: None,
-        }
-    }
-
-    /// Reserved for historical merge JSON (`set_upstream` moved to `grit pull`).
-    #[allow(dead_code)]
-    pub fn set_upstream(
-        branch: &str,
-        upstream: &str,
-        oid: ObjectId,
-        change_id: Option<ChangeId>,
-    ) -> Self {
-        Self {
-            result: MergeResult::SetUpstream,
-            branch: branch.to_owned(),
-            oid: Some(oid.to_hex()),
-            change_id: change_id.as_ref().map(|id| id.as_str().to_owned()),
-            upstream: Some(upstream.to_owned()),
             conflicts: None,
             next_steps: None,
             alternatives: None,
@@ -460,12 +419,6 @@ impl HumanRender for MergeOutcome {
                 crate::operation_output::render_merge_conflict_footer_human();
             }
             MergeResult::Aborted => outln!(w, "Merge aborted."),
-            MergeResult::SetUpstream => outln!(
-                w,
-                "Set {} to {}.",
-                self.branch,
-                self.upstream.as_deref().unwrap_or_default()
-            ),
         }
         Ok(())
     }
@@ -647,26 +600,6 @@ fn stored_change_id(repo: &Repository, oid: ObjectId) -> Result<Option<ChangeId>
     ))
 }
 
-/// Integrate `other` into the branch `into_ref` (currently at `into_oid`):
-/// up-to-date, fast-forward, or three-way merge. Retained for callers that merge via this helper.
-#[allow(dead_code)]
-pub fn integrate(
-    repo: &Repository,
-    into_ref: &str,
-    into_oid: ObjectId,
-    other_oid: ObjectId,
-    label: &str,
-) -> Result<MergeOutcome> {
-    integrate_with_options(
-        repo,
-        into_ref,
-        into_oid,
-        other_oid,
-        label,
-        &MergeOptions::default(),
-    )
-}
-
 fn integrate_with_options(
     repo: &Repository,
     into_ref: &str,
@@ -730,10 +663,6 @@ mod tests {
                 "conflicts",
             ),
             (MergeOutcome::aborted(), "aborted"),
-            (
-                MergeOutcome::set_upstream("main", "origin/main", oid, None),
-                "set_upstream",
-            ),
         ];
         for (outcome, expected) in cases {
             let value = serde_json::to_value(&outcome).expect("json");
