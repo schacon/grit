@@ -1293,6 +1293,11 @@ pub fn print_stash_apply_outcome(
         for path in &outcome.conflict_paths {
             outln!(w, "  - `{path}`");
         }
+        outln!(w);
+        outln!(
+            w,
+            "→ resolve conflicts, then `grit add PATH` to mark them resolved"
+        );
     } else {
         outln!(w, "- Applied **stash@{{{}}}**", outcome.index);
     }
@@ -1312,6 +1317,12 @@ pub fn print_stash_pop_outcome(w: &mut dyn Write, outcome: &StashPopOutcome) -> 
         for path in &outcome.conflict_paths {
             outln!(w, "  - `{path}`");
         }
+        outln!(w);
+        outln!(
+            w,
+            "→ resolve conflicts, `grit add PATH`, then `{}`",
+            outcome.drop_command()
+        );
     } else {
         let note = if outcome.dropped { "applied" } else { "empty" };
         outln!(w, "- Dropped **stash@{{{}}}** ({note})", outcome.index);
