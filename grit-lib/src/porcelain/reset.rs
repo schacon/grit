@@ -1288,11 +1288,11 @@ mod tests {
         let grit_dir = tempfile::tempdir().expect("tempdir");
         let git_dir = tempfile::tempdir().expect("tempdir");
         let (repo, trimmed) = wide_repo_with_local_changes(grit_dir.path());
-        wide_repo_with_local_changes(git_dir.path());
+        let (_, git_trimmed) = wide_repo_with_local_changes(git_dir.path());
 
         git(
             git_dir.path(),
-            &["reset", "-q", "--mixed", &trimmed.to_hex()],
+            &["reset", "-q", "--mixed", &git_trimmed.to_hex()],
         );
         reset_to_commit(&repo, &reset_opts(trimmed, ResetMode::Mixed)).expect("mixed reset");
 
@@ -1312,11 +1312,11 @@ mod tests {
         let grit_dir = tempfile::tempdir().expect("tempdir");
         let git_dir = tempfile::tempdir().expect("tempdir");
         let (repo, trimmed) = wide_repo_with_local_changes(grit_dir.path());
-        wide_repo_with_local_changes(git_dir.path());
+        let (_, git_trimmed) = wide_repo_with_local_changes(git_dir.path());
 
         git(
             git_dir.path(),
-            &["reset", "-q", "--hard", &trimmed.to_hex()],
+            &["reset", "-q", "--hard", &git_trimmed.to_hex()],
         );
         reset_to_commit(&repo, &reset_opts(trimmed, ResetMode::Hard)).expect("hard reset");
 
