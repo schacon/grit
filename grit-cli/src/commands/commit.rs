@@ -624,16 +624,16 @@ fn scope_json(scope: &CommitScope) -> CommitScopeJson {
 fn nothing_staged_commit_error(unstaged: usize, untracked: usize) -> anyhow::Error {
     let total = unstaged + untracked;
     let files = if total == 1 { "file" } else { "files" };
+    let verb = if total == 1 { "has" } else { "have" };
     let summary =
-        format!("nothing staged to commit ({total} {files} have unstaged or untracked changes)");
+        format!("nothing staged to commit ({total} {files} {verb} unstaged or untracked changes)");
     let hint = "run `grit add <file>` first, or `grit commit -- <path>`";
-    let human = format!("{summary} — {hint}");
     anyhow::Error::new(StructuredCliError {
         payload: StructuredJsonError {
             hint: Some(hint.to_owned()),
-            ..StructuredJsonError::new(summary, ErrorKind::NothingStaged)
+            ..StructuredJsonError::new(summary.clone(), ErrorKind::NothingStaged)
         },
-        human,
+        human: summary,
     })
 }
 

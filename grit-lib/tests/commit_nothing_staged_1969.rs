@@ -128,3 +128,51 @@ fn clean_tree_still_reports_nothing_to_commit() {
     .expect_err("commit");
     assert!(matches!(err, Error::NothingToCommit), "got {err:?}");
 }
+
+fn init_nested_repo(path: &Path) {
+    git_out(path, &["init", "-q", "-b", "main"]);
+    git_out(path, &["config", "user.email", "t@example.com"]);
+    git_out(path, &["config", "user.name", "Test"]);
+}
+
+#[test]
+fn staged_scope_counts_submodule_untracked_as_unstaged() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_out(root, &["init", "-q", "-b", "main"]);
+    git_out(root, &["config", "user.email", "t@example.com"]);
+    git_out(root, &["config", "user.name", "Test"]);
+
+    let inner = root.join("inner");
+    std::fs::create_dir_all(&inner).expect("mkdir inner");
+    init_nested_repo(&inner);
+    std::fs::write(inner.join("tracked.txt"), "v1\n").expect("write");
+    git_out(&inner, &["add", "tracked.txt"]);
+    git_out(&inner, &["commit", "-q", "-m", "inner"]);
+    let inner_head = git_out(&inner, &["rev-parse", "HEAD"]).trim().to_owned();
+    git_out(&inner, &["checkout", "-q", &inner_head]);
+
+    git_out(root, &["add", "inner"]);
+    git_out(root, &["commit", "-q", "-m", "add submodule"]);
+    git_out(root, &["config", "commit.autoStage", "false"]);
+
+    std::fs::write(inner.join("untracked.txt"), "new\n").expect("untracked in submodule");
+
+    let repo = open_grit(root);
+    let err = commit_with_scope(
+        &repo,
+        &commit_req("x"),
+        CommitScope::Staged,
+        &mut NullProgress,
+    )
+    .expect_err("commit");
+    match err {
+        Error::NothingStagedToCommit { unstaged, .. } => {
+            assert!(
+                unstaged >= 1,
+                "submodule untracked content must count as unstaged, got {err:?}"
+            );
+        }
+        other => panic!("expected NothingStagedToCommit, got {other:?}"),
+    }
+}

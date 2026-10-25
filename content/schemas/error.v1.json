@@ -230,6 +230,20 @@
             "worktree_path_io"
           ],
           "type": "string"
+        },
+        {
+          "description": "Index-only commit while the work tree has unstaged or untracked changes.",
+          "enum": [
+            "nothing_staged"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Genuinely nothing to commit (clean tree or auto-stage cancel-out).",
+          "enum": [
+            "nothing_to_commit"
+          ],
+          "type": "string"
         }
       ]
     },

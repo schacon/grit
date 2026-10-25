@@ -440,7 +440,7 @@ pub fn collect_untracked_and_ignored_with_cache(
 /// # Errors
 ///
 /// Propagates work-tree, diff, and untracked-walk failures.
-pub fn count_unstaged_and_untracked_paths(
+pub(crate) fn count_unstaged_and_untracked_paths(
     repo: &Repository,
     index: &mut Index,
 ) -> Result<(usize, usize)> {
@@ -450,7 +450,7 @@ pub fn count_unstaged_and_untracked_paths(
     let rules_arc = Arc::new(Mutex::new(worktree_rules));
     let diff_opts = DiffIndexToWorktreeOptions {
         index_mtime,
-        ignore_submodule_untracked: true,
+        ignore_submodule_untracked: false,
         repository_git_dir: Some(repo.git_dir().to_path_buf()),
         config: repo.config().ok(),
         worktree_rules: Some(Arc::clone(&rules_arc)),
