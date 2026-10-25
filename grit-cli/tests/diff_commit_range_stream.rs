@@ -101,6 +101,17 @@ fn commit_range_exit_code_and_human_no_spurious_no_changes() -> TestResult {
     assert_eq!(clean_code, Some(0));
     assert!(clean_out.contains("No changes.") || clean_out.trim().is_empty());
 
+    let (quiet_code, quiet_out, quiet_err) = gs(repo, ["diff", "HEAD~1", "HEAD", "--quiet"])?;
+    assert_eq!(
+        quiet_code,
+        Some(1),
+        "changed commit range --quiet should exit 1"
+    );
+    assert!(
+        quiet_out.is_empty() && quiet_err.is_empty(),
+        "quiet must produce no output: stdout={quiet_out:?} stderr={quiet_err:?}"
+    );
+
     Ok(())
 }
 

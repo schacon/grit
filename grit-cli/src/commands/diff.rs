@@ -120,6 +120,10 @@ pub struct DiffOutcome {
     #[serde(skip)]
     #[schemars(skip)]
     body_streamed: bool,
+    /// When true, [`finish_outcome`] must not recompute [`Self::changed`] from [`Self::files`].
+    #[serde(skip)]
+    #[schemars(skip)]
+    preserve_changed: bool,
 }
 
 /// One changed file.
@@ -395,7 +399,7 @@ fn finish_outcome(
     format: DiffFormatArgs,
     mut outcome: DiffOutcome,
 ) -> DiffOutcome {
-    if !outcome.body_streamed {
+    if !outcome.preserve_changed {
         outcome.changed = !outcome.files.is_empty();
     }
     if format.detail() == DiffDetail::Stat && outcome.totals.is_none() {
@@ -475,6 +479,7 @@ fn outcome_from_change_names(changes: Vec<FileChange>, format: DiffFormatArgs) -
         format,
         path_display: None,
         body_streamed: false,
+        preserve_changed: false,
     }
 }
 
@@ -544,6 +549,7 @@ fn outcome_from_lib(
         format,
         path_display: None,
         body_streamed: false,
+        preserve_changed: false,
     }
 }
 
@@ -694,6 +700,7 @@ pub fn run_no_index(opts: DiffRunOptions) -> Result<DiffOutcome> {
             format,
             path_display: None,
             body_streamed: false,
+            preserve_changed: false,
         },
     ))
 }
@@ -733,6 +740,7 @@ fn run_no_index_patch_text(opts: DiffRunOptions) -> Result<DiffOutcome> {
         format,
         path_display: None,
         body_streamed: true,
+        preserve_changed: true,
     })
 }
 
@@ -795,6 +803,7 @@ fn patch_text_outcome(
         format,
         path_display: None,
         body_streamed: false,
+        preserve_changed: true,
     })
 }
 
@@ -1382,6 +1391,7 @@ pub fn diff_of_commit(repo: &grit_lib::repo::Repository, oid: &ObjectId) -> Resu
             format: DiffFormatArgs::default(),
             path_display: None,
             body_streamed: false,
+            preserve_changed: false,
         });
     }
     diff_for_commit(
@@ -1447,6 +1457,7 @@ fn outcome_from_tree_structured(
         format,
         path_display: None,
         body_streamed: false,
+        preserve_changed: false,
     }
 }
 
@@ -1769,6 +1780,7 @@ fn outcome_from_changes(
         format,
         path_display: None,
         body_streamed: false,
+        preserve_changed: false,
     }
 }
 
@@ -2144,6 +2156,7 @@ fn outcome_stat_from_changes(
         format,
         path_display: None,
         body_streamed: false,
+        preserve_changed: false,
     }
 }
 
@@ -2213,6 +2226,7 @@ fn tree_diff_outcome(
                 format,
                 path_display: None,
                 body_streamed: false,
+                preserve_changed: true,
             }),
             DiffBodyDelivery::Stream(mode) => {
                 stream_tree_patch_diff(repo, &entries, diff_options, format, mode)
@@ -2251,6 +2265,7 @@ fn stream_tree_patch_diff(
             format,
             path_display: None,
             body_streamed: false,
+            preserve_changed: false,
         });
     }
     let path_display = PathDisplayOptions::from_repo(repo).ok();
@@ -2276,6 +2291,7 @@ fn stream_tree_patch_diff(
         format,
         path_display,
         body_streamed: true,
+        preserve_changed: true,
     })
 }
 
