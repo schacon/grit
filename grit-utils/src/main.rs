@@ -43,8 +43,8 @@ use grit_utils::revision_selection_suite::run_revision_selection_suite;
 use grit_utils::revwalk_suite::run_revwalk_suite;
 use grit_utils::scenario_suite::{self, ScenarioSuiteOptions};
 use grit_utils::scenarios::{
-    run_add_many_dirs_suite, run_add_suite, run_blame_suite, run_commit_suite,
-    run_deep_leaf_worktree_suite, run_dense_leaf_worktree_suite, run_diff_suite,
+    run_add_many_dirs_suite, run_add_suite, run_big_file_add_suite, run_blame_suite,
+    run_commit_suite, run_deep_leaf_worktree_suite, run_dense_leaf_worktree_suite, run_diff_suite,
     run_hot_path_suite, run_initial_monorepo_add_suite, run_log_suite, run_merge_check_suite,
     run_merge_only_suite, run_prepare_add, run_prepare_commit,
     run_prepare_conflicts_merge_conflict_continue, run_prepare_conflicts_merge_no_ff,
@@ -120,6 +120,11 @@ enum Cmd {
     Add {
         #[arg(long, value_delimiter = ',', default_values_t = vec![100, 1_000, 10_000, 50_000])]
         sizes: Vec<usize>,
+    },
+    /// `add` of one big untracked text file per size in MiB (#1850 layout)
+    AddBigFile {
+        #[arg(long, value_delimiter = ',', default_values_t = vec![256, 1_024])]
+        megabytes: Vec<usize>,
     },
     /// Initial `add` on untracked monorepo-shaped tree (#1674 layout)
     AddInitial {
@@ -1777,6 +1782,11 @@ fn main() -> Result<()> {
             eprintln!("Running add benchmarks...");
             let cfg = run_config(&cli, false);
             run_add_suite(&hyperfine, &git, &grit, &cfg, sizes, timestamp)?
+        }
+        Cmd::AddBigFile { megabytes } => {
+            eprintln!("Running big file add benchmarks...");
+            let cfg = run_config(&cli, false);
+            run_big_file_add_suite(&hyperfine, &git, &grit, &cfg, megabytes, timestamp)?
         }
         Cmd::AddInitial { files } => {
             eprintln!("Running initial monorepo add benchmark ({files} files)...");
