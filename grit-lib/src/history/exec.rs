@@ -6,6 +6,7 @@ use std::path::Path;
 use crate::command_runner::{
     run_sh_dash_c, CommandOutput, CommandRunner, CommandStdin, CommandStdio,
 };
+use crate::error::Error;
 use crate::objects::ObjectId;
 use crate::porcelain::checkout::checkout_hard_to_tree_from_head_tree;
 use crate::porcelain::switch::{
@@ -15,7 +16,7 @@ use crate::porcelain::switch::{
 use crate::porcelain::worktree_guard::ensure_worktree_clean_for_rebase_exec;
 use crate::refs::{write_ref, write_symbolic_ref};
 use crate::repo::Repository;
-use crate::state::{resolve_head, HeadState};
+use crate::state::{resolve_head_for_repository, HeadState};
 
 use super::apply::commit_tree_for_apply;
 use super::error::HistoryError;
@@ -233,23 +234,31 @@ fn map_clean_error(err: crate::error::Error) -> HistoryError {
 }
 
 fn capture_exec_prestate(repo: &Repository) -> Result<ExecPrestate, HistoryError> {
-    let head_state = resolve_head(repo.git_dir()).map_err(|e| HistoryError::WorktreeApply {
-        message: e.to_string(),
-    })?;
-    let head_commit = resolve_head_commit_oid(repo)?;
-    let head_tree = commit_tree_for_apply(repo, head_commit)?;
-    let index_bytes = fs::read(repo.index_path()).map_err(|e| HistoryError::WorktreeApply {
-        message: e.to_string(),
-    })?;
-    let head = match head_state {
-        HeadState::Branch { refname, .. } => SavedHead::Symbolic(refname),
-        HeadState::Detached { oid } => SavedHead::Detached(oid),
+    let head_state =
+        resolve_head_for_repository(repo).map_err(|e| HistoryError::WorktreeApply {
+            message: e.to_string(),
+        })?;
+    // The clean check ran against this same HEAD, so the saved HEAD and the tree restored
+    // afterwards must come from this one read; mixing sources restores a HEAD that does
+    // not match the restored index and worktree.
+    let (head, head_commit) = match head_state {
+        HeadState::Branch {
+            refname,
+            oid: Some(oid),
+            ..
+        } => (SavedHead::Symbolic(refname), oid),
+        HeadState::Detached { oid } => (SavedHead::Detached(oid), oid),
+        HeadState::Branch { oid: None, .. } => return Err(Error::UnbornHead.into()),
         HeadState::Invalid => {
             return Err(HistoryError::WorktreeApply {
                 message: "HEAD is in an unknown state".into(),
             });
         }
     };
+    let head_tree = commit_tree_for_apply(repo, head_commit)?;
+    let index_bytes = fs::read(repo.index_path()).map_err(|e| HistoryError::WorktreeApply {
+        message: e.to_string(),
+    })?;
     Ok(ExecPrestate {
         head,
         index_bytes,
@@ -285,17 +294,6 @@ fn restore_exec_prestate(
         message: e.to_string(),
     })?;
     Ok(())
-}
-
-fn resolve_head_commit_oid(repo: &Repository) -> Result<ObjectId, HistoryError> {
-    let head = resolve_head(repo.git_dir()).map_err(|e| HistoryError::WorktreeApply {
-        message: e.to_string(),
-    })?;
-    head.oid()
-        .copied()
-        .ok_or_else(|| HistoryError::WorktreeApply {
-            message: "HEAD has no commit".into(),
-        })
 }
 
 #[cfg(test)]
@@ -474,6 +472,67 @@ mod tests {
             },
         )
         .expect("plan")
+    }
+
+    #[test]
+    fn exec_restores_one_consistent_head_when_injected_ref_store_disagrees() {
+        use crate::config::environment::RepositoryOptions;
+        use crate::refs::store::{
+            Expected, MemoryRefStore, RawRef, RefStore, RefTransaction, RefUpdate, RefUpdateFlags,
+        };
+        use crate::repo::RepositoryBuilder;
+
+        let (dir, repo) = init_repo();
+        let root = commit_file(&repo, "main", "a.txt", b"1\n", "root\n", None);
+        let tip = commit_file(&repo, "main", "b.txt", b"2\n", "tip\n", Some(root));
+        let plan = two_commit_plan(&repo, root, tip);
+
+        write_ref(repo.git_dir(), "refs/heads/main", &root).expect("stale disk main");
+        let disk_status = || grit_test_support::git(dir.path(), &["status", "--porcelain"]);
+        assert_eq!(
+            disk_status(),
+            "A  b.txt\n",
+            "disk HEAD is stale behind the index"
+        );
+        let index_before = index_sha256(&repo);
+
+        let store = Arc::new(MemoryRefStore::new());
+        let txn = RefTransaction::new()
+            .update(RefUpdate {
+                name: "HEAD".to_owned(),
+                new_value: Some(RawRef::Direct(tip)),
+                expected: Expected::Any,
+                reflog: None,
+                flags: RefUpdateFlags::default(),
+            })
+            .expect("txn");
+        store
+            .prepare(txn)
+            .expect("prepare")
+            .commit()
+            .expect("commit");
+        let injected = RepositoryBuilder::new(
+            RepositoryOptions::empty().with_work_tree(dir.path().to_path_buf()),
+        )
+        .ref_store(store)
+        .open(repo.git_dir(), Some(dir.path()))
+        .expect("open injected");
+        assert_eq!(injected.head_commit().expect("injected head"), tip);
+
+        let runner = RecordingRunner::always_success();
+        let spec = ExecSpec {
+            commands: vec!["true".into()],
+        };
+        verify_rebase_with_exec(&injected, &plan, &spec, runner.as_ref()).expect("exec");
+
+        assert_eq!(
+            grit_test_support::git(dir.path(), &["rev-parse", "HEAD"]).trim(),
+            tip.to_hex(),
+            "restore writes the HEAD the clean check and saved tree came from"
+        );
+        assert_eq!(index_sha256(&repo), index_before);
+        assert_eq!(fs::read(dir.path().join("b.txt")).expect("b.txt"), b"2\n");
+        assert_eq!(disk_status(), "", "restored HEAD, index and worktree agree");
     }
 
     #[test]
