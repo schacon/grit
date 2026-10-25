@@ -3,6 +3,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use crate::git_dir::GitDirPathOperation;
 use crate::refs::RefnameUnavailable;
 
 use super::{Expected, RawRef};
@@ -58,6 +59,17 @@ pub enum RefStoreError {
     #[error("corrupt ref store: {0}")]
     Corrupt(String),
 
+    /// Filesystem I/O on a git-directory path during ref store work.
+    #[error("{}", crate::git_dir::io_error::format_git_dir_io_message(.path, *operation, &Self::git_dir_io_source(*.os_error)))]
+    GitDirPathIo {
+        /// Display path such as `.git/refs/heads/main` or `.git/worktrees/wt/HEAD.lock`.
+        path: String,
+        /// What the operation was trying to do when I/O failed.
+        operation: GitDirPathOperation,
+        /// Raw OS error code from the failing I/O call.
+        os_error: i32,
+    },
+
     /// Ref name is not safe to store (traversal, illegal component, etc.).
     ///
     /// Every backend checks update names and both sides of reflog and case-only renames
@@ -87,6 +99,26 @@ pub enum RefStoreError {
 }
 
 impl RefStoreError {
+    pub(crate) fn git_dir_path_io(
+        path: String,
+        operation: GitDirPathOperation,
+        source: std::io::Error,
+    ) -> Self {
+        Self::GitDirPathIo {
+            path,
+            operation,
+            os_error: source.raw_os_error().unwrap_or(0),
+        }
+    }
+
+    pub(crate) fn git_dir_io_source(os_error: i32) -> std::io::Error {
+        if os_error == 0 {
+            std::io::Error::from(std::io::ErrorKind::Other)
+        } else {
+            std::io::Error::from_raw_os_error(os_error)
+        }
+    }
+
     pub(crate) fn not_found(name: &str) -> Self {
         Self::NotFound {
             name: name.to_owned(),

@@ -1696,7 +1696,22 @@ fn build_repack_pack(
             .get(),
         write_threads: pack_write_parallel_options(odb, threads)?.threads.get(),
     };
-    fs::create_dir_all(pack_dir).map_err(Error::Io)?;
+    let git_dir = odb
+        .config_git_dir()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| {
+            pack_dir
+                .parent()
+                .and_then(|objects| objects.parent())
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| pack_dir.to_path_buf())
+        });
+    crate::git_dir::io_error::io_with_git_path(
+        &git_dir,
+        pack_dir,
+        crate::git_dir::GitDirPathOperation::GcPack,
+        fs::create_dir_all(pack_dir),
+    )?;
     let staging = pack_dir.join(format!("tmp_repack_{}", std::process::id()));
     let written = write_repack_pack(
         odb,
@@ -1862,6 +1877,7 @@ fn estimate_reachable_count(
 
 /// Remove pack artifacts in `pack_dir` except those belonging to `keep_pack`.
 pub fn remove_superseded_pack_files(pack_dir: &Path, keep_pack: &Path) -> Result<usize> {
+    let git_dir = crate::git_dir::io_error::git_dir_from_pack_dir(pack_dir);
     let keep_stem = keep_pack
         .file_stem()
         .and_then(|s| s.to_str())
@@ -1870,8 +1886,20 @@ pub fn remove_superseded_pack_files(pack_dir: &Path, keep_pack: &Path) -> Result
         return Ok(0);
     }
     let mut removed = 0usize;
-    for entry in fs::read_dir(pack_dir).map_err(Error::Io)? {
-        let entry = entry.map_err(Error::Io)?;
+    for entry in crate::git_dir::io_error::io_with_git_path(
+        &git_dir,
+        pack_dir,
+        crate::git_dir::GitDirPathOperation::GcPack,
+        fs::read_dir(pack_dir),
+    )? {
+        let entry = entry.map_err(|source| {
+            crate::git_dir::io_error::map_git_dir_io(
+                &git_dir,
+                pack_dir,
+                crate::git_dir::GitDirPathOperation::GcPack,
+                source,
+            )
+        })?;
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
         if name_str == keep_stem || name_str.starts_with(&format!("{keep_stem}.")) {
@@ -1885,7 +1913,12 @@ pub fn remove_superseded_pack_files(pack_dir: &Path, keep_pack: &Path) -> Result
             if pack_has_keep_marker(pack_dir, &path) {
                 continue;
             }
-            fs::remove_file(&path).map_err(Error::Io)?;
+            crate::git_dir::io_error::io_with_git_path(
+                &git_dir,
+                &path,
+                crate::git_dir::GitDirPathOperation::GcPack,
+                fs::remove_file(&path),
+            )?;
             removed += 1;
         }
     }

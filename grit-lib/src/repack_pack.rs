@@ -26,6 +26,7 @@ use flate2::Compression;
 
 use crate::delta_search::{search_deltas, DeltaCandidate, DeltaSearchParams};
 use crate::error::{Error, Result};
+use crate::git_dir::io_error::{git_dir_for_pack_io, map_git_dir_io, GitDirPathOperation};
 use crate::hash::HashingWriter;
 use crate::objects::{oid_hash_map, ObjectId, ObjectKind, OidHashMap};
 use crate::odb::Odb;
@@ -560,17 +561,21 @@ fn write_pack(
     settings: &RepackPackSettings,
     staging_path: &Path,
 ) -> Result<Vec<(ObjectId, u64, u32)>> {
+    let git_dir = git_dir_for_pack_io(odb, staging_path);
+    let pack_io = |source: std::io::Error| {
+        map_git_dir_io(&git_dir, staging_path, GitDirPathOperation::GcPack, source)
+    };
     let algo = odb.hash_algo();
     let compression = odb.pack_compression()?;
     let count = u32::try_from(order.len())
         .map_err(|_| Error::CorruptObject("pack object count exceeds u32".to_owned()))?;
-    let file = File::create(staging_path).map_err(Error::Io)?;
+    let file = File::create(staging_path).map_err(pack_io)?;
     let mut out = HashingWriter::new(algo, BufWriter::with_capacity(1 << 20, file));
     let mut header = Vec::with_capacity(32);
     header.extend_from_slice(b"PACK");
     header.extend_from_slice(&2u32.to_be_bytes());
     header.extend_from_slice(&count.to_be_bytes());
-    out.write_all(&header).map_err(Error::Io)?;
+    out.write_all(&header).map_err(pack_io)?;
     let mut offset = header.len() as u64;
 
     let mut new_offset = vec![u64::MAX; objects.len()];
@@ -630,8 +635,8 @@ fn write_pack(
                 (&zlib[..], None)
             }
         };
-        out.write_all(&header).map_err(Error::Io)?;
-        out.write_all(body).map_err(Error::Io)?;
+        out.write_all(&header).map_err(pack_io)?;
+        out.write_all(body).map_err(pack_io)?;
         let crc = known_crc.unwrap_or_else(|| {
             crc.update(&header);
             crc.update(body);
@@ -664,8 +669,8 @@ fn write_pack(
             emit(*num, prepare(num)?)?;
         }
     }
-    let (mut inner, _) = out.finish().map_err(Error::Io)?;
-    inner.flush().map_err(Error::Io)?;
+    let (mut inner, _) = out.finish().map_err(pack_io)?;
+    inner.flush().map_err(pack_io)?;
     Ok(rows)
 }
 

@@ -184,6 +184,12 @@ fn guide_lib(err: &LibError) -> Option<Error> {
             Some("close programs that may have the file open, then try again".to_owned()),
             Some(vec![path.clone()]),
         )),
+        LibError::GitDirPathIo { path, .. } => Some(guided(
+            ErrorKind::GitDirPathIo,
+            err.to_string(),
+            Some(git_dir_path_io_hint(path)),
+            Some(vec![path.clone()]),
+        )),
         LibError::UnbornHead => Some(
             crate::unborn_errors::unborn_head_from_cwd()
                 .unwrap_or_else(|| crate::unborn_errors::unborn_head_error(None)),
@@ -266,6 +272,18 @@ fn remote_not_found(name: &str) -> Error {
         )),
         None,
     )
+}
+
+fn git_dir_path_io_hint(path: &str) -> String {
+    if path.starts_with(".git/") || path == ".git" {
+        "check permissions and ownership under .git (for example `ls -l .git`); \
+         after running as root, fix ownership with `chown -R` for your user"
+            .to_owned()
+    } else {
+        "check permissions and ownership in the repository directory (for example `ls -l` in the repo root); \
+         after running as root, fix ownership with `chown -R` for your user"
+            .to_owned()
+    }
 }
 
 fn guided(
@@ -380,6 +398,27 @@ mod tests {
             .expect("hint")
             .contains("grit remote set-url half <url>"));
         assert!(guided_error(&Error::new(RemoteError::NoUrl { remote: None })).is_none());
+    }
+
+    #[test]
+    fn git_dir_path_io_hint_matches_layout() {
+        let worktree = payload(Error::new(LibError::GitDirPathIo {
+            path: ".git/objects/pack/tmp".into(),
+            operation: grit_lib::error::GitDirPathOperation::GcPack,
+            source: std::io::Error::from_raw_os_error(libc::EACCES as i32),
+        }));
+        assert!(worktree.hint.expect("hint").contains("ls -l .git"));
+        let bare = payload(Error::new(LibError::GitDirPathIo {
+            path: "objects/pack/tmp_repack_1".into(),
+            operation: grit_lib::error::GitDirPathOperation::GcPack,
+            source: std::io::Error::from_raw_os_error(libc::EACCES as i32),
+        }));
+        let bare_hint = bare.hint.expect("hint");
+        assert!(
+            !bare_hint.contains("ls -l .git"),
+            "bare hint should not reference .git"
+        );
+        assert!(bare_hint.contains("repo root"));
     }
 
     #[test]

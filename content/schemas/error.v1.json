@@ -239,6 +239,13 @@
           "type": "string"
         },
         {
+          "description": "Git directory I/O failed on a named path under `.git/` (`paths`, often one entry).",
+          "enum": [
+            "git_dir_path_io"
+          ],
+          "type": "string"
+        },
+        {
           "description": "Index-only commit while the work tree has unstaged or untracked changes.",
           "enum": [
             "nothing_staged"

@@ -2065,6 +2065,7 @@ fn ref_store_error_refname(err: &Error) -> Option<String> {
         },
         crate::refs::store::RefStoreError::SymrefLoop
         | crate::refs::store::RefStoreError::Corrupt(_)
+        | crate::refs::store::RefStoreError::GitDirPathIo { .. }
         | crate::refs::store::RefStoreError::Backend(_) => return None,
     })
 }

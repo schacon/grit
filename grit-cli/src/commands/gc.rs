@@ -546,7 +546,7 @@ pub fn run_full(dry_run: bool, quiet: bool, mode: OutputMode) -> Result<GcOutcom
         progress(mode, "Running garbage collection…");
     }
     let opts = GcOptions::full_run(dry_run, now);
-    let stats = gc(&repo, &opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let stats = gc(&repo, &opts).map_err(crate::json_error::map_lib_error)?;
     let timings = stats.phase_timings;
     let tasks = tasks_from_gc_stats(stats, timings);
     Ok(GcOutcome {
@@ -561,7 +561,7 @@ pub fn run_full(dry_run: bool, quiet: bool, mode: OutputMode) -> Result<GcOutcom
 pub fn run_auto(dry_run: bool, quiet: bool, now: OffsetDateTime) -> Result<GcOutcome> {
     let repo = context::discover()?;
     let opts = GcOptions::full_run(dry_run, now.unix_timestamp());
-    let outcome = gc_auto(&repo, &opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let outcome = gc_auto(&repo, &opts).map_err(crate::json_error::map_lib_error)?;
     let (auto, tasks) = match outcome {
         AutoGcOutcome::NotNeeded => (GcAutoReport::NotNeeded, Vec::new()),
         AutoGcOutcome::AlreadyRunning(holder) => (
@@ -676,7 +676,7 @@ pub fn run_repack(
     opts.write_bitmap = bitmaps;
     opts.force_recompress = force;
     let (stats, elapsed) = timed(mode, "Repacking objects…", || {
-        repack_all(&repo, &opts).map_err(|e| anyhow::anyhow!("{e}"))
+        repack_all(&repo, &opts).map_err(crate::json_error::map_lib_error)
     })?;
     Ok(GcOutcome {
         quiet,
@@ -694,7 +694,7 @@ pub fn run_commit_graph(dry_run: bool, quiet: bool, mode: OutputMode) -> Result<
     let mut opts = CommitGraphOptions::with_changed_paths(true);
     opts.dry_run = dry_run;
     let (report, elapsed) = timed(mode, "Writing commit-graph…", || {
-        write_commit_graph(&repo, &opts).map_err(|e| anyhow::anyhow!("{e}"))
+        write_commit_graph(&repo, &opts).map_err(crate::json_error::map_lib_error)
     })?;
     Ok(GcOutcome {
         quiet,
@@ -715,7 +715,7 @@ pub fn run_midx(dry_run: bool, quiet: bool, mode: OutputMode) -> Result<GcOutcom
     let mut opts = MidxOptions::default();
     opts.dry_run = dry_run;
     let (report, elapsed) = timed(mode, "Writing multi-pack-index…", || {
-        write_midx(&repo, &opts).map_err(|e| anyhow::anyhow!("{e}"))
+        write_midx(&repo, &opts).map_err(crate::json_error::map_lib_error)
     })?;
     Ok(GcOutcome {
         quiet,
@@ -735,7 +735,7 @@ pub fn run_pack_refs(dry_run: bool, quiet: bool, mode: OutputMode) -> Result<GcO
     let mut opts = PackRefsOptions::default();
     opts.dry_run = dry_run;
     let (report, elapsed) = timed(mode, "Packing refs…", || {
-        pack_refs(&repo, &opts).map_err(|e| anyhow::anyhow!("{e}"))
+        pack_refs(&repo, &opts).map_err(crate::json_error::map_lib_error)
     })?;
     Ok(GcOutcome {
         quiet,
@@ -761,7 +761,7 @@ pub fn run_prune(
     let (stats, elapsed) = timed(mode, "Pruning unreachable loose objects…", || {
         let mut prune_opts = PruneOptions::with_older_than(cutoff);
         prune_opts.dry_run = dry_run;
-        prune_loose_objects(&repo, &prune_opts).map_err(|e| anyhow::anyhow!("{e}"))
+        prune_loose_objects(&repo, &prune_opts).map_err(crate::json_error::map_lib_error)
     })?;
     Ok(GcOutcome {
         quiet,
