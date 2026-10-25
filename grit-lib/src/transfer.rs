@@ -947,6 +947,7 @@ fn copy_objects_for_local_fetch(
     pack_build: &PackBuildOptions,
     fetch_opts: &FetchOptions,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn crate::progress::Cancel,
 ) -> Result<(HashSet<ObjectId>, TransferStats)> {
     use crate::local_object_copy::{
         link_loose_objects_for_oids, linked_object_set, refresh_local_odb_after_link,
@@ -964,6 +965,7 @@ fn copy_objects_for_local_fetch(
         && source_objects_fully_packed(&remote_objects)?
     {
         progress.start(ProgressPhase::CopyingObjects, Some(wants.len() as u64));
+        crate::progress::poll_cancel(progress, cancel)?;
         if try_satisfy_via_object_link(&remote_objects, &local_objects, local_odb, wants, false)? {
             progress.set(wants.len() as u64);
             progress.finish();
@@ -1044,6 +1046,7 @@ fn copy_objects_for_local_fetch(
         ProgressPhase::CopyingObjects,
         Some(still_missing.len() as u64),
     );
+    crate::progress::poll_cancel(progress, cancel)?;
     let pack = build_pack_for_local_transfer(
         remote_odb,
         &send_set,
@@ -1539,7 +1542,13 @@ pub fn fetch_local(
     remote_git_dir: &Path,
     opts: &FetchOptions,
 ) -> Result<FetchOutcome> {
-    fetch_local_with_progress(local_git_dir, remote_git_dir, opts, &mut NoProgress)
+    fetch_local_with_progress(
+        local_git_dir,
+        remote_git_dir,
+        opts,
+        &mut NoProgress,
+        &crate::progress::NeverCancel,
+    )
 }
 
 /// Result of matching remote refs to fetch refspecs.
@@ -1661,7 +1670,9 @@ pub fn fetch_local_with_progress(
     remote_git_dir: &Path,
     opts: &FetchOptions,
     progress: &mut dyn Progress,
+    cancel: &dyn crate::progress::Cancel,
 ) -> Result<FetchOutcome> {
+    crate::progress::poll_cancel(progress, cancel)?;
     // Validate that the remote is actually a Git repository: a missing or
     // non-repo path must error (e.g. cloning a bad source) rather than silently
     // fetching nothing. A repo has an `objects` directory (bare or `.git`).
@@ -1897,6 +1908,7 @@ pub fn fetch_local_with_progress(
             &pack_opts,
             opts,
             progress,
+            cancel,
         )?;
         pack_oids = oids;
         transfer = fetch_transfer;
@@ -2153,7 +2165,10 @@ pub fn push_local(
     remote_git_dir: &Path,
     refs: &[PushRefSpec],
     opts: &PushOptions,
+    cancel: &dyn crate::progress::Cancel,
 ) -> Result<PushOutcome> {
+    let mut progress_sink = crate::progress::NullProgress;
+    crate::progress::poll_cancel(&mut progress_sink, cancel)?;
     if !opts.push_options.is_empty() {
         return Err(Error::PushOptionsUnsupported);
     }
@@ -2217,6 +2232,7 @@ pub fn push_local(
         })
         .collect();
     if !push_wants.is_empty() && !opts.dry_run {
+        crate::progress::poll_cancel(&mut progress_sink, cancel)?;
         let local_cfg = config_for_git_dir(local_git_dir);
         let pack_opts = if remote_have_tips.is_empty() {
             PackBuildOptions::for_local_copy(local_cfg.as_ref())
@@ -3297,8 +3313,14 @@ mod tests {
             ..Default::default()
         };
         let mut rec = PhaseRecorder::default();
-        fetch_local_with_progress(&local.path().join(".git"), remote.path(), &opts, &mut rec)
-            .expect("fetch_local");
+        fetch_local_with_progress(
+            &local.path().join(".git"),
+            remote.path(),
+            &opts,
+            &mut rec,
+            &crate::progress::NeverCancel,
+        )
+        .expect("fetch_local");
 
         assert!(
             rec.started

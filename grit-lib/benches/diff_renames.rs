@@ -102,14 +102,18 @@ fn bench_diff_renames(c: &mut Criterion) {
             &threads,
             |b, _| {
                 b.iter(|| {
-                    black_box(detect_renames_with_policy(
-                        &fx.odb,
-                        None,
-                        fx.entries.clone(),
-                        50,
-                        &fx.config,
-                        &policy,
-                    ));
+                    black_box(
+                        detect_renames_with_policy(
+                            &fx.odb,
+                            None,
+                            fx.entries.clone(),
+                            50,
+                            &fx.config,
+                            &policy,
+                            None,
+                        )
+                        .expect("detect renames"),
+                    );
                 });
             },
         );

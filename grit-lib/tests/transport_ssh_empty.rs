@@ -10,6 +10,7 @@ use std::process::Command;
 
 use grit_lib::objects::ObjectId;
 use grit_lib::prelude::Environment;
+use grit_lib::progress::NeverCancel;
 use grit_lib::remote::clone::{clone, CloneOptions};
 use grit_lib::remote::fetch::{fetch_remote, NoProgress};
 use grit_lib::remote::push::push_remote;
@@ -154,8 +155,14 @@ fn fetch_empty_bare_over_ssh_is_noop() {
         tags: TagMode::None,
         ..Default::default()
     };
-    fetch_remote(&local.join(".git"), &mut *conn, &mut opts, &mut NoProgress)
-        .expect("fetch against empty remote");
+    fetch_remote(
+        &local.join(".git"),
+        &mut *conn,
+        &mut opts,
+        &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("fetch against empty remote");
 }
 
 #[test]
@@ -184,7 +191,8 @@ fn clone_empty_bare_over_ssh_succeeds() {
         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/")),
     );
 
-    let outcome = clone(opts, &mut NoProgress, None).expect("clone empty bare over ssh");
+    let outcome =
+        clone(opts, &mut NoProgress, &NeverCancel, None).expect("clone empty bare over ssh");
 
     assert!(outcome.branches_with_commits.is_empty());
     assert!(dest.join(".git").is_dir());
@@ -239,6 +247,7 @@ fn push_to_empty_bare_over_ssh_without_hung_up_stderr() {
         &[spec],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push to empty bare");
     drop(conn);

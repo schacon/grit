@@ -87,6 +87,7 @@ fn push_local_full_lifecycle() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push main");
 
@@ -141,6 +142,7 @@ fn push_local_full_lifecycle() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect("non-ff push call");
     assert_eq!(
@@ -165,6 +167,7 @@ fn push_local_full_lifecycle() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect("forced push call");
     assert_eq!(outcome.results[0].status, PushRefStatus::Ok);
@@ -188,6 +191,7 @@ fn push_local_full_lifecycle() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect("delete push call");
     assert_eq!(outcome.results[0].status, PushRefStatus::Ok);
@@ -218,6 +222,7 @@ fn push_local_full_lifecycle() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect("cas push call");
     assert_eq!(outcome.results[0].status, PushRefStatus::RejectStale);
@@ -239,6 +244,7 @@ fn push_local_full_lifecycle() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect("cas push call (matching)");
     assert_eq!(outcome.results[0].status, PushRefStatus::Ok);
@@ -285,6 +291,7 @@ fn push_local_atomic_rejects_all_on_any_failure() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect("seed locked ref");
     assert_eq!(remote_ref(remote_git, "refs/heads/locked"), Some(c1));
@@ -320,6 +327,7 @@ fn push_local_atomic_rejects_all_on_any_failure() {
             dry_run: false,
             ..PushOptions::default()
         },
+        &grit_lib::progress::NeverCancel,
     )
     .expect("atomic push call");
 
@@ -390,6 +398,7 @@ fn push_local_non_atomic_df_applies_first_ref_only() {
             },
         ],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect("non-atomic df push");
 
@@ -457,6 +466,7 @@ fn push_local_atomic_store_batch_df_marks_atomic_push_failed() {
             atomic: true,
             ..PushOptions::default()
         },
+        &grit_lib::progress::NeverCancel,
     )
     .expect("atomic df push");
 
@@ -519,6 +529,7 @@ fn push_local_updates_remote_tracking_ref_when_configured() {
             tracking_remote: Some("origin".to_owned()),
             ..PushOptions::default()
         },
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push with tracking");
 
@@ -573,6 +584,7 @@ fn push_local_up_to_date_refreshes_stale_remote_tracking_ref() {
             tracking_remote: Some("origin".to_owned()),
             ..PushOptions::default()
         },
+        &grit_lib::progress::NeverCancel,
     )
     .expect("initial push");
 
@@ -596,6 +608,7 @@ fn push_local_up_to_date_refreshes_stale_remote_tracking_ref() {
             tracking_remote: Some("origin".to_owned()),
             ..PushOptions::default()
         },
+        &grit_lib::progress::NeverCancel,
     )
     .expect("up-to-date push");
 
@@ -656,6 +669,7 @@ fn push_local_honors_custom_fetch_refspec_for_tracking() {
             tracking_remote: Some("origin".to_owned()),
             ..PushOptions::default()
         },
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push with custom tracking mapping");
 
@@ -698,6 +712,7 @@ fn push_local_missing_remote_is_error() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("push to missing remote must fail");
     let msg = err.to_string();
@@ -751,6 +766,7 @@ fn push_local_does_not_use_decoy_repo_when_parent_relative_target_missing() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("missing ../wrong.git must fail");
     assert!(
@@ -830,6 +846,7 @@ fn linked_worktree_resolves_relative_remote_from_worktree_root() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push from linked worktree with resolved remote");
     assert_eq!(outcome.results.len(), 1);
@@ -884,6 +901,7 @@ fn push_local_into_empty_repo_links_local_pack() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push_local");
 
@@ -964,6 +982,7 @@ fn push_local_shallow_repacked_missing_parent_fails() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("shallow push must fail when parent objects are absent");
     let msg = err.to_string();
@@ -1042,6 +1061,7 @@ fn push_local_installs_single_pack_without_loose_objects() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push to empty bare remote");
 

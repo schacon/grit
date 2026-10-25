@@ -7,6 +7,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use grit_lib::error::Error;
+use grit_lib::progress::NeverCancel;
 use grit_lib::remote::fetch::{fetch_remote, NoProgress};
 use grit_lib::remote::transfer::{fetch_local, FetchDepth, FetchOptions, TagMode};
 use grit_lib::remote::transport::{ConnectOptions, GitDaemonTransport, Service, Transport};
@@ -269,7 +270,14 @@ fn grit_fetch_daemon(
         fetch_depth,
         ..Default::default()
     };
-    fetch_remote(&git_dir, &mut *conn, &mut opts, &mut NoProgress).expect("fetch_remote");
+    fetch_remote(
+        &git_dir,
+        &mut *conn,
+        &mut opts,
+        &mut NoProgress,
+        &NeverCancel,
+    )
+    .expect("fetch_remote");
 }
 
 fn init_shallow_client_from_daemon(tmp: &Path, url: &str, name: &str) -> PathBuf {

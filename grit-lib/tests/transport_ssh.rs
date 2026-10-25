@@ -26,6 +26,7 @@ use std::process::Command;
 
 use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectId;
+use grit_lib::progress::NeverCancel;
 use grit_lib::refs::resolve_ref;
 use grit_lib::remote::fetch::{fetch_remote, NoProgress};
 use grit_lib::remote::transfer::{FetchOptions, TagMode, UpdateMode};
@@ -139,8 +140,14 @@ fn run_fetch_and_assert(transport: &SshTransport, url: &str, source: &Path, loca
         tags: TagMode::All,
         ..Default::default()
     };
-    let outcome = fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
-        .expect("fetch_remote over ssh");
+    let outcome = fetch_remote(
+        &local_git,
+        &mut *conn,
+        &mut opts,
+        &mut NoProgress,
+        &NeverCancel,
+    )
+    .expect("fetch_remote over ssh");
 
     let got_main = resolve_ref(&local_git, "refs/remotes/origin/main").expect("origin/main");
     let got_topic = resolve_ref(&local_git, "refs/remotes/origin/topic").expect("origin/topic");
@@ -293,8 +300,14 @@ fn fetch_over_ssh_v2_lands_refs_and_objects() {
         tags: TagMode::All,
         ..Default::default()
     };
-    let outcome = fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
-        .expect("v2 fetch over ssh");
+    let outcome = fetch_remote(
+        &local_git,
+        &mut *conn,
+        &mut opts,
+        &mut NoProgress,
+        &NeverCancel,
+    )
+    .expect("v2 fetch over ssh");
 
     let got_main = resolve_ref(&local_git, "refs/remotes/origin/main").expect("origin/main");
     let got_topic = resolve_ref(&local_git, "refs/remotes/origin/topic").expect("origin/topic");

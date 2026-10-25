@@ -86,9 +86,19 @@ fn assert_serial_parallel_rename_match(
         threshold,
         config,
         &serial_policy(),
-    );
-    let parallel =
-        detect_renames_with_policy(odb, None, entries, threshold, config, &parallel_policy());
+        None,
+    )
+    .expect("serial rename detection");
+    let parallel = detect_renames_with_policy(
+        odb,
+        None,
+        entries,
+        threshold,
+        config,
+        &parallel_policy(),
+        None,
+    )
+    .expect("parallel rename detection");
     assert_eq!(
         serial, parallel,
         "parallel rename detection must match serial output"
@@ -183,7 +193,8 @@ fn parallel_rename_matches_serial_exact_and_inexact() {
     assert_serial_parallel_rename_match(repo.odb(), raw.clone(), 50, &config);
 
     let detected =
-        detect_renames_with_policy(repo.odb(), None, raw, 50, &config, &parallel_policy());
+        detect_renames_with_policy(repo.odb(), None, raw, 50, &config, &parallel_policy(), None)
+            .expect("detect renames");
     let git_lines = git_rename_and_copy_lines(root, &parent, &commit);
     let grit_lines = rename_and_copy_lines(&detected);
     assert_eq!(
@@ -218,7 +229,8 @@ fn exact_renames_above_default_rename_limit_match_git() {
     let raw = diff_trees(repo.odb(), Some(&parent), Some(&commit), "").expect("diff");
     let config = ConfigSet::new();
     let detected =
-        detect_renames_with_policy(repo.odb(), None, raw, 50, &config, &parallel_policy());
+        detect_renames_with_policy(repo.odb(), None, raw, 50, &config, &parallel_policy(), None)
+            .expect("detect renames");
 
     let renames = detected
         .iter()
@@ -285,7 +297,9 @@ fn asymmetric_matrix_exact_matches_still_pair() {
     }
 
     let config = ConfigSet::new();
-    let detected = detect_renames_with_policy(&odb, None, entries, 50, &config, &serial_policy());
+    let detected =
+        detect_renames_with_policy(&odb, None, entries, 50, &config, &serial_policy(), None)
+            .expect("detect renames");
     assert_eq!(
         detected
             .iter()

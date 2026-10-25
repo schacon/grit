@@ -1083,6 +1083,10 @@ pub enum Error {
     #[error(transparent)]
     InvalidIdentity(#[from] crate::ident::CommitIdentityError),
 
+    /// A long-running library operation stopped at a cancellation checkpoint.
+    #[error("operation cancelled")]
+    Cancelled,
+
     /// User-facing message that should be printed verbatim (no extra prefix).
     ///
     /// Used for revision errors that must match Git's `fatal:` lines exactly.

@@ -20,7 +20,7 @@ fn sample_ids(count: usize) -> Vec<ObjectId> {
             let mut hasher = ObjectHasher::new(HashAlgo::Sha1);
             hasher.update(b"grit-lib oid_hashmap bench");
             hasher.update(&i.to_le_bytes());
-            hasher.finalize()
+            hasher.finalize().expect("hash object id")
         })
         .collect()
 }

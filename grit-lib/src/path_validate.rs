@@ -6,10 +6,18 @@
 //! `core.protectNTFS` and `core.protectHFS`.
 //!
 //! ```rust
-//! use grit_lib::path_validate::{validate_path, EntryMode, ProtectOptions};
+//! use grit_lib::path_validate::{
+//!     validate_path, EntryMode, PathValidationKind, ProtectOptions,
+//! };
 //!
 //! let opts = ProtectOptions::default();
-//! validate_path(b"src/lib.rs", EntryMode::new(0o100644), opts).unwrap();
+//! validate_path(
+//!     b"src/lib.rs",
+//!     EntryMode::new(0o100644),
+//!     opts,
+//!     PathValidationKind::Worktree,
+//! )
+//! .unwrap();
 //! ```
 
 use crate::config::ConfigSet;

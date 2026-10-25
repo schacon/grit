@@ -9,6 +9,7 @@ use grit_lib::porcelain::commit::{
     commit_with_scope, commit_worktree, create_commit, CommitRequest, CommitScope, HookPolicy,
 };
 use grit_lib::porcelain::status::{status, StatusOptions};
+use grit_lib::progress::NeverCancel;
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
 use grit_lib::{reset_worktree_metadata_probe, worktree_metadata_probe_count};
@@ -61,7 +62,13 @@ fn stage_for_commit_stages_single_edit_on_deep_tree_without_new_untracked() {
     git(root, &["commit", "-qm", "base"]);
 
     let repo = open_repo(root);
-    status(&repo, &StatusOptions::default(), &mut NullProgress).expect("warm untracked cache");
+    status(
+        &repo,
+        &StatusOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("warm untracked cache");
 
     fs::write(root.join(".gitattributes"), "*.txt text eol=lf\n# edit\n").expect("attrs");
 
@@ -125,7 +132,13 @@ fn stage_for_commit_untracked_cache_eligible_tree_stages_one_edit() {
     );
 
     let repo = open_repo(root);
-    status(&repo, &StatusOptions::default(), &mut NullProgress).expect("warm untracked cache");
+    status(
+        &repo,
+        &StatusOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("warm untracked cache");
     fs::write(root.join(".gitattributes"), "*.txt text eol=lf\n# edit\n").expect("edit");
 
     let outcome = stage_for_commit(&repo, &mut NullProgress).expect("stage");
@@ -198,7 +211,13 @@ fn stage_for_commit_ignorecase_autocrlf_uses_tracked_scan_on_deep_tree() {
     );
 
     let repo = open_repo(root);
-    status(&repo, &StatusOptions::default(), &mut NullProgress).expect("warm untracked cache");
+    status(
+        &repo,
+        &StatusOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("warm untracked cache");
     fs::write(root.join("b00/d00/f0.txt"), "edited\n").expect("edit");
 
     let _probe = reset_worktree_metadata_probe(root);
@@ -361,7 +380,13 @@ fn commit_worktree_allow_empty_clean_tree_single_staging_pass() {
         &mut NullProgress,
     )
     .expect("grit add");
-    status(&repo, &StatusOptions::default(), &mut NullProgress).expect("warm UNTR");
+    status(
+        &repo,
+        &StatusOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("warm UNTR");
 
     let ident = "Test <t@example.com> 1 +0000".to_string();
     let mut req = CommitRequest {

@@ -420,6 +420,7 @@ pub fn collect_untracked_and_ignored_with_cache(
             cache_miss: UntrackedCacheMissAction::RefreshFull,
         },
         &rules,
+        None,
     )
     .map(|(untracked, ignored, _)| (untracked, ignored))
 }
@@ -436,6 +437,30 @@ pub fn collect_untracked_and_ignored_with_rules(
     pathspecs: &[String],
     rules: &crate::worktree_rules::WorktreeRules,
 ) -> Result<(Vec<String>, Vec<String>, UntrackedCollectMeta)> {
+    collect_untracked_and_ignored_with_rules_and_cancel(
+        repo,
+        index,
+        work_tree,
+        ignored_mode,
+        show_all,
+        pathspecs,
+        rules,
+        None,
+    )
+}
+
+/// Like [`collect_untracked_and_ignored_with_rules`], checking `cancel` during the walk.
+#[allow(clippy::too_many_arguments)]
+pub fn collect_untracked_and_ignored_with_rules_and_cancel(
+    repo: &Repository,
+    index: &mut Index,
+    work_tree: &Path,
+    ignored_mode: IgnoredMode,
+    show_all: bool,
+    pathspecs: &[String],
+    rules: &crate::worktree_rules::WorktreeRules,
+    cancel_watch: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<(Vec<String>, Vec<String>, UntrackedCollectMeta)> {
     collect_untracked_and_ignored_inner(
         repo,
         index,
@@ -449,6 +474,7 @@ pub fn collect_untracked_and_ignored_with_rules(
             cache_miss: UntrackedCacheMissAction::RefreshFull,
         },
         rules,
+        cancel_watch,
     )
 }
 
@@ -482,6 +508,15 @@ pub struct UntrackedCollectMeta {
     pub untracked_cache_refreshed: bool,
 }
 
+fn poll_untracked_cancel(
+    watch: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<()> {
+    if let Some(flag) = watch {
+        crate::progress::poll_watch(flag)?;
+    }
+    Ok(())
+}
+
 /// Shared implementation of the untracked/ignored walk.
 pub(crate) fn collect_untracked_and_ignored_inner(
     repo: &Repository,
@@ -490,7 +525,9 @@ pub(crate) fn collect_untracked_and_ignored_inner(
     pathspecs: &[String],
     scan: UntrackedScan,
     rules: &crate::worktree_rules::WorktreeRules,
+    cancel_watch: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(Vec<String>, Vec<String>, UntrackedCollectMeta)> {
+    poll_untracked_cancel(cancel_watch.as_ref())?;
     let UntrackedScan {
         ignored_mode,
         show_all,
@@ -525,6 +562,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
                     return Ok((untracked, Vec::new(), UntrackedCollectMeta::default()));
                 }
                 if cache_miss == UntrackedCacheMissAction::RefreshFull {
+                    poll_untracked_cancel(cancel_watch.as_ref())?;
                     crate::untracked_cache::refresh_untracked_cache_for_status(
                         repo,
                         index,
@@ -533,7 +571,9 @@ pub(crate) fn collect_untracked_and_ignored_inner(
                         &mut uc,
                         show_all,
                         ignored_mode_to_untracked_cache(ignored_mode),
+                        cancel_watch.as_deref(),
                     )?;
+                    poll_untracked_cancel(cancel_watch.as_ref())?;
                     let untracked = crate::untracked_cache::collect_untracked_from_cache(&uc);
                     index.untracked_cache = Some(uc);
                     return Ok((
@@ -571,6 +611,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
         effective_core_precomposeunicode_with_config(Some(repo.git_dir()), Some(rules.config()));
 
     if effective_pathspecs.is_empty() {
+        poll_untracked_cancel(cancel_watch.as_ref())?;
         let (mut par_untracked, mut par_ignored) = collect_untracked_parallel_top_level(
             repo,
             index,
@@ -582,6 +623,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
             &tracked_paths,
             &rules.ignore(),
             effective_pathspecs,
+            cancel_watch.clone(),
         )?;
         if sort_paths {
             par_untracked.sort_unstable();
@@ -590,6 +632,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
         return Ok((par_untracked, par_ignored, UntrackedCollectMeta::default()));
     }
 
+    poll_untracked_cancel(cancel_watch.as_ref())?;
     visit_untracked_node(
         repo,
         index,
@@ -608,6 +651,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
         Some(rules),
         &mut untracked,
         &mut ignored,
+        cancel_watch,
     )?;
 
     if sort_paths {
@@ -749,7 +793,9 @@ fn collect_untracked_parallel_top_level(
     tracked_paths: &crate::path_icase::Stage0TrackedPaths,
     matcher_template: &IgnoreMatcher,
     pathspecs: &[String],
+    cancel_watch: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(Vec<String>, Vec<String>)> {
+    poll_untracked_cancel(cancel_watch.as_ref())?;
     let entries = named_entries_sorted(fs::read_dir(work_tree).map_err(crate::error::Error::Io)?);
 
     let mut root_files = Vec::new();
@@ -799,6 +845,7 @@ fn collect_untracked_parallel_top_level(
                 None,
                 local_untracked,
                 local_ignored,
+                cancel_watch.clone(),
             )?;
             Ok::<(), crate::error::Error>(())
         };
@@ -839,6 +886,7 @@ fn collect_untracked_parallel_top_level(
                     None,
                     &mut untracked,
                     &mut ignored,
+                    cancel_watch.clone(),
                 )?;
             }
         }
@@ -918,6 +966,7 @@ fn collect_untracked_parallel_top_level(
                 None,
                 &mut local_untracked,
                 &mut local_ignored,
+                cancel_watch.clone(),
             )?;
             Ok((local_untracked, local_ignored))
         },
@@ -1070,6 +1119,7 @@ fn visit_untracked_dir_entry(
     rules: Option<&crate::worktree_rules::WorktreeRules>,
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
+    cancel_watch: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<UntrackedWalkStep> {
     if name == b".git" {
         return Ok(UntrackedWalkStep::Continue);
@@ -1120,6 +1170,7 @@ fn visit_untracked_dir_entry(
             rules,
             untracked_out,
             ignored_out,
+            cancel_watch,
         )?;
         if check_only && visible_out.is_some_and(|out| out.get()) {
             return Ok(UntrackedWalkStep::Stop);
@@ -1167,8 +1218,10 @@ fn visit_untracked_read_dir_lazy(
     rules: Option<&crate::worktree_rules::WorktreeRules>,
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
+    cancel_watch: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<()> {
     for entry in entries {
+        poll_untracked_cancel(cancel_watch.as_ref())?;
         if visible_out.is_some_and(|out| out.get()) {
             return Ok(());
         }
@@ -1199,6 +1252,7 @@ fn visit_untracked_read_dir_lazy(
                 rules,
                 untracked_out,
                 ignored_out,
+                cancel_watch.clone(),
             )?,
             UntrackedWalkStep::Stop
         ) {
@@ -1227,6 +1281,7 @@ fn visit_untracked_node(
     rules: Option<&crate::worktree_rules::WorktreeRules>,
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
+    cancel_watch: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<()> {
     if check_only && visible_out.is_some_and(|out| out.get()) {
         return Ok(());
@@ -1256,6 +1311,7 @@ fn visit_untracked_node(
             rules,
             untracked_out,
             ignored_out,
+            cancel_watch,
         );
     }
 
@@ -1288,10 +1344,12 @@ fn visit_untracked_node(
             rules,
             untracked_out,
             ignored_out,
+            cancel_watch,
         );
     }
 
     for (name, entry) in &named {
+        poll_untracked_cancel(cancel_watch.as_ref())?;
         if matches!(
             visit_untracked_dir_entry(
                 repo,
@@ -1312,6 +1370,7 @@ fn visit_untracked_node(
                 rules,
                 untracked_out,
                 ignored_out,
+                cancel_watch.clone(),
             )?,
             UntrackedWalkStep::Stop
         ) {
@@ -1341,6 +1400,7 @@ fn visit_untracked_directory(
     rules: Option<&crate::worktree_rules::WorktreeRules>,
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
+    cancel_watch: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<()> {
     let _ = matcher.note_directory_entered(repo, Some(index), rel);
 
@@ -1363,6 +1423,7 @@ fn visit_untracked_directory(
             rules,
             untracked_out,
             ignored_out,
+            cancel_watch.clone(),
         )?;
         return Ok(());
     }
@@ -1428,6 +1489,7 @@ fn visit_untracked_directory(
             rules,
             untracked_out,
             ignored_out,
+            cancel_watch.clone(),
         )?;
         return Ok(());
     }
@@ -1457,6 +1519,7 @@ fn visit_untracked_directory(
             rules,
             untracked_out,
             ignored_out,
+            cancel_watch.clone(),
         )?;
         if found.get() {
             if !rel.is_empty() {
@@ -1490,6 +1553,7 @@ fn visit_untracked_directory(
         rules,
         &mut sub_untracked,
         &mut sub_ignored,
+        cancel_watch.clone(),
     )?;
 
     if show_all {
@@ -1915,9 +1979,13 @@ use crate::progress::ProgressSink;
 pub fn status(
     repo: &Repository,
     opts: &StatusOptions,
-    _progress: &mut dyn ProgressSink,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn crate::progress::Cancel,
 ) -> Result<StatusModel> {
     crate::trace::trace_span!("grit.status.scan");
+    let watch = crate::progress::cancel_watch_arc(cancel);
+    let mut progress = crate::progress::WatchProgress::new(progress, std::sync::Arc::clone(&watch));
+    crate::progress::poll_cancel_watch(&mut progress, cancel, &watch)?;
     let work_tree = repo
         .work_tree()
         .ok_or(crate::error::Error::RequiresWorkTree)?;
@@ -1988,6 +2056,7 @@ pub fn status(
             && crate::diff::entry_is_racy_with_policy(e, diff_index_mtime, stat_policy)
             && i64::from(e.mtime_sec) < now_unix_seconds
     });
+    crate::progress::poll_cancel_watch(&mut progress, cancel, &watch)?;
     let (unstaged_raw, index_stat_refresh_changed) =
         crate::diff::diff_index_to_worktree_with_options(
             repo.odb(),
@@ -2005,6 +2074,7 @@ pub fn status(
                 for_status: true,
                 command_runner: Some(repo.command_runner()),
                 fsmonitor_query_boundary: opts.fsmonitor_query_boundary,
+                cancel_watch: Some(std::sync::Arc::clone(&watch)),
                 ..Default::default()
             },
         )?;
@@ -2027,7 +2097,9 @@ pub fn status(
             head_tree.as_ref(),
             &rename_config,
             &thread_policy,
+            Some(&watch),
         )?;
+        crate::progress::poll_cancel_watch(&mut progress, cancel, &watch)?;
         unstaged = apply_status_renames(
             repo.odb(),
             unstaged,
@@ -2035,6 +2107,7 @@ pub fn status(
             head_tree.as_ref(),
             &rename_config,
             &thread_policy,
+            Some(&watch),
         )?;
     }
 
@@ -2045,6 +2118,7 @@ pub fn status(
     let conflicts: Vec<String> = conflict_details.iter().map(|c| c.path.clone()).collect();
     normalize_status_conflicts(&mut staged, &mut unstaged, &conflicts);
 
+    crate::progress::poll_cancel_watch(&mut progress, cancel, &watch)?;
     let (untracked, ignored) =
         if opts.untracked == UntrackedMode::No && opts.ignored == IgnoredMode::No {
             (Vec::new(), Vec::new())
@@ -2052,15 +2126,17 @@ pub fn status(
             let rules_guard = worktree_rules.lock().map_err(|e| {
                 crate::error::Error::Message(format!("worktree rules lock poisoned: {e}"))
             })?;
-            let (mut untracked, ignored, collect_meta) = collect_untracked_and_ignored_with_rules(
-                repo,
-                &mut index,
-                work_tree,
-                opts.ignored,
-                opts.untracked == UntrackedMode::All,
-                &opts.pathspecs,
-                &rules_guard,
-            )?;
+            let (mut untracked, ignored, collect_meta) =
+                collect_untracked_and_ignored_with_rules_and_cancel(
+                    repo,
+                    &mut index,
+                    work_tree,
+                    opts.ignored,
+                    opts.untracked == UntrackedMode::All,
+                    &opts.pathspecs,
+                    &rules_guard,
+                    Some(std::sync::Arc::clone(&watch)),
+                )?;
             persist_index |= collect_meta.untracked_cache_refreshed;
             if opts.untracked == UntrackedMode::No {
                 untracked.clear();
@@ -2117,11 +2193,15 @@ fn apply_status_renames(
     head_tree: Option<&ObjectId>,
     config: &crate::config::ConfigSet,
     thread_policy: &crate::parallel::ThreadPolicy,
+    cancel_watch: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<Vec<DiffEntry>> {
     use crate::diff::DiffStatus;
     const MATRIX_BUDGET: usize = 50_000;
     const CANDIDATE_LIMIT: usize = 2_000;
 
+    if let Some(watch) = cancel_watch {
+        crate::progress::poll_watch(watch)?;
+    }
     let mut deleted = 0usize;
     let mut added = 0usize;
     for entry in &entries {
@@ -2148,16 +2228,18 @@ fn apply_status_renames(
             head_tree,
             config,
             thread_policy,
+            cancel_watch,
         );
     }
-    Ok(crate::diff::detect_renames_with_policy(
+    crate::diff::detect_renames_with_policy(
         odb,
         None,
         entries,
         rd.threshold,
         config,
         thread_policy,
-    ))
+        cancel_watch,
+    )
 }
 
 /// Render [`StatusModel`] as `git status --porcelain=v2` lines (no `#` headers).
@@ -2572,7 +2654,7 @@ fn porcelain_v2_worktree_mode(
 mod status_op_tests {
     use super::*;
     use crate::environment::RepositoryOptions;
-    use crate::progress::NullProgress;
+    use crate::progress::{NeverCancel, NullProgress};
     use std::fs;
     use tempfile::TempDir;
 
@@ -2709,7 +2791,13 @@ mod status_op_tests {
             &RepositoryOptions::empty().with_work_tree(root),
         )
         .unwrap();
-        let model = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+        let model = status(
+            &repo,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
 
         assert!(model.head_tree.is_none(), "unborn HEAD has no tree");
         assert!(
@@ -2746,7 +2834,13 @@ mod status_op_tests {
         )
         .unwrap();
         untracked_walk_probe::reset();
-        let model = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+        let model = status(
+            &repo,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
 
         assert_eq!(
             model.untracked,
@@ -2800,7 +2894,13 @@ mod status_op_tests {
             &RepositoryOptions::empty().with_work_tree(root),
         )
         .unwrap();
-        let model = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+        let model = status(
+            &repo,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
         let modified = model
             .unstaged
             .iter()
@@ -2839,7 +2939,13 @@ mod status_op_tests {
         )
         .unwrap();
         let _probe = reset_worktree_metadata_probe(root);
-        let _ = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+        let _ = status(
+            &repo,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
         let tracked = repo.load_index().unwrap().entries.len();
         let dir_count = (FILE_COUNT + 99) / 100;
         let calls = worktree_metadata_probe_count();
@@ -2866,7 +2972,13 @@ mod status_op_tests {
             &RepositoryOptions::empty().with_work_tree(root),
         )
         .unwrap();
-        let model = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+        let model = status(
+            &repo,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
         assert!(
             model.untracked.iter().any(|p| p == "a/b/untracked.txt"),
             "interior untracked sibling must be visible, got {:?}",
@@ -2892,7 +3004,7 @@ mod status_op_tests {
             ignored: IgnoredMode::Traditional,
             ..StatusOptions::default()
         };
-        let model = status(&repo, &opts, &mut NullProgress).unwrap();
+        let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).unwrap();
         assert!(
             model.untracked.is_empty(),
             "untracked=No must omit untracked, got {:?}",
@@ -2921,7 +3033,7 @@ mod status_op_tests {
             untracked: UntrackedMode::No,
             ..StatusOptions::default()
         };
-        let model = status(&repo, &opts, &mut NullProgress).unwrap();
+        let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).unwrap();
         assert!(
             model.untracked.is_empty(),
             "untracked=No must report nothing, got {:?}",
@@ -2959,11 +3071,29 @@ mod status_op_tests {
             &RepositoryOptions::empty().with_work_tree(root),
         )
         .unwrap();
-        status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
-        status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+        status(
+            &repo,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
+        status(
+            &repo,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
 
         untracked_walk_probe::reset();
-        let _ = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+        let _ = status(
+            &repo,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
         let entries_read = untracked_walk_probe::count();
         assert!(
             entries_read <= 32,
@@ -3035,7 +3165,13 @@ mod status_op_tests {
         let tmp = merge_conflict_repo_for_tests();
         let root = tmp.path();
         let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).unwrap();
-        let model = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+        let model = status(
+            &repo,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
         let op = model.operation.expect("merge operation");
         assert_eq!(op.kind, InProgressOperation::Merge);
         assert_eq!(
@@ -3064,7 +3200,13 @@ mod status_op_tests {
         std::fs::write(root.join("f"), "resolved\n").unwrap();
         grit_test_support::git(root, &["add", "f"]);
         let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).unwrap();
-        let model = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+        let model = status(
+            &repo,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
         let op = model.operation.expect("merge operation");
         assert!(model.conflicts.is_empty());
         assert_eq!(
@@ -3112,7 +3254,13 @@ mod status_op_tests {
         assert_ne!(pick.status.code(), Some(0), "expected cherry-pick conflict");
 
         let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).unwrap();
-        let model = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+        let model = status(
+            &repo,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
         assert!(model.state.cherry_pick_in_progress);
         assert!(!model.conflict_details.is_empty());
         let op = model.operation.expect("cherry-pick operation");
@@ -3251,7 +3399,7 @@ mod status_op_tests {
             }),
             ..StatusOptions::default()
         };
-        let model = status(&repo, &opts, &mut NullProgress).unwrap();
+        let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).unwrap();
 
         assert!(
             model.staged.iter().all(|e| e.path().starts_with("scoped/")),
@@ -3304,7 +3452,7 @@ mod status_op_tests {
             }),
             ..StatusOptions::default()
         };
-        let model = status(&repo, &opts, &mut NullProgress).unwrap();
+        let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).unwrap();
         let rename_line = short_status_lines(&model)
             .into_iter()
             .find_map(|line| match line {
@@ -3345,7 +3493,7 @@ mod status_op_tests {
             }),
             ..StatusOptions::default()
         };
-        let model = status(&repo, &opts, &mut NullProgress).unwrap();
+        let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).unwrap();
         let renamed: Vec<_> = model
             .staged
             .iter()
@@ -3423,7 +3571,7 @@ mod status_op_tests {
                 renames,
                 ..StatusOptions::default()
             };
-            let model = status(&repo, &opts, &mut NullProgress).unwrap();
+            let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).unwrap();
             let grit_rows = staged_letters(&model);
             let git_rows = git_staged_porcelain_v2(root, spec);
             assert_eq!(
@@ -3437,7 +3585,7 @@ mod status_op_tests {
             renames,
             ..StatusOptions::default()
         };
-        let model_both = status(&repo, &opts_both, &mut NullProgress).unwrap();
+        let model_both = status(&repo, &opts_both, &mut NullProgress, &NeverCancel).unwrap();
         assert!(
             model_both
                 .staged
@@ -3477,7 +3625,7 @@ mod status_op_tests {
             renames: status_renames_from_config(config.as_ref()),
             ..StatusOptions::default()
         };
-        let model = status(&repo, &opts, &mut NullProgress).unwrap();
+        let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).unwrap();
         let grit_letters: Vec<_> = staged_letters(&model).into_iter().map(|(c, _)| c).collect();
         let git_out = std::process::Command::new("git")
             .args(["status", "--porcelain=v2"])
@@ -3526,7 +3674,7 @@ mod status_op_tests {
             }),
             ..StatusOptions::default()
         };
-        let model = status(&repo, &opts, &mut NullProgress).unwrap();
+        let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).unwrap();
         assert!(
             model
                 .unstaged
@@ -3578,13 +3726,31 @@ mod status_op_tests {
             &RepositoryOptions::empty().with_work_tree(root),
         )
         .unwrap();
-        status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
-        status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+        status(
+            &repo,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
+        status(
+            &repo,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
 
         grit_test_support::git(root, &["status"]);
 
         untracked_walk_probe::reset();
-        let _ = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+        let _ = status(
+            &repo,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
         let entries_read = untracked_walk_probe::count();
         assert!(
             entries_read <= 32,
@@ -3624,7 +3790,7 @@ mod status_op_tests {
             ignored: IgnoredMode::Traditional,
             ..StatusOptions::default()
         };
-        let model = status(&repo, &opts, &mut NullProgress).unwrap();
+        let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).unwrap();
         let grit_ignored: std::collections::BTreeSet<String> = model.ignored.into_iter().collect();
 
         let git_out = std::process::Command::new("git")

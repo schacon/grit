@@ -16,7 +16,9 @@ use crate::hash::{hash_object, Parallelism};
 use crate::objects::{HashAlgo, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::pack_zlib::skip_zlib_at_with_scratch;
-use crate::progress::{ProgressPhase, ProgressSink};
+use crate::progress::{
+    cancel_watch_arc, poll_cancel, poll_watch, Cancel, ProgressPhase, ProgressSink,
+};
 use crate::unpack_objects::{apply_delta_into, type_code_to_kind, PackIndexRecord, PackReader};
 use crate::zlib_inflate::ZlibInflateScratch;
 use std::borrow::Cow;
@@ -27,6 +29,27 @@ use std::thread;
 
 /// Poll the coordinating thread every N object slots / resolved deltas.
 const PROGRESS_POLL_EVERY: u64 = 32;
+
+/// Poll cancel handles during index-pack (main thread and worker loops).
+fn poll_index_build_cancel(
+    cancel: Option<&dyn Cancel>,
+    progress: Option<&mut dyn ProgressSink>,
+    watch: Option<&Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<()> {
+    if let Some(p) = progress {
+        if let Some(c) = cancel {
+            poll_cancel(p, c)?;
+        }
+    } else if let Some(c) = cancel {
+        if c.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+    }
+    if let Some(w) = watch {
+        poll_watch(w)?;
+    }
+    Ok(())
+}
 
 /// Coordinates pack-index progress on the caller thread (workers bump atomics only).
 struct PackIndexReporter<'a> {
@@ -152,7 +175,7 @@ pub fn build_pack_index_records(
     parallelism: Parallelism,
     verify_trailer: bool,
 ) -> Result<Vec<PackIndexRecord>> {
-    build_pack_index_records_with_progress(pack, odb, parallelism, verify_trailer, None)
+    build_pack_index_records_with_progress(pack, odb, parallelism, verify_trailer, None, None)
 }
 
 /// Like [`build_pack_index_records`], emitting [`ProgressPhase::IndexingObjects`] then
@@ -163,6 +186,7 @@ pub fn build_pack_index_records_with_progress(
     parallelism: Parallelism,
     verify_trailer: bool,
     progress: Option<&mut dyn ProgressSink>,
+    cancel: Option<&dyn Cancel>,
 ) -> Result<Vec<PackIndexRecord>> {
     build_records(
         pack,
@@ -170,6 +194,7 @@ pub fn build_pack_index_records_with_progress(
         parallelism,
         verify_trailer,
         progress,
+        cancel,
         DELTA_CHAIN_BYTES_PER_WORKER,
     )
 }
@@ -181,9 +206,12 @@ fn build_records(
     parallelism: Parallelism,
     verify_trailer: bool,
     progress: Option<&mut dyn ProgressSink>,
+    cancel: Option<&dyn Cancel>,
     chain_limit: usize,
 ) -> Result<Vec<PackIndexRecord>> {
     crate::trace::trace_span!("grit.pack.delta.resolve");
+    let cancel_watch = cancel.map(cancel_watch_arc);
+    poll_index_build_cancel(cancel, None, cancel_watch.as_ref())?;
     let algo = odb.hash_algo();
     let threads = parallelism.threads();
     let header = read_pack_header(pack)?;
@@ -201,6 +229,8 @@ fn build_records(
             algo,
             verify_trailer,
             reporter.as_mut(),
+            cancel,
+            cancel_watch.as_ref(),
         )?;
     } else {
         scan_and_hash_whole_slots_overlapped(
@@ -212,8 +242,10 @@ fn build_records(
             verify_trailer,
             threads,
             reporter.as_mut(),
+            cancel_watch.clone(),
         )?;
     }
+    poll_index_build_cancel(cancel, None, cancel_watch.as_ref())?;
 
     let delta_total = u64::try_from(pending.len()).unwrap_or(u64::MAX);
     if let Some(r) = reporter.as_mut() {
@@ -232,6 +264,8 @@ fn build_records(
         &mut records,
         reporter.as_mut(),
         chain_limit,
+        cancel,
+        cancel_watch.as_ref(),
     )?;
 
     if let Some(r) = reporter.as_mut() {
@@ -262,6 +296,7 @@ fn read_pack_header(pack: &[u8]) -> Result<PackHeader> {
 }
 
 /// Single-threaded pack walk: one inflate+hash per whole object; zlib-skip deltas only.
+#[allow(clippy::too_many_arguments)]
 fn scan_and_hash_wholes_serial(
     pack: &[u8],
     header: &PackHeader,
@@ -270,6 +305,8 @@ fn scan_and_hash_wholes_serial(
     algo: HashAlgo,
     verify_trailer: bool,
     mut progress: Option<&mut PackIndexReporter<'_>>,
+    cancel: Option<&dyn Cancel>,
+    cancel_watch: Option<&Arc<AtomicBool>>,
 ) -> Result<()> {
     let hb = algo.len();
     let mut skip_scratch = ZlibInflateScratch::default();
@@ -279,7 +316,10 @@ fn scan_and_hash_wholes_serial(
     rd.read_u32_be()?;
     rd.read_u32_be()?;
 
-    for _ in 0..header.nr_objects {
+    for slot in 0..header.nr_objects {
+        if slot % 64 == 0 {
+            poll_index_build_cancel(cancel, None, cancel_watch)?;
+        }
         let obj_offset = rd.pos;
         let (type_code, size) = rd.read_type_size()?;
         match type_code {
@@ -411,6 +451,7 @@ fn scan_and_hash_whole_slots_overlapped(
     verify_trailer: bool,
     threads: std::num::NonZeroUsize,
     mut progress: Option<&mut PackIndexReporter<'_>>,
+    cancel_watch: Option<Arc<AtomicBool>>,
 ) -> Result<()> {
     let n_workers = threads.get();
     let inflight_limit = n_workers.saturating_mul(WHOLE_INFLIGHT_BYTES_PER_THREAD);
@@ -423,9 +464,16 @@ fn scan_and_hash_whole_slots_overlapped(
             let queue = Arc::clone(&queue);
             let first_error = Arc::clone(&first_error);
             let hashed = Arc::clone(&hashed);
+            let worker_watch = cancel_watch.clone();
             scope.spawn(move || {
                 let mut zlib = ZlibInflateScratch::default();
                 loop {
+                    if let Some(w) = worker_watch.as_ref() {
+                        if poll_watch(w).is_err() {
+                            record_first_error(&first_error, Error::Cancelled);
+                            return;
+                        }
+                    }
                     if first_error
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
@@ -477,7 +525,12 @@ fn scan_and_hash_whole_slots_overlapped(
             rd.read_u32_be()?;
             let mut whole_index = 0usize;
 
-            for _ in 0..header.nr_objects {
+            for slot in 0..header.nr_objects {
+                if slot % 64 == 0 {
+                    if let Some(w) = cancel_watch.as_ref() {
+                        poll_watch(w)?;
+                    }
+                }
                 if first_error
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
@@ -790,10 +843,13 @@ fn resolve_deltas(
     records: &mut Vec<PackIndexRecord>,
     mut progress: Option<&mut PackIndexReporter<'_>>,
     chain_limit: usize,
+    cancel: Option<&dyn Cancel>,
+    cancel_watch: Option<&Arc<AtomicBool>>,
 ) -> Result<()> {
     if pending.is_empty() {
         return Ok(());
     }
+    poll_index_build_cancel(cancel, None, cancel_watch)?;
     let children = DeltaChildren::new(pending)?;
     let claimed: Vec<AtomicBool> = pending.iter().map(|_| AtomicBool::new(false)).collect();
     let resolved = AtomicU64::new(0);
@@ -1163,6 +1219,7 @@ mod line_coverage_tests {
             Parallelism::resolve(Some(2)),
             true,
             Some(&mut cap),
+            None,
         )
         .expect("with progress");
         assert!(!records.is_empty());
@@ -1326,6 +1383,7 @@ mod line_coverage_tests {
             Parallelism::resolve(Some(threads)),
             true,
             None,
+            None,
             chain_limit,
         )?
         .into_iter()
@@ -1417,6 +1475,7 @@ mod line_coverage_tests {
             Parallelism::resolve(Some(2)),
             true,
             Some(&mut cap),
+            None,
         )
         .expect("with progress");
         let deltas = u64::try_from(contents.len() - 1).expect("count");

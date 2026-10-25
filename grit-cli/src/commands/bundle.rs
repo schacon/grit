@@ -370,7 +370,11 @@ pub fn run_unbundle(path: PathBuf, dry_run: bool) -> Result<BundleUnbundleOutcom
     }
     let outcome = repo
         .bundles()
-        .unbundle_with_progress(&path, &mut grit_lib::progress::NullProgress)
+        .unbundle_with_progress(
+            &path,
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .map_err(map_bundle_error)?;
     Ok(BundleUnbundleOutcome {
         path: path.display().to_string(),

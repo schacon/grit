@@ -15,7 +15,7 @@ use crate::objects::{ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::pack::{verify_pack_and_collect, write_v2_pack_index_with_trailer};
 use crate::pack_map::PackData;
-use crate::progress::ProgressSink;
+use crate::progress::{poll_cancel, Cancel, ProgressSink};
 use crate::transfer::{fix_thin_pack, ref_delta_bases_in_pack};
 use crate::unpack_objects::PackIndexRecord;
 
@@ -176,7 +176,7 @@ pub fn ingest_received_pack(
     odb: &Odb,
     opts: &IngestPackOptions,
 ) -> Result<IngestedPack> {
-    ingest_received_pack_with_progress(pack, odb, opts, None)
+    ingest_received_pack_with_progress(pack, odb, opts, None, None)
 }
 
 /// Like [`ingest_received_pack`], reporting pack indexing progress on `progress` when set.
@@ -185,6 +185,7 @@ pub fn ingest_received_pack_with_progress(
     odb: &Odb,
     opts: &IngestPackOptions,
     progress: Option<&mut dyn ProgressSink>,
+    cancel: Option<&dyn Cancel>,
 ) -> Result<IngestedPack> {
     if pack.is_empty() {
         return Ok(IngestedPack {
@@ -203,7 +204,7 @@ pub fn ingest_received_pack_with_progress(
             "received pack checksum mismatch (download may be incomplete): {e}"
         ))
     })?;
-    install_pack_bytes_with_progress(pack, odb, opts, progress)
+    install_pack_bytes_with_progress(pack, odb, opts, progress, cancel)
 }
 
 /// Ingest a pack already written to disk (streaming fetch/clone receive path).
@@ -216,7 +217,7 @@ pub fn ingest_received_pack_path(
     odb: &Odb,
     opts: &IngestPackOptions,
 ) -> Result<IngestedPack> {
-    ingest_received_pack_path_with_progress(pack_path, odb, opts, None)
+    ingest_received_pack_path_with_progress(pack_path, odb, opts, None, None)
 }
 
 fn wait_for_received_pack_path(path: PathBuf) -> Result<PathBuf> {
@@ -245,10 +246,11 @@ pub fn ingest_received_pack_path_with_progress(
     odb: &Odb,
     opts: &IngestPackOptions,
     progress: Option<&mut dyn ProgressSink>,
+    cancel: Option<&dyn Cancel>,
 ) -> Result<IngestedPack> {
     crate::trace::trace_span!("grit.pack.index");
     let pack_path = wait_for_received_pack_path(pack_path)?;
-    install_pack_path_with_progress(&pack_path, odb, opts, progress)
+    install_pack_path_with_progress(&pack_path, odb, opts, progress, cancel)
 }
 
 /// Write `pack` into `odb`'s `objects/pack/` directory with a v2 index.
@@ -259,7 +261,7 @@ pub fn install_pack_bytes(
     odb: &Odb,
     opts: &IngestPackOptions,
 ) -> Result<IngestedPack> {
-    install_pack_bytes_with_progress(pack, odb, opts, None)
+    install_pack_bytes_with_progress(pack, odb, opts, None, None)
 }
 
 /// Like [`install_pack_bytes`], reporting pack indexing progress on `progress` when set.
@@ -268,6 +270,7 @@ pub fn install_pack_bytes_with_progress(
     odb: &Odb,
     opts: &IngestPackOptions,
     progress: Option<&mut dyn ProgressSink>,
+    cancel: Option<&dyn Cancel>,
 ) -> Result<IngestedPack> {
     odb.require_files_primary("index_pack")?;
     let pack_dir = odb.objects_dir().join("pack");
@@ -276,7 +279,7 @@ pub fn install_pack_bytes_with_progress(
     let seq = INSTALL_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = pack_dir.join(format!("tmp_install_{}_{seq}", std::process::id()));
     std::fs::write(&tmp, &pack).map_err(Error::Io)?;
-    match install_pack_path_with_progress(&tmp, odb, opts, progress) {
+    match install_pack_path_with_progress(&tmp, odb, opts, progress, cancel) {
         Ok(ingested) => Ok(ingested),
         Err(e) => {
             let _ = std::fs::remove_file(&tmp);
@@ -294,15 +297,20 @@ pub fn install_pack_path(
     odb: &Odb,
     opts: &IngestPackOptions,
 ) -> Result<IngestedPack> {
-    install_pack_path_with_progress(pack_path, odb, opts, None)
+    install_pack_path_with_progress(pack_path, odb, opts, None, None)
 }
 
 /// Like [`install_pack_path`], reporting pack indexing progress on `progress` when set.
+///
+/// When `cancel` is set, the coordinator polls it at phase boundaries; worker threads
+/// during parallel hashing only observe a shared atomic snapshot (see library guide
+/// [Parallelism](https://grit-scm.com/docs/library/parallelism)).
 pub fn install_pack_path_with_progress(
     pack_path: &Path,
     odb: &Odb,
     opts: &IngestPackOptions,
-    progress: Option<&mut dyn ProgressSink>,
+    mut progress: Option<&mut dyn ProgressSink>,
+    cancel: Option<&dyn Cancel>,
 ) -> Result<IngestedPack> {
     odb.require_files_primary("index_pack")?;
     let owned = pack_path.to_path_buf();
@@ -344,11 +352,13 @@ pub fn install_pack_path_with_progress(
     cleanup_stale_install_stage(&stage);
 
     let install_result = (|| -> Result<IngestedPack> {
+        poll_ingest_cancel(&mut progress, cancel)?;
         std::fs::create_dir_all(&stage).map_err(Error::Io)?;
         if std::fs::rename(&owned, &stage_pack).is_err() {
             std::fs::copy(&owned, &stage_pack).map_err(Error::Io)?;
             let _ = std::fs::remove_file(&owned);
         }
+        poll_ingest_cancel(&mut progress, cancel)?;
         let mut indexed = PackData::open(&stage_pack)?;
         let parallelism = opts.index_parallelism(odb)?;
         record_resolved_ingest_threads(parallelism.threads().get());
@@ -360,6 +370,7 @@ pub fn install_pack_path_with_progress(
                     "received pack checksum mismatch (download may be incomplete): {e}"
                 ))
             })?;
+            poll_ingest_cancel(&mut progress, cancel)?;
             let trailer = pack_bytes[pack_bytes.len() - hb..].to_vec();
             if let Some(rows) = &opts.trusted_index_rows {
                 if rows.len()
@@ -383,7 +394,8 @@ pub fn install_pack_path_with_progress(
                     odb,
                     parallelism,
                     !opts.skip_post_index_verify,
-                    progress,
+                    progress.as_mut().map(|p| p as &mut dyn ProgressSink),
+                    cancel,
                 )?;
                 if opts.fix_thin {
                     let ref_bases = ref_delta_bases_in_pack(pack_bytes, odb.hash_algo())?;
@@ -400,6 +412,7 @@ pub fn install_pack_path_with_progress(
                             parallelism,
                             !opts.skip_post_index_verify,
                             None,
+                            cancel,
                         )?;
                     }
                 }
@@ -417,11 +430,15 @@ pub fn install_pack_path_with_progress(
             }
         };
         drop(indexed);
+        poll_ingest_cancel(&mut progress, cancel)?;
         write_v2_pack_index_with_trailer(&stage_idx, &entries, &trailer, hb, Some(sort_threads))?;
+        poll_ingest_cancel(&mut progress, cancel)?;
         if !opts.skip_post_index_verify {
             verify_pack_and_collect(&stage_idx)?;
         }
+        poll_ingest_cancel(&mut progress, cancel)?;
         std::fs::rename(&stage_pack, &final_pack).map_err(Error::Io)?;
+        poll_ingest_cancel(&mut progress, cancel)?;
         std::fs::rename(&stage_idx, &idx_path).map_err(|e| {
             let _ = std::fs::remove_file(&final_pack);
             Error::Io(e)
@@ -454,6 +471,22 @@ fn pack_needs_thin_fix(records: &[PackIndexRecord], ref_bases: &[ObjectId]) -> b
     }
     let in_pack: HashSet<ObjectId> = records.iter().map(|r| r.oid).collect();
     ref_bases.iter().any(|base| !in_pack.contains(base))
+}
+
+fn poll_ingest_cancel(
+    progress: &mut Option<&mut dyn ProgressSink>,
+    cancel: Option<&dyn Cancel>,
+) -> Result<()> {
+    let Some(c) = cancel else {
+        return Ok(());
+    };
+    if let Some(p) = progress.as_mut() {
+        poll_cancel(p, c)
+    } else if c.is_cancelled() {
+        Err(Error::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 fn cleanup_stale_install_stage(stage: &Path) {
@@ -607,6 +640,87 @@ mod tests {
                 pack_index_records_with_threads(&pack, &odb, Parallelism::resolve(Some(threads)))
                     .unwrap_or_else(|e| panic!("threads={threads}: {e}"));
             assert_eq!(records.len(), 401, "threads={threads}");
+        }
+    }
+
+    #[test]
+    fn install_pack_cancelled_during_indexing_cleans_stage() {
+        use crate::progress::{FlagCancel, ProgressPhase, ProgressSink, ProgressUnit};
+        use grit_test_support::objects::{HashAlgo, ObjectKind as PK, PackBuilder};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        struct CancelAtIndexing {
+            flag: FlagCancel,
+            saw_indexing: Arc<AtomicBool>,
+        }
+
+        impl ProgressSink for CancelAtIndexing {
+            fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
+                if phase == ProgressPhase::IndexingObjects {
+                    self.saw_indexing.store(true, Ordering::Relaxed);
+                    self.flag.cancel();
+                }
+                let _ = total;
+            }
+            fn start_with_unit(
+                &mut self,
+                phase: ProgressPhase,
+                unit: ProgressUnit,
+                total: Option<u64>,
+            ) {
+                self.start(phase, total);
+                let _ = unit;
+            }
+        }
+
+        let mut pb = PackBuilder::new(HashAlgo::Sha1);
+        for i in 0..400 {
+            pb.add_full(PK::Blob, format!("blob-{i}\n").as_bytes());
+        }
+        let pack = pb.build().bytes;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pack_path = tmp.path().join("incoming.pack");
+        std::fs::write(&pack_path, &pack).expect("write pack");
+        let odb = Odb::new(tmp.path());
+        let flag = FlagCancel::new();
+        let saw = Arc::new(AtomicBool::new(false));
+        let mut progress = CancelAtIndexing {
+            flag: flag.clone(),
+            saw_indexing: Arc::clone(&saw),
+        };
+        let err = install_pack_path_with_progress(
+            &pack_path,
+            &odb,
+            &IngestPackOptions {
+                threads: Some(4),
+                ..Default::default()
+            },
+            Some(&mut progress),
+            Some(&flag),
+        )
+        .expect_err("cancel during index-pack");
+        assert!(matches!(err, Error::Cancelled), "got {err:?}");
+        assert!(saw.load(Ordering::Relaxed), "expected indexing phase");
+
+        let pack_dir = tmp.path().join("pack");
+        if pack_dir.exists() {
+            for entry in pack_dir_entries(&pack_dir) {
+                let name = entry
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default();
+                assert!(
+                    !name.ends_with(".pack") && !name.ends_with(".idx"),
+                    "leftover install artifact: {}",
+                    entry.display()
+                );
+                assert!(
+                    !entry.is_dir() || !name.contains("-install"),
+                    "leftover stage dir: {}",
+                    entry.display()
+                );
+            }
         }
     }
 

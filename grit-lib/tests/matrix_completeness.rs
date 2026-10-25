@@ -49,6 +49,7 @@ use std::time::{Duration, Instant};
 use grit_lib::error::{Error, Result as GritResult};
 use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectId;
+use grit_lib::progress::NeverCancel;
 use grit_lib::refs::resolve_ref;
 use grit_lib::remote::fetch::{fetch_remote, NoProgress};
 use grit_lib::remote::pkt_line;
@@ -272,8 +273,14 @@ fn fetch_v0_sideband_band3_fatal_is_typed_error_not_hang() {
     let local_git_for_thread = local_git.clone();
     let err = with_watchdog(10, "fetch band-3", move || {
         let mut conn = conn;
-        fetch_remote(&local_git_for_thread, &mut conn, &mut opts, &mut NoProgress)
-            .expect_err("a band-3 fatal must surface as an error")
+        fetch_remote(
+            &local_git_for_thread,
+            &mut conn,
+            &mut opts,
+            &mut NoProgress,
+            &NeverCancel,
+        )
+        .expect_err("a band-3 fatal must surface as an error")
     });
     let msg = format!("{err}");
     assert!(
@@ -314,8 +321,14 @@ fn fetch_v0_err_after_done_is_typed_remote_error() {
     let local_git_for_thread = local_git.clone();
     let err = with_watchdog(10, "fetch ERR-after-done", move || {
         let mut conn = conn;
-        fetch_remote(&local_git_for_thread, &mut conn, &mut opts, &mut NoProgress)
-            .expect_err("an ERR after done must surface as an error")
+        fetch_remote(
+            &local_git_for_thread,
+            &mut conn,
+            &mut opts,
+            &mut NoProgress,
+            &NeverCancel,
+        )
+        .expect_err("an ERR after done must surface as an error")
     });
     let msg = format!("{err}");
     assert!(
@@ -404,6 +417,7 @@ fn push_remote_rejects_protocol_v2_typed_before_touching_refs() {
         &[spec],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("a v2 push must be rejected in this phase");
     let msg = format!("{err}");
@@ -467,6 +481,7 @@ fn push_remote_unpack_failure_report_demotes_all_sent_refs() {
         &[spec],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push_remote completes and parses the report");
 
@@ -594,6 +609,7 @@ fn push_http_rejects_v2_receive_pack_advertisement_typed() {
         &[spec],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("a v2 receive-pack advertisement must be rejected");
     let msg = format!("{err}");
@@ -639,6 +655,7 @@ fn push_http_propagates_discovery_transport_error_typed() {
         &[spec],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("a discovery transport failure must surface as an error");
     let msg = format!("{err}");
@@ -858,8 +875,14 @@ fn shallow_depth1_with_all_tags_over_git_daemon() {
         fetch_depth: FetchDepth::depth(1),
         ..Default::default()
     };
-    let outcome = fetch_remote(&local_git, &mut *conn, &mut opts, &mut NoProgress)
-        .expect("shallow+tags fetch over git daemon");
+    let outcome = fetch_remote(
+        &local_git,
+        &mut *conn,
+        &mut opts,
+        &mut NoProgress,
+        &NeverCancel,
+    )
+    .expect("shallow+tags fetch over git daemon");
     drop(conn);
 
     // The shallow tip landed as origin/main, cross-checked vs system git.

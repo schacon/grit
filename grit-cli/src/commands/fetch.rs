@@ -6,6 +6,7 @@ use crate::progress::summary::{stdout_color, transfer_header, TransferSummary};
 use crate::progress::TerminalProgress;
 use anyhow::{Context, Result};
 use grit_lib::config::ConfigSet;
+use grit_lib::progress::NeverCancel;
 use grit_lib::remote::fetch_request::{resolve_fetch_invocation, resolve_remote_argument};
 use grit_lib::remote::transfer::{
     resolve_fetch_prune, resolve_fetch_tags, FetchDepth, FetchOptions,
@@ -393,6 +394,7 @@ fn run_all(args: &FetchArgs, mode: OutputMode) -> Result<FetchAllOutcome> {
             args.prune_override(),
             args.tag_mode_override(),
             &mut progress,
+            &NeverCancel,
             Some(&factory),
         )
         .context("could not fetch all remotes")?;
@@ -516,6 +518,7 @@ fn fetch_once(
                 ..Default::default()
             },
             progress,
+            &NeverCancel,
             Some(factory),
         )
         .map_err(map_remote_fetch_error)

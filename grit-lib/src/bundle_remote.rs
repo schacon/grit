@@ -237,7 +237,13 @@ pub fn fetch_from_bundle(
     bundle_path: &Path,
     opts: &FetchOptions,
 ) -> Result<FetchOutcome> {
-    fetch_from_bundle_with_progress(local_git_dir, bundle_path, opts, &mut NoProgress)
+    fetch_from_bundle_with_progress(
+        local_git_dir,
+        bundle_path,
+        opts,
+        &mut NoProgress,
+        &crate::progress::NeverCancel,
+    )
 }
 
 /// Like [`fetch_from_bundle`], reporting bundle receive and index-pack progress.
@@ -246,7 +252,9 @@ pub fn fetch_from_bundle_with_progress(
     bundle_path: &Path,
     opts: &FetchOptions,
     progress: &mut dyn Progress,
+    cancel: &dyn crate::progress::Cancel,
 ) -> Result<FetchOutcome> {
+    crate::progress::poll_cancel(progress, cancel)?;
     let bundle = Bundle::open(bundle_path).map_err(map_bundle_err)?;
     let repo = Repository::open(local_git_dir, &RepositoryOptions::empty())?;
     bundle
@@ -258,9 +266,11 @@ pub fn fetch_from_bundle_with_progress(
     let (transfer, pack_oids) = if opts.dry_run {
         (TransferStats::default(), HashSet::new())
     } else {
+        crate::progress::poll_cancel(progress, cancel)?;
         let unbundled = bundle
-            .unbundle_with_progress(&repo, progress)
+            .unbundle_with_progress(&repo, progress, cancel)
             .map_err(map_bundle_err)?;
+        crate::progress::poll_cancel(progress, cancel)?;
         (unbundled.transfer, unbundled.pack_object_ids)
     };
 
@@ -279,6 +289,7 @@ pub fn fetch_from_bundle_with_progress(
         effective.fetch_source = Some(bundle_path.to_string_lossy().into_owned());
     }
 
+    crate::progress::poll_cancel(progress, cancel)?;
     complete_bundle_fetch(
         local_git_dir,
         repo.odb(),
@@ -531,6 +542,7 @@ fn complete_bundle_fetch(
 
 fn map_bundle_err(e: BundleError) -> Error {
     match e {
+        BundleError::Cancelled => Error::Cancelled,
         BundleError::MissingPrerequisite { .. } | BundleError::PrerequisitesNotConnected => {
             Error::BundleMissingPrerequisites
         }

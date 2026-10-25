@@ -331,6 +331,7 @@ pub fn pull<P>(
     repo: &Repository,
     options: &PullOptions,
     progress: &mut P,
+    cancel: &dyn crate::progress::Cancel,
     http_factory: Option<&dyn HttpClientFactory>,
 ) -> std::result::Result<PullOutcome, PullError>
 where
@@ -387,7 +388,7 @@ where
             let remote = resolve_remote_argument(config.as_ref(), &remote_name)
                 .map_err(PullError::Remote)?;
             transfer = remote
-                .fetch(repo, fetch_opts, progress, http_factory)
+                .fetch(repo, fetch_opts, progress, cancel, http_factory)
                 .map_err(PullError::Remote)?
                 .transfer;
         }
@@ -856,6 +857,7 @@ mod tests {
     use crate::config::environment::RepositoryOptions;
     use crate::config::ConfigSet;
     use crate::environment::Environment;
+    use crate::progress::NeverCancel;
     use crate::remote::fetch::NoProgress;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
@@ -1013,8 +1015,14 @@ mod tests {
         );
 
         let repo = open(&clone);
-        let outcome =
-            pull(&repo, &pull_options(&repo), &mut NoProgress, None).expect("pull succeeds");
+        let outcome = pull(
+            &repo,
+            &pull_options(&repo),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
+        .expect("pull succeeds");
         assert_eq!(outcome.result, PullResult::FastForward);
         assert_eq!(outcome.oid, Some(tip));
         assert_eq!(git(&clone, &["rev-parse", "main"]), tip.to_hex());
@@ -1032,8 +1040,14 @@ mod tests {
         git(dir, &["branch", "--set-upstream-to", "dev", "main"]);
 
         let repo = open(dir);
-        let outcome =
-            pull(&repo, &pull_options(&repo), &mut NoProgress, None).expect("local pull succeeds");
+        let outcome = pull(
+            &repo,
+            &pull_options(&repo),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
+        .expect("local pull succeeds");
         assert_eq!(outcome.result, PullResult::FastForward);
         assert_eq!(outcome.oid, Some(tip));
         assert_eq!(git(dir, &["rev-parse", "main"]), tip.to_hex());
@@ -1047,14 +1061,27 @@ mod tests {
         commit(&origin, "b.txt", "two");
 
         let repo = open(&clone);
-        let outcome =
-            pull(&repo, &pull_options(&repo), &mut NoProgress, None).expect("pull succeeds");
+        let outcome = pull(
+            &repo,
+            &pull_options(&repo),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
+        .expect("pull succeeds");
         assert_eq!(outcome.result, PullResult::FastForward);
         // One new commit, its root tree and the added blob.
         assert_eq!(outcome.transfer.objects, 3, "{:?}", outcome.transfer);
         assert!(outcome.transfer.bytes > 0, "{:?}", outcome.transfer);
 
-        let again = pull(&repo, &pull_options(&repo), &mut NoProgress, None).expect("second pull");
+        let again = pull(
+            &repo,
+            &pull_options(&repo),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
+        .expect("second pull");
         assert_eq!(again.result, PullResult::UpToDate);
         assert_eq!(again.transfer.objects, 0, "{:?}", again.transfer);
     }
@@ -1072,8 +1099,14 @@ mod tests {
         git(&local, &["remote", "add", "origin", "../origin"]);
 
         let repo = open(&local);
-        let outcome =
-            pull(&repo, &pull_options(&repo), &mut NoProgress, None).expect("pull succeeds");
+        let outcome = pull(
+            &repo,
+            &pull_options(&repo),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
+        .expect("pull succeeds");
         assert_eq!(outcome.result, PullResult::SetUpstream);
         assert_eq!(outcome.oid, Some(tip));
         assert_eq!(
@@ -1094,8 +1127,14 @@ mod tests {
         let mut repo = open(&clone);
         let sink = std::sync::Arc::new(crate::diagnostics::CollectingDiagnostics::new());
         repo.set_diagnostics(sink.clone());
-        let outcome =
-            pull(&repo, &pull_options(&repo), &mut NoProgress, None).expect("pull completes");
+        let outcome = pull(
+            &repo,
+            &pull_options(&repo),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
+        .expect("pull completes");
         assert_eq!(outcome.result, PullResult::FastForward);
         assert_eq!(outcome.oid, Some(tip));
         assert_eq!(git(&clone, &["rev-parse", "main"]), tip.to_hex());

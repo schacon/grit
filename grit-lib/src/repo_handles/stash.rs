@@ -92,6 +92,7 @@ impl<'repo> RepositoryStash<'repo> {
     ///
     /// ```
     /// # use grit_lib::repo::Repository;
+    /// # use grit_lib::porcelain::stash::StashMode;
     /// # use grit_lib::repo_handles::StashPushOptions;
     /// # use std::path::Path;
     /// # fn demo() -> grit_lib::error::Result<()> {

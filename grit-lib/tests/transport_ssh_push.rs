@@ -192,6 +192,7 @@ fn push_over_ssh_lands_ref_and_objects_and_reports_nonff_rejection() {
         &[spec_update(main_oid, "refs/heads/main", false)],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push_remote over ssh");
     drop(conn);
@@ -267,6 +268,7 @@ fn push_over_ssh_lands_ref_and_objects_and_reports_nonff_rejection() {
         &[spec_update(diverged, "refs/heads/main", false)],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("non-ff push_remote over ssh completes");
     drop(conn2);
@@ -304,6 +306,7 @@ fn push_over_ssh_lands_ref_and_objects_and_reports_nonff_rejection() {
         &[spec_update(diverged, "refs/heads/main", true)],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("forced push_remote over ssh completes");
     drop(conn3);

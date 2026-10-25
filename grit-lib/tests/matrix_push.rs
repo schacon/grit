@@ -695,8 +695,15 @@ fn push_matrix_over_git_daemon() {
         let mut conn = transport
             .connect(&url, Service::ReceivePack, &ConnectOptions::default())
             .expect("connect git daemon receive-pack");
-        push_remote(&local_git, &mut *conn, specs, opts, &mut NoProgress)
-            .expect("push_remote over git daemon")
+        push_remote(
+            &local_git,
+            &mut *conn,
+            specs,
+            opts,
+            &mut NoProgress,
+            &grit_lib::progress::NeverCancel,
+        )
+        .expect("push_remote over git daemon")
     };
 
     run_push_matrix("git", &bare, &graph, &push);
@@ -751,8 +758,15 @@ fn push_matrix_over_ssh() {
         let mut conn = transport
             .connect(&url, Service::ReceivePack, &ConnectOptions::default())
             .expect("connect ssh receive-pack");
-        push_remote(&local_git, &mut *conn, specs, opts, &mut NoProgress)
-            .expect("push_remote over ssh")
+        push_remote(
+            &local_git,
+            &mut *conn,
+            specs,
+            opts,
+            &mut NoProgress,
+            &grit_lib::progress::NeverCancel,
+        )
+        .expect("push_remote over ssh")
     };
 
     run_push_matrix("ssh", &bare, &graph, &push);
@@ -824,6 +838,7 @@ fn push_matrix_over_smart_http() {
             specs,
             opts,
             &mut NoProgress,
+            &grit_lib::progress::NeverCancel,
         )
         .expect("push_http over grit-http-server")
     };
@@ -916,6 +931,7 @@ fn remote_rejection_surfaces_over_git_daemon() {
         &[spec(Some(graph.c2), "refs/heads/main")],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push against declining hook completes");
     drop(conn);
@@ -973,6 +989,7 @@ fn remote_rejection_surfaces_over_ssh() {
         &[spec(Some(graph.c2), "refs/heads/main")],
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("ssh push against declining hook completes");
     drop(conn);
@@ -1210,6 +1227,7 @@ fn report_status_v1_and_v2_both_parse_over_ssh() {
             &push_specs,
             &PushOptions::default(),
             &mut NoProgress,
+            &grit_lib::progress::NeverCancel,
         )
         .expect("push reading a v1 report");
         drop(conn);
@@ -1253,6 +1271,7 @@ fn report_status_v1_and_v2_both_parse_over_ssh() {
             &push_specs,
             &PushOptions::default(),
             &mut NoProgress,
+            &grit_lib::progress::NeverCancel,
         )
         .expect("push reading a v2 report");
         drop(conn);
@@ -1318,6 +1337,7 @@ fn push_succeeds_when_fake_receive_pack_exits_immediately_after_report() {
         &push_specs,
         &PushOptions::default(),
         &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push must succeed when report-status was complete before reset");
     drop(conn);

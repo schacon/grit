@@ -120,10 +120,12 @@ fn modify_delete_merge_does_not_mark_unrelated_files_modified() {
     integrate_branch(&repo, "refs/heads/main", main_oid, feat_oid, "feat").expect("merge");
 
     use grit_lib::porcelain::status::{status, StatusOptions};
+    use grit_lib::progress::NeverCancel;
     let model = status(
         &repo,
         &StatusOptions::default(),
         &mut grit_lib::progress::NullProgress,
+        &NeverCancel,
     )
     .expect("status");
     assert!(

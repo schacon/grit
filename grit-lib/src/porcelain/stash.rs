@@ -505,6 +505,7 @@ fn has_stashable_changes(
             cache_miss: UntrackedCacheMissAction::RefreshFull,
         },
         &worktree_rules,
+        None,
     )?;
     Ok(!untracked.is_empty())
 }
@@ -525,6 +526,7 @@ fn collect_untracked_paths(repo: &Repository, work_tree: &Path) -> Result<Vec<St
             cache_miss: UntrackedCacheMissAction::RefreshFull,
         },
         &worktree_rules,
+        None,
     )?;
     let expanded = expand_untracked_for_staging_with_rules(
         repo,
@@ -1893,6 +1895,7 @@ fn collect_worktree_paths_blocking_stash_untracked_restore(
             cache_miss: UntrackedCacheMissAction::RefreshFull,
         },
         &worktree_rules,
+        None,
     )?;
     paths.extend(untracked);
     paths.extend(ignored);
@@ -2758,7 +2761,7 @@ mod coverage_tests {
     #[test]
     fn push_stash_refreshes_index_stat_for_clean_status() {
         use crate::porcelain::status::{status, StatusOptions};
-        use crate::progress::NullProgress;
+        use crate::progress::{NeverCancel, NullProgress};
 
         let tmp = TempDir::new().unwrap();
         let repo = init_repo(tmp.path());
@@ -2806,7 +2809,13 @@ mod coverage_tests {
         let index = repo.load_index().unwrap();
         assert!(index.get(b"f", 0).expect("f").size > 0);
         assert!(index.get(b"g", 0).expect("g").size > 0);
-        let st = status(&repo, &StatusOptions::default(), &mut NullProgress).expect("status");
+        let st = status(
+            &repo,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .expect("status");
         assert!(
             st.unstaged.is_empty(),
             "worktree matches HEAD after stash push"

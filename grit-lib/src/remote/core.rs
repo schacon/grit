@@ -386,6 +386,7 @@ impl Remote {
         repo: &Repository,
         mut opts: FetchOptions,
         progress: &mut dyn Progress,
+        cancel: &dyn crate::progress::Cancel,
         http_factory: Option<&dyn HttpClientFactory>,
     ) -> RemoteResult<FetchOutcome> {
         repo.odb().require_files_primary("fetch")?;
@@ -416,6 +417,7 @@ impl Remote {
             &self.fetch_url,
             &mut opts,
             progress,
+            cancel,
             http_factory,
             connect,
         )
@@ -435,6 +437,7 @@ impl Remote {
         refs: &[PushRefSpec],
         mut opts: PushOptions,
         progress: &mut dyn Progress,
+        cancel: &dyn crate::progress::Cancel,
         http_factory: Option<&dyn HttpClientFactory>,
     ) -> RemoteResult<PushOutcome> {
         repo.odb().require_files_primary("push")?;
@@ -447,6 +450,7 @@ impl Remote {
             refs,
             &opts,
             progress,
+            cancel,
             http_factory,
             ConnectOptions {
                 protocol_version: 0,
@@ -530,6 +534,7 @@ impl Remote {
         url: &RemoteUrl,
         opts: &mut FetchOptions,
         progress: &mut dyn Progress,
+        cancel: &dyn crate::progress::Cancel,
         http_factory: Option<&dyn HttpClientFactory>,
         connect: ConnectOptions,
     ) -> RemoteResult<FetchOutcome> {
@@ -539,6 +544,7 @@ impl Remote {
                 path,
                 opts,
                 progress,
+                cancel,
             )?),
             RemoteUrl::Local(_) | RemoteUrl::File(_) => {
                 let remote_git = local_git_dir_from_url(url, repo.git_dir(), repo.work_tree())?;
@@ -560,30 +566,55 @@ impl Remote {
                         &connect,
                     )
                     .map_err(RemoteError::Library)?;
-                    return Ok(fetch_remote(repo.git_dir(), &mut *conn, opts, progress)?);
+                    return Ok(fetch_remote(
+                        repo.git_dir(),
+                        &mut *conn,
+                        opts,
+                        progress,
+                        cancel,
+                    )?);
                 }
                 Ok(fetch_local_with_progress(
                     repo.git_dir(),
                     &remote_git,
                     opts,
                     progress,
+                    cancel,
                 )?)
             }
             RemoteUrl::Http(u) | RemoteUrl::Https(u) => {
                 let client: Arc<dyn HttpClient> = Arc::from(http_client(http_factory, repo)?);
                 let transport = SmartHttpTransport::new(client);
                 let mut conn = transport.connect(u, Service::UploadPack, &connect)?;
-                Ok(fetch_remote(repo.git_dir(), &mut *conn, opts, progress)?)
+                Ok(fetch_remote(
+                    repo.git_dir(),
+                    &mut *conn,
+                    opts,
+                    progress,
+                    cancel,
+                )?)
             }
             RemoteUrl::Git(u) => {
                 let mut conn =
                     GitDaemonTransport::new().connect(u, Service::UploadPack, &connect)?;
-                Ok(fetch_remote(repo.git_dir(), &mut *conn, opts, progress)?)
+                Ok(fetch_remote(
+                    repo.git_dir(),
+                    &mut *conn,
+                    opts,
+                    progress,
+                    cancel,
+                )?)
             }
             RemoteUrl::Ssh(u) => {
                 let transport = ssh_transport(Some(repo), Some(&opts.environment));
                 let mut conn = transport.connect(u, Service::UploadPack, &connect)?;
-                Ok(fetch_remote(repo.git_dir(), &mut *conn, opts, progress)?)
+                Ok(fetch_remote(
+                    repo.git_dir(),
+                    &mut *conn,
+                    opts,
+                    progress,
+                    cancel,
+                )?)
             }
         }
     }
@@ -596,13 +627,14 @@ impl Remote {
         refs: &[PushRefSpec],
         opts: &PushOptions,
         progress: &mut dyn Progress,
+        cancel: &dyn crate::progress::Cancel,
         http_factory: Option<&dyn HttpClientFactory>,
         connect: ConnectOptions,
     ) -> RemoteResult<PushOutcome> {
         match url {
             RemoteUrl::Local(_) | RemoteUrl::File(_) => {
                 let remote_git = local_git_dir_from_url(url, repo.git_dir(), repo.work_tree())?;
-                Ok(push_local(repo.git_dir(), &remote_git, refs, opts)?)
+                Ok(push_local(repo.git_dir(), &remote_git, refs, opts, cancel)?)
             }
             RemoteUrl::Http(u) | RemoteUrl::Https(u) => {
                 let client: Arc<dyn HttpClient> = Arc::from(http_client(http_factory, repo)?);
@@ -614,6 +646,7 @@ impl Remote {
                     refs,
                     opts,
                     progress,
+                    cancel,
                 )?)
             }
             RemoteUrl::Git(u) => {
@@ -625,6 +658,7 @@ impl Remote {
                     refs,
                     opts,
                     progress,
+                    cancel,
                 )?)
             }
             RemoteUrl::Ssh(u) => {
@@ -636,6 +670,7 @@ impl Remote {
                     refs,
                     opts,
                     progress,
+                    cancel,
                 )?)
             }
             RemoteUrl::Bundle(_) => Err(RemoteError::UnsupportedScheme),

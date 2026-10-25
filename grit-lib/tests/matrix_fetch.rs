@@ -53,6 +53,7 @@ use std::time::{Duration, Instant};
 use grit_lib::error::Result as GritResult;
 use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectId;
+use grit_lib::progress::NeverCancel;
 use grit_lib::refs::resolve_ref;
 use grit_lib::remote::fetch::{fetch_remote, NoProgress};
 use grit_lib::remote::transfer::{FetchDepth, FetchOptions, FetchOutcome, TagMode, UpdateMode};
@@ -356,7 +357,7 @@ fn daemon_driver(protocol: u8) -> Driver {
                 ..Default::default()
             };
             let mut conn = transport.connect(url, Service::UploadPack, &copts)?;
-            fetch_remote(local_git, &mut *conn, opts, &mut NoProgress)
+            fetch_remote(local_git, &mut *conn, opts, &mut NoProgress, &NeverCancel)
         }),
     }
 }
@@ -392,7 +393,7 @@ fn ssh_driver(protocol: u8, scratch: PathBuf) -> Option<Driver> {
                 ..Default::default()
             };
             let mut conn = transport.connect(url, Service::UploadPack, &copts)?;
-            fetch_remote(local_git, &mut *conn, opts, &mut NoProgress)
+            fetch_remote(local_git, &mut *conn, opts, &mut NoProgress, &NeverCancel)
         }),
     })
 }

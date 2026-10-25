@@ -126,6 +126,15 @@ pub trait ProgressSink {
 
     /// Finish the current phase.
     fn finish(&mut self) {}
+
+    /// When `true`, the operation should stop at the next [`poll_cancel`] check.
+    ///
+    /// CLI progress sinks may set this when the user interrupts (Ctrl+C). Most
+    /// call sites rely on a separate [`Cancel`] argument instead; either signal
+    /// produces [`crate::error::Error::Cancelled`].
+    fn should_cancel(&self) -> bool {
+        false
+    }
 }
 
 /// Forwarding impl so a `&mut P` can be threaded into sub-operations that also
@@ -146,6 +155,9 @@ impl<T: ProgressSink + ?Sized> ProgressSink for &mut T {
     fn finish(&mut self) {
         (**self).finish();
     }
+    fn should_cancel(&self) -> bool {
+        (**self).should_cancel()
+    }
 }
 
 /// A [`ProgressSink`] that discards every update. The default for tests,
@@ -160,6 +172,12 @@ impl ProgressSink for NullProgress {}
 pub trait Cancel {
     /// Returns `true` once the operation should stop as soon as possible.
     fn is_cancelled(&self) -> bool;
+
+    /// When cancellation is backed by a shared flag (for example [`FlagCancel`]), returns it
+    /// so worker threads can observe the same signal.
+    fn shared_watch(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        None
+    }
 }
 
 /// A [`Cancel`] that never signals cancellation. The default for call sites
@@ -170,6 +188,139 @@ pub struct NeverCancel;
 impl Cancel for NeverCancel {
     fn is_cancelled(&self) -> bool {
         false
+    }
+}
+
+/// Shared flag for tests and embedders that flip cancellation mid-operation.
+#[derive(Debug, Clone)]
+pub struct FlagCancel(pub std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl FlagCancel {
+    /// Create a cancel signal that starts unset.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            false,
+        )))
+    }
+
+    /// Signal cancellation to every consumer polling this handle.
+    pub fn cancel(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Default for FlagCancel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Cancel for FlagCancel {
+    fn is_cancelled(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn shared_watch(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        Some(std::sync::Arc::clone(&self.0))
+    }
+}
+
+/// Shared [`AtomicBool`](std::sync::atomic::AtomicBool) for cancellation visible across threads.
+///
+/// For [`FlagCancel`], this is the same flag as the handle (so embedders can cancel mid-scan).
+/// For other [`Cancel`] implementations, a private flag is seeded from [`Cancel::is_cancelled`]
+/// at creation time; combine with [`poll_cancel_watch`] on the main thread for progress signals.
+#[must_use]
+pub fn cancel_watch_arc(cancel: &dyn Cancel) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    cancel.shared_watch().unwrap_or_else(|| {
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cancel.is_cancelled()))
+    })
+}
+
+/// Returns [`crate::error::Error::Cancelled`] when `watch` was set.
+#[inline]
+pub fn poll_watch(watch: &std::sync::atomic::AtomicBool) -> crate::error::Result<()> {
+    if watch.load(std::sync::atomic::Ordering::Relaxed) {
+        Err(crate::error::Error::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+/// Like [`poll_cancel`], but also records cancellation in `watch` for worker threads.
+#[inline]
+pub fn poll_cancel_watch(
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
+    watch: &std::sync::atomic::AtomicBool,
+) -> crate::error::Result<()> {
+    if cancel.is_cancelled() || progress.should_cancel() {
+        watch.store(true, std::sync::atomic::Ordering::Relaxed);
+        return Err(crate::error::Error::Cancelled);
+    }
+    poll_watch(watch)
+}
+
+/// [`ProgressSink`] adapter that mirrors [`ProgressSink::should_cancel`] into `watch`.
+pub struct WatchProgress<'a> {
+    inner: &'a mut dyn ProgressSink,
+    watch: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl<'a> WatchProgress<'a> {
+    /// Wrap `inner` so any cancel request on the sink sets `watch`.
+    #[must_use]
+    pub fn new(
+        inner: &'a mut dyn ProgressSink,
+        watch: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        Self { inner, watch }
+    }
+
+    fn note_cancel(&self) {
+        if self.inner.should_cancel() {
+            self.watch.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+impl ProgressSink for WatchProgress<'_> {
+    fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
+        self.note_cancel();
+        self.inner.start(phase, total);
+    }
+    fn start_with_unit(&mut self, phase: ProgressPhase, unit: ProgressUnit, total: Option<u64>) {
+        self.note_cancel();
+        self.inner.start_with_unit(phase, unit, total);
+    }
+    fn inc(&mut self, units: u64) {
+        self.note_cancel();
+        self.inner.inc(units);
+    }
+    fn set(&mut self, current: u64) {
+        self.note_cancel();
+        self.inner.set(current);
+    }
+    fn finish(&mut self) {
+        self.note_cancel();
+        self.inner.finish();
+    }
+    fn should_cancel(&self) -> bool {
+        self.inner.should_cancel()
+    }
+}
+
+/// Returns [`crate::error::Error::Cancelled`] when `cancel` or `progress` request stop.
+#[inline]
+pub fn poll_cancel(
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
+) -> crate::error::Result<()> {
+    if cancel.is_cancelled() || progress.should_cancel() {
+        Err(crate::error::Error::Cancelled)
+    } else {
+        Ok(())
     }
 }
 
@@ -253,6 +404,15 @@ mod tests {
     #[test]
     fn never_cancel_never_cancels() {
         assert!(!NeverCancel.is_cancelled());
+    }
+
+    #[test]
+    fn poll_cancel_returns_typed_error() {
+        let flag = FlagCancel::new();
+        flag.cancel();
+        let mut sink = NullProgress;
+        let err = poll_cancel(&mut sink, &flag).expect_err("cancelled");
+        assert!(matches!(err, crate::error::Error::Cancelled));
     }
 
     #[test]

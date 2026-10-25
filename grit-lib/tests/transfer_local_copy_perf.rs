@@ -314,6 +314,7 @@ fn push_local_empty_bare_links_pack_within_budget() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push_local");
     let elapsed = t0.elapsed().as_secs_f64();

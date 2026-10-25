@@ -59,6 +59,7 @@ fn push_delete_tag_on_local_remote() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect("push tag");
     assert!(refs::resolve_ref(&origin, "refs/tags/v1").is_ok());
@@ -77,6 +78,7 @@ fn push_delete_tag_on_local_remote() {
             ..Default::default()
         }],
         &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
     )
     .expect("delete tag");
     assert!(refs::resolve_ref(&origin, "refs/tags/v1").is_err());

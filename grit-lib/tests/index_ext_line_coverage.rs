@@ -20,6 +20,7 @@ use grit_lib::index::untracked_cache::{
 };
 use grit_lib::index::Index;
 use grit_lib::porcelain::status::{status, IgnoredMode, StatusOptions, UntrackedMode};
+use grit_lib::progress::NeverCancel;
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
 
@@ -50,7 +51,7 @@ fn refresh_normal(
 ) {
     let cfg = repo.config().expect("config");
     let wt = repo.work_tree().expect("wt");
-    refresh_untracked_cache_for_status(repo, idx, wt, cfg.as_ref(), uc, false, ignored)
+    refresh_untracked_cache_for_status(repo, idx, wt, cfg.as_ref(), uc, false, ignored, None)
         .expect("refresh");
 }
 
@@ -120,14 +121,14 @@ fn untracked_cache_traditional_and_matching_ignored_modes() {
         ahead_behind: false,
         ..StatusOptions::default()
     };
-    let model = status(&repo, &opts, &mut NullProgress).expect("status traditional");
+    let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).expect("status traditional");
     assert!(model.ignored.iter().any(|p| p.contains("build")));
 
     let opts = StatusOptions {
         ignored: IgnoredMode::Matching,
         ..opts
     };
-    let model = status(&repo, &opts, &mut NullProgress).expect("status matching");
+    let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).expect("status matching");
     let _ = model.ignored;
 }
 
@@ -155,6 +156,7 @@ fn untracked_cache_all_mode_and_mode_switch() {
         &mut uc,
         true,
         UntrackedIgnoredMode::No,
+        None,
     )
     .expect("all mode refresh");
     let all_paths: BTreeSet<_> = collect_untracked_from_cache(&uc).into_iter().collect();
@@ -168,6 +170,7 @@ fn untracked_cache_all_mode_and_mode_switch() {
         &mut uc,
         false,
         UntrackedIgnoredMode::No,
+        None,
     )
     .expect("normal mode refresh");
     let normal_paths = collect_untracked_from_cache(&uc);
@@ -476,7 +479,7 @@ fn untracked_cache_wide_tree_normal_status() {
         ahead_behind: false,
         ..StatusOptions::default()
     };
-    let model = status(&repo, &opts, &mut NullProgress).expect("status");
+    let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).expect("status");
     assert_eq!(model.untracked.len(), 40);
 
     let idx = repo.index_handle().load().expect("load");
@@ -624,6 +627,7 @@ fn untracked_cache_many_loose_files_normal_and_all() {
         &mut uc,
         true,
         UntrackedIgnoredMode::No,
+        None,
     )
     .expect("all");
     assert_eq!(collect_untracked_from_cache(&uc).len(), 55);
@@ -636,6 +640,7 @@ fn untracked_cache_many_loose_files_normal_and_all() {
         &mut uc,
         false,
         UntrackedIgnoredMode::Traditional,
+        None,
     )
     .expect("normal");
     assert!(!collect_untracked_from_cache(&uc).is_empty());
@@ -713,6 +718,7 @@ fn untracked_matching_all_mode_skips_excluded_directories() {
         &mut uc,
         true,
         UntrackedIgnoredMode::Matching,
+        None,
     )
     .expect("matching all");
     let paths = collect_untracked_from_cache(&uc);
@@ -774,7 +780,7 @@ fn untracked_cache_deep_status_integration() {
         ..StatusOptions::default()
     };
     for _ in 0..2 {
-        let model = status(&repo, &opts, &mut NullProgress).expect("status");
+        let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).expect("status");
         assert!(model.untracked.len() >= 45);
     }
 
@@ -789,8 +795,17 @@ fn untracked_cache_deep_status_integration() {
         (true, UntrackedIgnoredMode::No),
         (true, UntrackedIgnoredMode::Matching),
     ] {
-        refresh_untracked_cache_for_status(&repo, &idx, wt, cfg.as_ref(), &mut uc, show_all, mode)
-            .expect("refresh sweep");
+        refresh_untracked_cache_for_status(
+            &repo,
+            &idx,
+            wt,
+            cfg.as_ref(),
+            &mut uc,
+            show_all,
+            mode,
+            None,
+        )
+        .expect("refresh sweep");
         let _ = collect_untracked_from_cache(&uc);
     }
 }
@@ -820,7 +835,7 @@ fn status_ignored_modes_exercise_untracked_collect_paths() {
             ahead_behind: false,
             ..StatusOptions::default()
         };
-        let model = status(&repo, &opts, &mut NullProgress).expect("status");
+        let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).expect("status");
         assert!(model.untracked.iter().any(|p| p == "free.txt"));
         assert!(!model.ignored.is_empty());
     }
@@ -831,7 +846,7 @@ fn status_ignored_modes_exercise_untracked_collect_paths() {
         ahead_behind: false,
         ..StatusOptions::default()
     };
-    let model = status(&repo, &opts, &mut NullProgress).expect("status all");
+    let model = status(&repo, &opts, &mut NullProgress, &NeverCancel).expect("status all");
     assert!(!model.ignored.is_empty());
 }
 

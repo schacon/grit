@@ -174,7 +174,13 @@ fn fetch_into_custom_primary_fails_without_touching_refs_or_objects() {
     let remote = Remote::from_url(upstream.path().to_str().expect("utf8")).expect("remote");
     let err = repo
         .remotes()
-        .fetch(&remote, fetch_all_branches(), &mut NoProgress, None)
+        .fetch(
+            &remote,
+            fetch_all_branches(),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
         .expect_err("fetch into a custom primary must not report success");
     assert!(is_unsupported(&err, "fetch"), "unexpected error: {err:?}");
 
@@ -214,7 +220,13 @@ fn fetch_from_bundle_into_custom_primary_is_rejected() {
     let remote = Remote::from_url(bundle.to_str().expect("utf8")).expect("remote");
     let err = repo
         .remotes()
-        .fetch(&remote, fetch_all_branches(), &mut NoProgress, None)
+        .fetch(
+            &remote,
+            fetch_all_branches(),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
         .expect_err("bundle fetch into a custom primary must fail");
     assert!(is_unsupported(&err, "fetch"), "unexpected error: {err:?}");
     assert!(resolve_ref(repo.git_dir(), "refs/remotes/origin/main").is_err());
@@ -250,6 +262,7 @@ fn fetch_all_reports_typed_error_per_remote() {
             None,
             None,
             &mut NoProgress,
+            &NeverCancel,
             None,
         )
         .expect("fetch_all");
@@ -287,6 +300,7 @@ fn push_from_custom_primary_fails_without_touching_remote() {
             &[spec],
             PushOptions::default(),
             &mut NoProgress,
+            &NeverCancel,
             None,
         )
         .expect_err("push from a custom primary must fail");
@@ -399,7 +413,13 @@ fn files_primary_fetch_and_push_still_round_trip_with_git() {
 
     let remote = Remote::from_url(upstream.path().to_str().expect("utf8")).expect("remote");
     repo.remotes()
-        .fetch(&remote, fetch_all_branches(), &mut NoProgress, None)
+        .fetch(
+            &remote,
+            fetch_all_branches(),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
         .expect("files-primary fetch");
     let tip = resolve_ref(repo.git_dir(), "refs/remotes/origin/main").expect("tracking ref");
     assert_eq!(tip, rev_parse(upstream.path(), "main"));
@@ -423,6 +443,7 @@ fn files_primary_fetch_and_push_still_round_trip_with_git() {
             &[spec],
             PushOptions::default(),
             &mut NoProgress,
+            &NeverCancel,
             None,
         )
         .expect("files-primary push");

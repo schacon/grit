@@ -15,6 +15,7 @@ use grit_lib::index::untracked_cache::{
 };
 use grit_lib::porcelain::add::stage_for_commit;
 use grit_lib::porcelain::status::{status, StatusOptions, UntrackedMode};
+use grit_lib::progress::NeverCancel;
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
 
@@ -36,7 +37,7 @@ fn grit_untracked_paths(repo: &Repository) -> Vec<String> {
         untracked: UntrackedMode::All,
         ..StatusOptions::default()
     };
-    let model = status(repo, &opts, &mut NullProgress).expect("status");
+    let model = status(repo, &opts, &mut NullProgress, &NeverCancel).expect("status");
     model.untracked
 }
 
@@ -45,7 +46,7 @@ fn grit_untracked_paths_normal(repo: &Repository) -> Vec<String> {
         untracked: UntrackedMode::Normal,
         ..StatusOptions::default()
     };
-    let model = status(repo, &opts, &mut NullProgress).expect("status");
+    let model = status(repo, &opts, &mut NullProgress, &NeverCancel).expect("status");
     model.untracked
 }
 
@@ -97,6 +98,7 @@ fn normal_refresh_check_only_subtree_records_nested_files() {
         &mut uc,
         false,
         UntrackedIgnoredMode::No,
+        None,
     )
     .expect("refresh normal");
 
@@ -193,6 +195,7 @@ fn try_untracked_from_valid_cache_rejects_invalid_root() {
         &mut uc,
         false,
         UntrackedIgnoredMode::No,
+        None,
     )
     .expect("refresh");
     uc.root.as_mut().expect("root").valid = false;
@@ -268,6 +271,7 @@ fn t7063_untracked_cache_reused_by_git_status() {
         &mut uc,
         false,
         UntrackedIgnoredMode::No,
+        None,
     )
     .expect("refresh cache");
     idx.untracked_cache = Some(uc);
@@ -418,6 +422,7 @@ fn t7063_dir_flags_from_config_modes() {
         &mut uc,
         true,
         UntrackedIgnoredMode::No,
+        None,
     )
     .expect("refresh all mode");
     let from_cache = collect_untracked_from_cache(&uc);
@@ -504,6 +509,7 @@ fn t7063_collect_untracked_matches_git_deep_tree() {
         &mut uc,
         true,
         UntrackedIgnoredMode::No,
+        None,
     )
     .expect("refresh for collect");
     let from_cache: BTreeSet<String> = collect_untracked_from_cache(&uc).into_iter().collect();

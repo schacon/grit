@@ -21,6 +21,7 @@ use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, OutputMode, RenderContext};
 use crate::progress::TerminalProgress;
 use crate::quiet_args::QuietArgs;
+use grit_lib::progress::NeverCancel;
 
 /// Result of `grit push`: the per-ref outcomes for the remote.
 #[derive(Serialize, JsonSchema)]
@@ -329,6 +330,7 @@ fn push_once(
                 ..Default::default()
             },
             progress,
+            &NeverCancel,
             Some(factory),
         )
         .map_err(|e| anyhow::Error::msg(e.to_string()))

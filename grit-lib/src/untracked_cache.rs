@@ -999,6 +999,7 @@ pub fn refresh_untracked_cache_for_status(
     uc: &mut UntrackedCache,
     show_all_untracked: bool,
     ignored_mode: UntrackedIgnoredMode,
+    cancel_watch: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<()> {
     uc.reset_stats();
     let requested_flags = if show_all_untracked {
@@ -1055,6 +1056,7 @@ pub fn refresh_untracked_cache_for_status(
         "",
         work_tree,
         uc,
+        cancel_watch,
     )?;
 
     collapse_tracked_only_untr_subtree(&mut root);
@@ -1144,6 +1146,7 @@ fn read_directory_recursive(
     rel: &str,
     abs: &Path,
     uc: &mut UntrackedCache,
+    cancel_watch: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<()> {
     let parent_exclude_rel = if rel.is_empty() {
         ".gitignore".to_string()
@@ -1202,6 +1205,9 @@ fn read_directory_recursive(
     ucd.check_only = check_only;
 
     loop {
+        if let Some(watch) = cancel_watch {
+            crate::progress::poll_watch(watch)?;
+        }
         let next = match &mut src {
             DirSource::Disk(rd) => {
                 let Some(Ok(entry)) = rd.next() else {
@@ -1290,6 +1296,7 @@ fn read_directory_recursive(
                 &child_rel,
                 &path,
                 uc,
+                cancel_watch,
             )?;
         } else {
             let is_ign = matcher.is_path_ignored(repo, Some(index), &child_rel, false)?;
@@ -1337,7 +1344,11 @@ fn visit_untracked_directory_uc(
     rel: &str,
     abs: &Path,
     uc: &mut UntrackedCache,
+    cancel_watch: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<()> {
+    if let Some(watch) = cancel_watch {
+        crate::progress::poll_watch(watch)?;
+    }
     let name = Path::new(rel)
         .file_name()
         .and_then(|s| s.to_str())
@@ -1360,6 +1371,7 @@ fn visit_untracked_directory_uc(
             rel,
             abs,
             uc,
+            cancel_watch,
         );
     }
 
@@ -1405,6 +1417,7 @@ fn visit_untracked_directory_uc(
             rel,
             abs,
             uc,
+            cancel_watch,
         );
     }
 
@@ -1466,6 +1479,7 @@ fn visit_untracked_directory_uc(
             rel,
             abs,
             uc,
+            cancel_watch,
         );
     }
 

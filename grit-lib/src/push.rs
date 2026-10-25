@@ -34,6 +34,7 @@ use crate::error::{Error, Result};
 use crate::fetch::Progress;
 use crate::objects::{HashAlgo, ObjectId, ObjectKind};
 use crate::pkt_line::{self, Packet};
+use crate::progress::{poll_cancel, Cancel};
 use crate::push_report::{PushRefResult, PushRefStatus};
 use crate::transfer::{
     build_pack, build_pack_push_fast, open_odb, PackBuildOptions, PushOptions, PushOutcome,
@@ -102,8 +103,10 @@ pub fn push_remote(
     refs: &[PushRefSpec],
     opts: &PushOptions,
     progress: &mut dyn Progress,
+    cancel: &dyn Cancel,
 ) -> Result<PushOutcome> {
     crate::trace::trace_span!("grit.push");
+    poll_cancel(progress, cancel)?;
     use crate::net_trace::net_trace;
     net_trace!(
         opts.network_trace,
@@ -164,6 +167,7 @@ pub fn push_remote(
     conn.writer().flush()?;
 
     if let Some(pack) = build_push_pack(&plan, local_git_dir, &local_odb, &adv)? {
+        poll_cancel(progress, cancel)?;
         net_trace!(
             opts.network_trace,
             opts.diagnostics.as_ref(),
@@ -258,6 +262,7 @@ pub fn push_http(
     refs: &[PushRefSpec],
     opts: &PushOptions,
     progress: &mut dyn Progress,
+    cancel: &dyn Cancel,
 ) -> Result<PushOutcome> {
     use crate::transport::http::SmartHttpTransport;
     use crate::transport::{ConnectOptions, Service, Transport};
@@ -269,7 +274,7 @@ pub fn push_http(
     };
     let transport = SmartHttpTransport::new(client);
     let mut conn = transport.connect(repo_url, Service::ReceivePack, &connect)?;
-    push_remote(local_git_dir, &mut *conn, refs, opts, progress)
+    push_remote(local_git_dir, &mut *conn, refs, opts, progress, cancel)
 }
 
 /// The remote ref map + `.have` hints + capability flags parsed from a
