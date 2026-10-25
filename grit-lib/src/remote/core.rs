@@ -16,16 +16,16 @@ use crate::credentials::{askpass_program, HelperCredentialProvider};
 #[cfg(feature = "http-ureq")]
 use crate::environment::Environment;
 use crate::error::Error;
-use crate::fetch::{fetch_remote, Progress};
+use crate::fetch::{fetch_remote_into, Progress};
 use crate::objects::ObjectId;
 use crate::odb::Odb;
-use crate::push::push_remote;
+use crate::push::push_remote_from;
 use crate::refs::listing::{
     compare_version_names, patterns_match_ls_remote, RefQueryOptions, RefSort, SortKey,
 };
 use crate::repo::Repository;
 use crate::transfer::{
-    fetch_local_with_progress, push_local, FetchOptions, FetchOutcome, PushOptions, PushOutcome,
+    fetch_local_into, push_local_from, FetchOptions, FetchOutcome, PushOptions, PushOutcome,
     PushRefSpec,
 };
 use crate::transport::http::{HttpClient, SmartHttpTransport};
@@ -596,12 +596,8 @@ impl Remote {
         connect: ConnectOptions,
     ) -> RemoteResult<FetchOutcome> {
         match url {
-            RemoteUrl::Bundle(path) => Ok(crate::bundle_remote::fetch_from_bundle_with_progress(
-                repo.git_dir(),
-                path,
-                opts,
-                progress,
-                cancel,
+            RemoteUrl::Bundle(path) => Ok(crate::bundle_remote::fetch_from_bundle_into(
+                repo, path, opts, progress, cancel,
             )?),
             RemoteUrl::Local(_) | RemoteUrl::File(_) => {
                 let remote_git = local_git_dir_from_url(url, repo.git_dir(), repo.work_tree())?;
@@ -623,55 +619,25 @@ impl Remote {
                         &connect,
                     )
                     .map_err(RemoteError::Library)?;
-                    return Ok(fetch_remote(
-                        repo.git_dir(),
-                        &mut *conn,
-                        opts,
-                        progress,
-                        cancel,
-                    )?);
+                    return Ok(fetch_remote_into(repo, &mut *conn, opts, progress, cancel)?);
                 }
-                Ok(fetch_local_with_progress(
-                    repo.git_dir(),
-                    &remote_git,
-                    opts,
-                    progress,
-                    cancel,
-                )?)
+                Ok(fetch_local_into(repo, &remote_git, opts, progress, cancel)?)
             }
             RemoteUrl::Http(u) | RemoteUrl::Https(u) => {
                 let client: Arc<dyn HttpClient> = Arc::from(http_client(http_factory, repo)?);
                 let transport = SmartHttpTransport::new(client);
                 let mut conn = transport.connect(u, Service::UploadPack, &connect)?;
-                Ok(fetch_remote(
-                    repo.git_dir(),
-                    &mut *conn,
-                    opts,
-                    progress,
-                    cancel,
-                )?)
+                Ok(fetch_remote_into(repo, &mut *conn, opts, progress, cancel)?)
             }
             RemoteUrl::Git(u) => {
                 let mut conn =
                     GitDaemonTransport::new().connect(u, Service::UploadPack, &connect)?;
-                Ok(fetch_remote(
-                    repo.git_dir(),
-                    &mut *conn,
-                    opts,
-                    progress,
-                    cancel,
-                )?)
+                Ok(fetch_remote_into(repo, &mut *conn, opts, progress, cancel)?)
             }
             RemoteUrl::Ssh(u) => {
                 let transport = ssh_transport(Some(repo), Some(&opts.environment));
                 let mut conn = transport.connect(u, Service::UploadPack, &connect)?;
-                Ok(fetch_remote(
-                    repo.git_dir(),
-                    &mut *conn,
-                    opts,
-                    progress,
-                    cancel,
-                )?)
+                Ok(fetch_remote_into(repo, &mut *conn, opts, progress, cancel)?)
             }
         }
     }
@@ -691,43 +657,28 @@ impl Remote {
         match url {
             RemoteUrl::Local(_) | RemoteUrl::File(_) => {
                 let remote_git = local_git_dir_from_url(url, repo.git_dir(), repo.work_tree())?;
-                Ok(push_local(repo.git_dir(), &remote_git, refs, opts, cancel)?)
+                Ok(push_local_from(repo, &remote_git, refs, opts, cancel)?)
             }
             RemoteUrl::Http(u) | RemoteUrl::Https(u) => {
                 let client: Arc<dyn HttpClient> = Arc::from(http_client(http_factory, repo)?);
                 let transport = SmartHttpTransport::new(client);
                 let mut conn = transport.connect(u, Service::ReceivePack, &connect)?;
-                Ok(push_remote(
-                    repo.git_dir(),
-                    &mut *conn,
-                    refs,
-                    opts,
-                    progress,
-                    cancel,
+                Ok(push_remote_from(
+                    repo, &mut *conn, refs, opts, progress, cancel,
                 )?)
             }
             RemoteUrl::Git(u) => {
                 let mut conn =
                     GitDaemonTransport::new().connect(u, Service::ReceivePack, &connect)?;
-                Ok(push_remote(
-                    repo.git_dir(),
-                    &mut *conn,
-                    refs,
-                    opts,
-                    progress,
-                    cancel,
+                Ok(push_remote_from(
+                    repo, &mut *conn, refs, opts, progress, cancel,
                 )?)
             }
             RemoteUrl::Ssh(u) => {
                 let transport = ssh_transport(Some(repo), None);
                 let mut conn = transport.connect(u, Service::ReceivePack, &connect)?;
-                Ok(push_remote(
-                    repo.git_dir(),
-                    &mut *conn,
-                    refs,
-                    opts,
-                    progress,
-                    cancel,
+                Ok(push_remote_from(
+                    repo, &mut *conn, refs, opts, progress, cancel,
                 )?)
             }
             RemoteUrl::Bundle(_) => Err(RemoteError::UnsupportedScheme),

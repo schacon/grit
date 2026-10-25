@@ -93,8 +93,8 @@ struct Entry {
 }
 
 /// Skipping algorithm negotiator for fetch `have` lines.
-pub struct SkippingNegotiator {
-    repo: Repository,
+pub struct SkippingNegotiator<'r> {
+    repo: &'r Repository,
     commit_graph: Option<CommitGraphChain>,
     heap: BinaryHeap<HeapItem>,
     entries: HashMap<ObjectId, Entry>,
@@ -103,10 +103,10 @@ pub struct SkippingNegotiator {
     shallow: HashSet<ObjectId>,
 }
 
-impl SkippingNegotiator {
-    /// New negotiator bound to `repo`.
-    pub fn new(repo: Repository) -> Self {
-        let shallow = read_shallow_boundary(&repo);
+impl<'r> SkippingNegotiator<'r> {
+    /// New negotiator reading commits through `repo`'s object store.
+    pub fn new(repo: &'r Repository) -> Self {
+        let shallow = read_shallow_boundary(repo);
         let commit_graph = CommitGraphChain::try_load(repo.odb().objects_dir())
             .ok()
             .flatten();
@@ -122,8 +122,8 @@ impl SkippingNegotiator {
     }
 
     /// Repository handle used for reading commits.
-    pub fn repo(&self) -> &Repository {
-        &self.repo
+    pub fn repo(&self) -> &'r Repository {
+        self.repo
     }
 
     /// Parents of `oid`, with shallow-boundary commits reported as parentless.
@@ -135,7 +135,7 @@ impl SkippingNegotiator {
         if self.shallow.contains(&oid) {
             return Ok(Vec::new());
         }
-        read_parents(&self.repo, self.commit_graph.as_ref(), oid)
+        read_parents(self.repo, self.commit_graph.as_ref(), oid)
     }
 
     fn f(&self, oid: ObjectId) -> u8 {
@@ -158,7 +158,7 @@ impl SkippingNegotiator {
         if mark & COMMON == 0 {
             self.non_common_revs += 1;
         }
-        let d = commit_date(&self.repo, self.commit_graph.as_ref(), oid)?;
+        let d = commit_date(self.repo, self.commit_graph.as_ref(), oid)?;
         self.heap.push(HeapItem { date: d, oid });
         Ok(())
     }

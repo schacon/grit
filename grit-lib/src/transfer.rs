@@ -1358,6 +1358,9 @@ pub(crate) fn ensure_local_remote_repository(remote_git_dir: &Path) -> Result<()
 }
 
 /// Like [`fetch_local`], reporting object copy progress through `progress`.
+///
+/// The local repository is opened with [`FetchOptions::environment`], so objects land in its
+/// `GIT_OBJECT_DIRECTORY` when that is set.
 pub fn fetch_local_with_progress(
     local_git_dir: &Path,
     remote_git_dir: &Path,
@@ -1367,11 +1370,31 @@ pub fn fetch_local_with_progress(
 ) -> Result<FetchOutcome> {
     crate::progress::poll_cancel(progress, cancel)?;
     ensure_local_remote_repository(remote_git_dir)?;
+    let local = crate::fetch::open_fetch_target(local_git_dir, opts)?;
+    fetch_local_into(&local, remote_git_dir, opts, progress, cancel)
+}
+
+/// Like [`fetch_local_with_progress`], copying objects into `local`'s object store.
+pub(crate) fn fetch_local_into(
+    local: &crate::repo::Repository,
+    remote_git_dir: &Path,
+    opts: &FetchOptions,
+    progress: &mut dyn Progress,
+    cancel: &dyn crate::progress::Cancel,
+) -> Result<FetchOutcome> {
+    crate::progress::poll_cancel(progress, cancel)?;
+    ensure_local_remote_repository(remote_git_dir)?;
+    let local_git_dir = local.git_dir();
     validate_fetch_depth_local(local_git_dir, opts)?;
 
     let remote_odb = open_odb(remote_git_dir);
-    sync_empty_destination_object_format(local_git_dir, remote_odb.hash_algo(), opts)?;
-    let local_odb = open_odb(local_git_dir);
+    let remote_algo = remote_odb.hash_algo();
+    let reopened = sync_empty_destination_object_format(local_git_dir, remote_algo, opts)?
+        .then(|| reopen_after_format_change(local))
+        .transpose()?;
+    let local = reopened.as_ref().unwrap_or(local);
+    let local_git_dir = local.git_dir();
+    let local_odb = local.odb();
 
     // 1. Enumerate remote refs (with HEAD symref for the default branch).
     let remote_entries = crate::remote::list_refs_from_git_dir_for_fetch(
@@ -1447,7 +1470,7 @@ pub fn fetch_local_with_progress(
         .map(|m| m.oid)
         .collect();
     let mut following_tag_wants =
-        crate::fetch::following_tag_wants_with_local_peel(&matched, &following_only, &local_odb)?;
+        crate::fetch::following_tag_wants_with_local_peel(&matched, &following_only, local_odb)?;
     let shallow_request = opts.has_deepen_request() || !local_shallow.is_empty();
     if shallow_request {
         let peel_set = crate::fetch::following_peel_commit_set_for_shallow(
@@ -1586,7 +1609,7 @@ pub fn fetch_local_with_progress(
         let (oids, fetch_transfer) = copy_objects_for_local_fetch(
             local_git_dir,
             &remote_odb,
-            &local_odb,
+            local_odb,
             &wants,
             &haves,
             &copy_source_shallow,
@@ -1615,15 +1638,20 @@ pub fn fetch_local_with_progress(
 
     if opts.tags == TagMode::Following {
         let boundaries = crate::shallow::load_shallow_boundaries(local_git_dir);
-        crate::fetch::retain_following_tags(&local_odb, &mut matched, &pack_oids, &boundaries)?;
+        crate::fetch::retain_following_tags(local_odb, &mut matched, &pack_oids, &boundaries)?;
     }
 
     // 4. Classify and apply ref updates. Ancestry checks use the local repo
     //    (or the bare remote during `--dry-run`, when objects are not copied).
-    let classify_repo = if opts.dry_run {
+    let dry_run_remote = if opts.dry_run {
         crate::repo::Repository::open(remote_git_dir, &RepositoryOptions::empty()).ok()
     } else {
-        crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty()).ok()
+        None
+    };
+    let classify_repo = if opts.dry_run {
+        dry_run_remote.as_ref()
+    } else {
+        Some(local)
     };
 
     let mut updates: Vec<RefUpdate> = Vec::new();
@@ -1676,7 +1704,7 @@ pub fn fetch_local_with_progress(
             &m.oid,
             m.force,
             m.dest_is_tag,
-            classify_repo.as_ref(),
+            classify_repo,
             None,
         );
 
@@ -1691,7 +1719,7 @@ pub fn fetch_local_with_progress(
             mode,
             opts,
             explicit_refspec_fetch,
-            classify_repo.as_ref(),
+            classify_repo,
         )?;
         if write && !opts.dry_run {
             if !crate::refs::is_valid_storable_ref_name(local_ref) {
@@ -1705,7 +1733,7 @@ pub fn fetch_local_with_progress(
                 });
                 continue;
             }
-            if m.dest_is_tag && !ref_target_exists(&local_odb, &remote_odb, m.oid)? {
+            if m.dest_is_tag && !ref_target_exists(local_odb, &remote_odb, m.oid)? {
                 updates.push(RefUpdate {
                     remote_ref: m.remote_ref.clone(),
                     local_ref: Some(local_ref.clone()),
@@ -1854,6 +1882,19 @@ pub fn push_local(
     opts: &PushOptions,
     cancel: &dyn crate::progress::Cancel,
 ) -> Result<PushOutcome> {
+    let local = crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty())?;
+    push_local_from(&local, remote_git_dir, refs, opts, cancel)
+}
+
+/// Like [`push_local`], reading the objects to send through `local`'s object store.
+pub(crate) fn push_local_from(
+    local: &crate::repo::Repository,
+    remote_git_dir: &Path,
+    refs: &[PushRefSpec],
+    opts: &PushOptions,
+    cancel: &dyn crate::progress::Cancel,
+) -> Result<PushOutcome> {
+    let local_git_dir = local.git_dir();
     let mut progress_sink = crate::progress::NullProgress;
     crate::progress::poll_cancel(&mut progress_sink, cancel)?;
     if !opts.push_options.is_empty() {
@@ -1861,13 +1902,8 @@ pub fn push_local(
     }
     ensure_local_remote_repository(remote_git_dir)?;
 
-    let local_odb = open_odb(local_git_dir);
+    let local_odb = local.odb();
     let remote_odb = open_odb(remote_git_dir);
-
-    // Ancestry (fast-forward) checks run against the LOCAL repo, where the source
-    // commits live. A remote-current oid that is not reachable from the source is
-    // simply "not an ancestor", which is the correct non-fast-forward verdict.
-    let local_repo = crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty()).ok();
 
     // The remote's existing ref tips become the `haves` for pack building, so the
     // copied object closure excludes everything the remote already has.
@@ -1882,12 +1918,7 @@ pub fn push_local(
     // First pass: decide each ref's status without mutating anything.
     let mut decisions: Vec<PushDecision> = Vec::with_capacity(refs.len());
     for spec in refs {
-        decisions.push(decide_push(
-            spec,
-            &local_odb,
-            remote_git_dir,
-            local_repo.as_ref(),
-        )?);
+        decisions.push(decide_push(spec, local_odb, remote_git_dir, Some(local))?);
     }
 
     // Atomic: if any update would be rejected, apply none and demote the
@@ -1925,7 +1956,7 @@ pub fn push_local(
         let empty_shallow = HashSet::new();
         let remote_shallow = crate::shallow::load_shallow_boundaries(remote_git_dir);
         copy_objects_for_local_push(
-            &local_odb,
+            local_odb,
             &remote_odb,
             &push_wants,
             &remote_have_tips,
@@ -2360,17 +2391,19 @@ pub(crate) fn remote_hash_algo_from_advertisement(
 }
 
 /// Before the first pack lands in a fresh clone, align `extensions.objectformat` with the remote.
+///
+/// Returns whether the local config was rewritten.
 pub(crate) fn sync_empty_destination_object_format(
     local_git_dir: &Path,
     remote_algo: HashAlgo,
     opts: &FetchOptions,
-) -> Result<()> {
+) -> Result<bool> {
     if opts.dry_run || !opts.initial_remote_fetch {
-        return Ok(());
+        return Ok(false);
     }
     let local_odb = open_odb(local_git_dir);
     if local_odb.hash_algo() == remote_algo {
-        return Ok(());
+        return Ok(false);
     }
     if local_odb.approximate_object_count()? > 0 {
         return Err(Error::Message(format!(
@@ -2379,7 +2412,19 @@ pub(crate) fn sync_empty_destination_object_format(
             remote_algo.name()
         )));
     }
-    write_empty_destination_object_format(local_git_dir, remote_algo)
+    write_empty_destination_object_format(local_git_dir, remote_algo)?;
+    Ok(true)
+}
+
+/// Reopen `local` after [`sync_empty_destination_object_format`] rewrote its object format, so
+/// its object store uses the new hash algorithm.
+pub(crate) fn reopen_after_format_change(
+    local: &crate::repo::Repository,
+) -> Result<crate::repo::Repository> {
+    crate::repo::Repository::open(
+        local.git_dir(),
+        &RepositoryOptions::with_environment(local.environment().clone()),
+    )
 }
 
 fn write_empty_destination_object_format(git_dir: &Path, algo: HashAlgo) -> Result<()> {

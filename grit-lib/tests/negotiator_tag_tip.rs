@@ -52,7 +52,7 @@ fn add_tip_accepts_annotated_tag() {
 
     // Re-open the repo so the negotiator reads through a fresh odb.
     let repo = Repository::open(repo.git_dir(), &RepositoryOptions::empty()).expect("open");
-    let mut neg = SkippingNegotiator::new(repo);
+    let mut neg = SkippingNegotiator::new(&repo);
 
     // Both entry points previously panicked the fetch on a tag tip.
     neg.add_tip(tag)
@@ -66,9 +66,8 @@ fn add_tip_accepts_annotated_tag() {
 
     // A plain commit tip still works, and a ref to a non-commit (a tree) is
     // skipped rather than erroring.
-    let mut neg = SkippingNegotiator::new(
-        Repository::open(&tmp.path(), &RepositoryOptions::empty()).expect("open"),
-    );
+    let reopened = Repository::open(&tmp.path(), &RepositoryOptions::empty()).expect("open");
+    let mut neg = SkippingNegotiator::new(&reopened);
     neg.add_tip(commit).expect("commit tip ok");
     neg.add_tip(tree)
         .expect("tree tip must be skipped, not error");

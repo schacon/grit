@@ -17,6 +17,7 @@ use crate::objects::ObjectId;
 use crate::pkt_line;
 use crate::protocol_v2;
 use crate::refspec::RefspecItem;
+use crate::repo::Repository;
 
 type LsRefsAdvertised = (
     Vec<(String, ObjectId)>,
@@ -132,7 +133,7 @@ fn parse_ack(line: &str) -> Option<(ObjectId, AckKind)> {
 
 /// Read one ACK round, feeding `common`/`continue`/`ready` acks to the
 /// negotiator. Lifted from `read_ack_round_with_negotiator`.
-fn read_ack_round(reader: &mut dyn Read, negotiator: &mut SkippingNegotiator) -> Result<()> {
+fn read_ack_round(reader: &mut dyn Read, negotiator: &mut SkippingNegotiator<'_>) -> Result<()> {
     let mut reader = reader;
     while let Some(pkt) = pkt_line::read_packet(&mut reader)? {
         match pkt {
@@ -254,7 +255,7 @@ fn append_shallow_request_v0(
 /// into the returned [`ShallowUpdate`].
 #[allow(clippy::too_many_arguments)]
 fn negotiate_pack(
-    local_git_dir: &Path,
+    local: &Repository,
     conn: &mut dyn Connection,
     wants: &[ObjectId],
     opts: &mut FetchOptions,
@@ -265,7 +266,7 @@ fn negotiate_pack(
     skip_local_haves: bool,
 ) -> Result<(Option<std::path::PathBuf>, ShallowUpdate)> {
     crate::trace::trace_span!("grit.fetch.negotiate");
-    let local_repo = crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty())?;
+    let local_git_dir = local.git_dir();
     let want_set: HashSet<ObjectId> = wants.iter().copied().collect();
 
     let Some(first_want) = wants.first().copied() else {
@@ -328,7 +329,7 @@ fn negotiate_pack(
     // Build the negotiator from local ref tips (heads, tags, HEAD), peeled to
     // commits, excluding the wants. Advertised tips we already have become
     // `known_common`.
-    let mut negotiator = SkippingNegotiator::new(local_repo);
+    let mut negotiator = SkippingNegotiator::new(local);
     if !skip_haves {
         add_negotiation_tips(&mut negotiator, local_git_dir, &want_set)?;
         // Seed `known_common` only for advertised refs we already track at the same
@@ -447,8 +448,7 @@ fn negotiate_pack(
         Some(_) => {}
     }
 
-    let local_odb = open_odb(local_git_dir);
-    let mut pack_receive = crate::pack_receive::TempPackReceive::create(local_odb.objects_dir())?;
+    let mut pack_receive = crate::pack_receive::TempPackReceive::create(local.odb().objects_dir())?;
     pack_receive.read_sideband(conn.reader(), progress, cancel)?;
     let pack_path = pack_receive.finish()?;
     Ok((pack_path, shallow_update))
@@ -722,13 +722,13 @@ pub(crate) fn parse_v2_ls_refs_response(reader: &mut dyn Read) -> Result<LsRefsA
 /// Draining the skipping negotiator walks the whole local history, so only as many haves are
 /// taken as the rounds actually send: usually the first batch is enough for the server to be
 /// `ready`.
-pub(crate) struct V2LocalHaves {
-    negotiator: SkippingNegotiator,
+pub(crate) struct V2LocalHaves<'r> {
+    negotiator: SkippingNegotiator<'r>,
     taken: Vec<ObjectId>,
     exhausted: bool,
 }
 
-impl V2LocalHaves {
+impl V2LocalHaves<'_> {
     /// The first `n` haves (fewer when the local history has fewer).
     fn first(&mut self, n: usize) -> Result<&[ObjectId]> {
         while self.taken.len() < n && !self.exhausted {
@@ -747,11 +747,13 @@ impl V2LocalHaves {
     }
 }
 
-pub(crate) fn v2_local_haves(local_git_dir: &Path, wants: &[ObjectId]) -> Result<V2LocalHaves> {
+pub(crate) fn v2_local_haves<'r>(
+    local: &'r Repository,
+    wants: &[ObjectId],
+) -> Result<V2LocalHaves<'r>> {
     let want_set: HashSet<ObjectId> = wants.iter().copied().collect();
-    let local_repo = crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty())?;
-    let mut negotiator = SkippingNegotiator::new(local_repo);
-    add_negotiation_tips(&mut negotiator, local_git_dir, &want_set)?;
+    let mut negotiator = SkippingNegotiator::new(local);
+    add_negotiation_tips(&mut negotiator, local.git_dir(), &want_set)?;
     Ok(V2LocalHaves {
         negotiator,
         taken: Vec::new(),
@@ -764,13 +766,13 @@ pub(crate) fn v2_local_haves(local_git_dir: &Path, wants: &[ObjectId]) -> Result
 /// order. Remote-tracking tips matter: they usually sit right below what the
 /// server is about to send, so offering them keeps the pack minimal.
 fn add_negotiation_tips(
-    negotiator: &mut SkippingNegotiator,
+    negotiator: &mut SkippingNegotiator<'_>,
     local_git_dir: &Path,
     wants: &HashSet<ObjectId>,
 ) -> Result<()> {
     let mut tips: Vec<ObjectId> = Vec::new();
     let mut seen_tip: HashSet<ObjectId> = HashSet::new();
-    let mut push_tip = |negotiator: &SkippingNegotiator, oid: ObjectId| {
+    let mut push_tip = |negotiator: &SkippingNegotiator<'_>, oid: ObjectId| {
         if let Ok(Some(c)) = negotiator.repo().odb().peel_to_commit(oid) {
             if !wants.contains(&c) && seen_tip.insert(c) {
                 tips.push(c);
@@ -810,10 +812,9 @@ fn add_negotiation_tips(
 /// side-band-64k pack.
 #[allow(clippy::too_many_arguments)]
 fn negotiate_pack_v2(
-    local_git_dir: &Path,
+    local: &Repository,
     conn: &mut dyn Connection,
     server_caps: &[String],
-    local_odb: &crate::odb::Odb,
     wants: &[ObjectId],
     deepen: &V2DeepenArgs,
     wire_filter: Option<&str>,
@@ -824,6 +825,7 @@ fn negotiate_pack_v2(
     if wants.is_empty() {
         return Ok((None, ShallowUpdate::default()));
     }
+    let local_odb = local.odb();
     let object_format = v2_object_format(server_caps, local_odb);
     let cap_echo = protocol_v2::cap_lines_for_command_request(server_caps);
     let sideband_all = protocol_v2::fetch_supports_sideband_all(server_caps);
@@ -839,7 +841,7 @@ fn negotiate_pack_v2(
     let mut haves = if shallow_request || skip_local_haves {
         None
     } else {
-        Some(v2_local_haves(local_git_dir, wants)?)
+        Some(v2_local_haves(local, wants)?)
     };
 
     let mut pack_receive = crate::pack_receive::TempPackReceive::create(local_odb.objects_dir())?;
@@ -1248,8 +1250,11 @@ fn skip_v2_section_until_boundary(reader: &mut dyn Read, sideband_all: bool) -> 
 ///
 /// # Errors
 ///
-/// Returns an error if a refspec is invalid, if the negotiation or pack ingest
-/// fails, or on ref/odb I/O failure.
+/// The local repository is opened with [`FetchOptions::environment`], so objects land in its
+/// `GIT_OBJECT_DIRECTORY` when that is set.
+///
+/// Returns an error if `local_git_dir` is not a repository, if a refspec is invalid, if the
+/// negotiation or pack ingest fails, or on ref/odb I/O failure.
 pub fn fetch_remote(
     local_git_dir: &Path,
     conn: &mut dyn Connection,
@@ -1257,7 +1262,28 @@ pub fn fetch_remote(
     progress: &mut dyn Progress,
     cancel: &dyn Cancel,
 ) -> Result<FetchOutcome> {
+    let local = open_fetch_target(local_git_dir, opts)?;
+    fetch_remote_into(&local, conn, opts, progress, cancel)
+}
+
+/// Open the repository a git-dir based fetch writes into, honouring the fetch's environment.
+pub(crate) fn open_fetch_target(local_git_dir: &Path, opts: &FetchOptions) -> Result<Repository> {
+    Repository::open(
+        local_git_dir,
+        &RepositoryOptions::with_environment(opts.environment.clone()),
+    )
+}
+
+/// Like [`fetch_remote`], reading and writing objects through `local`'s object store.
+pub(crate) fn fetch_remote_into(
+    local: &Repository,
+    conn: &mut dyn Connection,
+    opts: &mut FetchOptions,
+    progress: &mut dyn Progress,
+    cancel: &dyn Cancel,
+) -> Result<FetchOutcome> {
     use crate::net_trace::net_trace;
+    let local_git_dir = local.git_dir();
     // Wall-clock since fetch_remote entry, included in phase-boundary traces so
     // `GRIT_NET_DEBUG=1` shows where time goes (see the "matched"/"done" lines).
     let t_begin = std::time::Instant::now();
@@ -1278,9 +1304,9 @@ pub fn fetch_remote(
         }
     }
     if !opts.object_wants.is_empty() {
-        return fetch_remote_object_wants(local_git_dir, conn, opts, progress, cancel);
+        return fetch_remote_object_wants(local, conn, opts, progress, cancel);
     }
-    let local_odb_for_ls = open_odb(local_git_dir);
+    let local_odb_for_ls = local.odb();
 
     // 1. Remote refs + default branch.
     //
@@ -1294,7 +1320,7 @@ pub fn fetch_remote(
     {
         let caps: Vec<String> = conn.capabilities().to_vec();
         let (refs, head_symref, peel, head_oid) =
-            v2_ls_refs(conn, &caps, &local_odb_for_ls, opts.tags, &opts.refspecs)?;
+            v2_ls_refs(conn, &caps, local_odb_for_ls, opts.tags, &opts.refspecs)?;
         let default_branch =
             head_symref.map(|t| t.strip_prefix("refs/heads/").unwrap_or(&t).to_owned());
         (refs, default_branch, Some(caps), peel, head_oid)
@@ -1347,8 +1373,13 @@ pub fn fetch_remote(
         &[v2_caps.as_deref().unwrap_or(&[]), conn_caps.as_slice()],
         &remote_refs,
     );
-    crate::transfer::sync_empty_destination_object_format(local_git_dir, remote_algo, opts)?;
-    let local_odb = open_odb(local_git_dir);
+    let reopened =
+        crate::transfer::sync_empty_destination_object_format(local_git_dir, remote_algo, opts)?
+            .then(|| crate::transfer::reopen_after_format_change(local))
+            .transpose()?;
+    let local = reopened.as_ref().unwrap_or(local);
+    let local_git_dir = local.git_dir();
+    let local_odb = local.odb();
 
     let crate::transfer::FetchMatchSet {
         mut matched,
@@ -1394,7 +1425,7 @@ pub fn fetch_remote(
         .map(|m| m.oid)
         .collect();
     let mut following_tag_wants =
-        following_tag_wants_with_local_peel(&matched, &following_only, &local_odb)?;
+        following_tag_wants_with_local_peel(&matched, &following_only, local_odb)?;
 
     // The client's current shallow grafts (drives the wire `shallow <oid>` lines
     // and the "this is a shallow request" decisions in the negotiators).
@@ -1403,7 +1434,7 @@ pub fn fetch_remote(
     if shallow_request {
         let local_shallow_set: HashSet<ObjectId> = local_shallow.iter().copied().collect();
         let peel_set = following_peel_commit_set_for_shallow(
-            &local_odb,
+            local_odb,
             &fetch_commit_oids,
             opts.absolute_depth_for_tags(),
             &local_shallow_set,
@@ -1491,10 +1522,9 @@ pub fn fetch_remote(
             validate_fetch_depth_server(opts, None, Some(caps))?;
             let deepen = V2DeepenArgs::from_opts(opts, &local_shallow);
             negotiate_pack_v2(
-                local_git_dir,
+                local,
                 conn,
                 caps,
-                &local_odb,
                 &wants,
                 &deepen,
                 wire_filter,
@@ -1504,7 +1534,7 @@ pub fn fetch_remote(
             )?
         } else {
             negotiate_pack(
-                local_git_dir,
+                local,
                 conn,
                 &wants,
                 opts,
@@ -1546,7 +1576,7 @@ pub fn fetch_remote(
             )?;
             if opts.dry_run && dry_run_quarantine.is_none() {
                 dry_run_quarantine = Some(crate::receive_quarantine::ReceiveQuarantine::create(
-                    &local_odb,
+                    local_odb,
                     local_git_dir,
                 )?);
             }
@@ -1570,7 +1600,7 @@ pub fn fetch_remote(
             } else {
                 crate::index_pack::ingest_received_pack_path_with_progress(
                     path,
-                    &local_odb,
+                    local_odb,
                     &crate::index_pack::IngestPackOptions {
                         fix_thin: true,
                         skip_post_index_verify: true,
@@ -1634,11 +1664,7 @@ pub fn fetch_remote(
     // 5. Classify + apply ref updates (ancestry via the now-populated local repo).
     let t_apply = std::time::Instant::now();
     let classify_odb = dry_run_quarantine.as_ref().map(|q| q.odb());
-    let classify_repo = if opts.dry_run {
-        None
-    } else {
-        crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty()).ok()
-    };
+    let classify_repo = (!opts.dry_run).then_some(local);
     let d_repo_open = t_apply.elapsed();
 
     let mut updates: Vec<RefUpdate> = Vec::new();
@@ -1712,7 +1738,7 @@ pub fn fetch_remote(
             &m.oid,
             m.force,
             m.dest_is_tag,
-            classify_repo.as_ref(),
+            classify_repo,
             classify_odb.as_ref(),
         );
         d_classify += t.elapsed();
@@ -1728,7 +1754,7 @@ pub fn fetch_remote(
             mode,
             opts,
             explicit_refspec_fetch,
-            classify_repo.as_ref(),
+            classify_repo,
         )?;
         if write && !opts.dry_run {
             if !crate::refs::is_valid_storable_ref_name(local_ref) {
@@ -1833,7 +1859,7 @@ pub fn fetch_remote(
 
 /// Promisor on-demand fetch: negotiate a pack for [`FetchOptions::object_wants`] only.
 fn fetch_remote_object_wants(
-    local_git_dir: &Path,
+    local: &Repository,
     conn: &mut dyn Connection,
     opts: &mut FetchOptions,
     progress: &mut dyn Progress,
@@ -1842,7 +1868,8 @@ fn fetch_remote_object_wants(
     use crate::net_trace::net_trace;
 
     let t_begin = std::time::Instant::now();
-    let local_odb = open_odb(local_git_dir);
+    let local_git_dir = local.git_dir();
+    let local_odb = local.odb();
     let wants = local_odb.missing_stored_oids(opts.object_wants.iter().copied())?;
     if wants.is_empty() {
         return Ok(FetchOutcome {
@@ -1890,10 +1917,9 @@ fn fetch_remote_object_wants(
         validate_fetch_depth_server(opts, None, Some(caps))?;
         let deepen = V2DeepenArgs::from_opts(opts, &local_shallow);
         negotiate_pack_v2(
-            local_git_dir,
+            local,
             conn,
             caps,
-            &local_odb,
             &wants,
             &deepen,
             wire_filter,
@@ -1903,7 +1929,7 @@ fn fetch_remote_object_wants(
         )?
     } else {
         negotiate_pack(
-            local_git_dir,
+            local,
             conn,
             &wants,
             opts,
@@ -1924,7 +1950,7 @@ fn fetch_remote_object_wants(
         )?;
         let ingested = crate::index_pack::ingest_received_pack_path_with_progress(
             path,
-            &local_odb,
+            local_odb,
             &crate::index_pack::IngestPackOptions {
                 fix_thin: true,
                 skip_post_index_verify: true,
@@ -2463,8 +2489,9 @@ mod fetch_advertised_ref_tests {
     fn v2_local_haves_are_produced_only_as_far_as_asked() {
         let (dir, commits) = linear_history(400);
         let unrelated_want = ObjectId::from_bytes(&[9u8; 20]).unwrap();
+        let local = Repository::open(dir.path(), &RepositoryOptions::empty()).unwrap();
 
-        let mut drained = v2_local_haves(dir.path(), &[unrelated_want]).unwrap();
+        let mut drained = v2_local_haves(&local, &[unrelated_want]).unwrap();
         let all = drained.all().unwrap().to_vec();
         assert!(drained.exhausted);
         assert_eq!(all[0], *commits.last().unwrap());
@@ -2474,7 +2501,7 @@ mod fetch_advertised_ref_tests {
             all.len()
         );
 
-        let mut lazy = v2_local_haves(dir.path(), &[unrelated_want]).unwrap();
+        let mut lazy = v2_local_haves(&local, &[unrelated_want]).unwrap();
         let first = lazy.first(4).unwrap().to_vec();
         assert_eq!(first.as_slice(), &all[..4]);
         assert_eq!(lazy.taken.len(), 4, "only the requested haves are walked");
@@ -2486,12 +2513,13 @@ mod fetch_advertised_ref_tests {
     fn v2_local_haves_first_stops_at_a_short_history() {
         let (dir, _) = linear_history(3);
         let want = ObjectId::from_bytes(&[9u8; 20]).unwrap();
-        let all = v2_local_haves(dir.path(), &[want])
+        let local = Repository::open(dir.path(), &RepositoryOptions::empty()).unwrap();
+        let all = v2_local_haves(&local, &[want])
             .unwrap()
             .all()
             .unwrap()
             .to_vec();
-        let mut haves = v2_local_haves(dir.path(), &[want]).unwrap();
+        let mut haves = v2_local_haves(&local, &[want]).unwrap();
         assert_eq!(haves.first(INITIAL_FLUSH).unwrap(), all.as_slice());
         assert!(haves.exhausted);
     }
@@ -3192,10 +3220,9 @@ mod v2_negotiation_tests {
         let want = ObjectId::from_hex("1111111111111111111111111111111111111111").unwrap();
         // The scripted server sends no pack after `done`; only the requests matter.
         let _ = negotiate_pack_v2(
-            &git_dir,
+            &repo,
             &mut server,
             &[],
-            repo.odb(),
             &[want],
             &V2DeepenArgs::default(),
             None,

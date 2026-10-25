@@ -19245,21 +19245,21 @@ pub fn grit_lib::remote::fetch::fetch_remote(&std::path::Path, &mut dyn grit_lib
 pub mod grit_lib::remote::fetch_head
 pub fn grit_lib::remote::fetch_head::merge_object_ids_hex(&str) -> alloc::vec::Vec<alloc::string::String>
 pub mod grit_lib::remote::fetch_negotiator
-pub struct grit_lib::remote::fetch_negotiator::SkippingNegotiator
-impl grit_lib::remote::fetch_negotiator::SkippingNegotiator
-pub fn grit_lib::remote::fetch_negotiator::SkippingNegotiator::ack(&mut self, grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
-pub fn grit_lib::remote::fetch_negotiator::SkippingNegotiator::add_tip(&mut self, grit_lib::objects::ObjectId) -> grit_lib::error::Result<()>
-pub fn grit_lib::remote::fetch_negotiator::SkippingNegotiator::known_common(&mut self, grit_lib::objects::ObjectId) -> grit_lib::error::Result<()>
-pub fn grit_lib::remote::fetch_negotiator::SkippingNegotiator::new(grit_lib::repo::Repository) -> Self
-pub fn grit_lib::remote::fetch_negotiator::SkippingNegotiator::next_have(&mut self) -> grit_lib::error::Result<core::option::Option<grit_lib::objects::ObjectId>>
-pub fn grit_lib::remote::fetch_negotiator::SkippingNegotiator::repo(&self) -> &grit_lib::repo::Repository
-impl !core::marker::Freeze for grit_lib::remote::fetch_negotiator::SkippingNegotiator
-impl core::marker::Send for grit_lib::remote::fetch_negotiator::SkippingNegotiator
-impl core::marker::Sync for grit_lib::remote::fetch_negotiator::SkippingNegotiator
-impl core::marker::Unpin for grit_lib::remote::fetch_negotiator::SkippingNegotiator
-impl core::marker::UnsafeUnpin for grit_lib::remote::fetch_negotiator::SkippingNegotiator
-impl !core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::fetch_negotiator::SkippingNegotiator
-impl !core::panic::unwind_safe::UnwindSafe for grit_lib::remote::fetch_negotiator::SkippingNegotiator
+pub struct grit_lib::remote::fetch_negotiator::SkippingNegotiator<'r>
+impl<'r> grit_lib::remote::fetch_negotiator::SkippingNegotiator<'r>
+pub fn grit_lib::remote::fetch_negotiator::SkippingNegotiator<'r>::ack(&mut self, grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
+pub fn grit_lib::remote::fetch_negotiator::SkippingNegotiator<'r>::add_tip(&mut self, grit_lib::objects::ObjectId) -> grit_lib::error::Result<()>
+pub fn grit_lib::remote::fetch_negotiator::SkippingNegotiator<'r>::known_common(&mut self, grit_lib::objects::ObjectId) -> grit_lib::error::Result<()>
+pub fn grit_lib::remote::fetch_negotiator::SkippingNegotiator<'r>::new(&'r grit_lib::repo::Repository) -> Self
+pub fn grit_lib::remote::fetch_negotiator::SkippingNegotiator<'r>::next_have(&mut self) -> grit_lib::error::Result<core::option::Option<grit_lib::objects::ObjectId>>
+pub fn grit_lib::remote::fetch_negotiator::SkippingNegotiator<'r>::repo(&self) -> &'r grit_lib::repo::Repository
+impl<'r> core::marker::Freeze for grit_lib::remote::fetch_negotiator::SkippingNegotiator<'r>
+impl<'r> core::marker::Send for grit_lib::remote::fetch_negotiator::SkippingNegotiator<'r>
+impl<'r> core::marker::Sync for grit_lib::remote::fetch_negotiator::SkippingNegotiator<'r>
+impl<'r> core::marker::Unpin for grit_lib::remote::fetch_negotiator::SkippingNegotiator<'r>
+impl<'r> core::marker::UnsafeUnpin for grit_lib::remote::fetch_negotiator::SkippingNegotiator<'r>
+impl<'r> !core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::fetch_negotiator::SkippingNegotiator<'r>
+impl<'r> !core::panic::unwind_safe::UnwindSafe for grit_lib::remote::fetch_negotiator::SkippingNegotiator<'r>
 pub mod grit_lib::remote::fetch_request
 pub enum grit_lib::remote::fetch_request::FetchHeadPolicy
 pub grit_lib::remote::fetch_request::FetchHeadPolicy::ForMerge

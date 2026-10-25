@@ -36,10 +36,9 @@ use crate::objects::{HashAlgo, ObjectId};
 use crate::pkt_line::{self, Packet};
 use crate::progress::{poll_cancel, Cancel, ProgressPhase, ProgressUnit, ReceivedObjects};
 use crate::push_report::{PushRefResult, PushRefStatus};
+use crate::repo::Repository;
 use crate::sideband_lines::{RemoteLine, SidebandLines};
-use crate::transfer::{
-    build_pack, open_odb, PackBuildOptions, PushOptions, PushOutcome, PushRefSpec,
-};
+use crate::transfer::{build_pack, PackBuildOptions, PushOptions, PushOutcome, PushRefSpec};
 use crate::transport::Connection;
 
 fn finish_push_outcome(
@@ -187,7 +186,21 @@ pub fn push_remote(
     progress: &mut dyn Progress,
     cancel: &dyn Cancel,
 ) -> Result<PushOutcome> {
+    let local = Repository::open(local_git_dir, &RepositoryOptions::empty())?;
+    push_remote_from(&local, conn, refs, opts, progress, cancel)
+}
+
+/// Like [`push_remote`], reading the objects to send through `local`'s object store.
+pub(crate) fn push_remote_from(
+    local: &Repository,
+    conn: &mut dyn Connection,
+    refs: &[PushRefSpec],
+    opts: &PushOptions,
+    progress: &mut dyn Progress,
+    cancel: &dyn Cancel,
+) -> Result<PushOutcome> {
     crate::trace::trace_span!("grit.push");
+    let local_git_dir = local.git_dir();
     let mut sideband = PushSidebandCollector {
         inner: progress,
         remote_messages: Vec::new(),
@@ -209,8 +222,7 @@ pub fn push_remote(
         ));
     }
 
-    let local_odb = open_odb(local_git_dir);
-    let algo = local_odb.hash_algo();
+    let algo = local.odb().hash_algo();
 
     // 1. Advertisement: split the connection's parsed advertisement into the
     //    remote ref map and the `.have` hints, and read the negotiated caps.
@@ -228,7 +240,7 @@ pub fn push_remote(
 
     // 2–3. Decide each ref update client-side, handling atomic/dry-run/no-op
     //       early-returns; the shared planner mirrors `push_local`'s gate.
-    let mut plan = match plan_push(refs, &local_odb, local_git_dir, &adv, opts)? {
+    let mut plan = match plan_push(refs, local, &adv, opts)? {
         PlanOutcome::Send(plan) => plan,
         PlanOutcome::Done(results) => {
             if !opts.dry_run {
@@ -253,7 +265,7 @@ pub fn push_remote(
     conn.writer().write_all(&commands)?;
     conn.writer().flush()?;
 
-    if let Some(pack) = build_push_pack(&plan, local_git_dir, &local_odb, &adv)? {
+    if let Some(pack) = build_push_pack(&plan, local, &adv)? {
         poll_cancel(&mut sideband, cancel)?;
         net_trace!(
             opts.network_trace,
@@ -432,19 +444,13 @@ enum PlanOutcome {
 /// identical decision set.
 fn plan_push(
     refs: &[PushRefSpec],
-    local_odb: &crate::odb::Odb,
-    local_git_dir: &Path,
+    local: &Repository,
     adv: &AdvertisedState,
     opts: &PushOptions,
 ) -> Result<PlanOutcome> {
     let mut decisions: Vec<PushDecision> = Vec::with_capacity(refs.len());
     for spec in refs {
-        decisions.push(decide_push_wire(
-            spec,
-            local_odb,
-            local_git_dir,
-            &adv.remote_refs,
-        )?);
+        decisions.push(decide_push_wire(spec, local, &adv.remote_refs)?);
     }
 
     // Atomic: a single client-side rejection aborts the whole push without
@@ -574,10 +580,10 @@ fn build_command_block(
 /// push paths so the wire bytes are identical regardless of transport.
 fn build_push_pack(
     plan: &PushPlan,
-    local_git_dir: &Path,
-    local_odb: &crate::odb::Odb,
+    local: &Repository,
     adv: &AdvertisedState,
 ) -> Result<Option<Vec<u8>>> {
+    let local_odb = local.odb();
     let wants: Vec<ObjectId> = plan
         .to_send
         .iter()
@@ -596,7 +602,7 @@ fn build_push_pack(
     )?;
     let local_cfg = crate::config::ConfigSet::load(
         &crate::environment::Environment::empty(),
-        Some(local_git_dir),
+        Some(local.git_dir()),
         true,
     )
     .ok();
@@ -624,10 +630,10 @@ struct PushDecision {
 /// on-disk remote ref.
 fn decide_push_wire(
     spec: &PushRefSpec,
-    local_odb: &crate::odb::Odb,
-    local_git_dir: &Path,
+    local: &Repository,
     remote_refs: &HashMap<String, ObjectId>,
 ) -> Result<PushDecision> {
+    let local_odb = local.odb();
     let remote_current = remote_refs.get(&spec.dst).copied();
 
     let no_op = |status: PushRefStatus,
@@ -764,12 +770,8 @@ fn decide_push_wire(
         false
     } else if crate::merge_base::is_ancestor_odb_walk(local_odb, old, src)? {
         true
-    } else if let Ok(repo) =
-        crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty())
-    {
-        crate::merge_base::is_ancestor(&repo, old, src).unwrap_or(false)
     } else {
-        false
+        crate::merge_base::is_ancestor(local, old, src).unwrap_or(false)
     };
 
     if is_ff {
@@ -1071,24 +1073,33 @@ mod tests {
         out
     }
 
-    fn flaky_push_odb(
+    fn flaky_push_repo(
         dir: &Path,
     ) -> (
-        crate::odb::Odb,
+        Repository,
         std::sync::Arc<crate::odb::store::flaky::FlakyStore>,
     ) {
         let flaky = crate::odb::store::flaky::FlakyStore::new();
-        let odb = crate::odb::OdbBuilder::files(dir.join("objects"))
-            .primary(flaky.clone())
-            .alternates(false)
-            .build();
-        (odb, flaky)
+        let git_dir = dir.join("repo.git");
+        let repo = crate::repo::RepositoryBuilder::new(RepositoryOptions::empty())
+            .odb_builder(
+                crate::odb::OdbBuilder::files(git_dir.join("objects"))
+                    .primary(flaky.clone())
+                    .alternates(false),
+            )
+            .ref_store(std::sync::Arc::new(
+                crate::refs::store::MemoryRefStore::new(),
+            ))
+            .open(&git_dir, None)
+            .unwrap();
+        (repo, flaky)
     }
 
     #[test]
     fn push_pack_haves_fail_on_backend_error_instead_of_being_dropped() {
         let dir = tempfile::tempdir().unwrap();
-        let (odb, flaky) = flaky_push_odb(dir.path());
+        let (repo, flaky) = flaky_push_repo(dir.path());
+        let odb = repo.odb();
         let blob = odb.write(ObjectKind::Blob, b"to send").unwrap();
         let remote_tip = odb.write(ObjectKind::Blob, b"remote has this").unwrap();
         let plan = PushPlan {
@@ -1098,20 +1109,18 @@ mod tests {
         let mut adv = adv_state(false, true, false);
         adv.remote_refs
             .insert("refs/heads/main".to_owned(), remote_tip);
-        assert!(build_push_pack(&plan, dir.path(), &odb, &adv)
-            .unwrap()
-            .is_some());
+        assert!(build_push_pack(&plan, &repo, &adv).unwrap().is_some());
 
         flaky.fail_contains(true);
-        let err = build_push_pack(&plan, dir.path(), &odb, &adv).unwrap_err();
+        let err = build_push_pack(&plan, &repo, &adv).unwrap_err();
         assert!(crate::odb::store::flaky::is_injected(&err), "{err:?}");
     }
 
     #[test]
     fn push_source_check_fails_on_backend_error_instead_of_missing() {
         let dir = tempfile::tempdir().unwrap();
-        let (odb, flaky) = flaky_push_odb(dir.path());
-        let src = odb.write(ObjectKind::Blob, b"source").unwrap();
+        let (repo, flaky) = flaky_push_repo(dir.path());
+        let src = repo.odb().write(ObjectKind::Blob, b"source").unwrap();
         let spec = PushRefSpec {
             src: Some(src),
             src_ref: None,
@@ -1121,11 +1130,11 @@ mod tests {
             expected_old: None,
             expect_absent: false,
         };
-        let decision = decide_push_wire(&spec, &odb, dir.path(), &HashMap::new()).unwrap();
+        let decision = decide_push_wire(&spec, &repo, &HashMap::new()).unwrap();
         assert_eq!(decision.new_tip, Some(src));
 
         flaky.fail_contains(true);
-        let err = decide_push_wire(&spec, &odb, dir.path(), &HashMap::new())
+        let err = decide_push_wire(&spec, &repo, &HashMap::new())
             .err()
             .unwrap();
         assert!(crate::odb::store::flaky::is_injected(&err), "{err:?}");
@@ -1551,14 +1560,15 @@ mod tests {
             .status()
             .unwrap();
         let git_dir = dir.join(".git");
-        let odb = open_odb(&git_dir);
+        let repo = Repository::open(&git_dir, &RepositoryOptions::empty()).unwrap();
+        let odb = repo.odb();
         let tip = crate::refs::resolve_ref(&git_dir, "HEAD").expect("head");
         let plan = PushPlan {
             decisions: vec![send_decision("refs/heads/main", tip)],
             to_send: vec![0],
         };
         let adv = adv_state(false, true, false);
-        let pack = build_push_pack(&plan, &git_dir, &odb, &adv)
+        let pack = build_push_pack(&plan, &repo, &adv)
             .unwrap()
             .expect("pack bytes");
         let deltas = pack_delta_count(&pack, odb.hash_algo().len());

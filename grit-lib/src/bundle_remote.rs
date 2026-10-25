@@ -6,7 +6,6 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use crate::bundle::{plan_bundle_create, Bundle, BundleCreatePlan, BundleError, BundleSpec};
-use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::fetch::{NoProgress, Progress};
 use crate::objects::ObjectId;
@@ -247,6 +246,9 @@ pub fn fetch_from_bundle(
 }
 
 /// Like [`fetch_from_bundle`], reporting bundle receive and index-pack progress.
+///
+/// The local repository is opened with [`FetchOptions::environment`], so objects land in its
+/// `GIT_OBJECT_DIRECTORY` when that is set.
 pub fn fetch_from_bundle_with_progress(
     local_git_dir: &Path,
     bundle_path: &Path,
@@ -254,11 +256,22 @@ pub fn fetch_from_bundle_with_progress(
     progress: &mut dyn Progress,
     cancel: &dyn crate::progress::Cancel,
 ) -> Result<FetchOutcome> {
+    let repo = crate::fetch::open_fetch_target(local_git_dir, opts)?;
+    fetch_from_bundle_into(&repo, bundle_path, opts, progress, cancel)
+}
+
+/// Like [`fetch_from_bundle_with_progress`], unbundling into `repo`'s object store.
+pub(crate) fn fetch_from_bundle_into(
+    repo: &Repository,
+    bundle_path: &Path,
+    opts: &FetchOptions,
+    progress: &mut dyn Progress,
+    cancel: &dyn crate::progress::Cancel,
+) -> Result<FetchOutcome> {
     crate::progress::poll_cancel(progress, cancel)?;
     let bundle = Bundle::open(bundle_path).map_err(map_bundle_err)?;
-    let repo = Repository::open(local_git_dir, &RepositoryOptions::empty())?;
     bundle
-        .verify(&repo)
+        .verify(repo)
         .map_err(map_bundle_err)?
         .into_result()
         .map_err(map_bundle_err)?;
@@ -268,7 +281,7 @@ pub fn fetch_from_bundle_with_progress(
     } else {
         crate::progress::poll_cancel(progress, cancel)?;
         let unbundled = bundle
-            .unbundle_with_progress(&repo, progress, cancel)
+            .unbundle_with_progress(repo, progress, cancel)
             .map_err(map_bundle_err)?;
         crate::progress::poll_cancel(progress, cancel)?;
         (unbundled.transfer, unbundled.pack_object_ids)
@@ -291,8 +304,7 @@ pub fn fetch_from_bundle_with_progress(
 
     crate::progress::poll_cancel(progress, cancel)?;
     complete_bundle_fetch(
-        local_git_dir,
-        repo.odb(),
+        repo,
         &remote_refs,
         default_branch,
         &effective,
@@ -350,8 +362,7 @@ fn bundle_branch_tip_matches(
 
 #[allow(clippy::too_many_arguments)]
 fn complete_bundle_fetch(
-    local_git_dir: &Path,
-    local_odb: &crate::odb::Odb,
+    local: &Repository,
     remote_refs: &[(String, ObjectId)],
     default_branch: Option<String>,
     opts: &FetchOptions,
@@ -359,6 +370,8 @@ fn complete_bundle_fetch(
     pack_oids: HashSet<ObjectId>,
     transfer: TransferStats,
 ) -> Result<FetchOutcome> {
+    let local_git_dir = local.git_dir();
+    let local_odb = local.odb();
     let remote_head_oid = crate::transfer::remote_head_oid_from_advertised(remote_refs);
     let filtered_remote_refs: Vec<(String, ObjectId)> = remote_refs
         .iter()
@@ -405,11 +418,7 @@ fn complete_bundle_fetch(
         crate::fetch::retain_following_tags(local_odb, &mut matched, &pack_oids, &local_shallow)?;
     }
 
-    let local_repo = if opts.dry_run {
-        None
-    } else {
-        Repository::open(local_git_dir, &RepositoryOptions::empty()).ok()
-    };
+    let local_repo = (!opts.dry_run).then_some(local);
 
     let mut updates: Vec<RefUpdate> = Vec::new();
     let mut prune_batch: Vec<crate::refs::store::RefUpdate> = Vec::new();
@@ -451,7 +460,7 @@ fn complete_bundle_fetch(
             &m.oid,
             m.force,
             m.dest_is_tag,
-            local_repo.as_ref(),
+            local_repo,
             None,
         );
 
@@ -466,7 +475,7 @@ fn complete_bundle_fetch(
             mode,
             opts,
             explicit_refspec_fetch,
-            local_repo.as_ref(),
+            local_repo,
         )?;
         if write && !opts.dry_run {
             if !crate::refs::is_valid_storable_ref_name(local_ref) {
@@ -553,6 +562,7 @@ fn map_bundle_err(e: BundleError) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::environment::RepositoryOptions;
 
     #[test]
     fn default_branch_follows_bundle_head_not_first_branch_line() {
