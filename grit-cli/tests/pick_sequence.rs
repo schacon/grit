@@ -426,3 +426,50 @@ fn pick_message_requires_single_commit() {
     validate_pick_schema(&ok);
     assert_eq!(git(&dir, &["log", "-1", "--format=%s"]).trim(), "custom");
 }
+
+#[test]
+fn pick_json_subjects_skip_leading_blank_message_lines() {
+    let dir = unique_tmp("pick-seq", "blank-led-subject");
+    init_repo(&dir);
+    commit_file(&dir, "f.txt", "base\n", "base");
+    git(&dir, &["switch", "-q", "-c", "topic"]);
+    let commit_verbatim = |path: &str, body: &str| {
+        write_file(&dir, path, body);
+        git(&dir, &["add", path]);
+        write_file(
+            &dir,
+            ".git/blank-led-msg",
+            "\n\n  blank-led subject\n\nbody\n",
+        );
+        git(
+            &dir,
+            &[
+                "commit",
+                "-q",
+                "--cleanup=verbatim",
+                "-F",
+                ".git/blank-led-msg",
+            ],
+        );
+        git(&dir, &["rev-parse", "HEAD"]).trim().to_owned()
+    };
+    let clean = commit_verbatim("g.txt", "g\n");
+    let conflicting = commit_verbatim("f.txt", "topic\n");
+    assert_eq!(
+        git(&dir, &["log", "-1", "--format=%s", &conflicting]).trim(),
+        "blank-led subject"
+    );
+    git(&dir, &["switch", "-q", "main"]);
+    commit_file(&dir, "f.txt", "main\n", "main");
+
+    let check = grit(&dir, &["--json", "pick", "--check", &conflicting]);
+    let v: Value = serde_json::from_str(check.stdout.trim()).expect("json stdout");
+    assert_eq!(v["result"], "conflicts", "{}", check.stderr);
+    assert_eq!(v["commits"][0]["subject"], "blank-led subject");
+
+    let v = json_stdout(&["--json", "pick", &clean], &dir);
+    assert_eq!(v["result"], "picked");
+    assert_eq!(v["commits"][0]["subject"], "blank-led subject");
+    validate_pick_schema(&v);
+    git(&dir, &["fsck", "--strict"]);
+}

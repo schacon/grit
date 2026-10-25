@@ -11,9 +11,9 @@ use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::porcelain::replay::ReplayDirection;
 use grit_lib::porcelain::replay_sequence::{
-    abort_replay_sequence, commits_to_replay, continue_replay_sequence, skip_replay_step,
-    start_replay_sequence, ReplayCreated, ReplayEmptyPolicy, ReplayOptions, ReplaySequenceRequest,
-    SequenceOutcome,
+    abort_replay_sequence, commits_to_replay, continue_replay_sequence, predict_replay_sequence,
+    skip_replay_step, start_replay_sequence, ReplayCreated, ReplayEmptyPolicy, ReplayOptions,
+    ReplaySequenceRequest, SequenceOutcome, SequencePrediction,
 };
 use grit_lib::repo::Repository;
 const IDENT: &str = "Test User <t@example.com> 1700000000 +0000";
@@ -733,11 +733,13 @@ fn continue_after_range_conflict_pairs_all_created_sources() {
                 source: c1,
                 new_oid: created[0].new_oid,
                 change_id: created[0].change_id.clone(),
+                subject: "t1 conflict".into(),
             },
             ReplayCreated {
                 source: c2,
                 new_oid: created[1].new_oid,
                 change_id: created[1].change_id.clone(),
+                subject: "t2 clean".into(),
             },
         ]
     );
@@ -986,4 +988,171 @@ fn pick_refuses_staged_or_unstaged_changes_without_state() {
         fs::read_to_string(root.path().join("tests/deep/er/f2.txt")).unwrap(),
         "unstaged\n"
     );
+}
+
+fn stored_change_id(repo: &Repository, oid: ObjectId) -> Option<grit_lib::change_id::ChangeId> {
+    let obj = repo.odb().read(&oid).expect("read");
+    change_id(&parse_commit(&obj.data).expect("parse"))
+}
+
+#[test]
+fn revert_continue_reports_subjects_and_change_ids_of_earlier_steps() {
+    let root = tempfile::tempdir().expect("tempdir");
+    init_repo(root.path());
+    commit_file(root.path(), "shared.txt", "base\n", "base");
+    let add_clean = commit_file(root.path(), "clean.txt", "clean\n", "add clean");
+    let edit_shared = commit_file(root.path(), "shared.txt", "b\n", "edit shared");
+    commit_file(root.path(), "shared.txt", "c\n", "edit shared again");
+
+    let repo = open_repo(root.path());
+    let out = start_replay_sequence(
+        &repo,
+        &revert_req(vec![add_clean, edit_shared], ReplayOptions::default()),
+    )
+    .expect("revert");
+    let SequenceOutcome::Conflicts {
+        current,
+        current_subject,
+        created_so_far,
+        ..
+    } = out
+    else {
+        panic!("expected conflicts on the second revert, got {out:?}");
+    };
+    assert_eq!(current, edit_shared);
+    assert_eq!(current_subject, "edit shared");
+    assert_eq!(created_so_far.len(), 1);
+    assert_eq!(created_so_far[0].subject, "Revert \"add clean\"");
+
+    fs::write(root.path().join("shared.txt"), "resolved\n").unwrap();
+    git(root.path(), &["add", "shared.txt"]);
+    let SequenceOutcome::Completed { created, .. } =
+        continue_replay_sequence(&repo, IDENT).expect("continue")
+    else {
+        panic!("expected completed");
+    };
+    assert_eq!(created.len(), 2);
+    assert_eq!(created[0].source, add_clean);
+    assert_eq!(created[0].subject, "Revert \"add clean\"");
+    assert_eq!(created[1].source, edit_shared);
+    assert_eq!(created[1].subject, "Revert \"edit shared\"");
+    for record in &created {
+        let stored = stored_change_id(&repo, record.new_oid);
+        assert!(stored.is_some(), "revert commits carry a change-id");
+        assert_eq!(record.change_id, stored);
+    }
+    git_fsck_strict(root.path());
+}
+
+#[test]
+fn empty_stop_and_prediction_report_current_subject() {
+    let root = tempfile::tempdir().expect("tempdir");
+    init_repo(root.path());
+    commit_file(root.path(), "f", "a\n", "base");
+    git(root.path(), &["switch", "-c", "topic"]);
+    git(
+        root.path(),
+        &["commit", "--allow-empty", "-qm", "nothing here"],
+    );
+    let empty = oid_from_rev(root.path(), "HEAD");
+    git(root.path(), &["switch", "main"]);
+
+    let repo = open_repo(root.path());
+    let prediction =
+        predict_replay_sequence(&repo, &pick_req(vec![empty], ReplayOptions::default()))
+            .expect("predict");
+    assert_eq!(
+        prediction,
+        SequencePrediction::Empty {
+            commit: empty,
+            subject: "nothing here".into(),
+        }
+    );
+
+    let out = start_replay_sequence(&repo, &pick_req(vec![empty], ReplayOptions::default()))
+        .expect("pick");
+    let SequenceOutcome::Empty {
+        current,
+        current_subject,
+        created_so_far,
+        ..
+    } = out
+    else {
+        panic!("expected an empty stop, got {out:?}");
+    };
+    assert_eq!(current, empty);
+    assert_eq!(current_subject, "nothing here");
+    assert!(created_so_far.is_empty());
+    abort_replay_sequence(&repo).expect("abort");
+}
+
+#[test]
+fn subjects_skip_leading_blank_message_lines_like_git() {
+    let root = tempfile::tempdir().expect("tempdir");
+    init_repo(root.path());
+    commit_file(root.path(), "f", "base\n", "base");
+    git(root.path(), &["switch", "-c", "topic"]);
+    fs::write(root.path().join("f"), "topic\n").unwrap();
+    git(root.path(), &["add", "f"]);
+    let tree = git(root.path(), &["write-tree"]).trim().to_owned();
+    let mut commit_tree = Command::new("git")
+        .current_dir(root.path())
+        .args(["commit-tree", &tree, "-p", "HEAD"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("git commit-tree");
+    use std::io::Write as _;
+    commit_tree
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(b"\n\n  blank-led subject\n\nbody\n")
+        .expect("write message");
+    let out = commit_tree.wait_with_output().expect("commit-tree output");
+    assert!(out.status.success());
+    let pick = ObjectId::from_hex(String::from_utf8_lossy(&out.stdout).trim()).expect("oid");
+    git(root.path(), &["reset", "-q", "--hard", &pick.to_hex()]);
+    assert_eq!(
+        git(root.path(), &["log", "-1", "--format=%s", &pick.to_hex()]).trim(),
+        "blank-led subject"
+    );
+    git(root.path(), &["switch", "main"]);
+    fs::write(root.path().join("f"), "main\n").unwrap();
+    git(root.path(), &["commit", "-qam", "main"]);
+
+    let repo = open_repo(root.path());
+    let req = pick_req(vec![pick], ReplayOptions::default());
+    match predict_replay_sequence(&repo, &req).expect("predict") {
+        SequencePrediction::Conflicts { subject, .. } => assert_eq!(subject, "blank-led subject"),
+        other => panic!("expected predicted conflicts, got {other:?}"),
+    }
+    match start_replay_sequence(&repo, &req).expect("pick") {
+        SequenceOutcome::Conflicts {
+            current_subject, ..
+        } => assert_eq!(current_subject, "blank-led subject"),
+        other => panic!("expected conflicts, got {other:?}"),
+    }
+    let todo = fs::read_to_string(root.path().join(".git/sequencer/todo")).expect("todo");
+    assert!(
+        todo.trim_end().ends_with("blank-led subject"),
+        "todo names the first non-blank line, like git: {todo:?}"
+    );
+
+    fs::write(root.path().join("f"), "resolved\n").unwrap();
+    git(root.path(), &["add", "f"]);
+    let SequenceOutcome::Completed { created, .. } =
+        continue_replay_sequence(&repo, IDENT).expect("continue")
+    else {
+        panic!("expected completed");
+    };
+    assert_eq!(created.len(), 1);
+    assert_eq!(
+        created[0].subject,
+        git(root.path(), &["log", "-1", "--format=%s"]).trim()
+    );
+    assert_eq!(created[0].subject, "blank-led subject");
+    git_fsck_strict(root.path());
 }
