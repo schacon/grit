@@ -122,7 +122,6 @@
     "kind",
     "rejected",
     "remote",
-    "remote_messages",
     "results"
   ],
   "title": "PushOutcome",

@@ -43,7 +43,7 @@ pub struct PushOutcome {
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub upstream_set: Option<Vec<String>>,
     /// Hook and diagnostic lines from the remote (`remote: …` in human output).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(skip_serializing_if = "Vec::is_empty")]
     pub remote_messages: Vec<String>,
 }
