@@ -179,6 +179,8 @@ fn switch_to(repo: &Repository, branch: &str, oid: ObjectId) {
             dry_run: false,
             hooks: grit_lib::PostOperationHooks::Run,
         },
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("switch");
 }
@@ -202,6 +204,8 @@ fn exercise(storage: Storage) {
     reset_to_commit(
         &repo,
         &ResetOptions::new(fx.main, ResetMode::Hard, "T <t@example.com>", "reset: test"),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("reset --hard");
     assert_git_clean(&fx, &format!("{storage:?} reset --hard"));
@@ -265,6 +269,8 @@ fn corrupt_large_blob_never_leaves_a_partial_file() {
     let err = reset_to_commit(
         &repo,
         &ResetOptions::new(fx.main, ResetMode::Hard, "T <t@example.com>", "reset: test"),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     );
     assert!(err.is_err(), "reset --hard to a truncated blob must fail");
     assert_eq!(
