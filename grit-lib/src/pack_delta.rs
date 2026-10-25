@@ -33,9 +33,7 @@ use crate::pack_objects::{
     encode_ofs_delta_distance, encode_pack_object_header, pack_type_code, PackBuildOptions,
     PackStats, PlannedEntry,
 };
-use crate::parallel::{
-    try_par_map_force, ParallelHashError, ParallelOp, ParallelOptions, ThreadPolicy,
-};
+use crate::parallel::{ParallelOp, ParallelOptions, ThreadPolicy};
 
 /// Whether a delta from `base` to `target` was already rejected by an earlier pack write.
 ///
@@ -727,6 +725,8 @@ struct PreparedEntry {
     payload_len: usize,
     /// Set for freshly compressed whole objects.
     whole_kind: Option<ObjectKind>,
+    /// Body copied verbatim from an existing local pack.
+    reused: bool,
 }
 
 /// Resolve [`ParallelOptions`] for pack writing from repo config and an optional override.
@@ -773,7 +773,7 @@ pub(crate) fn serialize_pack_with_deltas(
 
 /// Planned entries encoded per parallel batch while streaming a pack, which bounds
 /// how much compressed output is held in memory at once.
-const WRITE_BATCH_ENTRIES: usize = 4096;
+const WRITE_BATCH_ENTRIES: usize = 256;
 
 /// Stream a delta plan to `w` as a PACK v2 stream, including the trailing checksum.
 ///
@@ -823,6 +823,8 @@ fn write_pack_in_batches(
     let count = u32::try_from(entries.len())
         .map_err(|_| Error::CorruptObject("pack object count exceeds u32".to_owned()))?;
     let delta_count = entries.iter().filter(|e| e.base.is_some()).count() as u32;
+    let mut verbatim_reuse_objects = 0u32;
+    let mut verbatim_reuse_bytes = 0u64;
 
     let mut out = HashingWriter::new(algo, w);
     let mut header: Vec<u8> = Vec::with_capacity(12 + algo.len());
@@ -833,49 +835,79 @@ fn write_pack_in_batches(
     let mut offset = header.len() as u64;
 
     let mut oid_to_offset: OidHashMap<u64> = oid_hash_map();
-    for batch in entries.chunks(batch_entries.max(1)) {
-        let prepared =
-            prepare_entries_parallel(odb, batch, plan_payloads, opts, &par_opts, compression)?;
-        for (entry, prep) in batch.iter().zip(prepared) {
-            header.clear();
-            match (entry.base, &prep.body) {
-                (None, PreparedBody::Raw(_)) => {}
-                (None, PreparedBody::Zlib(_)) => {
-                    let kind = prep.whole_kind.unwrap_or(entry.kind);
-                    encode_pack_object_header(&mut header, pack_type_code(kind), prep.payload_len);
+    let mut emit = |entry: &PlannedEntry, prep: &PreparedEntry| -> Result<()> {
+        header.clear();
+        match (entry.base, &prep.body) {
+            (None, PreparedBody::Raw(_)) => {}
+            (None, PreparedBody::Zlib(_)) => {
+                let kind = prep.whole_kind.unwrap_or(entry.kind);
+                encode_pack_object_header(&mut header, pack_type_code(kind), prep.payload_len);
+            }
+            (Some(base_oid), _) => {
+                let in_pack_offset = oid_to_offset.get(&base_oid).copied();
+                if let Some(base_off) = in_pack_offset.filter(|_| opts.use_ofs_delta) {
+                    let dist = offset.checked_sub(base_off).ok_or_else(|| {
+                        Error::CorruptObject("ofs-delta distance underflow".to_owned())
+                    })?;
+                    encode_pack_object_header(&mut header, 6, prep.payload_len);
+                    encode_ofs_delta_distance(&mut header, dist);
+                } else {
+                    if base_oid.as_bytes().len() != algo.len() {
+                        return Err(Error::CorruptObject(
+                            "ref-delta base oid width mismatch".to_owned(),
+                        ));
+                    }
+                    encode_pack_object_header(&mut header, 7, prep.payload_len);
+                    header.extend_from_slice(base_oid.as_bytes());
                 }
-                (Some(base_oid), _) => {
-                    let in_pack_offset = oid_to_offset.get(&base_oid).copied();
-                    if let Some(base_off) = in_pack_offset.filter(|_| opts.use_ofs_delta) {
-                        let dist = offset.checked_sub(base_off).ok_or_else(|| {
-                            Error::CorruptObject("ofs-delta distance underflow".to_owned())
-                        })?;
-                        encode_pack_object_header(&mut header, 6, prep.payload_len);
-                        encode_ofs_delta_distance(&mut header, dist);
-                    } else {
-                        if base_oid.as_bytes().len() != algo.len() {
-                            return Err(Error::CorruptObject(
-                                "ref-delta base oid width mismatch".to_owned(),
-                            ));
-                        }
-                        encode_pack_object_header(&mut header, 7, prep.payload_len);
-                        header.extend_from_slice(base_oid.as_bytes());
+            }
+        }
+        let body = match &prep.body {
+            PreparedBody::Raw(bytes) | PreparedBody::Zlib(bytes) => bytes,
+        };
+        out.write_all(&header).map_err(Error::Io)?;
+        out.write_all(body).map_err(Error::Io)?;
+        if let Some(rows) = index_rows.as_deref_mut() {
+            let mut crc = crc32fast::Hasher::new();
+            crc.update(&header);
+            crc.update(body);
+            rows.push((entry.oid, offset, crc.finalize()));
+        }
+        if prep.reused {
+            verbatim_reuse_objects += 1;
+            verbatim_reuse_bytes += body.len() as u64;
+        }
+        oid_to_offset.insert(entry.oid, offset);
+        offset += (header.len() + body.len()) as u64;
+        Ok(())
+    };
+    let prepare =
+        |batch: &[PlannedEntry]| prepare_batch(odb, batch, plan_payloads, opts, compression);
+    let batches: Vec<&[PlannedEntry]> = entries.chunks(batch_entries.max(1)).collect();
+    let workers = par_opts.threads.get();
+    if workers > 1 && entries.len() >= MIN_ENTRIES_FOR_PARALLEL_PACK_WRITE && batches.len() > 1 {
+        // Long-lived workers keep the odb's pack caches across batches; a pool per
+        // batch would reopen every pack index on each new thread.
+        crate::parallel::run_ordered_batches(
+            &batches,
+            1,
+            workers,
+            || odb.pack_read_context_guard(),
+            |_, batch| prepare(batch),
+            |done, prepared| {
+                for (batch, preps) in done.iter().zip(prepared) {
+                    for (entry, prep) in batch.iter().zip(&preps) {
+                        emit(entry, prep)?;
                     }
                 }
+                Ok(())
+            },
+        )?;
+    } else {
+        for batch in batches {
+            for (entry, prep) in batch.iter().zip(&prepare(batch)?) {
+                emit(entry, prep)?;
             }
-            let body = match &prep.body {
-                PreparedBody::Raw(bytes) | PreparedBody::Zlib(bytes) => bytes,
-            };
-            out.write_all(&header).map_err(Error::Io)?;
-            out.write_all(body).map_err(Error::Io)?;
-            if let Some(rows) = index_rows.as_deref_mut() {
-                let mut crc = crc32fast::Hasher::new();
-                crc.update(&header);
-                crc.update(body);
-                rows.push((entry.oid, offset, crc.finalize()));
-            }
-            oid_to_offset.insert(entry.oid, offset);
-            offset += (header.len() + body.len()) as u64;
         }
     }
     out.finish().map_err(Error::Io)?;
@@ -883,6 +915,8 @@ fn write_pack_in_batches(
         object_count: count,
         pack_bytes: offset + algo.len() as u64,
         delta_count,
+        verbatim_reuse_bytes,
+        verbatim_reuse_objects,
         ..PackStats::default()
     })
 }
@@ -892,27 +926,21 @@ fn write_pack_in_batches(
 // thread pool and index sharing often lose to a single-threaded pass.
 const MIN_ENTRIES_FOR_PARALLEL_PACK_WRITE: usize = 2048;
 
-fn prepare_entries_parallel(
+/// Delta-encode and deflate one batch of planned entries, in order.
+fn prepare_batch(
     odb: &Odb,
     entries: &[PlannedEntry],
     plan_payloads: &OidHashMap<Arc<[u8]>>,
     opts: &PackBuildOptions,
-    par_opts: &ParallelOptions,
     compression: Compression,
 ) -> Result<Vec<PreparedEntry>> {
-    let delta_indices = Arc::new(build_delta_indices(odb, entries, plan_payloads)?);
-
-    let prepare = |entry: &PlannedEntry| -> Result<PreparedEntry> {
-        prepare_one_entry(odb, entry, plan_payloads, &delta_indices, opts, compression)
-    };
-
-    if par_opts.threads.get() <= 1 || entries.len() < MIN_ENTRIES_FOR_PARALLEL_PACK_WRITE {
-        entries.iter().map(prepare).collect()
-    } else {
-        try_par_map_force(entries, *par_opts, prepare).map_err(|e| match e {
-            ParallelHashError::Task(err) => err,
+    let delta_indices = build_delta_indices(odb, entries, plan_payloads)?;
+    entries
+        .iter()
+        .map(|entry| {
+            prepare_one_entry(odb, entry, plan_payloads, &delta_indices, opts, compression)
         })
-    }
+        .collect()
 }
 
 fn build_delta_indices(
@@ -989,9 +1017,10 @@ fn prepare_whole(
     if opts.reuse_objects && odb.hash_algo() == HashAlgo::Sha1 {
         if let Some(raw) = crate::pack::packed_full_object_slice(odb.objects_dir(), &entry.oid)? {
             return Ok(PreparedEntry {
-                body: PreparedBody::Raw(raw.to_vec()),
+                body: PreparedBody::Raw(raw),
                 payload_len: 0,
                 whole_kind: None,
+                reused: true,
             });
         }
     }
@@ -1001,6 +1030,7 @@ fn prepare_whole(
         body: PreparedBody::Zlib(zlib),
         payload_len: payload.len(),
         whole_kind: Some(entry.kind),
+        reused: false,
     })
 }
 
@@ -1020,6 +1050,7 @@ fn prepare_delta(
             body: PreparedBody::Zlib(zlib),
             payload_len: delta_len,
             whole_kind: None,
+            reused: true,
         });
     }
 
@@ -1045,6 +1076,7 @@ fn prepare_delta(
         body: PreparedBody::Zlib(zlib),
         payload_len: delta.len(),
         whole_kind: None,
+        reused: false,
     })
 }
 
@@ -1311,23 +1343,57 @@ mod tests {
         std::fs::create_dir_all(&objects).expect("objects");
         let odb = Odb::new(&objects);
         let opts = PackBuildOptions::default();
-        let par = ParallelOptions {
-            threads: NonZeroUsize::MIN,
-            min_items: 0,
-            min_total_bytes: None,
-            signed_entry_threshold: None,
-        };
         let payloads = oid_hash_map();
-        let got = prepare_entries_parallel(
-            &odb,
-            &[entry],
-            &payloads,
-            &opts,
-            &par,
-            Compression::default(),
-        )
-        .expect("prepare");
+        let got = prepare_batch(&odb, &[entry], &payloads, &opts, Compression::default())
+            .expect("prepare");
         assert_eq!(got.len(), 1);
+    }
+
+    #[test]
+    fn streamed_pack_is_identical_across_worker_counts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let objects = dir.path().join("objects");
+        std::fs::create_dir_all(&objects).expect("objects");
+        let odb = Odb::new(&objects);
+        let entries: Vec<PlannedEntry> = (0..3000u32)
+            .map(|i| {
+                let data = format!("blob number {i}\n").into_bytes();
+                PlannedEntry {
+                    oid: odb.hash(ObjectKind::Blob, &data).unwrap(),
+                    kind: ObjectKind::Blob,
+                    data,
+                    base: None,
+                    reused_delta: None,
+                    reused_delta_zlib: None,
+                }
+            })
+            .collect();
+        let payloads = oid_hash_map();
+        let opts = PackBuildOptions::default();
+        let write = |threads: usize| {
+            let mut out = Vec::new();
+            let mut rows = Vec::new();
+            let stats = write_pack_with_deltas(
+                &odb,
+                &entries,
+                &payloads,
+                &opts,
+                Some(threads),
+                &mut out,
+                Some(&mut rows),
+            )
+            .unwrap();
+            (out, stats, rows)
+        };
+        let (serial, serial_stats, serial_rows) = write(1);
+        let (parallel, parallel_stats, parallel_rows) = write(4);
+        assert_eq!(serial, parallel);
+        assert_eq!(serial_stats, parallel_stats);
+        assert_eq!(serial_rows, parallel_rows);
+        assert_eq!(serial_stats.object_count, 3000);
+        assert_eq!(serial_stats.pack_bytes, serial.len() as u64);
+        let (body, trailer) = serial.split_at(serial.len() - 20);
+        assert_eq!(HashAlgo::Sha1.checksum_digest(body).as_slice(), trailer);
     }
 
     #[test]

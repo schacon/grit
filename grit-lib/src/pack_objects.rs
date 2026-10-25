@@ -114,6 +114,8 @@ impl PackBuildOptions {
     /// Window and depth follow `pack.window` / `pack.depth`. Whole objects and deltas
     /// already in the repository's packs are copied as they are, and the delta search
     /// only covers blobs that are not already stored as a delta, as Git does when serving.
+    /// Like Git, `pack.depth = 0` only disables new deltas: existing on-disk deltas are
+    /// still sent.
     ///
     /// # Parameters
     /// - `cfg` — repository config, or `None` for Git's defaults.
@@ -134,7 +136,7 @@ impl PackBuildOptions {
             window,
             max_depth,
             use_ofs_delta,
-            reuse_deltas: max_depth > 0,
+            reuse_deltas: true,
             reuse_objects: true,
             use_bitmaps: true,
             ..Default::default()
@@ -414,6 +416,32 @@ pub fn build_pack_with_shallow_and_filter(
     filter: Option<&ObjectFilter>,
     opts: &PackBuildOptions,
 ) -> Result<Vec<u8>> {
+    let mut pack = Vec::new();
+    write_pack_with_shallow_and_filter(
+        odb,
+        wants,
+        haves,
+        have_shallow,
+        source_shallow,
+        filter,
+        opts,
+        &mut pack,
+    )?;
+    Ok(pack)
+}
+
+/// Streaming form of [`build_pack_with_shallow_and_filter`].
+#[allow(clippy::too_many_arguments)]
+fn write_pack_with_shallow_and_filter(
+    odb: &Odb,
+    wants: &[ObjectId],
+    haves: &[ObjectId],
+    have_shallow: &HashSet<ObjectId>,
+    source_shallow: &HashSet<ObjectId>,
+    filter: Option<&ObjectFilter>,
+    opts: &PackBuildOptions,
+    w: &mut dyn Write,
+) -> Result<PackStats> {
     let selection = crate::pack_object_select::enumerate_pack_objects(
         odb,
         wants,
@@ -424,19 +452,46 @@ pub fn build_pack_with_shallow_and_filter(
             have_shallow_grafts: Some(have_shallow),
             use_bitmaps: opts.use_bitmaps,
             exclude_objects: None,
-            prefetch_walk_objects: true,
+            prefetch_walk_objects: false,
         },
     )?;
-    build_pack_from_send_list(
+    if !opts.delta {
+        let bytes = serialize_pack(odb, &selection.send, opts)?;
+        w.write_all(&bytes).map_err(Error::Io)?;
+        return Ok(PackStats {
+            object_count: u32::try_from(selection.send.len()).unwrap_or(u32::MAX),
+            pack_bytes: bytes.len() as u64,
+            ..PackStats::default()
+        });
+    }
+    let plan = plan_deltas(
         odb,
         &selection.send,
         &selection.have_closure,
         opts,
-        &selection.blob_name_hashes,
+        &oid_hash_map_from(&selection.blob_name_hashes),
+        None,
+        HashMap::new(),
+    )?;
+    crate::pack_delta::write_pack_with_deltas(
+        odb,
+        &plan.entries,
+        &plan.payloads,
+        opts,
+        None,
+        w,
+        None,
     )
 }
 
 /// Stream a pack for upload-pack: pack reuse when bitmaps allow, otherwise pack-objects.
+///
+/// The whole build runs in the odb's pack read context, so planning and the pack-write
+/// workers share one set of pack caches. Filtered (partial clone) packs stream too.
+///
+/// # Errors
+///
+/// Missing wants, corrupt objects, or I/O failures while writing to `w`.
 #[allow(clippy::too_many_arguments)]
 pub fn write_upload_pack_stream(
     repo: &Repository,
@@ -449,8 +504,35 @@ pub fn write_upload_pack_stream(
     progress: &mut dyn FnMut(PackProgress),
     w: &mut dyn Write,
 ) -> Result<PackStats> {
+    repo.odb().with_pack_read_context(|| {
+        write_upload_pack_stream_in_context(
+            repo,
+            wants,
+            haves,
+            source_shallow,
+            have_shallow,
+            filter,
+            opts,
+            progress,
+            w,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_upload_pack_stream_in_context(
+    repo: &Repository,
+    wants: &[ObjectId],
+    haves: &[ObjectId],
+    source_shallow: &HashSet<ObjectId>,
+    have_shallow: &HashSet<ObjectId>,
+    filter: Option<&ObjectFilter>,
+    opts: &PackBuildOptions,
+    progress: &mut dyn FnMut(PackProgress),
+    w: &mut dyn Write,
+) -> Result<PackStats> {
     if filter.is_some() {
-        let pack = build_pack_with_shallow_and_filter(
+        return write_pack_with_shallow_and_filter(
             repo.odb(),
             wants,
             haves,
@@ -458,13 +540,8 @@ pub fn write_upload_pack_stream(
             source_shallow,
             filter,
             opts,
-        )?;
-        let len = pack.len() as u64;
-        w.write_all(&pack).map_err(Error::Io)?;
-        return Ok(PackStats {
-            pack_bytes: len,
-            ..PackStats::default()
-        });
+            w,
+        );
     }
     if opts.use_bitmaps {
         if let Some(stats) = crate::pack_reuse::try_write_streaming_pack(
@@ -1174,6 +1251,42 @@ fn read_parallel<T: Send>(
     })
 }
 
+/// Reorder `entries` so every delta base that is in the pack precedes its targets.
+///
+/// Entries keep their relative order except that a not-yet-emitted base chain is
+/// emitted, deepest base first, right before the first entry that needs it. Bases
+/// outside the pack (thin-pack bases) are left alone.
+fn order_bases_first(entries: Vec<PlannedEntry>) -> Vec<PlannedEntry> {
+    let position: OidHashMap<usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.oid, i))
+        .collect();
+    let bases: Vec<Option<usize>> = entries
+        .iter()
+        .map(|e| e.base.and_then(|b| position.get(&b).copied()))
+        .collect();
+    let mut slots: Vec<Option<PlannedEntry>> = entries.into_iter().map(Some).collect();
+    let mut ordered = Vec::with_capacity(slots.len());
+    let mut chain = Vec::new();
+    for i in 0..slots.len() {
+        let mut cur = Some(i);
+        while let Some(j) = cur {
+            if slots[j].is_none() || chain.len() > slots.len() {
+                break;
+            }
+            chain.push(j);
+            cur = bases[j];
+        }
+        while let Some(j) = chain.pop() {
+            if let Some(entry) = slots[j].take() {
+                ordered.push(entry);
+            }
+        }
+    }
+    ordered
+}
+
 /// Whether `objects_dir/pack` holds at least one `.pack` file.
 pub(crate) fn objects_dir_has_local_packs(objects_dir: &Path) -> bool {
     let pack_dir = objects_dir.join("pack");
@@ -1454,11 +1567,8 @@ pub(crate) fn plan_deltas(
         delta_encodings.retain(|t, _| delta_to_base.contains_key(t));
     }
 
-    // Emit in the original discovery order so commits precede their trees/blobs.
-    // For OFS_DELTA the serializer needs each base to appear before its target;
-    // discovery order already places a larger base blob no earlier than a smaller
-    // one only by coincidence, so the serializer falls back to REF_DELTA whenever
-    // the base has not yet been written.
+    // Emit in discovery order (commits before their trees/blobs), pulling each in-pack
+    // delta base ahead of its first target so deltas can use the compact OFS_DELTA.
     let mut entries: Vec<PlannedEntry> = Vec::with_capacity(send.len());
     for &oid in send {
         let kind = match (objects.get(&oid), infos.get(&oid)) {
@@ -1475,6 +1585,7 @@ pub(crate) fn plan_deltas(
             reused_delta_zlib: reused_zlib.remove(&oid),
         });
     }
+    let entries = order_bases_first(entries);
 
     let mut payloads: OidHashMap<Arc<[u8]>> = oid_hash_map_with_capacity(objects.len().max(1));
     for (oid, obj) in objects.drain() {
@@ -1562,6 +1673,47 @@ pub(crate) fn encode_ofs_delta_distance(buf: &mut Vec<u8>, mut ofs: u64) {
 pub(crate) mod tests {
     use super::*;
     use crate::pack_object_select::{enumerate_pack_objects, PackEnumerateOptions};
+
+    fn planned(n: u8, base: Option<u8>) -> PlannedEntry {
+        let oid = |n: u8| ObjectId::from_bytes(&[n; 20]).unwrap();
+        PlannedEntry {
+            oid: oid(n),
+            kind: ObjectKind::Blob,
+            data: Vec::new(),
+            base: base.map(oid),
+            reused_delta: None,
+            reused_delta_zlib: None,
+        }
+    }
+
+    fn order_of(entries: Vec<PlannedEntry>) -> Vec<u8> {
+        order_bases_first(entries)
+            .iter()
+            .map(|e| e.oid.as_bytes()[0])
+            .collect()
+    }
+
+    #[test]
+    fn bases_are_ordered_before_their_targets() {
+        // 1 -> 3 -> 5 chain discovered target-first; 9 is an out-of-pack (thin) base.
+        let entries = vec![
+            planned(1, Some(3)),
+            planned(2, None),
+            planned(3, Some(5)),
+            planned(4, Some(9)),
+            planned(5, None),
+            planned(6, Some(2)),
+        ];
+        assert_eq!(order_of(entries), [5, 3, 1, 2, 4, 6]);
+    }
+
+    #[test]
+    fn base_cycles_do_not_hang_or_drop_entries() {
+        let entries = vec![planned(1, Some(2)), planned(2, Some(1)), planned(3, None)];
+        let mut order = order_of(entries);
+        order.sort_unstable();
+        assert_eq!(order, [1, 2, 3]);
+    }
 
     /// Enumerate everything reachable from `main` in a git-packed fixture.
     pub(crate) fn packed_selection(
@@ -1653,7 +1805,10 @@ pub(crate) mod tests {
         let opts = PackBuildOptions::for_serve(Some(&cfg), true, false);
         assert_eq!((opts.window, opts.max_depth), (4, 0));
         assert!(opts.thin && !opts.use_ofs_delta && opts.delta);
-        assert!(!opts.reuse_deltas, "depth 0 stores every object whole");
+        assert!(
+            opts.reuse_deltas,
+            "like git upload-pack, depth 0 stops new deltas but still sends on-disk deltas"
+        );
 
         let defaults = PackBuildOptions::for_serve(None, false, true);
         assert_eq!(
