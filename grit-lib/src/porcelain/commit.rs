@@ -326,6 +326,7 @@ pub fn commit_with_scope(
     scope: CommitScope,
     progress: &mut dyn ProgressSink,
 ) -> Result<CommitOutcome> {
+    guard_incomplete_rewrite_apply(repo)?;
     match scope {
         CommitScope::AutoStage => commit_worktree(repo, req, progress),
         CommitScope::Staged => {
@@ -360,6 +361,7 @@ pub fn commit_with_patch(
     pathspecs: &[String],
     progress: &mut dyn ProgressSink,
 ) -> std::result::Result<CommitOutcome, CommitPatchError> {
+    guard_incomplete_rewrite_apply(repo).map_err(CommitPatchError::Commit)?;
     commit_patch_scope(repo, req, input, pathspecs, progress)
 }
 

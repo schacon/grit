@@ -267,25 +267,30 @@ fn apply_absorb_refs_and_worktree(
     } else {
         None
     };
-    run_planned_rewrite_apply(repo, plan, opts, |repo, old_tree, new_tree| {
-        let old_head_commit = old_head_commit.ok_or_else(|| HistoryError::WorktreeApply {
-            message: "missing old HEAD commit for absorb apply".into(),
-        })?;
-        apply_absorb_worktree_after_refs(
-            repo,
-            old_tree,
-            new_tree,
-            old_head_commit,
-            absorb,
-            staged_paths,
-            prestate,
-        )
-    })
-    .map_err(|err| {
+    run_planned_rewrite_apply(
+        repo,
+        plan,
+        opts,
+        rewrite_journal::RewriteApplyKind::Absorb,
+        |repo, old_tree, new_tree| {
+            let old_head_commit = old_head_commit.ok_or_else(|| HistoryError::WorktreeApply {
+                message: "missing old HEAD commit for absorb apply".into(),
+            })?;
+            apply_absorb_worktree_after_refs(
+                repo,
+                old_tree,
+                new_tree,
+                old_head_commit,
+                absorb,
+                staged_paths,
+                prestate,
+            )
+        },
+    )
+    .inspect_err(|_| {
         if let Some(pre) = prestate {
             let _ = pre.restore(repo);
         }
-        err
     })
 }
 
@@ -687,24 +692,29 @@ fn apply_fixup_refs_and_worktree(
     } else {
         None
     };
-    run_planned_rewrite_apply(repo, plan, opts, |repo, old_tree, new_tree| {
-        let old_head_commit = old_head_commit.ok_or_else(|| HistoryError::WorktreeApply {
-            message: "missing old HEAD commit for fixup apply".into(),
-        })?;
-        apply_fixup_worktree_after_refs(
-            repo,
-            old_tree,
-            new_tree,
-            old_head_commit,
-            staged_paths,
-            prestate,
-        )
-    })
-    .map_err(|err| {
+    run_planned_rewrite_apply(
+        repo,
+        plan,
+        opts,
+        rewrite_journal::RewriteApplyKind::Fixup,
+        |repo, old_tree, new_tree| {
+            let old_head_commit = old_head_commit.ok_or_else(|| HistoryError::WorktreeApply {
+                message: "missing old HEAD commit for fixup apply".into(),
+            })?;
+            apply_fixup_worktree_after_refs(
+                repo,
+                old_tree,
+                new_tree,
+                old_head_commit,
+                staged_paths,
+                prestate,
+            )
+        },
+    )
+    .inspect_err(|_| {
         if let Some(pre) = prestate {
             let _ = pre.restore(repo);
         }
-        err
     })
 }
 
@@ -927,15 +937,22 @@ pub fn apply_rewrite(
             verify_worktree_ready_for_head_tree_change(repo, Some(old), new)?;
         }
     }
-    run_planned_rewrite_apply(repo, plan, opts, |repo, old_tree, new_tree| {
-        apply_head_tree_to_worktree(repo, old_tree, new_tree, progress, cancel)
-    })
+    run_planned_rewrite_apply(
+        repo,
+        plan,
+        opts,
+        rewrite_journal::RewriteApplyKind::Standard,
+        |repo, old_tree, new_tree| {
+            apply_head_tree_to_worktree(repo, old_tree, new_tree, progress, cancel)
+        },
+    )
 }
 
 fn run_planned_rewrite_apply<F>(
     repo: &Repository,
     plan: &RewritePlan,
     opts: &ApplyOptions,
+    apply_kind: rewrite_journal::RewriteApplyKind,
     apply_worktree: F,
 ) -> Result<AppliedRewrite, HistoryError>
 where
@@ -966,14 +983,24 @@ where
         })?;
 
     if needs_worktree {
-        let index_bytes = index_snapshot.as_deref().ok_or_else(|| HistoryError::WorktreeApply {
-            message: "missing index snapshot for rewrite apply journal".into(),
-        })?;
-        let worktree_snap = worktree_snapshot.as_ref().ok_or_else(|| HistoryError::WorktreeApply {
-            message: "missing worktree snapshot for rewrite apply journal".into(),
-        })?;
+        let index_bytes = index_snapshot
+            .as_deref()
+            .ok_or_else(|| HistoryError::WorktreeApply {
+                message: "missing index snapshot for rewrite apply journal".into(),
+            })?;
+        let worktree_snap =
+            worktree_snapshot
+                .as_ref()
+                .ok_or_else(|| HistoryError::WorktreeApply {
+                    message: "missing worktree snapshot for rewrite apply journal".into(),
+                })?;
         rewrite_journal::write_rewrite_apply_journal(
-            repo, plan, opts, index_bytes, worktree_snap,
+            repo,
+            plan,
+            opts,
+            apply_kind,
+            index_bytes,
+            worktree_snap,
         )?;
     }
 

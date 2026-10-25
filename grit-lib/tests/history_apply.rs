@@ -751,3 +751,45 @@ fn interrupted_rewrite_apply_recovers_and_blocks_commit_until_finished() {
     assert!(!rewrite_apply_journal_active(grit.git_dir()));
     assert!(wt.join("rewritten-only.txt").exists());
 }
+
+#[test]
+fn apply_rewrite_journal_accepts_git_path_with_double_dot_in_name() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let oids = build_commit_dag(wt, &[("b", "a"), ("c", "b")], &[("c", "refs/heads/main")]);
+    commit_file(wt, "a..b", "", "track a..b");
+    let grit = open_grit(wt);
+    let plan = plan_reword_with_tree(
+        wt,
+        oids["b"],
+        "side.txt",
+        b"side\n",
+        "side change",
+    );
+    apply_rewrite(&grit, &plan, &apply_opts()).expect("apply with a..b present");
+    assert!(wt.join("a..b").is_file());
+    assert!(wt.join("side.txt").is_file());
+}
+
+#[test]
+fn interrupted_rewrite_apply_abort_restores_empty_tracked_file() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let oids = build_commit_dag(wt, &[("b", "a"), ("c", "b")], &[("c", "refs/heads/main")]);
+    commit_file(wt, "empty.txt", "", "empty tracked");
+    let grit = open_grit(wt);
+    let plan = plan_reword_with_tree(
+        wt,
+        oids["c"],
+        "empty.txt",
+        b"would-be-new-content\n",
+        "change empty in replayed tip",
+    );
+    grit_lib::repo::set_test_inject_rewrite_apply_abort_after_refs(true);
+    apply_rewrite(&grit, &plan, &apply_opts()).expect_err("injected abort");
+    grit_lib::repo::set_test_inject_rewrite_apply_abort_after_refs(false);
+    fs::remove_file(wt.join("empty.txt")).expect("simulate partial checkout deleting empty file");
+    grit_lib::revwalk::history::abort_interrupted_rewrite_apply(&grit).expect("abort");
+    assert!(wt.join("empty.txt").is_file());
+    assert_eq!(fs::read(wt.join("empty.txt")).expect("read"), b"");
+}

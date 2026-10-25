@@ -8,7 +8,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+use sha1::{Digest, Sha1};
 
 use crate::lockfile::{LockFile, LockWait};
 use crate::objects::ObjectId;
@@ -26,6 +28,38 @@ const FORMAT_VERSION: u32 = 1;
 const META: &str = "meta";
 const INDEX_BEFORE: &str = "index-before";
 const WORKTREE_DIR: &str = "worktree";
+
+/// Which apply path created a pending journal (controls recovery).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RewriteApplyKind {
+    /// Standard [`super::apply_rewrite`] checkout.
+    Standard,
+    /// [`super::apply_fixup_rewrite`]: recovery rolls back instead of a generic checkout.
+    Fixup,
+    /// [`super::apply_absorb_rewrite`]: recovery rolls back instead of a generic checkout.
+    Absorb,
+}
+
+impl RewriteApplyKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "rewrite",
+            Self::Fixup => "fixup",
+            Self::Absorb => "absorb",
+        }
+    }
+
+    fn parse(raw: &str) -> Result<Self, HistoryError> {
+        match raw {
+            "rewrite" => Ok(Self::Standard),
+            "fixup" => Ok(Self::Fixup),
+            "absorb" => Ok(Self::Absorb),
+            other => Err(HistoryError::UndoRecordRead {
+                message: format!("unknown rewrite-apply kind {other:?}"),
+            }),
+        }
+    }
+}
 
 /// Outcome of [`recover_interrupted_rewrite_apply`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +85,7 @@ pub fn write_rewrite_apply_journal(
     repo: &Repository,
     plan: &RewritePlan,
     opts: &ApplyOptions,
+    apply_kind: RewriteApplyKind,
     index_before: &[u8],
     worktree_before: &HashMap<String, WorktreePathSnapshot>,
 ) -> Result<(), HistoryError> {
@@ -67,7 +102,7 @@ pub fn write_rewrite_apply_journal(
         write_worktree_snapshot_file(&worktree_dir, path, snap)?;
     }
 
-    let body = serialize_meta(plan, opts);
+    let body = serialize_meta(plan, opts, apply_kind);
     let lock_path = dir.join(format!("{META}.lock"));
     let target = dir.join(META);
     let mut lock =
@@ -98,8 +133,6 @@ pub fn clear_rewrite_apply_journal(repo: &Repository) -> Result<(), HistoryError
 ///
 /// # Errors
 ///
-/// Returns [`HistoryError::UndoRecordRead`] when the journal is present but invalid, and apply
-/// failures when rollback or checkout cannot complete.
 /// Abort an incomplete rewrite apply by rolling refs back and restoring snapshots.
 ///
 /// # Errors
@@ -149,10 +182,19 @@ pub fn recover_interrupted_rewrite_apply(
     let refs_at_old = refs_match_plan(repo, &record.ref_updates, false)?;
 
     if refs_at_new {
+        if record.apply_kind != RewriteApplyKind::Standard {
+            return rollback_from_journal(repo, &record).map(Some);
+        }
         let (Some(old_tree), Some(new_tree)) = (record.head_old_tree, record.head_new_tree) else {
             return rollback_from_journal(repo, &record).map(Some);
         };
-        if let Err(checkout_err) = apply_head_tree_to_worktree(repo, Some(&old_tree), &new_tree) {
+        if let Err(checkout_err) = apply_head_tree_to_worktree(
+            repo,
+            Some(&old_tree),
+            &new_tree,
+            &mut crate::progress::NullProgress,
+            &crate::progress::NeverCancel,
+        ) {
             let _ = rollback_from_journal(repo, &record);
             return Err(checkout_err);
         }
@@ -202,6 +244,7 @@ fn refs_match_plan(
 
 struct RewriteApplyJournal {
     apply_options: ApplyOptions,
+    apply_kind: RewriteApplyKind,
     head_old_tree: Option<ObjectId>,
     head_new_tree: Option<ObjectId>,
     ref_updates: Vec<PlannedRefUpdate>,
@@ -234,8 +277,9 @@ fn journal_read_err(e: impl std::fmt::Display) -> HistoryError {
     }
 }
 
-fn serialize_meta(plan: &RewritePlan, opts: &ApplyOptions) -> String {
+fn serialize_meta(plan: &RewritePlan, opts: &ApplyOptions, apply_kind: RewriteApplyKind) -> String {
     let mut out = format!("version {FORMAT_VERSION}\n");
+    out.push_str(&format!("apply-kind {}\n", apply_kind.as_str()));
     out.push_str(&format!("apply-identity {}\n", opts.identity));
     out.push_str(&format!("apply-reflog {}\n", opts.reflog_message));
     if let Some(op) = &opts.record_operation {
@@ -268,6 +312,7 @@ fn parse_meta(text: &str) -> Result<RewriteApplyJournal, HistoryError> {
     let mut identity: Option<String> = None;
     let mut reflog: Option<String> = None;
     let mut record_operation: Option<String> = None;
+    let mut apply_kind = RewriteApplyKind::Standard;
     let mut head_old_tree: Option<ObjectId> = None;
     let mut head_new_tree: Option<ObjectId> = None;
     let mut ref_updates = Vec::new();
@@ -288,6 +333,12 @@ fn parse_meta(text: &str) -> Result<RewriteApplyJournal, HistoryError> {
                     raw.parse::<u32>()
                         .map_err(|e| parse_err(line_no, &e.to_string()))?,
                 );
+            }
+            "apply-kind" => {
+                let raw = parts
+                    .next()
+                    .ok_or_else(|| parse_err(line_no, "missing apply kind"))?;
+                apply_kind = RewriteApplyKind::parse(raw)?;
             }
             "apply-identity" => {
                 identity = Some(parts.collect::<Vec<_>>().join(" "));
@@ -333,6 +384,7 @@ fn parse_meta(text: &str) -> Result<RewriteApplyJournal, HistoryError> {
     };
     Ok(RewriteApplyJournal {
         apply_options,
+        apply_kind,
         head_old_tree,
         head_new_tree,
         ref_updates,
@@ -352,13 +404,45 @@ fn parse_err(line_no: usize, detail: &str) -> HistoryError {
     }
 }
 
-fn worktree_snapshot_file(dir: &Path, rel_path: &str) -> Result<PathBuf, HistoryError> {
-    if rel_path.contains("..") {
+fn validate_repo_relative_path(path: &str) -> Result<(), HistoryError> {
+    if path.is_empty() {
         return Err(HistoryError::UndoRecordWrite {
-            message: format!("invalid worktree snapshot path {rel_path:?}"),
+            message: "empty worktree snapshot path".into(),
         });
     }
-    Ok(dir.join(rel_path))
+    let parsed = Path::new(path);
+    if parsed.is_absolute() {
+        return Err(HistoryError::UndoRecordWrite {
+            message: format!("absolute worktree snapshot path {path:?}"),
+        });
+    }
+    for component in parsed.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(HistoryError::UndoRecordWrite {
+                    message: format!("invalid worktree snapshot path {path:?}"),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn snapshot_blob_name(repo_path: &str) -> Result<String, HistoryError> {
+    validate_repo_relative_path(repo_path)?;
+    Ok(hex::encode(Sha1::digest(repo_path.as_bytes())))
+}
+
+fn payload_kind_line(snap: &WorktreePathSnapshot) -> &'static str {
+    match snap.kind {
+        WorktreePathKind::Absent | WorktreePathKind::Directory => "payload: none",
+        WorktreePathKind::Regular | WorktreePathKind::Symlink => match snap.bytes.as_ref() {
+            None => "payload: none",
+            Some(bytes) if bytes.is_empty() => "payload: empty",
+            Some(_) => "payload: data",
+        },
+    }
 }
 
 fn write_worktree_snapshot_file(
@@ -366,10 +450,7 @@ fn write_worktree_snapshot_file(
     path: &str,
     snap: &WorktreePathSnapshot,
 ) -> Result<(), HistoryError> {
-    let file_path = worktree_snapshot_file(dir, path)?;
-    if let Some(parent) = file_path.parent() {
-        fs::create_dir_all(parent).map_err(journal_write_err)?;
-    }
+    let file_path = dir.join(snapshot_blob_name(path)?);
     let kind = match snap.kind {
         WorktreePathKind::Absent => "absent",
         WorktreePathKind::Directory => "directory",
@@ -377,6 +458,8 @@ fn write_worktree_snapshot_file(
         WorktreePathKind::Symlink => "symlink",
     };
     let mut body = format!("path: {path}\nkind: {kind}\n");
+    body.push_str(payload_kind_line(snap));
+    body.push('\n');
     #[cfg(unix)]
     {
         body.push_str(&format!("mode: {:o}\n", snap.mode));
@@ -384,8 +467,10 @@ fn write_worktree_snapshot_file(
     body.push_str("---\n");
     let mut file = fs::File::create(&file_path).map_err(journal_write_err)?;
     file.write_all(body.as_bytes()).map_err(journal_write_err)?;
-    if let Some(bytes) = &snap.bytes {
-        file.write_all(bytes).map_err(journal_write_err)?;
+    if payload_kind_line(snap) == "payload: data" {
+        if let Some(bytes) = &snap.bytes {
+            file.write_all(bytes).map_err(journal_write_err)?;
+        }
     }
     Ok(())
 }
@@ -397,31 +482,15 @@ fn read_worktree_snapshot_dir(
     if !dir.is_dir() {
         return Ok(out);
     }
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        for entry in fs::read_dir(&current).map_err(journal_read_err)? {
-            let entry = entry.map_err(journal_read_err)?;
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            let rel = path
-                .strip_prefix(dir)
-                .map_err(journal_read_err)?
-                .to_string_lossy()
-                .replace('\\', "/");
-            let bytes = fs::read(&path).map_err(journal_read_err)?;
-            let (repo_path, snap) = parse_worktree_snapshot_file(&bytes)?;
-            if repo_path != rel {
-                return Err(HistoryError::UndoRecordRead {
-                    message: format!(
-                        "worktree snapshot path mismatch: header {repo_path} file {rel}"
-                    ),
-                });
-            }
-            out.insert(repo_path, snap);
+    for entry in fs::read_dir(dir).map_err(journal_read_err)? {
+        let entry = entry.map_err(journal_read_err)?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
         }
+        let bytes = fs::read(&path).map_err(journal_read_err)?;
+        let (repo_path, snap) = parse_worktree_snapshot_file(&bytes)?;
+        out.insert(repo_path, snap);
     }
     Ok(out)
 }
@@ -443,6 +512,7 @@ fn parse_worktree_snapshot_file(
     let payload = bytes[(split_at + sep.len())..].to_vec();
     let mut repo_path: Option<String> = None;
     let mut kind: Option<WorktreePathKind> = None;
+    let mut payload_kind: Option<&str> = None;
     #[cfg(unix)]
     let mut mode: u32 = 0o644;
     for line in header.lines() {
@@ -462,6 +532,9 @@ fn parse_worktree_snapshot_file(
                     }
                 });
             }
+            "payload" => {
+                payload_kind = parts.next().map(str::trim);
+            }
             "mode" => {
                 #[cfg(unix)]
                 {
@@ -479,17 +552,181 @@ fn parse_worktree_snapshot_file(
     let kind = kind.ok_or_else(|| HistoryError::UndoRecordRead {
         message: format!("worktree snapshot for {path} missing kind"),
     })?;
+    let bytes = match payload_kind {
+        Some("empty") => Some(Vec::new()),
+        Some("data") => Some(payload),
+        Some("none") | None => None,
+        Some(other) => {
+            return Err(HistoryError::UndoRecordRead {
+                message: format!("unknown payload kind {other:?} for {path}"),
+            });
+        }
+    };
     Ok((
         path,
         WorktreePathSnapshot {
             kind,
-            bytes: if payload.is_empty() {
-                None
-            } else {
-                Some(payload)
-            },
+            bytes,
             #[cfg(unix)]
             mode,
         },
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    use crate::history::types::{ApplyOptions, HeadEffect, RewritePlan};
+    use crate::repo::{init_repository, Repository};
+    use crate::RefStorageFormat;
+
+    fn temp_repo() -> (tempfile::TempDir, Repository) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)
+            .expect("init");
+        (dir, repo)
+    }
+
+    #[test]
+    fn worktree_snapshot_roundtrip_git_path_with_double_dot_in_name() {
+        let (_dir, repo) = temp_repo();
+        let mut snaps = HashMap::new();
+        snaps.insert(
+            "a..b".into(),
+            WorktreePathSnapshot {
+                kind: WorktreePathKind::Regular,
+                bytes: Some(b"hello".to_vec()),
+                #[cfg(unix)]
+                mode: 0o644,
+            },
+        );
+        let plan = RewritePlan {
+            commits: Vec::new(),
+            ref_updates: Vec::new(),
+            head: HeadEffect::default(),
+        };
+        let opts = ApplyOptions {
+            identity: "t <t@t>".into(),
+            reflog_message: "test".into(),
+            record_operation: None,
+            hooks: Default::default(),
+        };
+        write_rewrite_apply_journal(
+            &repo,
+            &plan,
+            &opts,
+            RewriteApplyKind::Standard,
+            b"INDEX",
+            &snaps,
+        )
+        .expect("write");
+        let record = read_rewrite_apply_journal(&repo).expect("read");
+        let restored = record.worktree_before.expect("snapshots");
+        assert_eq!(
+            restored.get("a..b").and_then(|s| s.bytes.as_deref()),
+            Some(b"hello" as &[u8])
+        );
+        clear_rewrite_apply_journal(&repo).expect("clear");
+    }
+
+    #[test]
+    fn worktree_snapshot_preserves_empty_regular_file_payload() {
+        let (_dir, repo) = temp_repo();
+        let mut snaps = HashMap::new();
+        snaps.insert(
+            "empty.txt".into(),
+            WorktreePathSnapshot {
+                kind: WorktreePathKind::Regular,
+                bytes: Some(Vec::new()),
+                #[cfg(unix)]
+                mode: 0o644,
+            },
+        );
+        let plan = RewritePlan {
+            commits: Vec::new(),
+            ref_updates: Vec::new(),
+            head: HeadEffect::default(),
+        };
+        let opts = ApplyOptions {
+            identity: "t <t@t>".into(),
+            reflog_message: "test".into(),
+            record_operation: None,
+            hooks: Default::default(),
+        };
+        write_rewrite_apply_journal(
+            &repo,
+            &plan,
+            &opts,
+            RewriteApplyKind::Standard,
+            b"INDEX",
+            &snaps,
+        )
+        .expect("write");
+        let record = read_rewrite_apply_journal(&repo).expect("read");
+        let snap = record
+            .worktree_before
+            .expect("snapshots")
+            .get("empty.txt")
+            .cloned()
+            .expect("empty.txt");
+        assert_eq!(snap.bytes, Some(Vec::new()));
+        clear_rewrite_apply_journal(&repo).expect("clear");
+    }
+
+    #[test]
+    fn hash_keyed_snapshots_do_not_collide_for_nested_paths() {
+        let (_dir, repo) = temp_repo();
+        let mut snaps = HashMap::new();
+        snaps.insert(
+            "foo".into(),
+            WorktreePathSnapshot {
+                kind: WorktreePathKind::Regular,
+                bytes: Some(b"file".to_vec()),
+                #[cfg(unix)]
+                mode: 0o644,
+            },
+        );
+        snaps.insert(
+            "foo/bar".into(),
+            WorktreePathSnapshot {
+                kind: WorktreePathKind::Regular,
+                bytes: Some(b"nested".to_vec()),
+                #[cfg(unix)]
+                mode: 0o644,
+            },
+        );
+        let plan = RewritePlan {
+            commits: Vec::new(),
+            ref_updates: Vec::new(),
+            head: HeadEffect::default(),
+        };
+        let opts = ApplyOptions {
+            identity: "t <t@t>".into(),
+            reflog_message: "test".into(),
+            record_operation: None,
+            hooks: Default::default(),
+        };
+        write_rewrite_apply_journal(
+            &repo,
+            &plan,
+            &opts,
+            RewriteApplyKind::Standard,
+            b"INDEX",
+            &snaps,
+        )
+        .expect("write");
+        let record = read_rewrite_apply_journal(&repo).expect("read");
+        let restored = record.worktree_before.expect("snapshots");
+        assert_eq!(
+            restored.get("foo").and_then(|s| s.bytes.as_deref()),
+            Some(b"file" as &[u8])
+        );
+        assert_eq!(
+            restored.get("foo/bar").and_then(|s| s.bytes.as_deref()),
+            Some(b"nested" as &[u8])
+        );
+        clear_rewrite_apply_journal(&repo).expect("clear");
+    }
 }
