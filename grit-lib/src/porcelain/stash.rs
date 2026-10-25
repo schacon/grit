@@ -56,8 +56,7 @@ use crate::porcelain::index_from_tree::{
 };
 use crate::porcelain::restore::{restore_paths, RestoreOptions, RestoreSource};
 use crate::porcelain::status::{
-    collect_untracked_and_ignored_inner, expand_untracked_for_staging_with_rules, IgnoredMode,
-    UntrackedCacheMissAction, UntrackedScan,
+    collect_untracked_and_ignored_inner, IgnoredMode, UntrackedCacheMissAction, UntrackedScan,
 };
 use crate::porcelain::switch::{switch_repository, SwitchMode, SwitchOptions};
 use crate::porcelain::worktree_guard::untracked_would_be_overwritten_by_tree_changes;
@@ -575,15 +574,7 @@ fn collect_untracked_paths(repo: &Repository, work_tree: &Path) -> Result<Vec<St
         &worktree_rules,
         None,
     )?;
-    let expanded = expand_untracked_for_staging_with_rules(
-        repo,
-        &mut index,
-        work_tree,
-        untracked,
-        &[],
-        &worktree_rules,
-    )?;
-    Ok(expanded
+    Ok(untracked
         .into_iter()
         .filter(|path| !path_in_nested_git_worktree(work_tree, path))
         .collect())
