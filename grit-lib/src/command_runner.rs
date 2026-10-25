@@ -532,6 +532,7 @@ pub(crate) fn child_path_var(env: &CommandEnvironment) -> Option<OsString> {
         .map(|(_, v)| v.clone())
         .or_else(|| {
             env.inherit_process
+                // hygiene: an inheriting child sees the process PATH; the spawn boundary reads it.
                 .then(|| std::env::var_os("PATH"))
                 .flatten()
         })
