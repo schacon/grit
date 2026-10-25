@@ -57,8 +57,8 @@ fn repo_with_one_commit() -> (tempfile::TempDir, Repository, ObjectId) {
     stage_worktree_changes(&repo, &[]).expect("stage");
     let req = CommitRequest {
         message: "m\n".into(),
-        author: "A <a@b> 0 +0000".into(),
-        committer: "A <a@b> 0 +0000".into(),
+        author: Some("A <a@b> 0 +0000".parse().expect("signature")),
+        committer: Some("A <a@b> 0 +0000".parse().expect("signature")),
         ..Default::default()
     };
     let outcome = create_commit(&repo, &req, &mut NullProgress).expect("commit");
@@ -118,8 +118,8 @@ fn deep_parent_navigation_is_revision_out_of_range() {
     stage_worktree_changes(&repo, &[]).expect("stage");
     let req = CommitRequest {
         message: "m\n".into(),
-        author: "A <a@b> 0 +0000".into(),
-        committer: "A <a@b> 0 +0000".into(),
+        author: Some("A <a@b> 0 +0000".parse().expect("signature")),
+        committer: Some("A <a@b> 0 +0000".parse().expect("signature")),
         ..Default::default()
     };
     create_commit(&repo, &req, &mut NullProgress).expect("commit");
@@ -146,8 +146,8 @@ fn empty_commit_message_is_typed() {
     stage_worktree_changes(&repo, &[]).expect("stage");
     let req = CommitRequest {
         message: "m\n".into(),
-        author: "A <a@b> 0 +0000".into(),
-        committer: "A <a@b> 0 +0000".into(),
+        author: Some("A <a@b> 0 +0000".parse().expect("signature")),
+        committer: Some("A <a@b> 0 +0000".parse().expect("signature")),
         ..Default::default()
     };
     create_commit(&repo, &req, &mut NullProgress).expect("commit");

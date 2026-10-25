@@ -35,7 +35,7 @@
 //! let opts = RewriteOptions {
 //!     scope: RefScope::Branches,
 //!     empty: EmptyPolicy::Drop,
-//!     committer: "Rewriter <r@example.com> 1 +0000".into(),
+//!     committer: "Rewriter <r@example.com> 1 +0000".parse()?,
 //!     preserve_committer: false,
 //!     sign: true,
 //! };
@@ -51,6 +51,7 @@ mod error;
 mod exec;
 mod fixup;
 mod last;
+mod message;
 mod r#move;
 mod plan;
 mod rebase;

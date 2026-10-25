@@ -49,7 +49,7 @@ fn reword_changes_only_message_and_replays_descendants() {
         &RewriteOptions {
             scope: RefScope::Branches,
             empty: EmptyPolicy::Drop,
-            committer: committer(1),
+            committer: committer(1).parse().expect("signature"),
             preserve_committer: false,
             sign: true,
         },
@@ -80,11 +80,49 @@ fn reword_changes_only_message_and_replays_descendants() {
     git_fsck_strict(wt);
 }
 
+#[test]
+fn reword_rejects_unwritable_committer_before_writing_objects() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let oids = build_commit_dag(wt, &[("b", "a"), ("c", "b")], &[("c", "refs/heads/main")]);
+    let grit = open_grit(wt);
+    let objects_before = git(wt, &["count-objects", "-v"]);
+    let injected = grit_lib::ident::Signature {
+        name: "Injected\nextra-header value".into(),
+        email: "r@grit.test".into(),
+        time: time::OffsetDateTime::from_unix_timestamp(1).expect("time"),
+    };
+    let err = reword(
+        &grit,
+        oids["b"],
+        "second reworded\n".into(),
+        &RewriteOptions {
+            scope: RefScope::Branches,
+            empty: EmptyPolicy::Drop,
+            committer: injected,
+            preserve_committer: false,
+            sign: true,
+        },
+    )
+    .expect_err("unwritable committer");
+    assert!(
+        matches!(
+            &err,
+            HistoryError::Library(inner)
+                if matches!(**inner, grit_lib::error::Error::InvalidSignature(_))
+        ),
+        "unexpected error: {err:?}"
+    );
+    assert_eq!(git(wt, &["count-objects", "-v"]), objects_before);
+    assert_eq!(git_rev_parse(wt, "main"), Some(oids["c"]));
+    git(wt, &["fsck", "--strict", "--unreachable"]);
+}
+
 fn rewrite_opts(seq: i64) -> RewriteOptions {
     RewriteOptions {
         scope: RefScope::Branches,
         empty: EmptyPolicy::Drop,
-        committer: committer(seq),
+        committer: committer(seq).parse().expect("signature"),
         preserve_committer: false,
         sign: true,
     }
@@ -262,7 +300,7 @@ fn reword_rejects_empty_message() {
         &RewriteOptions {
             scope: RefScope::Head,
             empty: EmptyPolicy::Drop,
-            committer: committer(1),
+            committer: committer(1).parse().expect("signature"),
             preserve_committer: false,
             sign: true,
         },
@@ -311,7 +349,7 @@ fn reword_in_bare_repository() {
         &RewriteOptions {
             scope: RefScope::Head,
             empty: EmptyPolicy::Drop,
-            committer: committer(2),
+            committer: committer(2).parse().expect("signature"),
             preserve_committer: false,
             sign: true,
         },
@@ -377,7 +415,7 @@ fn reword_root_replays_merge_with_merge_only_tree_content() {
         &RewriteOptions {
             scope: RefScope::Branches,
             empty: EmptyPolicy::Drop,
-            committer: committer(10),
+            committer: committer(10).parse().expect("signature"),
             preserve_committer: false,
             sign: true,
         },

@@ -12,6 +12,7 @@ use crate::commit::trailers::interpret::{
     TrailerWhere,
 };
 use crate::commit_trailers::{append_signoff_trailer_with_dedup, format_signoff_line};
+use crate::config::ident_resolve::IdentRole;
 use crate::config::ConfigSet;
 use crate::diagnostics::Warning;
 use crate::diff::refresh_index_stat_content_verified_with_rules;
@@ -24,7 +25,7 @@ use crate::error::{Error, Result};
 use crate::hooks::{run_commit_hook, CommitHookEnv, HookError, HookName};
 use crate::ident::{
     fsck_commit_idents, parse_signature_times, prepare_commit_author_from_parent,
-    prepare_commit_identity_line,
+    prepare_commit_identity_line, Signature,
 };
 use crate::index::{Index, IndexLock};
 use crate::objects::odb::Odb;
@@ -90,10 +91,14 @@ pub struct CommitRequest {
     /// read back only when that hook ran, so concurrent committers sharing the file never record
     /// each other's message.
     pub message: String,
-    /// Author identity: `Name <email>`, a bare email, or a full header line `Name <email> <unix> <±HHMM>`.
-    pub author: String,
-    /// Committer identity in the same forms as [`Self::author`].
-    pub committer: String,
+    /// Author to record. `None` keeps the replaced commit's author for [`Self::amend`] and the
+    /// source commit's author for [`Self::reuse_message_from`]; otherwise the repository's
+    /// author identity ([`Repository::identity`]) is used. [`Self::author_date`] and
+    /// [`Self::reset_author`] still apply.
+    pub author: Option<Signature>,
+    /// Committer to record; `None` uses the repository's committer identity
+    /// ([`Repository::identity`]).
+    pub committer: Option<Signature>,
     /// When false (default), reject commits whose tree equals the parent's tree or is the empty tree on an unborn branch.
     pub allow_empty: bool,
     /// When `Some(true)`, sign even if `commit.gpgsign` is false; when `Some(false)`, skip signing even when config requests it. When `None`, honor `commit.gpgsign`.
@@ -679,8 +684,9 @@ fn enrich_commit_message(
 pub struct CommitOutcome {
     /// OID of the new commit object written to the object database.
     pub oid: ObjectId,
-    /// Short branch name (e.g. `main`), or `detached HEAD` when not on a branch.
-    pub branch: String,
+    /// Short name of the branch the commit advanced (e.g. `main`), or `None` when `HEAD` is
+    /// detached and only `HEAD` moved.
+    pub branch: Option<String>,
     /// Parent commit OID, or `None` for the root commit on an unborn branch.
     pub parent: Option<ObjectId>,
     /// Every parent OID stored in the new commit object (empty only before the first commit is written).
@@ -695,6 +701,14 @@ pub struct CommitOutcome {
     pub change_id: Option<ChangeId>,
     /// Path-level changes vs the parent tree (`git diff --name-status` between parent and new tree).
     pub files: Vec<CommitFile>,
+}
+
+impl CommitOutcome {
+    /// Whether the commit was made on a detached `HEAD` ([`Self::branch`] is `None`).
+    #[must_use]
+    pub fn is_detached(&self) -> bool {
+        self.branch.is_none()
+    }
 }
 
 /// Write a commit from the current index and advance the checked-out branch.
@@ -874,7 +888,7 @@ fn finish_commit_dry_run(
     repo: &Repository,
     index: &mut Index,
     req: &CommitRequest,
-    short_name: String,
+    short_name: Option<String>,
     parent: Option<ObjectId>,
     parent_tree: Option<ObjectId>,
     merge_heads: Vec<ObjectId>,
@@ -920,7 +934,7 @@ fn finish_commit_dry_run(
     }
     let config = repo.config()?;
     let now = repo.identity_now();
-    let committer = prepare_commit_identity_line(&req.committer, None, now)?;
+    let committer = commit_identity_line(repo, req.committer.as_ref(), IdentRole::Committer, now)?;
     let _message_with_trailers = enrich_commit_message(
         message,
         &req.trailers,
@@ -986,8 +1000,10 @@ fn resolve_author_for_commit(
             Vec::new(),
         ));
     }
-    if !req.author.is_empty() {
-        let author = prepare_commit_identity_line(&req.author, req.author_date.as_deref(), now)?;
+    if let Some(author) = req.author.as_ref() {
+        author.validate()?;
+        let author =
+            prepare_commit_identity_line(&author.header_line(), req.author_date.as_deref(), now)?;
         return Ok((author, Vec::new()));
     }
     if let Some(a) = reuse_author {
@@ -1007,8 +1023,26 @@ fn resolve_author_for_commit(
             now,
         )?);
     }
-    let author = prepare_commit_identity_line(&req.author, req.author_date.as_deref(), now)?;
+    let author = repo.identity(IdentRole::Author, now)?.header_line();
+    let author = prepare_commit_identity_line(&author, req.author_date.as_deref(), now)?;
     Ok((author, Vec::new()))
+}
+
+/// The committer (or author) header line for a new commit: `identity` when given, otherwise
+/// the repository's identity for `role`.
+fn commit_identity_line(
+    repo: &Repository,
+    identity: Option<&Signature>,
+    role: IdentRole,
+    now: time::OffsetDateTime,
+) -> Result<String> {
+    match identity {
+        Some(signature) => {
+            signature.validate()?;
+            Ok(signature.header_line())
+        }
+        None => Ok(repo.identity(role, now)?.header_line()),
+    }
 }
 
 /// Removes a partial-commit hook index file on drop (Git `next-index-<pid>`).
@@ -1049,18 +1083,13 @@ fn create_commit_with_index(
     _progress: &mut dyn ProgressSink,
     persist_index: Option<LockedIndex>,
 ) -> Result<CommitOutcome> {
-    let (refname, short_name, mut parent, head_detached) = match head {
+    let (refname, short_name, mut parent) = match head {
         HeadState::Branch {
             refname,
             short_name,
             oid,
-        } => (refname, short_name, oid, false),
-        HeadState::Detached { oid } => (
-            "HEAD".to_owned(),
-            "detached HEAD".to_owned(),
-            Some(oid),
-            true,
-        ),
+        } => (refname, Some(short_name), oid),
+        HeadState::Detached { oid } => ("HEAD".to_owned(), None, Some(oid)),
         HeadState::Invalid => {
             return Err(Error::Message("HEAD is in an unknown state".into()));
         }
@@ -1218,7 +1247,7 @@ fn create_commit_with_index(
     }
     let config = repo.config()?;
     let now = repo.identity_now();
-    let committer = prepare_commit_identity_line(&req.committer, None, now)?;
+    let committer = commit_identity_line(repo, req.committer.as_ref(), IdentRole::Committer, now)?;
     message = enrich_commit_message(
         message,
         &req.trailers,
@@ -1360,7 +1389,7 @@ fn create_commit_with_index(
         diff_tree_path_change_count(repo.odb(), parent_tree.as_ref(), Some(&tree), "")?
     };
 
-    if head_detached {
+    if short_name.is_none() {
         update_detached_head_for_commit_on_store(
             repo.refs(),
             expected_old,
@@ -1618,8 +1647,8 @@ mod tests {
         let ident = ident();
         CommitRequest {
             message: message.to_owned(),
-            author: ident.clone(),
-            committer: ident,
+            author: Some(ident.parse().expect("signature")),
+            committer: Some(ident.parse().expect("signature")),
             ..Default::default()
         }
     }
@@ -1662,7 +1691,8 @@ mod tests {
 
         let outcome = create_commit(&repo, &commit_req("initial"), &mut NullProgress).unwrap();
         assert!(outcome.parent.is_none());
-        assert_eq!(outcome.branch, "main");
+        assert_eq!(outcome.branch.as_deref(), Some("main"));
+        assert!(!outcome.is_detached());
         assert_eq!(outcome.changes, 1);
         assert_eq!(
             resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap(),
@@ -1721,7 +1751,8 @@ mod tests {
         fs::write(root.join("b.txt"), b"2\n").unwrap();
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let second = create_commit(&repo, &commit_req("second"), &mut NullProgress).unwrap();
-        assert_eq!(second.branch, "detached HEAD");
+        assert_eq!(second.branch, None);
+        assert!(second.is_detached());
         assert_eq!(second.parent, Some(first.oid));
         let head = fs::read_to_string(repo.git_dir().join("HEAD")).unwrap();
         assert_eq!(head.trim(), second.oid.to_hex());
@@ -2573,7 +2604,11 @@ mod tests {
         fs::write(root.join("a.txt"), b"1\n").unwrap();
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let mut req = commit_req("signoff");
-        req.committer = "Committer Name <committer@example.com> 2 +0000".to_owned();
+        req.committer = Some(
+            "Committer Name <committer@example.com> 2 +0000"
+                .parse()
+                .expect("signature"),
+        );
         req.signoff = true;
         let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
         let msg = parse_commit(&repo.odb().read(&outcome.oid).unwrap().data)
@@ -2590,7 +2625,11 @@ mod tests {
         fs::write(root.join("a.txt"), b"1\n").unwrap();
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let mut req = commit_req("subject\n");
-        req.committer = "Committer Name <committer@example.com> 2 +0000".to_owned();
+        req.committer = Some(
+            "Committer Name <committer@example.com> 2 +0000"
+                .parse()
+                .expect("signature"),
+        );
         req.signoff = true;
         req.trailers = vec![("Acked-by".to_owned(), "Alice".to_owned())];
         let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
@@ -2610,21 +2649,29 @@ mod tests {
         fs::write(root.join("a.txt"), b"1\n").unwrap();
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let mut source = commit_req("source subject\n");
-        source.author = "Source Author <author@example.com> 978307200 +0000".to_owned();
-        source.committer = ident();
+        source.author = Some(
+            "Source Author <author@example.com> 978307200 +0000"
+                .parse()
+                .expect("signature"),
+        );
+        source.committer = Some(ident().parse().expect("signature"));
         let source_out = create_commit(&repo, &source, &mut NullProgress).unwrap();
 
         fs::write(root.join("a.txt"), b"2\n").unwrap();
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let mut tip = commit_req("tip subject\n");
-        tip.author = "Tip Author <tip@example.com> 1792591163 +0000".to_owned();
+        tip.author = Some(
+            "Tip Author <tip@example.com> 1792591163 +0000"
+                .parse()
+                .expect("signature"),
+        );
         create_commit(&repo, &tip, &mut NullProgress).unwrap();
 
         fs::write(root.join("a.txt"), b"3\n").unwrap();
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let mut amend = commit_req("");
         amend.amend = true;
-        amend.author = String::new();
+        amend.author = None;
         amend.reuse_message_from = Some(source_out.oid);
         let outcome = create_commit(&repo, &amend, &mut NullProgress).unwrap();
         let author = author_info_from_commit(&repo, outcome.oid);
@@ -2645,7 +2692,11 @@ mod tests {
         fs::write(root.join("a.txt"), b"1\n").unwrap();
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let mut source = commit_req("source subject\n");
-        source.author = "Source Author <author@example.com> 978307200 +0000".to_owned();
+        source.author = Some(
+            "Source Author <author@example.com> 978307200 +0000"
+                .parse()
+                .expect("signature"),
+        );
         let source_out = create_commit(&repo, &source, &mut NullProgress).unwrap();
 
         fs::write(root.join("a.txt"), b"2\n").unwrap();
@@ -2656,9 +2707,13 @@ mod tests {
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let mut amend = commit_req("");
         amend.amend = true;
-        amend.author = String::new();
+        amend.author = None;
         amend.reset_author = true;
-        amend.committer = "Reset Author <reset@example.com> 1800000000 +0000".to_owned();
+        amend.committer = Some(
+            "Reset Author <reset@example.com> 1800000000 +0000"
+                .parse()
+                .expect("signature"),
+        );
         amend.reuse_message_from = Some(source_out.oid);
         let outcome = create_commit(&repo, &amend, &mut NullProgress).unwrap();
         let author = author_info_from_commit(&repo, outcome.oid);
@@ -2674,14 +2729,18 @@ mod tests {
         fs::write(root.join("a.txt"), b"1\n").unwrap();
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let mut first = commit_req("source");
-        first.author = "Source Author <source@example.com> 99 +0000".to_owned();
-        first.committer = ident();
+        first.author = Some(
+            "Source Author <source@example.com> 99 +0000"
+                .parse()
+                .expect("signature"),
+        );
+        first.committer = Some(ident().parse().expect("signature"));
         let first_out = create_commit(&repo, &first, &mut NullProgress).unwrap();
 
         fs::write(root.join("a.txt"), b"2\n").unwrap();
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let mut req = commit_req("");
-        req.author = String::new();
+        req.author = None;
         req.reuse_message_from = Some(first_out.oid);
         let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
         let author = author_info_from_commit(&repo, outcome.oid);
@@ -2698,7 +2757,7 @@ mod tests {
         fs::write(root.join("a.txt"), b"1\n").unwrap();
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let mut first = commit_req("source");
-        first.author = "Old <old@example.com> 1 +0000".to_owned();
+        first.author = Some("Old <old@example.com> 1 +0000".parse().expect("signature"));
         create_commit(&repo, &first, &mut NullProgress).unwrap();
 
         fs::write(root.join("a.txt"), b"2\n").unwrap();
@@ -2707,9 +2766,13 @@ mod tests {
 
         let mut amend = commit_req("");
         amend.amend = true;
-        amend.author = String::new();
+        amend.author = None;
         amend.reset_author = true;
-        amend.committer = "New Committer <new@example.com> 2000 +0000".to_owned();
+        amend.committer = Some(
+            "New Committer <new@example.com> 2000 +0000"
+                .parse()
+                .expect("signature"),
+        );
         let outcome = create_commit(&repo, &amend, &mut NullProgress).unwrap();
         let author = author_info_from_commit(&repo, outcome.oid);
         assert_eq!(author.name, "New Committer");
@@ -2764,7 +2827,7 @@ mod tests {
         fs::write(root.join("a.txt"), b"2\n").unwrap();
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let mut req = commit_req("");
-        req.author = String::new();
+        req.author = None;
         req.reuse_message_from = Some(source.oid);
         let copy = create_commit(&repo, &req, &mut NullProgress).unwrap();
         let copy_data = parse_commit(&repo.odb().read(&copy.oid).unwrap().data).unwrap();
@@ -2858,7 +2921,11 @@ mod tests {
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let mut req = dry_run_req("amend");
         req.amend = true;
-        req.author = "Override <o@example.com> 1700000000 +0000".into();
+        req.author = Some(
+            "Override <o@example.com> 1700000000 +0000"
+                .parse()
+                .expect("signature"),
+        );
         let outcome =
             commit_with_scope(&repo, &req, CommitScope::Staged, &mut NullProgress).unwrap();
         assert_eq!(outcome.author.email, "o@example.com");

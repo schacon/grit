@@ -98,8 +98,8 @@ fn create_commit_aborts_on_pre_commit_hook_failure() {
         &repo,
         &CommitRequest {
             message: "msg".into(),
-            author: ident.clone(),
-            committer: ident,
+            author: Some(ident.parse().expect("signature")),
+            committer: Some(ident.parse().expect("signature")),
             allow_empty: false,
             sign_override: None,
             amend: false,
@@ -139,8 +139,8 @@ fn commit_msg_hook_receives_editmsg_path_argument() {
         &repo,
         &CommitRequest {
             message: "hello commit".into(),
-            author: ident.clone(),
-            committer: ident,
+            author: Some(ident.parse().expect("signature")),
+            committer: Some(ident.parse().expect("signature")),
             allow_empty: false,
             sign_override: None,
             amend: false,

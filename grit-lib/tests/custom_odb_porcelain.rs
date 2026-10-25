@@ -78,8 +78,8 @@ fn blob_id(data: &[u8]) -> ObjectId {
 fn commit_request(message: &str) -> CommitRequest {
     CommitRequest {
         message: message.to_owned(),
-        author: IDENT.to_owned(),
-        committer: IDENT.to_owned(),
+        author: Some(IDENT.parse().expect("signature")),
+        committer: Some(IDENT.parse().expect("signature")),
         ..Default::default()
     }
 }
