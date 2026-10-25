@@ -641,16 +641,15 @@ impl PartialOrd for WalkDateKey {
 
 /// Resumable date-order walk state for [`walk_commits_reachable_excluding_ancestors_of`].
 ///
-/// Ordering matches Git's default `rev-list`: among commits ready to print, take the
-/// greatest committer timestamp; a parent becomes ready only after all of its children
-/// still in the walk have been processed.
+/// Ordering matches Git's default `rev-list`: pop the greatest committer timestamp (ties go
+/// to the earlier queued commit) and queue each parent when it is first discovered. Nothing
+/// waits for a commit's other children, so under clock skew a parent can print before one of
+/// its children, exactly as in Git.
 #[derive(Clone, Debug)]
 pub struct ReachableWalkState {
     heap: BinaryHeap<WalkDateKey>,
     done: OidHashSet,
     queued: OidHashSet,
-    /// Selected children not yet emitted, per parent (Git `limit_list` gating).
-    unfinished_children: OidHashMap<usize>,
     /// Tips seeded on the heap up front (may emit before all children are shown).
     seeded: OidHashSet,
     seq: u64,
@@ -658,6 +657,8 @@ pub struct ReachableWalkState {
     /// Which pending commits reach a hide tip; computed on first use so restored
     /// snapshots rebuild it from their heap.
     paint: Option<SidePaint>,
+    /// Read parents and dates from the on-disk commit-graph when one is present.
+    use_commit_graph: bool,
 }
 
 /// Serializable snapshot of [`ReachableWalkState`] for resuming a bounded walk.
@@ -669,8 +670,6 @@ pub struct ReachableWalkSnapshot {
     pub done: Vec<ObjectId>,
     /// Every OID ever queued on the heap.
     pub queued: Vec<ObjectId>,
-    /// Pending child counts per parent OID.
-    pub unfinished_children: Vec<(ObjectId, u32)>,
     /// Tip OIDs seeded on the heap at walk start.
     pub seeded: Vec<ObjectId>,
     /// `seq` field.
@@ -686,17 +685,27 @@ impl ReachableWalkState {
     ///
     /// Propagates commit read errors while seeding the heap.
     pub fn new(repo: &Repository, tips: &[ObjectId], hide: &[ObjectId]) -> Result<Self> {
-        let hide_vec: Vec<ObjectId> = hide.to_vec();
-        let mut cache = CommitGraphCache::new(repo);
+        Self::with_commit_graph(repo, tips, hide, true)
+    }
+
+    /// Like [`Self::new`]; `use_commit_graph: false` parses every commit object instead of
+    /// reading the on-disk commit-graph ([`crate::rev_list::RevListOptions::use_commit_graph`]).
+    pub(crate) fn with_commit_graph(
+        repo: &Repository,
+        tips: &[ObjectId],
+        hide: &[ObjectId],
+        use_commit_graph: bool,
+    ) -> Result<Self> {
+        let mut cache = CommitGraphCache::with_commit_graph(repo, use_commit_graph);
         let mut state = Self {
             heap: BinaryHeap::new(),
             done: oid_hash_set(),
             queued: oid_hash_set(),
-            unfinished_children: oid_hash_map(),
             seeded: oid_hash_set(),
             seq: 0,
-            hide: hide_vec,
+            hide: hide.to_vec(),
             paint: None,
+            use_commit_graph,
         };
         for &tip in tips {
             if state.hide.contains(&tip) {
@@ -716,7 +725,6 @@ impl ReachableWalkState {
             heap,
             done,
             queued,
-            unfinished_children,
             seeded,
             seq,
             hide,
@@ -728,14 +736,11 @@ impl ReachableWalkState {
                 .collect(),
             done: done.into_iter().collect(),
             queued: queued.into_iter().collect(),
-            unfinished_children: unfinished_children
-                .into_iter()
-                .map(|(oid, count)| (oid, count as usize))
-                .collect(),
             seeded: seeded.into_iter().collect(),
             seq,
             paint: None,
             hide,
+            use_commit_graph: true,
         }
     }
 
@@ -750,11 +755,6 @@ impl ReachableWalkState {
                 .collect(),
             done: self.done.iter().copied().collect(),
             queued: self.queued.iter().copied().collect(),
-            unfinished_children: self
-                .unfinished_children
-                .iter()
-                .map(|(oid, count)| (*oid, *count as u32))
-                .collect(),
             seeded: self.seeded.iter().copied().collect(),
             seq: self.seq,
             hide: self.hide.clone(),
@@ -793,7 +793,7 @@ impl ReachableWalkState {
             return Ok(());
         }
         let pending: Vec<ObjectId> = self.heap.iter().map(|key| key.oid).collect();
-        self.paint = Some(SidePaint::compute(cache, &pending, &self.hide)?);
+        self.paint = Some(SidePaint::compute_hiding(cache, &pending, &self.hide)?);
         Ok(())
     }
 
@@ -832,9 +832,6 @@ impl ReachableWalkState {
         if is_tip {
             self.seeded.insert(oid);
         }
-        for parent in cache.parents_of(oid)? {
-            *self.unfinished_children.entry(parent).or_insert(0) += 1;
-        }
         let time = cache.commit_time(oid)?;
         let seq = self.seq;
         self.seq += 1;
@@ -844,11 +841,7 @@ impl ReachableWalkState {
 
     fn after_processed(&mut self, cache: &mut CommitGraphCache<'_>, oid: ObjectId) -> Result<()> {
         for parent in cache.parents_of(oid)? {
-            let Some(count) = self.unfinished_children.get_mut(&parent) else {
-                continue;
-            };
-            *count = count.saturating_sub(1);
-            if *count == 0 && !self.seeded.contains(&parent) && self.queued.insert(parent) {
+            if self.queued.insert(parent) {
                 // Ancestors of hidden commits are hidden too; keeping them off the
                 // heap stops the walk at the hide frontier instead of the root.
                 if self.is_hidden(cache, parent)? {
@@ -913,7 +906,7 @@ impl ReachableWalkState {
         limit: Option<usize>,
         cutoffs: ReachableWalkCommitterCutoffs,
     ) -> Result<Vec<ObjectId>> {
-        let mut cache = CommitGraphCache::new(repo);
+        let mut cache = CommitGraphCache::with_commit_graph(repo, self.use_commit_graph);
         let mut out = Vec::new();
         while let Some(oid) = self.pop_next_emit(&mut cache, cutoffs)? {
             out.push(oid);
@@ -1320,6 +1313,23 @@ pub fn commits_reachable_excluding_ancestors_of_cutoffs(
         repo, tips, hide, walk_limit, cutoffs,
     )?;
     Ok(oids)
+}
+
+/// [`commits_reachable_excluding_ancestors_of_cutoffs`] that can skip the on-disk commit-graph
+/// and parse every commit object instead.
+pub(crate) fn commits_reachable_excluding_ancestors_of_with_graph(
+    repo: &Repository,
+    tips: &[ObjectId],
+    hide: &[ObjectId],
+    limit: Option<usize>,
+    cutoffs: ReachableWalkCommitterCutoffs,
+    use_commit_graph: bool,
+) -> Result<Vec<ObjectId>> {
+    if tips.is_empty() {
+        return Ok(Vec::new());
+    }
+    ReachableWalkState::with_commit_graph(repo, tips, hide, use_commit_graph)?
+        .emit_until(repo, limit, cutoffs)
 }
 
 /// Return commits that are not reachable from any other input commit.
@@ -1735,7 +1745,34 @@ impl SidePaint {
         left: &[ObjectId],
         right: &[ObjectId],
     ) -> Result<Self> {
-        let mut walk = PaintWalk::default();
+        Self::paint(cache, left, right, PaintWalk::default())
+    }
+
+    /// Paint `tips` against the `hide` tips of a range walk. Like Git's walk over excluded
+    /// commits, a missing object reached from `hide` is skipped rather than an error: it is
+    /// hidden whatever lies behind it.
+    ///
+    /// # Errors
+    ///
+    /// Propagates commit read and parse errors for commits not reached from `hide`.
+    fn compute_hiding(
+        cache: &mut CommitGraphCache<'_>,
+        tips: &[ObjectId],
+        hide: &[ObjectId],
+    ) -> Result<Self> {
+        let walk = PaintWalk {
+            skip_missing_right: true,
+            ..PaintWalk::default()
+        };
+        Self::paint(cache, tips, hide, walk)
+    }
+
+    fn paint(
+        cache: &mut CommitGraphCache<'_>,
+        left: &[ObjectId],
+        right: &[ObjectId],
+        mut walk: PaintWalk,
+    ) -> Result<Self> {
         for (tips, side) in [(left, PAINT_LEFT), (right, PAINT_RIGHT)] {
             for &tip in tips {
                 let Some(tip) = try_peel_to_commit_for_merge_base(cache.repo, tip)? else {
@@ -1799,6 +1836,8 @@ struct PaintWalk {
     seq: u64,
     /// Queued commits that still keep the walk going (see [`Self::mark`]).
     open: usize,
+    /// Leave unreadable commits reached from the right side unqueued instead of failing.
+    skip_missing_right: bool,
 }
 
 impl PaintWalk {
@@ -1823,13 +1862,22 @@ impl PaintWalk {
             }
             return Ok(());
         }
+        let committed_at = match cache.commit_time(oid) {
+            Ok(time) => time,
+            // Hidden either way, and unpainted ancestors count as hidden too.
+            Err(Error::ObjectNotFound(_))
+                if self.skip_missing_right && after & PAINT_RIGHT != 0 =>
+            {
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        };
         let is_open = after != PAINT_BOTH || repaint;
         self.queued.insert(oid, is_open);
         if is_open {
             self.open += 1;
         }
         let rank = commit_rank_for_walk(cache, oid);
-        let committed_at = cache.commit_time(oid)?;
         self.heap.push(PaintKey {
             rank,
             committed_at,
@@ -2052,6 +2100,11 @@ struct CommitGraphCache<'r> {
 
 impl<'r> CommitGraphCache<'r> {
     fn new(repo: &'r Repository) -> Self {
+        Self::with_commit_graph(repo, true)
+    }
+
+    /// `use_commit_graph: false` leaves [`Self::graph`] empty so every lookup parses the commit.
+    fn with_commit_graph(repo: &'r Repository, use_commit_graph: bool) -> Self {
         let cfg = repo.config().map(|c| (*c).clone()).unwrap_or_default();
         // Stop ancestry traversal only at genuinely-missing promisor objects, not
         // at every member of a promisor pack. The clone base commit lives in a
@@ -2068,10 +2121,13 @@ impl<'r> CommitGraphCache<'r> {
         } else {
             oid_hash_set()
         };
-        let graph = repo
-            .caches()
-            .commit_graph_chain(&repo.git_dir().join("objects"))
-            .map(|arc| (*arc).clone());
+        let graph = if use_commit_graph {
+            repo.caches()
+                .commit_graph_chain(&repo.git_dir().join("objects"))
+                .map(|arc| (*arc).clone())
+        } else {
+            None
+        };
         let shallow_boundaries = oid_hash_set_from(&load_shallow_boundaries(repo.git_dir()));
         let graft_parents = load_graft_parents(repo.git_dir()).into_iter().collect();
         Self {

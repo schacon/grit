@@ -225,6 +225,16 @@ fn large_max_count_without_paths_matches_git() {
 /// A merge-heavy history with many equal committer dates and some clock skew, large enough
 /// that a `--max-count` page crosses the bounded-walk cap. Returns the tip.
 fn write_tied_skewed_history(odb: &Odb, commits: usize) -> grit_lib::objects::ObjectId {
+    *write_tied_skewed_history_commits(odb, commits)
+        .last()
+        .expect("at least one commit")
+}
+
+/// Like [`write_tied_skewed_history`], returning every commit oldest first.
+fn write_tied_skewed_history_commits(
+    odb: &Odb,
+    commits: usize,
+) -> Vec<grit_lib::objects::ObjectId> {
     let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
     let mut next = move || {
         state = state
@@ -251,7 +261,227 @@ fn write_tied_skewed_history(odb: &Odb, commits: usize) -> grit_lib::objects::Ob
         let commit = write_commit(odb, &parents, &format!("c{i}"), when, when).expect("commit");
         written.push(commit);
     }
-    *written.last().expect("at least one commit")
+    written
+}
+
+#[test]
+fn unlimited_range_does_not_read_history_below_excluded_tip() {
+    let dir = tempdir().expect("tempdir");
+    let repo = open_bare(dir.path()).expect("repo");
+    // Nothing below `base` exists, so walking either side's full closure fails.
+    let missing: grit_lib::objects::ObjectId = "0000000000000000000000000000000000000001"
+        .parse()
+        .expect("oid");
+    let base = write_commit(repo.odb(), &[missing], "base", 100, 100).expect("base");
+    let mut range = Vec::new();
+    let mut parent = base;
+    for i in 0..20 {
+        let when = 200 + i * 10;
+        parent = write_commit(repo.odb(), &[parent], &format!("c{i}"), when, when).expect("c");
+        range.push(parent);
+    }
+    range.reverse();
+    let tip_hex = range[0].to_hex();
+    let base_hex = base.to_hex();
+
+    let listed = rev_list(
+        &repo,
+        std::slice::from_ref(&tip_hex),
+        std::slice::from_ref(&base_hex),
+        &RevListOptions::default(),
+    )
+    .expect("unlimited A..B stays above the excluded tip");
+    assert_eq!(listed.commits, range);
+
+    let spec = format!("{base_hex}..{tip_hex}");
+    let walked = repo
+        .rev_walk()
+        .rev_list_result(&[spec.as_str()], &RevWalkListOptions::default())
+        .expect("RevWalk::rev_list_result A..B");
+    assert_eq!(walked.commits, range);
+    assert_eq!(support::git_rev_list(dir.path(), &[&spec]), range);
+}
+
+#[test]
+fn range_with_newer_hide_tip_tolerates_missing_history_behind_it() {
+    let dir = tempdir().expect("tempdir");
+    let repo = open_bare(dir.path()).expect("repo");
+    let missing: grit_lib::objects::ObjectId = "0000000000000000000000000000000000000001"
+        .parse()
+        .expect("oid");
+    // The hide side is newer than the range, so date order reaches behind `hide` before the
+    // positive side meets it. Git skips unreadable parents of excluded commits.
+    let below = write_commit(repo.odb(), &[missing], "below", 190, 190).expect("below");
+    let hide = write_commit(repo.odb(), &[below], "hide", 200, 200).expect("hide");
+    let mid = write_commit(repo.odb(), &[hide], "mid", 50, 50).expect("mid");
+    let tip = write_commit(repo.odb(), &[mid], "tip", 100, 100).expect("tip");
+    let spec = format!("{hide}..{tip}");
+    assert_eq!(support::git_rev_list(dir.path(), &[&spec]), vec![tip, mid]);
+
+    for max_count in [None, Some(10)] {
+        let listed = rev_list(
+            &repo,
+            &[tip.to_hex()],
+            &[hide.to_hex()],
+            &RevListOptions {
+                max_count,
+                ..Default::default()
+            },
+        )
+        .expect("range with a newer hide tip");
+        assert_eq!(listed.commits, vec![tip, mid], "max_count {max_count:?}");
+    }
+}
+
+/// Rewrite the committer date git stored for `oid` in the repository's commit-graph file.
+fn rewrite_commit_graph_date(git_dir: &Path, oid: grit_lib::objects::ObjectId, date: u32) {
+    let path = git_dir.join("objects/info/commit-graph");
+    let mut bytes = fs::read(&path).expect("read commit-graph");
+    let chunk_count = bytes[6] as usize;
+    let chunk_offset = |id: &[u8; 4]| {
+        (0..chunk_count)
+            .map(|i| 8 + i * 12)
+            .find(|&at| &bytes[at..at + 4] == id)
+            .map(|at| {
+                let mut offset = [0u8; 8];
+                offset.copy_from_slice(&bytes[at + 4..at + 12]);
+                u64::from_be_bytes(offset) as usize
+            })
+            .expect("chunk present")
+    };
+    let (oid_lookup, commit_data) = (chunk_offset(b"OIDL"), chunk_offset(b"CDAT"));
+    let position = (0..)
+        .find(|i| &bytes[oid_lookup + i * 20..oid_lookup + (i + 1) * 20] == oid.as_bytes())
+        .expect("commit in graph");
+    // Each CDAT row ends with generation and date; the low 32 bits hold the date.
+    let date_at = commit_data + position * 36 + 32;
+    bytes[date_at..date_at + 4].copy_from_slice(&date.to_be_bytes());
+    fs::remove_file(&path).expect("remove read-only commit-graph");
+    fs::write(&path, bytes).expect("write commit-graph");
+}
+
+#[test]
+fn range_with_commit_graph_disabled_reads_commit_objects() {
+    let dir = tempdir().expect("tempdir");
+    let repo = open_bare(dir.path()).expect("repo");
+    let root = write_commit(repo.odb(), &[], "root", 10, 10).expect("root");
+    let older = write_commit(repo.odb(), &[root], "older", 20, 20).expect("older");
+    let newer = write_commit(repo.odb(), &[root], "newer", 30, 30).expect("newer");
+    let merge = write_commit(repo.odb(), &[older, newer], "merge", 40, 40).expect("merge");
+    support::git(
+        dir.path(),
+        &["update-ref", "refs/heads/main", &merge.to_hex()],
+    );
+    support::git(dir.path(), &["commit-graph", "write", "--reachable"]);
+    rewrite_commit_graph_date(dir.path(), older, 1_000);
+
+    let walk = |use_commit_graph: bool, max_count: Option<usize>| {
+        let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");
+        rev_list(
+            &repo,
+            &[merge.to_hex()],
+            &[root.to_hex()],
+            &RevListOptions {
+                use_commit_graph,
+                max_count,
+                ..Default::default()
+            },
+        )
+        .expect("rev-list")
+        .commits
+    };
+    assert_eq!(
+        walk(true, None),
+        vec![merge, older, newer],
+        "the rewritten graph date is what the commit-graph walk sees"
+    );
+    let spec = format!("{root}..{merge}");
+    let git_from_objects: Vec<grit_lib::objects::ObjectId> = support::git(
+        dir.path(),
+        &["-c", "core.commitGraph=false", "rev-list", &spec],
+    )
+    .lines()
+    .map(|line| line.trim().parse().expect("oid"))
+    .collect();
+    assert_eq!(git_from_objects, vec![merge, newer, older]);
+    for max_count in [None, Some(10)] {
+        assert_eq!(
+            walk(false, max_count),
+            git_from_objects,
+            "use_commit_graph: false orders by commit object dates (max_count {max_count:?})"
+        );
+    }
+}
+
+#[test]
+fn unlimited_ranges_match_git_on_tied_and_skewed_history() {
+    let dir = tempdir().expect("tempdir");
+    let repo = open_bare(dir.path()).expect("repo");
+    let commits = write_tied_skewed_history_commits(repo.odb(), 900);
+    let hex = |i: usize| commits[i].to_hex();
+    let tip = commits.len() - 1;
+    let cases: [(&[usize], &[usize]); 5] = [
+        (&[tip], &[tip - 20]),
+        (&[tip], &[tip - 400]),
+        (&[tip], &[0]),
+        (&[tip, tip - 300], &[tip - 150, tip - 500]),
+        (&[tip - 10], &[tip]),
+    ];
+    for (positive, negative) in cases {
+        let positive: Vec<String> = positive.iter().map(|&i| hex(i)).collect();
+        let negative: Vec<String> = negative.iter().map(|&i| hex(i)).collect();
+        let mut git_args: Vec<String> = positive.clone();
+        git_args.extend(negative.iter().map(|n| format!("^{n}")));
+        for reverse in [false, true] {
+            let mut args: Vec<&str> = git_args.iter().map(String::as_str).collect();
+            if reverse {
+                args.push("--reverse");
+            }
+            let expected = support::git_rev_list(dir.path(), &args);
+            let opts = RevListOptions {
+                reverse,
+                path_graph_reorder: false,
+                use_commit_graph: true,
+                ..Default::default()
+            };
+            let actual = rev_list(&repo, &positive, &negative, &opts)
+                .expect("rev-list")
+                .commits;
+            assert_eq!(actual, expected, "rev-list {args:?} differs from git");
+        }
+    }
+}
+
+#[test]
+fn date_order_ranges_keep_children_before_parents_like_git() {
+    let dir = tempdir().expect("tempdir");
+    let repo = open_bare(dir.path()).expect("repo");
+    let commits = write_tied_skewed_history_commits(repo.odb(), 600);
+    let tip = commits[commits.len() - 1].to_hex();
+    let hide = commits[100].to_hex();
+    for max_count in [Some(40usize), None] {
+        let mut args = vec!["--date-order".to_owned(), tip.clone(), format!("^{hide}")];
+        if let Some(n) = max_count {
+            args.push(format!("--max-count={n}"));
+        }
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let expected = support::git_rev_list(dir.path(), &args);
+        let opts = RevListOptions {
+            ordering: OrderingMode::DateOrderWalk,
+            max_count,
+            path_graph_reorder: false,
+            ..Default::default()
+        };
+        let actual = rev_list(
+            &repo,
+            std::slice::from_ref(&tip),
+            std::slice::from_ref(&hide),
+            &opts,
+        )
+        .expect("rev-list --date-order")
+        .commits;
+        assert_eq!(actual, expected, "rev-list {args:?} differs from git");
+    }
 }
 
 #[test]
