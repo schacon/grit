@@ -279,7 +279,8 @@ impl RepositoryBuilder {
     /// Use a preconfigured [`crate::odb::OdbBuilder`] for the object store.
     ///
     /// The builder's objects directory may be any path naming the repository's `objects/`
-    /// directory (through symlinks, or relative to the environment's current directory);
+    /// directory, or [`crate::environment::Environment::git_object_directory`] when that is
+    /// set (through symlinks, or relative to the environment's current directory);
     /// [`Self::open`] replaces it with the canonical path of that directory, which is what
     /// [`crate::odb::Odb::objects_dir`] then reports (the symlink target when `objects/`
     /// itself is a symlink).
@@ -317,7 +318,8 @@ impl RepositoryBuilder {
     ///
     /// Same as [`Repository::open`], plus:
     /// - [`Error::OdbObjectsDirMismatch`] when a files-backed [`Self::odb_builder`] names a
-    ///   directory other than the repository's `objects/`.
+    ///   directory other than the repository's `objects/` (or the environment's
+    ///   `GIT_OBJECT_DIRECTORY`).
     /// - [`Error::InvalidRef`] when [`Self::initial_branch`] is not a valid branch name.
     /// - [`Error::RefStore`] when seeding `HEAD` in the ref store fails.
     pub fn open(self, git_dir: &Path, work_tree: Option<&Path>) -> Result<Repository> {
@@ -535,18 +537,9 @@ impl Repository {
         }
 
         let common_git_dir = resolve_common_dir(&git_dir).unwrap_or_else(|| git_dir.clone());
-
-        // For git worktrees the `objects/` directory lives in the common git
-        // directory pointed to by the `commondir` file.
-        let objects_dir = if git_dir.join("objects").exists() {
-            git_dir.join("objects")
-        } else {
-            common_git_dir.join("objects")
-        };
-
-        if !objects_dir.exists() {
-            return Err(not_a_repository_at(&git_dir));
-        }
+        let objects_dir = resolve_objects_dir(&environment, &git_dir, &common_git_dir)
+            .filter(|dir| dir.exists())
+            .ok_or_else(|| not_a_repository_at(&git_dir))?;
 
         let work_tree = match work_tree {
             Some(p) => {
@@ -1649,12 +1642,8 @@ impl Repository {
         }
 
         let common_git_dir = resolve_common_dir(&git_dir).unwrap_or_else(|| git_dir.clone());
-
-        let objects_dir = if git_dir.join("objects").exists() {
-            git_dir.join("objects")
-        } else {
-            common_git_dir.join("objects")
-        };
+        let objects_dir = resolve_objects_dir(&environment, &git_dir, &common_git_dir)
+            .ok_or_else(|| not_a_repository_at(&git_dir))?;
 
         // A custom primary does not need objects/ to exist, but the builder must still name it.
         if !builder.has_custom_primary() && !objects_dir.exists() {
@@ -4160,6 +4149,31 @@ fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf> {
             _ => return Ok(absolute),
         }
     }
+}
+
+/// The repository's primary objects directory.
+///
+/// [`Environment::git_object_directory`] wins when set (a relative path resolves against
+/// [`Environment::discovery_cwd`]); the main store is then reachable only through alternates,
+/// as in Git. Otherwise `objects/` in `git_dir`, or in `common_git_dir` for a linked
+/// worktree's admin directory.
+///
+/// Returns `None` when the variable is set but empty: Git treats that as a store that cannot
+/// exist, so the repository fails to open.
+fn resolve_objects_dir(
+    environment: &Environment,
+    git_dir: &Path,
+    common_git_dir: &Path,
+) -> Option<PathBuf> {
+    if let Some(dir) = environment.git_object_directory.as_deref() {
+        return (!dir.is_empty()).then(|| environment.discovery_cwd().join(dir));
+    }
+    let own = git_dir.join("objects");
+    Some(if own.exists() {
+        own
+    } else {
+        common_git_dir.join("objects")
+    })
 }
 
 fn head_file_present(git_dir: &Path) -> bool {
