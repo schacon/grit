@@ -18,7 +18,7 @@ use grit_lib::porcelain::stage_tracked::{
     stage_tracked_modifications_with_thresholds, IndexStagingThresholds,
 };
 use grit_lib::porcelain::status::{status, StatusOptions, UntrackedMode};
-use grit_lib::progress::NullProgress;
+use grit_lib::progress::{NeverCancel, NullProgress};
 use grit_lib::repo::Repository;
 use grit_lib::PARALLEL_STAT_MIN_ENTRIES;
 use grit_test_support::git;
@@ -287,7 +287,7 @@ fn unstaged_status(root: &Path, threads: usize) -> Vec<(String, DiffStatus, Stri
         stat_parallel_threads: Some(threads),
         ..StatusOptions::default()
     };
-    let model = status(&repo, &options, &mut NullProgress).expect("status");
+    let model = status(&repo, &options, &mut NullProgress, &NeverCancel).expect("status");
     model
         .unstaged
         .iter()
