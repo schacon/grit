@@ -429,6 +429,7 @@ pub struct Repository {
     test_assume_different_owner: bool,
     force_split_index: bool,
     thread_policy: crate::parallel::ThreadPolicy,
+    hook_stdio: crate::hooks::HookStdio,
 }
 
 const _: () = {
@@ -608,6 +609,7 @@ impl Repository {
             test_assume_different_owner: options.test_assume_different_owner,
             force_split_index: options.force_split_index,
             thread_policy: options.thread_policy,
+            hook_stdio: options.hook_stdio,
         })
     }
 
@@ -677,6 +679,13 @@ impl Repository {
         Arc::clone(&self.command_runner)
     }
 
+    /// Where hooks run through this handle write their output
+    /// ([`RepositoryOptions::with_hook_stdio`]).
+    #[must_use]
+    pub fn hook_stdio(&self) -> crate::hooks::HookStdio {
+        self.hook_stdio
+    }
+
     /// Generator used for random change ids on new commits.
     #[must_use]
     pub fn change_id_generator(&self) -> Arc<dyn ChangeIdGenerator> {
@@ -710,6 +719,7 @@ impl Repository {
             validate_repository_format: true,
             open_for_serving: false,
             promisor_fetcher: self.caches().promisor_fetcher(),
+            hook_stdio: self.hook_stdio,
         }
     }
 
@@ -1591,6 +1601,7 @@ impl Repository {
             test_assume_different_owner: options.test_assume_different_owner,
             force_split_index: options.force_split_index,
             thread_policy: options.thread_policy,
+            hook_stdio: options.hook_stdio,
         };
         repo.refresh_config_session()?;
         if options.validate_repository_format {

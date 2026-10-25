@@ -91,3 +91,26 @@ fn unstartable_post_commit_warns_and_keeps_the_commit() {
         "the hook failure must still be reported: {stderr}"
     );
 }
+
+#[test]
+fn unstartable_script_keeps_output_of_the_configured_hook_before_it() {
+    let repo = repo_with_hook("pre-commit");
+    fs::write(
+        repo.path().join(".git/config"),
+        "[core]\n\trepositoryformatversion = 0\n[hook \"lint\"]\n\tcommand = echo from-configured-hook\n\tevent = pre-commit\n",
+    )
+    .expect("config");
+
+    let out = grit(repo.path(), &["commit", "-m", "one", "--markdown"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    assert!(
+        stdout.starts_with("**Error:** failed to run hook pre-commit (.git/hooks/pre-commit)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("**Hook stdout:**\n\n```text\nfrom-configured-hook\n```"),
+        "{stdout}"
+    );
+    assert_eq!(commit_count(repo.path()), 0);
+}

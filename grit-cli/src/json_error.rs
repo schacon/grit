@@ -4,6 +4,7 @@ use std::error::Error as StdError;
 use std::fmt;
 
 use anyhow::Error;
+use grit_lib::command_runner::hooks::HookError;
 use grit_lib::error::{Error as LibError, OverwriteReason};
 use grit_lib::objects::ObjectId;
 use schemars::JsonSchema;
@@ -43,6 +44,58 @@ pub struct StructuredJsonError {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub oid: Option<String>,
+    /// The failing hook and what it wrote, when `kind == "hook_failed"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub hook: Option<HookFailureJson>,
+}
+
+/// A hook that exited non-zero, when `kind == "hook_failed"`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct HookFailureJson {
+    /// Hook event name (`pre-commit`, `commit-msg`, …).
+    pub name: String,
+    /// The hook's exit code.
+    pub status: i32,
+    /// What the hook wrote to stdout (lossy UTF-8).
+    pub stdout: String,
+    /// What the hook wrote to stderr (lossy UTF-8).
+    pub stderr: String,
+}
+
+/// A [`HookError`] anywhere in `err`'s chain, bare or wrapped in [`LibError::Hook`].
+pub fn hook_error_from_chain(err: &Error) -> Option<&HookError> {
+    err.chain()
+        .find_map(|cause| match cause.downcast_ref::<LibError>() {
+            Some(LibError::Hook(hook)) => Some(hook),
+            _ => cause.downcast_ref::<HookError>(),
+        })
+}
+
+fn hook_failure_payload(err: &Error) -> Option<StructuredJsonError> {
+    let hook = hook_error_from_chain(err)?;
+    let HookError::Failed {
+        hook_name,
+        status,
+        output,
+    } = hook
+    else {
+        return None;
+    };
+    Some(StructuredJsonError {
+        error: hook.to_string(),
+        kind: ErrorKind::HookFailed,
+        conflicts: None,
+        commit: None,
+        would_overwrite: None,
+        oid: None,
+        hook: Some(HookFailureJson {
+            name: hook_name.clone(),
+            status: *status,
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        }),
+    })
 }
 
 /// Carries both human text and a structured JSON payload.
@@ -84,6 +137,7 @@ pub fn operation_conflict(
             commit: commit.map(|oid| oid.to_hex()),
             would_overwrite: None,
             oid: None,
+            hook: None,
         },
         human,
     })
@@ -102,6 +156,7 @@ pub fn hash_collision(oid: ObjectId) -> Error {
             commit: None,
             would_overwrite: None,
             oid: Some(hex),
+            hook: None,
         },
         human,
     })
@@ -127,6 +182,7 @@ pub fn would_overwrite_error(
                 paths,
             }),
             oid: None,
+            hook: None,
         },
         human,
     })
@@ -142,6 +198,7 @@ pub fn index_locked(human: String) -> Error {
             commit: None,
             would_overwrite: None,
             oid: None,
+            hook: None,
         },
         human,
     })
@@ -232,6 +289,9 @@ pub fn structured_json_payload(err: &Error) -> Option<StructuredJsonError> {
     if let Some(e) = err.downcast_ref::<StructuredCliError>() {
         return Some(e.payload.clone());
     }
+    if let Some(payload) = hook_failure_payload(err) {
+        return Some(payload);
+    }
     hash_collision_from_chain(err).map(|oid| {
         let hex = oid.to_hex();
         StructuredJsonError {
@@ -241,6 +301,7 @@ pub fn structured_json_payload(err: &Error) -> Option<StructuredJsonError> {
             commit: None,
             would_overwrite: None,
             oid: Some(hex),
+            hook: None,
         }
     })
 }
@@ -256,6 +317,7 @@ pub fn incompatible_output_flags(human: impl Into<String>, kind: ErrorKind) -> E
             commit: None,
             would_overwrite: None,
             oid: None,
+            hook: None,
         },
         human,
     })
@@ -284,6 +346,7 @@ pub fn invalid_commit_filter(err: grit_lib::revwalk::filter::CommitFilterError) 
             commit: None,
             would_overwrite: None,
             oid: None,
+            hook: None,
         },
         human,
     })
@@ -301,6 +364,7 @@ pub fn invalid_pickaxe(err: grit_lib::diff::PickaxeError) -> Error {
             commit: None,
             would_overwrite: None,
             oid: None,
+            hook: None,
         },
         human,
     })
