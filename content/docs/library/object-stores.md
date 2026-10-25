@@ -37,6 +37,33 @@ Pass an [`OdbBuilder`](rustdoc:grit_lib::objects::odb::OdbBuilder) rooted at the
 cargo run -p grit-examples --bin memory_primary
 ```
 
+## No git directory at all
+
+When both the object store and the ref store are injected, [`RepositoryBuilder::open`](rustdoc:grit_lib::repo::RepositoryBuilder::open) reads nothing from the git directory's layout: it may be empty or missing. Repository config is still read from `<git_dir>/config` when that file exists, and the index lives at `<git_dir>/index`, so create the directory before staging files. Seed `HEAD` with [`initial_branch`](rustdoc:grit_lib::repo::RepositoryBuilder::initial_branch):
+
+```rust
+use std::sync::Arc;
+
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::objects::HashAlgo;
+use grit_lib::objects::odb::store::MemoryStore;
+use grit_lib::objects::odb::OdbBuilder;
+use grit_lib::refs::store::MemoryRefStore;
+use grit_lib::repo::RepositoryBuilder;
+
+let git_dir = std::path::Path::new("/nowhere/in-memory.git");
+let repo = RepositoryBuilder::new(RepositoryOptions::empty())
+    .odb_builder(
+        OdbBuilder::files(git_dir.join("objects"))
+            .primary(Arc::new(MemoryStore::new(HashAlgo::Sha1)))
+            .alternates(false),
+    )
+    .ref_store(Arc::new(MemoryRefStore::new()))
+    .initial_branch("main")
+    .open(git_dir, None)?;
+# Ok::<(), grit_lib::error::Error>(())
+```
+
 ## What works with a custom primary
 
 Object reads and writes go through your store, so commits, staging (`porcelain::add::stage` and auto-staging commits), log, diff, merge, stash, notes and bundle creation all work.
@@ -82,7 +109,7 @@ fn lookup_prefix(
 
 ## Conformance tests
 
-The workspace crate `grit_test_support::odb_conformance` provides shared read/write suites. Run them from an integration test in your crate (see [`grit-lib/tests/odb_conformance_memory.rs`](https://github.com/gitbutlerapp/grit/blob/main/grit-lib/tests/odb_conformance_memory.rs)) to validate a custom backend before wiring it through [`OdbBuilder`](rustdoc:grit_lib::objects::odb::OdbBuilder).
+The workspace crate `grit_test_support::odb_conformance` provides shared read/write suites (and `grit_test_support::refstore_conformance` does the same for ref stores, see [Refs](refs.md#writing-a-ref-backend)). Run them from an integration test in your crate (see [`grit-lib/tests/odb_conformance_memory.rs`](https://github.com/gitbutlerapp/grit/blob/main/grit-lib/tests/odb_conformance_memory.rs)) to validate a custom backend before wiring it through [`OdbBuilder`](rustdoc:grit_lib::objects::odb::OdbBuilder).
 
 ## Example: append-only packfile KV store
 

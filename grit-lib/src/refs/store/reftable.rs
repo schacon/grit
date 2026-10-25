@@ -19,14 +19,14 @@ use crate::reftable::{
 use crate::repo::init_repository;
 
 use super::apply::{apply_reflog_rename, RefBatchState};
+use super::backend::check_transaction_updates;
 use super::error::RefStoreError;
 use super::semantics::{
-    apply_update_to_map, format_reflog_identity, reflog_new_oid_before, reflog_old_oid_before,
-    reftable_write_target, simulate_batch_apply,
+    apply_update_to_map, deref_reflog_target, format_reflog_identity, reflog_new_oid_before,
+    reflog_old_oid_before, reftable_write_target,
 };
 use super::transaction::RefTransaction;
 use super::types::RefReflogRename;
-use super::validation::verify_create_conflicts;
 use super::{
     Expected, PreparedRefTransaction, RawRef, RefEntry, RefStorageFormat, RefStore, RefUpdate,
 };
@@ -34,6 +34,23 @@ use super::{
 type StoreResult<T> = std::result::Result<T, RefStoreError>;
 
 /// On-disk ref storage using the reftable backend (`extensions.refStorage = reftable`).
+///
+/// # Atomicity
+///
+/// Refs live in one reftable stack per location: the common stack in the repository's git
+/// directory, and in a linked worktree a second stack under `worktrees/<id>/` for `HEAD` and
+/// other per-worktree refs. A transaction touching one stack commits as a single new table,
+/// so readers see all of it or none of it.
+///
+/// A transaction touching both stacks (for example updating `HEAD` in a linked worktree,
+/// which writes the branch in the common stack and logs `HEAD` in the worktree stack) takes
+/// the `tables.list` lock of every stack in [`RefStore::prepare`], so no other writer can
+/// interleave, and all checks pass before anything is written. Commit then writes one table
+/// per stack, common stack first. These writes are not atomic together: if a later write
+/// fails (an I/O error), [`PreparedRefTransaction::commit`] returns the error, the earlier
+/// stacks keep their new table, and every remaining lock is released. For a `HEAD` update
+/// this means the branch already points at the new commit with its reflog line, `HEAD` still
+/// resolves to it through the symbolic ref, and only `HEAD`'s own reflog line is missing.
 pub struct ReftableRefStore {
     git_dir: PathBuf,
     _keepalive: Option<tempfile::TempDir>,
@@ -159,6 +176,100 @@ impl ReftableRefStore {
         Ok(stack
             .lookup_ref(&storage_refname)?
             .and_then(|rec| record_to_raw(&rec)))
+    }
+
+    /// Rewrite updates through a symbolic ref whose target lives in another stack (a linked
+    /// worktree's `HEAD` pointing at a branch in the common stack) as two updates: the write
+    /// of the target, checked and logged in its own stack, and a log-only line for the
+    /// symbolic ref in its stack.
+    ///
+    /// The two halves commit to different stacks; see the atomicity notes on
+    /// [`ReftableRefStore`] for what a failed second write leaves behind.
+    fn split_cross_stack_symref_updates(
+        &self,
+        updates: Vec<RefUpdate>,
+    ) -> StoreResult<Vec<RefUpdate>> {
+        let common = stack_root(&self.git_dir);
+        let mut out = Vec::with_capacity(updates.len());
+        for update in updates {
+            let (update_stack, _) = reftable_storage_location(&self.git_dir, &update.name);
+            // Only per-worktree refs (HEAD, refs/worktree/*, …) can point across stacks.
+            let target = if update_stack == common {
+                None
+            } else {
+                self.cross_stack_deref_target(&update, &update_stack)?
+            };
+            let Some(target) = target else {
+                out.push(update);
+                continue;
+            };
+            let old_oid = match self.read_raw_at(&target) {
+                Ok(Some(RawRef::Direct(oid))) => oid,
+                Ok(_) => ObjectId::zero(),
+                Err(e) => return Err(RefStoreError::Corrupt(e.to_string())),
+            };
+            let new_oid = match &update.new_value {
+                Some(RawRef::Direct(oid)) => *oid,
+                _ => ObjectId::zero(),
+            };
+            let (symref_expected, target_expected) = match &update.expected {
+                Expected::Symref(_) => (update.expected.clone(), Expected::Any),
+                other => (Expected::Any, other.clone()),
+            };
+            out.push(RefUpdate {
+                name: update.name.clone(),
+                new_value: update.new_value.clone(),
+                expected: symref_expected,
+                reflog: update.reflog.clone().map(|log| super::ReflogUpdate {
+                    old_oid: log.old_oid.or(Some(old_oid)),
+                    new_oid: log.new_oid.or(Some(new_oid)),
+                    ..log
+                }),
+                flags: super::RefUpdateFlags {
+                    log_only: true,
+                    no_deref: true,
+                },
+            });
+            out.push(RefUpdate {
+                name: target,
+                new_value: update.new_value,
+                expected: target_expected,
+                reflog: update.reflog,
+                flags: super::RefUpdateFlags {
+                    log_only: update.flags.log_only,
+                    no_deref: true,
+                },
+            });
+        }
+        Ok(out)
+    }
+
+    /// End of the symbolic chain `update` writes through, when it lies outside `update_stack`.
+    fn cross_stack_deref_target(
+        &self,
+        update: &RefUpdate,
+        update_stack: &Path,
+    ) -> StoreResult<Option<String>> {
+        if update.flags.no_deref || matches!(update.new_value, Some(RawRef::Symbolic(_))) {
+            return Ok(None);
+        }
+        let read = |name: &str| {
+            self.read_raw_at(name)
+                .map_err(|e| RefStoreError::Corrupt(e.to_string()))
+        };
+        let Some(RawRef::Symbolic(mut target)) = read(&update.name)? else {
+            return Ok(None);
+        };
+        for _ in 0..crate::refs::SYMREF_MAXDEPTH {
+            match read(&target)? {
+                Some(RawRef::Symbolic(next)) => target = next,
+                _ => {
+                    let (target_stack, _) = reftable_storage_location(&self.git_dir, &target);
+                    return Ok((target_stack != update_stack).then_some(target));
+                }
+            }
+        }
+        Err(RefStoreError::SymrefLoop)
     }
 
     fn merged_refs_from_locked_stack(
@@ -385,14 +496,25 @@ fn build_reftable_updates_for_stack(
         let new_oid = reflog_new_oid_before(&trial, refs, update);
         let (_, log_refname) = reftable_storage_location(git_dir, &update.name);
         if let Some(log) = update.reflog.as_ref() {
-            let log = log_record_from_update(git_dir, &log_refname, old_oid, new_oid, log)
-                .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
-            log_updates.push(ReftableTransactionUpdate {
-                refname: log_refname,
-                value: None,
-                log: Some(log),
-                expected_old: None,
-            });
+            let mut log_refnames = vec![log_refname];
+            if let Some(target_name) = deref_reflog_target(&trial, update) {
+                let (target_store, target_storage) =
+                    reftable_storage_location(git_dir, &target_name);
+                let (update_store, _) = reftable_storage_location(git_dir, &update.name);
+                if target_store == update_store {
+                    log_refnames.push(target_storage);
+                }
+            }
+            for refname in log_refnames {
+                let record = log_record_from_update(git_dir, &refname, old_oid, new_oid, log)
+                    .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
+                log_updates.push(ReftableTransactionUpdate {
+                    refname,
+                    value: None,
+                    log: Some(record),
+                    expected_old: None,
+                });
+            }
         }
         if value.is_some() {
             let expected_old = match &update.expected {
@@ -521,6 +643,7 @@ impl RefStore for ReftableRefStore {
             });
         }
 
+        let updates = self.split_cross_stack_symref_updates(updates)?;
         let logical_updates = updates.clone();
         let mut grouped: BTreeMap<PathBuf, Vec<RefUpdate>> = BTreeMap::new();
         for update in updates {
@@ -538,8 +661,12 @@ impl RefStore for ReftableRefStore {
             stack.reload_table_names();
             let refs = Self::merged_refs_from_locked_stack(&self.git_dir, &stack)
                 .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
-            verify_create_conflicts(&refs, &group)?;
-            simulate_batch_apply(&refs, &group)?;
+            let snapshot = RefBatchState {
+                refs,
+                reflogs: BTreeMap::new(),
+            };
+            check_transaction_updates(&snapshot, &group)?;
+            let refs = snapshot.refs;
             let rt_updates = build_reftable_updates_for_stack(&self.git_dir, &refs, &group)?;
             let opts = read_write_options(&store_git_dir);
             stacks.push(LockedStackBatch {
