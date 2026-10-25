@@ -2884,8 +2884,10 @@ impl<'repo> !core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::handl
 impl<'repo> !core::panic::unwind_safe::UnwindSafe for grit_lib::config::handle::ConfigHandle<'repo>
 pub struct grit_lib::config::ConfigSet
 impl grit_lib::config::ConfigSet
+pub const grit_lib::config::ConfigSet::BIG_FILE_THRESHOLD_DEFAULT: u64
 pub const grit_lib::config::ConfigSet::LOOSE_OBJECTS_ZLIB_DEFAULT: i32
 pub fn grit_lib::config::ConfigSet::add_command_override(&mut self, &str, &str) -> grit_lib::error::Result<()>
+pub fn grit_lib::config::ConfigSet::big_file_threshold(&self) -> grit_lib::error::Result<u64>
 pub fn grit_lib::config::ConfigSet::effective_log_refs_config(&self) -> grit_lib::refs::LogRefsConfig
 pub fn grit_lib::config::ConfigSet::entries(&self) -> &[grit_lib::config::ConfigEntry]
 pub fn grit_lib::config::ConfigSet::gc_auto_detach(&self) -> bool
@@ -5568,6 +5570,9 @@ pub grit_lib::error::Error::NothingToCommit
 pub grit_lib::error::Error::ObjectHeaderTooLong
 pub grit_lib::error::Error::ObjectHeaderTooLong::oid: alloc::string::String
 pub grit_lib::error::Error::ObjectNotFound(alloc::string::String)
+pub grit_lib::error::Error::ObjectStreamTruncated
+pub grit_lib::error::Error::ObjectStreamTruncated::actual: u64
+pub grit_lib::error::Error::ObjectStreamTruncated::expected: u64
 pub grit_lib::error::Error::OdbObjectsDirMismatch
 pub grit_lib::error::Error::OdbObjectsDirMismatch::builder: std::path::PathBuf
 pub grit_lib::error::Error::OdbObjectsDirMismatch::repository: std::path::PathBuf
@@ -5661,6 +5666,8 @@ pub grit_lib::error::Error::UnsupportedObjectStore::operation: &'static str
 pub grit_lib::error::Error::UnsupportedRepositoryExtension(alloc::string::String)
 pub grit_lib::error::Error::UnsupportedRepositoryFormatVersion(u32)
 pub grit_lib::error::Error::Worktree(grit_lib::worktree::WorktreeError)
+pub grit_lib::error::Error::WorktreeFileChanged
+pub grit_lib::error::Error::WorktreeFileChanged::path: alloc::string::String
 pub grit_lib::error::Error::WouldOverwrite
 pub grit_lib::error::Error::WouldOverwrite::message: alloc::string::String
 pub grit_lib::error::Error::WouldOverwrite::paths: alloc::vec::Vec<alloc::string::String>
@@ -9921,6 +9928,7 @@ impl grit_lib::objects::odb::Odb
 pub fn grit_lib::objects::odb::Odb::append_alternate_objects_line(&std::path::Path, &std::path::Path) -> grit_lib::error::Result<()>
 pub fn grit_lib::objects::odb::Odb::append_file_alternate(&self, &std::path::Path) -> grit_lib::error::Result<()>
 pub fn grit_lib::objects::odb::Odb::approximate_object_count(&self) -> grit_lib::error::Result<usize>
+pub fn grit_lib::objects::odb::Odb::big_file_threshold(&self) -> grit_lib::error::Result<u64>
 pub fn grit_lib::objects::odb::Odb::config_git_dir(&self) -> core::option::Option<&std::path::Path>
 pub fn grit_lib::objects::odb::Odb::contains(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
 pub fn grit_lib::objects::odb::Odb::count_loose_objects(&self) -> grit_lib::error::Result<usize>
@@ -9938,6 +9946,7 @@ pub fn grit_lib::objects::odb::Odb::for_each_object(&self, &mut dyn core::ops::f
 pub fn grit_lib::objects::odb::Odb::freshen_object(&self, &grit_lib::objects::ObjectId) -> bool
 pub fn grit_lib::objects::odb::Odb::hash(&self, grit_lib::objects::ObjectKind, &[u8]) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::hash_algo(&self) -> grit_lib::objects::HashAlgo
+pub fn grit_lib::objects::odb::Odb::hash_stream(&self, grit_lib::objects::ObjectKind, u64, &mut dyn alloc::io::read::Read) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::invalidate_alternates_cache(&self)
 pub fn grit_lib::objects::odb::Odb::invalidate_packs(&self)
 pub fn grit_lib::objects::odb::Odb::is_empty_tree(&self, &grit_lib::objects::ObjectId) -> bool
@@ -9966,6 +9975,7 @@ pub fn grit_lib::objects::odb::Odb::write_loose_materialize(&self, grit_lib::obj
 pub fn grit_lib::objects::odb::Odb::write_loose_zlib_prehashed(&self, &grit_lib::objects::ObjectId, &[u8], grit_lib::objects::odb::WriteOptions) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::write_raw(&self, &[u8]) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::write_raw_local(&self, &[u8]) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
+pub fn grit_lib::objects::odb::Odb::write_stream(&self, grit_lib::objects::ObjectKind, u64, &mut dyn alloc::io::read::Read, grit_lib::objects::odb::WriteOptions) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::write_with_options(&self, grit_lib::objects::ObjectKind, &[u8], grit_lib::objects::odb::WriteOptions) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::zlib_compress_loose_store(&self, &[u8]) -> grit_lib::error::Result<alloc::vec::Vec<u8>>
 impl grit_lib::objects::odb::Odb
@@ -15344,6 +15354,9 @@ pub grit_lib::prelude::Error::NothingToCommit
 pub grit_lib::prelude::Error::ObjectHeaderTooLong
 pub grit_lib::prelude::Error::ObjectHeaderTooLong::oid: alloc::string::String
 pub grit_lib::prelude::Error::ObjectNotFound(alloc::string::String)
+pub grit_lib::prelude::Error::ObjectStreamTruncated
+pub grit_lib::prelude::Error::ObjectStreamTruncated::actual: u64
+pub grit_lib::prelude::Error::ObjectStreamTruncated::expected: u64
 pub grit_lib::prelude::Error::OdbObjectsDirMismatch
 pub grit_lib::prelude::Error::OdbObjectsDirMismatch::builder: std::path::PathBuf
 pub grit_lib::prelude::Error::OdbObjectsDirMismatch::repository: std::path::PathBuf
@@ -15437,6 +15450,8 @@ pub grit_lib::prelude::Error::UnsupportedObjectStore::operation: &'static str
 pub grit_lib::prelude::Error::UnsupportedRepositoryExtension(alloc::string::String)
 pub grit_lib::prelude::Error::UnsupportedRepositoryFormatVersion(u32)
 pub grit_lib::prelude::Error::Worktree(grit_lib::worktree::WorktreeError)
+pub grit_lib::prelude::Error::WorktreeFileChanged
+pub grit_lib::prelude::Error::WorktreeFileChanged::path: alloc::string::String
 pub grit_lib::prelude::Error::WouldOverwrite
 pub grit_lib::prelude::Error::WouldOverwrite::message: alloc::string::String
 pub grit_lib::prelude::Error::WouldOverwrite::paths: alloc::vec::Vec<alloc::string::String>
@@ -15773,8 +15788,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diagnostics::Collecti
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::diagnostics::CollectingDiagnostics
 pub struct grit_lib::prelude::ConfigSet
 impl grit_lib::config::ConfigSet
+pub const grit_lib::config::ConfigSet::BIG_FILE_THRESHOLD_DEFAULT: u64
 pub const grit_lib::config::ConfigSet::LOOSE_OBJECTS_ZLIB_DEFAULT: i32
 pub fn grit_lib::config::ConfigSet::add_command_override(&mut self, &str, &str) -> grit_lib::error::Result<()>
+pub fn grit_lib::config::ConfigSet::big_file_threshold(&self) -> grit_lib::error::Result<u64>
 pub fn grit_lib::config::ConfigSet::effective_log_refs_config(&self) -> grit_lib::refs::LogRefsConfig
 pub fn grit_lib::config::ConfigSet::entries(&self) -> &[grit_lib::config::ConfigEntry]
 pub fn grit_lib::config::ConfigSet::gc_auto_detach(&self) -> bool
@@ -16164,6 +16181,7 @@ impl grit_lib::objects::odb::Odb
 pub fn grit_lib::objects::odb::Odb::append_alternate_objects_line(&std::path::Path, &std::path::Path) -> grit_lib::error::Result<()>
 pub fn grit_lib::objects::odb::Odb::append_file_alternate(&self, &std::path::Path) -> grit_lib::error::Result<()>
 pub fn grit_lib::objects::odb::Odb::approximate_object_count(&self) -> grit_lib::error::Result<usize>
+pub fn grit_lib::objects::odb::Odb::big_file_threshold(&self) -> grit_lib::error::Result<u64>
 pub fn grit_lib::objects::odb::Odb::config_git_dir(&self) -> core::option::Option<&std::path::Path>
 pub fn grit_lib::objects::odb::Odb::contains(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
 pub fn grit_lib::objects::odb::Odb::count_loose_objects(&self) -> grit_lib::error::Result<usize>
@@ -16181,6 +16199,7 @@ pub fn grit_lib::objects::odb::Odb::for_each_object(&self, &mut dyn core::ops::f
 pub fn grit_lib::objects::odb::Odb::freshen_object(&self, &grit_lib::objects::ObjectId) -> bool
 pub fn grit_lib::objects::odb::Odb::hash(&self, grit_lib::objects::ObjectKind, &[u8]) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::hash_algo(&self) -> grit_lib::objects::HashAlgo
+pub fn grit_lib::objects::odb::Odb::hash_stream(&self, grit_lib::objects::ObjectKind, u64, &mut dyn alloc::io::read::Read) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::invalidate_alternates_cache(&self)
 pub fn grit_lib::objects::odb::Odb::invalidate_packs(&self)
 pub fn grit_lib::objects::odb::Odb::is_empty_tree(&self, &grit_lib::objects::ObjectId) -> bool
@@ -16209,6 +16228,7 @@ pub fn grit_lib::objects::odb::Odb::write_loose_materialize(&self, grit_lib::obj
 pub fn grit_lib::objects::odb::Odb::write_loose_zlib_prehashed(&self, &grit_lib::objects::ObjectId, &[u8], grit_lib::objects::odb::WriteOptions) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::write_raw(&self, &[u8]) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::write_raw_local(&self, &[u8]) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
+pub fn grit_lib::objects::odb::Odb::write_stream(&self, grit_lib::objects::ObjectKind, u64, &mut dyn alloc::io::read::Read, grit_lib::objects::odb::WriteOptions) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::write_with_options(&self, grit_lib::objects::ObjectKind, &[u8], grit_lib::objects::odb::WriteOptions) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::zlib_compress_loose_store(&self, &[u8]) -> grit_lib::error::Result<alloc::vec::Vec<u8>>
 impl grit_lib::objects::odb::Odb
