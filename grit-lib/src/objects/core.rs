@@ -170,7 +170,6 @@ const EMPTY_BLOB_SHA256: [u8; 32] = [
 /// # }
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct ObjectId {
     bytes: [u8; MAX_OID_LEN],
     len: u8,
@@ -426,6 +425,16 @@ impl fmt::Display for ObjectId {
 impl fmt::Debug for ObjectId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ObjectId({})", self.to_hex())
+    }
+}
+
+#[cfg(feature = "serde-models")]
+impl serde::Serialize for ObjectId {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_hex())
     }
 }
 

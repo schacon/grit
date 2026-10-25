@@ -1084,7 +1084,7 @@ fn copy_objects_for_local_fetch(
         pack,
         local_odb,
         &ingest_opts,
-        Some(progress),
+        None,
         Some(cancel),
     )?;
     progress.inc(ingested.object_ids.len() as u64);

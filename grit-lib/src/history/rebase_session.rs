@@ -910,7 +910,14 @@ fn reset_index_worktree_to_head(
     let head_tree = commit_tree(repo, head_oid)?;
     // Paths tracked before the move but absent from `head_oid` must go too; leaving them as
     // untracked files makes `git rebase --skip/--abort` refuse to overwrite them later.
-    checkout_hard_to_tree_from_head_tree(repo, &head_tree, &head_tree).map_err(map_lib)?;
+    checkout_hard_to_tree_from_head_tree(
+        repo,
+        &head_tree,
+        &head_tree,
+        &mut crate::progress::NullProgress,
+        &crate::progress::NeverCancel,
+    )
+    .map_err(map_lib)?;
     Ok(())
 }
 

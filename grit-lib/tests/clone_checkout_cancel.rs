@@ -6,34 +6,41 @@ use grit_lib::remote::clone::{cleanup_failed_clone, clone, CloneError, CloneOpti
 use grit_lib::remote::fetch::Progress;
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 struct CancelCheckoutOnFiles {
     flag: FlagCancel,
-    seen: AtomicU64,
+    checkout_incs: AtomicU64,
     limit: u64,
+    in_checkout: AtomicBool,
 }
 
 impl CancelCheckoutOnFiles {
     fn new(limit: u64) -> Self {
         Self {
             flag: FlagCancel::new(),
-            seen: AtomicU64::new(0),
+            checkout_incs: AtomicU64::new(0),
             limit,
+            in_checkout: AtomicBool::new(false),
         }
     }
 }
 
 impl ProgressSink for CancelCheckoutOnFiles {
     fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
-        let _ = (phase, total);
+        let _ = total;
+        self.in_checkout
+            .store(phase == ProgressPhase::CheckingOutFiles, Ordering::Relaxed);
     }
 
     fn inc(&mut self, units: u64) {
         if self.flag.is_cancelled() {
             return;
         }
-        let prev = self.seen.fetch_add(units, Ordering::Relaxed);
+        if !self.in_checkout.load(Ordering::Relaxed) {
+            return;
+        }
+        let prev = self.checkout_incs.fetch_add(units, Ordering::Relaxed);
         if prev + units >= self.limit {
             self.flag.cancel();
         }
@@ -75,12 +82,19 @@ fn seed_many_file_repo(root: &Path, files: usize) {
     }
 }
 
+fn count_checkout_files(dest: &Path, total: usize) -> usize {
+    (0..total)
+        .filter(|i| dest.join(format!("f{i}.txt")).exists())
+        .count()
+}
+
 #[test]
 fn clone_returns_cancelled_when_checkout_progress_requests_abort() {
+    const FILES: usize = 500;
     let tmp = tempfile::tempdir().expect("tempdir");
     let upstream = tmp.path().join("upstream");
     std::fs::create_dir_all(&upstream).expect("mkdir");
-    seed_many_file_repo(&upstream, 120);
+    seed_many_file_repo(&upstream, FILES);
 
     let dest = tmp.path().join("dest");
     let url = upstream.to_string_lossy().into_owned();
@@ -96,6 +110,16 @@ fn clone_returns_cancelled_when_checkout_progress_requests_abort() {
     assert!(
         matches!(err, CloneError::Library(Error::Cancelled)),
         "expected cancelled clone, got {err:?}"
+    );
+    let checkout_incs = progress.checkout_incs.load(Ordering::Relaxed);
+    assert!(
+        checkout_incs <= 15,
+        "expected bounded CheckingOutFiles progress, saw {checkout_incs} increments"
+    );
+    let present = count_checkout_files(&dest, FILES);
+    assert!(
+        present < FILES,
+        "checkout should stop before all {FILES} files exist, found {present}"
     );
     cleanup_failed_clone(&dest, false);
     assert!(!dest.exists(), "caller cleanup removes partial clone");

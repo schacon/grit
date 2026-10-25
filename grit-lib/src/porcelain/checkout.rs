@@ -276,6 +276,7 @@ fn checkout_populated_tree(
                 precompose,
                 ignorecase,
                 &mut chunk_progress,
+                cancel,
             )?;
         } else {
             apply.skip_bulk_checkout_fast_path = true;
@@ -371,6 +372,8 @@ pub fn checkout_hard_to_tree_from_head_tree(
     repo: &Repository,
     head_tree: &ObjectId,
     target_tree: &ObjectId,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     use crate::porcelain::index_from_tree::index_from_tree_reusing_cache_tree;
 
@@ -401,7 +404,15 @@ pub fn checkout_hard_to_tree_from_head_tree(
 
     let mut written_by_tree_diff: BTreeSet<Vec<u8>> = BTreeSet::new();
     if !changes.is_empty() {
-        checkout_tree_changes(repo, &changes)?;
+        checkout_tree_changes_with_progress(
+            repo,
+            &changes,
+            progress,
+            cancel,
+            None,
+            CheckoutApplyOptions::default(),
+            None,
+        )?;
         for change in &changes {
             if change.status == DiffStatus::Deleted {
                 continue;
@@ -478,7 +489,12 @@ pub fn checkout_hard_to_tree_from_head_tree(
         &mut actions,
     )?;
 
+    progress.start(
+        ProgressPhase::CheckingOutFiles,
+        Some(u64::try_from(target_entries.len()).unwrap_or(u64::MAX)),
+    );
     for (mut te, action) in target_entries.into_iter().zip(actions) {
+        crate::progress::poll_cancel(progress, cancel)?;
         let abs = crate::index::worktree_path_from_index_rel(work_tree, &te.path);
         let mode = te.mode;
         match action {
@@ -581,6 +597,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
             te.oid,
         )?;
         new_entries.push(entry);
+        progress.inc(1);
     }
 
     finish_delayed_checkouts(
@@ -594,6 +611,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
     )?;
 
     remove_empty_parent_dirs_batch(work_tree, &deleted_abs_paths);
+    progress.finish();
 
     let mut new_index = Index::new();
     new_index.entries = new_entries;
@@ -1510,11 +1528,13 @@ fn checkout_bulk_added_tree_changes(
     precompose: bool,
     ignorecase: bool,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     let checkout_smudge_ctx = crate::filter_process::checkout_smudge_context(repo);
     let mut dir_cache = LeadingDirCache::with_protect(ProtectOptions::from_config(config.as_ref()));
     let mut write_jobs: Vec<CheckoutWriteJob> = Vec::with_capacity(changes.len());
     for change in changes {
+        crate::progress::poll_cancel(progress, cancel)?;
         let Some(path) = change.new_path.as_deref() else {
             continue;
         };
@@ -1563,6 +1583,8 @@ fn checkout_bulk_added_tree_changes(
         &parallel_indices,
         apply.parallel_prepare_blobs,
         apply.checkout_parallel_threshold,
+        progress,
+        cancel,
     )?;
     let new_entries = finish_bulk_write_jobs(
         repo,
@@ -1571,7 +1593,6 @@ fn checkout_bulk_added_tree_changes(
         &mut dir_cache,
         &mut delayed,
         write_outcomes,
-        progress,
     )?;
     if apply.wholesale_safety_precomputed {
         let _ = remove_wholesale_directories_on_disk(
@@ -1609,6 +1630,7 @@ fn checkout_bulk_mod_delete_tree_changes(
     precompose: bool,
     ignorecase: bool,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     let index: &Index = index_mut;
     let delete_changes: Vec<&DiffEntry> = changes
@@ -1764,6 +1786,8 @@ fn checkout_bulk_mod_delete_tree_changes(
         &parallel_indices,
         apply.parallel_prepare_blobs,
         apply.checkout_parallel_threshold,
+        progress,
+        cancel,
     )?;
     let new_entries = finish_bulk_write_jobs(
         repo,
@@ -1772,7 +1796,6 @@ fn checkout_bulk_mod_delete_tree_changes(
         &mut dir_cache,
         &mut delayed,
         write_outcomes,
-        progress,
     )?;
 
     checkout_commit_index_update(
@@ -1800,11 +1823,13 @@ fn checkout_bulk_deleted_tree_changes(
     wholesale_dirs_removed: &BTreeSet<String>,
     deleted_abs_paths: &mut Vec<PathBuf>,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
     apply: &CheckoutApplyOptions,
 ) -> Result<()> {
     let mut parallel_deleted_paths: HashSet<String> = HashSet::new();
     let mut per_file_deletes: Vec<String> = Vec::new();
     for change in changes {
+        crate::progress::poll_cancel(progress, cancel)?;
         if change.status != DiffStatus::Deleted {
             continue;
         }
@@ -2000,6 +2025,7 @@ fn checkout_tree_changes_with_progress(
                 precompose,
                 ignorecase,
                 &mut progress,
+                cancel,
             )?;
             return progress.finish_poll();
         }
@@ -2019,6 +2045,7 @@ fn checkout_tree_changes_with_progress(
                 precompose,
                 ignorecase,
                 &mut progress,
+                cancel,
             )?;
             return progress.finish_poll();
         }
@@ -2091,6 +2118,7 @@ fn checkout_tree_changes_with_progress(
                 &wholesale_dirs_removed,
                 &mut deleted_abs_paths,
                 &mut progress,
+                cancel,
                 &apply,
             )?;
             return progress.finish_poll();
@@ -2361,6 +2389,8 @@ fn checkout_tree_changes_with_progress(
             &parallel_indices,
             apply.parallel_prepare_blobs,
             apply.checkout_parallel_threshold,
+            &mut progress,
+            cancel,
         )?
     };
 
@@ -2375,11 +2405,9 @@ fn checkout_tree_changes_with_progress(
                 })? {
                     WriteJobOutcome::Index(entry) => {
                         new_entries.push(entry);
-                        progress.inc(1);
                     }
                     WriteJobOutcome::Delayed(target) => {
                         pending_delayed.push(target);
-                        progress.inc(1);
                     }
                 }
             }
@@ -2596,7 +2624,6 @@ fn finish_bulk_write_jobs(
     dir_cache: &mut LeadingDirCache,
     delayed: &mut DelayedProcessCheckout,
     write_outcomes: Vec<WriteJobOutcome>,
-    progress: &mut dyn ProgressSink,
 ) -> Result<Vec<IndexEntry>> {
     let mut new_entries = Vec::with_capacity(write_outcomes.len());
     let mut pending_delayed = Vec::new();
@@ -2604,11 +2631,9 @@ fn finish_bulk_write_jobs(
         match outcome {
             WriteJobOutcome::Index(entry) => {
                 new_entries.push(entry);
-                progress.inc(1);
             }
             WriteJobOutcome::Delayed(target) => {
                 pending_delayed.push(target);
-                progress.inc(1);
             }
         }
     }

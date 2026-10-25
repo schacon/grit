@@ -211,6 +211,16 @@ impl fmt::Display for ChangeId {
     }
 }
 
+#[cfg(feature = "serde-models")]
+impl serde::Serialize for ChangeId {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
 impl ChangeIdPolicy {
     /// Load `grit.changeIds` (default true) and `grit.testing.changeId`.
     #[must_use]

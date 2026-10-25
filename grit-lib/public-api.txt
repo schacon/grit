@@ -12815,7 +12815,7 @@ pub mod grit_lib::porcelain::checkout
 pub fn grit_lib::porcelain::checkout::apply_index_file_mode(&std::path::Path, u32) -> grit_lib::error::Result<()>
 pub fn grit_lib::porcelain::checkout::checkout_between_trees(&grit_lib::repo::Repository, core::option::Option<&grit_lib::objects::ObjectId>, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<()>
 pub fn grit_lib::porcelain::checkout::checkout_between_trees_with_progress(&grit_lib::repo::Repository, core::option::Option<&grit_lib::objects::ObjectId>, &grit_lib::objects::ObjectId, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<()>
-pub fn grit_lib::porcelain::checkout::checkout_hard_to_tree_from_head_tree(&grit_lib::repo::Repository, &grit_lib::objects::ObjectId, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<()>
+pub fn grit_lib::porcelain::checkout::checkout_hard_to_tree_from_head_tree(&grit_lib::repo::Repository, &grit_lib::objects::ObjectId, &grit_lib::objects::ObjectId, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<()>
 pub fn grit_lib::porcelain::checkout::checkout_tree_changes(&grit_lib::repo::Repository, &[grit_lib::diff::DiffEntry]) -> grit_lib::error::Result<()>
 pub fn grit_lib::porcelain::checkout::checkout_tree_changes_with_index(&grit_lib::repo::Repository, &[grit_lib::diff::DiffEntry], &mut grit_lib::index::Index) -> grit_lib::error::Result<()>
 pub fn grit_lib::porcelain::checkout::remove_empty_parent_dirs(&std::path::Path, &std::path::Path)

@@ -285,10 +285,15 @@ fn restore_exec_prestate(
             })?;
         }
     }
-    checkout_hard_to_tree_from_head_tree(repo, &current_tree, &pre.head_tree).map_err(|e| {
-        HistoryError::WorktreeApply {
-            message: e.to_string(),
-        }
+    checkout_hard_to_tree_from_head_tree(
+        repo,
+        &current_tree,
+        &pre.head_tree,
+        &mut crate::progress::NullProgress,
+        &crate::progress::NeverCancel,
+    )
+    .map_err(|e| HistoryError::WorktreeApply {
+        message: e.to_string(),
     })?;
     fs::write(repo.index_path(), &pre.index_bytes).map_err(|e| HistoryError::WorktreeApply {
         message: e.to_string(),

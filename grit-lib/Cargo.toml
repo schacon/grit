@@ -258,3 +258,8 @@ required-features = ["http-ureq"]
 name = "add_untr_80k_campaign"
 path = "tests/add_untr_80k_campaign.rs"
 
+[[test]]
+name = "serde_models"
+path = "tests/serde_models.rs"
+required-features = ["serde-models"]
+

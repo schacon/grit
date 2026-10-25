@@ -29,6 +29,8 @@ use crate::state::{resolve_head_for_repository, HeadState};
 
 /// Decoration category for `git log --decorate` colouring (`color.decorate.*`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde-models", serde(rename_all = "snake_case"))]
 pub enum DecorationKind {
     /// Local branch (`refs/heads/*`).
     Branch,
@@ -65,6 +67,7 @@ pub type DecorationMap = HashMap<String, Vec<DecorationItem>>;
 
 /// One ref label attached to a commit for structured log/show JSON.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct CommitRefDecoration {
     /// Display name (short branch/tag label or full ref when `--decorate=full`).
     pub name: String,

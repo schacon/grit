@@ -286,7 +286,7 @@ fn apply_reset_worktree(
         ResetMode::Hard => {
             ensure_reset_worktree_mode(repo, ResetMode::Hard)?;
             let head_tree = commit_tree_oid(repo, &previous)?;
-            checkout_hard_to_tree_from_head_tree(repo, &head_tree, &target_tree)?;
+            checkout_hard_to_tree_from_head_tree(repo, &head_tree, &target_tree, progress, cancel)?;
         }
         ResetMode::Keep => {
             ensure_reset_worktree_mode(repo, ResetMode::Keep)?;
