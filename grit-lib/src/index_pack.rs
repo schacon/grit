@@ -9,9 +9,13 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use tempfile::TempPath;
+
 use crate::error::{Error, Result};
+use crate::fs_publish::publish_no_clobber;
 use crate::hash::{verify_trailer, Parallelism};
 use crate::objects::{ObjectId, ObjectKind};
+use crate::odb::store::touch_pack_mtime;
 use crate::odb::Odb;
 use crate::pack::{verify_pack_and_collect, write_v2_pack_index_sorting};
 use crate::pack_index_build::{build_mapped_pack_index, RESIDENT_PACK_BYTES};
@@ -337,9 +341,7 @@ pub fn install_pack_bytes_with_progress(
     odb.require_files_primary("index_pack")?;
     let pack_dir = odb.objects_dir().join("pack");
     std::fs::create_dir_all(&pack_dir).map_err(Error::Io)?;
-    static INSTALL_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let seq = INSTALL_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = pack_dir.join(format!("tmp_install_{}_{seq}", std::process::id()));
+    let tmp = pack_dir.join(format!("tmp_install_{}", unique_install_suffix()));
     std::fs::write(&tmp, &pack).map_err(Error::Io)?;
     match install_pack_path_with_progress(&tmp, odb, opts, progress, cancel) {
         Ok(ingested) => Ok(ingested),
@@ -354,6 +356,13 @@ pub fn install_pack_bytes_with_progress(
 ///
 /// The file is moved into place when possible; callers may pass a temp receive
 /// path under `objects/pack/`.
+///
+/// Several threads or processes may install the same pack into one repository at
+/// once (parallel fetches): each stages under its own name, and a `.pack`/`.idx`
+/// already published under the same content-addressed name is kept, freshened, and
+/// reported as success rather than replaced. A failed or cancelled install removes
+/// only its private staging files, never a published `.pack` or `.idx`, because a
+/// concurrent installer may already have reported success relying on it.
 pub fn install_pack_path(
     pack_path: &Path,
     odb: &Odb,
@@ -405,14 +414,11 @@ pub fn install_pack_path_with_progress(
     let pack_dir = odb.objects_dir().join("pack");
     std::fs::create_dir_all(&pack_dir).map_err(Error::Io)?;
 
-    let stage = pack_dir.join(format!(".{stem}-install"));
+    // Unique per install: processes receiving the same pack must not share a stage.
+    let stage = pack_dir.join(format!(".{stem}-install-{}", unique_install_suffix()));
     let stage_pack = stage.join(format!("{stem}.pack"));
     let stage_idx = stage.join(format!("{stem}.idx"));
 
-    cleanup_stale_install_stage(&stage);
-
-    // Final `.pack`/`.idx` paths once known; completing a thin pack changes its checksum.
-    let mut published: Option<(PathBuf, PathBuf)> = None;
     let install_result = (|| -> Result<IngestedPack> {
         poll_ingest_cancel(&mut progress, cancel)?;
         std::fs::create_dir_all(&stage).map_err(Error::Io)?;
@@ -517,13 +523,19 @@ pub fn install_pack_path_with_progress(
         let stem = format!("pack-{}", ObjectId::from_bytes(&trailer)?.to_hex());
         let final_pack = pack_dir.join(format!("{stem}.pack"));
         let idx_path = pack_dir.join(format!("{stem}.idx"));
-        published = Some((final_pack.clone(), idx_path.clone()));
-        std::fs::rename(&stage_pack, &final_pack).map_err(Error::Io)?;
-        poll_ingest_cancel(&mut progress, cancel)?;
-        std::fs::rename(&stage_idx, &idx_path).map_err(|e| {
-            let _ = std::fs::remove_file(&final_pack);
-            Error::Io(e)
-        })?;
+        // Names are content-addressed: an existing `.pack`/`.idx` holds these bytes, and
+        // a concurrent installer may already rely on a file this install published, so
+        // published files are never rolled back. The pack goes first so a reader never
+        // sees an index without its pack, and there is no cancellation point between
+        // the two so a cancelled install does not strand a pack without its index.
+        let publish = |staged: &Path, final_path: &Path| -> Result<bool> {
+            let staged = TempPath::try_from_path(staged).map_err(Error::Io)?;
+            publish_no_clobber(staged, final_path).map_err(Error::Io)
+        };
+        if !publish(&stage_pack, &final_pack)? {
+            touch_pack_mtime(&final_pack);
+        }
+        publish(&stage_idx, &idx_path)?;
         if opts.mark_promisor_pack {
             std::fs::write(final_pack.with_extension("promisor"), b"").map_err(Error::Io)?;
         }
@@ -538,11 +550,7 @@ pub fn install_pack_path_with_progress(
     })();
 
     if install_result.is_err() {
-        cleanup_stale_install_stage(&stage);
-        if let Some((final_pack, idx_path)) = &published {
-            let _ = std::fs::remove_file(final_pack);
-            let _ = std::fs::remove_file(idx_path);
-        }
+        cleanup_install_stage(&stage);
         let _ = std::fs::remove_file(&owned);
     }
     let ingested = install_result?;
@@ -637,7 +645,14 @@ fn poll_ingest_cancel(
     }
 }
 
-fn cleanup_stale_install_stage(stage: &Path) {
+/// `<pid>_<seq>`: unique among all installs running on this machine.
+fn unique_install_suffix() -> String {
+    static INSTALL_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = INSTALL_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{}_{seq}", std::process::id())
+}
+
+fn cleanup_install_stage(stage: &Path) {
     if !stage.exists() {
         return;
     }
@@ -1314,6 +1329,159 @@ mod tests {
         }
     }
 
+    fn git_in(dir: &Path, args: &[&str]) -> Vec<u8> {
+        let out = Command::new("git") // hygiene: git fixture/fsck cross-check in cfg(test) module
+            .current_dir(dir)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "T")
+            .env("GIT_AUTHOR_EMAIL", "t@example.com")
+            .env("GIT_COMMITTER_NAME", "T")
+            .env("GIT_COMMITTER_EMAIL", "t@example.com")
+            .output()
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        out.stdout
+    }
+
+    /// A pack holding one commit with its tree and blob, plus the commit id.
+    fn commit_pack() -> (Vec<u8>, String) {
+        use std::io::Write;
+        let src = tempfile::tempdir().expect("src");
+        git_in(src.path(), &["init", "-q", "-b", "main"]);
+        std::fs::write(src.path().join("f"), b"shared pack\n").expect("write");
+        git_in(src.path(), &["add", "f"]);
+        git_in(src.path(), &["commit", "-qm", "c"]);
+        let tip = String::from_utf8(git_in(src.path(), &["rev-parse", "HEAD"])).expect("hex");
+        let tip = tip.trim().to_owned();
+        let mut child = Command::new("git") // hygiene: git pack fixture in cfg(test) module
+            .current_dir(src.path())
+            .args(["pack-objects", "--revs", "--stdout", "-q"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("pack-objects");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(format!("{tip}\n").as_bytes())
+            .expect("revs");
+        let out = child.wait_with_output().expect("pack-objects output");
+        assert!(out.status.success());
+        (out.stdout, tip)
+    }
+
+    fn published_files(pack_dir: &Path, ext: &str) -> usize {
+        pack_dir_entries(pack_dir)
+            .iter()
+            .filter(|p| p.extension().is_some_and(|e| e == ext))
+            .count()
+    }
+
+    fn assert_repo_fsck_clean(repo: &Path, tip: &str) {
+        git_in(repo, &["update-ref", "refs/heads/main", tip]);
+        git_in(repo, &["fsck", "--strict"]);
+    }
+
+    #[test]
+    fn cancel_once_pack_published_never_strands_a_peer_install() {
+        use std::cell::Cell;
+
+        /// Cancels the install as soon as its `.pack` is published, after running a
+        /// complete peer install of the same pack that relies on that file.
+        struct PeerThenCancel<'a> {
+            pack_dir: PathBuf,
+            objects: PathBuf,
+            pack: &'a [u8],
+            peer_ran: Cell<bool>,
+        }
+
+        impl Cancel for PeerThenCancel<'_> {
+            fn is_cancelled(&self) -> bool {
+                if self.peer_ran.get() {
+                    return true;
+                }
+                if published_files(&self.pack_dir, "pack") == 0 {
+                    return false;
+                }
+                self.peer_ran.set(true);
+                let peer_odb = Odb::new(&self.objects);
+                install_pack_bytes(self.pack.to_vec(), &peer_odb, &IngestPackOptions::default())
+                    .expect("peer install succeeds");
+                true
+            }
+        }
+
+        let (pack, tip) = commit_pack();
+        let repo = tempfile::tempdir().expect("repo");
+        git_in(repo.path(), &["init", "-q", "-b", "main"]);
+        let objects = repo.path().join(".git/objects");
+        let pack_dir = objects.join("pack");
+        let cancel = PeerThenCancel {
+            pack_dir: pack_dir.clone(),
+            objects: objects.clone(),
+            pack: &pack,
+            peer_ran: Cell::new(false),
+        };
+        let odb = Odb::new(&objects);
+        let result = install_pack_bytes_with_progress(
+            pack.clone(),
+            &odb,
+            &IngestPackOptions::default(),
+            None,
+            Some(&cancel),
+        );
+        match result {
+            Ok(_) => {}
+            Err(Error::Cancelled) => assert!(cancel.peer_ran.get()),
+            Err(e) => panic!("unexpected install error: {e:?}"),
+        }
+        assert_eq!(published_files(&pack_dir, "pack"), 1);
+        assert_eq!(published_files(&pack_dir, "idx"), 1);
+        assert_repo_fsck_clean(repo.path(), &tip);
+    }
+
+    #[test]
+    fn error_after_publish_keeps_published_pack_and_index() {
+        let (pack, tip) = commit_pack();
+        let repo = tempfile::tempdir().expect("repo");
+        git_in(repo.path(), &["init", "-q", "-b", "main"]);
+        let objects = repo.path().join(".git/objects");
+        let pack_dir = objects.join("pack");
+        let trailer = ObjectId::from_bytes(&pack[pack.len() - 20..]).expect("trailer");
+        // A directory where the `.promisor` marker goes makes the install fail only
+        // after the `.pack`/`.idx` pair is published.
+        std::fs::create_dir_all(pack_dir.join(format!("pack-{}.promisor", trailer.to_hex())))
+            .expect("promisor obstacle");
+        let odb = Odb::new(&objects);
+        let err = install_pack_bytes(
+            pack,
+            &odb,
+            &IngestPackOptions {
+                mark_promisor_pack: true,
+                ..Default::default()
+            },
+        )
+        .expect_err("promisor write fails");
+        assert!(matches!(err, Error::Io(_)), "got {err:?}");
+        assert_eq!(published_files(&pack_dir, "pack"), 1);
+        assert_eq!(published_files(&pack_dir, "idx"), 1);
+        assert!(
+            pack_dir_entries(&pack_dir).iter().all(|p| {
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+                !name.starts_with('.') && !name.starts_with("tmp_")
+            }),
+            "staging left behind"
+        );
+        assert_repo_fsck_clean(repo.path(), &tip);
+    }
+
     #[test]
     fn install_failure_leaves_no_published_pack_or_index() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1342,7 +1510,7 @@ mod tests {
                     .all(|p| p.extension().is_some_and(|e| e == "pack" || e == "idx")
                         || p.file_name()
                             .and_then(|n| n.to_str())
-                            .is_some_and(|n| n.starts_with('.') && n.ends_with("-install"))),
+                            .is_some_and(|n| n.starts_with('.') && n.contains("-install-"))),
                 "must not publish partial .pack/.idx, got {entries:?}"
             );
         }
