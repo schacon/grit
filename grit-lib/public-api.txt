@@ -10517,6 +10517,7 @@ pub struct grit_lib::objects::pack_object_select::PackEnumerateOptions<'a>
 pub grit_lib::objects::pack_object_select::PackEnumerateOptions::exclude_objects: core::option::Option<&'a std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>>
 pub grit_lib::objects::pack_object_select::PackEnumerateOptions::filter: core::option::Option<&'a grit_lib::revwalk::rev_list::ObjectFilter>
 pub grit_lib::objects::pack_object_select::PackEnumerateOptions::have_shallow_grafts: core::option::Option<&'a std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>>
+pub grit_lib::objects::pack_object_select::PackEnumerateOptions::peer_odb: core::option::Option<&'a grit_lib::objects::odb::Odb>
 pub grit_lib::objects::pack_object_select::PackEnumerateOptions::shallow_grafts: &'a std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>
 pub grit_lib::objects::pack_object_select::PackEnumerateOptions::use_bitmaps: bool
 impl<'a> core::clone::Clone for grit_lib::objects::pack_object_select::PackEnumerateOptions<'a>
@@ -10529,11 +10530,12 @@ impl<'a> core::marker::Send for grit_lib::objects::pack_object_select::PackEnume
 impl<'a> core::marker::Sync for grit_lib::objects::pack_object_select::PackEnumerateOptions<'a>
 impl<'a> core::marker::Unpin for grit_lib::objects::pack_object_select::PackEnumerateOptions<'a>
 impl<'a> core::marker::UnsafeUnpin for grit_lib::objects::pack_object_select::PackEnumerateOptions<'a>
-impl<'a> core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::pack_object_select::PackEnumerateOptions<'a>
-impl<'a> core::panic::unwind_safe::UnwindSafe for grit_lib::objects::pack_object_select::PackEnumerateOptions<'a>
+impl<'a> !core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::pack_object_select::PackEnumerateOptions<'a>
+impl<'a> !core::panic::unwind_safe::UnwindSafe for grit_lib::objects::pack_object_select::PackEnumerateOptions<'a>
 pub struct grit_lib::objects::pack_object_select::PackObjectSelection
 pub grit_lib::objects::pack_object_select::PackObjectSelection::have_closure: std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>
 pub grit_lib::objects::pack_object_select::PackObjectSelection::name_hashes: std::collections::hash::map::HashMap<grit_lib::objects::ObjectId, u32>
+pub grit_lib::objects::pack_object_select::PackObjectSelection::peer_held: core::option::Option<alloc::rcs::arc::Arc<grit_lib::objects::bitmap::ReachableSet>>
 pub grit_lib::objects::pack_object_select::PackObjectSelection::send: alloc::vec::Vec<grit_lib::objects::ObjectId>
 impl core::clone::Clone for grit_lib::objects::pack_object_select::PackObjectSelection
 pub fn grit_lib::objects::pack_object_select::PackObjectSelection::clone(&self) -> Self
@@ -10547,7 +10549,7 @@ impl core::marker::UnsafeUnpin for grit_lib::objects::pack_object_select::PackOb
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::pack_object_select::PackObjectSelection
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::pack_object_select::PackObjectSelection
 pub fn grit_lib::objects::pack_object_select::enumerate_pack_objects(&grit_lib::objects::odb::Odb, &[grit_lib::objects::ObjectId], &[grit_lib::objects::ObjectId], &grit_lib::objects::pack_object_select::PackEnumerateOptions<'_>) -> grit_lib::error::Result<grit_lib::objects::pack_object_select::PackObjectSelection>
-pub fn grit_lib::objects::pack_object_select::try_bitmap_reachable_for_upload(&grit_lib::objects::odb::Odb, &[grit_lib::objects::ObjectId], &[grit_lib::objects::ObjectId], core::option::Option<&grit_lib::revwalk::rev_list::ObjectFilter>, &std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>) -> grit_lib::error::Result<core::option::Option<(grit_lib::objects::bitmap::ReachableSet, std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>)>>
+pub fn grit_lib::objects::pack_object_select::try_bitmap_reachable_for_upload(&grit_lib::objects::odb::Odb, &[grit_lib::objects::ObjectId], &[grit_lib::objects::ObjectId], core::option::Option<&grit_lib::revwalk::rev_list::ObjectFilter>, &std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>) -> grit_lib::error::Result<core::option::Option<(grit_lib::objects::bitmap::ReachableSet, grit_lib::objects::bitmap::ReachableSet)>>
 pub mod grit_lib::objects::pack_objects
 pub enum grit_lib::objects::pack_objects::PackProgress
 pub grit_lib::objects::pack_objects::PackProgress::Enumerated
@@ -16627,6 +16629,25 @@ impl core::marker::Unpin for grit_lib::progress::ProgressUnit
 impl core::marker::UnsafeUnpin for grit_lib::progress::ProgressUnit
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::progress::ProgressUnit
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::progress::ProgressUnit
+pub struct grit_lib::progress::CancelProgress<'a>
+impl<'a> grit_lib::progress::CancelProgress<'a>
+pub fn grit_lib::progress::CancelProgress<'a>::finish_poll(&self) -> grit_lib::error::Result<()>
+pub fn grit_lib::progress::CancelProgress<'a>::new(&'a mut dyn grit_lib::progress::ProgressSink, &'a dyn grit_lib::progress::Cancel) -> Self
+pub fn grit_lib::progress::CancelProgress<'a>::stopped(&self) -> bool
+impl grit_lib::progress::ProgressSink for grit_lib::progress::CancelProgress<'_>
+pub fn grit_lib::progress::CancelProgress<'_>::finish(&mut self)
+pub fn grit_lib::progress::CancelProgress<'_>::inc(&mut self, u64)
+pub fn grit_lib::progress::CancelProgress<'_>::set(&mut self, u64)
+pub fn grit_lib::progress::CancelProgress<'_>::should_cancel(&self) -> bool
+pub fn grit_lib::progress::CancelProgress<'_>::start(&mut self, grit_lib::progress::ProgressPhase, core::option::Option<u64>)
+pub fn grit_lib::progress::CancelProgress<'_>::start_with_unit(&mut self, grit_lib::progress::ProgressPhase, grit_lib::progress::ProgressUnit, core::option::Option<u64>)
+impl<'a> !core::marker::Freeze for grit_lib::progress::CancelProgress<'a>
+impl<'a> !core::marker::Send for grit_lib::progress::CancelProgress<'a>
+impl<'a> !core::marker::Sync for grit_lib::progress::CancelProgress<'a>
+impl<'a> core::marker::Unpin for grit_lib::progress::CancelProgress<'a>
+impl<'a> core::marker::UnsafeUnpin for grit_lib::progress::CancelProgress<'a>
+impl<'a> !core::panic::unwind_safe::RefUnwindSafe for grit_lib::progress::CancelProgress<'a>
+impl<'a> !core::panic::unwind_safe::UnwindSafe for grit_lib::progress::CancelProgress<'a>
 pub struct grit_lib::progress::FlagCancel(pub alloc::rcs::arc::Arc<core::sync::atomic::AtomicBool>)
 impl grit_lib::progress::FlagCancel
 pub fn grit_lib::progress::FlagCancel::cancel(&self)
@@ -16802,6 +16823,13 @@ pub fn grit_lib::progress::ProgressSink::set(&mut self, u64)
 pub fn grit_lib::progress::ProgressSink::should_cancel(&self) -> bool
 pub fn grit_lib::progress::ProgressSink::start(&mut self, grit_lib::progress::ProgressPhase, core::option::Option<u64>)
 pub fn grit_lib::progress::ProgressSink::start_with_unit(&mut self, grit_lib::progress::ProgressPhase, grit_lib::progress::ProgressUnit, core::option::Option<u64>)
+impl grit_lib::progress::ProgressSink for grit_lib::progress::CancelProgress<'_>
+pub fn grit_lib::progress::CancelProgress<'_>::finish(&mut self)
+pub fn grit_lib::progress::CancelProgress<'_>::inc(&mut self, u64)
+pub fn grit_lib::progress::CancelProgress<'_>::set(&mut self, u64)
+pub fn grit_lib::progress::CancelProgress<'_>::should_cancel(&self) -> bool
+pub fn grit_lib::progress::CancelProgress<'_>::start(&mut self, grit_lib::progress::ProgressPhase, core::option::Option<u64>)
+pub fn grit_lib::progress::CancelProgress<'_>::start_with_unit(&mut self, grit_lib::progress::ProgressPhase, grit_lib::progress::ProgressUnit, core::option::Option<u64>)
 impl grit_lib::progress::ProgressSink for grit_lib::progress::NullProgress
 pub fn grit_lib::progress::NullProgress::finish(&mut self)
 pub fn grit_lib::progress::NullProgress::inc(&mut self, u64)
@@ -16833,17 +16861,6 @@ pub fn &mut T::start_with_unit(&mut self, grit_lib::progress::ProgressPhase, gri
 pub fn grit_lib::progress::cancel_watch_arc(&dyn grit_lib::progress::Cancel) -> alloc::rcs::arc::Arc<core::sync::atomic::AtomicBool>
 pub fn grit_lib::progress::poll_cancel(&mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<()>
 pub fn grit_lib::progress::poll_cancel_watch(&mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel, &core::sync::atomic::AtomicBool) -> grit_lib::error::Result<()>
-pub struct grit_lib::progress::CancelProgress<'a>
-pub fn grit_lib::progress::CancelProgress::new(&mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::progress::CancelProgress<'_>
-pub fn grit_lib::progress::CancelProgress::finish_poll(&self) -> grit_lib::error::Result<()>
-pub fn grit_lib::progress::CancelProgress::stopped(&self) -> bool
-impl grit_lib::progress::ProgressSink for grit_lib::progress::CancelProgress<'_>
-pub fn grit_lib::progress::CancelProgress::finish(&mut self)
-pub fn grit_lib::progress::CancelProgress::inc(&mut self, u64)
-pub fn grit_lib::progress::CancelProgress::set(&mut self, u64)
-pub fn grit_lib::progress::CancelProgress::should_cancel(&self) -> bool
-pub fn grit_lib::progress::CancelProgress::start(&mut self, grit_lib::progress::ProgressPhase, core::option::Option<u64>)
-pub fn grit_lib::progress::CancelProgress::start_with_unit(&mut self, grit_lib::progress::ProgressPhase, grit_lib::progress::ProgressUnit, core::option::Option<u64>)
 pub fn grit_lib::progress::poll_watch(&core::sync::atomic::AtomicBool) -> grit_lib::error::Result<()>
 pub mod grit_lib::quote_path
 pub fn grit_lib::quote_path::format_diff_path_with_prefix(&str, &str, bool) -> alloc::string::String

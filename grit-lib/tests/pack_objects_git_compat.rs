@@ -80,7 +80,7 @@ fn git_pack_objects(repo: &Path, tips: &[ObjectId], haves: &[ObjectId]) -> Vec<u
             writeln!(stdin, "{}", t.to_hex()).unwrap();
         }
         for h in haves {
-            writeln!(stdin, "^ {}", h.to_hex()).unwrap();
+            writeln!(stdin, "^{}", h.to_hex()).unwrap();
         }
     }
     let out = child.wait_with_output().expect("wait");
@@ -191,6 +191,74 @@ fn build_deep_history_repo(commits: usize) -> (tempfile::TempDir, ObjectId, Obje
     let tip = rev_parse(dir, "HEAD");
     let have = rev_parse(dir, &format!("HEAD~{}", commits.saturating_sub(2).max(1)));
     (tmp, tip, have)
+}
+
+/// Divergent tips after long shared history: send only the want-side tip objects.
+#[test]
+fn incremental_thin_pack_divergent_tips_matches_git_send_size() {
+    let tmp = tempfile::tempdir().expect("tmpdir");
+    let dir = tmp.path();
+    git(dir, &["init", "-q", "-b", "main", "."]);
+    for i in 0..300 {
+        std::fs::write(dir.join(format!("f{i:04}.txt")), format!("shared {i}\n")).unwrap();
+        git(dir, &["add", "-A"]);
+        git(dir, &["commit", "-q", "-m", &format!("c{i}")]);
+    }
+    let base = rev_parse(dir, "HEAD");
+    git(dir, &["branch", "have-tip", &base.to_hex()]);
+    std::fs::write(dir.join("want.txt"), b"want branch\n").unwrap();
+    git(dir, &["checkout", "-q", "-b", "want-tip"]);
+    git(dir, &["add", "want.txt"]);
+    git(dir, &["commit", "-q", "-m", "want side"]);
+    let want = rev_parse(dir, "HEAD");
+    git(dir, &["checkout", "-q", "have-tip"]);
+    std::fs::write(dir.join("have.txt"), b"have branch\n").unwrap();
+    git(dir, &["add", "have.txt"]);
+    git(dir, &["commit", "-q", "-m", "have side"]);
+    let have = rev_parse(dir, "HEAD");
+    git(dir, &["repack", "-adf", "-q"]);
+
+    let odb = open_odb(dir);
+    let empty = HashSet::new();
+    let selection = enumerate_pack_objects(
+        &odb,
+        &[want],
+        &[have],
+        &PackEnumerateOptions {
+            filter: None,
+            shallow_grafts: &empty,
+            have_shallow_grafts: Some(&empty),
+            use_bitmaps: false,
+            exclude_objects: None,
+            peer_odb: None,
+        },
+    )
+    .expect("enumerate");
+    assert!(
+        selection.send.len() <= 6,
+        "divergent tips should send only the want-side tip closure, got {} objects",
+        selection.send.len()
+    );
+
+    let grit_pack = build_pack(
+        &odb,
+        &[want],
+        &[have],
+        &PackBuildOptions {
+            delta: true,
+            thin: true,
+            ..PackBuildOptions::default()
+        },
+    )
+    .expect("thin pack");
+    let git_pack = git_pack_objects(dir, &[want], &[have]);
+    assert!(
+        grit_pack.len() <= git_pack.len() * 2,
+        "grit thin pack {} bytes vs git {} bytes",
+        grit_pack.len(),
+        git_pack.len()
+    );
+    git_index_pack_stdin_fix_thin(dir, have, &grit_pack);
 }
 
 /// Issue #1938: incremental enumeration must not walk or load the full peer closure.
