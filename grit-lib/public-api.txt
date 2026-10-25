@@ -5623,6 +5623,8 @@ pub grit_lib::error::Error::RestoreConflictNotUnmerged
 pub grit_lib::error::Error::RestoreConflictNotUnmerged::path: alloc::string::String
 pub grit_lib::error::Error::RestoreConflictWithSource
 pub grit_lib::error::Error::RestoreConflictWithStaged
+pub grit_lib::error::Error::RestorePathUnmerged
+pub grit_lib::error::Error::RestorePathUnmerged::paths: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::error::Error::RevList(grit_lib::revwalk::rev_list_error::RevListError)
 pub grit_lib::error::Error::RevParse(grit_lib::revwalk::rev_parse_error::RevParseError)
 pub grit_lib::error::Error::RevisionNotFound(alloc::string::String)
@@ -15433,6 +15435,8 @@ pub grit_lib::prelude::Error::RestoreConflictNotUnmerged
 pub grit_lib::prelude::Error::RestoreConflictNotUnmerged::path: alloc::string::String
 pub grit_lib::prelude::Error::RestoreConflictWithSource
 pub grit_lib::prelude::Error::RestoreConflictWithStaged
+pub grit_lib::prelude::Error::RestorePathUnmerged
+pub grit_lib::prelude::Error::RestorePathUnmerged::paths: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::prelude::Error::RevList(grit_lib::revwalk::rev_list_error::RevListError)
 pub grit_lib::prelude::Error::RevParse(grit_lib::revwalk::rev_parse_error::RevParseError)
 pub grit_lib::prelude::Error::RevisionNotFound(alloc::string::String)
