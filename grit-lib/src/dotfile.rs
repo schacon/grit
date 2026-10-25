@@ -49,9 +49,20 @@ pub fn is_hfs_dotgit(path: &str) -> bool {
 }
 
 /// Whether `name` matches `.git` under Git's NTFS equivalence rules (`is_ntfs_dotgit`).
+///
+/// Covers `.git` and its 8.3 short name `git~1`, each optionally followed by spaces and
+/// periods (which NTFS strips) or a `:` stream suffix, plus the hashed short forms.
 #[must_use]
 pub fn is_ntfs_dotgit(name: &str) -> bool {
-    is_ntfs_dot_generic(name, "git", "g7c29")
+    let b = name.as_bytes();
+    // Every alias starts with `.`, `g` or `~`; most names are rejected on the first byte.
+    match b.first() {
+        Some(b'g' | b'G') if b.len() >= 5 && bytes_eq_ignore_ascii_case(&b[1..5], b"it~1") => {
+            only_spaces_and_periods(name, 5)
+        }
+        Some(b'.' | b'g' | b'G' | b'~') => is_ntfs_dot_generic(name, "git", "g7c29"),
+        _ => false,
+    }
 }
 
 /// Whether `path` matches `.gitmodules` under Git's HFS+ equivalence rules.
@@ -214,6 +225,24 @@ mod tests {
             assert!(!is_ntfs_dot_gitignore(name));
             assert!(!is_ntfs_dot_mailmap(name));
             assert!(!is_ntfs_dotgit(name));
+        }
+    }
+
+    #[test]
+    fn ntfs_dotgit_short_name_with_trailing_spaces_periods_or_stream() {
+        for name in [
+            "git~1",
+            "GIT~1",
+            "GIT~1.",
+            "git~1 ",
+            "git~1...",
+            "Git~1 . ",
+            "git~1::$INDEX_ALLOCATION",
+        ] {
+            assert!(is_ntfs_dotgit(name), "{name:?} is a .git alias");
+        }
+        for name in ["git~1x", "git~1.txt", "git~2.", "git~", "git~1 a"] {
+            assert!(!is_ntfs_dotgit(name), "{name:?} is not a .git alias");
         }
     }
 
