@@ -790,8 +790,13 @@ fn status_on_racy_parallel_index_reports_same_size_stat_match_edit() {
         &RepositoryOptions::empty().with_work_tree(repo_root),
     )
     .expect("open grit repo");
-    let model = status(&grit_repo, &StatusOptions::default(), &mut NullProgress)
-        .expect("status on racy parallel index");
+    let model = status(
+        &grit_repo,
+        &StatusOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("status on racy parallel index");
     assert!(
         model
             .unstaged
@@ -847,8 +852,13 @@ fn status_on_racy_git_index_with_large_blobs_persists_and_warms() {
     .expect("open grit repo");
 
     let first_start = Instant::now();
-    let model = status(&grit_repo, &StatusOptions::default(), &mut NullProgress)
-        .expect("first status on racy large index");
+    let model = status(
+        &grit_repo,
+        &StatusOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("first status on racy large index");
     let first_elapsed = first_start.elapsed();
     assert!(
         model.unstaged.is_empty(),
@@ -856,8 +866,13 @@ fn status_on_racy_git_index_with_large_blobs_persists_and_warms() {
     );
 
     let second_start = Instant::now();
-    let _second =
-        status(&grit_repo, &StatusOptions::default(), &mut NullProgress).expect("second status");
+    let _second = status(
+        &grit_repo,
+        &StatusOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("second status");
     let second_elapsed = second_start.elapsed();
 
     assert!(

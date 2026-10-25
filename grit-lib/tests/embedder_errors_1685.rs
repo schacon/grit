@@ -7,7 +7,7 @@ use grit_lib::parallel::ThreadPolicy;
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::porcelain::staging::stage_worktree_changes;
 use grit_lib::porcelain::status::{status, StatusOptions};
-use grit_lib::progress::NullProgress;
+use grit_lib::progress::{NeverCancel, NullProgress};
 use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::revwalk::rev_parse_error::RevParseError;
 use std::collections::{HashMap, HashSet};
@@ -28,7 +28,13 @@ fn bare_repo_common_failures_use_requires_work_tree() {
     .expect("init bare");
 
     assert_requires_work_tree(
-        status(&bare, &StatusOptions::default(), &mut NullProgress).map(|_| ()),
+        status(
+            &bare,
+            &StatusOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .map(|_| ()),
     );
     assert_requires_work_tree(stage_worktree_changes(&bare, &[]).map(|_| ()));
 

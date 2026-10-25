@@ -1061,14 +1061,27 @@ mod tests {
         commit(&origin, "b.txt", "two");
 
         let repo = open(&clone);
-        let outcome =
-            pull(&repo, &pull_options(&repo), &mut NoProgress, None).expect("pull succeeds");
+        let outcome = pull(
+            &repo,
+            &pull_options(&repo),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
+        .expect("pull succeeds");
         assert_eq!(outcome.result, PullResult::FastForward);
         // One new commit, its root tree and the added blob.
         assert_eq!(outcome.transfer.objects, 3, "{:?}", outcome.transfer);
         assert!(outcome.transfer.bytes > 0, "{:?}", outcome.transfer);
 
-        let again = pull(&repo, &pull_options(&repo), &mut NoProgress, None).expect("second pull");
+        let again = pull(
+            &repo,
+            &pull_options(&repo),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
+        .expect("second pull");
         assert_eq!(again.result, PullResult::UpToDate);
         assert_eq!(again.transfer.objects, 0, "{:?}", again.transfer);
     }

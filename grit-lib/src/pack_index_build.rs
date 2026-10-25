@@ -1383,6 +1383,7 @@ mod line_coverage_tests {
             Parallelism::resolve(Some(threads)),
             true,
             None,
+            None,
             chain_limit,
         )?
         .into_iter()
