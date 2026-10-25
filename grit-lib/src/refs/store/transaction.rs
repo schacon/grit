@@ -1,5 +1,7 @@
 //! [`RefTransaction`] builder and validation.
 
+use std::collections::HashSet;
+
 use super::error::RefStoreError;
 use super::types::{Expected, RawRef, RefCaseOnlyRename, RefReflogRename, RefUpdate};
 use super::validation::validate_storable_refname;
@@ -17,6 +19,19 @@ impl RefTransaction {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Start a transaction holding `updates`, checking for duplicate names in one pass.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RefStoreError::DuplicateUpdate`] for the first name queued twice.
+    pub(crate) fn from_updates(updates: Vec<RefUpdate>) -> Result<Self, RefStoreError> {
+        Self::validate_no_duplicates(&updates)?;
+        Ok(Self {
+            updates,
+            ..Self::default()
+        })
     }
 
     /// Append an update, rejecting duplicate ref names in the same batch.
@@ -114,6 +129,18 @@ impl RefTransaction {
         for (from, to) in renames {
             validate_storable_refname(from)?;
             validate_storable_refname(to)?;
+        }
+        Ok(())
+    }
+
+    fn validate_no_duplicates(updates: &[RefUpdate]) -> Result<(), RefStoreError> {
+        let mut seen = HashSet::with_capacity(updates.len());
+        for update in updates {
+            if !seen.insert(&update.name) {
+                return Err(RefStoreError::DuplicateUpdate {
+                    name: update.name.clone(),
+                });
+            }
         }
         Ok(())
     }
@@ -282,6 +309,31 @@ mod tests {
             })
             .unwrap();
         assert!(txn.validate().is_ok());
+    }
+
+    #[test]
+    fn from_updates_rejects_a_name_queued_twice() {
+        let update = |name: &str| RefUpdate {
+            name: name.to_owned(),
+            new_value: None,
+            expected: Expected::Any,
+            reflog: None,
+            flags: Default::default(),
+        };
+        let txn =
+            RefTransaction::from_updates(vec![update("refs/heads/a"), update("refs/heads/b")])
+                .expect("distinct names");
+        assert_eq!(txn.updates().len(), 2);
+        let err = RefTransaction::from_updates(vec![
+            update("refs/heads/a"),
+            update("refs/heads/b"),
+            update("refs/heads/a"),
+        ])
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            RefStoreError::DuplicateUpdate { name } if name == "refs/heads/a"
+        ));
     }
 
     #[test]
