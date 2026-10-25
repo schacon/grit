@@ -11,13 +11,10 @@
 //! };
 //!
 //! let opts = ProtectOptions::default();
-//! validate_path(
-//!     b"src/lib.rs",
-//!     EntryMode::new(0o100644),
-//!     opts,
-//!     PathValidationKind::Worktree,
-//! )
-//! .unwrap();
+//! let blob = EntryMode::new(0o100644);
+//! let kind = PathValidationKind::Worktree;
+//! validate_path(b"src/lib.rs", blob, opts, kind).unwrap();
+//! assert!(validate_path(b"GIT~1./hooks", blob, opts, kind).is_err());
 //! ```
 
 use crate::config::ConfigSet;
@@ -337,8 +334,8 @@ pub fn component_is_dotgit_alias(name: &[u8], opts: ProtectOptions) -> bool {
     if name.eq_ignore_ascii_case(b".git") {
         return true;
     }
-    if name.eq_ignore_ascii_case(b"git~1") && opts.protect_ntfs {
-        return true;
+    if !may_alias_dotgit(name) {
+        return false;
     }
     let Ok(name_str) = std::str::from_utf8(name) else {
         return false;
@@ -350,6 +347,13 @@ pub fn component_is_dotgit_alias(name: &[u8], opts: ProtectOptions) -> bool {
         return true;
     }
     false
+}
+
+/// Cheap pre-filter for [`component_is_dotgit_alias`]: NTFS spellings start with `.`, `g`
+/// or `~`, HFS spellings with `.` or an ignorable (non-ASCII) code point, and anything else
+/// can only spell `.git` in a `\`-separated segment.
+fn may_alias_dotgit(name: &[u8]) -> bool {
+    matches!(name.first(), Some(b'.' | b'g' | b'G' | b'~' | 0x80..)) || name.contains(&b'\\')
 }
 
 fn validate_component_symlink_dotfile(
@@ -639,6 +643,63 @@ mod tests {
             validate_component(b".git ", BLOB, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::NtfsDotGit
         );
+    }
+
+    #[test]
+    fn ntfs_git_tilde_one_with_trailing_spaces_or_periods() {
+        for name in [
+            b"GIT~1.".as_slice(),
+            b"git~1 ",
+            b"git~1...",
+            b"git~1::$DATA",
+        ] {
+            for kind in [FSCK_KIND, WT_KIND] {
+                let err = validate_component(name, BLOB, FSCK, kind).unwrap_err();
+                // On Windows the Win32 segment rules run first and report the trailing dot,
+                // space or `:` instead.
+                if !cfg!(windows) {
+                    assert_eq!(err, PathComponentError::NtfsDotGit, "reject {name:?}");
+                }
+            }
+            assert!(audit_tree_entry_name(name, FSCK).dotgit);
+            if !cfg!(windows) {
+                assert!(validate_component(name, BLOB, OFF, FSCK_KIND).is_ok());
+                assert!(validate_component(name, BLOB, OFF, WT_KIND).is_ok());
+            }
+        }
+        assert!(validate_path(b"GIT~1./marker.txt", BLOB, FSCK, WT_KIND).is_err());
+        assert!(validate_component(b"git~1.txt", BLOB, FSCK, WT_KIND).is_ok());
+    }
+
+    #[test]
+    fn dotgit_prefilter_admits_every_alias_spelling() {
+        for name in [
+            ".git".as_bytes(),
+            b".GIT.",
+            b"git~1",
+            b"GIT~1 .",
+            b"g7c2~123",
+            b"~1234567",
+            ".gI\u{200c}T".as_bytes(),
+            "\u{200c}.git".as_bytes(),
+            b"foo\\.git",
+            b"x\\git~1",
+        ] {
+            assert!(may_alias_dotgit(name), "pre-filter must admit {name:?}");
+            assert!(
+                component_is_dotgit_alias(name, FSCK),
+                "{name:?} is a .git alias"
+            );
+        }
+        for name in [
+            b"src".as_slice(),
+            b"README.md",
+            b"Cargo.toml",
+            b"_git",
+            b"1git~1",
+        ] {
+            assert!(!may_alias_dotgit(name), "pre-filter skips {name:?}");
+        }
     }
 
     #[test]

@@ -45,6 +45,10 @@ validate_component(
 )?;
 ```
 
+## `.git` aliases
+
+With `core.protectNTFS` on, every platform rejects the NTFS spellings of `.git` for both kinds, because a repository checked out on Linux may later be used from Windows. These are `.git` and its 8.3 short name `git~1` in any case, each optionally followed by spaces and periods (which NTFS strips) or by a `:` stream suffix. Examples are `.git.`, `GIT~1.`, `git~1  ` and `.git::$INDEX_ALLOCATION`. A `\`-separated segment that spells `.git`, such as `.git\config`, is rejected too. System git refuses the same names on Linux, so a hostile tree cannot plant a second `.git` directory through either implementation.
+
 [`validate_path`](rustdoc:grit_lib::path_validate::validate_path) splits on `/` and validates each segment. [`audit_tree_entry_name`](rustdoc:grit_lib::path_validate::audit_tree_entry_name) returns a bitmask-style summary for fsck-style reporting when several rules fire on one name.
 
 ## Errors
