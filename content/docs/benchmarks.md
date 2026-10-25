@@ -525,6 +525,32 @@ On the 200k-file repro from the issue (one commit, gc'd, 4 vCPU), `grit clone` w
   --format json --output grit-utils/baselines/daily-clone-checkout-synth-100k-after.json --grit ./target/release/grit
 ```
 
+### Log pages on git.git (2026-10-25)
+
+`grit log` pages walk history in committer-date order, and the walk reads every commit it queues to learn its parents and date. The rows were then built by reading and parsing the same commits a second time, which cost about a third of a 5000-commit page. The walk now keeps the payloads it read (in one shared buffer, released as soon as the rows are loaded) and hands them to the row loader through [`LogWalkPage::commit_data`](rustdoc:grit_lib::revwalk::log_walk::LogWalkPage), so each commit is inflated once. Several fixed costs paid on every page also shrank: peeling to a commit decides the object kind from its header instead of inflating it twice, DWIM ref resolution reads each candidate (`refs/HEAD`, `refs/tags/HEAD`, …) once instead of twice, `packed-refs` records decode their ids while validating them, and pack index lookups in walk order binary-search directly instead of first comparing up to 128 rows after the previous hit.
+
+Hyperfine medians (interleaved runs) of `dist` builds of `origin/main` (`fce0b9c5f`) and of this change rebased onto it, on the pinned git.git clone (factory VM, same sitting), with median peak RSS over 15 runs. Sub-5 ms rows shift by a few tenths of a millisecond with machine load, so compare the two grit columns, which were timed together:
+
+| Command | git ms | grit main | grit after | git RSS | grit RSS main | grit RSS after |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `log --limit 100 --json` (`log/json-100@git-git`) | 2.95 | 4.44 | 4.33 | 12.3 MiB | 18.8 MiB | 18.7 MiB |
+| `log --limit 100` (`log/oneline-100@git-git`) | 3.03 | 3.97 | 3.91 | 12.2 MiB | 18.2 MiB | 18.2 MiB |
+| `log --limit 50 --json --filter …` (`log/json-filter@git-git`) | 2.23 | 4.57 | 4.42 | 9.9 MiB | 17.2 MiB | 17.3 MiB |
+| `log --limit 1000 --json` | 11.98 | 22.07 | 16.34 | 15.0 MiB | 23.5 MiB | 23.6 MiB |
+| `log --limit 5000` (`log/all@git-git`) | 47.79 | 106.00 | 64.28 | 18.0 MiB | 31.4 MiB | 31.4 MiB |
+
+On the headline row, five interleaved 200-run rounds put the change 1.0–5.5% ahead of `main` every time (median 4.43–4.49 ms → 4.23–4.37 ms), and `perf stat` task-clock over 200 runs drops from 3.84–3.87 ms to 3.69–3.78 ms. Path-limited, `--author`, `--stat`, `revs` and `show` rows are unchanged within noise in interleaved runs (`daily-log-git-git-before.json` / `daily-log-git-git-after.json` hold the full daily matrix capture for both binaries). What remains of the 100-commit gap is mostly fixed cost: argument parsing, repository discovery and config loading, and opening the pack for the first object.
+
+The daily runner used to read the clock only when a 1 ms `try_wait` poll first saw the child gone, so every sample was rounded up to a whole poll tick (about 1.1 ms here): sub-5 ms rows could only report values like 3.29, 4.39 or 5.44 ms, and a few-tenths gain stayed invisible unless it crossed a tick. On Linux it now blocks in `waitid` and reads the clock when the child exits, while a watchdog thread keeps the RSS sampling and the timeout and memory caps. Sub-5 ms rows captured before that fix (for example older `daily/` files) carry that rounding. Pass `--baseline-grit` to time a second grit binary in the same run for paired headline comparisons:
+
+```bash
+cargo build --profile dist -p grit-cli -p grit-utils
+./target/dist/grit-bench daily --only 'log/json-100@git-git,log/oneline-100@git-git' \
+  --grit ./target/dist/grit --baseline-grit /path/to/main/grit --min-runs 20 --format json --output /tmp/log-paired.json
+./target/dist/grit-bench daily --only 'log/json-100@git-git,log/oneline-100@git-git,log/all@git-git,log/author@git-git,log/json-filter@git-git,log/limit-path@git-git,log/path@git-git,log/stat-n50@git-git' \
+  --min-runs 30 --format json --output grit-utils/baselines/daily-log-git-git-after.json --grit ./target/dist/grit
+```
+
 ### git.git headlines (hyperfine wall time + peak RSS)
 
 **`grit-utils/baselines/dashboard/git-dot-git-headlines.json`** uses the standard grit-bench schema (hyperfine medians + **`peak_rss_bytes`** per side). Headline wall times are **not** taken from the daily RSS poll loop (which quantized sub-50 ms commands to ~50 ms); they use the same hyperfine + **`measure-rss`** path as other scenario suites.
