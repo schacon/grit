@@ -155,7 +155,7 @@ pub struct ResetOutcome {
 ///
 /// Same validation failures as [`reset_to_commit`] (missing commit, invalid `HEAD`, parse errors).
 pub fn preview_reset(repo: &Repository, opts: &ResetOptions) -> Result<ResetPreview> {
-    let (_previous, _head, preview) = plan_reset(repo, opts)?;
+    let (_previous, _head, preview) = plan_reset(repo, opts, true)?;
     Ok(preview)
 }
 
@@ -170,7 +170,7 @@ pub fn preview_reset(repo: &Repository, opts: &ResetOptions) -> Result<ResetPrev
 /// Returns an error when there is no current commit, the work tree is required but
 /// missing (hard/keep reset), local edits block keep reset, or ref/index/checkout I/O fails.
 pub fn reset_to_commit(repo: &Repository, opts: &ResetOptions) -> Result<ResetOutcome> {
-    let (previous, head, preview) = plan_reset(repo, opts)?;
+    let (previous, head, preview) = plan_reset(repo, opts, opts.dry_run)?;
     let ref_label = ref_label_for_head(&head);
 
     if opts.dry_run {
@@ -225,9 +225,15 @@ pub fn reset_to_commit(repo: &Repository, opts: &ResetOptions) -> Result<ResetOu
     })
 }
 
+/// Resolve the reset endpoints and orphan summary.
+///
+/// `with_worktree_preview` computes the paths a hard reset would discard (a full worktree
+/// diff) and the paths that block a keep reset. A real reset skips the hard-reset scan: it
+/// discards those edits anyway, and the keep checkout runs its own guard.
 fn plan_reset(
     repo: &Repository,
     opts: &ResetOptions,
+    with_worktree_preview: bool,
 ) -> Result<(ObjectId, HeadState, ResetPreview)> {
     let head = resolve_head_for_repository(repo)?;
     let previous = head.oid().copied().ok_or(Error::UnbornHead)?;
@@ -239,6 +245,7 @@ fn plan_reset(
     let target_tree = commit_tree_oid(repo, &opts.target)?;
 
     let (would_overwrite, would_block) = match opts.mode {
+        _ if !with_worktree_preview => (Vec::new(), Vec::new()),
         ResetMode::Hard => (
             hard_reset_would_discard_paths(repo, Some(head_tree))?,
             Vec::new(),
@@ -1196,5 +1203,337 @@ mod tests {
         let outcome = reset_to_commit(&repo, &reset_opts(c2, ResetMode::Mixed)).expect("reset");
         assert_eq!(outcome.orphaned_total, 0);
         assert!(outcome.orphaned_commits.is_empty());
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "T")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "T")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    const WIDE_DIRS: usize = 24;
+    const WIDE_FILES_PER_DIR: usize = 25;
+    const WIDE_DELETED_DIRS: usize = 8;
+
+    /// A wide tree on `main` plus branch `trimmed` that deletes the first
+    /// [`WIDE_DELETED_DIRS`] top-level directories, built with the system `git`.
+    /// Returns the open repository (on `main`) and the `trimmed` tip.
+    fn wide_repo_with_trimmed_branch(root: &std::path::Path) -> (Repository, ObjectId) {
+        git(root, &["init", "-q", "-b", "main", "."]);
+        for d in 0..WIDE_DIRS {
+            let dir = root.join(format!("d{d:02}"));
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            for f in 0..WIDE_FILES_PER_DIR {
+                std::fs::write(
+                    dir.join(format!("f{f:02}.txt")),
+                    format!("content {d} {f}\n"),
+                )
+                .expect("write");
+            }
+        }
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-qm", "full"]);
+        git(root, &["switch", "-qc", "trimmed"]);
+        let doomed: Vec<String> = (0..WIDE_DELETED_DIRS).map(|d| format!("d{d:02}")).collect();
+        let mut rm = vec!["rm", "-rq"];
+        rm.extend(doomed.iter().map(String::as_str));
+        git(root, &rm);
+        git(root, &["commit", "-qm", "trim"]);
+        let trimmed = ObjectId::from_hex(git(root, &["rev-parse", "HEAD"]).trim()).expect("oid");
+        git(root, &["switch", "-q", "main"]);
+        let repo = Repository::open(
+            &root.join(".git"),
+            &crate::environment::RepositoryOptions::empty().with_work_tree(root),
+        )
+        .expect("open");
+        (repo, trimmed)
+    }
+
+    /// Pin the mtime of every tracked file to `secs` and let `git` refresh the index, so stat data
+    /// is clean and no entry is racy (the index is written later than `secs`).
+    fn pin_worktree_mtimes_and_refresh(root: &std::path::Path, secs: i64) {
+        let pinned = filetime::FileTime::from_unix_time(secs, 0);
+        for d in 0..WIDE_DIRS {
+            for f in 0..WIDE_FILES_PER_DIR {
+                let path = root.join(format!("d{d:02}/f{f:02}.txt"));
+                filetime::set_file_mtime(&path, pinned).expect("pin mtime");
+            }
+        }
+        git(root, &["update-index", "-q", "--refresh"]);
+    }
+
+    fn assert_git_sees_clean_repo(root: &std::path::Path) {
+        assert_eq!(
+            git(root, &["status", "--porcelain"]),
+            "",
+            "git status clean"
+        );
+        git(root, &["fsck", "--no-progress"]);
+    }
+
+    #[test]
+    fn hard_reset_delete_heavy_reads_no_worktree_files_and_stats_each_once() {
+        use crate::worktree_scan::{reset_worktree_metadata_probe, worktree_metadata_probe_count};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let (repo, trimmed) = wide_repo_with_trimmed_branch(root);
+        pin_worktree_mtimes_and_refresh(root, 1_700_000_000);
+        // Same-size rewrites that only bump mtime: a content check would have to read them,
+        // but a hard reset deletes these files anyway.
+        let bumped = filetime::FileTime::from_unix_time(1_700_000_100, 0);
+        for d in 0..WIDE_DELETED_DIRS {
+            for f in 0..WIDE_FILES_PER_DIR {
+                let path = root.join(format!("d{d:02}/f{f:02}.txt"));
+                filetime::set_file_mtime(&path, bumped).expect("bump mtime");
+            }
+        }
+
+        let metrics = repo.odb().hot_path_metrics();
+        metrics.reset_blob_content_reads();
+        metrics.set_blob_counting(true);
+        let probes = reset_worktree_metadata_probe(root);
+        reset_to_commit(&repo, &reset_opts(trimmed, ResetMode::Hard)).expect("hard reset");
+        let probe_count = worktree_metadata_probe_count();
+        drop(probes);
+        metrics.set_blob_counting(false);
+
+        assert_eq!(
+            metrics.blob_content_reads(),
+            0,
+            "hard reset must not read deleted or stat-clean worktree files"
+        );
+        let kept = (WIDE_DIRS - WIDE_DELETED_DIRS) * WIDE_FILES_PER_DIR;
+        assert!(
+            probe_count <= kept + WIDE_DIRS + 8,
+            "expected about one metadata probe per kept file ({kept}), got {probe_count}"
+        );
+        for d in 0..WIDE_DELETED_DIRS {
+            assert!(!root.join(format!("d{d:02}")).exists(), "d{d:02} removed");
+        }
+        assert_git_sees_clean_repo(root);
+        assert_eq!(git(root, &["rev-parse", "HEAD"]).trim(), trimmed.to_hex());
+    }
+
+    #[test]
+    fn hard_reset_rewrites_racy_unchanged_file_with_same_size_edit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let (repo, trimmed) = wide_repo_with_trimmed_branch(root);
+        git(root, &["config", "core.trustctime", "false"]);
+        pin_worktree_mtimes_and_refresh(root, 1_700_000_000);
+
+        // Edit a file that is identical on both sides of the reset without changing its size
+        // or mtime, then make the index as old as that mtime so the entry is racily clean.
+        let kept = root.join(format!("d{WIDE_DELETED_DIRS:02}/f00.txt"));
+        let original = std::fs::read(&kept).expect("read kept");
+        let mut edited = original.clone();
+        edited[0] = b'X';
+        std::fs::write(&kept, &edited).expect("same-size edit");
+        let pinned = filetime::FileTime::from_unix_time(1_700_000_000, 0);
+        filetime::set_file_mtime(&kept, pinned).expect("forge mtime");
+        let index_path = repo.index_path_for_env().expect("index path");
+        filetime::set_file_mtime(&index_path, pinned).expect("racy index");
+        let index = repo.load_index().expect("index");
+        let rel = format!("d{WIDE_DELETED_DIRS:02}/f00.txt");
+        let entry = index.get(rel.as_bytes(), 0).expect("entry");
+        assert!(
+            crate::diff::entry_is_racy(entry, crate::diff::index_mtime_for_diff(&index, None)),
+            "fixture entry must be racy"
+        );
+
+        reset_to_commit(&repo, &reset_opts(trimmed, ResetMode::Hard)).expect("hard reset");
+
+        assert_eq!(std::fs::read(&kept).expect("read"), original);
+        assert_git_sees_clean_repo(root);
+    }
+
+    #[test]
+    fn hard_reset_keeps_recorded_stat_rows_for_unchanged_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let (repo, trimmed) = wide_repo_with_trimmed_branch(root);
+        git(root, &["config", "core.trustctime", "false"]);
+        pin_worktree_mtimes_and_refresh(root, 1_700_000_000);
+
+        // Stand-in for a directory scan whose ctime disagrees with the path stat Git recorded
+        // (NTFS read_dir vs lstat): the stat check ignores ctime, so the row stays clean, and
+        // the reset must keep the recorded row rather than store what the scan saw.
+        let kept = format!("d{WIDE_DELETED_DIRS:02}/f00.txt");
+        let mut index = repo.load_index().expect("index");
+        let entry = index.get_mut(kept.as_bytes(), 0).expect("kept entry");
+        entry.ctime_sec = 1_600_000_000;
+        entry.ctime_nsec = 7;
+        repo.write_index(&mut index).expect("write index");
+
+        reset_to_commit(&repo, &reset_opts(trimmed, ResetMode::Hard)).expect("hard reset");
+
+        let after = repo.load_index().expect("index after");
+        let row = after.get(kept.as_bytes(), 0).expect("kept row");
+        assert_eq!((row.ctime_sec, row.ctime_nsec), (1_600_000_000, 7));
+        assert_git_sees_clean_repo(root);
+    }
+
+    /// Repository on `main` with tracked `victim` sized like an empty directory, and branch
+    /// `other` that deletes it. Stat checks are minimal (no filemode, ctime or identity), the
+    /// index entry is settled at the pinned mtime of `victim`, which is then replaced by an
+    /// empty directory with the same size and mtime, so only the file type tells them apart.
+    fn file_replaced_by_same_stat_directory(root: &std::path::Path) -> ObjectId {
+        git(root, &["init", "-q", "-b", "main", "."]);
+        for (key, value) in [
+            ("core.filemode", "false"),
+            ("core.checkStat", "minimal"),
+            ("core.trustctime", "false"),
+        ] {
+            git(root, &["config", key, value]);
+        }
+        let probe = root.join("probe");
+        std::fs::create_dir(&probe).expect("probe dir");
+        let dir_size = std::fs::metadata(&probe).expect("probe meta").len() as usize;
+        std::fs::remove_dir(&probe).expect("remove probe");
+        let pinned = filetime::FileTime::from_unix_time(1_700_000_000, 0);
+        std::fs::write(root.join("victim"), vec![b'a'; dir_size]).expect("victim");
+        std::fs::write(root.join("keep"), "keep\n").expect("keep");
+        for name in ["victim", "keep"] {
+            filetime::set_file_mtime(root.join(name), pinned).expect("pin");
+        }
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-qm", "base"]);
+        git(root, &["switch", "-qc", "other"]);
+        git(root, &["rm", "-q", "victim"]);
+        git(root, &["commit", "-qm", "drop victim"]);
+        let other = ObjectId::from_hex(git(root, &["rev-parse", "HEAD"]).trim()).expect("oid");
+        git(root, &["switch", "-q", "main"]);
+        filetime::set_file_mtime(root.join("victim"), pinned).expect("re-pin");
+        git(root, &["update-index", "-q", "--refresh"]);
+        std::fs::remove_file(root.join("victim")).expect("remove victim");
+        std::fs::create_dir(root.join("victim")).expect("victim dir");
+        filetime::set_file_mtime(root.join("victim"), pinned).expect("pin dir");
+        assert_eq!(
+            std::fs::metadata(root.join("victim"))
+                .expect("dir meta")
+                .len() as usize,
+            dir_size
+        );
+        other
+    }
+
+    fn open_at(root: &std::path::Path) -> Repository {
+        Repository::open(
+            &root.join(".git"),
+            &crate::environment::RepositoryOptions::empty().with_work_tree(root),
+        )
+        .expect("open")
+    }
+
+    #[test]
+    fn hard_reset_restores_file_replaced_by_same_stat_directory_like_git() {
+        let grit_dir = tempfile::tempdir().expect("tempdir");
+        let git_dir = tempfile::tempdir().expect("tempdir");
+        file_replaced_by_same_stat_directory(grit_dir.path());
+        file_replaced_by_same_stat_directory(git_dir.path());
+
+        git(git_dir.path(), &["reset", "-q", "--hard", "HEAD"]);
+        let repo = open_at(grit_dir.path());
+        let head =
+            ObjectId::from_hex(git(grit_dir.path(), &["rev-parse", "HEAD"]).trim()).expect("head");
+        reset_to_commit(&repo, &reset_opts(head, ResetMode::Hard)).expect("hard reset");
+
+        for root in [git_dir.path(), grit_dir.path()] {
+            let victim = root.join("victim");
+            assert!(victim.is_file(), "{} restores the file", root.display());
+            assert_eq!(
+                std::fs::read(&victim).expect("read victim"),
+                std::fs::read(git_dir.path().join("victim")).expect("git victim")
+            );
+            assert_git_sees_clean_repo(root);
+        }
+    }
+
+    #[test]
+    fn switch_refuses_to_delete_file_replaced_by_same_stat_directory_like_git() {
+        use crate::porcelain::switch::{switch_repository, SwitchMode, SwitchOptions};
+
+        let grit_dir = tempfile::tempdir().expect("tempdir");
+        let git_dir = tempfile::tempdir().expect("tempdir");
+        let other = file_replaced_by_same_stat_directory(grit_dir.path());
+        file_replaced_by_same_stat_directory(git_dir.path());
+
+        let git_switch = std::process::Command::new("git")
+            .current_dir(git_dir.path())
+            .args(["switch", "-q", "other"])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .expect("git switch");
+        assert!(!git_switch.status.success(), "git refuses the switch");
+
+        let repo = open_at(grit_dir.path());
+        switch_repository(
+            &repo,
+            &SwitchOptions {
+                mode: SwitchMode::Existing {
+                    branch: "other".into(),
+                    oid: other,
+                },
+                dry_run: false,
+            },
+        )
+        .expect_err("grit refuses the switch too");
+        assert!(
+            grit_dir.path().join("victim").is_dir(),
+            "directory untouched"
+        );
+        assert_eq!(
+            git(grit_dir.path(), &["symbolic-ref", "--short", "HEAD"]).trim(),
+            "main"
+        );
+    }
+
+    #[test]
+    fn hard_reset_removes_staged_only_paths_and_keeps_untracked_under_deleted_dirs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let (repo, trimmed) = wide_repo_with_trimmed_branch(root);
+        std::fs::write(root.join("d00/staged.txt"), "new\n").expect("staged");
+        git(root, &["add", "d00/staged.txt"]);
+        std::fs::write(root.join("d01/untracked.txt"), "keep me\n").expect("untracked");
+
+        reset_to_commit(&repo, &reset_opts(trimmed, ResetMode::Hard)).expect("hard reset");
+
+        assert!(
+            !root.join("d00").exists(),
+            "staged-only path and its dir removed"
+        );
+        assert_eq!(
+            std::fs::read(root.join("d01/untracked.txt")).expect("untracked kept"),
+            b"keep me\n"
+        );
+        let tracked: Vec<_> = std::fs::read_dir(root.join("d01"))
+            .expect("d01")
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(
+            tracked,
+            ["untracked.txt"],
+            "only the untracked file remains"
+        );
+        assert_eq!(git(root, &["status", "--porcelain"]), "?? d01/\n");
+        git(root, &["fsck", "--no-progress"]);
     }
 }
