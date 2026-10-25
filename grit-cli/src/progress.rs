@@ -303,15 +303,20 @@ impl TerminalProgress {
             // Put the live phase line back underneath the remote message.
             self.redraw(true);
         } else {
-            match line {
-                RemoteLine::Update(_) => {
-                    let _ = write!(err, "{shown}");
-                }
-                RemoteLine::Line(_) => {
-                    let _ = writeln!(err, "{shown}");
-                }
-            }
+            // Non-TTY human output: each side-band fragment on its own line (no \r overwrites).
+            let _ = writeln!(err, "{shown}");
             let _ = err.flush();
+        }
+    }
+
+    fn flush_remote_pending(&mut self) {
+        if !self.emit_remote {
+            return;
+        }
+        let mut lines = Vec::new();
+        self.remote_lines.finish(|line| lines.push(line));
+        for line in lines {
+            self.render_remote(line);
         }
     }
 }
@@ -350,6 +355,7 @@ impl Progress for TerminalProgress {
 
 impl Drop for TerminalProgress {
     fn drop(&mut self) {
+        self.flush_remote_pending();
         if self.overall_on_screen {
             // The bar is only an estimate; take it down once the work is over.
             let mut err = io::stderr();

@@ -68,13 +68,27 @@ struct PushSidebandCollector<'a> {
 
 impl PushSidebandCollector<'_> {
     fn record_remote_chunk(&mut self, bytes: &[u8]) {
-        self.pending.feed(bytes, |line| {
-            if let RemoteLine::Line(text) = line {
-                if !text.is_empty() {
-                    self.remote_messages.push(text);
-                }
+        let mut lines = Vec::new();
+        self.pending.feed(bytes, |line| lines.push(line));
+        for line in lines {
+            self.record_remote_line(line);
+        }
+    }
+
+    fn record_remote_line(&mut self, line: RemoteLine) {
+        if let RemoteLine::Line(text) = line {
+            if !text.is_empty() {
+                self.remote_messages.push(text);
             }
-        });
+        }
+    }
+
+    fn finish_pending(&mut self) {
+        let mut lines = Vec::new();
+        self.pending.finish(|line| lines.push(line));
+        for line in lines {
+            self.record_remote_line(line);
+        }
     }
 }
 
@@ -290,6 +304,7 @@ pub fn push_remote(
     apply_report_status(&report, &mut plan.decisions);
 
     let results: Vec<_> = plan.decisions.into_iter().map(|d| d.result).collect();
+    sideband.finish_pending();
     let remote_messages = sideband.remote_messages;
     net_trace!(
         opts.network_trace,
@@ -1375,6 +1390,27 @@ mod tests {
         assert!(
             matches!(err, Error::Io(_)),
             "incomplete report must stay an I/O error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn sideband_remote_messages_flush_unterminated_hook_text() {
+        struct Noop;
+        impl crate::progress::ProgressSink for Noop {}
+        impl Progress for Noop {}
+        let mut inner = Noop;
+        let mut sideband = PushSidebandCollector {
+            inner: &mut inner,
+            remote_messages: Vec::new(),
+            pending: SidebandLines::new(),
+        };
+        let hook = b"policy: no ticket";
+        let wire = sideband_receive_pack_wire(hook);
+        demux_report_and_remote_messages(&wire, &mut sideband).unwrap();
+        sideband.finish_pending();
+        assert_eq!(
+            sideband.remote_messages,
+            vec!["policy: no ticket".to_owned()]
         );
     }
 

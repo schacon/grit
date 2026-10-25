@@ -1618,7 +1618,7 @@ pub fn print_push_remote_messages(w: &mut dyn Write, messages: &[String]) -> any
     }
     outln!(w, "### Remote messages");
     for line in messages {
-        outln!(w, "- `{line}`");
+        outln!(w, "- {}", format_inline_code(line));
     }
     Ok(())
 }
@@ -1690,6 +1690,19 @@ mod tests {
         let (open, close) = diff_code_fence(body);
         assert_eq!(open, "```diff");
         assert_eq!(close, "```");
+    }
+
+    #[test]
+    fn push_remote_messages_use_safe_inline_code() {
+        use super::print_push_remote_messages;
+        let mut buf = Vec::new();
+        print_push_remote_messages(
+            &mut buf,
+            &["use `ticket` in message".to_owned()],
+        )
+        .unwrap();
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.contains("``use `ticket` in message``"));
     }
 
     #[test]
