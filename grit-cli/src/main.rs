@@ -252,6 +252,9 @@ enum GcAction {
         /// Write a reachability `.bitmap` sidecar for the new pack.
         #[arg(long)]
         bitmaps: bool,
+        /// Recompute every delta instead of reusing the ones already in packs.
+        #[arg(short, long)]
+        force: bool,
         /// Report what would be packed without writing.
         #[arg(long = "dry-run")]
         dry_run: bool,
@@ -1056,6 +1059,9 @@ enum Command {
     },
     /// Pack reachable objects and remove redundant packs.
     Repack {
+        /// Recompute every delta instead of reusing the ones already in packs.
+        #[arg(short, long)]
+        force: bool,
         /// Show what would be packed without writing.
         #[arg(long = "dry-run")]
         dry_run: bool,
@@ -2792,9 +2798,11 @@ fn dispatch(
             opts,
             ctx,
         ),
-        Command::Repack { dry_run, quiet } => {
-            emit_success(&commands::repack::run(dry_run, quiet)?, opts, ctx)
-        }
+        Command::Repack {
+            force,
+            dry_run,
+            quiet,
+        } => emit_success(&commands::repack::run(force, dry_run, quiet)?, opts, ctx),
         Command::Gc {
             dry_run,
             quiet,
@@ -2805,8 +2813,9 @@ fn dispatch(
                 None => commands::gc::run(dry_run, quiet, mode)?,
                 Some(GcAction::Repack {
                     bitmaps,
+                    force,
                     dry_run: repack_dry,
-                }) => commands::gc::run_repack(bitmaps, dry_run || repack_dry, quiet, mode)?,
+                }) => commands::gc::run_repack(bitmaps, force, dry_run || repack_dry, quiet, mode)?,
                 Some(GcAction::CommitGraph { dry_run: sub_dry }) => {
                     commands::gc::run_commit_graph(dry_run || sub_dry, quiet, mode)?
                 }
