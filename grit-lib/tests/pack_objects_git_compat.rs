@@ -8,8 +8,12 @@ use std::process::{Command, Stdio};
 use std::collections::HashSet;
 
 use grit_lib::objects::odb::Odb;
-use grit_lib::objects::pack_object_select::{enumerate_pack_objects, PackEnumerateOptions};
-use grit_lib::objects::pack_objects::{PackBuildOptions, PackObjects, PackObjectsOptions};
+use grit_lib::objects::pack_object_select::{
+    enumerate_pack_objects, HaveBoundary, PackEnumerateOptions,
+};
+use grit_lib::objects::pack_objects::{
+    build_pack_for_push, PackBuildOptions, PackObjects, PackObjectsOptions,
+};
 use grit_lib::objects::unpack_objects::pack_bytes_to_object_map;
 use grit_lib::objects::ObjectId;
 use grit_lib::remote::transfer::build_pack;
@@ -62,11 +66,20 @@ fn grit_delta_pack(odb: &Odb, wants: &[ObjectId], haves: &[ObjectId]) -> Vec<u8>
     .expect("pack")
 }
 
-fn git_pack_objects(repo: &Path, tips: &[ObjectId], haves: &[ObjectId]) -> Vec<u8> {
+fn git_pack_objects_with_thin(
+    repo: &Path,
+    tips: &[ObjectId],
+    haves: &[ObjectId],
+    thin: bool,
+) -> Vec<u8> {
+    let mut args = vec!["pack-objects", "--stdout", "--revs", "--delta-base-offset"];
+    if thin {
+        args.push("--thin");
+    }
     let mut child = Command::new("git");
     child
         .current_dir(repo)
-        .args(["pack-objects", "--stdout", "--revs", "--delta-base-offset"])
+        .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -90,6 +103,17 @@ fn git_pack_objects(repo: &Path, tips: &[ObjectId], haves: &[ObjectId]) -> Vec<u
         String::from_utf8_lossy(&out.stderr)
     );
     out.stdout
+}
+
+fn git_pack_objects(repo: &Path, tips: &[ObjectId], haves: &[ObjectId]) -> Vec<u8> {
+    git_pack_objects_with_thin(repo, tips, haves, false)
+}
+
+fn pack_object_set(pack: &[u8], odb: &Odb) -> HashSet<ObjectId> {
+    pack_bytes_to_object_map(pack, odb)
+        .expect("resolve pack")
+        .into_keys()
+        .collect()
 }
 
 /// Complete a thin pack in a fresh repository that holds only `have`'s history from `src`.
@@ -231,6 +255,7 @@ fn incremental_thin_pack_divergent_tips_matches_git_send_size() {
             use_bitmaps: false,
             exclude_objects: None,
             peer_odb: None,
+            have_boundary: grit_lib::objects::pack_object_select::HaveBoundary::CommitClosure,
         },
     )
     .expect("enumerate");
@@ -259,6 +284,180 @@ fn incremental_thin_pack_divergent_tips_matches_git_send_size() {
         git_pack.len()
     );
     git_index_pack_stdin_fix_thin(dir, have, &grit_pack);
+
+    let push_selection = enumerate_pack_objects(
+        &odb,
+        &[want],
+        &[have],
+        &PackEnumerateOptions {
+            filter: None,
+            shallow_grafts: &empty,
+            have_shallow_grafts: Some(&empty),
+            use_bitmaps: false,
+            exclude_objects: None,
+            peer_odb: None,
+            have_boundary: HaveBoundary::TipsOnly,
+        },
+    )
+    .expect("push enumerate");
+    assert!(
+        push_selection.send.len() <= 6,
+        "send-pack boundary paint should match closure on divergent tips, got {} objects",
+        push_selection.send.len()
+    );
+
+    let grit_push = build_pack_for_push(
+        &odb,
+        &[want],
+        &[have],
+        &PackBuildOptions {
+            delta: true,
+            thin: true,
+            use_bitmaps: false,
+            ..PackBuildOptions::default()
+        },
+    )
+    .expect("push pack");
+    let git_push = git_pack_objects_with_thin(dir, &[want], &[have], true);
+    assert_eq!(
+        pack_object_set(&grit_push, &odb),
+        pack_object_set(&git_push, &odb),
+        "send-pack object set must match git pack-objects --revs --thin"
+    );
+}
+
+/// Shared history below a have tip (not through the tip commit) must stay excluded.
+#[test]
+fn send_pack_revs_matches_git_on_merge_history() {
+    let tmp = tempfile::tempdir().expect("tmpdir");
+    let dir = tmp.path();
+    git(dir, &["init", "-q", "-b", "main", "."]);
+    std::fs::write(dir.join("base.txt"), b"base\n").unwrap();
+    git(dir, &["add", "base.txt"]);
+    git(dir, &["commit", "-q", "-m", "base"]);
+    let base = rev_parse(dir, "HEAD");
+    git(dir, &["branch", "side", &base.to_hex()]);
+    git(dir, &["checkout", "-q", "main"]);
+    std::fs::write(dir.join("main.txt"), b"main\n").unwrap();
+    git(dir, &["add", "main.txt"]);
+    git(dir, &["commit", "-q", "-m", "main line"]);
+    let main_tip = rev_parse(dir, "HEAD");
+    git(dir, &["checkout", "-q", "side"]);
+    std::fs::write(dir.join("side.txt"), b"side\n").unwrap();
+    git(dir, &["add", "side.txt"]);
+    git(dir, &["commit", "-q", "-m", "side line"]);
+    let _side_tip = rev_parse(dir, "HEAD");
+    git(dir, &["checkout", "-q", "main"]);
+    git(dir, &["merge", "-q", "--no-ff", "side", "-m", "merge side"]);
+    let want = rev_parse(dir, "HEAD");
+    let have = main_tip;
+    git(dir, &["repack", "-adf", "-q"]);
+
+    let odb = open_odb(dir);
+    let grit_pack = build_pack_for_push(
+        &odb,
+        &[want],
+        &[have],
+        &PackBuildOptions {
+            delta: true,
+            thin: true,
+            use_bitmaps: false,
+            ..PackBuildOptions::default()
+        },
+    )
+    .expect("grit push pack");
+    let git_pack = git_pack_objects_with_thin(dir, &[want], &[have], true);
+    assert_eq!(
+        pack_object_set(&grit_pack, &odb),
+        pack_object_set(&git_pack, &odb),
+        "merge push must match git --revs --thin object set"
+    );
+}
+
+/// Annotated tags on non-commits in the have list are ignored (push must not fail).
+#[test]
+fn send_pack_ignores_blob_tag_haves() {
+    let tmp = tempfile::tempdir().expect("tmpdir");
+    let dir = tmp.path();
+    git(dir, &["init", "-q", "-b", "main", "."]);
+    std::fs::write(dir.join("f.txt"), b"v1\n").unwrap();
+    git(dir, &["add", "f.txt"]);
+    git(dir, &["commit", "-q", "-m", "c1"]);
+    let have = rev_parse(dir, "HEAD");
+    std::fs::write(dir.join("f.txt"), b"v2\n").unwrap();
+    git(dir, &["commit", "-q", "-am", "c2"]);
+    let want = rev_parse(dir, "HEAD");
+    git(
+        dir,
+        &[
+            "tag",
+            "-a",
+            "blob-tag",
+            "-m",
+            "points at blob",
+            "HEAD~1:f.txt",
+        ],
+    );
+    let blob_tag = rev_parse(dir, "refs/tags/blob-tag");
+    let odb = open_odb(dir);
+    build_pack_for_push(
+        &odb,
+        &[want],
+        &[have, blob_tag],
+        &PackBuildOptions {
+            delta: true,
+            thin: true,
+            use_bitmaps: false,
+            ..PackBuildOptions::default()
+        },
+    )
+    .expect("push with blob tag have");
+}
+
+/// Issue #1975: send-pack must not pre-walk the full commit closure of every advertised ref.
+#[test]
+fn push_send_pack_uses_tips_only_have_boundary() {
+    let (dir, tip, _) = build_deep_history_repo(800);
+    let parent = rev_parse(dir.path(), "HEAD~1");
+    let mut haves = vec![parent];
+    for n in (2..400).step_by(2) {
+        haves.push(rev_parse(dir.path(), &format!("HEAD~{n}")));
+    }
+    let odb = open_odb(dir.path());
+    let empty = HashSet::new();
+    // Many advertised tips on the same branch; enumeration must stay incremental.
+    let selection = enumerate_pack_objects(
+        &odb,
+        &[tip],
+        &haves,
+        &PackEnumerateOptions {
+            filter: None,
+            shallow_grafts: &empty,
+            have_shallow_grafts: Some(&empty),
+            use_bitmaps: false,
+            exclude_objects: None,
+            peer_odb: None,
+            have_boundary: HaveBoundary::TipsOnly,
+        },
+    )
+    .expect("enumerate");
+    assert!(
+        selection.send.len() < 40,
+        "one new commit with many advertised tips should stay small, got {} objects",
+        selection.send.len()
+    );
+    build_pack_for_push(
+        &odb,
+        &[tip],
+        &haves,
+        &PackBuildOptions {
+            delta: true,
+            thin: true,
+            use_bitmaps: false,
+            ..PackBuildOptions::default()
+        },
+    )
+    .expect("push pack");
 }
 
 /// Issue #1938: incremental enumeration must not walk or load the full peer closure.
@@ -279,6 +478,7 @@ fn incremental_thin_pack_send_list_is_bounded() {
             use_bitmaps: true,
             exclude_objects: None,
             peer_odb: None,
+            have_boundary: grit_lib::objects::pack_object_select::HaveBoundary::CommitClosure,
         },
     )
     .expect("enumerate");

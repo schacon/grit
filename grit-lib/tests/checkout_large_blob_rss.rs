@@ -13,6 +13,7 @@ use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::restore::{restore_paths, RestoreOptions, RestoreSource};
 use grit_lib::porcelain::switch::{switch_repository, SwitchMode, SwitchOptions};
+use grit_lib::progress::{NeverCancel, NullProgress};
 use grit_lib::repo::Repository;
 
 const BLOB_MIB: usize = 64;
