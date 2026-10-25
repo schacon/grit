@@ -1,5 +1,7 @@
 //! [`RefTransaction`] builder and validation.
 
+use std::collections::HashSet;
+
 use super::error::RefStoreError;
 use super::types::{Expected, RawRef, RefCaseOnlyRename, RefReflogRename, RefUpdate};
 use super::validation::validate_storable_refname;
@@ -127,6 +129,18 @@ impl RefTransaction {
         for (from, to) in renames {
             validate_storable_refname(from)?;
             validate_storable_refname(to)?;
+        }
+        Ok(())
+    }
+
+    fn validate_no_duplicates(updates: &[RefUpdate]) -> Result<(), RefStoreError> {
+        let mut seen = HashSet::with_capacity(updates.len());
+        for update in updates {
+            if !seen.insert(&update.name) {
+                return Err(RefStoreError::DuplicateUpdate {
+                    name: update.name.clone(),
+                });
+            }
         }
         Ok(())
     }
