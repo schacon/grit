@@ -428,6 +428,16 @@ impl fmt::Debug for ObjectId {
     }
 }
 
+#[cfg(feature = "serde-models")]
+impl serde::Serialize for ObjectId {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
 /// Marker bit in [`HEX_DECODE`] for bytes that are not hex digits.
 const HEX_INVALID: u8 = 0x10;
 

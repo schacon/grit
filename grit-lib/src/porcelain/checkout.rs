@@ -32,11 +32,13 @@ use crate::index::{
 };
 use crate::objects::{Object, ObjectId, TreeEntry};
 use crate::odb::{BoundedRead, Odb};
-use crate::parallel::{try_par_map, ParallelHashError, ParallelOp};
+use crate::parallel::{try_par_map, ParallelHashError, ParallelOp, ParallelOptions};
 use crate::path_icase::paths_equal;
 use crate::path_population::{validate_tree_walk_entry, validate_worktree_path};
 use crate::path_validate::ProtectOptions;
-use crate::progress::{NullProgress, ProgressPhase, ProgressSink, ProgressUnit};
+use crate::progress::{
+    Cancel, CancelProgress, NeverCancel, NullProgress, ProgressPhase, ProgressSink, ProgressUnit,
+};
 use crate::repo::Repository;
 use crate::sparse_checkout::SparseCheckout;
 use crate::worktree::{io_with_path, WorktreePathOperation};
@@ -51,7 +53,81 @@ use checkout_parallel::{
 };
 
 const PARALLEL_PER_FILE_DELETE_MIN: usize = 32;
+/// Chunk size for parallel checkout deletes so cancellation can stop before an entire tree is removed.
+const PARALLEL_DELETE_CANCEL_CHUNK: usize = 8;
 const POPULATED_TREE_CHECKOUT_CHUNK: usize = 2048;
+
+fn remove_checkout_files_parallel_cancellable(
+    work_tree: &Path,
+    paths: &[String],
+    options: ParallelOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
+) -> Result<(HashSet<String>, Vec<PathBuf>)> {
+    let mut parallel_deleted_paths = HashSet::new();
+    let mut deleted_abs_paths = Vec::new();
+    for chunk in paths.chunks(PARALLEL_DELETE_CANCEL_CHUNK) {
+        crate::progress::poll_cancel(progress, cancel)?;
+        let abs_paths: Vec<PathBuf> = chunk
+            .iter()
+            .map(|p| checkout_stored_worktree_abs(work_tree, p))
+            .collect();
+        try_par_map(&abs_paths, options, 0, |abs| {
+            let _ = fs::remove_file(abs);
+            Ok(())
+        })
+        .map_err(|e: ParallelHashError<()>| match e {
+            ParallelHashError::Task(()) => {
+                Error::PathError("parallel checkout delete failed".into())
+            }
+        })?;
+        for (path, abs) in chunk.iter().zip(abs_paths) {
+            parallel_deleted_paths.insert(path.clone());
+            deleted_abs_paths.push(abs);
+            progress.inc(1);
+            crate::progress::poll_cancel(progress, cancel)?;
+        }
+    }
+    Ok((parallel_deleted_paths, deleted_abs_paths))
+}
+
+fn remove_wholesale_dirs_parallel_cancellable(
+    work_tree: &Path,
+    dirs: &[String],
+    options: ParallelOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
+) -> Result<Vec<(String, PathBuf)>> {
+    let mut removed = Vec::new();
+    if dirs.is_empty() {
+        return Ok(removed);
+    }
+    if dirs.len() < 2 {
+        for dir in dirs {
+            crate::progress::poll_cancel(progress, cancel)?;
+            let abs = work_tree.join(dir);
+            if remove_wholesale_dir(&abs) {
+                removed.push((dir.clone(), abs));
+            }
+        }
+        return Ok(removed);
+    }
+    let wt = work_tree.to_path_buf();
+    for chunk in dirs.chunks(PARALLEL_DELETE_CANCEL_CHUNK) {
+        crate::progress::poll_cancel(progress, cancel)?;
+        let removed_chunk = try_par_map(chunk, options, 0, |dir| {
+            let abs = wt.join(dir);
+            Ok(remove_wholesale_dir(&abs).then_some((dir.clone(), abs)))
+        })
+        .map_err(|e: ParallelHashError<()>| match e {
+            ParallelHashError::Task(()) => {
+                Error::PathError("parallel wholesale directory removal failed".into())
+            }
+        })?;
+        removed.extend(removed_chunk.into_iter().flatten());
+    }
+    Ok(removed)
+}
 
 /// One blob entry while walking a tree for populated checkout (no full diff list).
 struct PopulatedTreeBlob {
@@ -191,6 +267,7 @@ fn checkout_populated_tree(
     repo: &Repository,
     tree_oid: &ObjectId,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     let work_tree = repo
         .work_tree()
@@ -243,6 +320,7 @@ fn checkout_populated_tree(
     let mut bulk_index_rewrite = false;
 
     while walk.fill_chunk(&mut chunk)? {
+        crate::progress::poll_cancel(progress, cancel)?;
         let chunk_changes: Vec<DiffEntry> =
             chunk.iter().map(populated_blob_to_added_diff).collect();
         let changes = apply_sparse_tree_changes_to_index(
@@ -272,6 +350,7 @@ fn checkout_populated_tree(
                 precompose,
                 ignorecase,
                 &mut chunk_progress,
+                cancel,
             )?;
         } else {
             apply.skip_bulk_checkout_fast_path = true;
@@ -279,6 +358,7 @@ fn checkout_populated_tree(
                 repo,
                 &changes,
                 &mut chunk_progress,
+                cancel,
                 Some(index_mut),
                 apply.clone(),
                 None,
@@ -291,7 +371,7 @@ fn checkout_populated_tree(
     write_checkout_index(repo, index_mut, bulk_index_rewrite, None)?;
 
     progress.finish();
-    Ok(())
+    crate::progress::poll_cancel(progress, cancel)
 }
 
 fn checkout_between_trees_slow(
@@ -299,6 +379,7 @@ fn checkout_between_trees_slow(
     from: Option<&ObjectId>,
     to: Option<&ObjectId>,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     let changes = diff_trees(repo.odb(), from, to, "")?;
     let mut apply = CheckoutApplyOptions::default();
@@ -308,7 +389,7 @@ fn checkout_between_trees_slow(
             apply.parallel_prepare_blobs = true;
         }
     }
-    checkout_tree_changes_with_progress(repo, &changes, progress, None, apply, None)
+    checkout_tree_changes_with_progress(repo, &changes, progress, cancel, None, apply, None)
 }
 
 /// Apply the change from tree `from` to tree `to` onto the working tree and
@@ -328,7 +409,7 @@ pub fn checkout_between_trees(
     from: Option<&ObjectId>,
     to: &ObjectId,
 ) -> Result<()> {
-    checkout_between_trees_with_progress(repo, from, to, &mut NullProgress)
+    checkout_between_trees_with_progress(repo, from, to, &mut NullProgress, &NeverCancel)
 }
 
 /// Like [`checkout_between_trees`], reporting checkout progress to `progress`.
@@ -341,11 +422,12 @@ pub fn checkout_between_trees_with_progress(
     from: Option<&ObjectId>,
     to: &ObjectId,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     if from.is_none() {
-        return checkout_populated_tree(repo, to, progress);
+        return checkout_populated_tree(repo, to, progress, cancel);
     }
-    checkout_between_trees_slow(repo, from, Some(to), progress)
+    checkout_between_trees_slow(repo, from, Some(to), progress, cancel)
 }
 
 /// Replace the index and tracked worktree so they match `target_tree` exactly.
@@ -364,6 +446,8 @@ pub fn checkout_hard_to_tree_from_head_tree(
     repo: &Repository,
     head_tree: &ObjectId,
     target_tree: &ObjectId,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     use crate::porcelain::index_from_tree::index_from_tree_reusing_cache_tree;
 
@@ -394,7 +478,15 @@ pub fn checkout_hard_to_tree_from_head_tree(
 
     let mut written_by_tree_diff: BTreeSet<Vec<u8>> = BTreeSet::new();
     if !changes.is_empty() {
-        checkout_tree_changes(repo, &changes)?;
+        checkout_tree_changes_with_progress(
+            repo,
+            &changes,
+            progress,
+            cancel,
+            None,
+            CheckoutApplyOptions::default(),
+            None,
+        )?;
         for change in &changes {
             if change.status == DiffStatus::Deleted {
                 continue;
@@ -471,7 +563,12 @@ pub fn checkout_hard_to_tree_from_head_tree(
         &mut actions,
     )?;
 
+    progress.start(
+        ProgressPhase::CheckingOutFiles,
+        Some(u64::try_from(target_entries.len()).unwrap_or(u64::MAX)),
+    );
     for (mut te, action) in target_entries.into_iter().zip(actions) {
+        crate::progress::poll_cancel(progress, cancel)?;
         let abs = crate::index::worktree_path_from_index_rel(work_tree, &te.path);
         let mode = te.mode;
         match action {
@@ -574,6 +671,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
             te.oid,
         )?;
         new_entries.push(entry);
+        progress.inc(1);
     }
 
     finish_delayed_checkouts(
@@ -587,6 +685,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
     )?;
 
     remove_empty_parent_dirs_batch(work_tree, &deleted_abs_paths);
+    progress.finish();
 
     let mut new_index = Index::new();
     new_index.entries = new_entries;
@@ -805,6 +904,7 @@ pub fn checkout_tree_changes(repo: &Repository, changes: &[DiffEntry]) -> Result
         repo,
         changes,
         &mut NullProgress,
+        &NeverCancel,
         None,
         CheckoutApplyOptions::default(),
         None,
@@ -856,6 +956,8 @@ pub fn checkout_tree_changes_with_index(
         repo,
         changes,
         index,
+        &mut NullProgress,
+        &NeverCancel,
         CheckoutApplyOptions::default(),
         None,
     )
@@ -866,13 +968,16 @@ pub(crate) fn checkout_tree_changes_with_index_opts(
     repo: &Repository,
     changes: &[DiffEntry],
     index: &mut Index,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
     apply: CheckoutApplyOptions,
     attribute_changes: Option<&[DiffEntry]>,
 ) -> Result<()> {
     checkout_tree_changes_with_progress(
         repo,
         changes,
-        &mut NullProgress,
+        progress,
+        cancel,
         Some(index),
         apply,
         attribute_changes,
@@ -1497,11 +1602,13 @@ fn checkout_bulk_added_tree_changes(
     precompose: bool,
     ignorecase: bool,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     let checkout_smudge_ctx = crate::filter_process::checkout_smudge_context(repo);
     let mut dir_cache = LeadingDirCache::with_protect(ProtectOptions::from_config(config.as_ref()));
     let mut write_jobs: Vec<CheckoutWriteJob> = Vec::with_capacity(changes.len());
     for change in changes {
+        crate::progress::poll_cancel(progress, cancel)?;
         let Some(path) = change.new_path.as_deref() else {
             continue;
         };
@@ -1550,6 +1657,8 @@ fn checkout_bulk_added_tree_changes(
         &parallel_indices,
         apply.parallel_prepare_blobs,
         apply.checkout_parallel_threshold,
+        progress,
+        cancel,
     )?;
     let new_entries = finish_bulk_write_jobs(
         repo,
@@ -1558,7 +1667,6 @@ fn checkout_bulk_added_tree_changes(
         &mut dir_cache,
         &mut delayed,
         write_outcomes,
-        progress,
     )?;
     if apply.wholesale_safety_precomputed {
         let _ = remove_wholesale_directories_on_disk(
@@ -1596,6 +1704,7 @@ fn checkout_bulk_mod_delete_tree_changes(
     precompose: bool,
     ignorecase: bool,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     let index: &Index = index_mut;
     let delete_changes: Vec<&DiffEntry> = changes
@@ -1678,24 +1787,19 @@ fn checkout_bulk_mod_delete_tree_changes(
     if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
         let policy = repo.thread_policy();
         let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-        let abs_paths: Vec<PathBuf> = per_file_deletes
-            .iter()
-            .map(|p| checkout_stored_worktree_abs(work_tree, p))
-            .collect();
-        try_par_map(&abs_paths, options, 0, |abs| {
-            let _ = fs::remove_file(abs);
-            Ok(())
-        })
-        .map_err(|e: ParallelHashError<()>| match e {
-            ParallelHashError::Task(()) => {
-                Error::PathError("parallel checkout delete failed".into())
-            }
-        })?;
+        let (parallel_set, abs_paths) = remove_checkout_files_parallel_cancellable(
+            work_tree,
+            &per_file_deletes,
+            options,
+            progress,
+            cancel,
+        )?;
         deleted_abs_paths.extend(abs_paths);
-        parallel_deleted_paths.extend(per_file_deletes.iter().cloned());
+        parallel_deleted_paths.extend(parallel_set);
     }
     let mut paths_to_remove: Vec<Vec<u8>> = Vec::with_capacity(delete_changes.len());
     for change in &delete_changes {
+        crate::progress::poll_cancel(progress, cancel)?;
         let Some(path) = &change.old_path else {
             continue;
         };
@@ -1716,7 +1820,10 @@ fn checkout_bulk_mod_delete_tree_changes(
         if !path_under_wholesale_directory(path, wholesale_index_prefixes) {
             paths_to_remove.push(checkout_stored_index_path_bytes(path));
         }
-        progress.inc(1);
+        if !parallel_deleted_paths.contains(path) {
+            progress.inc(1);
+            crate::progress::poll_cancel(progress, cancel)?;
+        }
     }
     remove_empty_parent_dirs_batch(work_tree, &deleted_abs_paths);
 
@@ -1751,6 +1858,8 @@ fn checkout_bulk_mod_delete_tree_changes(
         &parallel_indices,
         apply.parallel_prepare_blobs,
         apply.checkout_parallel_threshold,
+        progress,
+        cancel,
     )?;
     let new_entries = finish_bulk_write_jobs(
         repo,
@@ -1759,7 +1868,6 @@ fn checkout_bulk_mod_delete_tree_changes(
         &mut dir_cache,
         &mut delayed,
         write_outcomes,
-        progress,
     )?;
 
     checkout_commit_index_update(
@@ -1787,11 +1895,13 @@ fn checkout_bulk_deleted_tree_changes(
     wholesale_dirs_removed: &BTreeSet<String>,
     deleted_abs_paths: &mut Vec<PathBuf>,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
     apply: &CheckoutApplyOptions,
 ) -> Result<()> {
     let mut parallel_deleted_paths: HashSet<String> = HashSet::new();
     let mut per_file_deletes: Vec<String> = Vec::new();
     for change in changes {
+        crate::progress::poll_cancel(progress, cancel)?;
         if change.status != DiffStatus::Deleted {
             continue;
         }
@@ -1809,24 +1919,19 @@ fn checkout_bulk_deleted_tree_changes(
         let config = repo.config()?;
         let policy = repo.thread_policy();
         let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-        let abs_paths: Vec<PathBuf> = per_file_deletes
-            .iter()
-            .map(|p| checkout_stored_worktree_abs(work_tree, p))
-            .collect();
-        try_par_map(&abs_paths, options, 0, |abs| {
-            let _ = fs::remove_file(abs);
-            Ok(())
-        })
-        .map_err(|e: ParallelHashError<()>| match e {
-            ParallelHashError::Task(()) => {
-                Error::PathError("parallel checkout delete failed".into())
-            }
-        })?;
+        let (parallel_set, abs_paths) = remove_checkout_files_parallel_cancellable(
+            work_tree,
+            &per_file_deletes,
+            options,
+            progress,
+            cancel,
+        )?;
         deleted_abs_paths.extend(abs_paths);
-        parallel_deleted_paths.extend(per_file_deletes.iter().cloned());
+        parallel_deleted_paths.extend(parallel_set);
     }
     let mut paths_to_remove: Vec<Vec<u8>> = Vec::with_capacity(changes.len());
     for change in changes {
+        crate::progress::poll_cancel(progress, cancel)?;
         if change.status != DiffStatus::Deleted {
             continue;
         }
@@ -1849,7 +1954,10 @@ fn checkout_bulk_deleted_tree_changes(
         if !path_under_wholesale_directory(path, wholesale_index_prefixes) {
             paths_to_remove.push(checkout_stored_index_path_bytes(path));
         }
-        progress.inc(1);
+        if !parallel_deleted_paths.contains(path) {
+            progress.inc(1);
+            crate::progress::poll_cancel(progress, cancel)?;
+        }
     }
     remove_empty_parent_dirs_batch(work_tree, deleted_abs_paths);
     checkout_commit_index_update(
@@ -1911,10 +2019,12 @@ fn checkout_tree_changes_with_progress(
     repo: &Repository,
     changes: &[DiffEntry],
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
     reuse_index: Option<&mut Index>,
     apply: CheckoutApplyOptions,
     attribute_changes: Option<&[DiffEntry]>,
 ) -> Result<()> {
+    let mut progress = CancelProgress::new(progress, cancel);
     let work_tree = repo
         .work_tree()
         .ok_or_else(|| Error::PathError("cannot update a bare repository's working tree".into()))?;
@@ -1973,19 +2083,41 @@ fn checkout_tree_changes_with_progress(
         let conv = bulk_rules.conversion().clone();
 
         if bulk_mod_delete_checkout_eligible(changes, bulk_rules) {
-            return checkout_bulk_mod_delete_tree_changes(
-                repo, work_tree, changes, index_mut, bulk_rules, &config, &conv, apply, precompose,
-                ignorecase, progress,
-            );
+            checkout_bulk_mod_delete_tree_changes(
+                repo,
+                work_tree,
+                changes,
+                index_mut,
+                bulk_rules,
+                &config,
+                &conv,
+                apply,
+                precompose,
+                ignorecase,
+                &mut progress,
+                cancel,
+            )?;
+            return progress.finish_poll();
         }
         if bulk_write_checkout_eligible(changes, bulk_rules)
             && (tree_changes_are_all_additions(changes)
                 || tree_changes_are_all_modifications(changes))
         {
-            return checkout_bulk_added_tree_changes(
-                repo, work_tree, changes, index_mut, bulk_rules, &config, &conv, apply, precompose,
-                ignorecase, progress,
-            );
+            checkout_bulk_added_tree_changes(
+                repo,
+                work_tree,
+                changes,
+                index_mut,
+                bulk_rules,
+                &config,
+                &conv,
+                apply,
+                precompose,
+                ignorecase,
+                &mut progress,
+                cancel,
+            )?;
+            return progress.finish_poll();
         }
         if changes.len() >= BULK_DELETE_CHECKOUT_MIN && tree_changes_are_all_deletions(changes) {
             let index: &Index = index_mut;
@@ -2019,35 +2151,21 @@ fn checkout_tree_changes_with_progress(
             let mut wholesale_dirs_removed = BTreeSet::new();
             let mut deleted_abs_paths: Vec<PathBuf> = Vec::new();
             if !wholesale_index_prefixes.is_empty() {
-                if wholesale_index_prefixes.len() >= 2 {
-                    let policy = repo.thread_policy();
-                    let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-                    let wt = work_tree.to_path_buf();
-                    let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
-                    let removed = try_par_map(&dirs, options, 0, |dir| {
-                        let abs = wt.join(dir);
-                        Ok(remove_wholesale_dir(&abs).then_some((dir.clone(), abs)))
-                    })
-                    .map_err(|e: ParallelHashError<()>| match e {
-                        ParallelHashError::Task(()) => {
-                            Error::PathError("parallel wholesale directory removal failed".into())
-                        }
-                    })?;
-                    for (dir, abs) in removed.into_iter().flatten() {
-                        wholesale_dirs_removed.insert(dir);
-                        deleted_abs_paths.push(abs);
-                    }
-                } else {
-                    for dir in &wholesale_index_prefixes {
-                        let abs = work_tree.join(dir);
-                        if remove_wholesale_dir(&abs) {
-                            wholesale_dirs_removed.insert(dir.clone());
-                            deleted_abs_paths.push(abs);
-                        }
-                    }
+                let policy = repo.thread_policy();
+                let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
+                let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
+                for (dir, abs) in remove_wholesale_dirs_parallel_cancellable(
+                    work_tree,
+                    &dirs,
+                    options,
+                    &mut progress,
+                    cancel,
+                )? {
+                    wholesale_dirs_removed.insert(dir);
+                    deleted_abs_paths.push(abs);
                 }
             }
-            return checkout_bulk_deleted_tree_changes(
+            checkout_bulk_deleted_tree_changes(
                 repo,
                 work_tree,
                 changes,
@@ -2055,9 +2173,11 @@ fn checkout_tree_changes_with_progress(
                 &wholesale_index_prefixes,
                 &wholesale_dirs_removed,
                 &mut deleted_abs_paths,
-                progress,
+                &mut progress,
+                cancel,
                 &apply,
-            );
+            )?;
+            return progress.finish_poll();
         }
     }
 
@@ -2105,32 +2225,18 @@ fn checkout_tree_changes_with_progress(
     let wholesale_index_prefixes = wholesale_candidates;
     let mut wholesale_dirs_removed = BTreeSet::new();
     if !wholesale_index_prefixes.is_empty() {
-        if wholesale_index_prefixes.len() >= 2 {
-            let policy = repo.thread_policy();
-            let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-            let wt = work_tree.to_path_buf();
-            let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
-            let removed = try_par_map(&dirs, options, 0, |dir| {
-                let abs = wt.join(dir);
-                Ok(remove_wholesale_dir(&abs).then_some((dir.clone(), abs)))
-            })
-            .map_err(|e: ParallelHashError<()>| match e {
-                ParallelHashError::Task(()) => {
-                    Error::PathError("parallel wholesale directory removal failed".into())
-                }
-            })?;
-            for (dir, abs) in removed.into_iter().flatten() {
-                wholesale_dirs_removed.insert(dir);
-                deleted_abs_paths.push(abs);
-            }
-        } else {
-            for dir in &wholesale_index_prefixes {
-                let abs = work_tree.join(dir);
-                if remove_wholesale_dir(&abs) {
-                    wholesale_dirs_removed.insert(dir.clone());
-                    deleted_abs_paths.push(abs);
-                }
-            }
+        let policy = repo.thread_policy();
+        let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
+        let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
+        for (dir, abs) in remove_wholesale_dirs_parallel_cancellable(
+            work_tree,
+            &dirs,
+            options,
+            &mut progress,
+            cancel,
+        )? {
+            wholesale_dirs_removed.insert(dir);
+            deleted_abs_paths.push(abs);
         }
     }
 
@@ -2153,27 +2259,22 @@ fn checkout_tree_changes_with_progress(
     if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
         let policy = repo.thread_policy();
         let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-        let abs_paths: Vec<PathBuf> = per_file_deletes
-            .iter()
-            .map(|p| checkout_stored_worktree_abs(work_tree, p))
-            .collect();
-        try_par_map(&abs_paths, options, 0, |abs| {
-            let _ = fs::remove_file(abs);
-            Ok(())
-        })
-        .map_err(|e: ParallelHashError<()>| match e {
-            ParallelHashError::Task(()) => {
-                Error::PathError("parallel checkout delete failed".into())
-            }
-        })?;
+        let (parallel_set, abs_paths) = remove_checkout_files_parallel_cancellable(
+            work_tree,
+            &per_file_deletes,
+            options,
+            &mut progress,
+            cancel,
+        )?;
         deleted_abs_paths.extend(abs_paths);
-        parallel_deleted_paths.extend(per_file_deletes);
+        parallel_deleted_paths.extend(parallel_set);
     }
 
     {
         crate::trace::trace_span!("grit.checkout.plan");
         for change in changes {
             if change.status == DiffStatus::Deleted {
+                crate::progress::poll_cancel(&mut progress, cancel)?;
                 if let Some(path) = &change.old_path {
                     let old_mode = parse_git_mode(&change.old_mode);
                     if old_mode == MODE_GITLINK
@@ -2193,7 +2294,14 @@ fn checkout_tree_changes_with_progress(
                         paths_to_remove.push(checkout_stored_index_path_bytes(path));
                     }
                 }
-                progress.inc(1);
+                if change
+                    .old_path
+                    .as_ref()
+                    .is_none_or(|path| !parallel_deleted_paths.contains(path))
+                {
+                    progress.inc(1);
+                    crate::progress::poll_cancel(&mut progress, cancel)?;
+                }
                 continue;
             }
 
@@ -2325,6 +2433,8 @@ fn checkout_tree_changes_with_progress(
             &parallel_indices,
             apply.parallel_prepare_blobs,
             apply.checkout_parallel_threshold,
+            &mut progress,
+            cancel,
         )?
     };
 
@@ -2339,11 +2449,9 @@ fn checkout_tree_changes_with_progress(
                 })? {
                     WriteJobOutcome::Index(entry) => {
                         new_entries.push(entry);
-                        progress.inc(1);
                     }
                     WriteJobOutcome::Delayed(target) => {
                         pending_delayed.push(target);
-                        progress.inc(1);
                     }
                 }
             }
@@ -2380,7 +2488,7 @@ fn checkout_tree_changes_with_progress(
         apply.defer_index_disk_write,
     )?;
     progress.finish();
-    Ok(())
+    progress.finish_poll()
 }
 
 #[derive(Clone)]
@@ -2560,7 +2668,6 @@ fn finish_bulk_write_jobs(
     dir_cache: &mut LeadingDirCache,
     delayed: &mut DelayedProcessCheckout,
     write_outcomes: Vec<WriteJobOutcome>,
-    progress: &mut dyn ProgressSink,
 ) -> Result<Vec<IndexEntry>> {
     let mut new_entries = Vec::with_capacity(write_outcomes.len());
     let mut pending_delayed = Vec::new();
@@ -2568,11 +2675,9 @@ fn finish_bulk_write_jobs(
         match outcome {
             WriteJobOutcome::Index(entry) => {
                 new_entries.push(entry);
-                progress.inc(1);
             }
             WriteJobOutcome::Delayed(target) => {
                 pending_delayed.push(target);
-                progress.inc(1);
             }
         }
     }
@@ -3801,7 +3906,8 @@ mod tests {
         repo.write_index(&mut index).expect("empty index");
 
         let mut rec = CheckoutProgressRecorder::default();
-        checkout_between_trees_with_progress(&repo, None, &tree, &mut rec).expect("checkout");
+        checkout_between_trees_with_progress(&repo, None, &tree, &mut rec, &NeverCancel)
+            .expect("checkout");
 
         let index = repo.load_index().expect("index after");
         assert_eq!(
@@ -3840,7 +3946,7 @@ mod tests {
         let changes = diff_trees(repo.odb(), Some(&head), Some(&to_tree), "").expect("diff");
 
         let mut rec = CheckoutProgressRecorder::default();
-        checkout_between_trees_with_progress(&repo, Some(&head), &to_tree, &mut rec)
+        checkout_between_trees_with_progress(&repo, Some(&head), &to_tree, &mut rec, &NeverCancel)
             .expect("checkout");
 
         assert_eq!(rec.started.len(), 1);
@@ -3954,6 +4060,8 @@ mod tests {
             &repo,
             &changes,
             &mut index,
+            &mut NullProgress,
+            &NeverCancel,
             CheckoutApplyOptions {
                 parallel_prepare_blobs: true,
                 checkout_parallel_threshold: Some(0),
@@ -4035,6 +4143,8 @@ mod tests {
             &repo,
             &changes,
             &mut index,
+            &mut NullProgress,
+            &NeverCancel,
             CheckoutApplyOptions {
                 parallel_prepare_blobs: true,
                 checkout_parallel_threshold: Some(0),

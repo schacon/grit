@@ -146,7 +146,13 @@ pub fn start_rebase(
         }
         .into()),
         Ok(ResumablePlanOutcome::Complete(plan)) => {
-            let applied = apply_rewrite(repo, &plan, &opts.apply)?;
+            let applied = apply_rewrite(
+                repo,
+                &plan,
+                &opts.apply,
+                &mut crate::progress::NullProgress,
+                &crate::progress::NeverCancel,
+            )?;
             Ok(RebaseOutcome::Done {
                 applied,
                 plan: *plan,
@@ -732,7 +738,13 @@ fn advance_after_plan(
                 hooks: PostOperationHooks::Skip,
                 ..apply.clone()
             };
-            let mut applied = apply_rewrite(repo, &plan, &apply_without_hooks)?;
+            let mut applied = apply_rewrite(
+                repo,
+                &plan,
+                &apply_without_hooks,
+                &mut crate::progress::NullProgress,
+                &crate::progress::NeverCancel,
+            )?;
             refs::write_symbolic_ref_on_store(repo.refs(), repo.git_dir(), "HEAD", &prev.head_ref)
                 .map_err(map_lib)?;
             let branch_tip = repo.resolve_ref_oid(&prev.head_ref).map_err(map_lib)?;
@@ -898,7 +910,14 @@ fn reset_index_worktree_to_head(
     let head_tree = commit_tree(repo, head_oid)?;
     // Paths tracked before the move but absent from `head_oid` must go too; leaving them as
     // untracked files makes `git rebase --skip/--abort` refuse to overwrite them later.
-    checkout_hard_to_tree_from_head_tree(repo, &head_tree, &head_tree).map_err(map_lib)?;
+    checkout_hard_to_tree_from_head_tree(
+        repo,
+        &head_tree,
+        &head_tree,
+        &mut crate::progress::NullProgress,
+        &crate::progress::NeverCancel,
+    )
+    .map_err(map_lib)?;
     Ok(())
 }
 
@@ -926,6 +945,8 @@ fn hard_reset_head(
             identity.to_owned(),
             "rebase (abort)",
         ),
+        &mut crate::progress::NullProgress,
+        &crate::progress::NeverCancel,
     )
     .map_err(map_lib)?;
     Ok(())

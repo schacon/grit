@@ -23,6 +23,10 @@ use super::{
     write_checkout_entry, DelayedCheckoutTarget, LeadingDirCache, WorktreeFileContent,
 };
 
+/// Maximum parallel-eligible checkout jobs buffered before a flush so cancellation can stop
+/// work without materializing an entire large tree in one batch.
+const PARALLEL_WRITE_CANCEL_CHUNK: usize = 8;
+
 /// One blob checkout after attribute/conversion resolution on the caller thread.
 pub(crate) struct CheckoutWriteJob {
     pub path: String,
@@ -247,6 +251,7 @@ fn write_prepared_job(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn flush_prepared_writes_serial(
     repo: &Repository,
     work_tree: &Path,
@@ -254,8 +259,11 @@ fn flush_prepared_writes_serial(
     prepared: &[PreparedWrite],
     dir_cache: &mut LeadingDirCache,
     outcomes: &mut [Option<WriteJobOutcome>],
+    progress: &mut dyn crate::progress::ProgressSink,
+    cancel: &dyn crate::progress::Cancel,
 ) -> Result<()> {
     for item in prepared {
+        crate::progress::poll_cancel(progress, cancel)?;
         let entry = write_prepared_job(
             repo,
             work_tree,
@@ -377,10 +385,13 @@ fn flush_parallel_batch(
     outcomes: &mut [Option<WriteJobOutcome>],
     parallel_prepare_blobs: bool,
     checkout_parallel_threshold: Option<i64>,
+    progress: &mut dyn crate::progress::ProgressSink,
+    cancel: &dyn crate::progress::Cancel,
 ) -> Result<()> {
     if batch.is_empty() {
         return Ok(());
     }
+    crate::progress::poll_cancel(progress, cancel)?;
     let policy = repo.thread_policy();
     let mut options = policy.resolve(ParallelOp::Checkout, config.as_ref());
     if let Some(threshold) = checkout_parallel_threshold {
@@ -389,39 +400,41 @@ fn flush_parallel_batch(
     let use_parallel = options.threads.get() > 1 && checkout_pool_worthwhile(batch.len(), options);
     let pack_store = repo.odb().pack_store_for(repo.odb().objects_dir());
 
-    let prepared: Vec<PreparedWrite> = if parallel_prepare_blobs
-        && options.threads.get() > 1
-        && batch.len() > 1
-    {
-        try_par_map_with_local(
-            batch,
-            options,
-            0,
-            || PackReadContextGuard::install(Arc::clone(&pack_store)),
-            |_, &idx| {
-                prepare_write_job(repo, conv, &jobs[idx]).map(|bytes| PreparedWrite { idx, bytes })
-            },
-        )
-        .map_err(|e: ParallelHashError<Error>| match e {
-            ParallelHashError::Task(err) => err,
-        })?
-    } else {
-        let mut prepared = Vec::with_capacity(batch.len());
-        let prepare_result = repo.odb().with_pack_read_context(|| {
-            for &idx in batch {
-                match prepare_write_job(repo, conv, &jobs[idx]) {
-                    Ok(bytes) => prepared.push(PreparedWrite { idx, bytes }),
-                    Err(err) => return Err(err),
+    let prepared: Vec<PreparedWrite> =
+        if parallel_prepare_blobs && options.threads.get() > 1 && batch.len() > 1 {
+            try_par_map_with_local(
+                batch,
+                options,
+                0,
+                || PackReadContextGuard::install(Arc::clone(&pack_store)),
+                |_, &idx| {
+                    prepare_write_job(repo, conv, &jobs[idx])
+                        .map(|bytes| PreparedWrite { idx, bytes })
+                },
+            )
+            .map_err(|e: ParallelHashError<Error>| match e {
+                ParallelHashError::Task(err) => err,
+            })?
+        } else {
+            let mut prepared = Vec::with_capacity(batch.len());
+            let prepare_result = repo.odb().with_pack_read_context(|| {
+                for &idx in batch {
+                    crate::progress::poll_cancel(progress, cancel)?;
+                    match prepare_write_job(repo, conv, &jobs[idx]) {
+                        Ok(bytes) => prepared.push(PreparedWrite { idx, bytes }),
+                        Err(err) => return Err(err),
+                    }
                 }
+                Ok(())
+            });
+            if let Err(err) = prepare_result {
+                flush_prepared_writes_serial(
+                    repo, work_tree, jobs, &prepared, dir_cache, outcomes, progress, cancel,
+                )?;
+                return Err(err);
             }
-            Ok(())
-        });
-        if let Err(err) = prepare_result {
-            flush_prepared_writes_serial(repo, work_tree, jobs, &prepared, dir_cache, outcomes)?;
-            return Err(err);
-        }
-        prepared
-    };
+            prepared
+        };
 
     if use_parallel {
         let parent_snapshot = LeadingDirCache::with_ready_from(&*dir_cache);
@@ -433,10 +446,17 @@ fn flush_parallel_batch(
             &prepared,
             &parent_snapshot,
             outcomes,
-        )
+        )?;
     } else {
-        flush_prepared_writes_serial(repo, work_tree, jobs, &prepared, dir_cache, outcomes)
+        flush_prepared_writes_serial(
+            repo, work_tree, jobs, &prepared, dir_cache, outcomes, progress, cancel,
+        )?;
     }
+    for _ in batch {
+        progress.inc(1);
+        crate::progress::poll_cancel(progress, cancel)?;
+    }
+    Ok(())
 }
 
 /// Materialize write jobs in input order: one ODB read and conversion per job.
@@ -456,13 +476,33 @@ pub(crate) fn execute_write_jobs(
     parallel_indices: &HashSet<usize>,
     parallel_prepare_blobs: bool,
     checkout_parallel_threshold: Option<i64>,
+    progress: &mut dyn crate::progress::ProgressSink,
+    cancel: &dyn crate::progress::Cancel,
 ) -> Result<Vec<WriteJobOutcome>> {
     let mut outcomes: Vec<Option<WriteJobOutcome>> = vec![None; jobs.len()];
     let mut parallel_batch: Vec<usize> = Vec::new();
 
     for idx in 0..jobs.len() {
+        crate::progress::poll_cancel(progress, cancel)?;
         if parallel_indices.contains(&idx) {
             parallel_batch.push(idx);
+            if parallel_batch.len() >= PARALLEL_WRITE_CANCEL_CHUNK {
+                flush_parallel_batch(
+                    repo,
+                    config,
+                    conv,
+                    work_tree,
+                    jobs,
+                    &parallel_batch,
+                    dir_cache,
+                    &mut outcomes,
+                    parallel_prepare_blobs,
+                    checkout_parallel_threshold,
+                    progress,
+                    cancel,
+                )?;
+                parallel_batch.clear();
+            }
             continue;
         }
         flush_parallel_batch(
@@ -476,11 +516,14 @@ pub(crate) fn execute_write_jobs(
             &mut outcomes,
             parallel_prepare_blobs,
             checkout_parallel_threshold,
+            progress,
+            cancel,
         )?;
         parallel_batch.clear();
         let outcome =
             materialize_write_job_serial(repo, rules, work_tree, dir_cache, &jobs[idx], delayed)?;
         outcomes[idx] = Some(outcome);
+        progress.inc(1);
     }
     flush_parallel_batch(
         repo,
@@ -493,6 +536,8 @@ pub(crate) fn execute_write_jobs(
         &mut outcomes,
         parallel_prepare_blobs,
         checkout_parallel_threshold,
+        progress,
+        cancel,
     )?;
 
     outcomes
