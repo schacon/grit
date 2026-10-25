@@ -1671,3 +1671,38 @@ fn blame_subtree_merge_vendor_prefix_matches_git() {
     let repo = Repository::discover(Some(&proj), &RepositoryOptions::empty()).expect("open");
     assert_blame_matches(&repo, &proj, "vendor/app.sh", None, None);
 }
+
+/// One merge parent has the blamed path; another carries the same result bytes under a renamed path.
+#[test]
+fn blame_merge_same_path_and_renamed_sibling_parent_matches_git() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_run(root, &["init", "-q", "-b", "main"]);
+    git_run(root, &["config", "user.name", "Blame Test"]);
+    git_run(root, &["config", "user.email", "blame@example.com"]);
+
+    std::fs::write(root.join("README"), "base\n").unwrap();
+    git_run(root, &["add", "README"]);
+    git_run(root, &["commit", "-qm", "common base"]);
+    let base = git_output(root, &["rev-parse", "HEAD"]).trim().to_owned();
+
+    git_run(root, &["checkout", "-qb", "side", &base]);
+    std::fs::write(root.join("old.txt"), "line one\nline two\n").unwrap();
+    git_run(root, &["add", "old.txt"]);
+    git_run(root, &["commit", "-qm", "side adds old.txt only"]);
+
+    git_run(root, &["checkout", "-q", "main"]);
+    std::fs::write(root.join("target.txt"), "placeholder\n").unwrap();
+    git_run(root, &["add", "target.txt"]);
+    git_run(root, &["commit", "-qm", "main adds target.txt"]);
+    git_run(root, &["merge", "-q", "--no-ff", "--no-commit", "side"]);
+    git_run(root, &["rm", "-f", "target.txt"]);
+    git_run(root, &["mv", "old.txt", "target.txt"]);
+    git_run(
+        root,
+        &["commit", "-qm", "merge: rename old.txt to target.txt"],
+    );
+
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    assert_blame_matches(&repo, root, "target.txt", None, None);
+}

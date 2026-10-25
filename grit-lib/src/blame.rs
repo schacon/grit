@@ -2561,21 +2561,6 @@ fn compute_blame_with_session(
         // Octopus merges and `.git/info/grafts` with many synthetic parents use the same rule.
 
         if merge_aware && !is_ignored && parents.len() >= 2 {
-            let mut parents_with_path: Vec<ObjectId> = Vec::new();
-            for parent_oid in &parents {
-                if session
-                    .resolve_blob_at_commit(odb, *parent_oid, &current_path, &mut commit_cache)?
-                    .is_some()
-                {
-                    parents_with_path.push(*parent_oid);
-                }
-            }
-            if !parents_with_path.is_empty() && parents_with_path.len() < parents.len() {
-                parents = parents_with_path;
-            }
-        }
-
-        if merge_aware && !is_ignored && parents.len() >= 2 {
             let cur_lines_arc = match walk_lines.take() {
                 Some((oid, lines)) if oid == current_blob_oid => lines,
                 _ => session.load_blob_lines(current_blob_oid, &current_path, current_blob_mode)?,
