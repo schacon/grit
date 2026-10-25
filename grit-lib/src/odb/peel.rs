@@ -87,12 +87,37 @@ impl Odb {
     /// - [`Error::CorruptObject`] when a tag has no valid `object` header, a `type tag` header
     ///   names an object that is not a tag, or the chain loops.
     pub(crate) fn peel_tag_target(&self, oid: ObjectId) -> Result<Option<ObjectId>> {
+        self.peel_tag_target_from(oid, false)
+    }
+
+    /// Like [`Self::peel_tag_target`], but only reads objects stored in this database, so a
+    /// partial clone never lazy-fetches from its promisor remote.
+    ///
+    /// Returns `None` when `oid` is not a tag, or when `oid` or an intermediate tag of the
+    /// chain is not stored locally. The final target is taken from the last tag's header and
+    /// may be missing.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::peel_tag_target`], except that missing objects yield `Ok(None)`; a
+    /// failing object store is reported as by [`Self::contains`].
+    pub(crate) fn peel_stored_tag_target(&self, oid: ObjectId) -> Result<Option<ObjectId>> {
+        self.peel_tag_target_from(oid, true)
+    }
+
+    fn peel_tag_target_from(&self, oid: ObjectId, stored_only: bool) -> Result<Option<ObjectId>> {
+        if stored_only && !self.contains(&oid)? {
+            return Ok(None);
+        }
         if self.read_info(&oid)?.kind != ObjectKind::Tag {
             return Ok(None);
         }
         let mut current = oid;
         let mut visited: Option<HashSet<ObjectId>> = None;
         loop {
+            if stored_only && !self.contains(&current)? {
+                return Ok(None);
+            }
             let tag = self.read(&current)?;
             if tag.kind != ObjectKind::Tag {
                 return Err(Error::CorruptObject(format!(
@@ -284,6 +309,28 @@ mod tests {
             odb.peel_tag_target(missing),
             Err(Error::ObjectNotFound(_))
         ));
+    }
+
+    #[test]
+    fn peel_stored_tag_target_reads_only_stored_tags() {
+        let dir = TempDir::new().unwrap();
+        let odb = Odb::new(dir.path());
+        let c = commit(&odb);
+        let inner = tag(&odb, c, "commit", "inner");
+        let outer = tag(&odb, inner, "tag", "outer");
+        assert_eq!(odb.peel_stored_tag_target(outer).unwrap(), Some(c));
+        assert_eq!(odb.peel_stored_tag_target(c).unwrap(), None);
+
+        let missing = ObjectId::from_hex("1111111111111111111111111111111111111111").unwrap();
+        let on_missing_blob = tag(&odb, missing, "blob", "promised");
+        assert_eq!(
+            odb.peel_stored_tag_target(on_missing_blob).unwrap(),
+            Some(missing),
+            "the final target comes from the header and may be missing"
+        );
+        let on_missing_tag = tag(&odb, missing, "tag", "broken-chain");
+        assert_eq!(odb.peel_stored_tag_target(on_missing_tag).unwrap(), None);
+        assert_eq!(odb.peel_stored_tag_target(missing).unwrap(), None);
     }
 
     #[test]

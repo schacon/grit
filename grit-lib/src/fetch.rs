@@ -2193,10 +2193,22 @@ pub(crate) fn following_tag_wants_peel_among_fetched_commits(
     wants
 }
 
-/// Drop provisional `Following` tags whose object (or peeled target) did not
-/// arrive in the fetched pack — i.e. is not reachable from the other matched,
-/// non-tag refs we fetched. Matches `git fetch`'s default tag-following: a tag
-/// is kept when it points into the fetched history.
+/// Drop provisional `Following` tags that do not point into the fetched
+/// history, i.e. whose peeled target is not reachable from the matched non-tag
+/// refs. Matches `git fetch`'s default tag-following.
+///
+/// `pack_oids` holds the objects this fetch delivered. Every caller only
+/// receives objects reachable from what it wanted (wire fetch), or has already
+/// limited the provisional tags to reachable ones (local and bundle fetch), so
+/// a target inside `pack_oids` is kept without reading any object. Commit
+/// targets that were already local are checked with a commit walk, which stops
+/// as soon as all of them are found. Tree and blob targets that were already
+/// local are kept, as Git does: proving their reachability would mean walking
+/// every tree of the local history. Targets that are neither delivered nor
+/// local cannot be in the fetched history and are dropped. An annotated tag is
+/// kept only when its tag object is delivered or already local. Objects that
+/// are not stored locally are never read, so a partial clone does not
+/// lazy-fetch anything while following tags.
 pub(crate) fn retain_following_tags(
     local_odb: &crate::odb::Odb,
     matched: &mut Vec<crate::transfer::MatchedRef>,
@@ -2216,15 +2228,36 @@ pub(crate) fn retain_following_tags(
         .iter()
         .filter(|m| m.is_tag)
         .map(|m| {
-            let peeled = m
-                .advertised_peel
-                .unwrap_or_else(|| local_odb.peel_tags(m.oid).map_or(m.oid, |(oid, _)| oid));
+            let peeled = m.advertised_peel.unwrap_or_else(|| {
+                local_odb
+                    .peel_stored_tag_target(m.oid)
+                    .ok()
+                    .flatten()
+                    .unwrap_or(m.oid)
+            });
             (m.oid, peeled)
         })
         .collect();
-    let targets: HashSet<ObjectId> = peeled_by_tag.values().copied().collect();
-    let commit_reach = reachable_commits(local_odb, &roots, &targets, shallow_boundaries)?;
-    let pack_reach = pack_delivered_reachable(local_odb, &roots, pack_oids)?;
+    let mut local_commits: HashSet<ObjectId> = HashSet::new();
+    let mut local_trees_and_blobs: HashSet<ObjectId> = HashSet::new();
+    for &oid in peeled_by_tag.values() {
+        // `contains` never lazy-fetches; reading a missing object from a
+        // partial clone's ODB would pull it from the promisor remote.
+        if pack_oids.contains(&oid) || !local_odb.contains(&oid)? {
+            continue;
+        }
+        match local_odb.read_info(&oid)?.kind {
+            crate::objects::ObjectKind::Tree | crate::objects::ObjectKind::Blob => {
+                local_trees_and_blobs.insert(oid);
+            }
+            crate::objects::ObjectKind::Commit => {
+                local_commits.insert(oid);
+            }
+            // A tag here could not be peeled from local objects: its chain is broken.
+            crate::objects::ObjectKind::Tag => {}
+        }
+    }
+    let local_reach = reachable_commits(local_odb, &roots, &local_commits, shallow_boundaries)?;
     let mut keep = Vec::with_capacity(matched.len());
     for m in matched.iter() {
         if !m.is_tag {
@@ -2232,7 +2265,9 @@ pub(crate) fn retain_following_tags(
             continue;
         }
         let peeled = peeled_by_tag.get(&m.oid).copied().unwrap_or(m.oid);
-        let reachable = commit_reach.contains(&peeled) || pack_reach.contains(&peeled);
+        let reachable = pack_oids.contains(&peeled)
+            || local_trees_and_blobs.contains(&peeled)
+            || local_reach.contains(&peeled);
         // Lightweight tags store the peeled commit directly; annotated tags need their
         // tag object (new in this fetch or already local).
         keep.push(
@@ -2243,57 +2278,6 @@ pub(crate) fn retain_following_tags(
     let mut keep = keep.into_iter();
     matched.retain(|_| keep.next().unwrap_or(false));
     Ok(())
-}
-
-/// Objects reachable from `roots` by following only links whose target oid is in `pack_oids`.
-fn pack_delivered_reachable(
-    odb: &crate::odb::Odb,
-    roots: &[ObjectId],
-    pack_oids: &HashSet<ObjectId>,
-) -> Result<HashSet<ObjectId>> {
-    use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectKind};
-
-    let mut seen: HashSet<ObjectId> = HashSet::new();
-    let mut stack: Vec<ObjectId> = roots
-        .iter()
-        .copied()
-        .filter(|oid| pack_oids.contains(oid))
-        .collect();
-    while let Some(oid) = stack.pop() {
-        if !seen.insert(oid) {
-            continue;
-        }
-        let obj = odb.read(&oid)?;
-        match obj.kind {
-            ObjectKind::Commit => {
-                let c = parse_commit(&obj.data)?;
-                if pack_oids.contains(&c.tree) {
-                    stack.push(c.tree);
-                }
-                for p in c.parents {
-                    if pack_oids.contains(&p) {
-                        stack.push(p);
-                    }
-                }
-            }
-            ObjectKind::Tag => {
-                let t = parse_tag(&obj.data)?;
-                if pack_oids.contains(&t.object) {
-                    stack.push(t.object);
-                }
-            }
-            ObjectKind::Tree => {
-                let entries = parse_tree(&obj.data)?;
-                for entry in entries {
-                    if pack_oids.contains(&entry.oid) {
-                        stack.push(entry.oid);
-                    }
-                }
-            }
-            ObjectKind::Blob => {}
-        }
-    }
-    Ok(seen)
 }
 
 /// Names of the remote `refs/tags/*` entries in `remote_refs` that the local
@@ -2621,6 +2605,203 @@ mod fetch_advertised_ref_tests {
             chain.push(oid);
         }
         chain
+    }
+
+    fn matched_ref(
+        name: &str,
+        oid: ObjectId,
+        peel: Option<ObjectId>,
+    ) -> crate::transfer::MatchedRef {
+        let is_tag = name.starts_with("refs/tags/");
+        crate::transfer::MatchedRef {
+            remote_ref: name.to_owned(),
+            local_ref: Some(name.to_owned()),
+            oid,
+            force: false,
+            is_tag,
+            dest_is_tag: is_tag,
+            advertised_peel: peel,
+            fetch_head: crate::fetch_request::FetchHeadPolicy::ForMerge,
+        }
+    }
+
+    fn kept_tags(matched: &[crate::transfer::MatchedRef]) -> Vec<&str> {
+        let mut names: Vec<&str> = matched
+            .iter()
+            .filter(|m| m.is_tag)
+            .map(|m| m.remote_ref.as_str())
+            .collect();
+        names.sort_unstable();
+        names
+    }
+
+    #[test]
+    fn retain_following_tags_keeps_delivered_targets_without_reading_objects() {
+        use std::collections::HashSet;
+
+        // The object database is empty: deciding on delivered targets must not
+        // read (inflate) any commit, tree or blob.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let objects = tmp.path().join("objects");
+        std::fs::create_dir_all(&objects).expect("objects");
+        let odb = crate::odb::Odb::new(&objects);
+        let oid = |c: char| ObjectId::from_hex(&c.to_string().repeat(40)).expect("oid");
+        let (tip, tree, blob, tag_obj, missing_tag_obj, absent) =
+            (oid('1'), oid('2'), oid('3'), oid('4'), oid('5'), oid('6'));
+        let pack_oids = HashSet::from([tip, tree, blob, tag_obj]);
+        let mut matched = vec![
+            matched_ref("refs/heads/main", tip, None),
+            matched_ref("refs/tags/light", tip, None),
+            matched_ref("refs/tags/blob", blob, None),
+            matched_ref("refs/tags/annotated-tree", tag_obj, Some(tree)),
+            matched_ref("refs/tags/no-tag-object", missing_tag_obj, Some(tip)),
+            matched_ref("refs/tags/undelivered", absent, None),
+        ];
+
+        retain_following_tags(&odb, &mut matched, &pack_oids, &HashSet::new())
+            .expect("retain following tags");
+
+        assert_eq!(
+            kept_tags(&matched),
+            [
+                "refs/tags/annotated-tree",
+                "refs/tags/blob",
+                "refs/tags/light"
+            ]
+        );
+        assert!(matched.iter().any(|m| m.remote_ref == "refs/heads/main"));
+    }
+
+    #[test]
+    fn retain_following_tags_walks_commits_only_for_targets_already_local() {
+        use std::collections::HashSet;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let objects = tmp.path().join("objects");
+        std::fs::create_dir_all(&objects).expect("objects");
+        let odb = crate::odb::Odb::new(&objects);
+        let chain = write_commit_chain(&odb, 4);
+        let tip = chain[3];
+        // A second local history that the fetched tip does not reach.
+        let unrelated = odb
+            .write_loose_materialize(
+                crate::objects::ObjectKind::Commit,
+                b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n\
+                  author T <t@example.com> 9 +0000\ncommitter T <t@example.com> 9 +0000\n\nu\n",
+            )
+            .expect("write commit");
+        let blob = odb
+            .write_loose_materialize(crate::objects::ObjectKind::Blob, b"local blob\n")
+            .expect("write blob");
+        let mut matched = vec![
+            matched_ref("refs/heads/main", tip, None),
+            matched_ref("refs/tags/old", chain[0], None),
+            matched_ref("refs/tags/unrelated", unrelated, None),
+            matched_ref("refs/tags/local-blob", blob, None),
+        ];
+
+        retain_following_tags(&odb, &mut matched, &HashSet::new(), &HashSet::new())
+            .expect("retain following tags");
+        assert_eq!(
+            kept_tags(&matched),
+            ["refs/tags/local-blob", "refs/tags/old"]
+        );
+
+        // A shallow boundary stops the walk: history behind it is not fetched.
+        let mut matched = vec![
+            matched_ref("refs/heads/main", tip, None),
+            matched_ref("refs/tags/at-boundary", chain[1], None),
+            matched_ref("refs/tags/behind-boundary", chain[0], None),
+        ];
+        retain_following_tags(
+            &odb,
+            &mut matched,
+            &HashSet::new(),
+            &HashSet::from([chain[1]]),
+        )
+        .expect("retain following tags");
+        assert_eq!(kept_tags(&matched), ["refs/tags/at-boundary"]);
+    }
+
+    #[test]
+    fn retain_following_tags_never_lazy_fetches_in_a_partial_clone() {
+        use std::collections::HashSet;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        struct CountingFetcher(Arc<AtomicUsize>);
+        impl crate::promisor_fetch::PromisorFetcher for CountingFetcher {
+            fn fetch_missing(
+                &self,
+                _repo: &crate::repo::Repository,
+                _oids: &[ObjectId],
+            ) -> Result<()> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let git_dir = tmp.path().join(".git");
+        std::fs::create_dir_all(git_dir.join("objects/pack")).expect("objects");
+        std::fs::create_dir_all(git_dir.join("refs/heads")).expect("refs");
+        std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").expect("HEAD");
+        std::fs::write(
+            git_dir.join("config"),
+            "[core]\n\trepositoryformatversion = 1\n\tbare = true\n\
+             [extensions]\n\tpartialclone = origin\n\
+             [remote \"origin\"]\n\turl = /nonexistent\n\tpromisor = true\n",
+        )
+        .expect("config");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let repo = crate::repo::Repository::open(
+            &git_dir,
+            &RepositoryOptions::empty()
+                .with_promisor_fetcher(Some(Arc::new(CountingFetcher(Arc::clone(&calls))))),
+        )
+        .expect("open");
+        let odb = repo.odb();
+        let tip = write_commit_chain(odb, 1)[0];
+        let oid = |c: char| ObjectId::from_hex(&c.to_string().repeat(40)).expect("oid");
+        // Neither the promised blob nor the annotated tag object is stored locally.
+        let (promised_blob, missing_tag_obj) = (oid('7'), oid('8'));
+        let write_tag = |target: ObjectId, kind: &str| {
+            let body = format!(
+                "object {}\ntype {kind}\ntag t\ntagger T <t@example.com> 0 +0000\n\nt\n",
+                target.to_hex()
+            );
+            odb.write_loose_materialize(crate::objects::ObjectKind::Tag, body.as_bytes())
+                .expect("write tag")
+        };
+        // Stored tags whose final target, or an intermediate tag, is missing.
+        let local_tag_on_promised_blob = write_tag(promised_blob, "blob");
+        let local_tag_on_missing_tag = write_tag(missing_tag_obj, "tag");
+        let mut matched = vec![
+            matched_ref("refs/heads/main", tip, None),
+            matched_ref("refs/tags/light", tip, None),
+            matched_ref("refs/tags/promised-blob", promised_blob, None),
+            matched_ref("refs/tags/unpeeled", missing_tag_obj, None),
+            matched_ref(
+                "refs/tags/local-on-promised",
+                local_tag_on_promised_blob,
+                None,
+            ),
+            matched_ref(
+                "refs/tags/local-on-missing-tag",
+                local_tag_on_missing_tag,
+                None,
+            ),
+        ];
+
+        retain_following_tags(odb, &mut matched, &HashSet::new(), &HashSet::new())
+            .expect("retain following tags");
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "tag following must not lazy-fetch missing objects"
+        );
+        assert_eq!(kept_tags(&matched), ["refs/tags/light"]);
     }
 
     #[test]

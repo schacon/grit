@@ -120,8 +120,17 @@ pub struct RefUpdate {
 pub enum TagMode {
     /// Do not fetch any tags automatically.
     None,
-    /// Fetch tags that point at commits reachable from the refs being fetched
-    /// (same idea as `git fetch --follow-tags`; not what `git clone` does).
+    /// Fetch tags that point into the history being fetched (like `git fetch`'s
+    /// default tag-following; not what `git clone` does).
+    ///
+    /// A tag is kept when the object it peels to arrives with this fetch, when
+    /// it is a commit already present locally and reachable from the fetched
+    /// refs, or when it is a tree or blob already present locally. Annotated
+    /// tags also need their tag object. Git also keeps a tag on a local commit
+    /// that the fetched refs do not reach; grit does not. Deciding this reads
+    /// no objects for delivered targets, walks only commits for local ones, and
+    /// never lazy-fetches in a partial clone, so it stays cheap on large
+    /// histories.
     ///
     /// Tags the local repository already has at the advertised value are not
     /// considered again, so they do not appear in [`FetchOutcome::updates`].
