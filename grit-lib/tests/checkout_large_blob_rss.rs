@@ -139,6 +139,7 @@ fn materialize_without_loading(packed: bool) {
                     oid,
                 },
                 dry_run: false,
+                hooks: grit_lib::PostOperationHooks::Run,
             },
         )
         .expect("switch");

@@ -177,6 +177,7 @@ fn switch_to(repo: &Repository, branch: &str, oid: ObjectId) {
                 oid,
             },
             dry_run: false,
+            hooks: grit_lib::PostOperationHooks::Run,
         },
     )
     .expect("switch");
