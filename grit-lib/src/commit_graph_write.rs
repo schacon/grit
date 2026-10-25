@@ -211,20 +211,18 @@ fn compute_corrected_generations(
 }
 
 fn resolve_parent_edge(
+    commit: ObjectId,
     parent: ObjectId,
     oid_to_idx: &OidHashMap<u32>,
     base_count: u32,
     chain: Option<&CommitGraphChain>,
-) -> u32 {
+) -> crate::error::Result<u32> {
     if let Some(&idx) = oid_to_idx.get(&parent) {
-        return idx + base_count;
+        return Ok(idx + base_count);
     }
-    if let Some(c) = chain {
-        if let Some(gpos) = c.global_position(&parent) {
-            return gpos;
-        }
-    }
-    PARENT_NONE
+    chain
+        .and_then(|c| c.global_position(&parent))
+        .ok_or(crate::error::Error::CommitGraphParentMissing { commit, parent })
 }
 
 /// Counters emitted as `GIT_TRACE2_EVENT` for Bloom generation (`commit-graph.c`).
@@ -324,21 +322,25 @@ pub(crate) fn build_commit_graph_bytes_from_oid_maps(
         let info = &infos[oid];
         cdat.extend_from_slice(info.tree.as_bytes());
 
+        let edge = |parent: ObjectId| {
+            resolve_parent_edge(*oid, parent, &oid_to_idx, base_count, base_chain)
+        };
         let p1 = info
             .parents
             .first()
-            .map(|p| resolve_parent_edge(*p, &oid_to_idx, base_count, base_chain))
+            .map(|p| edge(*p))
+            .transpose()?
             .unwrap_or(PARENT_NONE);
         cdat.extend_from_slice(&p1.to_be_bytes());
 
         let p2 = if info.parents.len() <= 1 {
             PARENT_NONE
         } else if info.parents.len() == 2 {
-            resolve_parent_edge(info.parents[1], &oid_to_idx, base_count, base_chain)
+            edge(info.parents[1])?
         } else {
             let start_u32 = (extra_edges.len() / 4) as u32;
             for (j, p) in info.parents.iter().enumerate().skip(1) {
-                let mut ev = resolve_parent_edge(*p, &oid_to_idx, base_count, base_chain);
+                let mut ev = edge(*p)?;
                 if j + 1 == info.parents.len() {
                     ev |= GRAPH_LAST_EDGE;
                 }
@@ -774,6 +776,29 @@ pub fn remove_commit_graph_chain_dir(objects_dir: &std::path::Path) -> bool {
     std::fs::remove_dir_all(&graphs).is_ok()
 }
 
+/// Delete `objects/info/commit-graph` and any split `commit-graphs/` chain.
+///
+/// Returns `true` when a chain directory was removed (as [`remove_commit_graph_chain_dir`]).
+///
+/// # Errors
+///
+/// Propagates I/O failures removing the monolithic graph other than it being absent.
+pub(crate) fn remove_commit_graph_files(
+    objects_dir: &std::path::Path,
+) -> crate::error::Result<bool> {
+    let graph_path = objects_dir.join("info").join("commit-graph");
+    #[cfg(windows)]
+    if std::fs::symlink_metadata(&graph_path).is_ok_and(|m| m.file_type().is_file()) {
+        clear_readonly_attribute(&graph_path, true)?;
+    }
+    match std::fs::remove_file(&graph_path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(crate::error::Error::Io(e)),
+    }
+    Ok(remove_commit_graph_chain_dir(objects_dir))
+}
+
 /// Count unique commit OIDs that refs point to directly (peeling annotated tags), matching Git's
 /// `add_ref_to_set` accounting for the "Collecting referenced commits" progress meter. Unlike
 /// [`collect_reachable_commit_oids`], this does not walk commit parents.
@@ -972,6 +997,50 @@ mod tests {
     }
 
     #[test]
+    fn build_rejects_parent_outside_graph() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = init_repository(
+            dir.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let root = empty_commit(&repo, vec![], "T <t@example.com> 1 +0000");
+        let side = empty_commit(&repo, vec![], "T <t@example.com> 2 +0000");
+        let merge = empty_commit(&repo, vec![root, side], "T <t@example.com> 3 +0000");
+        let sorted = vec![merge, side];
+        let mut infos = oid_hash_map();
+        for oid in &sorted {
+            infos.insert(
+                *oid,
+                super::load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
+            );
+        }
+        let empty = empty_filter_map();
+        let err = super::build_commit_graph_bytes(
+            &sorted,
+            &commit_infos_std(&infos),
+            &repo.odb(),
+            false,
+            &BloomFilterSettings::default(),
+            None,
+            &[],
+            None,
+            &empty,
+            &empty,
+            true,
+        )
+        .expect_err("first parent is not in the graph");
+        assert!(matches!(
+            err,
+            crate::error::Error::CommitGraphParentMissing { commit, parent }
+                if commit == merge && parent == root
+        ));
+    }
+
+    #[test]
     fn build_respects_max_new_filters_budget() {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = init_repository(
@@ -1147,6 +1216,23 @@ mod tests {
 
         assert!(super::remove_commit_graph_chain_dir(&objects_dir));
         assert!(!chain_root.exists());
+    }
+
+    #[test]
+    fn remove_commit_graph_files_tolerates_missing_graph() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let objects_dir = dir.path().join("objects");
+        std::fs::create_dir_all(objects_dir.join("info")).expect("info");
+        assert!(!super::remove_commit_graph_files(&objects_dir).expect("nothing to remove"));
+
+        let graph_path = objects_dir.join("info").join("commit-graph");
+        std::fs::write(&graph_path, b"graph").expect("seed graph");
+        let mut perms = std::fs::metadata(&graph_path).expect("meta").permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&graph_path, perms).expect("readonly");
+        std::fs::create_dir_all(objects_dir.join("info").join("commit-graphs")).expect("chain");
+        assert!(super::remove_commit_graph_files(&objects_dir).expect("remove"));
+        assert!(!graph_path.exists());
     }
 
     #[cfg(unix)]
