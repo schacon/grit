@@ -1297,6 +1297,7 @@ fn validate_pathspecs(
     let unmerged_paths = unmerged_index_paths(index);
     let mut checker = KnownPathspecChecker::new(repo);
     let mut ignored_paths = Vec::new();
+    let icase_tracked = std::cell::OnceCell::new();
     for (label, resolved) in positive {
         if unstaged.iter().any(|e| {
             let one = [e.path()];
@@ -1317,9 +1318,15 @@ fn validate_pathspecs(
         if opts.force_ignored {
             continue;
         }
-        if let Some(display) =
-            ignored_display_for_explicit_add(repo, index, rules, work_tree, label, resolved)?
-        {
+        if let Some(display) = ignored_display_for_explicit_add(
+            repo,
+            index,
+            rules,
+            work_tree,
+            label,
+            resolved,
+            &icase_tracked,
+        )? {
             ignored_paths.push(display);
         }
     }
@@ -1333,13 +1340,14 @@ fn validate_pathspecs(
     Ok(())
 }
 
-fn ignored_display_for_explicit_add(
+fn ignored_display_for_explicit_add<'i>(
     repo: &Repository,
-    index: &Index,
+    index: &'i Index,
     rules: &WorktreeRules,
     work_tree: &Path,
     label: &str,
     resolved: &str,
+    icase_tracked: &std::cell::OnceCell<crate::path_icase::Stage0TrackedPaths<'i>>,
 ) -> Result<Option<String>> {
     if pathspec_is_exclude(resolved)
         || has_glob_chars(resolved)
@@ -1366,6 +1374,17 @@ fn ignored_display_for_explicit_add(
     }
     if let Some(parent) = first_ignored_parent_directory(repo, index, &mut ignore, &rel)? {
         return Ok(Some(parent));
+    }
+    // Under `core.ignorecase` a file whose index entry differs only in case is tracked, and
+    // Git stages it rather than reporting it as ignored.
+    if ignore.ignore_case()
+        && icase_tracked
+            .get_or_init(|| {
+                crate::path_icase::Stage0TrackedPaths::from_index_for_untracked_scan(index, true)
+            })
+            .contains_bytes(rel.as_bytes())
+    {
+        return Ok(None);
     }
     Ok(Some(label.to_owned()))
 }

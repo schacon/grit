@@ -252,7 +252,9 @@ impl IgnoreMatcher {
     /// # Parameters
     ///
     /// - `repo` - repository handle.
-    /// - `index` - optional index; when present, tracked entries are not ignored.
+    /// - `index` - optional index; when present, tracked entries are not ignored. The lookup is
+    ///   exact-case even under `core.ignorecase`, like `git check-ignore`; work-tree walks that
+    ///   must treat case variants of tracked paths as tracked check that before asking.
     /// - `repo_rel_path` - normalized repository-relative path with `/` separators.
     /// - `is_dir` - whether the queried path is a directory.
     ///

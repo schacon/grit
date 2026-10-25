@@ -1098,7 +1098,7 @@ fn plain_tracked_directory(
     }
     let rel = crate::repo_relpath::storage_string(&child_bytes);
     if gitlinks.contains(&rel)
-        || !has_tracked_under(index, gitlinks, &rel)
+        || !has_tracked_under(index, gitlinks, tracked_paths, &rel)
         || dir_is_nested_submodule_worktree(repo.git_dir(), &task.entry.path())
     {
         return None;
@@ -1315,7 +1315,7 @@ fn visit_untracked_node(
     #[cfg(test)]
     untracked_walk_probe::record_dir_read();
 
-    let tracked_subdir = !rel.is_empty() && has_tracked_under(index, gitlinks, rel);
+    let tracked_subdir = !rel.is_empty() && has_tracked_under(index, gitlinks, tracked_paths, rel);
     if check_only && !tracked_subdir {
         return visit_untracked_read_dir_lazy(
             entries,
@@ -1427,7 +1427,7 @@ fn visit_untracked_directory(
 ) -> Result<()> {
     let _ = matcher.note_directory_entered(repo, Some(index), rel);
 
-    if has_tracked_under(index, gitlinks, rel) {
+    if has_tracked_under(index, gitlinks, tracked_paths, rel) {
         visit_untracked_node(
             repo,
             index,
@@ -1713,8 +1713,18 @@ fn traditional_normal_directory_only(
     Ok(Some(format!("{rel}/")))
 }
 
-fn has_tracked_under(index: &Index, gitlinks: &HashSet<String>, rel_dir: &str) -> bool {
-    if index.has_stage0_descendant_under(rel_dir) {
+/// Whether `rel_dir` holds tracked entries. With `core.ignorecase`, a directory spelled with
+/// different ASCII case in the index counts (`build` when `Build/t` is tracked), so ignore
+/// rules never prune it before its tracked files are matched.
+fn has_tracked_under(
+    index: &Index,
+    gitlinks: &HashSet<String>,
+    tracked_paths: &crate::path_icase::Stage0TrackedPaths,
+    rel_dir: &str,
+) -> bool {
+    if index.has_stage0_descendant_under(rel_dir)
+        || (!rel_dir.is_empty() && tracked_paths.has_dir_ignoring_case(rel_dir.as_bytes()))
+    {
         return true;
     }
     gitlinks.iter().any(|g| {

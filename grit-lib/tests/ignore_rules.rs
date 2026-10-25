@@ -917,3 +917,127 @@ fn ignorecase_auto_stage_commit_skips_ignored_and_fscks() {
             .success());
     }
 }
+
+/// Tracked `Foo.log` and `Build/t` renamed on disk to `foo.log` and `build/t`, plus untracked
+/// `build/new.o` and `other.log`, under `*.LOG` / `Build/` rules.
+fn ignorecase_case_renamed_tracked_fixture(name: &str) -> (PathBuf, PathBuf) {
+    let home = unique_tmp("ignore", &format!("{name}-home"));
+    let root = unique_tmp("ignore", name);
+    fs::create_dir_all(&home).expect("home");
+    assert!(hermetic_git(&home, &root, &["init", "-q"]).status.success());
+    assert!(
+        hermetic_git(&home, &root, &["config", "core.ignorecase", "true"])
+            .status
+            .success()
+    );
+    fs::write(root.join(".gitignore"), "*.LOG\nBuild/\n").expect("gitignore");
+    fs::create_dir_all(root.join("Build")).expect("Build");
+    fs::write(root.join("Foo.log"), "x\n").expect("Foo.log");
+    fs::write(root.join("Build/t"), "y\n").expect("Build/t");
+    assert!(hermetic_git(
+        &home,
+        &root,
+        &["add", "-f", ".gitignore", "Foo.log", "Build/t"]
+    )
+    .status
+    .success());
+    assert!(hermetic_git(&home, &root, &["commit", "-qm", "base"])
+        .status
+        .success());
+    fs::rename(root.join("Foo.log"), root.join("foo.log")).expect("rename file");
+    fs::rename(root.join("Build"), root.join("build")).expect("rename dir");
+    fs::write(root.join("build/new.o"), "n\n").expect("new.o");
+    fs::write(root.join("other.log"), "z\n").expect("other.log");
+    (home, root)
+}
+
+#[test]
+fn ignorecase_case_renamed_tracked_paths_are_not_ignored_like_git() {
+    use grit_lib::porcelain::add::{stage, StageMode, StageOptions};
+    use grit_lib::porcelain::status::{status, IgnoredMode, StatusOptions};
+    use grit_lib::progress::{NeverCancel, NullProgress};
+    use std::collections::BTreeSet;
+
+    let (home, root) = ignorecase_case_renamed_tracked_fixture("1912-tracked-case");
+    let repo = open_at(&root);
+
+    let model = status(
+        &repo,
+        &StatusOptions {
+            ignored: IgnoredMode::Traditional,
+            ..StatusOptions::default()
+        },
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("status");
+    let mut git_untracked = BTreeSet::new();
+    let mut git_ignored = BTreeSet::new();
+    for line in git_lines(&home, &root, &["status", "--porcelain", "--ignored"]) {
+        if let Some(p) = line.strip_prefix("?? ") {
+            git_untracked.insert(p.to_owned());
+        } else if let Some(p) = line.strip_prefix("!! ") {
+            git_ignored.insert(p.to_owned());
+        }
+    }
+    let grit_untracked: BTreeSet<String> = model.untracked.into_iter().collect();
+    let grit_ignored: BTreeSet<String> = model.ignored.into_iter().collect();
+    assert_eq!(grit_untracked, git_untracked, "untracked vs git status");
+    assert_eq!(grit_ignored, git_ignored, "ignored vs git status --ignored");
+    assert!(!grit_ignored.contains("build/"), "{grit_ignored:?}");
+
+    // `clean --only-ignored` must not remove a directory holding a tracked file.
+    assert_clean_ignored_matches_git(&home, &root);
+
+    // `git check-ignore` uses an exact-case tracked check; `ignore_check` matches it.
+    let index = repo.index_handle().load().expect("index");
+    let paths = ["foo.log".to_owned(), "build/t".to_owned()];
+    let git_map = git_check_ignore_verbose(&home, &root, &["foo.log", "build/t"], false);
+    for check in repo.ignore_check(&paths, &index).expect("ignore_check") {
+        assert_match_eq(
+            &check.path,
+            &git_map[&check.path],
+            check.ignored,
+            &check.matched,
+        );
+    }
+
+    // Explicitly staging the case-renamed tracked file succeeds, as with git.
+    stage(
+        &repo,
+        &StageOptions {
+            pathspecs: vec!["foo.log".to_owned()],
+            mode: StageMode::All,
+            ..StageOptions::default()
+        },
+        &mut NullProgress,
+    )
+    .expect("stage foo.log");
+    assert!(hermetic_git(&home, &root, &["add", "--dry-run", "foo.log"])
+        .status
+        .success());
+
+    // A file under an ignored directory is still refused, naming the directory like git.
+    let err = stage(
+        &open_at(&root),
+        &StageOptions {
+            pathspecs: vec!["build/t".to_owned()],
+            mode: StageMode::All,
+            ..StageOptions::default()
+        },
+        &mut NullProgress,
+    )
+    .expect_err("build/t is under an ignored directory");
+    match err {
+        grit_lib::error::Error::PathspecIgnored { paths } => assert_eq!(paths, ["build"]),
+        other => panic!("expected PathspecIgnored, got {other:?}"),
+    }
+    assert!(
+        !hermetic_git(&home, &root, &["add", "--dry-run", "build/t"])
+            .status
+            .success()
+    );
+    assert!(hermetic_git(&home, &root, &["fsck", "--strict"])
+        .status
+        .success());
+}
