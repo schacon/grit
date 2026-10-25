@@ -398,6 +398,10 @@ fn disallowed_filter_returns_err_over_http() {
         Some(&grit_bare),
         &["config", "uploadpack.allowFilter", "false"],
     );
+    git(
+        Some(&grit_bare),
+        &["config", "uploadpack.allowSidebandAll", "true"],
+    );
     let Some(port) = free_port() else {
         return;
     };

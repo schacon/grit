@@ -659,16 +659,21 @@ fn fetch_v2(
             deepen_not.push(resolve_deepen_not(repo, rest.trim())?);
         } else if let Some(spec) = arg.strip_prefix("filter ") {
             filter_spec = Some(spec.trim().to_owned());
-        } else if let Some(name) = arg.strip_prefix("want-ref ") {
-            want_ref_names.push(name.trim().to_owned());
+        } else if let Some(name) = arg.strip_prefix("want-ref ").filter(|_| policy.ref_in_want) {
+            let name = name.trim();
+            if want_ref_names.iter().any(|n| n == name) {
+                return Err(ServeError::Protocol(format!("duplicate want-ref {name}")));
+            }
+            want_ref_names.push(name.to_owned());
         } else if arg == "done" {
             done = true;
         } else if arg == "deepen-relative" {
             deepen_relative = true;
         } else if matches!(
             arg.as_str(),
-            "thin-pack" | "no-progress" | "include-tag" | "ofs-delta" | "sideband-all"
-        ) {
+            "thin-pack" | "no-progress" | "include-tag" | "ofs-delta"
+        ) || (arg == "sideband-all" && policy.allow_sideband_all)
+        {
             caps.insert(arg.clone());
         } else {
             return Err(ServeError::Protocol(format!(
@@ -679,9 +684,14 @@ fn fetch_v2(
 
     let refs = advertised_refs(repo, &opts.hidden_refs, &[], Peel::Yes)?;
     let head = head_info(repo);
-    for name in want_ref_names {
-        wants.push(resolve_want_ref(repo, &refs, &opts.hidden_refs, &name)?);
-    }
+    let wanted_refs = want_ref_names
+        .into_iter()
+        .map(|name| {
+            let oid = resolve_want_ref(repo, &refs, &opts.hidden_refs, &name)?;
+            Ok((name, oid))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    wants.extend(wanted_refs.iter().map(|(_, oid)| *oid));
 
     let filter: Option<ObjectFilter> = match filter_spec {
         None => None,
@@ -738,6 +748,14 @@ fn fetch_v2(
         }
         for oid in &shallow_resp.shallow {
             write_v2_fetch_line(output, &format!("shallow {}", oid.to_hex()), sideband_all)?;
+        }
+        write_v2_section_delim(output)?;
+    }
+
+    if !wanted_refs.is_empty() {
+        write_v2_fetch_line(output, "wanted-refs", sideband_all)?;
+        for (name, oid) in &wanted_refs {
+            write_v2_fetch_line(output, &format!("{} {name}", oid.to_hex()), sideband_all)?;
         }
         write_v2_section_delim(output)?;
     }
