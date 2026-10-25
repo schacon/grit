@@ -153,8 +153,8 @@ Pass `--json` for stable, scripting-friendly output:
 | `depth` | integer or omitted | Shallow depth when `--depth` or `--shallow` was used. |
 | `blobs` | string or integer or omitted | `"none"` or a byte limit when `--blobs` was used. |
 | `partial` | boolean or omitted | `true` when `--blobs` configured a promisor partial clone. |
-| `objects` | integer | Objects received in the fetch pack. |
-| `bytes` | integer | Size in bytes of the received pack. |
+| `objects` | integer | Objects installed during fetch: for network clones, objects in the received pack; for local-path clones, objects in newly linked pack indexes plus any reachable loose objects hardlinked from the source. |
+| `bytes` | integer | On-disk payload bytes installed during fetch: for network clones, the received `.pack` size; for local-path clones, the sum of newly linked `.pack` files plus reachable loose object files (same bytes as hardlinked/copied object store data). |
 | `branches` | integer | Remote branches fetched. |
 | `tags` | integer | Remote tags fetched. |
 | `files` | integer | Working-tree files checked out. |
@@ -274,7 +274,7 @@ Markdown uses headings, bullet lists, and fenced blocks; pipe characters inside 
 - **url**: `[UPSTREAM]`
 - **objects**: 8
 - **object types**: 2 commits, 2 trees, 3 blobs, 1 tags
-- **bytes**: 665 ([SIZE])
+- **bytes**: 685 ([SIZE])
 - **branches**: 2
 - **tags**: 1
 - **files**: 2

@@ -600,6 +600,64 @@ fn pack_file_basenames(pack_dir: &Path) -> HashSet<String> {
     names
 }
 
+const LOCAL_LINK_KINDS_OID_PROBE_MAX: u64 = 4096;
+
+fn oids_from_newly_linked_pack_indexes(
+    local_odb: &Odb,
+    pack_dir_before: &HashSet<String>,
+) -> Result<Vec<ObjectId>> {
+    let pack_dir = local_odb.objects_dir().join("pack");
+    let mut oids = Vec::new();
+    if !pack_dir.is_dir() {
+        return Ok(oids);
+    }
+    for entry in fs::read_dir(&pack_dir).map_err(Error::Io)? {
+        let path = entry.map_err(Error::Io)?.path();
+        if path.extension().is_none_or(|e| e != "pack") {
+            continue;
+        }
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        if pack_dir_before.contains(name.to_string_lossy().as_ref()) {
+            continue;
+        }
+        let idx = path.with_extension("idx");
+        if !idx.is_file() {
+            continue;
+        }
+        let index = crate::pack::read_pack_index_no_verify(&idx)?;
+        for entry in index.iter() {
+            let oid = ObjectId::from_bytes(entry.oid())?;
+            oids.push(oid);
+        }
+    }
+    Ok(oids)
+}
+
+fn enrich_local_link_transfer_kinds(
+    local_odb: &Odb,
+    pack_dir_before: &HashSet<String>,
+    loose_reachable: &HashSet<ObjectId>,
+    transfer: &mut TransferStats,
+) -> Result<()> {
+    if transfer.kinds.is_some() || transfer.objects == 0 {
+        return Ok(());
+    }
+    if transfer.objects > LOCAL_LINK_KINDS_OID_PROBE_MAX {
+        return Ok(());
+    }
+    let mut probe: HashSet<ObjectId> = loose_reachable.clone();
+    for oid in oids_from_newly_linked_pack_indexes(local_odb, pack_dir_before)? {
+        probe.insert(oid);
+    }
+    if u64::try_from(probe.len()).unwrap_or(u64::MAX) != transfer.objects {
+        return Ok(());
+    }
+    transfer.kinds = Some(object_kind_counts_for_oids(local_odb, &probe)?);
+    Ok(())
+}
+
 /// Per-fetch transfer stats for objects installed during one local copy operation.
 fn transfer_stats_for_local_operation(
     local_odb: &Odb,
@@ -827,35 +885,63 @@ fn copy_objects_for_local_fetch(
     cancel: &dyn crate::progress::Cancel,
 ) -> Result<(HashSet<ObjectId>, TransferStats)> {
     use crate::local_object_copy::{
-        link_loose_objects_for_oids, linked_object_set, refresh_local_odb_after_link,
-        source_objects_fully_packed, try_satisfy_via_object_link,
+        link_loose_objects, link_loose_objects_for_oids, link_remote_pack_files, linked_object_set,
+        refresh_local_odb_after_link, try_satisfy_via_object_link,
     };
 
     let remote_objects = remote_odb.objects_dir();
     let local_objects = local_odb.objects_dir();
     let pack_dir_before = pack_file_basenames(&local_objects.join("pack"));
+    let remote_has_alternates = !crate::pack::read_alternates_recursive(remote_objects)?.is_empty();
 
-    if !pack_build.thin
+    if !remote_has_alternates
+        && !pack_build.thin
         && try_pack_link
         && haves.is_empty()
         && !wants.is_empty()
-        && source_objects_fully_packed(remote_objects)?
     {
         progress.start(ProgressPhase::CopyingObjects, Some(wants.len() as u64));
         crate::progress::poll_cancel(progress, cancel)?;
-        if try_satisfy_via_object_link(
-            remote_objects,
-            local_objects,
-            local_odb,
-            wants,
-            false,
-            progress,
-            cancel,
-        )? {
-            progress.set(wants.len() as u64);
+        let linked_packs =
+            link_remote_pack_files(remote_objects, local_objects, progress, cancel, wants.len())?;
+        if linked_packs > 0 {
+            refresh_local_odb_after_link(local_odb);
+        }
+        let pack_alone_satisfies_wants =
+            linked_packs > 0 && wants.iter().all(|oid| local_odb.exists(oid));
+        let linked_loose = link_loose_objects(remote_objects, local_objects, progress, cancel)?;
+        if linked_packs > 0 || linked_loose > 0 {
+            refresh_local_odb_after_link(local_odb);
+        }
+        if (linked_packs > 0 || linked_loose > 0) && wants.iter().all(|oid| local_odb.exists(oid)) {
+            if linked_loose == 0 {
+                progress.set(wants.len() as u64);
+            }
             progress.finish();
-            let oids = linked_object_set(local_odb, wants);
-            let transfer = transfer_stats_for_local_operation(local_odb, &oids, &pack_dir_before)?;
+            let stats_loose = if pack_alone_satisfies_wants {
+                HashSet::new()
+            } else {
+                crate::local_object_copy::loose_reachable_from_roots(
+                    local_odb,
+                    local_objects,
+                    wants,
+                    source_shallow,
+                    cancel,
+                )?
+            };
+            let oids = if stats_loose.is_empty() {
+                linked_object_set(local_odb, wants)
+            } else {
+                stats_loose.clone()
+            };
+            let mut transfer =
+                transfer_stats_for_local_operation(local_odb, &stats_loose, &pack_dir_before)?;
+            enrich_local_link_transfer_kinds(
+                local_odb,
+                &pack_dir_before,
+                &stats_loose,
+                &mut transfer,
+            )?;
             return Ok((oids, transfer));
         }
         progress.finish();

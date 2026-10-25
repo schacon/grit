@@ -3,15 +3,19 @@
 //! When the source stores objects in packfiles, linking or copying those packs
 //! avoids rebuilding a pack in memory (Git's `--local` fetch/clone path).
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
 
 use crate::error::{Error, Result};
 use crate::fs_publish::hard_link_or_copy;
-use crate::objects::ObjectId;
+use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::pack;
+
+fn is_stored_loose(objects_dir: &Path, oid: &ObjectId) -> bool {
+    oid.loose_path_in(objects_dir).is_file()
+}
 
 fn pack_entry_name_ok(name: &str) -> bool {
     if name.starts_with("tmp_") || name.starts_with(".") {
@@ -69,7 +73,7 @@ pub(crate) fn link_remote_pack_files(
     Ok(linked)
 }
 
-fn link_loose_objects(
+pub(crate) fn link_loose_objects(
     remote_objects: &Path,
     local_objects: &Path,
     progress: &mut dyn crate::progress::ProgressSink,
@@ -105,38 +109,76 @@ fn link_loose_objects(
     Ok(copied)
 }
 
+/// Loose objects reachable from `roots` without reading packed objects.
+///
+/// Used for local-clone transfer stats after hardlinking a full pack plus loose
+/// shards: packed objects are counted from the linked `.idx`, and this walk adds
+/// only the small loose tip set.
+pub(crate) fn loose_reachable_from_roots(
+    odb: &Odb,
+    objects_dir: &Path,
+    roots: &[ObjectId],
+    shallow_grafts: &HashSet<ObjectId>,
+    cancel: &dyn crate::progress::Cancel,
+) -> Result<HashSet<ObjectId>> {
+    let mut visited: HashSet<ObjectId> = HashSet::new();
+    let mut reachable: HashSet<ObjectId> = HashSet::new();
+    let mut queue: VecDeque<ObjectId> = VecDeque::new();
+    for &root in roots {
+        if visited.insert(root) {
+            queue.push_back(root);
+        }
+    }
+    while let Some(oid) = queue.pop_front() {
+        if visited.len().is_multiple_of(64) {
+            let mut sink = crate::progress::NullProgress;
+            crate::progress::poll_cancel(&mut sink, cancel)?;
+        }
+        if !is_stored_loose(objects_dir, &oid) {
+            continue;
+        }
+        reachable.insert(oid);
+        let obj = odb.read(&oid)?;
+        match obj.kind {
+            ObjectKind::Commit => {
+                let commit = parse_commit(&obj.data)?;
+                if !shallow_grafts.contains(&oid) {
+                    for parent in commit.parents {
+                        if visited.insert(parent) {
+                            queue.push_back(parent);
+                        }
+                    }
+                }
+                if visited.insert(commit.tree) {
+                    queue.push_back(commit.tree);
+                }
+            }
+            ObjectKind::Tree => {
+                for entry in parse_tree(&obj.data)? {
+                    if entry.mode == 0o160000 {
+                        continue;
+                    }
+                    if visited.insert(entry.oid) {
+                        queue.push_back(entry.oid);
+                    }
+                }
+            }
+            ObjectKind::Tag => {
+                let tag = parse_tag(&obj.data)?;
+                if visited.insert(tag.object) {
+                    queue.push_back(tag.object);
+                }
+            }
+            ObjectKind::Blob => {}
+        }
+    }
+    Ok(reachable)
+}
+
 /// After pack/loose linking, refresh pack caches so [`Odb::exists`] sees new objects.
 pub(crate) fn refresh_local_odb_after_link(local_odb: &Odb) {
     local_odb.invalidate_packs();
     pack::clear_pack_cache();
-}
-
-/// Whether `objects_dir` stores every object in packfiles (no loose objects, no alternates).
-///
-/// Used before the initial local-clone pack-link fast path: when true, linking packs for tip
-/// oids alone is sufficient because the pack closure is the whole object store.
-pub(crate) fn source_objects_fully_packed(objects_dir: &Path) -> Result<bool> {
-    if !pack::read_alternates_recursive(objects_dir)?.is_empty() {
-        return Ok(false);
-    }
-    for entry in fs::read_dir(objects_dir).map_err(Error::Io)? {
-        let entry = entry.map_err(Error::Io)?;
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if name_str == "info" || name_str == "pack" {
-            continue;
-        }
-        if name_str.len() != 2 || !name_str.chars().all(|c| c.is_ascii_hexdigit()) {
-            continue;
-        }
-        let Ok(mut shard) = fs::read_dir(entry.path()) else {
-            continue;
-        };
-        if shard.next().is_some() {
-            return Ok(false);
-        }
-    }
-    Ok(true)
 }
 
 /// Try to satisfy `needed` by linking the remote's on-disk objects into `local`.
@@ -247,64 +289,6 @@ mod tests {
             out.status.success(),
             "git: {}",
             String::from_utf8_lossy(&out.stderr)
-        );
-    }
-
-    #[test]
-    fn source_objects_fully_packed_repacked_repo() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let src = tmp.path().join("src");
-        fs::create_dir_all(&src).unwrap();
-        git(&src, &["init", "-q", "-b", "main"]);
-        fs::write(src.join("f"), b"payload\n").unwrap();
-        git(&src, &["add", "f"]);
-        git(&src, &["commit", "-qm", "c"]);
-        git(&src, &["repack", "-a", "-d", "-f"]);
-        let objects = src.join(".git/objects");
-        assert!(source_objects_fully_packed(&objects).expect("scan"));
-    }
-
-    #[test]
-    fn source_objects_fully_packed_false_when_loose_blob_remains() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let src = tmp.path().join("src");
-        fs::create_dir_all(&src).unwrap();
-        git(&src, &["init", "-q", "-b", "main"]);
-        fs::write(src.join("a"), b"one\n").unwrap();
-        git(&src, &["add", "a"]);
-        git(&src, &["commit", "-qm", "one"]);
-        let head = Command::new("git")
-            .current_dir(&src)
-            .args(["rev-parse", "HEAD"])
-            .output()
-            .unwrap();
-        let tree = Command::new("git")
-            .current_dir(&src)
-            .args(["rev-parse", "HEAD^{tree}"])
-            .output()
-            .unwrap();
-        let head_hex = String::from_utf8_lossy(&head.stdout);
-        let tree_hex = String::from_utf8_lossy(&tree.stdout);
-        let input = format!("{}\n{}\n", head_hex.trim(), tree_hex.trim());
-        let mut pack = Command::new("git")
-            .current_dir(&src)
-            .args(["pack-objects", "-q", ".git/objects/pack/pack"])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .spawn()
-            .expect("pack-objects");
-        if let Some(mut stdin) = pack.stdin.take() {
-            use std::io::Write;
-            stdin.write_all(input.as_bytes()).unwrap();
-        }
-        assert!(pack.wait_with_output().unwrap().status.success());
-        git(&src, &["prune-packed"]);
-        let objects = src.join(".git/objects");
-        assert!(
-            !source_objects_fully_packed(&objects).expect("scan"),
-            "mixed pack+loose must not qualify for tip-only fast path"
         );
     }
 
