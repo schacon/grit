@@ -1994,24 +1994,6 @@ pub(crate) fn push_local_from(
         decisions.push(decide_push(spec, local_odb, remote_git_dir, Some(local))?);
     }
 
-    apply_remote_receive_policy(remote_git_dir, &local_odb, &mut decisions)?;
-
-    // Atomic: if any update would be rejected, apply none and demote the
-    // otherwise-accepted updates to AtomicPushFailed.
-    let any_rejected = decisions.iter().any(|d| d.result.status.is_error());
-    if opts.atomic && any_rejected {
-        for d in &mut decisions {
-            if matches!(d.result.status, PushRefStatus::Ok) {
-                d.result.status = PushRefStatus::AtomicPushFailed;
-                d.apply = false;
-            }
-        }
-        return Ok(PushOutcome {
-            results: decisions.into_iter().map(|d| d.result).collect(),
-            remote_messages: Vec::new(),
-        });
-    }
-
     let push_wants: Vec<ObjectId> = decisions
         .iter()
         .filter(|d| d.apply && !opts.dry_run)
@@ -2039,6 +2021,24 @@ pub(crate) fn push_local_from(
             &remote_shallow,
             &pack_opts,
         )?;
+    }
+
+    apply_remote_receive_policy(remote_git_dir, local_git_dir, opts.dry_run, &mut decisions)?;
+
+    // Atomic: if any update would be rejected, apply none and demote the
+    // otherwise-accepted updates to AtomicPushFailed.
+    let any_rejected = decisions.iter().any(|d| d.result.status.is_error());
+    if opts.atomic && any_rejected {
+        for d in &mut decisions {
+            if matches!(d.result.status, PushRefStatus::Ok) {
+                d.result.status = PushRefStatus::AtomicPushFailed;
+                d.apply = false;
+            }
+        }
+        return Ok(PushOutcome {
+            results: decisions.into_iter().map(|d| d.result).collect(),
+            remote_messages: Vec::new(),
+        });
     }
 
     // Second pass: apply ref updates (one transaction per ref unless `atomic`).
@@ -2095,10 +2095,21 @@ pub(crate) fn push_local_from(
     })
 }
 
+/// Object database for receive-policy checks during local push.
+///
+/// Matches wire receive-pack: the pusher's objects are primary and the remote's
+/// object store is consulted via alternates so fast-forward walks see both the
+/// current remote tip and objects not yet copied. After a real push copies
+/// objects, the remote repository odb alone is enough.
+fn push_policy_object_lookup(remote_git_dir: &Path, local_git_dir: &Path) -> Odb {
+    Odb::new(&objects_dir(local_git_dir)).with_env_alternate_dirs(vec![objects_dir(remote_git_dir)])
+}
+
 /// Apply the remote repository's `receive.*` policy to updates that would mutate refs.
 fn apply_remote_receive_policy(
     remote_git_dir: &Path,
-    local_odb: &Odb,
+    local_git_dir: &Path,
+    dry_run: bool,
     decisions: &mut [PushDecision],
 ) -> Result<()> {
     if !decisions.iter().any(|d| d.apply) {
@@ -2111,6 +2122,7 @@ fn apply_remote_receive_policy(
     let policy = crate::serve::ReceivePolicy::from_config(cfg.as_ref());
     let hidden_refs = crate::hide_refs::hide_ref_patterns_receive(cfg.as_ref());
     let current_branch = crate::serve::checked_out_branch(&remote_repo);
+    let pre_copy_lookup = dry_run.then(|| push_policy_object_lookup(remote_git_dir, local_git_dir));
 
     for d in decisions.iter_mut().filter(|d| d.apply) {
         let cmd = match &d.action {
@@ -2126,9 +2138,13 @@ fn apply_remote_receive_policy(
             },
             PushAction::None => continue,
         };
+        let object_lookup = pre_copy_lookup
+            .as_ref()
+            .map(|odb| odb as &Odb)
+            .or_else(|| (!dry_run).then_some(remote_repo.odb()));
         let refusal = match crate::serve::validate_ref_update(
             &remote_repo,
-            Some(local_odb),
+            object_lookup,
             &cmd,
             &policy,
             &hidden_refs,

@@ -20,10 +20,11 @@ pub fn checked_out_branch(repo: &Repository) -> Option<String> {
 
 /// Decide whether one ref update may be applied under `receive.*` policy.
 ///
-/// `object_lookup`, when set, is used to test that the new tip exists (the
-/// receive quarantine during wire push, or the pusher's object store during
-/// [`crate::remote::transfer::push_local`] before objects are copied). When
-/// `None`, the repository's own object database is used.
+/// `object_lookup`, when set, is the object database used for existence and
+/// fast-forward checks (the receive quarantine during wire push, which falls
+/// back to the repository via alternates; or a local push dry-run lookup with
+/// the pusher's store primary and the remote as alternates). When `None`, the
+/// repository's own object database is used (local push after objects are copied).
 ///
 /// # Errors
 ///
@@ -86,12 +87,86 @@ fn fast_forward_refusal(
     if !is_commit(&old) || !is_commit(&new) {
         return Some(RefUpdateRefusal::BadRef);
     }
-    let graph = repo
-        .caches()
-        .commit_graph_chain(repo.odb().objects_dir());
+    let graph = repo.caches().commit_graph_chain(repo.odb().objects_dir());
     match crate::merge_base::is_ancestor_odb_walk_with_graph(odb, graph.as_deref(), old, new) {
         Ok(true) => None,
         Ok(false) => Some(RefUpdateRefusal::NonFastForward),
         Err(_) => Some(RefUpdateRefusal::FastForwardCheckFailed),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use crate::config::environment::RepositoryOptions;
+    use crate::objects::ObjectId;
+    use crate::odb::Odb;
+    use crate::repo::Repository;
+    use grit_test_support::{git, git_cmd};
+
+    use super::{validate_ref_update, ReceivePolicy, RefCommand, RefUpdateRefusal};
+
+    fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
+        ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("oid")
+    }
+
+    /// Remote tip exists only on the remote; pusher store is primary with remote alternates.
+    #[test]
+    fn validate_ff_with_remote_tip_in_alternate_store() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let seed = tmp.path().join("seed");
+        let bare = tmp.path().join("r.git");
+        let local = tmp.path().join("w");
+        std::fs::create_dir_all(&seed).unwrap();
+        git(&seed, &["init", "-q", "-b", "main", "."]);
+        std::fs::write(seed.join("a"), "a\n").unwrap();
+        git(&seed, &["add", "a"]);
+        git(&seed, &["commit", "-q", "-m", "c1"]);
+        std::fs::write(seed.join("b"), "b\n").unwrap();
+        git(&seed, &["add", "b"]);
+        git(&seed, &["commit", "-q", "-m", "c2"]);
+        git_cmd(&["clone", "-q", "--bare", "seed", "r.git"])
+            .in_dir(tmp.path())
+            .suc();
+        git_cmd(&["clone", "-q", "r.git", "w"])
+            .in_dir(tmp.path())
+            .suc();
+        let local_git = local.join(".git");
+        std::fs::write(local.join("c"), "c\n").unwrap();
+        git(&local, &["add", "c"]);
+        git(&local, &["commit", "-q", "-m", "c3"]);
+        let c3 = rev_parse(&local, "HEAD");
+        let c2 = rev_parse(&local, "HEAD~1");
+        let c2_hex = c2.to_hex();
+        let loose = local_git.join(format!(
+            "objects/{}/{rest}",
+            &c2_hex[..2],
+            rest = &c2_hex[2..]
+        ));
+        std::fs::remove_file(&loose).expect("remove local copy of parent tip");
+
+        let remote_repo =
+            Repository::open(&bare, &RepositoryOptions::empty()).expect("open remote");
+        let lookup = Odb::new(&local_git.join("objects"))
+            .with_env_alternate_dirs(vec![bare.join("objects")]);
+        let policy = ReceivePolicy {
+            deny_non_fast_forwards: true,
+            deny_deletes: false,
+            deny_current_branch: false,
+        };
+        let cmd = RefCommand {
+            refname: "refs/heads/main".to_owned(),
+            old: Some(c2),
+            new: Some(c3),
+        };
+        let refusal = validate_ref_update(&remote_repo, Some(&lookup), &cmd, &policy, &[], None)
+            .expect("validate");
+        assert_eq!(refusal, None);
+
+        let local_only = Odb::new(&local_git.join("objects"));
+        let bad = validate_ref_update(&remote_repo, Some(&local_only), &cmd, &policy, &[], None)
+            .expect("validate local only");
+        assert_eq!(bad, Some(RefUpdateRefusal::BadRef));
     }
 }
