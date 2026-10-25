@@ -113,15 +113,22 @@ fn restore_after_conflicted_stash_pop_reports_unmerged_path() {
     assert_eq!(restore.status.code(), Some(1));
     let err = stderr(&restore);
     assert!(err.contains("path 'f.txt' is unmerged"), "{err}");
-    assert!(err.contains("--ours"), "{err}");
+    assert!(err.contains("grit restore --ours f.txt"), "{err}");
+    assert!(err.contains("grit restore --merge f.txt"), "{err}");
     assert!(!err.contains("did not match"), "{err}");
     assert_eq!(fs::read(dir.path().join("f.txt")).unwrap(), markers);
 
     let json = run(GRIT, dir.path(), &["--json", "restore", "f.txt"]);
     assert_eq!(json.status.code(), Some(1));
     let json: serde_json::Value = serde_json::from_slice(&json.stdout).expect("json");
-    assert_eq!(json["kind"], "conflict");
-    assert_eq!(json["conflicts"], serde_json::json!(["f.txt"]));
+    assert_eq!(json["kind"], "unmerged_paths");
+    assert_eq!(json["paths"], serde_json::json!(["f.txt"]));
+    assert!(
+        json["hint"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("grit restore --theirs f.txt")),
+        "{json}"
+    );
 
     grit_ok(dir.path(), &["restore", "--theirs", "f.txt"]);
     assert_eq!(fs::read(dir.path().join("f.txt")).unwrap(), b"local\n");

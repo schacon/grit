@@ -88,7 +88,8 @@ A plain restore on a conflicted path names the options that work:
 
 ```console
 $ grit restore README.md
-error: path 'README.md' is unmerged; restore a side with --ours or --theirs, or the conflict markers with --merge
+error: path 'README.md' is unmerged
+hint: take one side with `grit restore --ours README.md` or `grit restore --theirs README.md`, or bring the conflict markers back with `grit restore --merge README.md`
 ```
 
 ## JSON output
@@ -117,7 +118,7 @@ Example:
 }
 ```
 
-When a plain restore refuses an unmerged path, stdout with `--json` is a single error object with `kind` `conflict` and a `conflicts` array of the unmerged paths. See the [error schema](/schemas/error/v1.json).
+When a plain restore refuses an unmerged path, stdout with `--json` is a single error object with `kind` `unmerged_paths`, a `paths` array of the unmerged paths and a `hint` naming the `grit restore --ours` / `--theirs` / `--merge` commands. See the [error schema](/schemas/error/v1.json).
 
 ## Markdown output
 

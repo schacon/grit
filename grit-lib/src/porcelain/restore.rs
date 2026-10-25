@@ -1162,8 +1162,6 @@ mod tests {
         let err = Error::RestorePathUnmerged {
             paths: vec!["a".into(), "b".into()],
         };
-        let msg = err.to_string();
-        assert!(msg.starts_with("paths are unmerged: 'a', 'b'"), "{msg}");
-        assert!(msg.contains("--ours") && msg.contains("--merge"), "{msg}");
+        assert_eq!(err.to_string(), "paths are unmerged: 'a', 'b'");
     }
 }

@@ -734,7 +734,7 @@ fn index_locked_message(lock_path: &std::path::Path, holder: Option<&LockHolder>
 }
 
 fn restore_unmerged_message(paths: &[String]) -> String {
-    let subject = match paths {
+    match paths {
         [path] => format!("path '{path}' is unmerged"),
         _ => format!(
             "paths are unmerged: {}",
@@ -744,10 +744,7 @@ fn restore_unmerged_message(paths: &[String]) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-    };
-    format!(
-        "{subject}; restore a side with --ours or --theirs, or the conflict markers with --merge"
-    )
+    }
 }
 
 /// The top-level error type for all grit-lib operations.

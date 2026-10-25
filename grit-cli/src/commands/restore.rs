@@ -17,7 +17,6 @@ use std::collections::BTreeMap;
 use std::io::Write;
 
 use crate::context;
-use crate::json_error;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 use crate::pathspec_args::PathspecArgs;
 
@@ -198,10 +197,7 @@ pub fn run(
 
 fn map_restore_error(err: LibError) -> anyhow::Error {
     match err {
-        LibError::RestorePathUnmerged { ref paths } => {
-            let paths = paths.clone();
-            json_error::unmerged_paths(err.to_string(), paths)
-        }
+        unmerged @ LibError::RestorePathUnmerged { .. } => anyhow::Error::from(unmerged),
         other => anyhow::anyhow!("{other}"),
     }
 }
