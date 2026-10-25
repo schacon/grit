@@ -67,30 +67,191 @@ fn remove_checkout_worktree_file(work_tree: &Path, rel_path: &str) -> Result<()>
     }
 }
 
+#[derive(Clone)]
+enum CheckoutRemovedPathBackup {
+    File {
+        bytes: Vec<u8>,
+        #[cfg(unix)]
+        mode: u32,
+    },
+    Symlink {
+        target: PathBuf,
+    },
+}
+
+/// Tracks per-file checkout deletions so a later unlink failure can restore the worktree.
+struct CheckoutPerFileDeleteRollback {
+    work_tree: PathBuf,
+    removed: Vec<(String, CheckoutRemovedPathBackup)>,
+}
+
+impl CheckoutPerFileDeleteRollback {
+    fn new(work_tree: &Path) -> Self {
+        Self {
+            work_tree: work_tree.to_path_buf(),
+            removed: Vec::new(),
+        }
+    }
+
+    fn snapshot(work_tree: &Path, rel_path: &str) -> Result<Option<CheckoutRemovedPathBackup>> {
+        let abs = checkout_stored_worktree_abs(work_tree, rel_path);
+        if abs.is_symlink() {
+            let target = fs::read_link(&abs).map_err(|source| {
+                crate::worktree::map_worktree_io(rel_path, WorktreePathOperation::Read, source)
+            })?;
+            return Ok(Some(CheckoutRemovedPathBackup::Symlink { target }));
+        }
+        if abs.is_file() {
+            let bytes = fs::read(&abs).map_err(|source| {
+                crate::worktree::map_worktree_io(rel_path, WorktreePathOperation::Read, source)
+            })?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = fs::metadata(&abs)
+                    .map_err(|source| {
+                        crate::worktree::map_worktree_io(
+                            rel_path,
+                            WorktreePathOperation::Metadata,
+                            source,
+                        )
+                    })?
+                    .permissions()
+                    .mode()
+                    & 0o7777;
+                return Ok(Some(CheckoutRemovedPathBackup::File { bytes, mode }));
+            }
+            #[cfg(not(unix))]
+            {
+                return Ok(Some(CheckoutRemovedPathBackup::File { bytes }));
+            }
+        }
+        Ok(None)
+    }
+
+    fn restore_one(work_tree: &Path, rel_path: &str, backup: &CheckoutRemovedPathBackup) {
+        let abs = checkout_stored_worktree_abs(work_tree, rel_path);
+        let _ = (|| -> Result<()> {
+            if abs.is_dir() {
+                fs::remove_dir_all(&abs).map_err(Error::Io)?;
+            } else if abs.exists() || abs.is_symlink() {
+                fs::remove_file(&abs).map_err(Error::Io)?;
+            }
+            if let Some(parent) = abs.parent() {
+                fs::create_dir_all(parent).map_err(Error::Io)?;
+            }
+            match backup {
+                CheckoutRemovedPathBackup::File {
+                    bytes,
+                    #[cfg(unix)]
+                    mode,
+                } => {
+                    fs::write(&abs, bytes).map_err(Error::Io)?;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let mut perms = fs::metadata(&abs).map_err(Error::Io)?.permissions();
+                        perms.set_mode(*mode);
+                        fs::set_permissions(&abs, perms).map_err(Error::Io)?;
+                    }
+                }
+                CheckoutRemovedPathBackup::Symlink { target } => {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::symlink;
+                        symlink(target, &abs).map_err(Error::Io)?;
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = target;
+                        return Err(Error::PathError(format!(
+                            "symlink restore for '{rel_path}' requires unix"
+                        )));
+                    }
+                }
+            }
+            Ok(())
+        })();
+    }
+
+    fn restore_chunk(work_tree: &Path, chunk: &[(String, Option<CheckoutRemovedPathBackup>)]) {
+        for (rel_path, backup) in chunk {
+            if let Some(backup) = backup {
+                Self::restore_one(work_tree, rel_path, backup);
+            }
+        }
+    }
+
+    fn restore_all(&mut self) {
+        while let Some((rel_path, backup)) = self.removed.pop() {
+            Self::restore_one(&self.work_tree, &rel_path, &backup);
+        }
+    }
+
+    fn record_removed(&mut self, rel_path: &str, backup: Option<CheckoutRemovedPathBackup>) {
+        if let Some(backup) = backup {
+            self.removed.push((rel_path.to_owned(), backup));
+        }
+    }
+
+    fn remove_file(&mut self, rel_path: &str) -> Result<()> {
+        let snapshot = Self::snapshot(&self.work_tree, rel_path)?;
+        match remove_checkout_worktree_file(&self.work_tree, rel_path) {
+            Ok(()) => {
+                self.record_removed(rel_path, snapshot);
+                Ok(())
+            }
+            Err(err) => {
+                self.restore_all();
+                Err(err)
+            }
+        }
+    }
+}
+
 fn remove_checkout_files_parallel_cancellable(
     work_tree: &Path,
     paths: &[String],
     options: ParallelOptions,
     progress: &mut dyn ProgressSink,
     cancel: &dyn Cancel,
+    delete_rollback: &mut CheckoutPerFileDeleteRollback,
 ) -> Result<(HashSet<String>, Vec<PathBuf>)> {
     let mut parallel_deleted_paths = HashSet::new();
     let mut deleted_abs_paths = Vec::new();
     let wt = work_tree.to_path_buf();
     for chunk in paths.chunks(PARALLEL_DELETE_CANCEL_CHUNK) {
         crate::progress::poll_cancel(progress, cancel)?;
-        try_par_map(chunk, options, 0, |rel_path| {
+        let snapshots: Result<Vec<(String, Option<CheckoutRemovedPathBackup>)>> = chunk
+            .iter()
+            .map(|rel_path| {
+                Ok((
+                    rel_path.clone(),
+                    CheckoutPerFileDeleteRollback::snapshot(work_tree, rel_path)?,
+                ))
+            })
+            .collect();
+        let snapshots = snapshots?;
+        match try_par_map(chunk, options, 0, |rel_path| {
             remove_checkout_worktree_file(&wt, rel_path)
-        })
-        .map_err(|e: ParallelHashError<Error>| match e {
-            ParallelHashError::Task(err) => err,
-        })?;
-        for path in chunk {
-            let abs = checkout_stored_worktree_abs(work_tree, path);
-            parallel_deleted_paths.insert(path.clone());
-            deleted_abs_paths.push(abs);
-            progress.inc(1);
-            crate::progress::poll_cancel(progress, cancel)?;
+        }) {
+            Ok(_) => {
+                for (rel_path, snapshot) in snapshots {
+                    delete_rollback.record_removed(&rel_path, snapshot);
+                    let abs = checkout_stored_worktree_abs(work_tree, &rel_path);
+                    parallel_deleted_paths.insert(rel_path);
+                    deleted_abs_paths.push(abs);
+                    progress.inc(1);
+                    crate::progress::poll_cancel(progress, cancel)?;
+                }
+            }
+            Err(e) => {
+                CheckoutPerFileDeleteRollback::restore_chunk(work_tree, &snapshots);
+                delete_rollback.restore_all();
+                return Err(match e {
+                    ParallelHashError::Task(err) => err,
+                });
+            }
         }
     }
     Ok((parallel_deleted_paths, deleted_abs_paths))
@@ -1788,6 +1949,7 @@ fn checkout_bulk_mod_delete_tree_changes(
         }
         per_file_deletes.push(path.clone());
     }
+    let mut delete_rollback = CheckoutPerFileDeleteRollback::new(work_tree);
     let mut parallel_deleted_paths: HashSet<String> = HashSet::new();
     if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
         let policy = repo.thread_policy();
@@ -1798,6 +1960,7 @@ fn checkout_bulk_mod_delete_tree_changes(
             options,
             progress,
             cancel,
+            &mut delete_rollback,
         )?;
         deleted_abs_paths.extend(abs_paths);
         parallel_deleted_paths.extend(parallel_set);
@@ -1817,7 +1980,7 @@ fn checkout_bulk_mod_delete_tree_changes(
                 remove_uninitialized_gitlink_worktree(&abs);
                 deleted_abs_paths.push(abs);
             } else if !parallel_deleted_paths.contains(path) {
-                remove_checkout_worktree_file(work_tree, path)?;
+                delete_rollback.remove_file(path)?;
                 deleted_abs_paths.push(checkout_stored_worktree_abs(work_tree, path));
             }
         }
@@ -1919,6 +2082,7 @@ fn checkout_bulk_deleted_tree_changes(
         }
         per_file_deletes.push(path.clone());
     }
+    let mut delete_rollback = CheckoutPerFileDeleteRollback::new(work_tree);
     if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
         let config = repo.config()?;
         let policy = repo.thread_policy();
@@ -1929,6 +2093,7 @@ fn checkout_bulk_deleted_tree_changes(
             options,
             progress,
             cancel,
+            &mut delete_rollback,
         )?;
         deleted_abs_paths.extend(abs_paths);
         parallel_deleted_paths.extend(parallel_set);
@@ -1950,7 +2115,7 @@ fn checkout_bulk_deleted_tree_changes(
                 remove_uninitialized_gitlink_worktree(&abs);
                 deleted_abs_paths.push(abs);
             } else if !parallel_deleted_paths.contains(path) {
-                remove_checkout_worktree_file(work_tree, path)?;
+                delete_rollback.remove_file(path)?;
                 deleted_abs_paths.push(checkout_stored_worktree_abs(work_tree, path));
             }
         }
@@ -2259,6 +2424,7 @@ fn checkout_tree_changes_with_progress(
         }
         per_file_deletes.push(path.clone());
     }
+    let mut delete_rollback = CheckoutPerFileDeleteRollback::new(work_tree);
     if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
         let policy = repo.thread_policy();
         let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
@@ -2268,6 +2434,7 @@ fn checkout_tree_changes_with_progress(
             options,
             &mut progress,
             cancel,
+            &mut delete_rollback,
         )?;
         deleted_abs_paths.extend(abs_paths);
         parallel_deleted_paths.extend(parallel_set);
@@ -2288,7 +2455,7 @@ fn checkout_tree_changes_with_progress(
                             remove_uninitialized_gitlink_worktree(&abs);
                             deleted_abs_paths.push(abs);
                         } else if !parallel_deleted_paths.contains(path) {
-                            remove_checkout_worktree_file(work_tree, path)?;
+                            delete_rollback.remove_file(path)?;
                             deleted_abs_paths.push(checkout_stored_worktree_abs(work_tree, path));
                         }
                     }
