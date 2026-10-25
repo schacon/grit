@@ -28,7 +28,7 @@ pub(crate) use shallow_upload::{compute_shallow_response, ShallowRequest};
 
 pub use receive_pack::{
     receive_pack, receive_pack_with_hook, HookRunRecord, ReceiveHook, ReceiveOutcome,
-    ReceivePolicy, RefCommand, RefUpdateRefusal, RefUpdateResult, UnpackError,
+    ReceivePolicy, RefCommand, RefUpdateRefusal, RefUpdateResult, RejectedObject, UnpackError,
 };
 pub use ref_update_policy::{checked_out_branch, head_branch, validate_ref_update, HeadBranches};
 pub use upload_pack::upload_pack;

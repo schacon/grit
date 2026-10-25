@@ -8,11 +8,14 @@ use super::{
     write_line, Packet, Peel, ProtocolVersion, Result, ServeError, ServeOptions,
 };
 use crate::config::ConfigSet;
+use crate::fsck_msg_policy::{ObjectFsckPolicy, SkipListError};
+use crate::fsck_standalone::FsckError;
 use crate::hooks::{run_hook_in_git_dir, HookResult};
 use crate::index_pack::{install_pack_path, IngestPackOptions};
 use crate::objects::pack_stream_scan::{PackStreamScanError, PackStreamScanner};
-use crate::objects::ObjectId;
+use crate::objects::{ObjectId, ObjectKind};
 use crate::odb::Odb;
+use crate::parallel::{try_par_map, ParallelHashError, ParallelOp};
 use crate::receive_pack::{max_input_size_from_config, should_use_unpack_objects};
 use crate::receive_quarantine::ReceiveQuarantine;
 use crate::repo::Repository;
@@ -33,8 +36,8 @@ const CAPABILITIES: &[&str] = &[
     "ofs-delta",
 ];
 
-/// Which ref updates the server refuses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Which pushed objects and ref updates the server refuses.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceivePolicy {
     /// Refuse branch (`refs/heads/*`) updates that would discard commits
     /// (`receive.denyNonFastForwards`). Other refs are not checked.
@@ -47,6 +50,11 @@ pub struct ReceivePolicy {
     /// Refuse to delete the branch `HEAD` points at, in a bare repository as
     /// well as one with a working tree (`receive.denyDeleteCurrent`).
     pub deny_delete_current: bool,
+    /// Check every pushed commit, tree and tag with this policy before any of
+    /// them enters the repository (`receive.fsckObjects`). One refused object
+    /// refuses the whole push with [`UnpackError::Rejected`]. `None` skips the
+    /// check.
+    pub fsck_objects: Option<ObjectFsckPolicy>,
 }
 
 impl Default for ReceivePolicy {
@@ -56,6 +64,7 @@ impl Default for ReceivePolicy {
             deny_deletes: false,
             deny_current_branch: true,
             deny_delete_current: true,
+            fsck_objects: None,
         }
     }
 }
@@ -68,6 +77,12 @@ impl ReceivePolicy {
     /// allow it (this server does not update the working tree).
     /// `receive.denyDeleteCurrent` is the same, except that `updateInstead`
     /// refuses: there is no working tree to update for a deleted branch.
+    ///
+    /// Pushed objects are checked when `receive.fsckObjects` is true, or when it
+    /// is unset and `transfer.fsckObjects` is true. A value that is not a
+    /// boolean turns the check on rather than silently leaving it off. The
+    /// check uses `receive.fsck.<msg-id>` overrides and `receive.fsck.skipList`
+    /// (see [`ObjectFsckPolicy::from_config`]).
     ///
     /// # Parameters
     ///
@@ -87,12 +102,40 @@ impl ReceivePolicy {
                     || (update_instead_allows && v == "updateinstead")
             })
         };
+        let explicit = |key: &str| config.get_bool(key).map(|r| r.unwrap_or(true));
+        let fsck = explicit("receive.fsckObjects")
+            .or_else(|| explicit("transfer.fsckObjects"))
+            .unwrap_or(false);
         Self {
             deny_non_fast_forwards: flag("receive.denyNonFastForwards"),
             deny_deletes: flag("receive.denyDeletes"),
             deny_current_branch: !allows("receive.denyCurrentBranch", true),
             deny_delete_current: !allows("receive.denyDeleteCurrent", false),
+            fsck_objects: fsck.then(|| ObjectFsckPolicy::from_config(config, "receive.fsck")),
         }
+    }
+}
+
+/// A pushed object refused by [`ReceivePolicy::fsck_objects`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RejectedObject {
+    /// The refused object.
+    pub oid: ObjectId,
+    /// Its type.
+    pub kind: ObjectKind,
+    /// The error-level problem found in it.
+    pub error: FsckError,
+}
+
+impl std::fmt::Display for RejectedObject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} {} refused: {}",
+            self.kind,
+            self.oid.to_hex(),
+            self.error.report_line()
+        )
     }
 }
 
@@ -237,6 +280,13 @@ pub enum UnpackError {
     /// corrupt object, failed connectivity check, ...).
     #[error(transparent)]
     Ingest(Box<crate::error::Error>),
+    /// A pushed object failed [`ReceivePolicy::fsck_objects`].
+    #[error("{0}")]
+    Rejected(RejectedObject),
+    /// The `receive.fsck.skipList` file could not be loaded, so no object
+    /// could be checked.
+    #[error(transparent)]
+    FsckSkipList(#[from] SkipListError),
     /// Reading the client stream or writing the spooled pack failed.
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -461,6 +511,10 @@ pub fn receive_pack_with_hook(
             let odb = q.odb();
             spool_push_pack(input, &odb, max_input)
                 .and_then(|pack| ingest_spooled_pack(&odb, pack, cfg.as_ref()))
+                .and_then(|indexed| match &policy.fsck_objects {
+                    Some(fsck) => check_received_objects(repo, &odb, indexed, cfg.as_ref(), fsck),
+                    None => Ok(()),
+                })
                 .err()
         }
         None => None,
@@ -1020,13 +1074,62 @@ fn read_some(input: &mut dyn Read, buf: &mut [u8]) -> std::io::Result<usize> {
     }
 }
 
+/// Check the objects a push stored in the quarantine `odb` against `fsck`.
+///
+/// `indexed` lists the objects of an installed pack; `None` means the pack was
+/// exploded into loose objects, which are then all the quarantine holds.
+fn check_received_objects(
+    repo: &Repository,
+    odb: &Odb,
+    indexed: Option<HashSet<ObjectId>>,
+    cfg: &ConfigSet,
+    fsck: &ObjectFsckPolicy,
+) -> std::result::Result<(), UnpackError> {
+    let checker = fsck.checker(odb.hash_algo(), repo.git_dir(), repo.environment())?;
+    let mut received: Vec<ObjectId> = match indexed {
+        Some(ids) => ids.into_iter().collect(),
+        None => odb
+            .enumerate_local_loose_objects()?
+            .into_iter()
+            .map(|(oid, _)| oid)
+            .collect(),
+    };
+    received.sort_unstable();
+    let parallel = repo
+        .thread_policy()
+        .try_resolve(ParallelOp::IndexPack, cfg)
+        .map_err(crate::error::Error::from)?;
+    let verdicts = try_par_map(&received, parallel, received.len(), |oid| {
+        if odb.read_info(oid)?.kind == ObjectKind::Blob {
+            return Ok(None);
+        }
+        let obj = odb.read(oid)?;
+        Ok(checker
+            .check(oid, obj.kind, &obj.data)
+            .err()
+            .map(|error| RejectedObject {
+                oid: *oid,
+                kind: obj.kind,
+                error,
+            }))
+    })
+    .map_err(|ParallelHashError::Task(e): ParallelHashError<crate::error::Error>| e)?;
+    match verdicts.into_iter().flatten().next() {
+        Some(rejected) => Err(UnpackError::Rejected(rejected)),
+        None => Ok(()),
+    }
+}
+
 /// Store a spooled push pack: explode small packs into loose objects, index and
 /// install larger ones, per `receive.unpacklimit`.
+///
+/// Returns the ids of the installed pack's objects; `None` when the objects
+/// were unpacked as loose files.
 fn ingest_spooled_pack(
     odb: &Odb,
     pack: SpooledPack,
     cfg: &ConfigSet,
-) -> std::result::Result<(), UnpackError> {
+) -> std::result::Result<Option<HashSet<ObjectId>>, UnpackError> {
     if should_use_unpack_objects(&pack.header, cfg) {
         let mut reader = BufReader::with_capacity(SPOOL_CHUNK, pack.file.reopen()?);
         unpack_objects(
@@ -1038,10 +1141,10 @@ fn ingest_spooled_pack(
                 ..UnpackOptions::default()
             },
         )?;
-        return Ok(());
+        return Ok(None);
     }
     let path = pack.file.into_temp_path();
-    install_pack_path(
+    let installed = install_pack_path(
         &path,
         odb,
         &IngestPackOptions {
@@ -1052,7 +1155,7 @@ fn ingest_spooled_pack(
             ..Default::default()
         },
     )?;
-    Ok(())
+    Ok(Some(installed.object_ids))
 }
 
 #[cfg(test)]
