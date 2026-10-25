@@ -19,12 +19,13 @@ use grit_lib::diff::{
     apply_diff_filter, apply_rename_detection_to_diff_entries, build_file_diffs, commit_diff_files,
     diff_commits_with_renames_and_policy, diff_index_to_tree_with_renames,
     diff_index_to_worktree_with_renames, diff_trees_with_renames_and_policy,
-    hunk_ids_with_duplicate_peers, line_change_counts, peer_hunks_by_primary_path,
-    peer_scope_includes_path, read_submodule_head_oid, read_worktree_side_bytes_for_diff,
+    for_each_tree_diff_structured, hunk_ids_with_duplicate_peers, line_change_counts,
+    peer_hunks_by_primary_path, peer_scope_includes_path, read_submodule_head_oid,
+    read_worktree_side_bytes_for_diff,
     structured::{
         format_hunk_range, structured_file_diff, SideBytes, StructuredFileDiff, StructuredLineKind,
     },
-    submodule_porcelain_flags, tree_diff_structured_entry, tree_diff_structured_parallel,
+    submodule_porcelain_flags, tree_diff_structured_parallel,
     write_patch, write_patch_resolved, DiffDetail, DiffEntry, DiffFilesOutput,
     DiffIndexToWorktreeOptions, DiffMerges, DiffOptions, DiffSide, DiffStatus, PatchResolvedSide,
     PatchSide, PatchTextOptions, TreeDiffStructured,
@@ -2271,19 +2272,32 @@ fn stream_tree_patch_diff(
     let path_display = PathDisplayOptions::from_repo(repo).ok();
     let color = diff_render::use_color();
     let mut stdout = std::io::stdout();
-    let diff_options = diff_options.cap_word_level_inline_for_changed_files(entries.len());
-    for (index, entry) in entries.iter().enumerate() {
-        let structured = tree_diff_structured_entry(repo.odb(), entry, &diff_options)
-            .context("structured diff")?;
-        let file = file_diff_from_tree_structured(structured);
-        match mode {
-            OutputMode::Human => render_file(&mut stdout, &file, color, path_display.as_ref())?,
-            OutputMode::Markdown => {
-                markdown::print_diff_file(&mut stdout, &file, path_display.as_ref(), index > 0)?
+    let config = repo.config().context("could not load config")?;
+    let thread_policy = repo.thread_policy();
+    let mut index = 0usize;
+    for_each_tree_diff_structured(
+        repo.odb(),
+        entries,
+        diff_options,
+        config.as_ref(),
+        &thread_policy,
+        |structured| {
+            let file = file_diff_from_tree_structured(structured);
+            let map_cli_err = |e: anyhow::Error| grit_lib::error::Error::PathError(e.to_string());
+            match mode {
+                OutputMode::Human => render_file(&mut stdout, &file, color, path_display.as_ref())
+                    .map_err(map_cli_err)?,
+                OutputMode::Markdown => {
+                    markdown::print_diff_file(&mut stdout, &file, path_display.as_ref(), index > 0)
+                        .map_err(map_cli_err)?
+                }
+                OutputMode::Json => unreachable!("stream delivery is not used for JSON"),
             }
-            OutputMode::Json => unreachable!("stream delivery is not used for JSON"),
-        }
-    }
+            index += 1;
+            Ok(())
+        },
+    )
+    .context("structured diff")?;
     Ok(DiffOutcome {
         changed: true,
         files: Vec::new(),
@@ -3067,5 +3081,144 @@ mod tests {
         assert_eq!(expand_tabs("ü\tc", 0), "ü       c");
         assert_eq!(expand_tabs("\t", 5), "   ");
         assert_eq!(expand_tabs("", 0), "");
+    }
+
+    mod stream_output_parity {
+        use super::super::{
+            file_diff_from_tree_structured, render_file, DiffFormatArgs, PathDisplayOptions,
+        };
+        use crate::markdown;
+        use crate::output::OutputMode;
+        use grit_lib::diff::{
+            diff_trees, for_each_tree_diff_structured, tree_diff_structured_parallel, write_patch,
+            write_patch_structured, DiffEntry, DiffOptions, PatchTextOptions,
+        };
+        use grit_lib::objects::{serialize_tree, ObjectKind, TreeEntry};
+        use grit_lib::repo::{InitOptions, Repository};
+
+        fn repo_with_range() -> (tempfile::TempDir, Repository, Vec<DiffEntry>) {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+            let odb = repo.odb();
+            let tree = |tag: &str| {
+                let entries: Vec<TreeEntry> = (0..6)
+                    .map(|i| {
+                        let oid = odb
+                            .write(
+                                ObjectKind::Blob,
+                                format!("{tag} {i}\nsecond line\n").as_bytes(),
+                            )
+                            .expect("blob");
+                        TreeEntry {
+                            mode: 0o100644,
+                            name: format!("dir/f{i}.txt").into_bytes(),
+                            oid,
+                        }
+                    })
+                    .collect();
+                odb.write(ObjectKind::Tree, &serialize_tree(&entries))
+                    .expect("tree")
+            };
+            let old_tree = tree("old");
+            let new_tree = tree("new");
+            let entries =
+                diff_trees(odb, Some(&old_tree), Some(&new_tree), "").expect("diff entries");
+            (dir, repo, entries)
+        }
+
+        fn render_human_or_markdown(
+            repo: &Repository,
+            entries: &[DiffEntry],
+            mode: OutputMode,
+            stream: bool,
+        ) -> Vec<u8> {
+            let config = repo.config().expect("config");
+            let thread_policy = repo.thread_policy();
+            let diff_options = DiffOptions::default().with_word_level_inline(false);
+            let path_display = PathDisplayOptions::from_repo(repo).ok();
+            let mut buf = Vec::new();
+            let mut render_one = |index: usize, structured| {
+                let file = file_diff_from_tree_structured(structured);
+                match mode {
+                    OutputMode::Human => {
+                        render_file(&mut buf, &file, false, path_display.as_ref()).expect("human")
+                    }
+                    OutputMode::Markdown => {
+                        markdown::print_diff_file(&mut buf, &file, path_display.as_ref(), index > 0)
+                            .expect("markdown")
+                    }
+                    OutputMode::Json => unreachable!(),
+                }
+            };
+            if stream {
+                let mut index = 0usize;
+                for_each_tree_diff_structured(
+                    repo.odb(),
+                    entries,
+                    diff_options,
+                    config.as_ref(),
+                    &thread_policy,
+                    |structured| {
+                        render_one(index, structured);
+                        index += 1;
+                        Ok(())
+                    },
+                )
+                .expect("stream render");
+            } else {
+                let rows = tree_diff_structured_parallel(
+                    repo.odb(),
+                    entries.to_vec(),
+                    config.as_ref(),
+                    &thread_policy,
+                    diff_options,
+                )
+                .expect("collect structured");
+                for (index, row) in rows.into_iter().enumerate() {
+                    render_one(index, row);
+                }
+            }
+            buf
+        }
+
+        #[test]
+        fn human_stream_matches_collected() {
+            let (_dir, repo, entries) = repo_with_range();
+            let collected = render_human_or_markdown(&repo, &entries, OutputMode::Human, false);
+            let streamed = render_human_or_markdown(&repo, &entries, OutputMode::Human, true);
+            assert_eq!(collected, streamed);
+        }
+
+        #[test]
+        fn markdown_stream_matches_collected() {
+            let (_dir, repo, entries) = repo_with_range();
+            let collected = render_human_or_markdown(&repo, &entries, OutputMode::Markdown, false);
+            let streamed = render_human_or_markdown(&repo, &entries, OutputMode::Markdown, true);
+            assert_eq!(collected, streamed);
+        }
+
+        #[test]
+        fn patch_text_pipeline_matches_collected() {
+            let (_dir, repo, entries) = repo_with_range();
+            let config = repo.config().expect("config");
+            let thread_policy = repo.thread_policy();
+            let diff_options = DiffOptions::default();
+            let patch_opts =
+                PatchTextOptions::from_repo(&repo, diff_options.clone()).expect("patch opts");
+            let mut pipelined = Vec::new();
+            write_patch(&repo, &entries, &patch_opts, &mut pipelined).expect("write_patch");
+            let structured = tree_diff_structured_parallel(
+                repo.odb(),
+                entries,
+                config.as_ref(),
+                &thread_policy,
+                diff_options,
+            )
+            .expect("structured");
+            let mut collected = Vec::new();
+            write_patch_structured(&repo, &structured, &patch_opts, &mut collected)
+                .expect("write_patch_structured");
+            assert_eq!(pipelined, collected);
+        }
     }
 }

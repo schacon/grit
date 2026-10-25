@@ -6,6 +6,7 @@ use crate::error::{Error, Result};
 use crate::objects::pack_store::PackReadContextGuard;
 use crate::objects::ObjectId;
 use crate::odb::Odb;
+use crate::parallel::run_ordered_batches;
 use crate::parallel::{try_par_map_with_local, ParallelHashError};
 use crate::parallel::{ParallelOp, ParallelOptions, ThreadPolicy};
 use std::num::NonZeroUsize;
@@ -226,9 +227,10 @@ pub fn tree_diff_structured_entry(
     })
 }
 
-/// Visit structured tree diffs one entry at a time (serial blob loads and hunk generation).
+/// Visit structured tree diffs in path order without retaining every file's hunks at once.
 ///
-/// Use this when rendering or writing patch output should not retain every file's hunks at once.
+/// When thread policy allows, workers compute up to about `2 × threads` entries ahead while
+/// the callback consumes results strictly in order.
 ///
 /// # Errors
 ///
@@ -237,16 +239,37 @@ pub fn for_each_tree_diff_structured(
     odb: &Odb,
     entries: &[DiffEntry],
     diff_options: DiffOptions,
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
     mut visit: impl FnMut(TreeDiffStructured) -> Result<()>,
 ) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
     }
     let diff_options = diff_options.cap_word_level_inline_for_changed_files(entries.len());
-    for entry in entries {
-        visit(tree_diff_structured_entry(odb, entry, &diff_options)?)?;
+    let par_opts = per_entry_parallel_options(thread_policy, config, entries.len());
+    let n_workers = par_opts.threads.get();
+    if n_workers <= 1 || entries.len() < 2 {
+        for entry in entries {
+            visit(tree_diff_structured_entry(odb, entry, &diff_options)?)?;
+        }
+        return Ok(());
     }
-    Ok(())
+    let line_diff_opts = diff_options;
+    let store = odb.pack_store_for(odb.objects_dir());
+    run_ordered_batches(
+        entries,
+        1,
+        n_workers,
+        || PackReadContextGuard::install(Arc::clone(&store)),
+        move |_ctx, entry| tree_diff_structured_entry(odb, entry, &line_diff_opts),
+        move |_batch, rows| {
+            for row in rows {
+                visit(row)?;
+            }
+            Ok(())
+        },
+    )
 }
 
 /// Load sides and compute structured line diffs for each entry in parallel.

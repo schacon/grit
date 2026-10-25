@@ -155,12 +155,19 @@ pub fn build_file_diffs_streaming(
     odb: &Odb,
     entries: Vec<DiffEntry>,
     diff_options: DiffOptions,
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
     mut emit: impl FnMut(FileDiff) -> Result<()>,
 ) -> Result<()> {
     use super::tree_content::for_each_tree_diff_structured;
-    for_each_tree_diff_structured(odb, &entries, diff_options, |structured| {
-        emit(file_diff_from_structured(structured))
-    })
+    for_each_tree_diff_structured(
+        odb,
+        &entries,
+        diff_options,
+        config,
+        thread_policy,
+        |structured| emit(file_diff_from_structured(structured)),
+    )
 }
 
 /// Git `--name-status` letter for a diff entry (uppercase status + rename score suffix).

@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Write;
+use std::sync::Arc;
 
 use super::structured::{StructuredFileDiff, StructuredLine, StructuredLineKind};
 use crate::attributes::load_gitattributes_for_check_attr_source;
@@ -14,10 +15,12 @@ use crate::diff::options::DiffOptions;
 use crate::error::{Error, Result};
 use crate::index::Index;
 use crate::merge_file;
+use crate::objects::pack_store::PackReadContextGuard;
 use crate::objects::CommitData;
 use crate::objects::{parse_commit, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::oid_abbrev_cache::OidAbbrevCache;
+use crate::parallel::{run_ordered_batches, ParallelOp};
 use crate::quote_path::format_diff_path_with_prefix;
 use crate::repo::Repository;
 use crate::userdiff::{matcher_for_path_parsed, FuncnameMatcher};
@@ -112,20 +115,62 @@ pub fn write_patch<W: Write>(
     let mut abbrev_cache = OidAbbrevCache::new(abbrev_len);
     let oids = entries.iter().flat_map(|e| [e.old_oid, e.new_oid]);
     abbrev_cache.warm_for_patch_batch(repo, oids, &thread_policy, &config)?;
-    for entry in entries {
-        write_diff_entry_patch(
-            out,
-            repo,
-            odb,
-            entry,
-            &log_opts,
-            &mut abbrev_cache,
-            None,
-            DiffEntryPatchBinaryFormat::GitApplyBinaryPatch,
-            &config,
-        )?;
+    let mut par_opts = thread_policy.resolve(ParallelOp::DiffContent, &config);
+    par_opts.min_items = 0;
+    par_opts.min_total_bytes = None;
+    let n_workers = par_opts.threads.get();
+    if n_workers <= 1 || entries.len() < 2 {
+        for entry in entries {
+            write_diff_entry_patch(
+                out,
+                repo,
+                odb,
+                entry,
+                &log_opts,
+                &mut abbrev_cache,
+                None,
+                DiffEntryPatchBinaryFormat::GitApplyBinaryPatch,
+                &config,
+            )?;
+        }
+        return Ok(());
     }
-    Ok(())
+    let store = odb.pack_store_for(odb.objects_dir());
+    let warmed_cache = abbrev_cache;
+    struct PatchWriteWorker {
+        _read: PackReadContextGuard,
+        abbrev: OidAbbrevCache,
+    }
+    run_ordered_batches(
+        entries,
+        1,
+        n_workers,
+        || PatchWriteWorker {
+            _read: PackReadContextGuard::install(Arc::clone(&store)),
+            abbrev: warmed_cache.clone(),
+        },
+        |worker, entry| {
+            let mut buf = Vec::new();
+            write_diff_entry_patch(
+                &mut buf,
+                repo,
+                odb,
+                entry,
+                &log_opts,
+                &mut worker.abbrev,
+                None,
+                DiffEntryPatchBinaryFormat::GitApplyBinaryPatch,
+                &config,
+            )?;
+            Ok(buf)
+        },
+        |_batch, chunks: Vec<Vec<u8>>| {
+            for chunk in chunks {
+                out.write_all(&chunk)?;
+            }
+            Ok(())
+        },
+    )
 }
 
 /// Write patch text from precomputed [`TreeDiffStructured`](super::tree_content::TreeDiffStructured) rows.

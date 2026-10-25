@@ -58,10 +58,17 @@ fn streaming_patch_rows_match_build_file_diffs() {
     .expect("bulk");
 
     let mut streamed = Vec::new();
-    build_file_diffs_streaming(repo.odb(), entries, opts, |row| {
-        streamed.push(row);
-        Ok(())
-    })
+    build_file_diffs_streaming(
+        repo.odb(),
+        entries,
+        opts,
+        config.as_ref(),
+        &thread_policy,
+        |row| {
+            streamed.push(row);
+            Ok(())
+        },
+    )
     .expect("stream");
 
     assert_eq!(streamed.len(), bulk.files.len());
@@ -78,11 +85,20 @@ fn streaming_propagates_callback_errors() {
     let old_tree = tree_with_files(&repo, "a");
     let new_tree = tree_with_files(&repo, "b");
     let entries = diff_trees(repo.odb(), Some(&old_tree), Some(&new_tree), "").expect("diff");
-    let err = build_file_diffs_streaming(repo.odb(), entries, DiffOptions::default(), |_| {
-        Err(Error::DiffPath(DiffPathError::NoSuchPathInDiff {
-            path: "missing".into(),
-        }))
-    })
+    let config = repo.config().expect("config");
+    let thread_policy = ThreadPolicy::default();
+    let err = build_file_diffs_streaming(
+        repo.odb(),
+        entries,
+        DiffOptions::default(),
+        config.as_ref(),
+        &thread_policy,
+        |_| {
+            Err(Error::DiffPath(DiffPathError::NoSuchPathInDiff {
+                path: "missing".into(),
+            }))
+        },
+    )
     .expect_err("callback error");
     assert!(matches!(
         err,

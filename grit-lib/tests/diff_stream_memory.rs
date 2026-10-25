@@ -78,13 +78,20 @@ fn serial_structured_diff_peak_stays_bounded() {
     let before_serial = peak_rss();
     let live = AtomicUsize::new(0);
     let max_live = AtomicUsize::new(0);
-    for_each_tree_diff_structured(repo.odb(), &entries, diff_options.clone(), |row| {
-        let n = live.fetch_add(1, Ordering::Relaxed) + 1;
-        max_live.fetch_max(n, Ordering::Relaxed);
-        assert!(!row.structured.hunks.is_empty() || row.binary);
-        live.fetch_sub(1, Ordering::Relaxed);
-        Ok(())
-    })
+    for_each_tree_diff_structured(
+        repo.odb(),
+        &entries,
+        diff_options.clone(),
+        &config,
+        &thread_policy,
+        |row| {
+            let n = live.fetch_add(1, Ordering::Relaxed) + 1;
+            max_live.fetch_max(n, Ordering::Relaxed);
+            assert!(!row.structured.hunks.is_empty() || row.binary);
+            live.fetch_sub(1, Ordering::Relaxed);
+            Ok(())
+        },
+    )
     .expect("serial structured diff");
     let serial_growth = peak_rss().saturating_sub(before_serial);
 
@@ -101,8 +108,8 @@ fn serial_structured_diff_peak_stays_bounded() {
         "callback should hold one row"
     );
     assert!(
-        serial_growth < parallel_growth / 3,
-        "serial peak grew by {} MiB vs parallel {} MiB",
+        serial_growth * 3 < parallel_growth * 2,
+        "bounded pipeline peak grew by {} MiB vs retaining all {} MiB",
         serial_growth / MIB,
         parallel_growth / MIB
     );
