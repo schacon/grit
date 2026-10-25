@@ -1742,6 +1742,7 @@ fn repack_object_list(
             have_shallow_grafts: Some(shallow),
             use_bitmaps,
             exclude_objects: None,
+            peer_odb: None,
         },
         NameTrees::Yes,
     )?;

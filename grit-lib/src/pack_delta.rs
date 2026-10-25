@@ -472,6 +472,7 @@ mod tests {
             odb,
             &selection.send,
             &selection.have_closure,
+            selection.peer_held.as_deref(),
             &opts,
             &selection.name_hashes,
             None,
