@@ -575,28 +575,28 @@ Writing one 350 MB file to the work tree took grit 8–9 s and about 1 GB of mem
 - **The blob was copied three times.** The loose store copied the payload out of the inflate buffer. The work-tree conversion copied it again even when it changed nothing. Restore then re-read and copied the written file to check it.
 - **Nothing streamed.** `Odb::open_stream` read every stream to the end before returning it.
 
-Checkout now streams a regular file larger than 1 MiB straight from the object database into the work tree when no conversion applies to its path. That means no `ident`, `working-tree-encoding`, smudge filter or LF-to-CRLF setting; see [`worktree_conversion_is_identity`](rustdoc:grit_lib::worktree::crlf::worktree_conversion_is_identity). Loose objects and objects stored whole in a pack are inflated as the file is written ([`Odb::with_stream`](rustdoc:grit_lib::objects::odb::Odb::with_stream)). Pack deltas are still rebuilt in memory, as in Git. Choosing between the two paths costs no extra lookup: a loose object's header, or a whole pack entry's header, gives its size before anything is inflated. Hashing a work-tree file (the racy-clean checks in `switch`, `restore` and `status`) no longer copies files whose content goes into Git unchanged, and hashes files of 1 MiB or more in chunks.
+Checkout now streams a regular file larger than 1 MiB straight from the object database into the work tree when no conversion applies to its path. That means no `ident`, `working-tree-encoding`, smudge filter or LF-to-CRLF setting; see [`worktree_conversion_is_identity`](rustdoc:grit_lib::worktree::crlf::worktree_conversion_is_identity). Loose objects and objects stored whole in a pack are inflated as the file is written ([`Odb::with_stream`](rustdoc:grit_lib::objects::odb::Odb::with_stream)). Pack deltas are still rebuilt in memory, as in Git. Files at or under 1 MiB, which is nearly all of them, are still read with one lookup: a loose object's header, or a whole pack entry's header, gives the size before the body is inflated, so the size check is part of the read. A file that does stream is looked up twice, once to size it and once to open the stream, and a whole pack entry's bytes are checked against the pack index CRC before streaming, so a corrupt copy is never streamed. Streamed data goes to a temporary file next to the destination, which is renamed into place only after the object's size and zlib checksum have been verified. A corrupt object fails the checkout and leaves the old file, or no file, in place. Hashing a work-tree file (the racy-clean checks in `switch`, `restore` and `status`) no longer copies files whose content goes into Git unchanged, and hashes files of 1 MiB or more in chunks.
 
 Factory VM (4 vCPU), system `git 2.43.0`, release builds, `origin/main` (`5d5136859`) against this change in one sitting, `/usr/bin/time` wall time and peak RSS. The repository is the issue's: one 349 MB text file (`seq 1 40000000`) committed loose.
 
 | Command | Git | Grit before | Grit after |
 | --- | ---: | ---: | ---: |
-| `restore big.txt` | 0.94 s / 91 MB | 8.97 s / 1012 MB | **0.74 s / 14 MB** |
-| `switch main` (writes the file) | 0.92 s / 91 MB | 8.14 s / 1012 MB | **0.48 s / 15 MB** |
-| `restore` of 300 MB random bytes, packed | 0.43 s / 605 MB | 1.43 s / 1213 MB | **0.38 s / 314 MB** |
-| `clone` of a packed repository with both files | 1.71 s / 689 MB | 1.98 s / 1963 MB | **0.73 s / 399 MB** |
+| `restore big.txt` | 0.95 s / 91 MB | 9.33 s / 1011 MB | **0.78 s / 14 MB** |
+| `switch main` (writes the file) | 0.94 s / 91 MB | 8.21 s / 1012 MB | **0.48 s / 15 MB** |
+| `restore` of 300 MB random bytes, packed | 0.43 s / 605 MB | 1.53 s / 1213 MB | **0.45 s / 314 MB** |
+| `clone` of a packed repository with both files | 1.59 s / 689 MB | 2.12 s / 1963 MB | **0.72 s / 399 MB** |
 
-In the packed rows peak RSS includes the pages of the mapped pack read through while inflating. Git reads a packed blob under `core.bigFileThreshold` (512 MiB) into memory whole.
+In the packed rows peak RSS includes the pages of the mapped pack read through while inflating, and the time includes checking the pack entry against its index CRC before it is streamed. Git reads a packed blob under `core.bigFileThreshold` (512 MiB) into memory whole.
 
 The daily matrix row `switch/large-blob@big-asset` switches away from a 300 MB loose text file and back, so each run checks the racily clean file before deleting it and then writes it again. Committed in **`daily-large-blob-before.json`** and **`daily-large-blob-after.json`**:
 
 | Scenario | Git ms (before / after run) | Grit ms before → after | Grit ÷ Git before → after | Grit peak RSS before → after |
 | --- | ---: | ---: | ---: | ---: |
-| `switch/large-blob@big-asset` | 870 / 949 | 4691 → **773** | 5.39× → **0.82×** | 915 → **17** MiB |
+| `switch/large-blob@big-asset` | 870 / 905 | 4691 → **615** | 5.39× → **0.68×** | 915 → **16** MiB |
 
-Checkouts of many small files did not change: switching both ways between two commits that differ in every file of a 30 000-file tree measured 1.094 s → 1.090 s packed and 1.060 s → 1.044 s loose (hyperfine, 20 runs), and cloning that repository 513 → 514 ms.
+Checkouts of many small files did not change: switching both ways between two commits that differ in every file of a 30 000-file tree measured 1.195 s → 1.188 s packed and 1.167 s → 1.107 s loose (hyperfine, 20 runs), and cloning that repository 564 → 543 ms.
 
-`grit clone` of a repository whose big file is still loose takes 5.2 s and about 1.1 GB on this repository (Git: 1.0 s and 91 MB, copying the loose objects). Grit packs the objects for a local clone, and building that pack holds the big blob in memory. That pack-building path is separate from checkout and not changed here.
+`grit clone` of a repository whose big file is still loose takes 5.1 s and about 1.1 GB on this repository (Git: 1.0 s and 91 MB, copying the loose objects). Grit packs the objects for a local clone, and building that pack holds the big blob in memory. That pack-building path is separate from checkout and not changed here.
 
 The `checkout_large_blob_rss` integration test restores and switches to a 64 MiB blob, loose and packed, and fails if the process's peak RSS grows by 16 MiB or more. On `origin/main` it grows by 139 MiB.
 
