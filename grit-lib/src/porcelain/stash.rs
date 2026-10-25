@@ -19,8 +19,8 @@ use std::io;
 use std::path::Path;
 
 use crate::diff::{
-    diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees, format_mode,
-    worktree_differs_from_index_entry, zero_oid, DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
+    diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees, format_mode, zero_oid,
+    DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
 };
 use crate::error::{Error, Result};
 use crate::index::{index_file_mtime, Index, IndexEntry, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
@@ -42,6 +42,7 @@ use crate::pathspec::{
 };
 use crate::porcelain::branch_error::BranchError;
 use crate::porcelain::checkout::checkout_between_trees;
+use crate::porcelain::checkout::is_eligible_for_parallel_checkout;
 use crate::porcelain::checkout::smudge_bytes_for_worktree_path;
 use crate::porcelain::clean::{is_nested_git_worktree, path_in_nested_git_worktree};
 use crate::porcelain::commit::write_commit_object;
@@ -49,7 +50,10 @@ use crate::porcelain::hunk_select::{
     diff_options_for_hunk_select, resolve_selection, reverse_apply_patches_to_worktree,
     HunkSelection, WorktreeReverseApplyOptions,
 };
-use crate::porcelain::index_from_tree::{index_from_tree, index_from_tree_with_worktree_stats};
+use crate::porcelain::index_from_tree::{
+    index_from_tree_with_seeded_stats, index_from_tree_with_seeded_worktree_stats,
+    index_from_tree_with_worktree_stats,
+};
 use crate::porcelain::restore::{restore_paths, RestoreOptions, RestoreSource};
 use crate::porcelain::status::{
     collect_untracked_and_ignored_inner, expand_untracked_for_staging_with_rules, IgnoredMode,
@@ -467,19 +471,48 @@ fn staged_change_paths_for_options(
     Ok(filter_paths_by_pathspecs(paths, &options.pathspecs))
 }
 
+/// What [`has_stashable_changes`] found.
+enum StashableChanges {
+    /// Index and worktree match `HEAD`, and no wanted untracked files exist.
+    Nothing,
+    /// There is something to stash. `unstaged` is the index-to-worktree diff when the scan
+    /// computed one over an index that [`index_is_plain_for_stash`] accepts, so building the W
+    /// tree can reuse it instead of diffing the worktree again.
+    Found { unstaged: Option<Vec<DiffEntry>> },
+}
+
+/// Whether diffing `index` against the worktree gives the same result as diffing an index
+/// built from the tree `index` writes, seeded with its stat data: only plain stage-0 file
+/// entries, none of which carries a flag that a tree-built copy would lose.
+fn index_is_plain_for_stash(index: &Index) -> bool {
+    index.entries.iter().all(|e| {
+        e.stage() == 0
+            && e.mode != MODE_TREE
+            && !e.skip_worktree()
+            && !e.assume_unchanged()
+            && !e.intent_to_add()
+            && !e.fsmonitor_valid()
+    })
+}
+
 fn has_stashable_changes(
     repo: &Repository,
     work_tree: &Path,
     head_tree: &ObjectId,
     options: &StashPushOptions,
-) -> Result<bool> {
+) -> Result<StashableChanges> {
+    let found = |unstaged: Option<Vec<DiffEntry>>| Ok(StashableChanges::Found { unstaged });
     let mut index = repo.load_index()?;
     if options.mode == StashMode::StagedOnly {
-        return Ok(!staged_change_paths_for_options(repo, &index, head_tree, options)?.is_empty());
+        if staged_change_paths_for_options(repo, &index, head_tree, options)?.is_empty() {
+            return Ok(StashableChanges::Nothing);
+        }
+        return found(None);
     }
     if !diff_index_to_tree(repo.odb(), &index, Some(head_tree), true)?.is_empty() {
-        return Ok(true);
+        return found(None);
     }
+    let plain = index_is_plain_for_stash(&index);
     let include_untracked = options.include_untracked;
     let index_mtime = index_file_mtime(&repo.index_path());
     let worktree_rules = crate::worktree_rules::WorktreeRules::from_repository(repo, &index)?;
@@ -495,10 +528,10 @@ fn has_stashable_changes(
     let (unstaged, _) =
         diff_index_to_worktree_with_options(repo.odb(), &mut index, work_tree, diff_opts)?;
     if !unstaged.is_empty() {
-        return Ok(true);
+        return found(plain.then_some(unstaged));
     }
     if !include_untracked {
-        return Ok(false);
+        return Ok(StashableChanges::Nothing);
     }
     let worktree_rules = rules_arc
         .lock()
@@ -518,7 +551,10 @@ fn has_stashable_changes(
         &worktree_rules,
         None,
     )?;
-    Ok(!untracked.is_empty())
+    if untracked.is_empty() {
+        return Ok(StashableChanges::Nothing);
+    }
+    found(plain.then_some(unstaged))
 }
 
 fn collect_untracked_paths(repo: &Repository, work_tree: &Path) -> Result<Vec<String>> {
@@ -553,24 +589,33 @@ fn collect_untracked_paths(repo: &Repository, work_tree: &Path) -> Result<Vec<St
         .collect())
 }
 
+/// Stage every unstaged worktree change into `index`.
+///
+/// `precomputed` is the index-to-worktree diff of an index with the same entries and stat data
+/// as `index`; when absent the diff is computed here.
 fn apply_worktree_diff_to_index(
     repo: &Repository,
     work_tree: &Path,
     index: &mut Index,
+    precomputed: Option<Vec<DiffEntry>>,
 ) -> Result<()> {
     let index_mtime = index_file_mtime(&repo.index_path());
     let worktree_rules = crate::worktree_rules::WorktreeRules::from_repository(repo, index)?;
     let rules_arc = std::sync::Arc::new(std::sync::Mutex::new(worktree_rules));
-    let diff_opts = DiffIndexToWorktreeOptions {
-        index_mtime,
-        ignore_submodule_untracked: true,
-        repository_git_dir: Some(repo.git_dir().to_path_buf()),
-        config: repo.config().ok(),
-        worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
-        ..Default::default()
+    let unstaged = match precomputed {
+        Some(unstaged) => unstaged,
+        None => {
+            let diff_opts = DiffIndexToWorktreeOptions {
+                index_mtime,
+                ignore_submodule_untracked: true,
+                repository_git_dir: Some(repo.git_dir().to_path_buf()),
+                config: repo.config().ok(),
+                worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
+                ..Default::default()
+            };
+            diff_index_to_worktree_with_options(repo.odb(), index, work_tree, diff_opts)?.0
+        }
     };
-    let (unstaged, _) =
-        diff_index_to_worktree_with_options(repo.odb(), index, work_tree, diff_opts)?;
     let mut worktree_rules = rules_arc
         .lock()
         .map_err(|e| Error::Message(format!("worktree rules lock poisoned: {e}")))?;
@@ -653,6 +698,7 @@ fn stage_tracked_path_for_stash(
         WorktreeAddRefresh::ModeOnly { mode } => {
             if let Some(entry) = index.get_mut(rel_path.as_bytes(), 0) {
                 entry.mode = mode;
+                index.invalidate_cache_tree_for_path(rel_path.as_bytes());
             }
             Ok(())
         }
@@ -972,7 +1018,10 @@ pub(crate) fn preview_stash(
     }
 
     options.validate_staged_worktree(repo, work_tree, &head_tree)?;
-    if !has_stashable_changes(repo, work_tree, &head_tree, options)? {
+    if matches!(
+        has_stashable_changes(repo, work_tree, &head_tree, options)?,
+        StashableChanges::Nothing
+    ) {
         return Ok(None);
     }
 
@@ -1253,6 +1302,7 @@ fn build_stash_commit(
     }
 
     let partial_patches = resolve_partial_stash_patches(repo, options)?;
+    let mut reusable_unstaged = None;
     if let Some(ref patches) = partial_patches {
         if patches.is_empty() {
             return Ok(None);
@@ -1261,8 +1311,11 @@ fn build_stash_commit(
         if !has_stashable_changes_for_pathspecs(repo, work_tree, &head_tree, options)? {
             return Ok(None);
         }
-    } else if !has_stashable_changes(repo, work_tree, &head_tree, options)? {
-        return Ok(None);
+    } else {
+        match has_stashable_changes(repo, work_tree, &head_tree, options)? {
+            StashableChanges::Nothing => return Ok(None),
+            StashableChanges::Found { unstaged } => reusable_unstaged = unstaged,
+        }
     }
 
     let context = stash_context_message(repo, &head, &head_oid)?;
@@ -1317,7 +1370,10 @@ fn build_stash_commit(
     let w_tree = if options.mode == StashMode::StagedOnly {
         i_tree
     } else {
-        let mut w_index = index_from_tree(repo, &i_tree)?;
+        // Seeding stat data from the index I was written from lets the worktree diff below hash
+        // only files whose stat changed, and the primed cache-tree limits the W tree write to
+        // the directories those files invalidate.
+        let mut w_index = index_from_tree_with_seeded_stats(repo, &i_tree, &index)?;
         if let Some(ref patches) = partial_patches {
             apply_patch_to_index(
                 repo,
@@ -1338,7 +1394,7 @@ fn build_stash_commit(
                 &options.pathspecs,
             )?;
         } else {
-            apply_worktree_diff_to_index(repo, work_tree, &mut w_index)?;
+            apply_worktree_diff_to_index(repo, work_tree, &mut w_index, reusable_unstaged)?;
         }
         write_stash_tree_from_index(repo, &mut w_index)?
     };
@@ -1511,7 +1567,12 @@ pub(crate) fn push_stash(
                 }
                 StashMode::All => {
                     checkout_between_trees(repo, Some(&built.w_tree), &head_tree)?;
-                    let mut head_index = index_from_tree_with_worktree_stats(repo, &head_tree)?;
+                    // The checkout left fresh stat data for every path it rewrote; reuse it so
+                    // the refresh only hashes files whose stat does not match.
+                    let checked_out = repo.load_index()?;
+                    let mut head_index =
+                        index_from_tree_with_seeded_worktree_stats(repo, &head_tree, &checked_out)?;
+                    drop(checked_out);
                     repo.write_index(&mut head_index)?;
                 }
             }
@@ -1732,6 +1793,70 @@ pub(crate) fn clear_stashes(repo: &Repository) -> Result<usize> {
     Ok(count)
 }
 
+/// One filter-free regular file that stash apply writes from a stash tree blob.
+struct StashFileWrite<'a> {
+    rel_path: &'a str,
+    abs: std::path::PathBuf,
+    mode: u32,
+    oid: ObjectId,
+    file_attrs: crate::crlf::FileAttrs,
+}
+
+/// Write `jobs` into the worktree, spreading blob reads, conversion and writes over the
+/// checkout worker pool (`checkout.workers`). Parent directories must already exist.
+fn write_stash_files(
+    repo: &Repository,
+    rules: &WorktreeRules,
+    jobs: &[StashFileWrite<'_>],
+) -> Result<()> {
+    if jobs.is_empty() {
+        return Ok(());
+    }
+    let config = repo.config()?;
+    let options = repo
+        .thread_policy()
+        .resolve(crate::parallel::ParallelOp::Checkout, config.as_ref());
+    let conv = rules.conversion();
+    let smudge_context = crate::filter_process::checkout_smudge_context(repo);
+    let pack_store = repo.odb().pack_store_for(repo.odb().objects_dir());
+    crate::parallel::try_par_map_with_local(
+        jobs,
+        options,
+        0,
+        || {
+            crate::objects::pack_store::PackReadContextGuard::install(std::sync::Arc::clone(
+                &pack_store,
+            ))
+        },
+        |_, job| -> Result<()> {
+            let blob = repo.odb().read(&job.oid)?;
+            let oid_hex = job.oid.to_string();
+            let smudge_meta =
+                crate::filter_process::smudge_meta_for_checkout_blob(&smudge_context, &oid_hex);
+            let bytes = crate::crlf::convert_to_worktree_eager(
+                &blob.data,
+                job.rel_path,
+                conv,
+                &job.file_attrs,
+                Some(&oid_hex),
+                Some(&smudge_meta),
+                None,
+            )?;
+            write_regular_file_replacing_symlink(&job.abs, &bytes)?;
+            #[cfg(unix)]
+            if job.mode == MODE_EXECUTABLE {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&job.abs, fs::Permissions::from_mode(0o755))?;
+            }
+            Ok(())
+        },
+    )
+    .map_err(|e| match e {
+        crate::parallel::ParallelHashError::Task(err) => err,
+    })?;
+    Ok(())
+}
+
 /// Write one flattened tree entry into the worktree (blob, symlink, or gitlink).
 fn write_smudged_regular_file_replacing_symlink(
     repo: &Repository,
@@ -1825,6 +1950,36 @@ pub fn stash_worktree_change_paths(
     Ok(changes.into_iter().map(|(path, _)| path).collect())
 }
 
+/// Whether the cached stat data of `ie` proves the worktree file still matches the index.
+///
+/// `false` means "unknown", not "modified": callers must fall back to a content comparison.
+/// Racily clean entries (modified within the index file's mtime granularity) are never trusted.
+fn index_entry_stat_clean(
+    work_tree: &Path,
+    ie: &IndexEntry,
+    index_mtime: Option<(u32, u32)>,
+    stat_policy: crate::index::StatMatchPolicy,
+    trust_filemode: bool,
+) -> bool {
+    if ie.stat_cache_unset() || ie.mode == MODE_GITLINK {
+        return false;
+    }
+    let Ok(rel) = std::str::from_utf8(&ie.path) else {
+        return false;
+    };
+    let Ok(meta) = fs::symlink_metadata(work_tree.join(rel)) else {
+        return false;
+    };
+    if meta.is_dir() || meta.file_type().is_symlink() != (ie.mode == MODE_SYMLINK) {
+        return false;
+    }
+    if trust_filemode && crate::diff::mode_from_metadata(&meta) != ie.mode {
+        return false;
+    }
+    crate::diff::stat_matches_with_policy(ie, &meta, stat_policy)
+        && !crate::diff::entry_is_racy_with_policy(ie, index_mtime, stat_policy)
+}
+
 /// Refuse to apply when the stash would clobber a locally-modified file.
 pub fn check_stash_apply_would_overwrite_local_changes(
     repo: &Repository,
@@ -1838,6 +1993,14 @@ pub fn check_stash_apply_would_overwrite_local_changes(
     };
 
     let config = repo.config()?;
+    let stat_policy = crate::index::StatMatchPolicy::from_config(Some(config.as_ref()));
+    let trust_filemode = config
+        .get_bool("core.filemode")
+        .and_then(|r| r.ok())
+        .unwrap_or(true);
+    let index_mtime = crate::diff::index_mtime_for_diff(&current_index, None);
+    let comparer =
+        crate::diff::WorktreeEntryComparer::new(repo.git_dir(), work_tree, Some(config.as_ref()));
 
     for path in stash_worktree_change_paths(repo, stash_commit)? {
         let Some(idx_entry) = current_index.get(path.as_bytes(), 0) else {
@@ -1846,15 +2009,16 @@ pub fn check_stash_apply_would_overwrite_local_changes(
         if idx_entry.mode == MODE_GITLINK {
             continue;
         }
-        if worktree_differs_from_index_entry(
-            repo.odb(),
-            repo.git_dir(),
+        if index_entry_stat_clean(
             work_tree,
             idx_entry,
-            true,
-            Some(config.as_ref()),
-            None,
-        )? {
+            index_mtime,
+            stat_policy,
+            trust_filemode,
+        ) {
+            continue;
+        }
+        if comparer.differs(repo.odb(), idx_entry, true, None)? {
             return Err(Error::StashWouldOverwriteLocalChanges {
                 paths: path.clone(),
             });
@@ -2104,17 +2268,28 @@ fn apply_stash_commit(
     };
 
     // Read stash trees
-    let stash_tree_entries = flatten_tree_full_for_repo(repo, &stash_commit.tree, "")?;
-
     // Read HEAD-at-stash tree (base)
     let head_at_stash_tree = repo.odb().commit_tree(head_at_stash)?;
     let base_tree_entries = flatten_tree_full_for_repo(repo, &head_at_stash_tree, "")?;
 
-    let wt_changes = collect_flat_tree_worktree_changes(&base_tree_entries, &stash_tree_entries);
+    // Only the changed entries of the stash tree are kept, not the whole flattened tree.
+    let wt_changes: Vec<(String, Option<FlatTreeEntry>)> = {
+        let stash_tree_entries = flatten_tree_full_for_repo(repo, &stash_commit.tree, "")?;
+        collect_flat_tree_worktree_changes(&base_tree_entries, &stash_tree_entries)
+            .into_iter()
+            .map(|(path, entry)| (path, entry.cloned()))
+            .collect()
+    };
 
-    // Read index commit tree
+    // Read index commit tree; with nothing staged at stash time it is the base tree.
     let idx_tree = repo.odb().commit_tree(index_commit_oid)?;
-    let idx_tree_entries = flatten_tree_full_for_repo(repo, &idx_tree, "")?;
+    let idx_tree_loaded: Vec<FlatTreeEntry>;
+    let idx_tree_entries: &[FlatTreeEntry] = if idx_tree == head_at_stash_tree {
+        &base_tree_entries
+    } else {
+        idx_tree_loaded = flatten_tree_full_for_repo(repo, &idx_tree, "")?;
+        &idx_tree_loaded
+    };
     // Determine if HEAD has moved since the stash was created
     let current_head = resolve_head_for_repository(repo)?;
     let current_head_oid = current_head.oid().copied();
@@ -2159,184 +2334,191 @@ fn apply_stash_commit(
     }
 
     // Apply working tree changes (with three-way merge when HEAD has moved)
+    let mut prepared_dirs: HashSet<std::path::PathBuf> = HashSet::new();
+    let mut parallel_writes: Vec<StashFileWrite<'_>> = Vec::new();
     for (path, change) in &wt_changes {
+        // Deletions all ran in the first pass. Pruning directories here could remove the
+        // parent of a regular file still queued for `write_stash_files`.
+        let Some(entry) = change else {
+            continue;
+        };
         let file_path = work_tree.join(path);
-        match change {
-            Some(entry) => {
-                if let Some(parent) = file_path.parent() {
-                    // If a component of the parent is a file, remove it first
-                    let mut cur = work_tree.to_path_buf();
-                    if let Ok(rel) = file_path
-                        .parent()
-                        .unwrap_or(work_tree)
-                        .strip_prefix(work_tree)
-                    {
-                        for comp in rel.components() {
-                            cur.push(comp);
-                            if cur.exists() && !cur.is_dir() {
-                                let _ = fs::remove_file(&cur);
-                            }
+        if let Some(parent) = file_path.parent() {
+            // Entries of one tree never use another entry's path as a directory, so a
+            // parent prepared once stays a directory for the rest of this pass.
+            if !prepared_dirs.contains(parent) {
+                // If a component of the parent is a file, remove it first
+                let mut cur = work_tree.to_path_buf();
+                if let Ok(rel) = parent.strip_prefix(work_tree) {
+                    for comp in rel.components() {
+                        cur.push(comp);
+                        if cur.exists() && !cur.is_dir() {
+                            let _ = fs::remove_file(&cur);
                         }
                     }
-                    fs::create_dir_all(parent)?;
                 }
-                if entry.mode == MODE_GITLINK {
-                    if file_path.is_file() || file_path.is_symlink() {
-                        let _ = fs::remove_file(&file_path);
-                    } else if file_path.is_dir() {
-                        let git_meta = file_path.join(".git");
-                        if !(git_meta.is_file() || git_meta.is_dir()) {
-                            fs::remove_dir_all(&file_path)?;
-                        }
-                    }
-                    fs::create_dir_all(&file_path)?;
-                    continue;
-                }
-
-                let stash_blob = repo.odb().read(&entry.oid)?;
-
-                if entry.mode == MODE_SYMLINK {
-                    let target = String::from_utf8(stash_blob.data)
-                        .map_err(|_| Error::StashSymlinkNotUtf8)?;
-                    if file_path.exists() || file_path.symlink_metadata().is_ok() {
-                        let _ = fs::remove_file(&file_path);
-                    }
-                    #[cfg(unix)]
-                    std::os::unix::fs::symlink(&target, &file_path)?;
-                    // Windows lacks unprivileged symlinks; keep the worktree
-                    // populated by writing the target as a regular file.
-                    #[cfg(not(unix))]
-                    fs::write(&file_path, target.as_bytes())?;
-                } else if head_moved {
-                    // Three-way merge: base (head_at_stash), ours (current HEAD), theirs (stash)
-                    let base_content = flat_tree_lookup(&base_tree_entries, path)
-                        .and_then(|e| repo.odb().read(&e.oid).ok())
-                        .map(|o| o.data)
-                        .unwrap_or_default();
-                    let ours_content = flat_tree_lookup(current_head_entries, path)
-                        .and_then(|e| repo.odb().read(&e.oid).ok())
-                        .map(|o| o.data)
-                        .unwrap_or_default();
-                    let theirs_content = stash_blob.data;
-
-                    // If ours == base, no conflict (only stash changed this file)
-                    if ours_content == base_content {
-                        write_smudged_regular_file_replacing_symlink(
-                            repo,
-                            &worktree_rules,
-                            path,
-                            &file_path,
-                            entry.mode,
-                            &theirs_content,
-                            &entry.oid,
-                        )?;
-                    } else if ours_content == theirs_content {
-                        // Both changed the same way, no conflict
-                        let smudge_oid = flat_tree_lookup(current_head_entries, path)
-                            .map(|e| e.oid)
-                            .unwrap_or(entry.oid);
-                        write_smudged_regular_file_replacing_symlink(
-                            repo,
-                            &worktree_rules,
-                            path,
-                            &file_path,
-                            entry.mode,
-                            &ours_content,
-                            &smudge_oid,
-                        )?;
-                    } else {
-                        // Both sides changed differently — try content merge
-                        use crate::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
-                        let input = MergeInput {
-                            base: &base_content,
-                            ours: &ours_content,
-                            theirs: &theirs_content,
-                            label_ours: "Updated upstream",
-                            label_base: "Stashed changes",
-                            label_theirs: "Stashed changes",
-                            favor: MergeFavor::None,
-                            style: ConflictStyle::Merge,
-                            marker_size: 7,
-                            diff_algorithm: None,
-                            ignore_all_space: false,
-                            ignore_space_change: false,
-                            ignore_space_at_eol: false,
-                            ignore_cr_at_eol: false,
-                        };
-                        let output = merge(&input)?;
-                        let marker_oid = repo.odb().hash(ObjectKind::Blob, &output.content)?;
-                        let worktree_bytes = smudge_bytes_for_worktree_path(
-                            repo,
-                            &worktree_rules,
-                            path,
-                            entry.mode,
-                            &output.content,
-                            &marker_oid,
-                        )?;
-                        write_regular_file_replacing_symlink(&file_path, &worktree_bytes)?;
-                        if output.conflicts > 0 {
-                            has_conflicts = true;
-                            // Write conflict stages to index
-                            let path_bytes = path.as_bytes();
-                            // Remove existing stage-0 entry
-                            new_index
-                                .entries
-                                .retain(|e| e.path != path_bytes || e.stage() != 0);
-                            // Adding non-zero stages drops this path from any valid stage-0
-                            // cache-tree; invalidate it (Git's add_index_entry ->
-                            // cache_tree_invalidate_path) so a stale TREE extension is not written
-                            // alongside the conflicted index (otherwise GIT_TEST_CHECK_CACHE_TREE
-                            // rejects it with "corrupted cache-tree has entries not present in
-                            // index"; t7600 'merge with conflicted --autostash changes').
-                            new_index.invalidate_cache_tree_for_path(path_bytes);
-                            // Add stage entries
-                            if let Some(base_entry) = flat_tree_lookup(&base_tree_entries, path) {
-                                add_stage_entry(
-                                    &mut new_index,
-                                    path_bytes,
-                                    &base_entry.oid,
-                                    base_entry.mode,
-                                    1,
-                                );
-                            }
-                            if let Some(ours_entry) = flat_tree_lookup(current_head_entries, path) {
-                                let mode = current_index
-                                    .get(path_bytes, 0)
-                                    .map(|e| e.mode)
-                                    .unwrap_or(0o100644);
-                                add_stage_entry(
-                                    &mut new_index,
-                                    path_bytes,
-                                    &ours_entry.oid,
-                                    mode,
-                                    2,
-                                );
-                            }
-                            add_stage_entry(&mut new_index, path_bytes, &entry.oid, entry.mode, 3);
-                        }
-                    }
-                } else {
-                    write_smudged_regular_file_replacing_symlink(
-                        repo,
-                        &worktree_rules,
-                        path,
-                        &file_path,
-                        entry.mode,
-                        &stash_blob.data,
-                        &entry.oid,
-                    )?;
-                }
+                fs::create_dir_all(parent)?;
+                prepared_dirs.insert(parent.to_path_buf());
             }
-            None => {
-                // Deleted in stash
+        }
+        if entry.mode == MODE_GITLINK {
+            if file_path.is_file() || file_path.is_symlink() {
                 let _ = fs::remove_file(&file_path);
-                if let Some(parent) = file_path.parent() {
-                    remove_empty_dirs(parent, work_tree, repo.environment());
+            } else if file_path.is_dir() {
+                let git_meta = file_path.join(".git");
+                if !(git_meta.is_file() || git_meta.is_dir()) {
+                    fs::remove_dir_all(&file_path)?;
                 }
             }
+            fs::create_dir_all(&file_path)?;
+            continue;
+        }
+
+        if !head_moved && entry.mode != MODE_SYMLINK {
+            let file_attrs = worktree_rules.file_attrs(path, false);
+            if is_eligible_for_parallel_checkout(entry.mode, &file_attrs) {
+                parallel_writes.push(StashFileWrite {
+                    rel_path: path,
+                    abs: file_path,
+                    mode: entry.mode,
+                    oid: entry.oid,
+                    file_attrs,
+                });
+                continue;
+            }
+        }
+
+        let stash_blob = repo.odb().read(&entry.oid)?;
+
+        if entry.mode == MODE_SYMLINK {
+            let target =
+                String::from_utf8(stash_blob.data).map_err(|_| Error::StashSymlinkNotUtf8)?;
+            if file_path.exists() || file_path.symlink_metadata().is_ok() {
+                let _ = fs::remove_file(&file_path);
+            }
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&target, &file_path)?;
+            // Windows lacks unprivileged symlinks; keep the worktree
+            // populated by writing the target as a regular file.
+            #[cfg(not(unix))]
+            fs::write(&file_path, target.as_bytes())?;
+        } else if head_moved {
+            // Three-way merge: base (head_at_stash), ours (current HEAD), theirs (stash)
+            let base_content = flat_tree_lookup(&base_tree_entries, path)
+                .and_then(|e| repo.odb().read(&e.oid).ok())
+                .map(|o| o.data)
+                .unwrap_or_default();
+            let ours_content = flat_tree_lookup(current_head_entries, path)
+                .and_then(|e| repo.odb().read(&e.oid).ok())
+                .map(|o| o.data)
+                .unwrap_or_default();
+            let theirs_content = stash_blob.data;
+
+            // If ours == base, no conflict (only stash changed this file)
+            if ours_content == base_content {
+                write_smudged_regular_file_replacing_symlink(
+                    repo,
+                    &worktree_rules,
+                    path,
+                    &file_path,
+                    entry.mode,
+                    &theirs_content,
+                    &entry.oid,
+                )?;
+            } else if ours_content == theirs_content {
+                // Both changed the same way, no conflict
+                let smudge_oid = flat_tree_lookup(current_head_entries, path)
+                    .map(|e| e.oid)
+                    .unwrap_or(entry.oid);
+                write_smudged_regular_file_replacing_symlink(
+                    repo,
+                    &worktree_rules,
+                    path,
+                    &file_path,
+                    entry.mode,
+                    &ours_content,
+                    &smudge_oid,
+                )?;
+            } else {
+                // Both sides changed differently — try content merge
+                use crate::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
+                let input = MergeInput {
+                    base: &base_content,
+                    ours: &ours_content,
+                    theirs: &theirs_content,
+                    label_ours: "Updated upstream",
+                    label_base: "Stashed changes",
+                    label_theirs: "Stashed changes",
+                    favor: MergeFavor::None,
+                    style: ConflictStyle::Merge,
+                    marker_size: 7,
+                    diff_algorithm: None,
+                    ignore_all_space: false,
+                    ignore_space_change: false,
+                    ignore_space_at_eol: false,
+                    ignore_cr_at_eol: false,
+                };
+                let output = merge(&input)?;
+                let marker_oid = repo.odb().hash(ObjectKind::Blob, &output.content)?;
+                let worktree_bytes = smudge_bytes_for_worktree_path(
+                    repo,
+                    &worktree_rules,
+                    path,
+                    entry.mode,
+                    &output.content,
+                    &marker_oid,
+                )?;
+                write_regular_file_replacing_symlink(&file_path, &worktree_bytes)?;
+                if output.conflicts > 0 {
+                    has_conflicts = true;
+                    // Write conflict stages to index
+                    let path_bytes = path.as_bytes();
+                    // Remove existing stage-0 entry
+                    new_index
+                        .entries
+                        .retain(|e| e.path != path_bytes || e.stage() != 0);
+                    // Adding non-zero stages drops this path from any valid stage-0
+                    // cache-tree; invalidate it (Git's add_index_entry ->
+                    // cache_tree_invalidate_path) so a stale TREE extension is not written
+                    // alongside the conflicted index (otherwise GIT_TEST_CHECK_CACHE_TREE
+                    // rejects it with "corrupted cache-tree has entries not present in
+                    // index"; t7600 'merge with conflicted --autostash changes').
+                    new_index.invalidate_cache_tree_for_path(path_bytes);
+                    // Add stage entries
+                    if let Some(base_entry) = flat_tree_lookup(&base_tree_entries, path) {
+                        add_stage_entry(
+                            &mut new_index,
+                            path_bytes,
+                            &base_entry.oid,
+                            base_entry.mode,
+                            1,
+                        );
+                    }
+                    if let Some(ours_entry) = flat_tree_lookup(current_head_entries, path) {
+                        let mode = current_index
+                            .get(path_bytes, 0)
+                            .map(|e| e.mode)
+                            .unwrap_or(0o100644);
+                        add_stage_entry(&mut new_index, path_bytes, &ours_entry.oid, mode, 2);
+                    }
+                    add_stage_entry(&mut new_index, path_bytes, &entry.oid, entry.mode, 3);
+                }
+            }
+        } else {
+            write_smudged_regular_file_replacing_symlink(
+                repo,
+                &worktree_rules,
+                path,
+                &file_path,
+                entry.mode,
+                &stash_blob.data,
+                &entry.oid,
+            )?;
         }
     }
 
+    write_stash_files(repo, &worktree_rules, &parallel_writes)?;
+    drop(parallel_writes);
     // Update the index
 
     if restore_index && !has_conflicts {
@@ -2345,11 +2527,11 @@ fn apply_stash_commit(
         } else {
             // Stash index matched current index or HEAD at stash time; replay per-path index parent.
             for base_entry in &base_tree_entries {
-                if flat_tree_lookup(&idx_tree_entries, &base_entry.path).is_none() {
+                if flat_tree_lookup(idx_tree_entries, &base_entry.path).is_none() {
                     new_index.remove(base_entry.path.as_bytes());
                 }
             }
-            for idx_entry in &idx_tree_entries {
+            for idx_entry in idx_tree_entries {
                 let path = &idx_entry.path;
                 let base_oid = flat_tree_lookup(&base_tree_entries, path).map(|e| &e.oid);
                 if base_oid != Some(&idx_entry.oid) {
@@ -2398,18 +2580,26 @@ fn apply_stash_commit(
         // (e.g. a newly `git add`ed file) must be re-staged from the stash index parent
         // (t3903 `stash an added file`).
         let mut touched: BTreeSet<String> = wt_changes.iter().map(|(p, _)| p.clone()).collect();
-        for entry in &idx_tree_entries {
+        for entry in idx_tree_entries {
             if flat_tree_lookup(&base_tree_entries, &entry.path).is_none() {
                 touched.insert(entry.path.clone());
             }
         }
+        // Unmerged paths only come from the starting index or the conflict pass above, and the
+        // loop below never adds or removes conflict stages, so one snapshot covers every path.
+        let unmerged: HashSet<Vec<u8>> = new_index
+            .entries
+            .iter()
+            .filter(|e| e.stage() > 0)
+            .map(|e| e.path.clone())
+            .collect();
         for path in &touched {
             if let Some(te) = flat_tree_lookup(current_head_entries, path) {
                 let path_bytes = path.as_bytes();
                 let size = if te.mode == MODE_SYMLINK || te.mode == MODE_GITLINK {
                     0u32
                 } else {
-                    repo.odb().read(&te.oid)?.data.len() as u32
+                    repo.odb().read_info(&te.oid)?.size as u32
                 };
                 let new_entry = IndexEntry {
                     ctime_sec: 0,
@@ -2430,23 +2620,15 @@ fn apply_stash_commit(
                 };
                 // Do not replace unmerged index entries: `stage_file` strips stages 1–3, which
                 // would hide merge conflicts after stash apply (t9903 conflict prompt).
-                let has_unmerged = new_index
-                    .entries
-                    .iter()
-                    .any(|e| e.path == path_bytes && e.stage() > 0);
-                if !has_unmerged {
+                if !unmerged.contains(path_bytes) {
                     new_index.stage_file(new_entry);
                 }
             } else {
                 let path_bytes = path.as_bytes();
-                let has_unmerged = new_index
-                    .entries
-                    .iter()
-                    .any(|e| e.path == path_bytes && e.stage() > 0);
-                if has_unmerged {
+                if unmerged.contains(path_bytes) {
                     continue;
                 }
-                if let Some(ie) = flat_tree_lookup(&idx_tree_entries, path) {
+                if let Some(ie) = flat_tree_lookup(idx_tree_entries, path) {
                     let had_staged = match flat_tree_lookup(&base_tree_entries, path) {
                         Some(b) => b.oid != ie.oid || b.mode != ie.mode,
                         None => true,
@@ -2455,7 +2637,7 @@ fn apply_stash_commit(
                         let size = if ie.mode == MODE_SYMLINK || ie.mode == MODE_GITLINK {
                             0u32
                         } else {
-                            repo.odb().read(&ie.oid)?.data.len() as u32
+                            repo.odb().read_info(&ie.oid)?.size as u32
                         };
                         new_index.stage_file(IndexEntry {
                             ctime_sec: 0,
@@ -2497,18 +2679,35 @@ fn apply_stash_commit(
     // the recorded OID, so a following `git diff-files` reflects only genuine differences (t3903
     // 'stash apply --index refreshes the index').
     if !has_conflicts {
-        let rules = crate::worktree_rules::WorktreeRules::from_repository(repo, &new_index).ok();
-        let rules_arc = rules.map(|r| std::sync::Arc::new(std::sync::Mutex::new(r)));
-        let _ = crate::diff::refresh_index_stat_content_verified_with_rules(
-            repo.odb(),
-            repo.git_dir(),
-            &mut new_index,
-            work_tree,
-            None,
-            repo.config().ok().as_deref(),
-            None,
-            rules_arc.as_ref(),
-        )?;
+        if restore_index || head_moved {
+            refresh_index_stats_content_verified(repo, work_tree, &mut new_index)?;
+        } else {
+            // HEAD is unchanged and the index was not restored, so a touched path's index entry
+            // can only match the worktree when it holds the very blob just written there (a newly
+            // added file whose staged and worktree content agree). Every other touched entry is
+            // known to differ, and untouched entries keep their stat data.
+            let mut written = Index::new();
+            for (path, change) in &wt_changes {
+                let Some(stashed) = change else {
+                    continue;
+                };
+                if let Some(ie) = new_index.get(path.as_bytes(), 0) {
+                    if ie.oid == stashed.oid && ie.mode == stashed.mode {
+                        written.push_entry_unsorted(ie.clone());
+                    }
+                }
+            }
+            if !written.entries.is_empty() {
+                written.sort();
+                written.source_mtime = new_index.source_mtime;
+                refresh_index_stats_content_verified(repo, work_tree, &mut written)?;
+                for refreshed in written.entries {
+                    if let Some(ie) = new_index.get_mut(&refreshed.path, 0) {
+                        *ie = refreshed;
+                    }
+                }
+            }
+        }
     }
     let conflicted_paths = if has_conflicts {
         unmerged_paths(&new_index)
@@ -2529,6 +2728,27 @@ fn apply_stash_commit(
     }
 
     Ok(StashApplyOutcome { conflicted_paths })
+}
+
+/// Refresh cached stat data for stage-0 entries whose worktree content matches their blob.
+fn refresh_index_stats_content_verified(
+    repo: &Repository,
+    work_tree: &Path,
+    index: &mut Index,
+) -> Result<()> {
+    let rules = WorktreeRules::from_repository(repo, index).ok();
+    let rules_arc = rules.map(|r| std::sync::Arc::new(std::sync::Mutex::new(r)));
+    crate::diff::refresh_index_stat_content_verified_with_rules(
+        repo.odb(),
+        repo.git_dir(),
+        index,
+        work_tree,
+        None,
+        repo.config().ok().as_deref(),
+        None,
+        rules_arc.as_ref(),
+    )?;
+    Ok(())
 }
 
 const STASH_REF: &str = "refs/stash";
