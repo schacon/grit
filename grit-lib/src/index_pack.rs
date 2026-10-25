@@ -128,7 +128,9 @@ pub struct IngestPackOptions {
     /// When true, write an empty sibling `.promisor` file next to the installed pack.
     pub mark_promisor_pack: bool,
     /// Rows for a pack built in-process (`oid`, pack offset, per-object CRC32). When set, the
-    /// pack body is not rescanned to rebuild the index (local repack/gc only).
+    /// pack body is not rescanned to rebuild the index (local repack/gc only); together with
+    /// [`Self::skip_post_index_verify`] the pack's trailer is trusted as written too, so the
+    /// body is not read at all.
     pub trusted_index_rows: Option<Vec<(ObjectId, u64, u32)>>,
 }
 
@@ -359,63 +361,82 @@ pub fn install_pack_path_with_progress(
             let _ = std::fs::remove_file(&owned);
         }
         poll_ingest_cancel(&mut progress, cancel)?;
-        let indexed = PackData::open(&stage_pack)?;
         let parallelism = opts.index_parallelism(odb)?;
         record_resolved_ingest_threads(parallelism.threads().get());
         let sort_threads = parallelism.threads().get();
-        let resident = ResidentBudget::new(&indexed, RESIDENT_PACK_BYTES);
-        let pack_bytes: &[u8] = indexed.deref();
-        let body_len = pack_bytes.len() - hb;
-        if resident.checksum(odb.hash_algo(), &pack_bytes[..body_len]) != pack_bytes[body_len..] {
-            return Err(Error::CorruptObject(
-                "received pack checksum mismatch (download may be incomplete)".to_owned(),
-            ));
-        }
-        poll_ingest_cancel(&mut progress, cancel)?;
-        let mut trailer = pack_bytes[body_len..].to_vec();
-        let (mut entries, object_counts) = if let Some(rows) = &opts.trusted_index_rows {
+        // A pack built in-process with trusted rows and its trailer checked at
+        // write time is installed without reading its body again.
+        let trusted_as_written = opts
+            .trusted_index_rows
+            .as_deref()
+            .filter(|_| opts.skip_post_index_verify);
+        let mut trailer = trailer;
+        let (mut entries, object_counts) = if let Some(rows) = trusted_as_written {
             if rows.len()
-                != u32::from_be_bytes([
-                    pack_bytes[8],
-                    pack_bytes[9],
-                    pack_bytes[10],
-                    pack_bytes[11],
-                ]) as usize
+                != u32::from_be_bytes([header[8], header[9], header[10], header[11]]) as usize
             {
                 return Err(Error::CorruptObject(
                     "trusted index row count does not match pack header".to_owned(),
                 ));
             }
-            drop(indexed);
-            (rows.clone(), ObjectKindCounts::default())
+            (rows.to_vec(), ObjectKindCounts::default())
         } else {
-            let file = std::fs::File::open(&stage_pack).map_err(Error::Io)?;
-            let build = build_mapped_pack_index(
-                &indexed,
-                &file,
-                odb,
-                parallelism,
-                false,
-                progress.as_mut().map(|p| p as &mut dyn ProgressSink),
-                cancel,
-            )?;
-            drop(file);
-            drop(indexed);
-            let mut records = build.records;
-            if opts.fix_thin && !build.thin_bases.is_empty() {
-                poll_ingest_cancel(&mut progress, cancel)?;
-                trailer = append_thin_bases(&stage_pack, odb, &build.thin_bases, &mut records)?;
+            let indexed = PackData::open(&stage_pack)?;
+            let resident = ResidentBudget::new(&indexed, RESIDENT_PACK_BYTES);
+            let pack_bytes: &[u8] = indexed.deref();
+            let body_len = pack_bytes.len() - hb;
+            if resident.checksum(odb.hash_algo(), &pack_bytes[..body_len]) != pack_bytes[body_len..]
+            {
+                return Err(Error::CorruptObject(
+                    "received pack checksum mismatch (download may be incomplete)".to_owned(),
+                ));
             }
-            let object_counts: ObjectKindCounts = records.iter().map(|r| r.kind).collect();
-            let entries: Vec<(ObjectId, u64, u32)> = records
-                .into_iter()
-                .map(
-                    |PackIndexRecord {
-                         oid, offset, crc32, ..
-                     }| (oid, offset, crc32),
-                )
-                .collect();
-            (entries, object_counts)
+            poll_ingest_cancel(&mut progress, cancel)?;
+            trailer = pack_bytes[body_len..].to_vec();
+            if let Some(rows) = &opts.trusted_index_rows {
+                if rows.len()
+                    != u32::from_be_bytes([
+                        pack_bytes[8],
+                        pack_bytes[9],
+                        pack_bytes[10],
+                        pack_bytes[11],
+                    ]) as usize
+                {
+                    return Err(Error::CorruptObject(
+                        "trusted index row count does not match pack header".to_owned(),
+                    ));
+                }
+                drop(indexed);
+                (rows.clone(), ObjectKindCounts::default())
+            } else {
+                let file = std::fs::File::open(&stage_pack).map_err(Error::Io)?;
+                let build = build_mapped_pack_index(
+                    &indexed,
+                    &file,
+                    odb,
+                    parallelism,
+                    false,
+                    progress.as_mut().map(|p| p as &mut dyn ProgressSink),
+                    cancel,
+                )?;
+                drop(file);
+                drop(indexed);
+                let mut records = build.records;
+                if opts.fix_thin && !build.thin_bases.is_empty() {
+                    poll_ingest_cancel(&mut progress, cancel)?;
+                    trailer = append_thin_bases(&stage_pack, odb, &build.thin_bases, &mut records)?;
+                }
+                let object_counts: ObjectKindCounts = records.iter().map(|r| r.kind).collect();
+                let entries: Vec<(ObjectId, u64, u32)> = records
+                    .into_iter()
+                    .map(
+                        |PackIndexRecord {
+                             oid, offset, crc32, ..
+                         }| (oid, offset, crc32),
+                    )
+                    .collect();
+                (entries, object_counts)
+            }
         };
         poll_ingest_cancel(&mut progress, cancel)?;
         write_v2_pack_index_sorting(&stage_idx, &mut entries, &trailer, hb, Some(sort_threads))?;
