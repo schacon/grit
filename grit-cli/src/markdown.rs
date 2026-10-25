@@ -144,6 +144,34 @@ pub fn print_ignored(
     Ok(())
 }
 
+/// Render one file diff as Markdown (optional blank line before the header).
+pub fn print_diff_file(
+    w: &mut dyn Write,
+    file: &FileDiff,
+    path_opts: Option<&PathDisplayOptions>,
+    separator_before: bool,
+) -> anyhow::Result<()> {
+    if separator_before {
+        outln!(w);
+    }
+    let header = ui::format_diff_file_header(file.old_path.as_deref(), &file.path, path_opts);
+    outln!(w, "## {header}");
+    print_file_diff_metadata(w, file)?;
+    if file.binary {
+        if file.content_changed {
+            outln!(w);
+            outln!(w, "Binary file differs.");
+        }
+        return Ok(());
+    }
+    let patch = render_file_patch(file);
+    if !patch.is_empty() {
+        outln!(w);
+        print_fenced_diff(w, &patch)?;
+    }
+    Ok(())
+}
+
 /// Render a full diff outcome as Markdown (one fenced `diff` block per file).
 pub fn print_diff_files(
     w: &mut dyn Write,
@@ -155,24 +183,7 @@ pub fn print_diff_files(
         return Ok(());
     }
     for (i, file) in files.iter().enumerate() {
-        if i > 0 {
-            outln!(w);
-        }
-        let header = ui::format_diff_file_header(file.old_path.as_deref(), &file.path, path_opts);
-        outln!(w, "## {header}");
-        print_file_diff_metadata(w, file)?;
-        if file.binary {
-            if file.content_changed {
-                outln!(w);
-                outln!(w, "Binary file differs.");
-            }
-            continue;
-        }
-        let patch = render_file_patch(file);
-        if !patch.is_empty() {
-            outln!(w);
-            print_fenced_diff(w, &patch)?;
-        }
+        print_diff_file(w, file, path_opts, i > 0)?;
     }
     Ok(())
 }

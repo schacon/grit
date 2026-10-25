@@ -395,7 +395,9 @@ fn finish_outcome(
     format: DiffFormatArgs,
     mut outcome: DiffOutcome,
 ) -> DiffOutcome {
-    outcome.changed = !outcome.files.is_empty();
+    if !outcome.body_streamed {
+        outcome.changed = !outcome.files.is_empty();
+    }
     if format.detail() == DiffDetail::Stat && outcome.totals.is_none() {
         let stat = diffstat_from_files(&outcome.files);
         outcome.totals = Some(DiffTotalsJson {
@@ -2255,17 +2257,15 @@ fn stream_tree_patch_diff(
     let color = diff_render::use_color();
     let mut stdout = std::io::stdout();
     let diff_options = diff_options.cap_word_level_inline_for_changed_files(entries.len());
-    for entry in entries {
+    for (index, entry) in entries.iter().enumerate() {
         let structured = tree_diff_structured_entry(repo.odb(), entry, &diff_options)
             .context("structured diff")?;
         let file = file_diff_from_tree_structured(structured);
         match mode {
             OutputMode::Human => render_file(&mut stdout, &file, color, path_display.as_ref())?,
-            OutputMode::Markdown => markdown::print_diff_files(
-                &mut stdout,
-                std::slice::from_ref(&file),
-                path_display.as_ref(),
-            )?,
+            OutputMode::Markdown => {
+                markdown::print_diff_file(&mut stdout, &file, path_display.as_ref(), index > 0)?
+            }
             OutputMode::Json => unreachable!("stream delivery is not used for JSON"),
         }
     }
