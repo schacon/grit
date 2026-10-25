@@ -836,7 +836,12 @@ fn status_on_racy_git_index_with_large_blobs_persists_and_warms() {
         .expect("index metadata")
         .modified()
         .expect("index mtime");
-    let pinned = filetime::FileTime::from_system_time(index_mtime);
+    // A past second: status only persists the refreshed index once the clock has left the
+    // racy entries' second, and this test is about the run after that rewrite.
+    let pinned = filetime::FileTime::from_unix_time(
+        filetime::FileTime::from_system_time(index_mtime).unix_seconds() - 10,
+        0,
+    );
     for path in git(repo_root, &["ls-files", "-z"])
         .split('\0')
         .filter(|p| !p.is_empty())
@@ -863,6 +868,13 @@ fn status_on_racy_git_index_with_large_blobs_persists_and_warms() {
     assert!(
         model.unstaged.is_empty(),
         "racy git index with large blobs must be clean in grit status"
+    );
+    let persisted = filetime::FileTime::from_last_modification_time(
+        &fs::metadata(&index_path).expect("index metadata"),
+    );
+    assert!(
+        persisted.unix_seconds() > pinned.unix_seconds(),
+        "first status must persist the verified index so its entries stop being racy"
     );
 
     let second_start = Instant::now();

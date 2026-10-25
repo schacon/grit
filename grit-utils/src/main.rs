@@ -111,7 +111,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Benchmark `status` at various repo sizes
+    /// Benchmark `status` (dirty, clean, right after checkout) at various repo sizes
     Status {
         #[arg(long, value_delimiter = ',', default_values_t = vec![100, 1_000, 10_000, 50_000])]
         sizes: Vec<usize>,
@@ -258,7 +258,7 @@ enum Cmd {
         #[arg(long, value_delimiter = ',', default_values_t = vec![1_000, 10_000])]
         sizes: Vec<usize>,
     },
-    /// Run status (dirty + clean) and add benchmarks
+    /// Run status (dirty, clean, right after checkout) and add benchmarks
     All {
         #[arg(long, value_delimiter = ',', default_values_t = vec![100, 1_000, 10_000, 50_000])]
         sizes: Vec<usize>,
@@ -573,6 +573,11 @@ enum Cmd {
     },
     #[command(hide = true)]
     PrepareRestore,
+    #[command(hide = true)]
+    PrepareStatusAfterCheckout {
+        #[arg(long)]
+        git: PathBuf,
+    },
     #[command(hide = true)]
     PrepareStash {
         #[arg(long)]
@@ -1574,6 +1579,9 @@ fn main() -> Result<()> {
         Cmd::PrepareRestore => {
             return run_prepare_restore(&PathBuf::from("git"));
         }
+        Cmd::PrepareStatusAfterCheckout { .. } => {
+            return grit_utils::scenarios::run_prepare_status_after_checkout();
+        }
         Cmd::PrepareStash { git } => {
             let git = resolve_binary("git", Some(git))?;
             return run_prepare_stash(&git);
@@ -2250,6 +2258,7 @@ fn main() -> Result<()> {
         | Cmd::PrepareNetworkPullRebase { .. }
         | Cmd::ServeGitHttp { .. }
         | Cmd::PrepareRestore
+        | Cmd::PrepareStatusAfterCheckout { .. }
         | Cmd::PrepareStash { .. }
         | Cmd::PrepareDiffDirty { .. }
         | Cmd::PrepareDiffSynthetic { .. }
