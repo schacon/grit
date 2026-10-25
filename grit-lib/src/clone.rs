@@ -13,7 +13,7 @@ use crate::environment::Environment;
 use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::fetch::{fetch_operation_identity, Progress};
-use crate::objects::ObjectId;
+use crate::objects::{HashAlgo, ObjectId};
 use crate::partial_clone::{ObjectFilterSpec, PartialCloneConfig};
 use crate::progress::Cancel;
 use crate::promisor_fetch::PromisorFetcher;
@@ -22,7 +22,7 @@ use crate::refs;
 use crate::remote::{
     fold_peeled_refs, HttpClientFactory, ListRefsOptions, Remote, RemoteError, DEFAULT_REMOTE,
 };
-use crate::repo::{init_repository, Repository};
+use crate::repo::{init_repository_with_object_format, Repository};
 use crate::transfer::{CloneReflog, FetchOptions, TagMode, TransferStats};
 use crate::transport_path::{
     absolute_local_clone_source_url, git_url_basename, resolve_local_remote_git_dir,
@@ -468,12 +468,16 @@ fn clone_after_claim(
         .dest
         .to_str()
         .ok_or_else(|| CloneError::Library(Error::Message("non-UTF-8 destination path".into())))?;
-    init_repository(
+    let discovery_cwd = opts.environment.discovery_cwd();
+    let object_format =
+        local_clone_source_hash_algo(&opts.url, &discovery_cwd).unwrap_or(HashAlgo::Sha1);
+    init_repository_with_object_format(
         &opts.dest,
         bare,
         &opts.initial_branch,
         None,
         RefStorageFormat::Files,
+        object_format,
     )
     .map_err(|e| {
         CloneError::Library(Error::Message(format!("could not initialize '{dir}': {e}")))
@@ -483,20 +487,14 @@ fn clone_after_claim(
     } else {
         opts.dest.join(".git")
     };
-    let repo = if bare {
-        Repository::open(
-            &git_dir,
-            &RepositoryOptions::with_environment(opts.environment.clone()),
-        )
-        .map_err(CloneError::Library)?
-    } else {
-        let mut open_opts = RepositoryOptions::with_environment(opts.environment.clone())
-            .with_work_tree(opts.dest.clone());
-        if let Some(fetcher) = opts.promisor_fetcher.clone() {
-            open_opts = open_opts.with_promisor_fetcher(Some(fetcher));
-        }
-        Repository::open(&git_dir, &open_opts).map_err(CloneError::Library)?
-    };
+    let mut repo = open_clone_repository(
+        &git_dir,
+        &opts.dest,
+        bare,
+        &opts.environment,
+        opts.promisor_fetcher.clone(),
+    )
+    .map_err(CloneError::Library)?;
 
     let origin_url = stored_clone_remote_url(&opts.url);
     set_local_config(
@@ -564,6 +562,16 @@ fn clone_after_claim(
         fetch_opts.http_protocol_version = Some(v);
     }
     let fetch_outcome = remote.fetch(&repo, fetch_opts, progress, cancel, http_factory)?;
+    // Wire clone may upgrade an empty SHA-1 destination to the remote object format; reopen so
+    // checkout uses a fresh ODB hash algorithm (the pre-fetch handle caches SHA-1).
+    repo = open_clone_repository(
+        &git_dir,
+        &opts.dest,
+        bare,
+        &opts.environment,
+        opts.promisor_fetcher.clone(),
+    )
+    .map_err(CloneError::Library)?;
 
     if let Some(spec) = opts.filter {
         PartialCloneConfig::write(repo.git_dir(), &opts.remote_name, &spec)
@@ -1072,6 +1080,38 @@ fn pick_default_branch_bare(repo: &Repository) -> Option<String> {
         .ok()?
         .into_iter()
         .find_map(|(name, _)| name.strip_prefix("refs/heads/").map(str::to_owned))
+}
+
+fn open_clone_repository(
+    git_dir: &Path,
+    dest: &Path,
+    bare: bool,
+    environment: &Environment,
+    promisor_fetcher: Option<Arc<dyn PromisorFetcher>>,
+) -> Result<Repository> {
+    if bare {
+        Repository::open(
+            git_dir,
+            &RepositoryOptions::with_environment(environment.clone()),
+        )
+    } else {
+        let mut open_opts = RepositoryOptions::with_environment(environment.clone())
+            .with_work_tree(dest.to_path_buf());
+        if let Some(fetcher) = promisor_fetcher {
+            open_opts = open_opts.with_promisor_fetcher(Some(fetcher));
+        }
+        Repository::open(git_dir, &open_opts)
+    }
+}
+
+/// When cloning from a local path, match the source repository's object hash up front.
+fn local_clone_source_hash_algo(url: &str, discovery_cwd: &Path) -> Option<HashAlgo> {
+    if !url_is_local_not_ssh(url.trim()) {
+        return None;
+    }
+    let probe_git = discovery_cwd.join(".git");
+    let remote_git = resolve_local_remote_git_dir(url.trim(), &probe_git, Some(discovery_cwd));
+    Some(crate::transfer::open_odb(&remote_git).hash_algo())
 }
 
 fn default_branch_from_local_remote(url: &str, repo: &Repository) -> Option<String> {
