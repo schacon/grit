@@ -248,8 +248,12 @@ impl ObjectStore for PackedObjects {
 
     fn open_stream(&self, oid: &ObjectId) -> Result<Option<ObjectStream<'_>>> {
         self.with_pack(|dir| {
-            let pack::PackedEntry::Whole(whole) = pack::locate_packed_whole_object(dir, oid)?
-            else {
+            let mut entry = pack::locate_packed_whole_object(dir, oid, true)?;
+            if matches!(entry, pack::PackedEntry::Absent) && reprepare_pack_directory_on_miss(dir)?
+            {
+                entry = pack::locate_packed_whole_object(dir, oid, true)?;
+            }
+            let pack::PackedEntry::Whole(whole) = entry else {
                 return stream_from_buffered_read(self, oid);
             };
             Ok(Some(ObjectStream {

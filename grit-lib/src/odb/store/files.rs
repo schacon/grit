@@ -321,11 +321,11 @@ impl FilesSource {
     /// Propagates pack lookup and loose read failures.
     pub(crate) fn read_unless_larger(&self, oid: &ObjectId, limit: u64) -> Result<LocalSizedRead> {
         let probe = || {
-            match pack::locate_packed_whole_object(&self.objects_dir, oid)? {
+            match pack::locate_packed_whole_object(&self.objects_dir, oid, false)? {
                 pack::PackedEntry::Whole(whole) => {
                     return Ok(LocalSizedRead::Packed(Some(whole.size)))
                 }
-                pack::PackedEntry::DeltaOnly => return Ok(LocalSizedRead::Packed(None)),
+                pack::PackedEntry::NotWhole => return Ok(LocalSizedRead::Packed(None)),
                 pack::PackedEntry::Absent => {}
             }
             Ok(match self.loose.read_unless_larger(oid, limit)? {
@@ -478,12 +478,18 @@ impl ObjectStore for FilesSource {
         }
         PackStore::with_context(self.packs.pack_store().clone(), || {
             if self.use_midx {
-                if let Ok(Some(stream)) = self.midx.open_stream(oid) {
-                    return Ok(Some(stream));
+                match self.midx.open_stream(oid) {
+                    Ok(Some(stream)) => return Ok(Some(stream)),
+                    Ok(None) => {}
+                    Err(Error::Midx(_)) => {}
+                    Err(err) if Self::midx_read_should_fallback_to_packs(&err) => {}
+                    Err(err) => return Err(err),
                 }
             }
-            if let Ok(Some(stream)) = self.packs.open_stream(oid) {
-                return Ok(Some(stream));
+            match self.packs.open_stream(oid) {
+                Ok(Some(stream)) => return Ok(Some(stream)),
+                Ok(None) | Err(Error::ObjectNotFound(_)) => {}
+                Err(err) => return Err(err),
             }
             self.loose.open_stream(oid)
         })

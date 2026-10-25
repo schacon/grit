@@ -63,19 +63,31 @@ fn git_pack(dir: &Path, oids: &[ObjectId]) -> std::path::PathBuf {
         .current_dir(dir)
         .args(["pack-objects", "-q", ".git/objects/pack/pack"])
         .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
         .spawn()
         .expect("spawn pack-objects");
     std::io::Write::write_all(child.stdin.as_mut().expect("stdin"), list.as_bytes())
         .expect("feed pack-objects");
-    assert!(child.wait().expect("pack-objects").success());
+    let out = child.wait_with_output().expect("pack-objects");
+    assert!(out.status.success());
     git(dir, &["prune-packed"]);
-    fs::read_dir(dir.join(".git/objects/pack"))
-        .expect("pack dir")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .find(|p| p.extension().is_some_and(|x| x == "pack"))
-        .expect("pack written")
+    let hash = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    dir.join(format!(".git/objects/pack/pack-{hash}.pack"))
+}
+
+/// Flip bytes in the middle of `pack`, inside the large entry it holds.
+fn corrupt_middle(pack: &Path) {
+    let mut bytes = fs::read(pack).expect("read pack");
+    let middle = bytes.len() / 2;
+    for b in &mut bytes[middle..middle + 64] {
+        *b ^= 0x5a;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(pack, fs::Permissions::from_mode(0o644)).expect("chmod");
+    }
+    fs::write(pack, &bytes).expect("corrupt pack");
 }
 
 fn init_repo() -> TempDir {
@@ -133,6 +145,80 @@ fn with_stream_reads_whole_and_deltified_packed_objects() {
         assert_eq!(size, data.len() as u64);
         assert!(read == *data, "streamed packed payload differs for {oid}");
     }
+}
+
+#[test]
+fn with_stream_skips_a_corrupt_packed_copy_for_a_redundant_intact_one() {
+    for corrupt_second in [false, true] {
+        let dir = init_repo();
+        let odb = Odb::new(&dir.path().join(".git/objects"));
+        let data = payload(2 * 1024 * 1024, 5);
+        let big = odb.write(ObjectKind::Blob, &data).expect("write big");
+        let small = odb
+            .write(ObjectKind::Blob, b"small\n")
+            .expect("write small");
+        let first = git_pack(dir.path(), &[big]);
+        let second = git_pack(dir.path(), &[big, small]);
+        assert_ne!(first, second);
+        corrupt_middle(if corrupt_second { &second } else { &first });
+
+        let odb = Odb::new(&dir.path().join(".git/objects"));
+        let (_, size, read) = stream_in_chunks(&odb, &big).expect("intact copy streams");
+        assert_eq!(size, data.len() as u64);
+        assert!(
+            read == data,
+            "streamed the corrupt copy (corrupt_second={corrupt_second})"
+        );
+    }
+}
+
+#[test]
+fn with_stream_fails_before_reading_when_the_only_packed_copy_is_corrupt() {
+    let dir = init_repo();
+    let odb = Odb::new(&dir.path().join(".git/objects"));
+    let data = payload(2 * 1024 * 1024, 6);
+    let oid = odb.write(ObjectKind::Blob, &data).expect("write");
+    corrupt_middle(&git_pack(dir.path(), &[oid]));
+
+    let odb = Odb::new(&dir.path().join(".git/objects"));
+    let called = std::cell::Cell::new(false);
+    let result = odb.with_stream(&oid, |_| {
+        called.set(true);
+        Ok(())
+    });
+    assert!(result.is_err(), "corrupt copy must fail, got {result:?}");
+    assert!(
+        !called.get(),
+        "no stream may be handed out for a corrupt copy"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn with_stream_propagates_pack_open_errors_instead_of_reporting_missing() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = init_repo();
+    let odb = Odb::new(&dir.path().join(".git/objects"));
+    let data = payload(2 * 1024 * 1024, 4);
+    let oid = odb.write(ObjectKind::Blob, &data).expect("write");
+    let pack = git_pack(dir.path(), &[oid]);
+    fs::set_permissions(&pack, fs::Permissions::from_mode(0o000)).expect("chmod pack");
+    if fs::File::open(&pack).is_ok() {
+        // Running with privileges that ignore file modes; the pack stays readable.
+        return;
+    }
+
+    let odb = Odb::new(&dir.path().join(".git/objects"));
+    assert!(
+        odb.read(&oid).is_err(),
+        "buffered read reports the unreadable pack"
+    );
+    let streamed = odb.with_stream(&oid, |_| Ok(()));
+    fs::set_permissions(&pack, fs::Permissions::from_mode(0o444)).expect("restore mode");
+    assert!(
+        streamed.is_err(),
+        "an unreadable pack must surface as an error, got {streamed:?}"
+    );
 }
 
 #[test]

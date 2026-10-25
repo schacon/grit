@@ -4903,8 +4903,9 @@ pub(crate) struct PackedWholeObject {
 pub(crate) enum PackedEntry {
     /// Stored whole in some pack.
     Whole(PackedWholeObject),
-    /// Present in a pack, but only as a delta (or with an unparsable entry header).
-    DeltaOnly,
+    /// Present in a pack, but not usable whole: stored as a delta, with an unparsable entry
+    /// header, or failing the pack index CRC when that is checked.
+    NotWhole,
     /// In no local pack.
     Absent,
 }
@@ -4913,7 +4914,9 @@ pub(crate) enum PackedEntry {
 ///
 /// Costs one index lookup and entry-header parse per pack holding the object. Packs that
 /// hold it only as a delta, or whose entry header does not parse, are skipped so another
-/// pack can serve it whole.
+/// pack can serve it whole. With `verify_crc`, an entry whose bytes do not match the pack
+/// index CRC (v2 indexes) is skipped too, so a corrupt copy is never streamed and a
+/// redundant intact copy, or the buffered read path, serves the object instead.
 ///
 /// # Errors
 ///
@@ -4921,6 +4924,7 @@ pub(crate) enum PackedEntry {
 pub(crate) fn locate_packed_whole_object(
     objects_dir: &Path,
     oid: &ObjectId,
+    verify_crc: bool,
 ) -> Result<PackedEntry> {
     let indexes = read_local_pack_indexes_cached(objects_dir)?;
     let mut found = PackedEntry::Absent;
@@ -4928,7 +4932,7 @@ pub(crate) fn locate_packed_whole_object(
         let Some(entry_offset) = idx.find_offset(oid)? else {
             continue;
         };
-        found = PackedEntry::DeltaOnly;
+        found = PackedEntry::NotWhole;
         let pack = read_pack_bytes_cached(&idx.pack_path)?;
         let Some(data_end) = pack.len().checked_sub(idx.hash_bytes()) else {
             continue;
@@ -4945,6 +4949,9 @@ pub(crate) fn locate_packed_whole_object(
         let Ok(kind) = packed_type_to_kind(packed_type) else {
             continue;
         };
+        if verify_crc && !packed_entry_matches_index_crc(idx, &pack, entry_offset)? {
+            continue;
+        }
         return Ok(PackedEntry::Whole(PackedWholeObject {
             pack,
             zlib_offset: pos,
@@ -4954,6 +4961,22 @@ pub(crate) fn locate_packed_whole_object(
         }));
     }
     Ok(found)
+}
+
+/// Whether the raw pack entry at `entry_offset` matches the CRC32 its pack index records.
+///
+/// Version 1 indexes record no CRC; their entries are accepted (the zlib checksum still
+/// guards the payload).
+fn packed_entry_matches_index_crc(idx: &PackIndex, pack: &[u8], entry_offset: u64) -> Result<bool> {
+    let Some(recorded) = idx.crc32_for_pack_offset(entry_offset)? else {
+        return Ok(true);
+    };
+    let Some(end) = pack_entry_raw_end(idx, pack, entry_offset)? else {
+        return Ok(false);
+    };
+    let start = usize::try_from(entry_offset)
+        .map_err(|_| Error::CorruptObject(format!("pack offset {entry_offset} overflows")))?;
+    Ok(start < end && crc32fast::hash(&pack[start..end]) == recorded)
 }
 
 /// When `oid` is stored as a full (non-delta) object in a local pack, return its verbatim packed
