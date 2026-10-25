@@ -582,6 +582,69 @@ mod tests {
     }
 
     #[test]
+    fn page_commit_data_holds_the_commits_the_walk_read() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_repo(&dir)?;
+        let base = write_commit(&repo.odb(), &[], "base", 100)?;
+        let side = write_commit(&repo.odb(), &[base], "side", 150)?;
+        let main1 = write_commit(&repo.odb(), &[base], "main1", 200)?;
+        let merge = write_commit(&repo.odb(), &[main1, side], "merge", 300)?;
+        let tip = write_commit(&repo.odb(), &[merge], "tip", 400)?;
+        let query = LogWalkQuery {
+            tips: vec![tip],
+            hide: Vec::new(),
+            cutoffs: ReachableWalkCommitterCutoffs::default(),
+        };
+        let page = LogWalkCursor::step(&repo, &query, None, 10)?;
+        assert_eq!(page.commits.len(), 5);
+        // Seeding the walk reads the tip linkage first, so only the tip may be missing.
+        assert!(page.commit_data.len() >= page.commits.len() - 1);
+        let retained: Vec<ObjectId> = page.commit_data.oids().copied().collect();
+        let mut commit_data = page.commit_data.clone();
+        for oid in retained {
+            assert!(page.commits.contains(&oid));
+            assert_eq!(
+                commit_data.take_commit(&oid).transpose()?,
+                Some(parse_commit(&repo.odb().read(&oid)?.data)?)
+            );
+        }
+
+        let reopened = Repository::open(dir.path(), &RepositoryOptions::empty())?;
+        let limited = LogWalkCursor::step(&reopened, &query, None, 2)?;
+        assert!(limited
+            .commit_data
+            .oids()
+            .all(|oid| limited.commits.contains(oid)));
+        Ok(())
+    }
+
+    #[test]
+    fn page_commit_data_skips_commits_behind_a_replace_ref() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_repo(&dir)?;
+        let base = write_commit(&repo.odb(), &[], "base", 100)?;
+        let mid = write_commit(&repo.odb(), &[base], "mid", 200)?;
+        let tip = write_commit(&repo.odb(), &[mid], "tip", 300)?;
+        let replacement = write_commit(&repo.odb(), &[base], "replacement", 200)?;
+        crate::refs::write_ref(
+            repo.git_dir(),
+            &format!("refs/replace/{}", mid.to_hex()),
+            &replacement,
+        )?;
+        let repo = Repository::open(dir.path(), &RepositoryOptions::empty())?;
+        let query = LogWalkQuery {
+            tips: vec![tip],
+            hide: Vec::new(),
+            cutoffs: ReachableWalkCommitterCutoffs::default(),
+        };
+        let page = LogWalkCursor::step(&repo, &query, None, 10)?;
+        assert!(page.commits.contains(&mid));
+        assert!(!page.commit_data.contains(&mid));
+        assert!(page.commit_data.contains(&base));
+        Ok(())
+    }
+
+    #[test]
     fn equal_committer_dates_match_git_log_order() -> Result<()> {
         let dir = tempdir().map_err(Error::Io)?;
         let repo = open_repo(&dir)?;

@@ -2389,7 +2389,8 @@ impl<'r> CommitGraphCache<'r> {
         }
         // A plain commit without a replacement is its own peel target, so one read serves both
         // the peel and the parse; anything else (tags, replaced objects) peels first.
-        let direct = if self.repo.object_id_after_replace(&oid) == oid {
+        let effective_oid = self.repo.object_id_after_replace(&oid);
+        let direct = if effective_oid == oid {
             Some(self.read_object(&oid)?).filter(|object| object.kind == ObjectKind::Commit)
         } else {
             None
@@ -2412,7 +2413,7 @@ impl<'r> CommitGraphCache<'r> {
         }
         let linkage = CommitRef::parse(&object.data)?;
         let (time, parsed_parents) = (linkage.committer_timestamp(), linkage.parents().to_vec());
-        if self.retain_reads && commit_oid == oid {
+        if self.retain_reads && effective_oid == oid && commit_oid == oid {
             if let Some(retained) = self.retained.as_mut() {
                 retained.insert(oid, &object.data);
             }
