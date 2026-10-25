@@ -453,6 +453,26 @@ fn v2_fetch_records_server_option_from_client() {
 }
 
 #[test]
+fn object_info_missing_oid_is_not_an_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bare = fixture(tmp.path());
+    let missing = "1111111111111111111111111111111111111111";
+    let mut body = Vec::new();
+    pkt(&mut body, "command=object-info");
+    pkt(&mut body, "object-format=sha1");
+    body.extend(b"0001");
+    pkt(&mut body, "size");
+    pkt(&mut body, &format!("oid {missing}"));
+    body.extend(b"0000");
+    let grit_sections = response_sections(&serve_grit(&bare, &body));
+    let git_sections = response_sections(&serve_git(&bare, &body));
+    assert_eq!(
+        grit_sections, git_sections,
+        "missing oid should not fail the command"
+    );
+}
+
+#[test]
 fn object_info_matches_git_for_tip_commit() {
     let tmp = tempfile::tempdir().unwrap();
     let bare = fixture(tmp.path());

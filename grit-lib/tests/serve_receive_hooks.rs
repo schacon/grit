@@ -101,6 +101,7 @@ fn serve_push(repo: &Repository, body: &[u8]) -> (ReceiveOutcome, Vec<u8>) {
         advertise_refs: false,
         agent: "grit-test".to_owned(),
         hidden_refs: Vec::new(),
+        ..ServeOptions::default()
     };
     let policy = ReceivePolicy::default();
     let mut output = Vec::new();
@@ -846,6 +847,7 @@ fn receive_pack_finishes_when_push_client_keeps_stream_open() {
             advertise_refs: false,
             agent: "grit-test".to_owned(),
             hidden_refs: Vec::new(),
+            ..ServeOptions::default()
         };
         let policy = ReceivePolicy::default();
         let mut output = Vec::new();

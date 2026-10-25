@@ -1,6 +1,7 @@
 //! Protocol v2 `command=object-info` (remote object metadata without a pack).
 
 use super::{parse_oid, write_flush, write_line, Result, ServeError};
+use crate::error::Error;
 use crate::repo::Repository;
 
 /// Write the v2 `object-info` response for `args` to `output`.
@@ -36,7 +37,7 @@ pub(crate) fn write_object_info_response(
     for oid in oids {
         write_line(
             output,
-            &format_object_info_line(repo, &oid, want_size, want_type),
+            &format_object_info_line(repo, &oid, want_size, want_type)?,
         )?;
     }
     write_flush(output)
@@ -47,11 +48,12 @@ fn format_object_info_line(
     oid: &crate::objects::ObjectId,
     want_size: bool,
     want_type: bool,
-) -> String {
+) -> Result<String> {
     let hex = oid.to_hex();
-    let info = match repo.odb().read_info(oid) {
+    let info = match repo.odb().read_info_for_serve(oid) {
         Ok(info) => info,
-        Err(_) => return format!("{hex} "),
+        Err(Error::ObjectNotFound(_)) => return Ok(format!("{hex} ")),
+        Err(err) => return Err(ServeError::Repository(err)),
     };
     let mut line = hex;
     if want_size {
@@ -62,5 +64,5 @@ fn format_object_info_line(
         line.push(' ');
         line.push_str(info.kind.as_str());
     }
-    line
+    Ok(line)
 }
