@@ -6,7 +6,8 @@ use super::upload_pack_policy::{
 };
 use super::{
     advertised_refs, check_object_format, head_info, parse_oid, read_packet, write_flush,
-    write_line, AdvertisedRef, Packet, Peel, ProtocolVersion, Result, ServeError, ServeOptions,
+    write_line, AdvertisedRef, DeepenNotError, Packet, Peel, ProtocolVersion, Result, ServeError,
+    ServeOptions,
 };
 use crate::config::ConfigSet;
 use crate::objects::{ObjectId, ObjectKind};
@@ -89,6 +90,7 @@ fn serve_error_client_message(err: &ServeError) -> String {
         ServeError::UploadFilter(e) => e.to_string(),
         ServeError::NotOurRef(oid) => format!("not our ref {}", oid.to_hex()),
         ServeError::UnknownCommand(cmd) => format!("unknown command {cmd}"),
+        ServeError::InvalidDeepenNot { spec, reason } => format!("deepen-not {spec}: {reason}"),
         ServeError::ObjectFormatMismatch { client, repository } => {
             format!("object format mismatch: client wants {client}, repository uses {repository}")
         }
@@ -383,12 +385,37 @@ fn parse_shallow_line(
     Ok(false)
 }
 
+/// Resolve a `deepen-not` argument to the commit that bounds the shallow history.
+///
+/// Git clients send whatever the user gave `--shallow-exclude`, usually a ref
+/// name such as `v1.0` or `refs/heads/main`. A full-width object id is accepted
+/// too. Short names expand through the standard ref lookup rules and must match
+/// exactly one ref. Annotated tags are peeled.
 fn resolve_deepen_not(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    if let Ok(oid) = ObjectId::from_hex(spec) {
-        return Ok(oid);
+    let invalid = |reason| ServeError::InvalidDeepenNot {
+        spec: spec.to_owned(),
+        reason,
+    };
+    let oid = match parse_oid(repo, spec) {
+        Ok(oid) => oid,
+        Err(_) => {
+            let (matches, name) = crate::refs::shorten::expand_ref_dwim_full_name(repo, spec)?;
+            let name = match (matches, name) {
+                (1, Some(name)) => name,
+                (0, _) | (_, None) => return Err(invalid(DeepenNotError::UnknownRef)),
+                _ => return Err(invalid(DeepenNotError::AmbiguousRef)),
+            };
+            repo.resolve_ref_oid(&name)
+                .map_err(|_| invalid(DeepenNotError::UnknownRef))?
+        }
+    };
+    if !repo.odb().contains(&oid)? {
+        return Err(invalid(DeepenNotError::UnknownRef));
     }
-    crate::refs::resolve_ref(repo.git_dir(), spec)
-        .map_err(|_| ServeError::Protocol(format!("invalid deepen-not '{spec}'")))
+    match repo.odb().peel_tags(oid)? {
+        (commit, ObjectKind::Commit) => Ok(commit),
+        _ => Err(invalid(DeepenNotError::NotACommit)),
+    }
 }
 
 fn write_v0_shallow_lines(output: &mut dyn Write, sh: &ShallowResponse) -> Result<()> {
@@ -629,19 +656,24 @@ fn fetch_v2(
                     .map_err(|_| ServeError::Protocol(format!("bad deepen-since '{arg}'")))?,
             );
         } else if let Some(rest) = arg.strip_prefix("deepen-not ") {
-            deepen_not.push(parse_oid(repo, rest.trim())?);
+            deepen_not.push(resolve_deepen_not(repo, rest.trim())?);
         } else if let Some(spec) = arg.strip_prefix("filter ") {
             filter_spec = Some(spec.trim().to_owned());
-        } else if let Some(name) = arg.strip_prefix("want-ref ") {
-            want_ref_names.push(name.trim().to_owned());
+        } else if let Some(name) = arg.strip_prefix("want-ref ").filter(|_| policy.ref_in_want) {
+            let name = name.trim();
+            if want_ref_names.iter().any(|n| n == name) {
+                return Err(ServeError::Protocol(format!("duplicate want-ref {name}")));
+            }
+            want_ref_names.push(name.to_owned());
         } else if arg == "done" {
             done = true;
         } else if arg == "deepen-relative" {
             deepen_relative = true;
         } else if matches!(
             arg.as_str(),
-            "thin-pack" | "no-progress" | "include-tag" | "ofs-delta" | "sideband-all"
-        ) {
+            "thin-pack" | "no-progress" | "include-tag" | "ofs-delta"
+        ) || (arg == "sideband-all" && policy.allow_sideband_all)
+        {
             caps.insert(arg.clone());
         } else {
             return Err(ServeError::Protocol(format!(
@@ -652,9 +684,14 @@ fn fetch_v2(
 
     let refs = advertised_refs(repo, &opts.hidden_refs, &[], Peel::Yes)?;
     let head = head_info(repo);
-    for name in want_ref_names {
-        wants.push(resolve_want_ref(repo, &refs, &opts.hidden_refs, &name)?);
-    }
+    let wanted_refs = want_ref_names
+        .into_iter()
+        .map(|name| {
+            let oid = resolve_want_ref(repo, &refs, &opts.hidden_refs, &name)?;
+            Ok((name, oid))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    wants.extend(wanted_refs.iter().map(|(_, oid)| *oid));
 
     let filter: Option<ObjectFilter> = match filter_spec {
         None => None,
@@ -711,6 +748,14 @@ fn fetch_v2(
         }
         for oid in &shallow_resp.shallow {
             write_v2_fetch_line(output, &format!("shallow {}", oid.to_hex()), sideband_all)?;
+        }
+        write_v2_section_delim(output)?;
+    }
+
+    if !wanted_refs.is_empty() {
+        write_v2_fetch_line(output, "wanted-refs", sideband_all)?;
+        for (name, oid) in &wanted_refs {
+            write_v2_fetch_line(output, &format!("{} {name}", oid.to_hex()), sideband_all)?;
         }
         write_v2_section_delim(output)?;
     }
