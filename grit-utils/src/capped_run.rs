@@ -50,7 +50,8 @@ impl TerminationKind {
 pub struct CappedRunOutcome {
     pub termination: TerminationKind,
     pub peak_rss_bytes: u64,
-    /// Parent-observed wall time from spawn through exit or cap (includes RSS poll sleeps).
+    /// Parent-observed wall time from spawn through exit or cap. On Linux it is read when the
+    /// child exits; elsewhere it is rounded up to the next RSS poll tick.
     pub wall_ms: f64,
 }
 
@@ -82,7 +83,6 @@ pub fn run_capped_argv_command_with(
     configure: impl FnOnce(&mut std::process::Command),
 ) -> Result<CappedRunOutcome> {
     use std::process::{Command, Stdio};
-    use std::thread;
 
     let mut child_cmd = Command::new(program);
     child_cmd
@@ -92,66 +92,11 @@ pub fn run_capped_argv_command_with(
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     configure(&mut child_cmd);
-    let mut child = child_cmd
+    let child = child_cmd
         .spawn()
         .with_context(|| format!("spawn capped argv command {}", program.display()))?;
 
-    let pid = child.id();
-    let start = Instant::now();
-    let mut peak_rss_bytes = 0u64;
-
-    loop {
-        if let Some(limit) = timeout {
-            if start.elapsed() >= limit {
-                kill_process_tree(pid);
-                let _ = child.wait();
-                peak_rss_bytes = peak_rss_bytes.max(children_rusage_peak_rss_bytes()?);
-                return Ok(CappedRunOutcome {
-                    termination: TerminationKind::Timeout,
-                    peak_rss_bytes,
-                    wall_ms: wall_ms_since(start),
-                });
-            }
-        }
-
-        let rss = process_tree_rss_bytes(pid)?;
-        peak_rss_bytes = peak_rss_bytes.max(rss);
-        if let Some(cap) = max_rss_bytes {
-            if rss > cap {
-                kill_process_tree(pid);
-                let _ = child.wait();
-                peak_rss_bytes = peak_rss_bytes.max(children_rusage_peak_rss_bytes()?);
-                return Ok(CappedRunOutcome {
-                    termination: TerminationKind::MemoryCap {
-                        peak_rss_bytes,
-                        cap_bytes: cap,
-                    },
-                    peak_rss_bytes,
-                    wall_ms: wall_ms_since(start),
-                });
-            }
-        }
-
-        match child.try_wait().context("poll capped argv command")? {
-            Some(status) => {
-                peak_rss_bytes = peak_rss_bytes.max(children_rusage_peak_rss_bytes()?);
-                let wall_ms = wall_ms_since(start);
-                let termination = if status.success() {
-                    TerminationKind::Success
-                } else {
-                    TerminationKind::CommandFailed {
-                        code: status.code().unwrap_or(-1),
-                    }
-                };
-                return Ok(CappedRunOutcome {
-                    termination,
-                    peak_rss_bytes,
-                    wall_ms,
-                });
-            }
-            None => thread::sleep(RSS_POLL_INTERVAL),
-        }
-    }
+    monitor_child(child, Instant::now(), timeout, max_rss_bytes)
 }
 
 #[cfg(not(unix))]
@@ -202,9 +147,8 @@ pub fn run_capped_shell_command(
     max_rss_bytes: Option<u64>,
 ) -> Result<CappedRunOutcome> {
     use std::process::{Command, Stdio};
-    use std::thread;
 
-    let mut child = Command::new("/bin/sh")
+    let child = Command::new("/bin/sh")
         .arg("-c")
         .arg(command)
         .current_dir(cwd)
@@ -214,62 +158,7 @@ pub fn run_capped_shell_command(
         .spawn()
         .context("spawn capped benchmark command")?;
 
-    let pid = child.id();
-    let start = Instant::now();
-    let mut peak_rss_bytes = 0u64;
-
-    loop {
-        if let Some(limit) = timeout {
-            if start.elapsed() >= limit {
-                kill_process_tree(pid);
-                let _ = child.wait();
-                peak_rss_bytes = peak_rss_bytes.max(children_rusage_peak_rss_bytes()?);
-                return Ok(CappedRunOutcome {
-                    termination: TerminationKind::Timeout,
-                    peak_rss_bytes,
-                    wall_ms: wall_ms_since(start),
-                });
-            }
-        }
-
-        let rss = process_tree_rss_bytes(pid)?;
-        peak_rss_bytes = peak_rss_bytes.max(rss);
-        if let Some(cap) = max_rss_bytes {
-            if rss > cap {
-                kill_process_tree(pid);
-                let _ = child.wait();
-                peak_rss_bytes = peak_rss_bytes.max(children_rusage_peak_rss_bytes()?);
-                return Ok(CappedRunOutcome {
-                    termination: TerminationKind::MemoryCap {
-                        peak_rss_bytes,
-                        cap_bytes: cap,
-                    },
-                    peak_rss_bytes,
-                    wall_ms: wall_ms_since(start),
-                });
-            }
-        }
-
-        match child.try_wait().context("poll capped command")? {
-            Some(status) => {
-                peak_rss_bytes = peak_rss_bytes.max(children_rusage_peak_rss_bytes()?);
-                let wall_ms = wall_ms_since(start);
-                let termination = if status.success() {
-                    TerminationKind::Success
-                } else {
-                    TerminationKind::CommandFailed {
-                        code: status.code().unwrap_or(-1),
-                    }
-                };
-                return Ok(CappedRunOutcome {
-                    termination,
-                    peak_rss_bytes,
-                    wall_ms,
-                });
-            }
-            None => thread::sleep(RSS_POLL_INTERVAL),
-        }
-    }
+    monitor_child(child, Instant::now(), timeout, max_rss_bytes)
 }
 
 #[cfg(not(unix))]
@@ -302,6 +191,146 @@ pub fn run_capped_shell_command(
         peak_rss_bytes: 0,
         wall_ms: 0.0,
     })
+}
+
+/// Why the monitor stopped a child early.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy)]
+enum Stopped {
+    Timeout,
+    MemoryCap { cap_bytes: u64 },
+}
+
+/// Wait for `child` while enforcing `timeout` and `max_rss_bytes`, sampling tree RSS every
+/// [`RSS_POLL_INTERVAL`].
+///
+/// On Linux the caller blocks in `waitid(WNOWAIT)` and reads the clock the moment the child
+/// exits, while a watchdog thread samples and enforces the caps; the child is reaped only
+/// after the watchdog stops, so it never signals a recycled pid. Timing on the poll loop
+/// instead would round every run up to the next poll tick, which swamps millisecond commands.
+#[cfg(target_os = "linux")]
+fn monitor_child(
+    mut child: std::process::Child,
+    start: Instant,
+    timeout: Option<Duration>,
+    max_rss_bytes: Option<u64>,
+) -> Result<CappedRunOutcome> {
+    use nix::sys::wait::{waitid, Id, WaitPidFlag};
+    use nix::unistd::Pid;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let pid = child.id();
+    let done = Arc::new(AtomicBool::new(false));
+    let watchdog = {
+        let done = Arc::clone(&done);
+        std::thread::spawn(move || -> (u64, Option<Stopped>) {
+            let mut peak = 0u64;
+            while !done.load(Ordering::Acquire) {
+                if timeout.is_some_and(|limit| start.elapsed() >= limit) {
+                    kill_process_tree(pid);
+                    return (peak, Some(Stopped::Timeout));
+                }
+                let rss = process_tree_rss_bytes(pid).unwrap_or(0);
+                peak = peak.max(rss);
+                if let Some(cap_bytes) = max_rss_bytes.filter(|&cap| rss > cap) {
+                    kill_process_tree(pid);
+                    return (peak, Some(Stopped::MemoryCap { cap_bytes }));
+                }
+                std::thread::sleep(RSS_POLL_INTERVAL);
+            }
+            (peak, None)
+        })
+    };
+    let exited = loop {
+        match waitid(
+            Id::Pid(Pid::from_raw(pid as i32)),
+            WaitPidFlag::WEXITED | WaitPidFlag::WNOWAIT,
+        ) {
+            Err(nix::errno::Errno::EINTR) => continue,
+            other => break other,
+        }
+    };
+    let wall_ms = wall_ms_since(start);
+    done.store(true, Ordering::Release);
+    let (sampled_peak, stopped) = watchdog
+        .join()
+        .map_err(|_| anyhow::anyhow!("RSS watchdog panicked"))?;
+    exited.context("wait for capped command")?;
+    let status = child.wait().context("reap capped command")?;
+    let peak_rss_bytes = sampled_peak.max(children_rusage_peak_rss_bytes()?);
+    let termination = match stopped {
+        Some(Stopped::Timeout) => TerminationKind::Timeout,
+        Some(Stopped::MemoryCap { cap_bytes }) => TerminationKind::MemoryCap {
+            peak_rss_bytes,
+            cap_bytes,
+        },
+        None if status.success() => TerminationKind::Success,
+        None => TerminationKind::CommandFailed {
+            code: status.code().unwrap_or(-1),
+        },
+    };
+    Ok(CappedRunOutcome {
+        termination,
+        peak_rss_bytes,
+        wall_ms,
+    })
+}
+
+/// Polling fallback of the Linux monitor for Unix systems without `waitid(WNOWAIT)`.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn monitor_child(
+    mut child: std::process::Child,
+    start: Instant,
+    timeout: Option<Duration>,
+    max_rss_bytes: Option<u64>,
+) -> Result<CappedRunOutcome> {
+    let pid = child.id();
+    let mut peak_rss_bytes = 0u64;
+    loop {
+        let stopped = if timeout.is_some_and(|limit| start.elapsed() >= limit) {
+            Some(Stopped::Timeout)
+        } else {
+            let rss = process_tree_rss_bytes(pid)?;
+            peak_rss_bytes = peak_rss_bytes.max(rss);
+            max_rss_bytes
+                .filter(|&cap| rss > cap)
+                .map(|cap_bytes| Stopped::MemoryCap { cap_bytes })
+        };
+        if let Some(stopped) = stopped {
+            kill_process_tree(pid);
+            let _ = child.wait();
+            peak_rss_bytes = peak_rss_bytes.max(children_rusage_peak_rss_bytes()?);
+            let termination = match stopped {
+                Stopped::Timeout => TerminationKind::Timeout,
+                Stopped::MemoryCap { cap_bytes } => TerminationKind::MemoryCap {
+                    peak_rss_bytes,
+                    cap_bytes,
+                },
+            };
+            return Ok(CappedRunOutcome {
+                termination,
+                peak_rss_bytes,
+                wall_ms: wall_ms_since(start),
+            });
+        }
+        if let Some(status) = child.try_wait().context("poll capped command")? {
+            peak_rss_bytes = peak_rss_bytes.max(children_rusage_peak_rss_bytes()?);
+            let termination = if status.success() {
+                TerminationKind::Success
+            } else {
+                TerminationKind::CommandFailed {
+                    code: status.code().unwrap_or(-1),
+                }
+            };
+            return Ok(CappedRunOutcome {
+                termination,
+                peak_rss_bytes,
+                wall_ms: wall_ms_since(start),
+            });
+        }
+        std::thread::sleep(RSS_POLL_INTERVAL);
+    }
 }
 
 #[cfg(unix)]
@@ -516,6 +545,56 @@ mod tests {
             outcome.wall_ms >= 900.0 && outcome.wall_ms < 1800.0,
             "expected ~1s wall at timeout, got {} ms",
             outcome.wall_ms
+        );
+    }
+
+    /// The first poll after spawn almost never sees a fresh process exit, so polled timing
+    /// reports at least one full poll interval even for a command that does nothing.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wall_time_is_read_at_exit_not_at_the_next_poll_tick() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let fastest = (0..30)
+            .map(|_| {
+                let outcome = run_capped_argv_command(
+                    Path::new("/bin/true"),
+                    &[],
+                    dir.path(),
+                    Some(Duration::from_secs(10)),
+                    Some(1 << 30),
+                )
+                .expect("monitored run");
+                assert_eq!(outcome.termination, TerminationKind::Success);
+                outcome.wall_ms
+            })
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            fastest < RSS_POLL_INTERVAL.as_secs_f64() * 1000.0 * 0.9,
+            "fastest /bin/true took {fastest} ms; timing still waits for a poll tick"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exit_status_and_peak_rss_survive_blocking_wait() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let failed = run_capped_shell_command("exit 3", dir.path(), None, None).expect("run");
+        assert_eq!(
+            failed.termination,
+            TerminationKind::CommandFailed { code: 3 }
+        );
+        let grew = run_capped_shell_command(
+            "perl -e '$b = \"x\" x (32*1024*1024); select(undef, undef, undef, 0.2)'",
+            dir.path(),
+            Some(Duration::from_secs(15)),
+            Some(1 << 30),
+        )
+        .expect("run");
+        assert_eq!(grew.termination, TerminationKind::Success);
+        assert!(
+            grew.peak_rss_bytes >= 32 * 1024 * 1024,
+            "peak RSS {} misses the 32 MiB allocation",
+            grew.peak_rss_bytes
         );
     }
 }
