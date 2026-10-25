@@ -22,8 +22,9 @@ use crate::diff::{
     diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees, format_mode, zero_oid,
     DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
 };
-use crate::error::{Error, Result};
+use crate::error::{ApplyError, Error, Result};
 use crate::index::{index_file_mtime, Index, IndexEntry, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
+use crate::worktree::{map_worktree_io, WorktreePathOperation};
 // `MODE_EXECUTABLE` only drives the Unix executable-bit application below.
 use crate::apply::{apply_patch_to_index, FilePatch, IndexApplyOptions};
 use crate::check_ref_format::validate_branch_short_name;
@@ -757,7 +758,7 @@ fn stage_untracked_path_for_stash(
             None,
             filter_fp,
         )
-        .map_err(|e| Error::Message(format!("could not store {index_relpath}: {e}")))?
+        .map_err(|e| materialize_stash_blob_err(e, &index_relpath))?
     };
     let entry = entry_from_stat(&abs, index_relpath.as_bytes(), oid, mode)?;
     index.add_or_replace(entry);
@@ -1525,59 +1526,91 @@ pub(crate) fn push_stash(
         &built.message,
         &options.identity.header_line(),
     )?;
-    if let Some(ref patches) = built.partial_patches {
-        if !built.untracked_paths.is_empty() {
-            remove_stashed_untracked(repo, work_tree, &built.untracked_paths)?;
-        }
-        reverse_apply_patches_to_worktree(
-            repo,
-            patches,
-            &WorktreeReverseApplyOptions { dry_run: false },
-        )
-        .map_err(|e| Error::Message(e.to_string()))?;
-    } else {
-        let head = resolve_head_for_repository(repo)?;
-        let head_oid = head_commit_oid(&head)?;
-        let head_tree = repo.odb().commit_tree(&head_oid)?;
-        if !built.untracked_paths.is_empty() {
-            remove_stashed_untracked(repo, work_tree, &built.untracked_paths)?;
-        }
-        if !built.push_pathspecs.is_empty() {
-            let reset_specs = pathspecs_for_push_reset(repo, &head_tree, &built.push_pathspecs)?;
-            reset_stash_push_pathspecs_to_head(repo, &head_tree, &reset_specs)?;
-            if built.mode == StashMode::StagedOnly {
-                let index = repo.load_index()?;
-                let all_staged = staged_change_paths(repo, &index, &head_tree)?;
-                let stashed_set: HashSet<&str> =
-                    built.staged_only_paths.iter().map(String::as_str).collect();
-                let worktree_only: Vec<String> = all_staged
-                    .into_iter()
-                    .filter(|path| !stashed_set.contains(path.as_str()))
-                    .collect();
-                apply_staged_worktree_only_reset(repo, work_tree, &head_tree, &worktree_only)?;
+    let reset = (|| -> Result<()> {
+        if let Some(ref patches) = built.partial_patches {
+            if !built.untracked_paths.is_empty() {
+                remove_stashed_untracked(repo, work_tree, &built.untracked_paths)?;
             }
+            reverse_apply_patches_to_worktree(
+                repo,
+                patches,
+                &WorktreeReverseApplyOptions { dry_run: false },
+            )
+            .map_err(stash_worktree_step_error)?;
         } else {
-            match built.mode {
-                StashMode::StagedOnly => {
-                    apply_staged_only_reset(repo, work_tree, &head_tree, &built.staged_only_paths)?;
+            let head = resolve_head_for_repository(repo)?;
+            let head_oid = head_commit_oid(&head)?;
+            let head_tree = repo.odb().commit_tree(&head_oid)?;
+            if !built.untracked_paths.is_empty() {
+                remove_stashed_untracked(repo, work_tree, &built.untracked_paths)?;
+            }
+            if !built.push_pathspecs.is_empty() {
+                let reset_specs =
+                    pathspecs_for_push_reset(repo, &head_tree, &built.push_pathspecs)?;
+                reset_stash_push_pathspecs_to_head(repo, &head_tree, &reset_specs)?;
+                if built.mode == StashMode::StagedOnly {
+                    let index = repo.load_index()?;
+                    let all_staged = staged_change_paths(repo, &index, &head_tree)?;
+                    let stashed_set: HashSet<&str> =
+                        built.staged_only_paths.iter().map(String::as_str).collect();
+                    let worktree_only: Vec<String> = all_staged
+                        .into_iter()
+                        .filter(|path| !stashed_set.contains(path.as_str()))
+                        .collect();
+                    apply_staged_worktree_only_reset(repo, work_tree, &head_tree, &worktree_only)?;
                 }
-                StashMode::KeepIndex => {
-                    checkout_between_trees(repo, Some(&built.w_tree), &built.i_tree)?;
-                }
-                StashMode::All => {
-                    checkout_between_trees(repo, Some(&built.w_tree), &head_tree)?;
-                    // The checkout left fresh stat data for every path it rewrote; reuse it so
-                    // the refresh only hashes files whose stat does not match.
-                    let checked_out = repo.load_index()?;
-                    let mut head_index =
-                        index_from_tree_with_seeded_worktree_stats(repo, &head_tree, &checked_out)?;
-                    drop(checked_out);
-                    repo.write_index(&mut head_index)?;
+            } else {
+                match built.mode {
+                    StashMode::StagedOnly => {
+                        apply_staged_only_reset(
+                            repo,
+                            work_tree,
+                            &head_tree,
+                            &built.staged_only_paths,
+                        )?;
+                    }
+                    StashMode::KeepIndex => {
+                        checkout_between_trees(repo, Some(&built.w_tree), &built.i_tree)?;
+                    }
+                    StashMode::All => {
+                        checkout_between_trees(repo, Some(&built.w_tree), &head_tree)?;
+                        // The checkout left fresh stat data for every path it rewrote; reuse it so
+                        // the refresh only hashes files whose stat does not match.
+                        let checked_out = repo.load_index()?;
+                        let mut head_index = index_from_tree_with_seeded_worktree_stats(
+                            repo,
+                            &head_tree,
+                            &checked_out,
+                        )?;
+                        drop(checked_out);
+                        repo.write_index(&mut head_index)?;
+                    }
                 }
             }
         }
+        Ok(())
+    })();
+    if reset.is_err() {
+        let _ = drop_stash_commit(repo, &built.w_commit);
     }
+    reset?;
     Ok(Some(result))
+}
+
+fn stash_worktree_step_error(err: ApplyError) -> Error {
+    match err {
+        ApplyError::Failed { path, message } if !path.is_empty() => Error::Message(format!(
+            "could not update '{path}' while finishing stash: {message}"
+        )),
+        other => Error::Message(other.to_string()),
+    }
+}
+
+fn materialize_stash_blob_err(err: Error, index_relpath: &str) -> Error {
+    match err {
+        Error::Io(source) => map_worktree_io(index_relpath, WorktreePathOperation::Read, source),
+        other => other,
+    }
 }
 
 /// List stash entries from `refs/stash` reflog (newest first).
@@ -3027,6 +3060,31 @@ mod coverage_tests {
             mode: StashMode::default(),
         };
         assert!(push_stash(&repo, &opts).expect("push").is_none());
+    }
+
+    #[test]
+    fn drop_stash_commit_removes_tip_after_store() {
+        let tmp = TempDir::new().unwrap();
+        let repo = init_repo(tmp.path());
+        let ident = "T <t@t> 1 +0000";
+        fs::write(tmp.path().join("f"), b"dirty\n").unwrap();
+        let opts = StashPushOptions {
+            message: Some("m".into()),
+            include_untracked: false,
+            identity: ident.parse().expect("signature"),
+            selection: None,
+            pathspecs: Vec::new(),
+            dry_run: false,
+            mode: StashMode::default(),
+        };
+        let oid = create_stash(&repo, &opts).expect("create").expect("some");
+        store_stash(&repo, oid, "On main: m", ident).expect("store");
+        assert_eq!(list_stashes(&repo).expect("list").len(), 1);
+        assert!(drop_stash_commit(&repo, &oid).expect("drop"));
+        assert!(
+            list_stashes(&repo).expect("list").is_empty(),
+            "rollback must remove the tip entry"
+        );
     }
 
     #[test]

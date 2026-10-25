@@ -5685,6 +5685,10 @@ pub grit_lib::error::Error::UnsupportedRepositoryFormatVersion(u32)
 pub grit_lib::error::Error::Worktree(grit_lib::worktree::WorktreeError)
 pub grit_lib::error::Error::WorktreeFileChanged
 pub grit_lib::error::Error::WorktreeFileChanged::path: alloc::string::String
+pub grit_lib::error::Error::WorktreePathIo
+pub grit_lib::error::Error::WorktreePathIo::operation: grit_lib::error::WorktreePathOperation
+pub grit_lib::error::Error::WorktreePathIo::path: alloc::string::String
+pub grit_lib::error::Error::WorktreePathIo::source: core::io::error::Error
 pub grit_lib::error::Error::WouldOverwrite
 pub grit_lib::error::Error::WouldOverwrite::message: alloc::string::String
 pub grit_lib::error::Error::WouldOverwrite::paths: alloc::vec::Vec<alloc::string::String>
@@ -6132,6 +6136,30 @@ impl core::marker::Unpin for grit_lib::error::WorktreeOperation
 impl core::marker::UnsafeUnpin for grit_lib::error::WorktreeOperation
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::error::WorktreeOperation
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::error::WorktreeOperation
+#[non_exhaustive] pub enum grit_lib::error::WorktreePathOperation
+pub grit_lib::error::WorktreePathOperation::Create
+pub grit_lib::error::WorktreePathOperation::Metadata
+pub grit_lib::error::WorktreePathOperation::Read
+pub grit_lib::error::WorktreePathOperation::Remove
+pub grit_lib::error::WorktreePathOperation::Replace
+impl core::clone::Clone for grit_lib::error::WorktreePathOperation
+pub fn grit_lib::error::WorktreePathOperation::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::error::WorktreePathOperation
+impl core::cmp::PartialEq for grit_lib::error::WorktreePathOperation
+pub fn grit_lib::error::WorktreePathOperation::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::error::WorktreePathOperation
+pub fn grit_lib::error::WorktreePathOperation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for grit_lib::error::WorktreePathOperation
+pub fn grit_lib::error::WorktreePathOperation::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for grit_lib::error::WorktreePathOperation
+impl core::marker::StructuralPartialEq for grit_lib::error::WorktreePathOperation
+impl core::marker::Freeze for grit_lib::error::WorktreePathOperation
+impl core::marker::Send for grit_lib::error::WorktreePathOperation
+impl core::marker::Sync for grit_lib::error::WorktreePathOperation
+impl core::marker::Unpin for grit_lib::error::WorktreePathOperation
+impl core::marker::UnsafeUnpin for grit_lib::error::WorktreePathOperation
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::error::WorktreePathOperation
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::error::WorktreePathOperation
 pub struct grit_lib::error::LockHolder
 pub grit_lib::error::LockHolder::pid: u64
 pub grit_lib::error::LockHolder::running: bool
@@ -15503,6 +15531,10 @@ pub grit_lib::prelude::Error::UnsupportedRepositoryFormatVersion(u32)
 pub grit_lib::prelude::Error::Worktree(grit_lib::worktree::WorktreeError)
 pub grit_lib::prelude::Error::WorktreeFileChanged
 pub grit_lib::prelude::Error::WorktreeFileChanged::path: alloc::string::String
+pub grit_lib::prelude::Error::WorktreePathIo
+pub grit_lib::prelude::Error::WorktreePathIo::operation: grit_lib::error::WorktreePathOperation
+pub grit_lib::prelude::Error::WorktreePathIo::path: alloc::string::String
+pub grit_lib::prelude::Error::WorktreePathIo::source: core::io::error::Error
 pub grit_lib::prelude::Error::WouldOverwrite
 pub grit_lib::prelude::Error::WouldOverwrite::message: alloc::string::String
 pub grit_lib::prelude::Error::WouldOverwrite::paths: alloc::vec::Vec<alloc::string::String>
