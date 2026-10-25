@@ -1612,7 +1612,7 @@ pub fn print_add_outcome(w: &mut dyn Write, outcome: &AddOutcome) -> anyhow::Res
 }
 
 /// Remote hook/diagnostic lines from a push (side-band channel 2).
-pub fn print_push_remote_messages(w: &mut dyn Write, messages: &[String]) -> anyhow::Result<()> {
+pub fn print_remote_push_messages(w: &mut dyn Write, messages: &[String]) -> anyhow::Result<()> {
     if messages.is_empty() {
         return Ok(());
     }
@@ -1693,14 +1693,10 @@ mod tests {
     }
 
     #[test]
-    fn push_remote_messages_use_safe_inline_code() {
-        use super::print_push_remote_messages;
+    fn remote_push_messages_use_safe_inline_code() {
+        use super::print_remote_push_messages;
         let mut buf = Vec::new();
-        print_push_remote_messages(
-            &mut buf,
-            &["use `ticket` in message".to_owned()],
-        )
-        .unwrap();
+        print_remote_push_messages(&mut buf, &["use `ticket` in message".to_owned()]).unwrap();
         let text = String::from_utf8(buf).unwrap();
         assert!(text.contains("``use `ticket` in message``"));
     }

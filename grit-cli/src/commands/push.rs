@@ -150,7 +150,7 @@ impl HumanRender for PushOutcome {
 impl MarkdownRender for PushOutcome {
     fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         let label = self.branch.as_deref().unwrap_or("refs");
-        markdown::print_push_remote_messages(w, &self.remote_messages)?;
+        markdown::print_remote_push_messages(w, &self.remote_messages)?;
         markdown::print_push_results(w, &self.remote, label, self.dry_run, &self.results)?;
         Ok(())
     }
