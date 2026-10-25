@@ -4182,6 +4182,11 @@ fn parallel_process_blob_worktree_jobs(
     let est_bytes = jobs.len().saturating_mul(8192);
     let store_dirty_blobs = (materialize_dirty_blobs && !hash_blobs_without_write)
         .then_some(crate::odb::BULK_NEW_LOOSE_WRITE);
+    let stream_from = if store_dirty_blobs.is_some() {
+        odb.big_file_threshold()?
+    } else {
+        hash_stream_threshold(odb)?
+    };
 
     let rows = try_par_map::<StagingHashJob, Option<(usize, DiffEntry)>, Error, _>(
         jobs,
@@ -4196,6 +4201,7 @@ fn parallel_process_blob_worktree_jobs(
                 &job.rel_path,
                 Some(&job.entry),
                 filter_process,
+                stream_from,
             )?
             .object_id(odb, store_dirty_blobs)?;
             if eff_oid != job.entry.oid || job.worktree_mode != job.entry.mode {
@@ -6359,7 +6365,7 @@ pub(crate) fn symlink_target_bytes(target: &Path) -> Vec<u8> {
 /// stored as a stream.
 ///
 /// Regular files of at least [`Odb::big_file_threshold`] bytes whose clean conversion is the
-/// identity ([`crate::crlf::clean_is_identity`]) are streamed so memory use does not depend
+/// identity ([`crate::crlf::git_conversion_is_identity`]) are streamed so memory use does not depend
 /// on the file size.
 pub(crate) enum WorktreeBlobContent {
     /// Content after the clean conversion (filters, encoding, line endings).
@@ -6465,6 +6471,9 @@ fn open_with_size(path: &Path, rel_path: &str) -> Result<(fs::File, u64)> {
     Ok((file, size))
 }
 
+/// Open a regular worktree file and clean-convert it, or hand it out as a stream when it is
+/// at least `stream_from` bytes and its clean conversion is the identity.
+#[allow(clippy::too_many_arguments)]
 fn read_regular_worktree_blob(
     odb: &Odb,
     path: &Path,
@@ -6473,9 +6482,10 @@ fn read_regular_worktree_blob(
     rel_path: &str,
     index_entry: Option<&IndexEntry>,
     filter_process: Option<&crate::filter_process::FilterProcessState>,
+    stream_from: u64,
 ) -> Result<WorktreeBlobContent> {
     let (file, size) = open_with_size(path, rel_path)?;
-    if crate::crlf::clean_is_identity(conv, file_attrs) && size >= odb.big_file_threshold()? {
+    if crate::crlf::git_conversion_is_identity(conv, file_attrs) && size >= stream_from {
         #[cfg(test)]
         odb.hot_path_metrics().record_blob_content_read();
         return Ok(WorktreeBlobContent::Stream { file, size });
@@ -6506,6 +6516,32 @@ pub(crate) fn worktree_blob_content(
     index_entry: Option<&IndexEntry>,
     filter_process: Option<&crate::filter_process::FilterProcessState>,
 ) -> Result<WorktreeBlobContent> {
+    worktree_blob_content_from(
+        odb,
+        path,
+        meta,
+        conv,
+        file_attrs,
+        rel_path,
+        index_entry,
+        filter_process,
+        odb.big_file_threshold()?,
+    )
+}
+
+/// [`worktree_blob_content`], streaming unconverted regular files from `stream_from` bytes.
+#[allow(clippy::too_many_arguments)]
+fn worktree_blob_content_from(
+    odb: &Odb,
+    path: &Path,
+    meta: &fs::Metadata,
+    conv: &crate::crlf::ConversionConfig,
+    file_attrs: &crate::crlf::FileAttrs,
+    rel_path: &str,
+    index_entry: Option<&IndexEntry>,
+    filter_process: Option<&crate::filter_process::FilterProcessState>,
+    stream_from: u64,
+) -> Result<WorktreeBlobContent> {
     if meta.file_type().is_symlink() {
         let target = fs::read_link(path).map_err(|source| {
             crate::worktree::map_worktree_io(
@@ -6527,6 +6563,7 @@ pub(crate) fn worktree_blob_content(
         rel_path,
         index_entry,
         filter_process,
+        stream_from,
     )
 }
 
@@ -6581,7 +6618,12 @@ fn worktree_file_oid(
     materialize: bool,
     filter_process: Option<&crate::filter_process::FilterProcessState>,
 ) -> Result<ObjectId> {
-    worktree_blob_content(
+    let stream_from = if materialize {
+        odb.big_file_threshold()?
+    } else {
+        hash_stream_threshold(odb)?
+    };
+    worktree_blob_content_from(
         odb,
         path,
         meta,
@@ -6590,14 +6632,15 @@ fn worktree_file_oid(
         rel_path,
         index_entry,
         filter_process,
+        stream_from,
     )?
     .object_id(odb, materialize.then_some(crate::odb::BULK_NEW_LOOSE_WRITE))
 }
 
 /// Hash normalized worktree bytes for a path (does not write to the object database).
 ///
-/// Files of at least `core.bigFileThreshold` bytes that need no clean conversion are hashed
-/// as a stream, without reading them into memory.
+/// Files that need no clean conversion are hashed as a stream, without reading them into
+/// memory, from 1 MiB (or `core.bigFileThreshold` when that is smaller).
 ///
 /// # Errors
 ///
@@ -6628,6 +6671,15 @@ pub fn hash_worktree_file(
     )
 }
 
+/// Work-tree files at least this large are hashed as a stream (when their content goes into
+/// Git unchanged) even below `core.bigFileThreshold`, which only governs how blobs are stored.
+const STREAMED_HASH_MIN_SIZE: u64 = 1024 * 1024;
+
+/// Size from which an unconverted work-tree file is hashed as a stream rather than read whole.
+fn hash_stream_threshold(odb: &Odb) -> Result<u64> {
+    Ok(odb.big_file_threshold()?.min(STREAMED_HASH_MIN_SIZE))
+}
+
 /// Like [`hash_worktree_file`], for callers that already know the worktree file type from a
 /// directory scan (`worktree_mode` is the Git mode derived from that stat), so no metadata
 /// probe is needed.
@@ -6654,6 +6706,7 @@ pub(crate) fn hash_worktree_file_with_mode(
         rel_path,
         index_entry,
         filter_process,
+        hash_stream_threshold(odb)?,
     )?
     .hash(odb)
 }

@@ -10039,6 +10039,7 @@ pub fn grit_lib::objects::odb::Odb::sources(&self) -> grit_lib::error::Result<al
 pub fn grit_lib::objects::odb::Odb::with_config_git_dir(self, std::path::PathBuf) -> Self
 pub fn grit_lib::objects::odb::Odb::with_env_alternate_dirs(self, alloc::vec::Vec<std::path::PathBuf>) -> Self
 pub fn grit_lib::objects::odb::Odb::with_pack_read_context<R>(&self, impl core::ops::function::FnOnce() -> R) -> R
+pub fn grit_lib::objects::odb::Odb::with_stream<R>(&self, &grit_lib::objects::ObjectId, impl core::ops::function::FnOnce(grit_lib::objects::odb::store::ObjectStream<'_>) -> grit_lib::error::Result<R>) -> grit_lib::error::Result<core::option::Option<R>>
 pub fn grit_lib::objects::odb::Odb::with_work_tree(&std::path::Path, &std::path::Path) -> Self
 pub fn grit_lib::objects::odb::Odb::write(&self, grit_lib::objects::ObjectKind, &[u8]) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::write_local(&self, grit_lib::objects::ObjectKind, &[u8]) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
@@ -16326,6 +16327,7 @@ pub fn grit_lib::objects::odb::Odb::sources(&self) -> grit_lib::error::Result<al
 pub fn grit_lib::objects::odb::Odb::with_config_git_dir(self, std::path::PathBuf) -> Self
 pub fn grit_lib::objects::odb::Odb::with_env_alternate_dirs(self, alloc::vec::Vec<std::path::PathBuf>) -> Self
 pub fn grit_lib::objects::odb::Odb::with_pack_read_context<R>(&self, impl core::ops::function::FnOnce() -> R) -> R
+pub fn grit_lib::objects::odb::Odb::with_stream<R>(&self, &grit_lib::objects::ObjectId, impl core::ops::function::FnOnce(grit_lib::objects::odb::store::ObjectStream<'_>) -> grit_lib::error::Result<R>) -> grit_lib::error::Result<core::option::Option<R>>
 pub fn grit_lib::objects::odb::Odb::with_work_tree(&std::path::Path, &std::path::Path) -> Self
 pub fn grit_lib::objects::odb::Odb::write(&self, grit_lib::objects::ObjectKind, &[u8]) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::write_local(&self, grit_lib::objects::ObjectKind, &[u8]) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
@@ -26174,6 +26176,7 @@ pub fn grit_lib::worktree::crlf::file_attrs_from_attr_map(&std::collections::has
 pub fn grit_lib::worktree::crlf::file_attrs_from_gitattributes(&[grit_lib::worktree::attributes::AttrRule], &grit_lib::worktree::attributes::MacroTable, &str, bool, &grit_lib::config::ConfigSet) -> grit_lib::worktree::crlf::FileAttrs
 pub fn grit_lib::worktree::crlf::gather_convert_stats_ascii(&[u8]) -> &'static str
 pub fn grit_lib::worktree::crlf::get_file_attrs(&[grit_lib::worktree::attributes::AttrRule], &str, bool, &grit_lib::config::ConfigSet) -> grit_lib::worktree::crlf::FileAttrs
+pub fn grit_lib::worktree::crlf::git_conversion_is_identity(&grit_lib::worktree::crlf::ConversionConfig, &grit_lib::worktree::crlf::FileAttrs) -> bool
 pub fn grit_lib::worktree::crlf::has_crlf(&[u8]) -> bool
 pub fn grit_lib::worktree::crlf::has_crlf_in_index_blob(&[u8]) -> bool
 pub fn grit_lib::worktree::crlf::has_lone_lf(&[u8]) -> bool
@@ -26190,6 +26193,7 @@ pub fn grit_lib::worktree::crlf::parse_gitattributes_content(&str) -> alloc::vec
 pub fn grit_lib::worktree::crlf::path_gitattribute_value(&[grit_lib::worktree::attributes::AttrRule], &str, bool, &str) -> core::option::Option<alloc::string::String>
 pub fn grit_lib::worktree::crlf::run_filter(&dyn grit_lib::command_runner::CommandRunner, &str, &[u8], &str) -> core::result::Result<alloc::vec::Vec<u8>, grit_lib::error::FilterError>
 pub fn grit_lib::worktree::crlf::should_convert_to_crlf(&grit_lib::worktree::crlf::ConversionConfig, &grit_lib::worktree::crlf::FileAttrs, &[u8]) -> bool
+pub fn grit_lib::worktree::crlf::worktree_conversion_is_identity(&grit_lib::worktree::crlf::ConversionConfig, &grit_lib::worktree::crlf::FileAttrs) -> bool
 pub type grit_lib::worktree::crlf::GitAttributes = alloc::vec::Vec<grit_lib::worktree::attributes::AttrRule>
 pub mod grit_lib::worktree::fsmonitor
 pub struct grit_lib::worktree::fsmonitor::FsmonitorQueryBoundary(pub u64)
