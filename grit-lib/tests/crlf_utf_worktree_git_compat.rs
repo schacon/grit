@@ -1,12 +1,19 @@
-//! Bare UTF-16/UTF-32 `working-tree-encoding` smudge bytes match system Git checkout.
+//! `working-tree-encoding` clean/smudge matches system Git (UTF-16/UTF-32 and ISO-8859-1).
 
 use std::fs;
+use std::io::Write;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
+use grit_lib::config::environment::Environment;
 use grit_lib::config::ConfigSet;
 use grit_lib::error::FilterError;
-use grit_lib::worktree::crlf::{convert_to_worktree_eager, ConversionConfig, FileAttrs};
+use grit_lib::progress::NeverCancel;
+use grit_lib::remote::clone::{clone as clone_repo, CloneOptions};
+use grit_lib::remote::fetch::NoProgress;
+use grit_lib::worktree::crlf::{
+    convert_to_git, convert_to_worktree_eager, ConversionConfig, FileAttrs,
+};
 
 fn default_conv() -> ConversionConfig {
     ConversionConfig::from_config(&ConfigSet::new())
@@ -33,6 +40,60 @@ fn attrs_utf32() -> FileAttrs {
         working_tree_encoding: Some("UTF-32".to_owned()),
         ..FileAttrs::default()
     }
+}
+
+const LATIN1_HELLO_WORKTREE: &[u8] = b"h\xe9llo\n";
+const LATIN1_HELLO_UTF8_BLOB: &[u8] = b"h\xc3\xa9llo\n";
+/// UTF-8 euro sign + newline — not representable in ISO-8859-1.
+const EURO_UTF8_BLOB: &[u8] = b"\xe2\x82\xac\n";
+
+fn attrs_latin1(label: &str) -> FileAttrs {
+    FileAttrs {
+        working_tree_encoding: Some(label.to_owned()),
+        ..FileAttrs::default()
+    }
+}
+
+#[test]
+fn latin1_clean_and_smudge_roundtrip() {
+    let conv = default_conv();
+    let attrs = attrs_latin1("ISO-8859-1");
+    let cleaned =
+        convert_to_git(LATIN1_HELLO_WORKTREE, "a.l1", &conv, &attrs).expect("latin1 clean");
+    assert_eq!(cleaned, LATIN1_HELLO_UTF8_BLOB);
+    let smudged = convert_to_worktree_eager(&cleaned, "a.l1", &conv, &attrs, None, None, None)
+        .expect("latin1 smudge");
+    assert_eq!(smudged, LATIN1_HELLO_WORKTREE);
+}
+
+#[test]
+fn latin1_alias_spellings_roundtrip() {
+    let conv = default_conv();
+    for label in ["latin1", "ISO8859-1", "ISO-8859-1"] {
+        let attrs = attrs_latin1(label);
+        let cleaned = convert_to_git(LATIN1_HELLO_WORKTREE, "a.l1", &conv, &attrs)
+            .unwrap_or_else(|e| panic!("clean with {label}: {e:?}"));
+        assert_eq!(cleaned, LATIN1_HELLO_UTF8_BLOB, "UTF-8 blob for {label}");
+        let smudged = convert_to_worktree_eager(&cleaned, "a.l1", &conv, &attrs, None, None, None)
+            .unwrap_or_else(|e| panic!("smudge with {label}: {e:?}"));
+        assert_eq!(smudged, LATIN1_HELLO_WORKTREE, "worktree bytes for {label}");
+    }
+}
+
+#[test]
+fn latin1_smudge_matches_git_bytes() {
+    let conv = default_conv();
+    let out = convert_to_worktree_eager(
+        LATIN1_HELLO_UTF8_BLOB,
+        "a.l1",
+        &conv,
+        &attrs_latin1("ISO-8859-1"),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(out, LATIN1_HELLO_WORKTREE);
 }
 
 #[test]
@@ -179,4 +240,281 @@ fn bare_utf32_smudge_matches_system_git_checkout() {
         convert_to_worktree_eager(b"wide\n", "g.txt", &conv, &attrs_utf32(), None, None, None)
             .unwrap();
     assert_eq!(grit_bytes, git_bytes);
+}
+
+fn git_out(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .envs(git_env())
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {:?} failed: {:?}",
+        args,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+fn init_git_latin1_source(root: &Path) {
+    fs::write(
+        root.join(".gitattributes"),
+        b"*.l1 text working-tree-encoding=ISO-8859-1\n",
+    )
+    .expect("gitattributes");
+    fs::write(root.join("a.l1"), LATIN1_HELLO_WORKTREE).expect("a.l1");
+    Command::new("git")
+        .current_dir(root)
+        .args(["init", "-q"])
+        .envs(git_env())
+        .status()
+        .expect("git init");
+    for (key, value) in [("user.email", "test@example.com"), ("user.name", "Test")] {
+        Command::new("git")
+            .current_dir(root)
+            .args(["config", key, value])
+            .envs(git_env())
+            .status()
+            .expect("git config");
+    }
+    Command::new("git")
+        .current_dir(root)
+        .args(["add", "-A"])
+        .envs(git_env())
+        .status()
+        .expect("git add");
+    Command::new("git")
+        .current_dir(root)
+        .args(["commit", "-qm", "gitmade"])
+        .envs(git_env())
+        .status()
+        .expect("git commit");
+}
+
+#[test]
+fn latin1_clean_matches_git_stored_blob() {
+    let root = tempfile::tempdir().expect("tempdir");
+    init_git_latin1_source(root.path());
+    let git_blob = git_out(root.path(), &["cat-file", "-p", "HEAD:a.l1"]);
+    let conv = default_conv();
+    let cleaned = convert_to_git(
+        LATIN1_HELLO_WORKTREE,
+        "a.l1",
+        &conv,
+        &attrs_latin1("ISO-8859-1"),
+    )
+    .expect("grit clean");
+    assert_eq!(cleaned, git_blob.as_bytes());
+}
+
+#[test]
+fn latin1_smudge_matches_system_git_checkout() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let git_bytes = git_checkout_worktree_bytes(
+        root.path(),
+        "working-tree-encoding=ISO-8859-1",
+        "a.l1",
+        LATIN1_HELLO_WORKTREE,
+    );
+    assert_eq!(git_bytes, LATIN1_HELLO_WORKTREE);
+
+    let conv = default_conv();
+    let grit_bytes = convert_to_worktree_eager(
+        LATIN1_HELLO_UTF8_BLOB,
+        "a.l1",
+        &conv,
+        &attrs_latin1("ISO-8859-1"),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(grit_bytes, git_bytes);
+}
+
+#[test]
+fn grit_clone_checkouts_latin1_from_git_repo() {
+    let upstream = tempfile::tempdir().expect("upstream");
+    init_git_latin1_source(upstream.path());
+
+    let dest = tempfile::tempdir().expect("dest");
+    let opts = CloneOptions {
+        url: upstream.path().to_string_lossy().into_owned(),
+        dest: dest.path().to_path_buf(),
+        environment: Environment::empty(),
+        ..CloneOptions::new(upstream.path().to_string_lossy(), dest.path().to_path_buf())
+    };
+    clone_repo(opts, &mut NoProgress, &NeverCancel, None).expect("grit clone");
+
+    let bytes = fs::read(dest.path().join("a.l1")).expect("read a.l1");
+    assert_eq!(bytes, LATIN1_HELLO_WORKTREE);
+    let status = git_out(dest.path(), &["status", "--short"]);
+    assert!(
+        status.is_empty(),
+        "git status in grit clone should be clean after Latin-1 checkout: {status:?}"
+    );
+}
+
+/// Build a commit whose tree contains `.gitattributes` and `a.l1` at `EURO_UTF8_BLOB`.
+///
+/// The euro blob is stored via `hash-object` (bypasses clean on ingest). The caller should
+/// `git reset --hard` to this commit so Git applies `working-tree-encoding` on checkout.
+fn init_git_repo_with_latin1_attrs_and_utf8_euro_blob(root: &Path) -> String {
+    fs::write(
+        root.join(".gitattributes"),
+        b"*.l1 text working-tree-encoding=ISO-8859-1\n",
+    )
+    .expect("gitattributes");
+    Command::new("git")
+        .current_dir(root)
+        .args(["init", "-q"])
+        .envs(git_env())
+        .status()
+        .expect("git init");
+    for (key, value) in [("user.email", "test@example.com"), ("user.name", "Test")] {
+        Command::new("git")
+            .current_dir(root)
+            .args(["config", key, value])
+            .envs(git_env())
+            .status()
+            .expect("git config");
+    }
+    Command::new("git")
+        .current_dir(root)
+        .args(["add", ".gitattributes"])
+        .envs(git_env())
+        .status()
+        .expect("git add attrs");
+    Command::new("git")
+        .current_dir(root)
+        .args(["commit", "-qm", "attrs"])
+        .envs(git_env())
+        .status()
+        .expect("git commit attrs");
+
+    let mut hash_child = Command::new("git")
+        .current_dir(root)
+        .args(["hash-object", "-w", "--stdin"])
+        .envs(git_env())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("hash-object");
+    hash_child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(EURO_UTF8_BLOB)
+        .expect("blob");
+    let hash_out = hash_child.wait_with_output().expect("hash-object wait");
+    assert!(hash_out.status.success(), "hash-object failed");
+    let blob = String::from_utf8_lossy(&hash_out.stdout).trim().to_string();
+
+    let attrs_blob = git_out(root, &["rev-parse", "HEAD:.gitattributes"])
+        .trim()
+        .to_string();
+    let tree_line = format!("100644 blob {attrs_blob}\t.gitattributes\n100644 blob {blob}\ta.l1\n");
+    let mut tree_child = Command::new("git")
+        .current_dir(root)
+        .args(["mktree"])
+        .envs(git_env())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("mktree");
+    tree_child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(tree_line.as_bytes())
+        .expect("tree line");
+    let tree_out = tree_child.wait_with_output().expect("mktree wait");
+    assert!(tree_out.status.success(), "mktree failed");
+    let tree = String::from_utf8_lossy(&tree_out.stdout).trim().to_string();
+
+    let commit_out = Command::new("git")
+        .current_dir(root)
+        .args(["commit-tree", &tree, "-p", "HEAD", "-m", "file"])
+        .envs(git_env())
+        .output()
+        .expect("commit-tree");
+    assert!(commit_out.status.success(), "commit-tree failed");
+    String::from_utf8_lossy(&commit_out.stdout)
+        .trim()
+        .to_string()
+}
+
+#[test]
+fn latin1_smudge_fails_for_unrepresentable_utf8_blob() {
+    let conv = default_conv();
+    let err = convert_to_worktree_eager(
+        EURO_UTF8_BLOB,
+        "a.l1",
+        &conv,
+        &attrs_latin1("ISO-8859-1"),
+        None,
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            FilterError::NotFilteredProperly { ref detail, .. }
+                if detail.contains("failed to encode") && detail.contains("ISO-8859-1")
+        ),
+        "expected encode failure, got {err:?}"
+    );
+}
+
+#[test]
+fn latin1_smudge_unrepresentable_utf8_matches_git_worktree_bytes() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let commit = init_git_repo_with_latin1_attrs_and_utf8_euro_blob(root.path());
+
+    let reset = Command::new("git")
+        .current_dir(root.path())
+        .args(["reset", "--hard", &commit])
+        .envs(git_env())
+        .output()
+        .expect("git reset --hard");
+    let git_stderr = String::from_utf8_lossy(&reset.stderr);
+    assert!(
+        git_stderr.contains("failed to encode")
+            && git_stderr.contains("ISO-8859-1")
+            && git_stderr.contains("a.l1"),
+        "git must report Latin-1 smudge failure when attributes apply: {git_stderr:?}"
+    );
+
+    let git_worktree = fs::read(root.path().join("a.l1")).expect("git checkout bytes");
+    assert_eq!(
+        git_worktree, EURO_UTF8_BLOB,
+        "system git must keep the UTF-8 euro blob bytes in the worktree"
+    );
+    assert_ne!(
+        git_worktree, b"?\n",
+        "system git must not lossily substitute '?' for U+20AC"
+    );
+
+    let conv = default_conv();
+    let grit_err = convert_to_worktree_eager(
+        EURO_UTF8_BLOB,
+        "a.l1",
+        &conv,
+        &attrs_latin1("ISO-8859-1"),
+        None,
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(
+            grit_err,
+            FilterError::NotFilteredProperly { ref detail, .. }
+                if detail.contains("failed to encode") && detail.contains("ISO-8859-1")
+        ),
+        "grit smudge must fail like git instead of writing lossy Latin-1, got {grit_err:?}"
+    );
 }

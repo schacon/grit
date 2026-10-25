@@ -5,7 +5,7 @@
 
 use encoding_rs::Encoding;
 
-fn is_iso_8859_1(label: &str) -> bool {
+pub(crate) fn is_iso_8859_1(label: &str) -> bool {
     matches!(
         label.trim().to_ascii_lowercase().as_str(),
         "iso-8859-1" | "iso8859-1" | "latin1" | "latin-1"
@@ -21,6 +21,22 @@ pub(crate) fn decode_latin1(bytes: &[u8]) -> String {
     s
 }
 
+/// Encode Unicode to Latin-1 bytes when every scalar is in U+0000..=U+00FF.
+///
+/// Used for `working-tree-encoding` smudge; returns `None` if any character is unrepresentable
+/// (Git reports a conversion failure instead of substituting bytes).
+pub(crate) fn encode_latin1_strict(unicode: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(unicode.len());
+    for c in unicode.chars() {
+        let cp = u32::from(c);
+        if cp > 0xFF {
+            return None;
+        }
+        out.push(cp as u8);
+    }
+    Some(out)
+}
+
 /// Encode a string produced by [`decode_latin1`] back to raw bytes for patch output.
 pub(crate) fn encode_latin1_lossy(unicode: &str) -> Vec<u8> {
     unicode
@@ -34,6 +50,17 @@ pub(crate) fn encode_latin1_lossy(unicode: &str) -> Vec<u8> {
             }
         })
         .collect()
+}
+
+/// Latin-1 working-tree bytes → UTF-8 blob bytes (Git `working-tree-encoding` clean filter).
+pub(crate) fn worktree_latin1_to_utf8_bytes(bytes: &[u8]) -> Vec<u8> {
+    decode_latin1(bytes).into_bytes()
+}
+
+/// UTF-8 blob bytes → Latin-1 working-tree bytes (Git smudge filter).
+pub(crate) fn utf8_bytes_to_worktree_latin1(utf8: &[u8]) -> Option<Vec<u8>> {
+    let s = std::str::from_utf8(utf8).ok()?;
+    encode_latin1_strict(s)
 }
 
 /// Find the offset of the first byte that is not part of a strictly valid UTF-8
@@ -276,5 +303,34 @@ mod tests {
         let encoded = encode_header_text("ISO8859-1", unicode).expect("latin1 encodes");
         assert_eq!(encoded, vec![0xC1, 0xE9, 0xED, 0x20, 0xF3, 0xFA]);
         assert_eq!(decode_bytes(Some("ISO8859-1"), &encoded), unicode);
+    }
+
+    #[test]
+    fn iso8859_1_aliases_for_worktree_encoding() {
+        for label in ["latin1", "ISO8859-1", "ISO-8859-1", "latin-1", "  LATIN1  "] {
+            assert!(is_iso_8859_1(label), "expected Latin-1 alias: {label}");
+        }
+    }
+
+    #[test]
+    fn worktree_latin1_round_trip_bytes() {
+        let worktree = b"h\xe9llo\n";
+        let utf8_blob = worktree_latin1_to_utf8_bytes(worktree);
+        assert_eq!(utf8_blob, b"h\xc3\xa9llo\n");
+        assert_eq!(
+            utf8_bytes_to_worktree_latin1(&utf8_blob).as_deref(),
+            Some(worktree.as_slice())
+        );
+    }
+
+    #[test]
+    fn worktree_latin1_smudge_rejects_unrepresentable_utf8() {
+        let euro_utf8 = b"\xe2\x82\xac\n";
+        assert!(utf8_bytes_to_worktree_latin1(euro_utf8).is_none());
+        assert_eq!(
+            encode_latin1_lossy(std::str::from_utf8(euro_utf8).unwrap()),
+            b"?\n",
+            "commit-message path stays lossy"
+        );
     }
 }
