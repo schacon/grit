@@ -349,8 +349,12 @@ fn wrapper_helpers_classify_only_remote_unreadable() {
     assert!(!Error::NothingToCommit.is_remote_unreadable());
 
     assert!(RemoteError::Library(unreadable()).is_remote_unreadable());
-    assert!(!RemoteError::NoUrl.is_remote_unreadable());
-    assert!(!RemoteError::Library(Error::Auth("denied".into())).is_remote_unreadable());
+    assert!(!RemoteError::NoUrl { remote: None }.is_remote_unreadable());
+    assert!(!RemoteError::Library(Error::Auth {
+        url: "https://example.com/r.git".into(),
+        reason: grit_lib::error::AuthFailure::Rejected,
+    })
+    .is_remote_unreadable());
 
     assert!(CloneError::Library(unreadable()).is_remote_unreadable());
     assert!(CloneError::Remote(RemoteError::Library(unreadable())).is_remote_unreadable());

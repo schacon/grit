@@ -50,6 +50,20 @@ pub enum ErrorKind {
     RevisionNotFound,
     /// Clone, fetch, pull, push, or `remote refs` could not reach or read the remote (exit 128).
     RemoteUnreadable,
+    /// Push has no remote: none was named and no `origin` is configured.
+    NoRemote,
+    /// A named remote is not configured.
+    RemoteNotFound,
+    /// A configured remote has no URL.
+    RemoteNoUrl,
+    /// The server wants credentials and none were available.
+    AuthRequired,
+    /// The server rejected the credentials that were sent.
+    AuthRejected,
+    /// `merge --continue` found conflicts that are not resolved (or not staged) yet (`paths`).
+    UnmergedPaths,
+    /// Staged or unstaged changes block the operation (`paths`).
+    DirtyWorktree,
 }
 
 impl ErrorKind {
@@ -98,6 +112,13 @@ impl ErrorKind {
             Self::HookFailed => "hook_failed",
             Self::RevisionNotFound => "revision_not_found",
             Self::RemoteUnreadable => "remote_unreadable",
+            Self::NoRemote => "no_remote",
+            Self::RemoteNotFound => "remote_not_found",
+            Self::RemoteNoUrl => "remote_no_url",
+            Self::AuthRequired => "auth_required",
+            Self::AuthRejected => "auth_rejected",
+            Self::UnmergedPaths => "unmerged_paths",
+            Self::DirtyWorktree => "dirty_worktree",
         }
     }
 
@@ -127,6 +148,13 @@ impl ErrorKind {
             Self::HookFailed,
             Self::RevisionNotFound,
             Self::RemoteUnreadable,
+            Self::NoRemote,
+            Self::RemoteNotFound,
+            Self::RemoteNoUrl,
+            Self::AuthRequired,
+            Self::AuthRejected,
+            Self::UnmergedPaths,
+            Self::DirtyWorktree,
         ]
     }
 }

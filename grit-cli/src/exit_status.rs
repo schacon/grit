@@ -394,7 +394,10 @@ mod tests {
             assert_eq!(ExitStatus::for_error(&err), ExitStatus::RemoteUnreadable);
         }
         let auth = commands::fetch::map_remote_error(grit_lib::remote::RemoteError::Library(
-            grit_lib::error::Error::Auth("denied".into()),
+            grit_lib::error::Error::Auth {
+                url: "https://example.com/r.git".into(),
+                reason: grit_lib::error::AuthFailure::Rejected,
+            },
         ));
         assert_eq!(ExitStatus::for_error(&auth), ExitStatus::Failure);
 
