@@ -756,6 +756,10 @@ pub struct PushOptions {
 pub struct PushOutcome {
     /// Per-ref resolved results (status, old/new oid, reason).
     pub results: Vec<PushRefResult>,
+    /// Hook and diagnostic lines from the remote (side-band channel 2), in order.
+    ///
+    /// Empty for local `file://` pushes and when the server did not use side-band.
+    pub remote_messages: Vec<String>,
 }
 
 pub use crate::pack_objects::{
@@ -1921,6 +1925,7 @@ pub fn push_local(
         }
         return Ok(PushOutcome {
             results: decisions.into_iter().map(|d| d.result).collect(),
+            remote_messages: Vec::new(),
         });
     }
 
@@ -2003,7 +2008,10 @@ pub fn push_local(
         }
     }
 
-    Ok(PushOutcome { results })
+    Ok(PushOutcome {
+        results,
+        remote_messages: Vec::new(),
+    })
 }
 
 fn push_store_ref_update(
