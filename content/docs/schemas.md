@@ -3,7 +3,7 @@ title: JSON schemas
 summary: Versioned v1 JSON Schemas for every grit command's --json success object.
 ---
 
-Every command that prints a JSON outcome object with `--json` has a versioned JSON Schema served at a stable URL (`https://grit-scm.com/schemas/<command>/vN.json`). Most commands are still on **v1**; `clone` publishes **v3** while **v1** and **v2** remain frozen; `config`, `merge`, `mv`, `pull`, `pick`, `remote` (and several `remote.*` subcommands), `tag`, and `worktree.prune` publish **v2** while **v1** remains frozen for older clients.
+Every command that prints a JSON outcome object with `--json` has a versioned JSON Schema served at a stable URL (`https://grit-scm.com/schemas/<command>/vN.json`). Most commands are still on **v1**; `clone` publishes **v3** while **v1** and **v2** remain frozen; `config`, `merge`, `mv`, `pull`, `pick`, `remote` (and several `remote.*` subcommands), `switch`, `tag`, and `worktree.prune` publish **v2** while **v1** remains frozen for older clients.
 
 See the [Agent guide](../agents/#json-schema-versioning) for additive vs breaking rules, the CI backward-compatibility gate, and how to regenerate live files under `content/schemas/` with `GRIT_UPDATE_SCHEMAS=1`.
 
@@ -104,7 +104,7 @@ Plain command failures with `--json` validate against the shared [error schema](
 | `stash.branch` | [v1](/schemas/stash.branch/v1.json) |
 | `stash.clear` | [v1](/schemas/stash.clear/v1.json) |
 | `status` | [v1](/schemas/status/v1.json) |
-| `switch` | [v1](/schemas/switch/v1.json) |
+| `switch` | [v2](/schemas/switch/v2.json), [v1](/schemas/switch/v1.json) |
 | `tag` | [v2](/schemas/tag/v2.json), [v1](/schemas/tag/v1.json) |
 | `update` | [v1](/schemas/update/v1.json) |
 | `worktree.add` | [v1](/schemas/worktree.add/v1.json) |
