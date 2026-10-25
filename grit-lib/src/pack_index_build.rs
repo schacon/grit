@@ -296,6 +296,7 @@ fn read_pack_header(pack: &[u8]) -> Result<PackHeader> {
 }
 
 /// Single-threaded pack walk: one inflate+hash per whole object; zlib-skip deltas only.
+#[allow(clippy::too_many_arguments)]
 fn scan_and_hash_wholes_serial(
     pack: &[u8],
     header: &PackHeader,

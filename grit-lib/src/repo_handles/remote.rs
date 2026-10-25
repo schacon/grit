@@ -280,6 +280,7 @@ impl<'repo> RepositoryRemotes<'repo> {
     /// Returns [`crate::error::Error::Config`] when prune config is invalid for
     /// a remote (same as
     /// [`resolve_fetch_prune`](crate::remote::transfer::resolve_fetch_prune)).
+    #[allow(clippy::too_many_arguments)]
     pub fn fetch_all(
         &self,
         config: &ConfigSet,

@@ -375,6 +375,7 @@ pub fn read_sideband_pack_tail(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn read_sideband_pack_tail_buffered(
     r: &mut dyn Read,
     target: &mut PackReceiveTarget<'_>,

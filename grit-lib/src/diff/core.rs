@@ -7109,6 +7109,7 @@ fn modified_as_copy_from_sources(
 /// When `work_root` is set, added entries whose `new_oid` is the zero placeholder (as in
 /// uncached `diff-index` when the work tree diverged from the index) load content from disk
 /// under that root instead of the object database.
+#[allow(clippy::expect_used)]
 pub fn detect_renames(
     odb: &Odb,
     work_root: Option<&Path>,
@@ -7132,7 +7133,6 @@ fn poll_rename_cancel(
 }
 
 /// Like [`detect_renames`], but honors `index.threads` / `--threads` via `thread_policy`.
-#[must_use]
 pub fn detect_renames_with_policy(
     odb: &Odb,
     work_root: Option<&Path>,
@@ -8166,6 +8166,7 @@ pub fn flatten_tree_entries(
 /// # Errors
 ///
 /// Propagates errors from reading the `head_tree` object from `odb`.
+#[allow(clippy::too_many_arguments)]
 pub fn status_apply_rename_copy_detection(
     odb: &Odb,
     unstaged_raw: Vec<DiffEntry>,

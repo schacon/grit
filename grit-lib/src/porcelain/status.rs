@@ -450,6 +450,7 @@ pub fn collect_untracked_and_ignored_with_rules(
 }
 
 /// Like [`collect_untracked_and_ignored_with_rules`], checking `cancel` during the walk.
+#[allow(clippy::too_many_arguments)]
 pub fn collect_untracked_and_ignored_with_rules_and_cancel(
     repo: &Repository,
     index: &mut Index,
