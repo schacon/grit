@@ -57,16 +57,7 @@ fn read_parents(
 /// `register_shallow()` rewrites the commit graph during `rev-list` so negotiation never tries to
 /// load (and fails on) objects past the shallow cut (t5539 shallow http fetch/deepen).
 fn read_shallow_boundary(repo: &Repository) -> HashSet<ObjectId> {
-    let shallow_path = repo.git_dir().join("shallow");
-    let mut set = HashSet::new();
-    if let Ok(contents) = std::fs::read_to_string(&shallow_path) {
-        for line in contents.lines().map(str::trim).filter(|l| !l.is_empty()) {
-            if let Ok(oid) = ObjectId::from_hex(line) {
-                set.insert(oid);
-            }
-        }
-    }
-    set
+    crate::shallow::load_shallow_boundaries(repo.git_dir())
 }
 
 #[derive(Clone, Copy)]

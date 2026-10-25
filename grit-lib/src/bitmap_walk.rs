@@ -283,7 +283,7 @@ impl BitmapIndex {
         missing: MissingAction,
     ) -> std::result::Result<ReachableSet, BitmapWalkError> {
         if !shallow_boundary_oids(repo.git_dir()).is_empty()
-            || repo.git_dir().join("shallow").is_file()
+            || crate::shallow::shallow_file_path(repo.git_dir()).is_file()
         {
             return Err(BitmapWalkUnsupported.into());
         }
@@ -336,7 +336,7 @@ impl BitmapIndex {
         filter_want_tips: &[ObjectId],
     ) -> std::result::Result<ReachableSet, BitmapWalkError> {
         if !shallow_boundary_oids(repo.git_dir()).is_empty()
-            || repo.git_dir().join("shallow").is_file()
+            || crate::shallow::shallow_file_path(repo.git_dir()).is_file()
         {
             return Err(BitmapWalkUnsupported.into());
         }

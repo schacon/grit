@@ -23,6 +23,7 @@ use crate::pack_rev::{
 };
 use crate::refs;
 use crate::repo::Repository;
+use crate::shallow::load_shallow_boundaries;
 
 use super::order::BitmapOrder;
 
@@ -269,7 +270,9 @@ fn write_bitmap_for_order_in_context(
     let roots = collect_referenced_object_roots(repo.git_dir())
         .map_err(|e| PackBitmapWriteError::Object(e.to_string()))?;
     let strict = options.verify_reachability_closure;
-    let (type_bitmaps, commits) = build_type_bitmaps_and_commits(repo, order)?;
+    // Shallow boundary commits have no parents for reachability, as in Git.
+    let shallow = load_shallow_boundaries(repo.git_dir());
+    let (type_bitmaps, commits) = build_type_bitmaps_and_commits(repo, order, shallow)?;
     let tips = commit_tips_from_roots(repo, order, &commits, &roots, strict)?;
     let needs_bitmap = tip_needs_flags(repo, &tips, &options.prefer_bitmap_tips)?;
     let hash_cache_len = hash_cache_row_count(order);
@@ -371,17 +374,36 @@ struct CommitRow {
 }
 
 /// Every commit in the bitmap order, parsed once so later phases never re-read commits.
+///
+/// Shallow boundary commits are recorded without parents.
 struct CommitTable {
     /// Newest committer date first (stable on ties, so pack order breaks them).
     rows: Vec<CommitRow>,
     by_oid: HashMap<ObjectId, usize>,
+    shallow: HashSet<ObjectId>,
 }
 
 impl CommitTable {
-    fn new(mut rows: Vec<CommitRow>) -> Self {
+    fn new(mut rows: Vec<CommitRow>, shallow: HashSet<ObjectId>) -> Self {
         rows.sort_by_key(|c| std::cmp::Reverse(c.committer_date));
+        for row in rows.iter_mut().filter(|row| shallow.contains(&row.oid)) {
+            row.parents.clear();
+        }
         let by_oid = rows.iter().enumerate().map(|(i, c)| (c.oid, i)).collect();
-        Self { rows, by_oid }
+        Self {
+            rows,
+            by_oid,
+            shallow,
+        }
+    }
+
+    /// `parents` of commit `oid`, or none when `oid` is a shallow boundary.
+    fn graft_parents(&self, oid: &ObjectId, parents: Vec<ObjectId>) -> Vec<ObjectId> {
+        if self.shallow.contains(oid) {
+            Vec::new()
+        } else {
+            parents
+        }
     }
 
     fn index_of(&self, oid: &ObjectId) -> Option<usize> {
@@ -409,7 +431,7 @@ impl CommitTable {
         let obj = read_object(repo, oid)?;
         let commit =
             parse_commit(&obj.data).map_err(|e| PackBitmapWriteError::Object(e.to_string()))?;
-        Ok(Cow::Owned(commit.parents))
+        Ok(Cow::Owned(self.graft_parents(oid, commit.parents)))
     }
 }
 
@@ -458,6 +480,7 @@ fn pack_entry_kinds(
 fn build_type_bitmaps_and_commits(
     repo: &Repository,
     order: &BitmapOrder,
+    shallow: HashSet<ObjectId>,
 ) -> Result<(TypeBitmaps, CommitTable), PackBitmapWriteError> {
     let mut commits = Vec::new();
     let mut commit_bm = Bitmap::new();
@@ -508,7 +531,7 @@ fn build_type_bitmaps_and_commits(
             blobs: EwahBitmap::from_bitmap(&blobs),
             tags: EwahBitmap::from_bitmap(&tags),
         },
-        CommitTable::new(commits),
+        CommitTable::new(commits, shallow),
     ))
 }
 

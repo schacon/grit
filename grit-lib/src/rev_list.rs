@@ -6129,7 +6129,7 @@ fn try_commit_graph_count_only(
     else {
         return Ok(None);
     };
-    let shallow = load_shallow_boundaries(repo.git_dir());
+    let shallow = crate::shallow::load_shallow_boundaries(repo.git_dir());
     let Some(n) = chain.count_reachable_commits(include, exclude, false, &shallow) else {
         return Ok(None);
     };
@@ -7535,9 +7535,10 @@ impl<'r> CommitGraph<'r> {
         first_parent_only: bool,
         use_commit_graph: bool,
     ) -> Self {
-        let shallow_boundaries: OidHashSet = load_shallow_boundaries(repo.git_dir())
-            .into_iter()
-            .collect();
+        let shallow_boundaries: OidHashSet =
+            crate::shallow::load_shallow_boundaries(repo.git_dir())
+                .into_iter()
+                .collect();
         let graft_parents: OidHashMap<Vec<ObjectId>> =
             crate::rev_parse::load_graft_parents(repo.git_dir())
                 .into_iter()
@@ -7756,23 +7757,6 @@ fn subject_line_from_commit_message(message: &str) -> String {
         .map(str::trim)
         .unwrap_or("(no subject)")
         .to_owned()
-}
-
-/// Load shallow boundary commit OIDs from `.git/shallow`.
-fn load_shallow_boundaries(git_dir: &Path) -> HashSet<ObjectId> {
-    let shallow_path = git_dir.join("shallow");
-    let mut set = HashSet::new();
-    if let Ok(contents) = fs::read_to_string(&shallow_path) {
-        for line in contents.lines() {
-            let line = line.trim();
-            if !line.is_empty() {
-                if let Ok(oid) = line.parse::<ObjectId>() {
-                    set.insert(oid);
-                }
-            }
-        }
-    }
-    set
 }
 
 fn commit_tips_from_ref_pairs(

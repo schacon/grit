@@ -20251,6 +20251,7 @@ pub fn grit_lib::remote::shallow::load_shallow_oids(&std::path::Path) -> grit_li
 pub fn grit_lib::remote::shallow::new_shallow_roots_for_push(&grit_lib::objects::odb::Odb, grit_lib::objects::ObjectId, &std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>, &[grit_lib::objects::ObjectId]) -> std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>
 pub fn grit_lib::remote::shallow::read_shallow_info_section(&mut dyn alloc::io::read::Read) -> grit_lib::error::Result<(alloc::vec::Vec<grit_lib::objects::ObjectId>, alloc::vec::Vec<grit_lib::objects::ObjectId>)>
 pub fn grit_lib::remote::shallow::read_shallow_info_section_sideband(&mut dyn alloc::io::read::Read, bool) -> grit_lib::error::Result<(alloc::vec::Vec<grit_lib::objects::ObjectId>, alloc::vec::Vec<grit_lib::objects::ObjectId>)>
+pub fn grit_lib::remote::shallow::shallow_file_path(&std::path::Path) -> std::path::PathBuf
 pub mod grit_lib::remote::sideband_lines
 pub enum grit_lib::remote::sideband_lines::RemoteLine
 pub grit_lib::remote::sideband_lines::RemoteLine::Line(alloc::string::String)

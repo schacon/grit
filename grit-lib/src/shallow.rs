@@ -7,20 +7,31 @@ use crate::pkt_line;
 use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// A sentinel `deepen` depth requesting *complete* history, used to drive an
 /// `--unshallow` fetch. Git sends `INFINITE_DEPTH` (`0x7fffffff`) as the `deepen`
 /// argument; the server responds by `unshallow`-ing every boundary it can fill.
 pub const INFINITE_DEPTH: u32 = 0x7fff_ffff;
 
+/// Path of the `shallow` file for `git_dir`.
+///
+/// The file is shared by every worktree: for a linked worktree's admin directory
+/// (one with a `commondir` file) it lives in the common Git directory, as in Git.
+#[must_use]
+pub fn shallow_file_path(git_dir: &Path) -> PathBuf {
+    crate::repo::common_git_dir_for_config(git_dir).join("shallow")
+}
+
 /// Returns the set of commit OIDs recorded as shallow boundaries in `.git/shallow`.
+///
+/// `git_dir` may be a linked worktree's admin directory; see [`shallow_file_path`].
 ///
 /// For each listed commit, history must not be traversed past its parents (the parents may be
 /// absent from the object database). This matches Git's behavior for `git fsck` and reachability.
 #[must_use]
 pub fn load_shallow_boundaries(git_dir: &Path) -> HashSet<ObjectId> {
-    let shallow_path = git_dir.join("shallow");
+    let shallow_path = shallow_file_path(git_dir);
     let mut set = HashSet::new();
     let Ok(contents) = fs::read_to_string(&shallow_path) else {
         return set;
@@ -65,7 +76,7 @@ pub fn add_shallow_boundaries(
     hexes.sort();
     let mut body = hexes.join("\n");
     body.push('\n');
-    fs::write(git_dir.join("shallow"), body)
+    fs::write(shallow_file_path(git_dir), body)
 }
 
 /// Determine which of `boundaries` become *new* shallow roots when `tip` is pushed into a receiver
@@ -148,7 +159,7 @@ pub fn new_shallow_roots_for_push(
 /// # Errors
 /// Returns an error only on an unexpected I/O failure reading an existing file.
 pub fn load_shallow_oids(git_dir: &Path) -> Result<Vec<ObjectId>> {
-    let shallow_path = git_dir.join("shallow");
+    let shallow_path = shallow_file_path(git_dir);
     if !shallow_path.exists() {
         return Ok(Vec::new());
     }
@@ -189,7 +200,7 @@ pub fn apply_shallow_updates(
         boundaries.remove(oid);
     }
 
-    let shallow_path = git_dir.join("shallow");
+    let shallow_path = shallow_file_path(git_dir);
     if boundaries.is_empty() {
         let _ = fs::remove_file(&shallow_path);
         return Ok(());
@@ -398,6 +409,30 @@ mod tests {
     fn oid(hex_byte: u8) -> ObjectId {
         let s = format!("{hex_byte:02x}").repeat(20);
         ObjectId::from_hex(&s).unwrap()
+    }
+
+    #[test]
+    fn linked_worktree_admin_dir_uses_common_shallow_file() {
+        let dir = tempdir().unwrap();
+        let common = dir.path().join("repo.git");
+        let admin = common.join("worktrees").join("linked");
+        std::fs::create_dir_all(&admin).unwrap();
+        std::fs::write(admin.join("commondir"), "../..\n").unwrap();
+        let common = common.canonicalize().unwrap();
+        assert_eq!(shallow_file_path(&admin), common.join("shallow"));
+        assert_eq!(shallow_file_path(&common), common.join("shallow"));
+
+        let a = oid(0x11);
+        let b = oid(0x22);
+        std::fs::write(common.join("shallow"), format!("{}\n", a.to_hex())).unwrap();
+        assert_eq!(load_shallow_boundaries(&admin), HashSet::from([a]));
+        assert_eq!(load_shallow_oids(&admin).unwrap(), vec![a]);
+
+        apply_shallow_updates(&admin, &[b], &[a]).unwrap();
+        assert!(!admin.join("shallow").exists());
+        assert_eq!(load_shallow_boundaries(&common), HashSet::from([b]));
+        apply_shallow_updates(&admin, &[], &[b]).unwrap();
+        assert!(!common.join("shallow").exists());
     }
 
     #[test]
