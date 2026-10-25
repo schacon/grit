@@ -16,6 +16,7 @@ use serde::Serialize;
 use std::io::Write;
 
 use crate::commands::auth;
+use crate::commands::fetch::map_remote_error;
 use crate::context;
 use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, OutputMode, RenderContext};
@@ -333,7 +334,7 @@ fn push_once(
             &NeverCancel,
             Some(factory),
         )
-        .map_err(|e| anyhow::Error::msg(e.to_string()))
+        .map_err(map_remote_error)
 }
 
 #[cfg(test)]

@@ -1304,7 +1304,10 @@ pub fn fetch_remote(
         && remote_refs.is_empty()
         && !crate::transport::connection_handshake_complete(conn)
     {
-        return Err(Error::RemoteReadFailed);
+        return Err(Error::RemoteUnreadable {
+            url: None,
+            reason: crate::error::RemoteUnreadableReason::NoHandshake,
+        });
     }
 
     let crate::transfer::FetchMatchSet {

@@ -88,12 +88,13 @@ pub fn is_git_directory(path: &Path) -> bool {
     path.join("HEAD").is_file() && path.join("objects").is_dir()
 }
 
-/// Stricter check aligned with Git `setup.c` `is_git_directory` for embedded-repo detection.
-///
-/// Validates `HEAD` in the resolved gitdir (including linked-worktree admin dirs) and
+/// Whether `git_dir` is a usable Git directory, with the same rules as Git's repository
+/// discovery: a valid `HEAD` in `git_dir` (including linked-worktree admin dirs) and
 /// `objects/` + `refs/` in the common git directory (`commondir` when present).
+///
+/// Used for embedded-repository detection and to validate local remotes.
 #[must_use]
-pub(crate) fn git_directory_for_embedded_repo(git_dir: &Path) -> bool {
+pub(crate) fn is_valid_git_dir(git_dir: &Path) -> bool {
     if !git_head_ref_valid(&git_dir.join("HEAD")) {
         return false;
     }
@@ -111,7 +112,7 @@ mod embedded_git_dir_tests {
         let tmp = tempfile::tempdir().unwrap();
         let git = tmp.path().join(".git");
         fs::create_dir_all(&git).unwrap();
-        assert!(!git_directory_for_embedded_repo(&git));
+        assert!(!is_valid_git_dir(&git));
     }
 
     #[test]
@@ -121,7 +122,7 @@ mod embedded_git_dir_tests {
         fs::create_dir_all(git.join("objects")).unwrap();
         fs::create_dir_all(git.join("refs/heads")).unwrap();
         fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
-        assert!(git_directory_for_embedded_repo(&git));
+        assert!(is_valid_git_dir(&git));
     }
 
     #[test]
@@ -134,7 +135,7 @@ mod embedded_git_dir_tests {
         fs::create_dir_all(&admin).unwrap();
         fs::write(admin.join("HEAD"), "ref: refs/heads/main\n").unwrap();
         fs::write(admin.join("commondir"), "../..\n").unwrap();
-        assert!(git_directory_for_embedded_repo(&admin));
+        assert!(is_valid_git_dir(&admin));
         assert!(
             !admin.join("objects").is_dir(),
             "admin dir must not need local objects/"

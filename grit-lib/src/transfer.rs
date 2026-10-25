@@ -22,7 +22,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::error::{Error, Result};
+use crate::error::{Error, RemoteUnreadableReason, Result};
 use crate::fetch::{NoProgress, Progress};
 use crate::hash;
 use crate::objects::{parse_commit, parse_tag, parse_tree, HashAlgo, ObjectId, ObjectKind};
@@ -963,8 +963,8 @@ fn copy_objects_for_local_fetch(
         source_objects_fully_packed, try_satisfy_via_object_link,
     };
 
-    let remote_objects = remote_git_dir.join("objects");
-    let local_objects = local_git_dir.join("objects");
+    let remote_objects = objects_dir(remote_git_dir);
+    let local_objects = objects_dir(local_git_dir);
     let pack_dir_before = pack_file_basenames(&local_objects_pack_dir(local_git_dir));
 
     if !pack_build.thin
@@ -1095,8 +1095,8 @@ fn copy_objects_for_local_push(
         link_loose_objects_for_oids, refresh_local_odb_after_link, try_satisfy_via_object_link,
     };
 
-    let local_objects = local_git_dir.join("objects");
-    let remote_objects = remote_git_dir.join("objects");
+    let local_objects = objects_dir(local_git_dir);
+    let remote_objects = objects_dir(remote_git_dir);
 
     let have_tips: HashSet<ObjectId> = haves.iter().copied().collect();
     let send_set = collect_reachable_excluding_peer(
@@ -1673,6 +1673,19 @@ pub(crate) fn enforce_fetch_ref_update(
     Ok(())
 }
 
+/// Fail with [`Error::RemoteUnreadable`] unless `remote_git_dir` is a Git directory.
+///
+/// A missing or non-repository path must not read as an empty remote.
+pub(crate) fn ensure_local_remote_repository(remote_git_dir: &Path) -> Result<()> {
+    if crate::submodule_gitdir::is_valid_git_dir(remote_git_dir) {
+        return Ok(());
+    }
+    Err(Error::remote_unreadable(
+        remote_git_dir.display().to_string(),
+        RemoteUnreadableReason::RepositoryNotFound,
+    ))
+}
+
 /// Like [`fetch_local`], reporting object copy progress through `progress`.
 pub fn fetch_local_with_progress(
     local_git_dir: &Path,
@@ -1682,15 +1695,7 @@ pub fn fetch_local_with_progress(
     cancel: &dyn crate::progress::Cancel,
 ) -> Result<FetchOutcome> {
     crate::progress::poll_cancel(progress, cancel)?;
-    // Validate that the remote is actually a Git repository: a missing or
-    // non-repo path must error (e.g. cloning a bad source) rather than silently
-    // fetching nothing. A repo has an `objects` directory (bare or `.git`).
-    if !remote_git_dir.join("objects").is_dir() {
-        return Err(Error::Message(format!(
-            "could not find repository at '{}'",
-            remote_git_dir.display()
-        )));
-    }
+    ensure_local_remote_repository(remote_git_dir)?;
     validate_fetch_depth_local(local_git_dir, opts)?;
 
     let local_odb = open_odb(local_git_dir);
@@ -2181,12 +2186,7 @@ pub fn push_local(
     if !opts.push_options.is_empty() {
         return Err(Error::PushOptionsUnsupported);
     }
-    if !remote_git_dir.join("objects").is_dir() {
-        return Err(Error::Message(format!(
-            "could not find repository at '{}'",
-            remote_git_dir.display()
-        )));
-    }
+    ensure_local_remote_repository(remote_git_dir)?;
 
     let local_odb = open_odb(local_git_dir);
     let remote_odb = open_odb(remote_git_dir);
@@ -2654,8 +2654,14 @@ pub(crate) struct MatchedRef {
 
 /// Open an [`Odb`] for a git directory, attaching the git dir so `hash_algo`
 /// (and MIDX config) resolve correctly.
+/// `objects/` of `git_dir`, which lives in the common directory for a linked worktree's
+/// admin dir.
+fn objects_dir(git_dir: &Path) -> PathBuf {
+    crate::repo::common_git_dir_for_config(git_dir).join("objects")
+}
+
 pub(crate) fn open_odb(git_dir: &Path) -> Odb {
-    Odb::new(&git_dir.join("objects")).with_config_git_dir(git_dir.to_path_buf())
+    Odb::new(&objects_dir(git_dir)).with_config_git_dir(git_dir.to_path_buf())
 }
 
 fn config_for_git_dir(git_dir: &Path) -> Option<crate::config::ConfigSet> {

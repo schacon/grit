@@ -274,6 +274,9 @@ fn local_git_dir_from_filesystem_path(path: &Path) -> PathBuf {
     let dot_git = path.join(".git");
     if dot_git.is_dir() {
         dot_git
+    } else if dot_git.is_file() {
+        // A linked worktree or `--separate-git-dir` checkout points at its git dir.
+        crate::repo::resolve_dot_git(&dot_git).unwrap_or_else(|_| path.to_path_buf())
     } else {
         path.to_path_buf()
     }
