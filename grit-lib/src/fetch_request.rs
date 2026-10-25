@@ -12,7 +12,7 @@ use thiserror::Error;
 use crate::config::ConfigSet;
 use crate::objects::ObjectId;
 use crate::refspec::{parse_fetch_refspec, RefspecError, RefspecItem};
-use crate::remote::{Remote, RemoteError};
+use crate::remote::{Remote, RemoteError, DEFAULT_REMOTE};
 use crate::repo_handles::has_remote_section;
 use crate::transfer::{match_positive, ref_excluded, MatchedRef};
 
@@ -177,19 +177,93 @@ pub fn resolve_fetch_remote(
     resolve_remote_argument(config, remote_or_url)
 }
 
+/// `branch.<branch>.remote`, trimmed; `None` when unset, blank, or `branch` is `None`.
+fn branch_remote(config: &ConfigSet, branch: Option<&str>) -> Option<String> {
+    branch
+        .and_then(|name| config.get(&format!("branch.{name}.remote")))
+        .map(|remote| remote.trim().to_owned())
+        .filter(|remote| !remote.is_empty())
+}
+
+/// The remote `grit pull` uses when none is named: `branch.<branch>.remote`, else
+/// [`DEFAULT_REMOTE`].
+///
+/// `branch` is the short name of the checked-out branch, or `None` on a detached or
+/// otherwise branchless `HEAD`. A configured value of `.` (the upstream is a local
+/// branch) is returned as is, so pull can integrate it without fetching; empty or
+/// whitespace-only values are ignored. Unlike
+/// [`crate::remote::push_plan::configured_remote_for_push`], `remote.pushDefault` and
+/// `branch.<name>.pushRemote` play no part.
+///
+/// # Returns
+///
+/// The remote name, or `.` for a local upstream.
+#[must_use]
+pub fn configured_remote_for_pull(config: &ConfigSet, branch: Option<&str>) -> String {
+    branch_remote(config, branch).unwrap_or_else(|| DEFAULT_REMOTE.to_owned())
+}
+
+/// The remote `grit fetch` uses when none is named: `branch.<branch>.remote`, else
+/// [`DEFAULT_REMOTE`].
+///
+/// Same as [`configured_remote_for_pull`], except that a local upstream (`.`) also
+/// falls back to [`DEFAULT_REMOTE`]: fetching the repository from itself updates no
+/// remote-tracking ref, so a branch tracking a local branch fetches the default remote.
+///
+/// # Returns
+///
+/// A remote name; never `.`.
+#[must_use]
+pub fn configured_remote_for_fetch(config: &ConfigSet, branch: Option<&str>) -> String {
+    branch_remote(config, branch)
+        .filter(|remote| remote != ".")
+        .unwrap_or_else(|| DEFAULT_REMOTE.to_owned())
+}
+
 /// Classify `grit fetch [<remote>] [<refspec>…]` positionals (no refspec parsing).
 ///
 /// When the CLI supplies a first positional (`remote`), it is always the
 /// repository (configured name, URL, scp-style `host:path`, or path) — matching
 /// Git. Remaining positionals are refspecs. With no first positional, an initial
 /// token that looks like a repository is consumed as the remote; otherwise the
-/// default remote is used and every token is a refspec.
+/// remote comes from [`configured_remote_for_fetch`] for `current_branch` and every
+/// token is a refspec.
+///
+/// `current_branch` is the short name of the checked-out branch (`None` when `HEAD`
+/// is detached).
 #[must_use]
 pub fn resolve_fetch_invocation(
     config: &ConfigSet,
     remote: Option<&str>,
     refspecs: &[String],
-    default_remote: &str,
+    current_branch: Option<&str>,
+) -> FetchInvocation {
+    classify_invocation(config, remote, refspecs, || {
+        configured_remote_for_fetch(config, current_branch)
+    })
+}
+
+/// Classify `grit pull [<remote>] [<refspec>…]` positionals.
+///
+/// Same rules as [`resolve_fetch_invocation`], but the default remote comes from
+/// [`configured_remote_for_pull`], so a branch tracking a local branch yields `.`.
+#[must_use]
+pub fn resolve_pull_invocation(
+    config: &ConfigSet,
+    remote: Option<&str>,
+    refspecs: &[String],
+    current_branch: Option<&str>,
+) -> FetchInvocation {
+    classify_invocation(config, remote, refspecs, || {
+        configured_remote_for_pull(config, current_branch)
+    })
+}
+
+fn classify_invocation(
+    config: &ConfigSet,
+    remote: Option<&str>,
+    refspecs: &[String],
+    default_remote: impl FnOnce() -> String,
 ) -> FetchInvocation {
     if let Some(name) = remote.filter(|s| !s.is_empty()) {
         return FetchInvocation {
@@ -197,24 +271,15 @@ pub fn resolve_fetch_invocation(
             user_refspecs: refspecs.to_vec(),
         };
     }
-
-    if refspecs.is_empty() {
-        return FetchInvocation {
-            remote: default_remote.to_owned(),
-            user_refspecs: Vec::new(),
-        };
-    }
-
-    if is_fetch_remote_token(config, &refspecs[0]) {
-        FetchInvocation {
-            remote: refspecs[0].clone(),
-            user_refspecs: refspecs[1..].to_vec(),
-        }
-    } else {
-        FetchInvocation {
-            remote: default_remote.to_owned(),
+    match refspecs.split_first() {
+        Some((first, rest)) if is_fetch_remote_token(config, first) => FetchInvocation {
+            remote: first.clone(),
+            user_refspecs: rest.to_vec(),
+        },
+        _ => FetchInvocation {
+            remote: default_remote(),
             user_refspecs: refspecs.to_vec(),
-        }
+        },
     }
 }
 
@@ -1075,7 +1140,7 @@ mod tests {
         config.merge(&file);
 
         assert_eq!(
-            resolve_fetch_invocation(&config, None, &["main:refs/heads/feature".into()], "origin"),
+            resolve_fetch_invocation(&config, None, &["main:refs/heads/feature".into()], None),
             FetchInvocation {
                 remote: "origin".into(),
                 user_refspecs: vec!["main:refs/heads/feature".into()],
@@ -1090,14 +1155,14 @@ mod tests {
 
         let config = ConfigSet::new();
         assert_eq!(
-            resolve_fetch_invocation(&config, Some("example.com:repo"), &[], "origin"),
+            resolve_fetch_invocation(&config, Some("example.com:repo"), &[], None),
             FetchInvocation {
                 remote: "example.com:repo".into(),
                 user_refspecs: vec![],
             }
         );
         assert_eq!(
-            resolve_fetch_invocation(&config, Some("git@host:org/repo"), &[], "origin"),
+            resolve_fetch_invocation(&config, Some("git@host:org/repo"), &[], None),
             FetchInvocation {
                 remote: "git@host:org/repo".into(),
                 user_refspecs: vec![],
@@ -1162,7 +1227,7 @@ mod tests {
         config.merge(&file);
 
         let invocation =
-            resolve_fetch_invocation(&config, None, &["half".into(), "main".into()], "origin");
+            resolve_fetch_invocation(&config, None, &["half".into(), "main".into()], None);
         assert_eq!(
             invocation,
             FetchInvocation {
@@ -1191,7 +1256,7 @@ mod tests {
         config.merge(&file);
 
         assert_eq!(
-            resolve_fetch_invocation(&config, Some("origin"), &["a:b".into()], "origin"),
+            resolve_fetch_invocation(&config, Some("origin"), &["a:b".into()], None),
             FetchInvocation {
                 remote: "origin".into(),
                 user_refspecs: vec!["a:b".into()],
@@ -1214,14 +1279,14 @@ mod tests {
         config.merge(&file);
 
         assert_eq!(
-            resolve_fetch_invocation(&config, Some("origin"), &["main".into()], "origin"),
+            resolve_fetch_invocation(&config, Some("origin"), &["main".into()], None),
             FetchInvocation {
                 remote: "origin".into(),
                 user_refspecs: vec!["main".into()],
             }
         );
         assert_eq!(
-            resolve_fetch_invocation(&config, None, &["main".into()], "origin"),
+            resolve_fetch_invocation(&config, None, &["main".into()], None),
             FetchInvocation {
                 remote: "origin".into(),
                 user_refspecs: vec!["main".into()],
@@ -1230,7 +1295,7 @@ mod tests {
 
         let refspec = "refs/heads/main:refs/remotes/origin/main".to_owned();
         assert_eq!(
-            resolve_fetch_invocation(&config, None, &[refspec.clone()], "origin"),
+            resolve_fetch_invocation(&config, None, &[refspec.clone()], None),
             FetchInvocation {
                 remote: "origin".into(),
                 user_refspecs: vec![refspec],
@@ -1244,5 +1309,152 @@ mod tests {
         assert!(!super::looks_like_fetch_refspec(
             "git@github.com:org/repo.git"
         ));
+    }
+
+    fn branch_remote_config(body: &str) -> crate::config::ConfigSet {
+        use crate::config::{ConfigFile, ConfigScope, ConfigSet};
+
+        let file = ConfigFile::parse(std::path::Path::new("cfg"), body, ConfigScope::Local)
+            .expect("parse");
+        let mut config = ConfigSet::new();
+        config.merge(&file);
+        config
+    }
+
+    const BRANCH_REMOTES: &str =
+        "[remote \"origin\"]\n\turl = /tmp/a.git\n[remote \"backup\"]\n\turl = /tmp/b.git\n\
+         [branch \"main\"]\n\tremote = backup\n[branch \"local\"]\n\tremote = .\n\
+         [branch \"blank\"]\n\tremote = \"  \"\n[branch \"padded\"]\n\tremote = \" backup \"\n";
+
+    #[test]
+    fn configured_remote_for_pull_uses_branch_remote_then_origin() {
+        use super::configured_remote_for_pull;
+
+        let config = branch_remote_config(BRANCH_REMOTES);
+        assert_eq!(configured_remote_for_pull(&config, Some("main")), "backup");
+        assert_eq!(configured_remote_for_pull(&config, Some("local")), ".");
+        assert_eq!(configured_remote_for_pull(&config, Some("blank")), "origin");
+        assert_eq!(
+            configured_remote_for_pull(&config, Some("padded")),
+            "backup"
+        );
+        assert_eq!(configured_remote_for_pull(&config, Some("other")), "origin");
+        assert_eq!(configured_remote_for_pull(&config, None), "origin");
+        assert_eq!(
+            configured_remote_for_pull(&crate::config::ConfigSet::new(), Some("main")),
+            "origin"
+        );
+    }
+
+    #[test]
+    fn configured_remote_for_fetch_skips_local_upstream() {
+        use super::configured_remote_for_fetch;
+
+        let config = branch_remote_config(BRANCH_REMOTES);
+        assert_eq!(configured_remote_for_fetch(&config, Some("main")), "backup");
+        assert_eq!(
+            configured_remote_for_fetch(&config, Some("local")),
+            "origin"
+        );
+        assert_eq!(
+            configured_remote_for_fetch(&config, Some("blank")),
+            "origin"
+        );
+        assert_eq!(
+            configured_remote_for_fetch(&config, Some("padded")),
+            "backup"
+        );
+        assert_eq!(configured_remote_for_fetch(&config, None), "origin");
+    }
+
+    #[test]
+    fn configured_remotes_ignore_push_remotes() {
+        use super::{configured_remote_for_fetch, configured_remote_for_pull};
+
+        let config = branch_remote_config(
+            "[remote]\n\tpushDefault = backup\n[branch \"main\"]\n\tpushRemote = backup\n",
+        );
+        assert_eq!(configured_remote_for_fetch(&config, Some("main")), "origin");
+        assert_eq!(configured_remote_for_pull(&config, Some("main")), "origin");
+    }
+
+    #[test]
+    fn local_upstream_defaults_differ_between_fetch_and_pull() {
+        use super::{resolve_fetch_invocation, resolve_pull_invocation, FetchInvocation};
+
+        let config = branch_remote_config(BRANCH_REMOTES);
+        assert_eq!(
+            resolve_fetch_invocation(&config, None, &[], Some("local")),
+            FetchInvocation {
+                remote: "origin".into(),
+                user_refspecs: vec![],
+            }
+        );
+        assert_eq!(
+            resolve_pull_invocation(&config, None, &[], Some("local")),
+            FetchInvocation {
+                remote: ".".into(),
+                user_refspecs: vec![],
+            }
+        );
+        assert_eq!(
+            resolve_pull_invocation(&config, None, &["backup".into()], Some("local")),
+            FetchInvocation {
+                remote: "backup".into(),
+                user_refspecs: vec![],
+            }
+        );
+        assert_eq!(
+            resolve_pull_invocation(&config, None, &[], Some("main")),
+            FetchInvocation {
+                remote: "backup".into(),
+                user_refspecs: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_fetch_invocation_defaults_to_current_branch_remote() {
+        use super::{resolve_fetch_invocation, FetchInvocation};
+
+        let config = branch_remote_config(
+            "[remote \"origin\"]\n\turl = /tmp/a.git\n[remote \"backup\"]\n\turl = /tmp/b.git\n\
+             [branch \"main\"]\n\tremote = backup\n",
+        );
+        assert_eq!(
+            resolve_fetch_invocation(&config, None, &[], Some("main")),
+            FetchInvocation {
+                remote: "backup".into(),
+                user_refspecs: vec![],
+            }
+        );
+        assert_eq!(
+            resolve_fetch_invocation(&config, None, &["topic".into()], Some("main")),
+            FetchInvocation {
+                remote: "backup".into(),
+                user_refspecs: vec!["topic".into()],
+            }
+        );
+        assert_eq!(
+            resolve_fetch_invocation(&config, None, &["origin".into()], Some("main")),
+            FetchInvocation {
+                remote: "origin".into(),
+                user_refspecs: vec![],
+            }
+        );
+        assert_eq!(
+            resolve_fetch_invocation(&config, Some("origin"), &[], Some("main")),
+            FetchInvocation {
+                remote: "origin".into(),
+                user_refspecs: vec![],
+            }
+        );
+        assert_eq!(
+            resolve_fetch_invocation(&config, None, &[], None),
+            FetchInvocation {
+                remote: "origin".into(),
+                user_refspecs: vec![],
+            }
+        );
     }
 }
