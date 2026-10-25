@@ -251,6 +251,7 @@ fn write_prepared_job(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn flush_prepared_writes_serial(
     repo: &Repository,
     work_tree: &Path,
@@ -399,49 +400,41 @@ fn flush_parallel_batch(
     let use_parallel = options.threads.get() > 1 && checkout_pool_worthwhile(batch.len(), options);
     let pack_store = repo.odb().pack_store_for(repo.odb().objects_dir());
 
-    let prepared: Vec<PreparedWrite> = if parallel_prepare_blobs
-        && options.threads.get() > 1
-        && batch.len() > 1
-    {
-        try_par_map_with_local(
-            batch,
-            options,
-            0,
-            || PackReadContextGuard::install(Arc::clone(&pack_store)),
-            |_, &idx| {
-                prepare_write_job(repo, conv, &jobs[idx]).map(|bytes| PreparedWrite { idx, bytes })
-            },
-        )
-        .map_err(|e: ParallelHashError<Error>| match e {
-            ParallelHashError::Task(err) => err,
-        })?
-    } else {
-        let mut prepared = Vec::with_capacity(batch.len());
-        let prepare_result = repo.odb().with_pack_read_context(|| {
-            for &idx in batch {
-                crate::progress::poll_cancel(progress, cancel)?;
-                match prepare_write_job(repo, conv, &jobs[idx]) {
-                    Ok(bytes) => prepared.push(PreparedWrite { idx, bytes }),
-                    Err(err) => return Err(err),
+    let prepared: Vec<PreparedWrite> =
+        if parallel_prepare_blobs && options.threads.get() > 1 && batch.len() > 1 {
+            try_par_map_with_local(
+                batch,
+                options,
+                0,
+                || PackReadContextGuard::install(Arc::clone(&pack_store)),
+                |_, &idx| {
+                    prepare_write_job(repo, conv, &jobs[idx])
+                        .map(|bytes| PreparedWrite { idx, bytes })
+                },
+            )
+            .map_err(|e: ParallelHashError<Error>| match e {
+                ParallelHashError::Task(err) => err,
+            })?
+        } else {
+            let mut prepared = Vec::with_capacity(batch.len());
+            let prepare_result = repo.odb().with_pack_read_context(|| {
+                for &idx in batch {
+                    crate::progress::poll_cancel(progress, cancel)?;
+                    match prepare_write_job(repo, conv, &jobs[idx]) {
+                        Ok(bytes) => prepared.push(PreparedWrite { idx, bytes }),
+                        Err(err) => return Err(err),
+                    }
                 }
+                Ok(())
+            });
+            if let Err(err) = prepare_result {
+                flush_prepared_writes_serial(
+                    repo, work_tree, jobs, &prepared, dir_cache, outcomes, progress, cancel,
+                )?;
+                return Err(err);
             }
-            Ok(())
-        });
-        if let Err(err) = prepare_result {
-            flush_prepared_writes_serial(
-                repo,
-                work_tree,
-                jobs,
-                &prepared,
-                dir_cache,
-                outcomes,
-                progress,
-                cancel,
-            )?;
-            return Err(err);
-        }
-        prepared
-    };
+            prepared
+        };
 
     if use_parallel {
         let parent_snapshot = LeadingDirCache::with_ready_from(&*dir_cache);
@@ -456,14 +449,7 @@ fn flush_parallel_batch(
         )?;
     } else {
         flush_prepared_writes_serial(
-            repo,
-            work_tree,
-            jobs,
-            &prepared,
-            dir_cache,
-            outcomes,
-            progress,
-            cancel,
+            repo, work_tree, jobs, &prepared, dir_cache, outcomes, progress, cancel,
         )?;
     }
     for _ in batch {

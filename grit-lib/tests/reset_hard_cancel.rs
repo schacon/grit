@@ -174,3 +174,48 @@ fn hard_reset_returns_cancelled_and_stops_checkout_early() {
         "hard reset should stop before writing every file, found {present}/{FILES}"
     );
 }
+
+#[test]
+fn hard_reset_backward_returns_cancelled_and_stops_deletes_early() {
+    const FILES: usize = 120;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo = Repository::init(
+        tmp.path(),
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(RefStorageFormat::Files),
+    )
+    .expect("init");
+    let _head = seed_many_file_repo(&repo, FILES);
+    let first = grit_lib::revwalk::rev_parse::resolve_revision_as_commit_without_index_dwim(
+        &repo, "HEAD~119",
+    )
+    .expect("first commit");
+
+    let mut progress = CancelHardResetOnFiles::new(5);
+    let cancel = progress.flag.clone();
+    let err = reset_to_commit(
+        &repo,
+        &ResetOptions::new(first, ResetMode::Hard, identity(), "reset"),
+        &mut progress,
+        &cancel,
+    )
+    .expect_err("cancel during backward hard reset deletes");
+    assert!(
+        matches!(err, grit_lib::error::Error::Cancelled),
+        "expected cancelled reset, got {err:?}"
+    );
+    let checkout_incs = progress.checkout_incs.load(Ordering::Relaxed);
+    assert!(
+        checkout_incs <= 15,
+        "expected bounded delete progress, saw {checkout_incs} increments"
+    );
+    let wt = repo.work_tree().expect("work tree");
+    let present = (0..FILES)
+        .filter(|i| wt.join(format!("f{i}.txt")).exists())
+        .count();
+    assert!(
+        present > 1 && present < FILES,
+        "backward reset should stop deleting early, found {present}/{FILES} files"
+    );
+}

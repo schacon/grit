@@ -32,7 +32,7 @@ use crate::index::{
 };
 use crate::objects::{Object, ObjectId, TreeEntry};
 use crate::odb::{BoundedRead, Odb};
-use crate::parallel::{try_par_map, ParallelHashError, ParallelOp};
+use crate::parallel::{try_par_map, ParallelHashError, ParallelOp, ParallelOptions};
 use crate::path_icase::paths_equal;
 use crate::path_population::{validate_tree_walk_entry, validate_worktree_path};
 use crate::path_validate::ProtectOptions;
@@ -53,7 +53,81 @@ use checkout_parallel::{
 };
 
 const PARALLEL_PER_FILE_DELETE_MIN: usize = 32;
+/// Chunk size for parallel checkout deletes so cancellation can stop before an entire tree is removed.
+const PARALLEL_DELETE_CANCEL_CHUNK: usize = 8;
 const POPULATED_TREE_CHECKOUT_CHUNK: usize = 2048;
+
+fn remove_checkout_files_parallel_cancellable(
+    work_tree: &Path,
+    paths: &[String],
+    options: ParallelOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
+) -> Result<(HashSet<String>, Vec<PathBuf>)> {
+    let mut parallel_deleted_paths = HashSet::new();
+    let mut deleted_abs_paths = Vec::new();
+    for chunk in paths.chunks(PARALLEL_DELETE_CANCEL_CHUNK) {
+        crate::progress::poll_cancel(progress, cancel)?;
+        let abs_paths: Vec<PathBuf> = chunk
+            .iter()
+            .map(|p| checkout_stored_worktree_abs(work_tree, p))
+            .collect();
+        try_par_map(&abs_paths, options, 0, |abs| {
+            let _ = fs::remove_file(abs);
+            Ok(())
+        })
+        .map_err(|e: ParallelHashError<()>| match e {
+            ParallelHashError::Task(()) => {
+                Error::PathError("parallel checkout delete failed".into())
+            }
+        })?;
+        for (path, abs) in chunk.iter().zip(abs_paths) {
+            parallel_deleted_paths.insert(path.clone());
+            deleted_abs_paths.push(abs);
+            progress.inc(1);
+            crate::progress::poll_cancel(progress, cancel)?;
+        }
+    }
+    Ok((parallel_deleted_paths, deleted_abs_paths))
+}
+
+fn remove_wholesale_dirs_parallel_cancellable(
+    work_tree: &Path,
+    dirs: &[String],
+    options: ParallelOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
+) -> Result<Vec<(String, PathBuf)>> {
+    let mut removed = Vec::new();
+    if dirs.is_empty() {
+        return Ok(removed);
+    }
+    if dirs.len() < 2 {
+        for dir in dirs {
+            crate::progress::poll_cancel(progress, cancel)?;
+            let abs = work_tree.join(dir);
+            if remove_wholesale_dir(&abs) {
+                removed.push((dir.clone(), abs));
+            }
+        }
+        return Ok(removed);
+    }
+    let wt = work_tree.to_path_buf();
+    for chunk in dirs.chunks(PARALLEL_DELETE_CANCEL_CHUNK) {
+        crate::progress::poll_cancel(progress, cancel)?;
+        let removed_chunk = try_par_map(chunk, options, 0, |dir| {
+            let abs = wt.join(dir);
+            Ok(remove_wholesale_dir(&abs).then_some((dir.clone(), abs)))
+        })
+        .map_err(|e: ParallelHashError<()>| match e {
+            ParallelHashError::Task(()) => {
+                Error::PathError("parallel wholesale directory removal failed".into())
+            }
+        })?;
+        removed.extend(removed_chunk.into_iter().flatten());
+    }
+    Ok(removed)
+}
 
 /// One blob entry while walking a tree for populated checkout (no full diff list).
 struct PopulatedTreeBlob {
@@ -1713,24 +1787,19 @@ fn checkout_bulk_mod_delete_tree_changes(
     if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
         let policy = repo.thread_policy();
         let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-        let abs_paths: Vec<PathBuf> = per_file_deletes
-            .iter()
-            .map(|p| checkout_stored_worktree_abs(work_tree, p))
-            .collect();
-        try_par_map(&abs_paths, options, 0, |abs| {
-            let _ = fs::remove_file(abs);
-            Ok(())
-        })
-        .map_err(|e: ParallelHashError<()>| match e {
-            ParallelHashError::Task(()) => {
-                Error::PathError("parallel checkout delete failed".into())
-            }
-        })?;
+        let (parallel_set, abs_paths) = remove_checkout_files_parallel_cancellable(
+            work_tree,
+            &per_file_deletes,
+            options,
+            progress,
+            cancel,
+        )?;
         deleted_abs_paths.extend(abs_paths);
-        parallel_deleted_paths.extend(per_file_deletes.iter().cloned());
+        parallel_deleted_paths.extend(parallel_set);
     }
     let mut paths_to_remove: Vec<Vec<u8>> = Vec::with_capacity(delete_changes.len());
     for change in &delete_changes {
+        crate::progress::poll_cancel(progress, cancel)?;
         let Some(path) = &change.old_path else {
             continue;
         };
@@ -1751,7 +1820,10 @@ fn checkout_bulk_mod_delete_tree_changes(
         if !path_under_wholesale_directory(path, wholesale_index_prefixes) {
             paths_to_remove.push(checkout_stored_index_path_bytes(path));
         }
-        progress.inc(1);
+        if !parallel_deleted_paths.contains(path) {
+            progress.inc(1);
+            crate::progress::poll_cancel(progress, cancel)?;
+        }
     }
     remove_empty_parent_dirs_batch(work_tree, &deleted_abs_paths);
 
@@ -1847,24 +1919,19 @@ fn checkout_bulk_deleted_tree_changes(
         let config = repo.config()?;
         let policy = repo.thread_policy();
         let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-        let abs_paths: Vec<PathBuf> = per_file_deletes
-            .iter()
-            .map(|p| checkout_stored_worktree_abs(work_tree, p))
-            .collect();
-        try_par_map(&abs_paths, options, 0, |abs| {
-            let _ = fs::remove_file(abs);
-            Ok(())
-        })
-        .map_err(|e: ParallelHashError<()>| match e {
-            ParallelHashError::Task(()) => {
-                Error::PathError("parallel checkout delete failed".into())
-            }
-        })?;
+        let (parallel_set, abs_paths) = remove_checkout_files_parallel_cancellable(
+            work_tree,
+            &per_file_deletes,
+            options,
+            progress,
+            cancel,
+        )?;
         deleted_abs_paths.extend(abs_paths);
-        parallel_deleted_paths.extend(per_file_deletes.iter().cloned());
+        parallel_deleted_paths.extend(parallel_set);
     }
     let mut paths_to_remove: Vec<Vec<u8>> = Vec::with_capacity(changes.len());
     for change in changes {
+        crate::progress::poll_cancel(progress, cancel)?;
         if change.status != DiffStatus::Deleted {
             continue;
         }
@@ -1887,7 +1954,10 @@ fn checkout_bulk_deleted_tree_changes(
         if !path_under_wholesale_directory(path, wholesale_index_prefixes) {
             paths_to_remove.push(checkout_stored_index_path_bytes(path));
         }
-        progress.inc(1);
+        if !parallel_deleted_paths.contains(path) {
+            progress.inc(1);
+            crate::progress::poll_cancel(progress, cancel)?;
+        }
     }
     remove_empty_parent_dirs_batch(work_tree, deleted_abs_paths);
     checkout_commit_index_update(
@@ -2081,32 +2151,18 @@ fn checkout_tree_changes_with_progress(
             let mut wholesale_dirs_removed = BTreeSet::new();
             let mut deleted_abs_paths: Vec<PathBuf> = Vec::new();
             if !wholesale_index_prefixes.is_empty() {
-                if wholesale_index_prefixes.len() >= 2 {
-                    let policy = repo.thread_policy();
-                    let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-                    let wt = work_tree.to_path_buf();
-                    let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
-                    let removed = try_par_map(&dirs, options, 0, |dir| {
-                        let abs = wt.join(dir);
-                        Ok(remove_wholesale_dir(&abs).then_some((dir.clone(), abs)))
-                    })
-                    .map_err(|e: ParallelHashError<()>| match e {
-                        ParallelHashError::Task(()) => {
-                            Error::PathError("parallel wholesale directory removal failed".into())
-                        }
-                    })?;
-                    for (dir, abs) in removed.into_iter().flatten() {
-                        wholesale_dirs_removed.insert(dir);
-                        deleted_abs_paths.push(abs);
-                    }
-                } else {
-                    for dir in &wholesale_index_prefixes {
-                        let abs = work_tree.join(dir);
-                        if remove_wholesale_dir(&abs) {
-                            wholesale_dirs_removed.insert(dir.clone());
-                            deleted_abs_paths.push(abs);
-                        }
-                    }
+                let policy = repo.thread_policy();
+                let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
+                let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
+                for (dir, abs) in remove_wholesale_dirs_parallel_cancellable(
+                    work_tree,
+                    &dirs,
+                    options,
+                    &mut progress,
+                    cancel,
+                )? {
+                    wholesale_dirs_removed.insert(dir);
+                    deleted_abs_paths.push(abs);
                 }
             }
             checkout_bulk_deleted_tree_changes(
@@ -2169,32 +2225,18 @@ fn checkout_tree_changes_with_progress(
     let wholesale_index_prefixes = wholesale_candidates;
     let mut wholesale_dirs_removed = BTreeSet::new();
     if !wholesale_index_prefixes.is_empty() {
-        if wholesale_index_prefixes.len() >= 2 {
-            let policy = repo.thread_policy();
-            let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-            let wt = work_tree.to_path_buf();
-            let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
-            let removed = try_par_map(&dirs, options, 0, |dir| {
-                let abs = wt.join(dir);
-                Ok(remove_wholesale_dir(&abs).then_some((dir.clone(), abs)))
-            })
-            .map_err(|e: ParallelHashError<()>| match e {
-                ParallelHashError::Task(()) => {
-                    Error::PathError("parallel wholesale directory removal failed".into())
-                }
-            })?;
-            for (dir, abs) in removed.into_iter().flatten() {
-                wholesale_dirs_removed.insert(dir);
-                deleted_abs_paths.push(abs);
-            }
-        } else {
-            for dir in &wholesale_index_prefixes {
-                let abs = work_tree.join(dir);
-                if remove_wholesale_dir(&abs) {
-                    wholesale_dirs_removed.insert(dir.clone());
-                    deleted_abs_paths.push(abs);
-                }
-            }
+        let policy = repo.thread_policy();
+        let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
+        let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
+        for (dir, abs) in remove_wholesale_dirs_parallel_cancellable(
+            work_tree,
+            &dirs,
+            options,
+            &mut progress,
+            cancel,
+        )? {
+            wholesale_dirs_removed.insert(dir);
+            deleted_abs_paths.push(abs);
         }
     }
 
@@ -2217,27 +2259,22 @@ fn checkout_tree_changes_with_progress(
     if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
         let policy = repo.thread_policy();
         let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-        let abs_paths: Vec<PathBuf> = per_file_deletes
-            .iter()
-            .map(|p| checkout_stored_worktree_abs(work_tree, p))
-            .collect();
-        try_par_map(&abs_paths, options, 0, |abs| {
-            let _ = fs::remove_file(abs);
-            Ok(())
-        })
-        .map_err(|e: ParallelHashError<()>| match e {
-            ParallelHashError::Task(()) => {
-                Error::PathError("parallel checkout delete failed".into())
-            }
-        })?;
+        let (parallel_set, abs_paths) = remove_checkout_files_parallel_cancellable(
+            work_tree,
+            &per_file_deletes,
+            options,
+            &mut progress,
+            cancel,
+        )?;
         deleted_abs_paths.extend(abs_paths);
-        parallel_deleted_paths.extend(per_file_deletes);
+        parallel_deleted_paths.extend(parallel_set);
     }
 
     {
         crate::trace::trace_span!("grit.checkout.plan");
         for change in changes {
             if change.status == DiffStatus::Deleted {
+                crate::progress::poll_cancel(&mut progress, cancel)?;
                 if let Some(path) = &change.old_path {
                     let old_mode = parse_git_mode(&change.old_mode);
                     if old_mode == MODE_GITLINK
@@ -2257,7 +2294,14 @@ fn checkout_tree_changes_with_progress(
                         paths_to_remove.push(checkout_stored_index_path_bytes(path));
                     }
                 }
-                progress.inc(1);
+                if change
+                    .old_path
+                    .as_ref()
+                    .is_none_or(|path| !parallel_deleted_paths.contains(path))
+                {
+                    progress.inc(1);
+                    crate::progress::poll_cancel(&mut progress, cancel)?;
+                }
                 continue;
             }
 
