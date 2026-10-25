@@ -114,13 +114,19 @@ pub(crate) fn validate_wants_filtered(repo: &Repository, wants: &[ObjectId]) -> 
     Ok(())
 }
 
-/// Validate `want` OIDs against advertisement and config rela rules.
+/// Validate `want` OIDs against advertisement, config rules, and session mode.
+///
+/// Stateful sessions only accept wants that appeared in the ref advertisement
+/// (plus `HEAD`). Stateless RPC (smart HTTP POST) matches Git: objects reachable
+/// from current ref tips are allowed without extra config, but wants that are
+/// already advertised ref tips skip reachability work.
 pub(crate) fn validate_wants(
     repo: &Repository,
     refs: &[AdvertisedRef],
     head: Option<ObjectId>,
     wants: &[ObjectId],
     policy: &UploadPackPolicy,
+    stateless_rpc: bool,
 ) -> Result<()> {
     if policy.allow_reachable_sha1_in_want {
         let reachable = reachable_from_repository_tips(repo)?;
@@ -131,15 +137,36 @@ pub(crate) fn validate_wants(
         }
         return Ok(());
     }
+
+    let advertised = advertised_object_ids(refs, head);
+    let extra: Vec<ObjectId> = wants
+        .iter()
+        .copied()
+        .filter(|w| !advertised.contains(w))
+        .collect();
+    if extra.is_empty() {
+        return Ok(());
+    }
+
+    if stateless_rpc {
+        validate_stateless_extra_wants(repo, &extra)?;
+        return Ok(());
+    }
+
     if policy.allow_tip_sha1_in_want {
         let tips = repository_tip_commits(repo)?;
-        for w in wants {
+        for w in &extra {
             if !tips.contains(w) {
                 return Err(ServeError::NotOurRef(*w));
             }
         }
         return Ok(());
     }
+
+    Err(ServeError::NotOurRef(extra[0]))
+}
+
+fn advertised_object_ids(refs: &[AdvertisedRef], head: Option<ObjectId>) -> HashSet<ObjectId> {
     let mut allowed: HashSet<ObjectId> = refs
         .iter()
         .flat_map(|r| std::iter::once(r.oid).chain(r.peeled))
@@ -147,10 +174,144 @@ pub(crate) fn validate_wants(
     if let Some(h) = head {
         allowed.insert(h);
     }
-    if let Some(bad) = wants.iter().find(|w| !allowed.contains(w)) {
-        return Err(ServeError::NotOurRef(*bad));
+    allowed
+}
+
+/// Extra wants in stateless RPC: reachable from ref tips (Git smart HTTP race case).
+fn validate_stateless_extra_wants(repo: &Repository, wants: &[ObjectId]) -> Result<()> {
+    let tips = repository_tip_commits(repo)?;
+    let ref_objects = repository_ref_object_ids(repo)?;
+    for w in wants {
+        if ref_objects.contains(w) {
+            continue;
+        }
+        if !object_reachable_from_tip_commits(repo, *w, &tips)? {
+            return Err(ServeError::NotOurRef(*w));
+        }
     }
     Ok(())
+}
+
+/// Direct ref targets (unpeeled), including annotated tag objects on refs.
+fn repository_ref_object_ids(repo: &Repository) -> Result<HashSet<ObjectId>> {
+    let mut ids = HashSet::new();
+    for (_, oid) in crate::refs::list_refs(repo.git_dir(), "refs/")? {
+        ids.insert(oid);
+    }
+    if let Ok(head) = crate::refs::resolve_ref(repo.git_dir(), "HEAD") {
+        ids.insert(head);
+    }
+    Ok(ids)
+}
+
+/// Whether `want` is reachable from current tip commits (ancestor of some tip).
+fn object_reachable_from_tip_commits(
+    repo: &Repository,
+    want: ObjectId,
+    tips: &HashSet<ObjectId>,
+) -> Result<bool> {
+    if tips.contains(&want) {
+        return Ok(true);
+    }
+    if !repo.odb().contains(&want)? {
+        return Ok(false);
+    }
+    let Ok(obj) = repo.odb().read(&want) else {
+        return Ok(false);
+    };
+    match obj.kind {
+        ObjectKind::Commit => commit_is_ancestor_of_some_tip(repo, want, tips),
+        ObjectKind::Tag => {
+            let Ok(tag) = crate::objects::parse_tag(&obj.data) else {
+                return Ok(false);
+            };
+            reachable_object_from_tips(repo, tag.object, tips)
+        }
+        ObjectKind::Tree | ObjectKind::Blob => object_reachable_in_tip_closure(repo, want, tips),
+    }
+}
+
+/// Reachability of a non-tag object from ref tips (tag targets and nested tags).
+fn reachable_object_from_tips(
+    repo: &Repository,
+    object: ObjectId,
+    tips: &HashSet<ObjectId>,
+) -> Result<bool> {
+    if tips.contains(&object) {
+        return Ok(true);
+    }
+    if !repo.odb().contains(&object)? {
+        return Ok(false);
+    }
+    let Ok(obj) = repo.odb().read(&object) else {
+        return Ok(false);
+    };
+    match obj.kind {
+        ObjectKind::Commit => commit_is_ancestor_of_some_tip(repo, object, tips),
+        ObjectKind::Tree | ObjectKind::Blob => object_reachable_in_tip_closure(repo, object, tips),
+        ObjectKind::Tag => {
+            let Ok(tag) = crate::objects::parse_tag(&obj.data) else {
+                return Ok(false);
+            };
+            reachable_object_from_tips(repo, tag.object, tips)
+        }
+    }
+}
+
+fn commit_is_ancestor_of_some_tip(
+    repo: &Repository,
+    want: ObjectId,
+    tips: &HashSet<ObjectId>,
+) -> Result<bool> {
+    for tip in tips {
+        if want == *tip || crate::merge_base::is_ancestor(repo, want, *tip)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Tree/blob wants: walk from tips until `target` appears (early exit).
+fn object_reachable_in_tip_closure(
+    repo: &Repository,
+    target: ObjectId,
+    tips: &HashSet<ObjectId>,
+) -> Result<bool> {
+    let mut seen = HashSet::new();
+    let mut queue: VecDeque<ObjectId> = tips.iter().copied().collect();
+    while let Some(oid) = queue.pop_front() {
+        if oid == target {
+            return Ok(true);
+        }
+        if !seen.insert(oid) {
+            continue;
+        }
+        let Ok(obj) = repo.odb().read(&oid) else {
+            continue;
+        };
+        match obj.kind {
+            ObjectKind::Commit => {
+                if let Ok(c) = crate::objects::parse_commit(&obj.data) {
+                    queue.extend(c.parents);
+                    queue.push_back(c.tree);
+                }
+            }
+            ObjectKind::Tree => {
+                if let Ok(entries) = crate::objects::parse_tree(&obj.data) {
+                    for entry in entries {
+                        queue.push_back(entry.oid);
+                    }
+                }
+            }
+            ObjectKind::Tag => {
+                if let Ok(tag) = crate::objects::parse_tag(&obj.data) {
+                    queue.push_back(tag.object);
+                }
+            }
+            ObjectKind::Blob => {}
+        }
+    }
+    Ok(false)
 }
 
 /// Peeled commit tips for every ref in the repository (including hidden refs).
