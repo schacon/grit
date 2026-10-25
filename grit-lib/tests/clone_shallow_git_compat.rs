@@ -160,6 +160,70 @@ fn clone_depth_one_lightweight_tag_matches_git() {
 }
 
 #[test]
+fn clone_depth_one_annotated_tag_matches_git() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bare = tmp.path().join("remote.git");
+    build_issue_1934_bare(&bare);
+    let url = format!("file://{}", bare.display());
+    let tag_tip = rev_parse(&bare, "v2^{commit}");
+
+    let git_dest = tmp.path().join("git-annotated-tag");
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            "--branch",
+            "v2",
+            &url,
+            git_dest.to_str().unwrap(),
+        ],
+    );
+
+    let grit_dest = tmp.path().join("grit-annotated-tag");
+    clone_repo(
+        CloneOptions {
+            depth: Some(1),
+            branch: Some("v2".to_owned()),
+            ..CloneOptions::new(url, grit_dest.clone())
+        },
+        &mut NoProgress,
+        &NeverCancel,
+        None,
+    )
+    .expect("shallow annotated tag clone");
+
+    assert_eq!(
+        git(&git_dest, &["rev-list", "--count", "HEAD"])
+            .trim()
+            .parse::<usize>()
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        git(&grit_dest, &["rev-list", "--count", "HEAD"])
+            .trim()
+            .parse::<usize>()
+            .unwrap(),
+        1
+    );
+    assert!(git_dest.join(".git/shallow").is_file());
+    assert!(grit_dest.join(".git/shallow").is_file());
+    assert_eq!(
+        shallow_file_lines(&grit_dest.join(".git")),
+        shallow_file_lines(&git_dest.join(".git"))
+    );
+    assert_eq!(
+        resolve_ref(&grit_dest.join(".git"), "HEAD").unwrap(),
+        tag_tip
+    );
+    git_fsck_clean(&git_dest);
+    git_fsck_clean(&grit_dest);
+}
+
+#[test]
 fn clone_depth_one_records_shallow_boundary_and_limits_history() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let bare = tmp.path().join("remote.git");

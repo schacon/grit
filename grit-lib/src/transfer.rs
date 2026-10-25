@@ -1497,19 +1497,14 @@ pub fn fetch_local_with_progress(
         local_odb.missing_oids(matched_oids.iter().copied())?
     };
 
-    let shallow_wants: Vec<ObjectId> = matched
-        .iter()
-        .filter_map(|m| {
-            let tip = if m.is_tag {
-                m.advertised_peel.filter(|p| !p.is_zero()).unwrap_or(m.oid)
-            } else {
-                m.oid
-            };
-            wants.contains(&tip).then_some(tip)
-        })
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
+    let mut shallow_wants_set = HashSet::new();
+    for m in &matched {
+        let tip = shallow_want_commit_tip(&remote_odb, m)?;
+        if wants.contains(&tip) || (m.is_tag && wants.contains(&m.oid)) {
+            shallow_wants_set.insert(tip);
+        }
+    }
+    let shallow_wants: Vec<ObjectId> = shallow_wants_set.into_iter().collect();
 
     let mut haves: Vec<ObjectId> = Vec::new();
     let mut have_seen: HashSet<ObjectId> = HashSet::new();
@@ -2651,6 +2646,21 @@ pub(crate) fn apply_tag_mode(
         }
     }
     Ok(following_only)
+}
+
+/// Commit tip to use when computing shallow boundaries for one matched ref.
+fn shallow_want_commit_tip(remote_odb: &Odb, matched: &MatchedRef) -> Result<ObjectId> {
+    if !matched.is_tag {
+        return Ok(matched.oid);
+    }
+    if let Some(peel) = matched.advertised_peel.filter(|p| !p.is_zero()) {
+        return Ok(peel);
+    }
+    if remote_odb.contains(&matched.oid)? {
+        let (peeled, _) = remote_odb.peel_tags(matched.oid)?;
+        return Ok(peeled);
+    }
+    Ok(matched.oid)
 }
 
 /// Whether a tag ref's peeled target (or the oid itself for lightweight tags)

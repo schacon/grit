@@ -8011,6 +8011,24 @@ pub fn shallow_grafts_for_upload_pack_target_depth(
     client_shallow: &[ObjectId],
     target_depth: usize,
 ) -> Vec<ObjectId> {
+    shallow_grafts_for_upload_pack_target_depth_with_policy(
+        repo,
+        wants,
+        client_shallow,
+        target_depth,
+        true,
+    )
+}
+
+/// Like [`shallow_grafts_for_upload_pack_target_depth`], but can treat commits the
+/// client already marked shallow as borders (for absolute `fetch --depth` retention).
+pub(crate) fn shallow_grafts_for_upload_pack_target_depth_with_policy(
+    repo: &Repository,
+    wants: &[ObjectId],
+    client_shallow: &[ObjectId],
+    target_depth: usize,
+    omit_existing_client_shallows: bool,
+) -> Vec<ObjectId> {
     let wants = peel_to_commit_tips(repo, wants);
     if target_depth == 0 || wants.is_empty() {
         return Vec::new();
@@ -8018,7 +8036,13 @@ pub fn shallow_grafts_for_upload_pack_target_depth(
     let server_shallow = shallow_boundary_oids(repo.git_dir());
     let client_set: HashSet<ObjectId> = client_shallow.iter().copied().collect();
     let included_depths = commits_within_parent_depth(repo, &wants, target_depth, &server_shallow);
-    border_commits_for_depth_fetch(repo, &included_depths, target_depth, &client_set)
+    border_commits_for_depth_fetch(
+        repo,
+        &included_depths,
+        target_depth,
+        &client_set,
+        omit_existing_client_shallows,
+    )
 }
 
 /// Peel `wants` through annotated tags and keep the distinct commits, in order.
@@ -8095,12 +8119,16 @@ fn border_commits_for_depth_fetch(
     repo: &Repository,
     included_depths: &HashMap<ObjectId, usize>,
     target_depth: usize,
-    _client_shallow: &HashSet<ObjectId>,
+    client_shallow: &HashSet<ObjectId>,
+    omit_existing_client_shallows: bool,
 ) -> Vec<ObjectId> {
     let included: HashSet<ObjectId> = included_depths.keys().copied().collect();
     let mut out = Vec::new();
     let mut seen_out = HashSet::new();
     for &c in included.iter() {
+        if omit_existing_client_shallows && client_shallow.contains(&c) {
+            continue;
+        }
         let parents = commit_parent_ids(repo, c);
         let at_depth_limit = included_depths.get(&c).copied() == Some(target_depth);
         let is_border =
