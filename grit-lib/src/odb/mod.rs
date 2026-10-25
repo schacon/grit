@@ -2764,7 +2764,6 @@ impl Odb {
             .loose_store()
             .write_prehashed(oid, ObjectKind::Blob, data, options)
     }
-
     /// Like [`Self::write`], with control over freshen behaviour on existing objects.
     pub fn write_with_options(
         &self,
@@ -3380,6 +3379,40 @@ mod tests {
             fs::read(odb2.object_path(&oid2)).unwrap(),
             fs::read(odb.object_path(&oid_normal)).unwrap()
         );
+    }
+
+    #[test]
+    fn write_blob_prehashed_matches_write_and_skips_existing_objects() {
+        let dir = TempDir::new().unwrap();
+        let odb = Odb::new(&dir.path().join("objects"));
+        let data = vec![7u8; 100_000];
+        let oid_normal = odb.write(ObjectKind::Blob, &data).unwrap();
+
+        let dir2 = TempDir::new().unwrap();
+        let odb2 = Odb::new(&dir2.path().join("objects"));
+        let oid = hash::hash_object(odb2.hash_algo(), ObjectKind::Blob, &data).unwrap();
+        let options = WriteOptions {
+            assume_loose_only_existence: true,
+            ..WriteOptions::default()
+        };
+        assert_eq!(
+            odb2.write_blob_prehashed(&oid, &data, options).unwrap(),
+            oid
+        );
+        assert_eq!(oid, oid_normal);
+        assert!(odb2.object_path(&oid).is_file());
+        let obj = odb2.read(&oid).unwrap();
+        assert_eq!(
+            (obj.kind, obj.data.as_slice()),
+            (ObjectKind::Blob, data.as_slice())
+        );
+
+        // An existing object is kept as is, even when handed different bytes for its id.
+        assert_eq!(
+            odb2.write_blob_prehashed(&oid, b"other", options).unwrap(),
+            oid
+        );
+        assert_eq!(odb2.read(&oid).unwrap().data, data);
     }
 
     #[test]
