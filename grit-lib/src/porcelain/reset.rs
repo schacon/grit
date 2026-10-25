@@ -5,8 +5,8 @@ use crate::diff::DiffEntry;
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, ObjectId, ObjectKind};
 use crate::porcelain::checkout::checkout_hard_to_tree_from_head_tree;
-use crate::porcelain::orphans::compute_orphan_info;
 use crate::porcelain::index_from_tree::index_from_tree_with_owned_seed_worktree_stats;
+use crate::porcelain::orphans::compute_orphan_info;
 use crate::porcelain::switch::{
     checkout_tree_transition_allow_local_reset, keep_style_transition_would_block_paths_for_preview,
 };
