@@ -996,6 +996,13 @@ fn pending_tree_merge_index_rows(index: &Index, merged: &TreeMergeOutput) -> Tre
         let existing = index.get(path, 0);
         match (merged_rows.get(path).map(Vec::as_slice), existing) {
             (None, None) => true,
+            // Checkout recorded this row without writing the file (sparse checkout skipped the
+            // path); stat'ing whatever is on disk would mark foreign content as clean.
+            (Some([row]), Some(existing))
+                if existing.skip_worktree() || existing.stat_cache_unset() =>
+            {
+                row.stage() == 0 && existing.oid == row.oid && existing.mode == row.mode
+            }
             (Some([row]), Some(existing)) => {
                 row.stage() == 0
                     && (row.mode == MODE_REGULAR || row.mode == crate::index::MODE_EXECUTABLE)

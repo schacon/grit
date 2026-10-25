@@ -23,6 +23,12 @@ The `grit add` command is a thin wrapper around this API.
 
 Some checkouts cannot show every mode Git records. With `core.filemode=false` the executable bit on disk means nothing, and with `core.symlinks=false` (the Windows default when symlinks need admin rights) a symlink is checked out as a plain file holding the link target. [`WorktreeModePolicy`](rustdoc:grit_lib::index::WorktreeModePolicy) reads both settings with `from_config` and maps an `lstat` mode onto the mode already in the index: `index_mode_for_worktree` keeps a recorded `120000` for a plain file when symlinks are disabled, and keeps a recorded `100644`/`100755` when the filemode is not trusted. Staging, `commit`, `status` and worktree diffs all go through it, so an untouched link stays a link and an edited one is staged as a new link target, the same as Git.
 
+## Sparse checkout
+
+[`SparseCheckout::load`](rustdoc:grit_lib::index::sparse_checkout::SparseCheckout::load) compiles the repository's sparse-checkout definition (`core.sparseCheckout`, `core.sparseCheckoutCone` and `info/sparse-checkout`, cone or non-cone) once, and returns `None` when sparse checkout is off. [`SparseCheckout::includes`](rustdoc:grit_lib::index::sparse_checkout::SparseCheckout::includes) answers whether a path belongs in the work tree.
+
+Every operation that updates the work tree from a tree consults it: `reset --hard` and `--mixed`, `switch`, `merge`, `pull` (merge and rebase), stash and the history engine. A path outside the definition that is skip-worktree (or new to the index) gets an index row with the `skip-worktree` bit and nothing is written to disk, the same as `git`. Conflicted paths are written out with conflict markers, also like `git`. When `index.sparse` is on, the index is collapsed back into sparse-directory entries when it is written. [`SparseCheckout::carry_skip_worktree`](rustdoc:grit_lib::index::sparse_checkout::SparseCheckout::carry_skip_worktree) keeps the bits on an index rebuilt from a tree without touching the work tree.
+
 ## Writing a tree from the index
 
 [`write_tree_from_index`](rustdoc:grit_lib::index::write_tree::write_tree_from_index) builds a tree object from stage-0 entries (respecting the optional path prefix). It returns the root [`ObjectId`](rustdoc:grit_lib::objects::ObjectId). When the index cache-tree extension is valid, grit reuses cached subtree oids for speed; otherwise it walks entries and writes new tree objects through [`Odb`](rustdoc:grit_lib::objects::odb::Odb).

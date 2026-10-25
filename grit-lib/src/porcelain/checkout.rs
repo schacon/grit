@@ -12,6 +12,7 @@
 //! These functions compute and apply worktree changes from index/object data
 //! and make no presentation decisions — no colour, pager, tty, or stdout.
 
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -37,6 +38,7 @@ use crate::path_population::{validate_tree_walk_entry, validate_worktree_path};
 use crate::path_validate::ProtectOptions;
 use crate::progress::{NullProgress, ProgressPhase, ProgressSink, ProgressUnit};
 use crate::repo::Repository;
+use crate::sparse_checkout::SparseCheckout;
 use crate::worktree_rules::WorktreeRules;
 
 #[path = "checkout_parallel.rs"]
@@ -232,12 +234,22 @@ fn checkout_populated_tree(
         checkout_result_tree: None,
         defer_index_disk_write: true,
         precomputed_worktree_rules: Some(Rc::clone(&rules)),
+        sparse_paths_applied: true,
         ..CheckoutApplyOptions::default()
     };
+    let sparse = SparseCheckout::load(repo)?;
     let mut bulk_index_rewrite = false;
 
     while walk.fill_chunk(&mut chunk)? {
-        let changes: Vec<DiffEntry> = chunk.iter().map(populated_blob_to_added_diff).collect();
+        let chunk_changes: Vec<DiffEntry> =
+            chunk.iter().map(populated_blob_to_added_diff).collect();
+        let changes = apply_sparse_tree_changes_to_index(
+            sparse.as_ref(),
+            work_tree,
+            index_mut,
+            &chunk_changes,
+            &mut apply,
+        );
         prefetch_promisor_blobs_for_checkout(repo, &changes)?;
         let mut chunk_progress = ChunkProgressSink(progress);
         let bulk_write = bulk_write_checkout_eligible(&changes, rules.as_ref())
@@ -393,6 +405,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
     index.source_mtime = pre_reset_index_mtime;
     let config = repo.config()?;
     let rules = WorktreeRules::from_parts(repo, &index, config.clone())?;
+    let sparse = SparseCheckout::load(repo)?;
     let mut delayed = DelayedProcessCheckout::default();
     let mut pending_delayed: Vec<DelayedCheckoutTarget> = Vec::new();
     let mut new_entries: Vec<IndexEntry> = Vec::with_capacity(target_entries.len());
@@ -408,6 +421,11 @@ pub fn checkout_hard_to_tree_from_head_tree(
     let mut actions: Vec<HardResetEntryAction> = target_entries
         .iter()
         .map(|te| {
+            if sparse.as_ref().is_some_and(|sparse| {
+                sparse.checkout_skips(&index, &crate::repo_relpath::storage_string(&te.path))
+            }) {
+                return HardResetEntryAction::SkipWorktree;
+            }
             if te.mode == MODE_GITLINK {
                 return HardResetEntryAction::Gitlink;
             }
@@ -449,10 +467,15 @@ pub fn checkout_hard_to_tree_from_head_tree(
         &mut actions,
     )?;
 
-    for (te, action) in target_entries.into_iter().zip(actions) {
+    for (mut te, action) in target_entries.into_iter().zip(actions) {
         let abs = crate::index::worktree_path_from_index_rel(work_tree, &te.path);
         let mode = te.mode;
         match action {
+            HardResetEntryAction::SkipWorktree => {
+                te.set_skip_worktree(true);
+                new_entries.push(te);
+                continue;
+            }
             HardResetEntryAction::Keep(pos) | HardResetEntryAction::Written(Some(pos)) => {
                 new_entries.push(index_entry_with_recorded_stat(&index.entries[pos]));
                 continue;
@@ -546,12 +569,20 @@ pub fn checkout_hard_to_tree_from_head_tree(
     let mut new_index = Index::new();
     new_index.entries = new_entries;
     new_index.sort();
+    if sparse.is_some() {
+        let cache_tree = crate::write_tree::build_cache_tree_from_tree(repo.odb(), target_tree)?;
+        if usize::try_from(cache_tree.entry_count).ok() == Some(new_index.entries.len()) {
+            new_index.set_cache_tree(cache_tree);
+        }
+    }
     repo.write_index(&mut new_index)?;
     Ok(())
 }
 
 /// What a hard reset does with one target-tree entry.
 enum HardResetEntryAction {
+    /// Outside the sparse checkout: record the index row with `skip-worktree`, no work-tree I/O.
+    SkipWorktree,
     /// Gitlink: handled by the submodule placeholder logic.
     Gitlink,
     /// Written by the tree-diff checkout; reuse the index row it recorded (position in the
@@ -784,6 +815,12 @@ pub(crate) struct CheckoutApplyOptions {
     pub defer_index_disk_write: bool,
     /// Pre-built attribute/conversion context (populated-tree checkout with `.gitattributes`).
     pub precomputed_worktree_rules: Option<Rc<WorktreeRules>>,
+    /// The caller already split off sparse-checkout skipped paths; every change left is
+    /// applied to the work tree.
+    pub sparse_paths_applied: bool,
+    /// Index rows (with `skip-worktree` set) for sparse-checkout skipped paths, merged into the
+    /// index together with the rows checkout writes.
+    pub skip_worktree_rows: Vec<IndexEntry>,
 }
 
 /// Like [`checkout_tree_changes`], but updates `index` in place instead of loading from disk.
@@ -1160,6 +1197,15 @@ const BULK_ADD_CHECKOUT_MIN: usize = 32;
 const BULK_INDEX_REWRITE_MIN: usize = 64;
 const BULK_DELETE_CHECKOUT_MIN: usize = 32;
 
+/// Remove a wholesale-deleted directory; true once it no longer exists. A directory that only
+/// held skip-worktree paths is usually absent already.
+fn remove_wholesale_dir(abs: &Path) -> bool {
+    match fs::remove_dir_all(abs) {
+        Ok(()) => true,
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+    }
+}
+
 fn remove_wholesale_directories_on_disk(
     repo: &Repository,
     work_tree: &Path,
@@ -1177,7 +1223,7 @@ fn remove_wholesale_directories_on_disk(
         let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
         let removed = try_par_map(&dirs, options, 0, |dir| {
             let abs = wt.join(dir);
-            Ok(fs::remove_dir_all(&abs).is_ok().then_some(dir.clone()))
+            Ok(remove_wholesale_dir(&abs).then_some(dir.clone()))
         })
         .map_err(|e: ParallelHashError<()>| match e {
             ParallelHashError::Task(()) => {
@@ -1188,7 +1234,7 @@ fn remove_wholesale_directories_on_disk(
     } else {
         for dir in wholesale_index_prefixes {
             let abs = work_tree.join(dir);
-            if fs::remove_dir_all(&abs).is_ok() {
+            if remove_wholesale_dir(&abs) {
                 wholesale_dirs_removed.insert(dir.clone());
             }
         }
@@ -1202,11 +1248,13 @@ fn checkout_commit_index_update(
     index_mut: &mut Index,
     wholesale_dirs_removed: &BTreeSet<String>,
     paths_to_remove: &[Vec<u8>],
-    new_entries: Vec<IndexEntry>,
+    mut new_entries: Vec<IndexEntry>,
+    skip_worktree_rows: &[IndexEntry],
     bulk_index_rewrite: bool,
     checkout_result_tree: Option<crate::objects::ObjectId>,
     defer_index_disk_write: bool,
 ) -> Result<()> {
+    new_entries.extend_from_slice(skip_worktree_rows);
     let change_count = paths_to_remove.len() + new_entries.len();
     let pre_mtime_max = crate::index::stage0_mtime_max(&index_mut.entries);
     let new_mtime_max = crate::index::stage0_mtime_max(&new_entries);
@@ -1288,6 +1336,68 @@ fn write_checkout_index(
     crate::index::advance_index_file_mtime_past_entries(index_mut, &index_path, index_mtime_hint)?;
     index_mut.source_mtime = crate::index::index_file_mtime(&index_path);
     Ok(())
+}
+
+/// Split off the changes that sparse checkout keeps out of the work tree.
+///
+/// Those paths get no work-tree I/O: deleted ones lose their index row here, and the others get
+/// a row in [`CheckoutApplyOptions::skip_worktree_rows`], which the index commit merges after any
+/// wholesale directory removal. The row has `skip-worktree` set unless the path is new to the
+/// index and a file already sits there: that file is left untouched and tracked, like Git.
+/// Returns the changes that still have to be applied to the work tree; when sparse checkout is
+/// off this is `changes` itself.
+fn apply_sparse_tree_changes_to_index<'a>(
+    sparse: Option<&SparseCheckout>,
+    work_tree: &Path,
+    index: &mut Index,
+    changes: &'a [DiffEntry],
+    apply: &mut CheckoutApplyOptions,
+) -> Cow<'a, [DiffEntry]> {
+    let Some(sparse) = sparse else {
+        return Cow::Borrowed(changes);
+    };
+    apply.skip_worktree_rows.clear();
+    let skipped_path = |change: &'a DiffEntry| -> Option<&'a str> {
+        let path = match change.status {
+            DiffStatus::Deleted => change.old_path.as_deref(),
+            DiffStatus::Added | DiffStatus::Modified | DiffStatus::TypeChanged => {
+                change.new_path.as_deref()
+            }
+            _ => None,
+        }?;
+        sparse.checkout_skips(index, path).then_some(path)
+    };
+    let skipped: Vec<Option<&str>> = changes.iter().map(skipped_path).collect();
+    if skipped.iter().all(Option::is_none) {
+        return Cow::Borrowed(changes);
+    }
+    let mut worktree = Vec::with_capacity(changes.len());
+    let mut removed: Vec<Vec<u8>> = Vec::new();
+    for (change, path) in changes.iter().zip(skipped) {
+        let Some(path) = path else {
+            worktree.push(change.clone());
+            continue;
+        };
+        if change.status == DiffStatus::Deleted {
+            removed.push(checkout_stored_index_path_bytes(path));
+            continue;
+        }
+        let mut entry =
+            prospective_index_entry(path, change.new_oid, parse_git_mode(&change.new_mode));
+        entry.path = checkout_stored_index_path_bytes(path);
+        let untracked_file_present = index.get(&entry.path, 0).is_none()
+            && fs::symlink_metadata(checkout_stored_worktree_abs(work_tree, path)).is_ok();
+        entry.set_skip_worktree(!untracked_file_present);
+        apply.skip_worktree_rows.push(entry);
+    }
+    if !removed.is_empty() {
+        index.remove_prefixes_paths_and_insert(
+            &BTreeSet::new(),
+            removed.iter().map(Vec::as_slice),
+            Vec::new(),
+        );
+    }
+    Cow::Owned(worktree)
 }
 
 fn tree_changes_are_all_additions(changes: &[DiffEntry]) -> bool {
@@ -1443,6 +1553,7 @@ fn checkout_bulk_added_tree_changes(
         &apply.preverified_wholesale_dirs,
         &[],
         new_entries,
+        &apply.skip_worktree_rows,
         true,
         apply.checkout_result_tree,
         apply.defer_index_disk_write,
@@ -1636,6 +1747,7 @@ fn checkout_bulk_mod_delete_tree_changes(
         wholesale_index_prefixes,
         &paths_to_remove,
         new_entries,
+        &apply.skip_worktree_rows,
         true,
         apply.checkout_result_tree,
         apply.defer_index_disk_write,
@@ -1725,6 +1837,7 @@ fn checkout_bulk_deleted_tree_changes(
         wholesale_index_prefixes,
         &paths_to_remove,
         Vec::new(),
+        &apply.skip_worktree_rows,
         true,
         apply.checkout_result_tree,
         apply.defer_index_disk_write,
@@ -1785,8 +1898,6 @@ fn checkout_tree_changes_with_progress(
         .work_tree()
         .ok_or_else(|| Error::PathError("cannot update a bare repository's working tree".into()))?;
 
-    prefetch_promisor_blobs_for_checkout(repo, changes)?;
-
     let mut loaded_index;
     let index_mut: &mut Index = if let Some(index) = reuse_index {
         index
@@ -1797,6 +1908,22 @@ fn checkout_tree_changes_with_progress(
     let config = repo.config()?;
     let protect = ProtectOptions::from_config(config.as_ref());
     validate_diff_changes_for_worktree(changes, protect)?;
+    let mut apply = apply;
+    let sparse = if apply.sparse_paths_applied {
+        None
+    } else {
+        SparseCheckout::load(repo)?
+    };
+    let worktree_changes = apply_sparse_tree_changes_to_index(
+        sparse.as_ref(),
+        work_tree,
+        index_mut,
+        changes,
+        &mut apply,
+    );
+    let changes: &[DiffEntry] = &worktree_changes;
+
+    prefetch_promisor_blobs_for_checkout(repo, changes)?;
     if let Some(extra) = attribute_changes {
         validate_diff_changes_for_worktree(extra, protect)?;
     }
@@ -1878,9 +2005,7 @@ fn checkout_tree_changes_with_progress(
                     let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
                     let removed = try_par_map(&dirs, options, 0, |dir| {
                         let abs = wt.join(dir);
-                        Ok(fs::remove_dir_all(&abs)
-                            .is_ok()
-                            .then_some((dir.clone(), abs)))
+                        Ok(remove_wholesale_dir(&abs).then_some((dir.clone(), abs)))
                     })
                     .map_err(|e: ParallelHashError<()>| match e {
                         ParallelHashError::Task(()) => {
@@ -1894,7 +2019,7 @@ fn checkout_tree_changes_with_progress(
                 } else {
                     for dir in &wholesale_index_prefixes {
                         let abs = work_tree.join(dir);
-                        if fs::remove_dir_all(&abs).is_ok() {
+                        if remove_wholesale_dir(&abs) {
                             wholesale_dirs_removed.insert(dir.clone());
                             deleted_abs_paths.push(abs);
                         }
@@ -1966,9 +2091,7 @@ fn checkout_tree_changes_with_progress(
             let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
             let removed = try_par_map(&dirs, options, 0, |dir| {
                 let abs = wt.join(dir);
-                Ok(fs::remove_dir_all(&abs)
-                    .is_ok()
-                    .then_some((dir.clone(), abs)))
+                Ok(remove_wholesale_dir(&abs).then_some((dir.clone(), abs)))
             })
             .map_err(|e: ParallelHashError<()>| match e {
                 ParallelHashError::Task(()) => {
@@ -1982,7 +2105,7 @@ fn checkout_tree_changes_with_progress(
         } else {
             for dir in &wholesale_index_prefixes {
                 let abs = work_tree.join(dir);
-                if fs::remove_dir_all(&abs).is_ok() {
+                if remove_wholesale_dir(&abs) {
                     wholesale_dirs_removed.insert(dir.clone());
                     deleted_abs_paths.push(abs);
                 }
@@ -2230,6 +2353,7 @@ fn checkout_tree_changes_with_progress(
         &wholesale_dirs_removed,
         &paths_to_remove,
         new_entries,
+        &apply.skip_worktree_rows,
         bulk_index_rewrite,
         apply.checkout_result_tree,
         apply.defer_index_disk_write,

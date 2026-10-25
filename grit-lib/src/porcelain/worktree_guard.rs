@@ -24,6 +24,7 @@ use crate::parallel::{try_par_map, ParallelHashError, ParallelOp};
 use crate::porcelain::checkout::tree_changes_touch_gitattributes;
 use crate::porcelain::status::{collect_untracked_and_ignored_with_cache, IgnoredMode};
 use crate::repo::Repository;
+use crate::sparse_checkout::SparseCheckout;
 use crate::state::resolve_head_for_repository;
 use crate::worktree_rules::WorktreeRules;
 
@@ -1320,6 +1321,19 @@ pub(crate) fn collect_untracked_and_wholesale_trust_for_tree_changes(
     }
     let trust_wholesale = delete_roots.is_empty()
         || (!untracked_blocks_wholesale && !ignored.iter().any(|p| under_delete_root(p)));
+    // Sparse checkout leaves an untracked file at a skipped added path in place, so it does not
+    // block; files under a wholesale-deleted root still do, since that directory is removed.
+    if !untracked.is_empty() {
+        if let Some(sparse) = SparseCheckout::load(repo)? {
+            let skipped: HashSet<&str> = tree_changes
+                .iter()
+                .filter(|c| c.status == DiffStatus::Added)
+                .filter_map(|c| c.new_path.as_deref())
+                .filter(|path| sparse.checkout_skips(index, path))
+                .collect();
+            untracked.retain(|path| under_delete_root(path) || !skipped.contains(path.as_str()));
+        }
+    }
     Ok((
         untracked,
         ignored,
