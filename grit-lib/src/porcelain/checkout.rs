@@ -2825,45 +2825,49 @@ pub(crate) enum WorktreeFileContent<'a> {
     /// Bytes already in memory, after any checkout conversion.
     Bytes(&'a [u8]),
     /// A blob payload copied verbatim from an object-database stream (regular files only).
+    ///
+    /// The stream is spooled to a temporary file next to the destination, which is renamed
+    /// into place only once the reader has reached its validated end: a corrupt or truncated
+    /// object fails the checkout without leaving a partial file or disturbing the old one.
     Stream(&'a mut dyn Read),
 }
 
-/// Why writing [`WorktreeFileContent`] into a file failed.
-enum ContentWriteError {
-    /// Reading the object stream failed (corrupt or truncated object).
-    Read(std::io::Error),
-    /// Writing the work-tree file failed.
-    Write(std::io::Error),
-}
-
-impl ContentWriteError {
-    /// Convert to a library error, mapping a write failure with `write_error`.
-    fn into_error(self, write_error: impl FnOnce(std::io::Error) -> Error) -> Error {
-        match self {
-            Self::Read(e) => Error::Io(e),
-            Self::Write(e) => write_error(e),
-        }
+/// Copy `reader` into a new temporary file in `dir`, created with the checkout mode for `mode`.
+///
+/// The temporary file is removed again when reading or writing fails, including when the
+/// reader reports a corrupt or truncated object at its end.
+fn spool_stream_to_temp(
+    dir: &Path,
+    rel_path: &str,
+    reader: &mut dyn Read,
+    mode: u32,
+) -> Result<tempfile::NamedTempFile> {
+    let write_error = |e: std::io::Error| {
+        crate::worktree::map_worktree_io(rel_path, WorktreePathOperation::Replace, e)
+    };
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".grit-checkout-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(fs::Permissions::from_mode(git_create_mode_for_index_mode(
+            mode,
+        )));
     }
-}
-
-impl WorktreeFileContent<'_> {
-    fn write_into(self, file: &mut fs::File) -> std::result::Result<(), ContentWriteError> {
-        match self {
-            Self::Bytes(data) => file.write_all(data).map_err(ContentWriteError::Write),
-            Self::Stream(reader) => {
-                let mut buf = vec![0u8; STREAMED_CHECKOUT_COPY_BUF];
-                loop {
-                    let n = match reader.read(&mut buf) {
-                        Ok(0) => return Ok(()),
-                        Ok(n) => n,
-                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                        Err(e) => return Err(ContentWriteError::Read(e)),
-                    };
-                    file.write_all(&buf[..n])
-                        .map_err(ContentWriteError::Write)?;
-                }
-            }
-        }
+    #[cfg(not(unix))]
+    let _ = mode;
+    let mut tmp = builder.tempfile_in(dir).map_err(write_error)?;
+    let mut buf = vec![0u8; STREAMED_CHECKOUT_COPY_BUF];
+    loop {
+        let n = match reader.read(&mut buf) {
+            Ok(0) => return Ok(tmp),
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(Error::Io(e)),
+        };
+        tmp.as_file_mut()
+            .write_all(&buf[..n])
+            .map_err(write_error)?;
     }
 }
 
@@ -2872,7 +2876,8 @@ impl WorktreeFileContent<'_> {
 /// A regular file whose checkout conversion is the identity
 /// ([`crlf::worktree_conversion_is_identity`]) and whose blob is larger than
 /// [`STREAMED_CHECKOUT_LIMIT`] is left for [`stream_checkout_entry`]; everything else is read
-/// whole. Either way the object is looked up once.
+/// whole. Objects within the limit are read in that one lookup; a streamed object is opened
+/// again by [`stream_checkout_entry`].
 pub(crate) fn read_blob_unless_streamed(
     repo: &Repository,
     conv: &crlf::ConversionConfig,
@@ -2974,7 +2979,15 @@ fn write_checkout_entry(
     oid: ObjectId,
 ) -> Result<IndexEntry> {
     let index_path = crate::repo_relpath::storage_bytes(rel_path).into_owned();
-    if mode != MODE_SYMLINK && can_overwrite_regular_in_place(change) {
+    let in_place_bytes = match content {
+        WorktreeFileContent::Bytes(data)
+            if mode != MODE_SYMLINK && can_overwrite_regular_in_place(change) =>
+        {
+            Some(data)
+        }
+        _ => None,
+    };
+    if let Some(data) = in_place_bytes {
         dir_cache.ensure_parents(work_tree, rel_path)?;
         let abs_path = crate::repo_relpath::worktree_abs(work_tree, rel_path);
         if let Ok(mut file) = OpenOptions::new()
@@ -2982,10 +2995,8 @@ fn write_checkout_entry(
             .truncate(true)
             .open(&abs_path)
         {
-            content.write_into(&mut file).map_err(|e| {
-                e.into_error(|e| {
-                    Error::PathError(format!("writing '{rel_path}' during checkout: {e}"))
-                })
+            file.write_all(data).map_err(|e| {
+                Error::PathError(format!("writing '{rel_path}' during checkout: {e}"))
             })?;
             drop(file);
             let old_mode = parse_git_mode(&change.old_mode);
@@ -3187,7 +3198,7 @@ fn git_create_mode_for_index_mode(mode: u32) -> u32 {
 fn write_fresh_worktree_blob(
     abs_path: &Path,
     rel_path: &str,
-    content: WorktreeFileContent<'_>,
+    data: &[u8],
     mode: u32,
 ) -> Result<fs::Metadata> {
     let mut options = OpenOptions::new();
@@ -3202,11 +3213,11 @@ fn write_fresh_worktree_blob(
     let mut file = options.open(abs_path).map_err(|e| {
         crate::worktree::map_worktree_io(rel_path, WorktreePathOperation::Replace, e)
     })?;
-    content.write_into(&mut file).map_err(|e| {
-        e.into_error(|e| {
-            crate::worktree::map_worktree_io(rel_path, WorktreePathOperation::Replace, e)
-        })
-    })?;
+    io_with_path(
+        rel_path,
+        WorktreePathOperation::Replace,
+        file.write_all(data),
+    )?;
     written_file_metadata(file, abs_path)
 }
 
@@ -3275,6 +3286,23 @@ fn write_worktree_content(
         }
     }
 
+    enum Ready<'a> {
+        Bytes(&'a [u8]),
+        Spooled(tempfile::NamedTempFile),
+    }
+    let ready = match content {
+        WorktreeFileContent::Bytes(data) => Ready::Bytes(data),
+        WorktreeFileContent::Stream(_) if mode == MODE_SYMLINK => {
+            return Err(Error::PathError(format!(
+                "symlink target for '{rel_path}' must be in memory"
+            )));
+        }
+        WorktreeFileContent::Stream(reader) => {
+            let dir = abs_path.parent().unwrap_or(work_tree);
+            Ready::Spooled(spool_stream_to_temp(dir, rel_path, reader, mode)?)
+        }
+    };
+
     // Remove existing file/dir/symlink at target path. Use symlink_metadata + is_symlink so we
     // replace symlinked paths (e.g. `D` → `untracked`) before creating a real directory tree.
     if let Ok(meta) = fs::symlink_metadata(&abs_path) {
@@ -3299,12 +3327,16 @@ fn write_worktree_content(
         }
     }
 
+    let data = match ready {
+        Ready::Spooled(tmp) => {
+            let file = tmp.persist(&abs_path).map_err(|e| {
+                crate::worktree::map_worktree_io(rel_path, WorktreePathOperation::Replace, e.error)
+            })?;
+            return written_file_metadata(file, &abs_path);
+        }
+        Ready::Bytes(data) => data,
+    };
     if mode == MODE_SYMLINK {
-        let WorktreeFileContent::Bytes(data) = content else {
-            return Err(Error::PathError(format!(
-                "symlink target for '{rel_path}' must be in memory"
-            )));
-        };
         let target = std::str::from_utf8(data).map_err(|_| {
             Error::PathError(format!("symlink target for '{rel_path}' is not UTF-8"))
         })?;
@@ -3336,7 +3368,7 @@ fn write_worktree_content(
         #[cfg(unix)]
         return written_file_symlink_metadata(&abs_path);
     }
-    write_fresh_worktree_blob(&abs_path, rel_path, content, mode)
+    write_fresh_worktree_blob(&abs_path, rel_path, data, mode)
 }
 
 /// Remove empty parent directories up to (but not including) `work_tree`.

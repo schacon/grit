@@ -221,6 +221,68 @@ fn large_blobs_from_several_packs_check_out_clean() {
     exercise(Storage::MultiPack);
 }
 
+/// Truncate the loose object behind `path` in `HEAD` to half its compressed size.
+fn truncate_loose_blob(root: &Path, path: &str) {
+    let oid = git(root, &["rev-parse", &format!("HEAD:{path}")]);
+    let oid = oid.trim();
+    let loose = root.join(".git/objects").join(&oid[..2]).join(&oid[2..]);
+    let bytes = fs::read(&loose).expect("read loose object");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&loose, fs::Permissions::from_mode(0o644)).expect("chmod");
+    }
+    fs::write(&loose, &bytes[..bytes.len() / 2]).expect("truncate loose object");
+}
+
+#[test]
+fn corrupt_large_blob_never_leaves_a_partial_file() {
+    let fx = fixture(Storage::Loose);
+    truncate_loose_blob(&fx.root, "assets/big.dat");
+    let repo = open(&fx.root);
+
+    fs::remove_file(fx.root.join("assets/big.dat")).expect("rm big");
+    let err = restore_paths(
+        &repo,
+        &RestoreOptions {
+            pathspecs: vec!["assets/big.dat".into()],
+            pathspec_sources: vec!["assets/big.dat".into()],
+            source: RestoreSource::Index,
+            staged: false,
+            worktree: true,
+            stage: None,
+            remerge: None,
+        },
+    );
+    assert!(err.is_err(), "restore of a truncated blob must fail");
+    assert!(
+        !fx.root.join("assets/big.dat").exists(),
+        "a failed restore must not leave a partial file"
+    );
+
+    fs::write(fx.root.join("assets/big.dat"), b"local edit\n").expect("modify");
+    let err = reset_to_commit(
+        &repo,
+        &ResetOptions::new(fx.main, ResetMode::Hard, "T <t@example.com>", "reset: test"),
+    );
+    assert!(err.is_err(), "reset --hard to a truncated blob must fail");
+    assert_eq!(
+        fs::read(fx.root.join("assets/big.dat")).expect("read"),
+        b"local edit\n",
+        "a failed reset must leave the existing file untouched"
+    );
+    let leftovers: Vec<_> = fs::read_dir(fx.root.join("assets"))
+        .expect("read assets")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name != "big.dat")
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "temporary files left behind: {leftovers:?}"
+    );
+}
+
 #[test]
 fn large_text_blob_under_autocrlf_is_converted_not_copied() {
     let dir = tempfile::tempdir().expect("tempdir");
