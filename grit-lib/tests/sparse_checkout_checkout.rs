@@ -283,6 +283,7 @@ fn switch_detach_keeps_out_of_cone_paths_skip_worktree() {
                 reflog_to_label: "HEAD~2".into(),
             },
             dry_run: false,
+            hooks: grit_lib::PostOperationHooks::Run,
         },
     )
     .expect("grit switch");
@@ -308,6 +309,7 @@ fn switch_branch_adds_out_of_cone_paths_as_skip_worktree() {
                 oid: rev(&pair.grit_dir, "side"),
             },
             dry_run: false,
+            hooks: grit_lib::PostOperationHooks::Run,
         },
     )
     .expect("grit switch");
@@ -516,6 +518,7 @@ fn sparse_index_survives_reset_hard_and_switch() {
                 oid: rev(&pair.grit_dir, "side"),
             },
             dry_run: false,
+            hooks: grit_lib::PostOperationHooks::Run,
         },
     )
     .expect("grit switch");
@@ -558,6 +561,7 @@ fn switch_does_not_refuse_untracked_file_at_skipped_path() {
                     oid: rev(&pair.grit_dir, "side"),
                 },
                 dry_run: false,
+                hooks: grit_lib::PostOperationHooks::Run,
             },
         )
         .expect("grit switch");
@@ -633,6 +637,7 @@ fn switch_with_wholesale_deleted_directories_keeps_new_skip_worktree_rows() {
                 oid: rev(&pair.grit_dir, "wide"),
             },
             dry_run: false,
+            hooks: grit_lib::PostOperationHooks::Run,
         },
     )
     .expect("grit switch");

@@ -249,13 +249,15 @@ fn plan_rebase_fast_forward(
     let scoped = collect_scoped_refs(repo, &opts.rewrite, branch_tip)?;
     let mapping = HashMap::from([(branch_tip, onto)]);
     let ref_updates = plan_ref_updates(&scoped, &mapping);
-    let head = head_effect(repo, &mapping)?;
+    let mut head = head_effect(repo, &mapping)?;
+    head.checkout_onto = Some(onto);
     Ok(RewritePlan {
         commits: vec![RewrittenCommit {
             old: branch_tip,
             new: Some(onto),
             change_id: None,
             subject: None,
+            reused: true,
         }],
         ref_updates,
         head,
@@ -382,14 +384,16 @@ fn rebase_onto_impl(
             head: super::types::HeadEffect::default(),
         });
     }
-    plan_rewrite_with_order(
+    let mut plan = plan_rewrite_with_order(
         repo,
         &edits,
         &opts.rewrite,
         Some(&replay_order),
         opts.flatten_leaf_merges,
         opts.favor,
-    )
+    )?;
+    plan.head.checkout_onto = Some(onto);
+    Ok(plan)
 }
 
 /// Like [`plan_rebase`], but resumable planning may stop on the first replay conflict.
@@ -408,7 +412,7 @@ pub(crate) fn plan_rebase_resumable(
         && is_ancestor(repo, request.branch_tip, effective_onto).map_err(library_err)?
     {
         let plan = plan_rebase_fast_forward(repo, request.branch_tip, effective_onto, opts)?;
-        return Ok(Ok(ResumablePlanOutcome::Complete(plan)));
+        return Ok(Ok(ResumablePlanOutcome::Complete(Box::new(plan))));
     }
     if is_rebase_up_to_date(
         repo,
@@ -427,13 +431,17 @@ pub(crate) fn plan_rebase_resumable(
     if range.is_empty() {
         return Ok(Err(RebasePlan::UpToDate));
     }
-    Ok(Ok(plan_rewrite_with_order_resumable(
+    let mut outcome = plan_rewrite_with_order_resumable(
         repo,
         &edits,
         &opts.rewrite,
         Some(&replay_order),
         opts.flatten_leaf_merges,
-    )?))
+    )?;
+    if let ResumablePlanOutcome::Complete(plan) = &mut outcome {
+        plan.head.checkout_onto = Some(effective_onto);
+    }
+    Ok(Ok(outcome))
 }
 
 /// Include sibling branch tips (same parent in the rebase range) when updating all descendant refs.

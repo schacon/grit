@@ -74,6 +74,7 @@ impl HistoryLastRecord {
                 head_ref: self.head_ref.clone(),
                 old_tree: self.head_new_tree.or(self.head_old_tree),
                 new_tree: self.head_old_tree,
+                checkout_onto: None,
             },
         }
     }

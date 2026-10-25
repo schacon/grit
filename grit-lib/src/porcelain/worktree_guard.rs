@@ -2105,6 +2105,7 @@ mod tests {
                     oid: tip_b,
                 },
                 dry_run: false,
+                hooks: crate::hooks::PostOperationHooks::Run,
             },
         );
         assert!(
@@ -2483,6 +2484,7 @@ mod tests {
                     oid: target_co,
                 },
                 dry_run: false,
+                hooks: crate::hooks::PostOperationHooks::Run,
             },
         );
         assert!(
@@ -2822,6 +2824,7 @@ mod tests {
                     oid,
                 },
                 dry_run: false,
+                hooks: crate::hooks::PostOperationHooks::Run,
             },
         )
         .map(|_| ())
