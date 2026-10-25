@@ -10,7 +10,6 @@ use crate::commands::fetch_args::FetchArgs;
 use crate::context;
 use crate::output::OutputMode;
 use crate::progress::summary::transfer_header;
-use crate::progress::TerminalProgress;
 use anyhow::{Context, Result};
 use grit_lib::config::ConfigSet;
 use grit_lib::porcelain::pull::{pull, PullError, PullMode, PullOptions};
@@ -75,11 +74,7 @@ pub fn run(args: &PullRunArgs, mode: OutputMode) -> Result<PullOutcome> {
     let factory = DefaultHttpClientFactory;
     // The work-tree update after the fetch reports no progress, so the overall
     // bar covers the transfer only.
-    let mut progress = if args.fetch.quiet {
-        TerminalProgress::quiet(mode)
-    } else {
-        TerminalProgress::new(mode).with_overall(false)
-    };
+    let mut progress = args.fetch.quiet.progress(mode).with_overall(false);
     let url = config.get(&format!("remote.{remote_name}.url"));
     if progress.is_drawing() && remote_name != "." {
         eprintln!(

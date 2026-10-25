@@ -283,11 +283,7 @@ fn run_one(args: &FetchArgs, mode: OutputMode) -> Result<FetchOutcome> {
 
     let factory = DefaultHttpClientFactory;
     // No checkout follows a fetch, so the overall bar ends with the pack.
-    let mut progress = if args.quiet {
-        TerminalProgress::quiet(mode)
-    } else {
-        TerminalProgress::new(mode).with_overall(false)
-    };
+    let mut progress = args.quiet.progress(mode).with_overall(false);
     if matches!(args.depth, Some(0)) {
         return Err(anyhow::anyhow!("--depth requires a positive integer"));
     }
@@ -381,12 +377,7 @@ fn run_all(args: &FetchArgs, mode: OutputMode) -> Result<FetchAllOutcome> {
     let config = ConfigSet::load(&crate::context::environment(), Some(repo.git_dir()), true)
         .context("could not load config")?;
     let factory = DefaultHttpClientFactory;
-    let progress = if args.quiet {
-        TerminalProgress::quiet(mode)
-    } else {
-        TerminalProgress::new(mode)
-    };
-    let mut progress = progress;
+    let mut progress = args.quiet.progress(mode);
     let base = FetchOptions {
         dry_run: args.dry_run,
         fetch_depth: args.fetch_depth(),
