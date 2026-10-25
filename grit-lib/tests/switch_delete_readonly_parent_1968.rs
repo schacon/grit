@@ -40,7 +40,7 @@ mod unix {
         std::fs::set_permissions(path, perms).expect("chmod");
     }
 
-    fn switch_to_del(repo: &Repository, root: &Path, del_oid: ObjectId) -> Error {
+    fn switch_to_del(repo: &Repository, del_oid: ObjectId) -> Error {
         switch_repository(
             repo,
             &SwitchOptions {
@@ -85,7 +85,7 @@ mod unix {
         )
         .expect("open grit repo");
 
-        let err = switch_to_del(&repo, tmp.path(), del_oid);
+        let err = switch_to_del(&repo, del_oid);
 
         let msg = err.to_string();
         assert!(msg.contains("d/a"), "error must name the path, got: {msg}");
@@ -137,7 +137,7 @@ mod unix {
         )
         .expect("open grit repo");
 
-        let err = switch_to_del(&repo, tmp.path(), del_oid);
+        let err = switch_to_del(&repo, del_oid);
         assert!(
             err.to_string().contains("z/blocked"),
             "expected blocked path in error, got: {err}"
@@ -197,7 +197,7 @@ mod unix {
         )
         .expect("open grit repo");
 
-        let err = switch_to_del(&repo, tmp.path(), del_oid);
+        let err = switch_to_del(&repo, del_oid);
         assert!(
             err.to_string().contains("z/blocked"),
             "expected blocked path in error, got: {err}"

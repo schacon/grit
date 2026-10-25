@@ -68,68 +68,88 @@ fn remove_checkout_worktree_file(work_tree: &Path, rel_path: &str) -> Result<()>
 }
 
 #[derive(Clone)]
-enum CheckoutRemovedPathBackup {
-    File {
-        bytes: Vec<u8>,
-        #[cfg(unix)]
-        mode: u32,
-    },
-    Symlink {
-        target: PathBuf,
-    },
+struct CheckoutDeleteStash {
+    stash_path: PathBuf,
+    #[cfg(unix)]
+    mode: u32,
 }
 
 /// Tracks per-file checkout deletions so a later unlink failure can restore the worktree.
+///
+/// Deleted bytes are spooled under a temp directory (rename/copy), not held in memory.
 struct CheckoutPerFileDeleteRollback {
     work_tree: PathBuf,
-    removed: Vec<(String, CheckoutRemovedPathBackup)>,
+    stash_dir: tempfile::TempDir,
+    next_stash_id: usize,
+    removed: Vec<(String, CheckoutDeleteStash)>,
 }
 
 impl CheckoutPerFileDeleteRollback {
-    fn new(work_tree: &Path) -> Self {
-        Self {
+    fn new(work_tree: &Path) -> Result<Self> {
+        let stash_dir = tempfile::TempDir::new().map_err(Error::Io)?;
+        Ok(Self {
             work_tree: work_tree.to_path_buf(),
+            stash_dir,
+            next_stash_id: 0,
             removed: Vec::new(),
-        }
+        })
     }
 
-    fn snapshot(work_tree: &Path, rel_path: &str) -> Result<Option<CheckoutRemovedPathBackup>> {
+    fn alloc_stash_path(&mut self) -> PathBuf {
+        let id = self.next_stash_id;
+        self.next_stash_id += 1;
+        self.stash_dir.path().join(format!("{id:08}"))
+    }
+
+    fn stash_worktree_path(
+        work_tree: &Path,
+        rel_path: &str,
+        stash_path: &Path,
+    ) -> Result<Option<CheckoutDeleteStash>> {
         let abs = checkout_stored_worktree_abs(work_tree, rel_path);
-        if abs.is_symlink() {
-            let target = fs::read_link(&abs).map_err(|source| {
-                crate::worktree::map_worktree_io(rel_path, WorktreePathOperation::Read, source)
-            })?;
-            return Ok(Some(CheckoutRemovedPathBackup::Symlink { target }));
+        let meta = match fs::symlink_metadata(&abs) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(crate::worktree::map_worktree_io(
+                    rel_path,
+                    WorktreePathOperation::Metadata,
+                    source,
+                ));
+            }
+        };
+        if !(meta.is_file() || meta.file_type().is_symlink()) {
+            return Ok(None);
         }
-        if abs.is_file() {
-            let bytes = fs::read(&abs).map_err(|source| {
-                crate::worktree::map_worktree_io(rel_path, WorktreePathOperation::Read, source)
-            })?;
+        #[cfg(unix)]
+        let mode = {
+            use std::os::unix::fs::PermissionsExt;
+            meta.permissions().mode() & 0o7777
+        };
+        if let Some(parent) = stash_path.parent() {
+            fs::create_dir_all(parent).map_err(Error::Io)?;
+        }
+        match fs::rename(&abs, stash_path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => {
+                fs::copy(&abs, stash_path).map_err(|source| {
+                    crate::worktree::map_worktree_io(rel_path, WorktreePathOperation::Read, source)
+                })?;
+                remove_checkout_worktree_file(work_tree, rel_path)?;
+            }
+        }
+        Ok(Some(CheckoutDeleteStash {
+            stash_path: stash_path.to_path_buf(),
             #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mode = fs::metadata(&abs)
-                    .map_err(|source| {
-                        crate::worktree::map_worktree_io(
-                            rel_path,
-                            WorktreePathOperation::Metadata,
-                            source,
-                        )
-                    })?
-                    .permissions()
-                    .mode()
-                    & 0o7777;
-                return Ok(Some(CheckoutRemovedPathBackup::File { bytes, mode }));
-            }
-            #[cfg(not(unix))]
-            {
-                return Ok(Some(CheckoutRemovedPathBackup::File { bytes }));
-            }
-        }
-        Ok(None)
+            mode,
+        }))
     }
 
-    fn restore_one(work_tree: &Path, rel_path: &str, backup: &CheckoutRemovedPathBackup) {
+    fn restore_stash(work_tree: &Path, rel_path: &str, stash: &CheckoutDeleteStash) {
+        if !stash.stash_path.exists() {
+            return;
+        }
         let abs = checkout_stored_worktree_abs(work_tree, rel_path);
         let _ = (|| -> Result<()> {
             if abs.is_dir() {
@@ -140,65 +160,38 @@ impl CheckoutPerFileDeleteRollback {
             if let Some(parent) = abs.parent() {
                 fs::create_dir_all(parent).map_err(Error::Io)?;
             }
-            match backup {
-                CheckoutRemovedPathBackup::File {
-                    bytes,
-                    #[cfg(unix)]
-                    mode,
-                } => {
-                    fs::write(&abs, bytes).map_err(Error::Io)?;
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        let mut perms = fs::metadata(&abs).map_err(Error::Io)?.permissions();
-                        perms.set_mode(*mode);
-                        fs::set_permissions(&abs, perms).map_err(Error::Io)?;
-                    }
-                }
-                CheckoutRemovedPathBackup::Symlink { target } => {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::symlink;
-                        symlink(target, &abs).map_err(Error::Io)?;
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        let _ = target;
-                        return Err(Error::PathError(format!(
-                            "symlink restore for '{rel_path}' requires unix"
-                        )));
-                    }
-                }
+            if fs::rename(&stash.stash_path, &abs).is_err() {
+                fs::copy(&stash.stash_path, &abs).map_err(Error::Io)?;
+                fs::remove_file(&stash.stash_path).map_err(Error::Io)?;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = fs::metadata(&abs).map_err(Error::Io)?.permissions();
+                perms.set_mode(stash.mode);
+                fs::set_permissions(&abs, perms).map_err(Error::Io)?;
             }
             Ok(())
         })();
     }
 
-    fn restore_chunk(work_tree: &Path, chunk: &[(String, Option<CheckoutRemovedPathBackup>)]) {
-        for (rel_path, backup) in chunk {
-            if let Some(backup) = backup {
-                Self::restore_one(work_tree, rel_path, backup);
-            }
-        }
-    }
-
     fn restore_all(&mut self) {
-        while let Some((rel_path, backup)) = self.removed.pop() {
-            Self::restore_one(&self.work_tree, &rel_path, &backup);
+        while let Some((rel_path, stash)) = self.removed.pop() {
+            Self::restore_stash(&self.work_tree, &rel_path, &stash);
         }
     }
 
-    fn record_removed(&mut self, rel_path: &str, backup: Option<CheckoutRemovedPathBackup>) {
-        if let Some(backup) = backup {
-            self.removed.push((rel_path.to_owned(), backup));
+    fn record_removed(&mut self, rel_path: &str, stash: Option<CheckoutDeleteStash>) {
+        if let Some(stash) = stash {
+            self.removed.push((rel_path.to_owned(), stash));
         }
     }
 
     fn remove_file(&mut self, rel_path: &str) -> Result<()> {
-        let snapshot = Self::snapshot(&self.work_tree, rel_path)?;
-        match remove_checkout_worktree_file(&self.work_tree, rel_path) {
-            Ok(()) => {
-                self.record_removed(rel_path, snapshot);
+        let stash_path = self.alloc_stash_path();
+        match Self::stash_worktree_path(&self.work_tree, rel_path, &stash_path) {
+            Ok(stash) => {
+                self.record_removed(rel_path, stash);
                 Ok(())
             }
             Err(err) => {
@@ -222,22 +215,23 @@ fn remove_checkout_files_parallel_cancellable(
     let wt = work_tree.to_path_buf();
     for chunk in paths.chunks(PARALLEL_DELETE_CANCEL_CHUNK) {
         crate::progress::poll_cancel(progress, cancel)?;
-        let snapshots: Result<Vec<(String, Option<CheckoutRemovedPathBackup>)>> = chunk
+        let jobs: Vec<(String, PathBuf)> = chunk
             .iter()
-            .map(|rel_path| {
-                Ok((
-                    rel_path.clone(),
-                    CheckoutPerFileDeleteRollback::snapshot(work_tree, rel_path)?,
-                ))
-            })
+            .map(|rel_path| (rel_path.clone(), delete_rollback.alloc_stash_path()))
             .collect();
-        let snapshots = snapshots?;
-        match try_par_map(chunk, options, 0, |rel_path| {
-            remove_checkout_worktree_file(&wt, rel_path)
-        }) {
-            Ok(_) => {
-                for (rel_path, snapshot) in snapshots {
-                    delete_rollback.record_removed(&rel_path, snapshot);
+        let stashed: Result<Vec<(String, PathBuf, Option<CheckoutDeleteStash>)>> =
+            try_par_map(&jobs, options, 0, |(rel_path, stash_path)| {
+                let stash =
+                    CheckoutPerFileDeleteRollback::stash_worktree_path(&wt, rel_path, stash_path)?;
+                Ok((rel_path.clone(), stash_path.clone(), stash))
+            })
+            .map_err(|e: ParallelHashError<Error>| match e {
+                ParallelHashError::Task(err) => err,
+            });
+        match stashed {
+            Ok(records) => {
+                for (rel_path, _stash_path, stash) in records {
+                    delete_rollback.record_removed(&rel_path, stash);
                     let abs = checkout_stored_worktree_abs(work_tree, &rel_path);
                     parallel_deleted_paths.insert(rel_path);
                     deleted_abs_paths.push(abs);
@@ -245,12 +239,27 @@ fn remove_checkout_files_parallel_cancellable(
                     crate::progress::poll_cancel(progress, cancel)?;
                 }
             }
-            Err(e) => {
-                CheckoutPerFileDeleteRollback::restore_chunk(work_tree, &snapshots);
+            Err(err) => {
+                for (rel_path, stash_path) in &jobs {
+                    if !stash_path.exists() {
+                        continue;
+                    }
+                    #[cfg(unix)]
+                    let mode = {
+                        use std::os::unix::fs::PermissionsExt;
+                        fs::metadata(stash_path)
+                            .map(|m| m.permissions().mode() & 0o7777)
+                            .unwrap_or(0o644)
+                    };
+                    let stash = CheckoutDeleteStash {
+                        stash_path: stash_path.clone(),
+                        #[cfg(unix)]
+                        mode,
+                    };
+                    CheckoutPerFileDeleteRollback::restore_stash(work_tree, rel_path, &stash);
+                }
                 delete_rollback.restore_all();
-                return Err(match e {
-                    ParallelHashError::Task(err) => err,
-                });
+                return Err(err);
             }
         }
     }
@@ -1949,7 +1958,7 @@ fn checkout_bulk_mod_delete_tree_changes(
         }
         per_file_deletes.push(path.clone());
     }
-    let mut delete_rollback = CheckoutPerFileDeleteRollback::new(work_tree);
+    let mut delete_rollback = CheckoutPerFileDeleteRollback::new(work_tree)?;
     let mut parallel_deleted_paths: HashSet<String> = HashSet::new();
     if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
         let policy = repo.thread_policy();
@@ -2082,7 +2091,7 @@ fn checkout_bulk_deleted_tree_changes(
         }
         per_file_deletes.push(path.clone());
     }
-    let mut delete_rollback = CheckoutPerFileDeleteRollback::new(work_tree);
+    let mut delete_rollback = CheckoutPerFileDeleteRollback::new(work_tree)?;
     if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
         let config = repo.config()?;
         let policy = repo.thread_policy();
@@ -2424,7 +2433,7 @@ fn checkout_tree_changes_with_progress(
         }
         per_file_deletes.push(path.clone());
     }
-    let mut delete_rollback = CheckoutPerFileDeleteRollback::new(work_tree);
+    let mut delete_rollback = CheckoutPerFileDeleteRollback::new(work_tree)?;
     if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
         let policy = repo.thread_policy();
         let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
