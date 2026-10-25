@@ -602,13 +602,12 @@ fn pack_file_basenames(pack_dir: &Path) -> HashSet<String> {
 
 /// Per-fetch transfer stats for objects installed during one local copy operation.
 fn transfer_stats_for_local_operation(
-    local_git_dir: &Path,
     local_odb: &Odb,
     installed: &HashSet<ObjectId>,
     pack_dir_before: &HashSet<String>,
 ) -> Result<TransferStats> {
-    let objects_dir = local_git_dir.join("objects");
-    let pack_dir = local_objects_pack_dir(local_git_dir);
+    let objects_dir = local_odb.objects_dir();
+    let pack_dir = objects_dir.join("pack");
     let mut bytes = 0u64;
     let mut objects_from_new_packs = 0u64;
     if pack_dir.is_dir() {
@@ -632,7 +631,7 @@ fn transfer_stats_for_local_operation(
             }
         }
     }
-    let (loose_objects, loose_bytes) = loose_transfer_stats(&objects_dir, installed)?;
+    let (loose_objects, loose_bytes) = loose_transfer_stats(objects_dir, installed)?;
     bytes = bytes.saturating_add(loose_bytes);
     let installed_count = u64::try_from(installed.len()).unwrap_or(u64::MAX);
     let objects = if objects_from_new_packs > 0 {
@@ -650,10 +649,6 @@ fn transfer_stats_for_local_operation(
         bytes,
         kinds,
     })
-}
-
-fn local_objects_pack_dir(git_dir: &Path) -> PathBuf {
-    git_dir.join("objects").join("pack")
 }
 
 /// A single ref update requested by a push.
@@ -818,7 +813,6 @@ fn ingest_pack_options_for_fetch(
 /// Copy objects for a local fetch: link remote packfiles when possible, then pack any remainder.
 #[allow(clippy::too_many_arguments)]
 fn copy_objects_for_local_fetch(
-    remote_git_dir: &Path,
     local_git_dir: &Path,
     remote_odb: &Odb,
     local_odb: &Odb,
@@ -837,21 +831,21 @@ fn copy_objects_for_local_fetch(
         source_objects_fully_packed, try_satisfy_via_object_link,
     };
 
-    let remote_objects = objects_dir(remote_git_dir);
-    let local_objects = objects_dir(local_git_dir);
-    let pack_dir_before = pack_file_basenames(&local_objects_pack_dir(local_git_dir));
+    let remote_objects = remote_odb.objects_dir();
+    let local_objects = local_odb.objects_dir();
+    let pack_dir_before = pack_file_basenames(&local_objects.join("pack"));
 
     if !pack_build.thin
         && try_pack_link
         && haves.is_empty()
         && !wants.is_empty()
-        && source_objects_fully_packed(&remote_objects)?
+        && source_objects_fully_packed(remote_objects)?
     {
         progress.start(ProgressPhase::CopyingObjects, Some(wants.len() as u64));
         crate::progress::poll_cancel(progress, cancel)?;
         if try_satisfy_via_object_link(
-            &remote_objects,
-            &local_objects,
+            remote_objects,
+            local_objects,
             local_odb,
             wants,
             false,
@@ -861,12 +855,7 @@ fn copy_objects_for_local_fetch(
             progress.set(wants.len() as u64);
             progress.finish();
             let oids = linked_object_set(local_odb, wants);
-            let transfer = transfer_stats_for_local_operation(
-                local_git_dir,
-                local_odb,
-                &oids,
-                &pack_dir_before,
-            )?;
+            let transfer = transfer_stats_for_local_operation(local_odb, &oids, &pack_dir_before)?;
             return Ok((oids, transfer));
         }
         progress.finish();
@@ -887,8 +876,8 @@ fn copy_objects_for_local_fetch(
         progress.start(ProgressPhase::CopyingObjects, Some(send.len() as u64));
         crate::progress::poll_cancel(progress, cancel)?;
         if try_satisfy_via_object_link(
-            &remote_objects,
-            &local_objects,
+            remote_objects,
+            local_objects,
             local_odb,
             send,
             false,
@@ -898,12 +887,7 @@ fn copy_objects_for_local_fetch(
             progress.set(send.len() as u64);
             progress.finish();
             let oids = linked_object_set(local_odb, send);
-            let transfer = transfer_stats_for_local_operation(
-                local_git_dir,
-                local_odb,
-                &oids,
-                &pack_dir_before,
-            )?;
+            let transfer = transfer_stats_for_local_operation(local_odb, &oids, &pack_dir_before)?;
             return Ok((oids, transfer));
         }
         progress.finish();
@@ -912,8 +896,7 @@ fn copy_objects_for_local_fetch(
     let mut still_missing = objects_missing_from_peer(local_odb, send);
     if still_missing.is_empty() {
         let oids = linked_object_set(local_odb, send);
-        let transfer =
-            transfer_stats_for_local_operation(local_git_dir, local_odb, &oids, &pack_dir_before)?;
+        let transfer = transfer_stats_for_local_operation(local_odb, &oids, &pack_dir_before)?;
         return Ok((oids, transfer));
     }
 
@@ -922,8 +905,8 @@ fn copy_objects_for_local_fetch(
     if !haves.is_empty() {
         progress.start(ProgressPhase::CopyingObjects, Some(send.len() as u64));
         let linked_loose = link_loose_objects_for_oids(
-            &remote_objects,
-            &local_objects,
+            remote_objects,
+            local_objects,
             &still_missing,
             progress,
             cancel,
@@ -936,12 +919,7 @@ fn copy_objects_for_local_fetch(
         progress.finish();
         if still_missing.is_empty() {
             let oids = linked_object_set(local_odb, send);
-            let transfer = transfer_stats_for_local_operation(
-                local_git_dir,
-                local_odb,
-                &oids,
-                &pack_dir_before,
-            )?;
+            let transfer = transfer_stats_for_local_operation(local_odb, &oids, &pack_dir_before)?;
             return Ok((oids, transfer));
         }
     }
@@ -976,16 +954,13 @@ fn copy_objects_for_local_fetch(
     refresh_local_odb_after_link(local_odb);
     let mut out = linked_object_set(local_odb, send);
     out.extend(ingested.object_ids);
-    let transfer =
-        transfer_stats_for_local_operation(local_git_dir, local_odb, &out, &pack_dir_before)?;
+    let transfer = transfer_stats_for_local_operation(local_odb, &out, &pack_dir_before)?;
     Ok((out, transfer))
 }
 
 /// Copy objects for a local push: link source packfiles into the remote when possible, then pack any remainder.
 #[allow(clippy::too_many_arguments)]
 fn copy_objects_for_local_push(
-    local_git_dir: &Path,
-    remote_git_dir: &Path,
     local_odb: &Odb,
     remote_odb: &Odb,
     wants: &[ObjectId],
@@ -998,8 +973,8 @@ fn copy_objects_for_local_push(
         link_loose_objects_for_oids, refresh_local_odb_after_link, try_satisfy_via_object_link,
     };
 
-    let local_objects = objects_dir(local_git_dir);
-    let remote_objects = objects_dir(remote_git_dir);
+    let local_objects = local_odb.objects_dir();
+    let remote_objects = remote_odb.objects_dir();
 
     let have_tips: HashSet<ObjectId> = haves.iter().copied().collect();
     let send_set = collect_reachable_excluding_peer(
@@ -1016,8 +991,8 @@ fn copy_objects_for_local_push(
     let cancel = crate::progress::NeverCancel;
     if !opts.thin
         && try_satisfy_via_object_link(
-            &local_objects,
-            &remote_objects,
+            local_objects,
+            remote_objects,
             remote_odb,
             send,
             false,
@@ -1035,8 +1010,8 @@ fn copy_objects_for_local_push(
 
     if !haves.is_empty() {
         let linked_loose = link_loose_objects_for_oids(
-            &local_objects,
-            &remote_objects,
+            local_objects,
+            remote_objects,
             &still_missing,
             &mut progress,
             &cancel,
@@ -1609,7 +1584,6 @@ pub fn fetch_local_with_progress(
         let remote_cfg = config_for_git_dir(remote_git_dir);
         let pack_opts = PackBuildOptions::for_local_copy(remote_cfg.as_ref());
         let (oids, fetch_transfer) = copy_objects_for_local_fetch(
-            remote_git_dir,
             local_git_dir,
             &remote_odb,
             &local_odb,
@@ -1951,8 +1925,6 @@ pub fn push_local(
         let empty_shallow = HashSet::new();
         let remote_shallow = crate::shallow::load_shallow_boundaries(remote_git_dir);
         copy_objects_for_local_push(
-            local_git_dir,
-            remote_git_dir,
             &local_odb,
             &remote_odb,
             &push_wants,
@@ -3194,9 +3166,8 @@ mod tests {
         let git_dir = repo.join(".git");
         let pack_dir = git_dir.join("objects/pack");
         let odb = Odb::new(&git_dir.join("objects")).with_config_git_dir(git_dir.clone());
-        let stats =
-            transfer_stats_for_local_operation(&git_dir, &odb, &HashSet::new(), &HashSet::new())
-                .expect("stats");
+        let stats = transfer_stats_for_local_operation(&odb, &HashSet::new(), &HashSet::new())
+            .expect("stats");
         assert!(stats.bytes > 0);
         assert!(stats.objects > 0);
 

@@ -431,7 +431,9 @@ impl Bundle {
             ProgressUnit::Bytes,
             Some(pack_bytes),
         );
-        let tmp = tempfile::NamedTempFile::new_in(repo.git_dir().join("objects").join("pack"))
+        let pack_dir = repo.odb().objects_dir().join("pack");
+        std::fs::create_dir_all(&pack_dir).map_err(BundleError::from)?;
+        let tmp = tempfile::NamedTempFile::new_in(&pack_dir)
             .map_err(|e| BundleError::Io(e.to_string()))?;
         {
             let mut input = File::open(&self.path)?;
