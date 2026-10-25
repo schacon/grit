@@ -5714,6 +5714,8 @@ impl core::convert::From<grit_lib::error::Error> for grit_lib::remote::serve::Se
 pub fn grit_lib::remote::serve::ServeError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::remote::serve::UnpackError
 pub fn grit_lib::remote::serve::UnpackError::from(grit_lib::error::Error) -> Self
+impl core::convert::From<grit_lib::error::Error> for grit_lib::revwalk::history::HistoryError
+pub fn grit_lib::revwalk::history::HistoryError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::revwalk::history::RebaseSessionError
 pub fn grit_lib::revwalk::history::RebaseSessionError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::FilterError> for grit_lib::error::Error
@@ -15392,6 +15394,8 @@ impl core::convert::From<grit_lib::error::Error> for grit_lib::remote::serve::Se
 pub fn grit_lib::remote::serve::ServeError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::remote::serve::UnpackError
 pub fn grit_lib::remote::serve::UnpackError::from(grit_lib::error::Error) -> Self
+impl core::convert::From<grit_lib::error::Error> for grit_lib::revwalk::history::HistoryError
+pub fn grit_lib::revwalk::history::HistoryError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::revwalk::history::RebaseSessionError
 pub fn grit_lib::revwalk::history::RebaseSessionError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::error::FilterError> for grit_lib::error::Error
@@ -16213,6 +16217,8 @@ pub fn grit_lib::repo::Repository::write_largest_pack_bitmap(&self, &grit_lib::o
 impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::enforce_safe_directory(&self) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo::Repository::verify_safe_for_clone_source(&self) -> grit_lib::error::Result<()>
+impl grit_lib::repo::Repository
+pub fn grit_lib::repo::Repository::head_commit(&self) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::ignore_check(&self, &[alloc::string::String], &grit_lib::index::Index) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::worktree::ignore::IgnoreCheck>>
 impl grit_lib::repo::Repository
@@ -21303,6 +21309,8 @@ impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::enforce_safe_directory(&self) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo::Repository::verify_safe_for_clone_source(&self) -> grit_lib::error::Result<()>
 impl grit_lib::repo::Repository
+pub fn grit_lib::repo::Repository::head_commit(&self) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
+impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::ignore_check(&self, &[alloc::string::String], &grit_lib::index::Index) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::worktree::ignore::IgnoreCheck>>
 impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::read_object_for_display(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<grit_lib::revwalk::object_inspect::ObjectContents>
@@ -22646,6 +22654,8 @@ pub grit_lib::revwalk::history::HistoryError::UndoStale
 pub grit_lib::revwalk::history::HistoryError::UndoStale::name: alloc::string::String
 pub grit_lib::revwalk::history::HistoryError::WorktreeApply
 pub grit_lib::revwalk::history::HistoryError::WorktreeApply::message: alloc::string::String
+impl core::convert::From<grit_lib::error::Error> for grit_lib::revwalk::history::HistoryError
+pub fn grit_lib::revwalk::history::HistoryError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::ident::AuthorArgError> for grit_lib::revwalk::history::HistoryError
 pub fn grit_lib::revwalk::history::HistoryError::from(grit_lib::ident::AuthorArgError) -> Self
 impl core::convert::From<grit_lib::porcelain::hunk_select::HunkSelectError> for grit_lib::revwalk::history::HistoryError
