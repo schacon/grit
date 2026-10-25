@@ -14,7 +14,6 @@ use sha1::{Digest, Sha1};
 
 use crate::lockfile::{LockFile, LockWait};
 use crate::objects::ObjectId;
-use crate::refs::resolve_ref;
 use crate::repo::Repository;
 
 use super::{
@@ -230,8 +229,9 @@ fn refs_match_plan(
     expect_new: bool,
 ) -> Result<bool, HistoryError> {
     for planned in updates {
-        let current =
-            resolve_ref(repo.git_dir(), &planned.name).map_err(|e| HistoryError::RefApply {
+        let current = repo
+            .resolve_ref_oid(&planned.name)
+            .map_err(|e| HistoryError::RefApply {
                 message: e.to_string(),
             })?;
         let expected = if expect_new { planned.new } else { planned.old };
