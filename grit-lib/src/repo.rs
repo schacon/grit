@@ -1169,14 +1169,59 @@ impl Repository {
         crate::pathspec::pathspec_match_context_with_precompose(self.pathspec_precompose_enabled())
     }
 
-    /// Whether `path` matches any of the resolved `specs`, honoring `core.precomposeunicode` pathspec rules.
-    #[must_use]
-    pub fn paths_match_pathspecs(&self, path: &str, specs: &[String]) -> bool {
-        crate::pathspec::matches_pathspec_list_with_context(
-            path,
+    /// Whether `path` is selected by the resolved pathspec list `specs`.
+    ///
+    /// Shorthand for [`Self::pathspec_matcher`] followed by
+    /// [`crate::pathspec::PathspecMatcher::matches`]; build the matcher once instead when
+    /// filtering many paths with specs that may carry `:(attr:...)` magic.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::pathspec_matcher`].
+    pub fn paths_match_pathspecs(&self, path: &str, specs: &[String]) -> Result<bool> {
+        Ok(self.pathspec_matcher(specs)?.matches(path))
+    }
+
+    /// Prepare `specs` (resolved pathspecs) for matching many paths in this repository.
+    ///
+    /// The matcher applies Git's list semantics and every pathspec magic word, including
+    /// `:(attr:...)`, which is evaluated against this repository's attributes: the work-tree
+    /// stack (global file, root and nested `.gitattributes`, `info/attributes`), or
+    /// `info/attributes` and the global file for a bare repository. Attributes are read only
+    /// when a spec carries attr magic, once per matcher, from the per-handle cache; `[attr]`
+    /// macros are expanded and `core.ignorecase` makes attribute patterns case-insensitive.
+    /// Paths and specs follow `core.precomposeunicode`.
+    ///
+    /// # Errors
+    ///
+    /// Only when a spec carries attr magic: [`Error::InvalidAttrPathspec`] for a malformed or
+    /// repeated `attr:` clause, or the error from loading config or the attribute files (for
+    /// example an unreadable `core.attributesFile` setting or a poisoned cache lock).
+    pub fn pathspec_matcher<'s>(
+        &self,
+        specs: &'s [String],
+    ) -> Result<crate::pathspec::PathspecMatcher<'s>> {
+        let precompose = self.pathspec_precompose_enabled();
+        if !specs
+            .iter()
+            .any(|spec| crate::pathspec::pathspec_has_attr_magic(spec))
+        {
+            return Ok(crate::pathspec::PathspecMatcher::new(
+                specs, precompose, None, false,
+            ));
+        }
+        crate::pathspec::validate_attr_pathspecs(specs)?;
+        let attrs = match self.work_tree() {
+            Some(work_tree) => self.caches().gitattributes_stack_shared(self, work_tree)?,
+            None => self.caches().gitattributes_bare_shared(self)?,
+        };
+        let icase = crate::crlf::config_ignorecase(self.config()?.as_ref());
+        Ok(crate::pathspec::PathspecMatcher::new(
             specs,
-            self.pathspec_match_context(),
-        )
+            precompose,
+            Some(attrs),
+            icase,
+        ))
     }
 
     /// Repository-relative prefix of the process cwd for argv pathspecs (no trailing slash).

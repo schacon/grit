@@ -531,6 +531,27 @@ pub enum PathspecResolveError {
     NeedsWorkTree,
 }
 
+/// Why a `:(attr:...)` pathspec clause was rejected.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AttrPathspecError {
+    /// The clause names no attribute requirement (`:(attr:)`).
+    #[error("attr requirement list is empty")]
+    Empty,
+    /// More than one `attr:` clause appears in one pathspec.
+    #[error("a pathspec may contain at most one attr clause")]
+    MultipleAttrClauses,
+    /// A requirement names an attribute that is not valid (`-a=b`, `bad name`, `bad/name`).
+    #[error("'{0}' is not a usable attribute name")]
+    InvalidName(String),
+    /// A `\` escape ends the value or precedes whitespace.
+    #[error("attr value ends with a dangling escape")]
+    DanglingEscape,
+    /// A `\` escape precedes something other than `,`.
+    #[error("attr values may only escape ','")]
+    UnsupportedEscape,
+}
+
 /// Path outside the repository during pathspec or transport resolution.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -903,6 +924,16 @@ pub enum Error {
     ReceivedPackTempMissing {
         /// Path to the temp pack that was expected on disk.
         path: std::path::PathBuf,
+    },
+
+    /// A pathspec's `:(attr:...)` magic is malformed.
+    #[error("invalid attr magic in pathspec '{spec}': {reason}")]
+    InvalidAttrPathspec {
+        /// The offending pathspec as given.
+        spec: String,
+        /// What is wrong with its attr clause.
+        #[source]
+        reason: AttrPathspecError,
     },
 
     /// A pathspec did not match any file known to Git (index or HEAD tree).
