@@ -22,7 +22,6 @@ use crate::output::{outln, HumanRender, MarkdownRender, OutputMode, RenderContex
 use crate::progress::TerminalProgress;
 use crate::quiet_args::QuietArgs;
 use grit_lib::progress::NeverCancel;
-use grit_lib::remote::fetch::NoProgress;
 
 /// Result of `grit push`: the per-ref outcomes for the remote.
 #[derive(Serialize, JsonSchema)]

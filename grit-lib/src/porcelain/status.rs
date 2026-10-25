@@ -1343,6 +1343,7 @@ fn visit_untracked_node(
             rules,
             untracked_out,
             ignored_out,
+            cancel_watch,
         );
     }
 
