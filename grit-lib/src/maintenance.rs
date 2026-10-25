@@ -1098,7 +1098,6 @@ fn pack_loose_objects_incremental(
         &HashMap::new(),
         None,
         threads,
-        HashMap::new(),
     )
 }
 
@@ -1743,7 +1742,6 @@ fn repack_object_list(
             have_shallow_grafts: Some(shallow),
             use_bitmaps,
             exclude_objects: None,
-            prefetch_walk_objects: false,
         },
         NameTrees::Yes,
     )?;

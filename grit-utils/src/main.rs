@@ -218,6 +218,11 @@ enum Cmd {
         #[arg(long)]
         smoke: bool,
     },
+    /// `grit gc` vs `git gc` on all-loose repositories (exploded history, wide commit)
+    GcLoose {
+        #[arg(long)]
+        smoke: bool,
+    },
     /// Benchmark `grit stash` push + pop at selected repo sizes
     Stash {
         #[arg(long, value_delimiter = ',', default_values_t = vec![10_000, 100_000])]
@@ -492,6 +497,13 @@ enum Cmd {
         git: PathBuf,
         #[arg(long)]
         worktree: Option<PathBuf>,
+    },
+    #[command(hide = true)]
+    PrepareGcLoose {
+        #[arg(long)]
+        git: PathBuf,
+        #[arg(long)]
+        worktree: PathBuf,
     },
     PrepareHistoryRewrite {
         #[arg(long)]
@@ -1511,6 +1523,9 @@ fn main() -> Result<()> {
                 worktree.as_deref(),
             );
         }
+        Cmd::PrepareGcLoose { git: _, worktree } => {
+            return grit_utils::gc_loose_suite::run_prepare_gc_loose(worktree);
+        }
         Cmd::PrepareHistoryRewrite { git } => {
             let git = resolve_binary("git", Some(git))?;
             return run_prepare_history_rewrite(&git);
@@ -1980,6 +1995,13 @@ fn main() -> Result<()> {
             let cfg = run_config(&cli, true);
             run_maintenance_suite(&hyperfine, &git, &grit, &cfg, *smoke, timestamp)?
         }
+        Cmd::GcLoose { smoke } => {
+            eprintln!("Running gc-loose benchmarks...");
+            let cfg = run_config(&cli, true);
+            grit_utils::gc_loose_suite::run_gc_loose_suite(
+                &hyperfine, &git, &grit, &cfg, *smoke, timestamp,
+            )?
+        }
         Cmd::Stash { sizes } => {
             eprintln!("Running stash benchmarks...");
             let cfg = run_config(&cli, true);
@@ -2216,6 +2238,7 @@ fn main() -> Result<()> {
         | Cmd::PrepareConflictsRevertMainline { .. }
         | Cmd::PrepareCommit { .. }
         | Cmd::PrepareMaintenance { .. }
+        | Cmd::PrepareGcLoose { .. }
         | Cmd::PrepareHistoryRewrite { .. }
         | Cmd::PrepareRefs { .. }
         | Cmd::TruncatePackedRefs { .. }
