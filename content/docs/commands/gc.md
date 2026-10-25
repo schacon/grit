@@ -55,6 +55,8 @@ Progress lines go to **stderr**. The human summary lists each task, key counters
 | --- | --- |
 | `--dry-run` | Report counters and paths that would be written; leave the repository unchanged. |
 
+`grit gc midx` writes multi-pack-index format version 1, which every Git with multi-pack-index support reads (Git 2.43 included). Set `midx.version = 2` in config to write version 2 instead; only newer Git releases read it. Any other `midx.version` value is an error, even with `--dry-run`, and nothing is written.
+
 ### `grit gc prune`
 
 | Option | Description |
