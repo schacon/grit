@@ -19,6 +19,7 @@
 
 mod object_info;
 mod receive_pack;
+mod ref_update_policy;
 mod shallow_upload;
 mod upload_pack;
 mod upload_pack_policy;
@@ -29,6 +30,7 @@ pub use receive_pack::{
     receive_pack, receive_pack_with_hook, HookRunRecord, ReceiveHook, ReceiveOutcome,
     ReceivePolicy, RefCommand, RefUpdateRefusal, RefUpdateResult, UnpackError,
 };
+pub use ref_update_policy::{checked_out_branch, validate_ref_update};
 pub use upload_pack::upload_pack;
 
 use std::ops::ControlFlow;
