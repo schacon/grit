@@ -893,8 +893,11 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         };
         report.packs_written = 1;
         report.objects = ingested.object_ids.len();
+        let pack_path = ingested.pack_path.ok_or(Error::UnsupportedObjectStore {
+            operation: "repack",
+        })?;
 
-        let idx_path = ingested.pack_path.with_extension("idx");
+        let idx_path = pack_path.with_extension("idx");
         if cfg
             .as_ref()
             .is_none_or(|c| c.pack_write_reverse_index_default(&opts.environment))
@@ -939,10 +942,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         // Incremental repack keeps every existing pack, so nothing is superseded.
         if !opts.incremental {
             odb.loosen_unreachable_from_superseded_packs(
-                &pack_dir,
-                &ingested.pack_path,
-                &reachable,
-                retention,
+                &pack_dir, &pack_path, &reachable, retention,
             )?;
         }
 
@@ -952,7 +952,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         report.packs_removed = if opts.incremental {
             0
         } else {
-            remove_superseded_pack_files(&pack_dir, &ingested.pack_path)?
+            remove_superseded_pack_files(&pack_dir, &pack_path)?
         };
 
         prune_packed_loose =
