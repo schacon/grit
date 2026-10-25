@@ -762,7 +762,9 @@ fn rebase_fetched_upstream(
         },
         rebase: pull_rebase_options(repo)?,
         apply: ApplyOptions {
-            identity: checkout_reflog_identity(repo),
+            identity: repo
+                .identity(IdentRole::Committer, repo.identity_now())
+                .map_err(PullError::Repository)?,
             reflog_message: format!("pull: rebase onto {label}"),
             record_operation: Some("rebase".into()),
             hooks: crate::hooks::PostOperationHooks::Run,

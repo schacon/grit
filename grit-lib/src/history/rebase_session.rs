@@ -318,7 +318,13 @@ pub fn skip_rebase(
 /// Returns [`RebaseSessionError::NoRebaseInProgress`] when no rebase is in progress, and
 /// [`RebaseSessionError::ForeignRebaseInProgress`] when a git-started rebase recorded an
 /// autostash or has no readable `orig-head` (finish those with `git rebase --abort`).
-pub fn abort_rebase(repo: &Repository, identity: &str) -> Result<(), RebaseSessionError> {
+pub fn abort_rebase(
+    repo: &Repository,
+    identity: &crate::ident::Signature,
+) -> Result<(), RebaseSessionError> {
+    identity
+        .validate()
+        .map_err(|err| map_lib(crate::error::Error::InvalidSignature(err)))?;
     let had_journal = super::rewrite_apply_journal_active(repo.git_dir());
     if had_journal {
         super::abort_interrupted_rewrite_apply(repo)?;
@@ -345,7 +351,7 @@ pub fn abort_rebase(repo: &Repository, identity: &str) -> Result<(), RebaseSessi
 fn abort_foreign_rebase(
     repo: &Repository,
     state_dir: &Path,
-    identity: &str,
+    identity: &crate::ident::Signature,
 ) -> Result<(), RebaseSessionError> {
     if state_dir.join("autostash").exists() {
         return Err(RebaseSessionError::ForeignRebaseInProgress);
@@ -962,7 +968,7 @@ fn hard_reset_branch(
     repo: &Repository,
     refname: &str,
     target: ObjectId,
-    identity: &str,
+    identity: &crate::ident::Signature,
 ) -> Result<(), RebaseSessionError> {
     refs::write_symbolic_ref_on_store(repo.refs(), repo.git_dir(), "HEAD", refname)
         .map_err(map_lib)?;
@@ -972,16 +978,11 @@ fn hard_reset_branch(
 fn hard_reset_head(
     repo: &Repository,
     target: ObjectId,
-    identity: &str,
+    identity: &crate::ident::Signature,
 ) -> Result<(), RebaseSessionError> {
     reset_to_commit(
         repo,
-        &ResetOptions::new(
-            target,
-            ResetMode::Hard,
-            identity.to_owned(),
-            "rebase (abort)",
-        ),
+        &ResetOptions::new(target, ResetMode::Hard, identity.clone(), "rebase (abort)"),
         &mut crate::progress::NullProgress,
         &crate::progress::NeverCancel,
     )
