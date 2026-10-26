@@ -11,7 +11,9 @@ use grit_lib::progress::NullProgress;
 use grit_lib::refs::{write_ref, write_ref_cas};
 use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::state::{resolve_head, HeadState};
-use grit_lib::worktree::{add_linked_worktree, AddLinkedWorktreeOptions};
+use grit_lib::worktree::{
+    add_linked_worktree, list_worktrees, AddLinkedWorktreeOptions, WorktreeBranch,
+};
 use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
@@ -50,6 +52,30 @@ fn assert_git_dir_io(err: &Error) {
         !msg.starts_with("I/O error:"),
         "expected contextual git-dir message, got {msg}"
     );
+}
+
+fn assert_git_dir_path_io(err: &Error) -> String {
+    match err {
+        Error::GitDirPathIo { path, .. } => {
+            assert_git_dir_io(err);
+            path.clone()
+        }
+        other => panic!("expected GitDirPathIo, got {other}"),
+    }
+}
+
+fn chmod_dir_readonly(path: &Path) {
+    let meta = fs::metadata(path).expect("metadata");
+    let mut perms = meta.permissions();
+    perms.set_mode(meta.permissions().mode() & !0o222);
+    fs::set_permissions(path, perms).expect("chmod");
+}
+
+fn restore_dir_write(path: &Path) {
+    let meta = fs::metadata(path).expect("metadata");
+    let mut perms = meta.permissions();
+    perms.set_mode(meta.permissions().mode() | 0o222);
+    fs::set_permissions(path, perms).expect("chmod");
 }
 
 fn commit_request(message: &str) -> CommitRequest {
@@ -211,6 +237,58 @@ fn read_only_linked_worktree_metadata_on_detached_commit_names_head_lock() {
         other => panic!("expected GitDirPathIo, got {other}"),
     }
     restore_tree_write(&admin);
+}
+
+#[test]
+fn linked_worktree_commit_readonly_admin_names_git_path() {
+    let dir = tempdir().expect("tempdir");
+    let main_wt = dir.path().join("main");
+    fs::create_dir_all(&main_wt).expect("main wt");
+    let repo = init_repo(&main_wt);
+    seed_commit(&repo, &main_wt, "base");
+
+    let linked_wt = dir.path().join("linked");
+    add_linked_worktree(
+        &repo,
+        &AddLinkedWorktreeOptions {
+            path: linked_wt.clone(),
+            branch: Some(WorktreeBranch::Detach),
+            start_point: Some("HEAD".into()),
+            force: false,
+            lock: None,
+            no_checkout: false,
+            track: false,
+        },
+    )
+    .expect("add linked worktree");
+
+    let linked_repo = Repository::discover(Some(linked_wt.as_path()), &RepositoryOptions::empty())
+        .expect("discover linked");
+    fs::write(linked_wt.join("a"), "linked change\n").expect("write");
+    stage(&linked_repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+
+    let admin = list_worktrees(&repo)
+        .expect("list")
+        .into_iter()
+        .find(|e| e.path == linked_wt.canonicalize().unwrap_or(linked_wt.clone()))
+        .expect("linked entry")
+        .admin_dir;
+    chmod_dir_readonly(&admin);
+
+    let err = commit_with_scope(
+        &linked_repo,
+        &commit_request("linked"),
+        CommitScope::Staged,
+        &mut NullProgress,
+    )
+    .expect_err("commit should fail");
+    let path = assert_git_dir_path_io(&err);
+    assert!(
+        path.contains(".git/worktrees/") && path.contains("index"),
+        "expected linked worktree index path, got {path}"
+    );
+
+    restore_dir_write(&admin);
 }
 
 #[test]

@@ -42,6 +42,11 @@ fn layout_uses_dot_git_prefix(git_dir: &Path) -> bool {
     git_dir.file_name().is_some_and(|n| n == ".git")
 }
 
+/// Normalize a path suffix from [`Path::strip_prefix`] for stable `.git/…` display (forward slashes).
+fn normalize_repo_relative_suffix(rel: &str) -> String {
+    rel.trim_start_matches(['/', '\\']).replace('\\', "/")
+}
+
 /// Format a repository-relative suffix for display (worktree vs bare).
 fn format_layout_path(layout_git_dir: &Path, rel: &str) -> String {
     if rel.is_empty() {
@@ -65,7 +70,7 @@ fn format_layout_path(layout_git_dir: &Path, rel: &str) -> String {
 #[allow(dead_code)]
 pub fn display_storage_path(layout_git_dir: &Path, storage_root: &Path, path: &Path) -> String {
     if let Ok(rel) = path.strip_prefix(storage_root) {
-        let trimmed = rel.to_string_lossy().trim_start_matches('/').to_owned();
+        let trimmed = normalize_repo_relative_suffix(&rel.to_string_lossy());
         return format_layout_path(layout_git_dir, &trimmed);
     }
     display_git_dir_path(layout_git_dir, path)
@@ -80,16 +85,15 @@ pub fn display_ref_store_path(common_dir: &Path, checkout_git_dir: &Path, path: 
         checkout_git_dir
     };
     let rel = if let Ok(r) = path.strip_prefix(common_dir) {
-        r.to_string_lossy().trim_start_matches('/').to_owned()
+        normalize_repo_relative_suffix(&r.to_string_lossy())
     } else if let Ok(tail) = path.strip_prefix(checkout_git_dir) {
         let middle = checkout_git_dir
             .strip_prefix(common_dir)
-            .map(|p| p.to_string_lossy().trim_matches('/').to_owned())
+            .map(|p| normalize_repo_relative_suffix(&p.to_string_lossy()))
             .unwrap_or_default();
-        let tail = tail.to_string_lossy();
-        let tail = tail.trim_start_matches('/');
+        let tail = normalize_repo_relative_suffix(&tail.to_string_lossy());
         if middle.is_empty() {
-            tail.to_owned()
+            tail
         } else {
             format!("{middle}/{tail}")
         }
@@ -103,13 +107,13 @@ pub fn display_ref_store_path(common_dir: &Path, checkout_git_dir: &Path, path: 
 #[must_use]
 pub fn display_git_dir_path(git_dir: &Path, path: &Path) -> String {
     if let Ok(rel) = path.strip_prefix(git_dir) {
-        let trimmed = rel.to_string_lossy().trim_start_matches('/').to_owned();
+        let trimmed = normalize_repo_relative_suffix(&rel.to_string_lossy());
         return format_layout_path(git_dir, &trimmed);
     }
     if layout_uses_dot_git_prefix(git_dir) {
         if let Some(worktree) = git_dir.parent() {
             if let Ok(rel) = path.strip_prefix(worktree) {
-                return rel.to_string_lossy().replace('\\', "/");
+                return normalize_repo_relative_suffix(&rel.to_string_lossy());
             }
         }
     }
@@ -223,6 +227,24 @@ pub fn io_with_git_path<T>(
     result.map_err(|source| map_git_dir_io(git_dir, path, operation, source))
 }
 
+/// Map a bare [`Error::Io`] from index persistence to [`Error::GitDirPathIo`].
+#[must_use]
+pub fn map_index_write_error(git_dir: &Path, index_path: &Path, err: Error) -> Error {
+    let display_path = if let Some(common) = crate::refs::common_dir(git_dir) {
+        display_ref_store_path(&common, git_dir, index_path)
+    } else {
+        display_git_dir_path(git_dir, index_path)
+    };
+    match err {
+        Error::Io(source) => Error::GitDirPathIo {
+            path: display_path,
+            operation: GitDirPathOperation::WriteIndex,
+            source,
+        },
+        other => other,
+    }
+}
+
 /// Attach storage-layout git-dir context to [`std::io::Result`].
 #[allow(dead_code)]
 pub fn io_with_storage_git_path<T>(
@@ -272,6 +294,27 @@ mod tests {
         let git = PathBuf::from("/tmp/pe/.git");
         let path = git.join("objects/ab/cdef");
         assert_eq!(display_git_dir_path(&git, &path), ".git/objects/ab/cdef");
+    }
+
+    #[test]
+    fn strip_prefix_suffix_normalizes_windows_separators() {
+        let git = PathBuf::from("/tmp/pe/.git");
+        let rel = normalize_repo_relative_suffix(r"\objects\ab\cdef");
+        assert_eq!(rel, "objects/ab/cdef");
+        assert_eq!(format_layout_path(&git, &rel), ".git/objects/ab/cdef");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn display_path_under_dot_git_on_windows() {
+        let git = PathBuf::from(r"C:\Users\pe\repo\.git");
+        let path = PathBuf::from(r"C:\Users\pe\repo\.git\objects\ab\cdef");
+        let display = display_git_dir_path(&git, &path);
+        assert_eq!(display, ".git/objects/ab/cdef");
+        assert!(
+            !display.contains('\\'),
+            "git-dir display paths must use forward slashes: {display}"
+        );
     }
 
     #[test]
