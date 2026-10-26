@@ -210,14 +210,9 @@ fn filter_bounded_contains(
     repo: &Repository,
     query: &RefQuery,
     rows: &mut Vec<(String, ObjectId, Option<ObjectId>)>,
-    targets: &[ObjectId],
+    mut evaluator: RefContainsMemo<'_>,
     limit: usize,
 ) -> std::result::Result<(), RefQueryError> {
-    if limit == 0 || rows.is_empty() {
-        rows.clear();
-        return Ok(());
-    }
-    let mut evaluator = RefContainsMemo::new(repo, targets)?;
     let mut peels = oid_hash_map();
     rows.sort_by(|a, b| a.0.cmp(&b.0));
     if query.sort.reverse {
@@ -266,7 +261,13 @@ pub(super) fn filter_listings_by_reachability(
     let no_merged = resolve_targets(repo, &query.no_merged)?;
     if can_bound_contains(query) {
         if let Some(limit) = query.limit {
-            return filter_bounded_contains(repo, query, rows, &contains, limit);
+            if limit == 0 || rows.is_empty() {
+                rows.clear();
+                return Ok(());
+            }
+            if let Some(evaluator) = RefContainsMemo::new(repo, &contains)? {
+                return filter_bounded_contains(repo, query, rows, evaluator, limit);
+            }
         }
     }
     let odb = repo.odb();

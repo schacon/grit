@@ -429,3 +429,51 @@ fn bounded_contains_preserves_order_and_matching_row_truncation() -> TestResult 
     }
     Ok(())
 }
+
+#[test]
+fn bounded_contains_graft_cycle_preserves_matches_and_truncation() -> TestResult {
+    let scratch = Scratch::new("contains-graft-cycle")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    git(&repo, &["init", "-b", "main"]);
+    let tree = git(&repo, &["mktree"]).trim().to_owned();
+    let root = git(&repo, &["commit-tree", &tree, "-m", "root"])
+        .trim()
+        .to_owned();
+    let child = git(&repo, &["commit-tree", &tree, "-p", &root, "-m", "child"])
+        .trim()
+        .to_owned();
+    git(&repo, &["update-ref", "refs/heads/a-root", &root]);
+    git(&repo, &["update-ref", "refs/heads/b-child", &child]);
+    fs::write(repo.join(".git/info/grafts"), format!("{root} {child}\n"))?;
+    git(&repo, &["fsck", "--strict", "--no-progress"]);
+    let all = git(
+        &repo,
+        &[
+            "for-each-ref",
+            &format!("--contains={child}"),
+            "--format=%(refname)",
+            "refs/heads/",
+        ],
+    )
+    .lines()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    assert_eq!(all, ["refs/heads/a-root", "refs/heads/b-child"]);
+    for limit in [1, 2, 100] {
+        let count = limit.to_string();
+        let json = grit_json(&repo, &["branch", "--contains", &child, "-n", &count]);
+        let names = json["branches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["full_ref"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(names, all[..all.len().min(limit)]);
+        assert_eq!(
+            json["truncated"].as_bool().unwrap_or(false),
+            all.len() > limit
+        );
+    }
+    Ok(())
+}

@@ -2285,6 +2285,21 @@ impl<'r> CommitGraphCache<'r> {
         }
     }
 
+    /// Parent rewrites can invalidate commit-graph linkage and create ancestry cycles.
+    fn has_parent_rewrites(&self) -> Result<bool> {
+        if !self.graft_parents.is_empty() {
+            return Ok(true);
+        }
+        let mut has_replacements = false;
+        if let Some(prefix) = self.repo.replace_ref_base_if_enabled() {
+            self.repo.refs().for_each_ref(&prefix, &mut |_| {
+                has_replacements = true;
+                std::ops::ControlFlow::Break(())
+            })?;
+        }
+        Ok(has_replacements)
+    }
+
     fn grafted_parents(&self, oid: ObjectId, parents: Vec<ObjectId>) -> Vec<ObjectId> {
         self.graft_parents.get(&oid).cloned().unwrap_or(parents)
     }
@@ -2730,18 +2745,12 @@ struct ContainsFrame {
 }
 
 impl<'repo> RefContainsMemo<'repo> {
-    pub(crate) fn new(repo: &'repo Repository, targets: &[ObjectId]) -> Result<Self> {
+    /// Returns `None` for rewritten parents: ancestry need not be acyclic, so
+    /// callers must use the batch walk instead of inferring negative ancestors.
+    pub(crate) fn new(repo: &'repo Repository, targets: &[ObjectId]) -> Result<Option<Self>> {
         let mut graph = CommitGraphCache::new(repo);
-        // Parent rewrites invalidate the on-disk graph's linkage and generations.
-        let mut has_replacements = false;
-        if let Some(prefix) = repo.replace_ref_base_if_enabled() {
-            repo.refs().for_each_ref(&prefix, &mut |_| {
-                has_replacements = true;
-                std::ops::ControlFlow::Break(())
-            })?;
-        }
-        if has_replacements || !graph.graft_parents.is_empty() {
-            graph.graph = None;
+        if graph.has_parent_rewrites()? {
+            return Ok(None);
         }
         let min_target_gen = min_ranked_generation(&graph, targets);
         let mut known: OidHashMap<bool> = targets.iter().map(|&oid| (oid, true)).collect();
@@ -2760,14 +2769,14 @@ impl<'repo> RefContainsMemo<'repo> {
                 }
             }
         }
-        Ok(Self {
+        Ok(Some(Self {
             graph,
             known,
             min_target_gen,
             negative_pending,
             negative_frontier: BinaryHeap::new(),
             negative_seq: 0,
-        })
+        }))
     }
 
     fn known(&self, oid: ObjectId) -> Option<bool> {
@@ -2934,6 +2943,9 @@ impl<'repo> RefContainsBatch<'repo> {
             return Ok(());
         }
 
+        if self.graph.has_parent_rewrites()? {
+            self.graph.graph = None;
+        }
         self.graph.ensure_single_pack_reader();
 
         for state in &mut self.tip_state {
@@ -3077,7 +3089,7 @@ mod tests {
             } else {
                 repo
             };
-            let mut memo = RefContainsMemo::new(&repo, &[target])?;
+            let mut memo = RefContainsMemo::new(&repo, &[target])?.expect("unrewritten parents");
             assert!(memo.contains(merge)?);
             assert_eq!(memo.known(side), Some(false));
             assert_eq!(memo.known.get(&child), Some(&true));
@@ -3106,7 +3118,7 @@ mod tests {
         for i in 0..2 {
             side = write_commit_same_time(repo.odb(), &[side], &format!("side {i}"), 200)?;
         }
-        let mut memo = RefContainsMemo::new(&repo, &[target])?;
+        let mut memo = RefContainsMemo::new(&repo, &[target])?.expect("unrewritten parents");
         assert!(!memo.contains(side)?);
         assert!(
             !memo.known.contains_key(&root),
@@ -3117,7 +3129,7 @@ mod tests {
     }
 
     #[test]
-    fn containment_memo_disables_graph_for_parent_rewrites() -> Result<()> {
+    fn containment_memo_defers_parent_rewrites_to_batch() -> Result<()> {
         for replace in [false, true] {
             let dir = tempdir()?;
             let repo = open_test_bare(&dir)?;
@@ -3143,9 +3155,12 @@ mod tests {
                 )?;
             }
             let repo = Repository::open(dir.path(), &RepositoryOptions::empty())?;
-            let mut memo = RefContainsMemo::new(&repo, &[target])?;
-            assert!(memo.graph.graph.is_none());
-            assert!(memo.contains(old)?);
+            assert!(RefContainsMemo::new(&repo, &[target])?.is_none());
+            let mut batch = RefContainsBatch::new(&repo);
+            let index = batch.register_tip(&repo, old);
+            batch.run(&[target], &[])?;
+            assert!(batch.graph.graph.is_none());
+            assert!(batch.tip_state(index).contains_match);
         }
         Ok(())
     }

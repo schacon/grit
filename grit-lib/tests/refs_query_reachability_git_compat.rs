@@ -752,3 +752,120 @@ fn bounded_contains_validates_targets_even_with_zero_limit_or_no_candidates() {
         }
     }
 }
+
+#[test]
+fn bounded_contains_parent_rewrite_cycles_match_unlimited_and_git() {
+    if !git_interop_available(Backend::Files) {
+        return;
+    }
+    for backend in [Backend::Files, Backend::Reftable] {
+        if backend == Backend::Reftable && !require_reftable_git() {
+            continue;
+        }
+        for with_graph in [false, true] {
+            // Replacement lookup currently reads loose refs only; reftable coverage
+            // here exercises graft cycles, which both implementations support.
+            let rewrites = if backend == Backend::Files {
+                &[false, true][..]
+            } else {
+                &[false][..]
+            };
+            for &replace in rewrites {
+                let dir = tempfile::tempdir().unwrap();
+                let worktree = dir.path();
+                let repo = init_repo(worktree, backend);
+                let tree = repo
+                    .odb()
+                    .write(grit_lib::objects::ObjectKind::Tree, b"")
+                    .unwrap();
+                let root = git(worktree, &["commit-tree", &tree.to_string(), "-m", "root"])
+                    .trim()
+                    .to_owned();
+                let child = git(
+                    worktree,
+                    &["commit-tree", &tree.to_string(), "-p", &root, "-m", "child"],
+                )
+                .trim()
+                .to_owned();
+                git(worktree, &["update-ref", "refs/heads/a-root", &root]);
+                git(worktree, &["update-ref", "refs/heads/b-child", &child]);
+                maybe_write_graph(worktree, &repo, with_graph);
+                if replace {
+                    let replacement = git(
+                        worktree,
+                        &[
+                            "commit-tree",
+                            &tree.to_string(),
+                            "-p",
+                            &child,
+                            "-m",
+                            "replacement",
+                        ],
+                    )
+                    .trim()
+                    .to_owned();
+                    git(
+                        worktree,
+                        &["update-ref", &format!("refs/replace/{root}"), &replacement],
+                    );
+                } else {
+                    std::fs::create_dir_all(repo.git_dir().join("info")).unwrap();
+                    std::fs::write(
+                        repo.git_dir().join("info/grafts"),
+                        format!("{root} {child}\n"),
+                    )
+                    .unwrap();
+                }
+                // The graph intentionally retains the original parents. Check object
+                // integrity without asking fsck to validate that stale acceleration.
+                git(
+                    worktree,
+                    &[
+                        "-c",
+                        "core.commitGraph=false",
+                        "fsck",
+                        "--strict",
+                        "--no-progress",
+                    ],
+                );
+                // Reopen after changing ancestry so the query sees the parent rewrites.
+                let repo = Repository::open(
+                    repo.git_dir(),
+                    &grit_lib::config::environment::RepositoryOptions::empty(),
+                )
+                .unwrap();
+                for reverse in [false, true] {
+                    let sort = if reverse {
+                        "--sort=-refname"
+                    } else {
+                        "--sort=refname"
+                    };
+                    let all = git_refnames(
+                        worktree,
+                        &[sort, &format!("--contains={child}"), "refs/heads/"],
+                    );
+                    let expected = if reverse {
+                        vec!["refs/heads/b-child", "refs/heads/a-root"]
+                    } else {
+                        vec!["refs/heads/a-root", "refs/heads/b-child"]
+                    };
+                    assert_eq!(all, expected);
+                    for limit in [None, Some(1), Some(2), Some(100)] {
+                        let query = RefQuery {
+                            namespaces: vec![RefNamespace::Heads],
+                            contains: vec![child.parse().unwrap()],
+                            sort: grit_lib::refs::listing::RefSort {
+                                key: grit_lib::refs::listing::SortKey::Name,
+                                reverse,
+                            },
+                            limit,
+                            ..RefQuery::default()
+                        };
+                        assert_eq!(grit_refnames(&repo, query), all[..limit.unwrap_or(all.len()).min(all.len())],
+                            "backend={backend:?} graph={with_graph} replace={replace} reverse={reverse} limit={limit:?}");
+                    }
+                }
+            }
+        }
+    }
+}

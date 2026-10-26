@@ -15,7 +15,7 @@
   "tools": {
     "git": "git version 2.55.0",
     "grit": "grit 0.5.21",
-    "grit_commit": null
+    "grit_commit": "9d66d522369c5c4cedd97ed7cfbccd7eb9a37463"
   },
   "fixtures": [
     {

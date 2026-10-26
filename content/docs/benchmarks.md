@@ -121,7 +121,7 @@ Each command gets one warmup. Limits 1 and 100 and the unfiltered control use th
 | Human / unlimited | 35218.04 / 70,764 | 2463.11 / 101,344 | 2461.21 / 102,600 |
 | Human / unfiltered, unlimited | 88.80 / 5,388 | 83.11 / 18,728 | 82.62 / 19,936 |
 
-The finite name-ordered path shares positive and negative ancestry between evaluated tips and stops after enough matches, including the CLI's extra truncation probe. Without a commit-graph, expensive negative probes can meet an incrementally explored boundary of proven target ancestors. Committer dates order that exploration but never exclude ancestry. Unlimited queries, version/date sorts and combined filters retain the batch path.
+The finite name-ordered path shares positive and negative ancestry between evaluated tips and stops after enough matches, including the CLI's extra truncation probe. Without a commit-graph, expensive negative probes can meet an incrementally explored boundary of proven target ancestors. Committer dates order that exploration but never exclude ancestry. Unlimited queries, version/date sorts and combined filters retain the batch path. Grafts and enabled replacement refs also use the batch path: rewritten parents can form cycles, so a target's ancestors are not necessarily nonmatches. Commit-graph linkage and generations are ignored for these rewritten histories.
 
 Unlimited containment remains around 2.5 seconds in both builds; unfiltered JSON listing remains around 131 ms. The control RSS samples vary by roughly 1–2 MiB, as retained in the baselines.
 
