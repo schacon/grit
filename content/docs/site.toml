@@ -136,6 +136,8 @@ baseline = [
   "grit-utils/baselines/bounded-branch-contains-after.json",
   "grit-utils/baselines/status-scan-before.json",
   "grit-utils/baselines/status-scan-after.json",
+  "grit-utils/baselines/daily-branch-json-4643-before.json",
+  "grit-utils/baselines/daily-branch-json-4643-after.json",
   "grit-utils/baselines/large-blob-memory-after.json",
   "grit-utils/baselines/hot-paths-after.json",
   "grit-utils/baselines/suite-after-LH.json",
