@@ -310,7 +310,8 @@ fn prepare_write_job(
     conv: &ConversionConfig,
     job: &CheckoutWriteJob<'_>,
 ) -> Result<Option<Vec<u8>>> {
-    let Some(object) = read_blob_unless_streamed(repo, conv, &job.file_attrs, job.mode, &job.oid)?
+    let Some(object) =
+        read_blob_unless_streamed(repo, conv, &job.file_attrs, job.mode, &job.oid, true)?
     else {
         return Ok(None);
     };
@@ -417,6 +418,7 @@ fn materialize_write_job_serial(
         &job.file_attrs,
         job.mode,
         &job.oid,
+        true,
     )?
     else {
         return stream_checkout_entry(
