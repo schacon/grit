@@ -176,6 +176,7 @@ baseline = [
   "grit-utils/baselines/blobless-reset-after.json",
   "grit-utils/baselines/daily-merge-content-wide-after.json",
   "grit-utils/baselines/daily-commit-autostage-after.json",
+  "grit-utils/baselines/daily-reset-undo-commit-after.json",
   "grit-utils/baselines/bundle-create-all.json",
   "grit-utils/baselines/daily-clone-checkout-synth-100k-after.json",
   "grit-utils/baselines/daily-log-git-git-after.json",

@@ -1,0 +1,131 @@
+{
+  "schema": "grit-daily-bench/1",
+  "generated_at": "2026-10-26T02:56:08.970554323Z",
+  "machine": {
+    "cpu_model": "Intel(R) Xeon(R) Processor",
+    "physical_cores": 4,
+    "logical_cores": 4,
+    "ram_bytes": 16780574720,
+    "os": "linux",
+    "kernel": "Linux 6.12.94+",
+    "scratch_filesystem": "ext4",
+    "rustc_version": "rustc 1.83.0 (90b35a623 2024-11-26)",
+    "cargo_profile": "dev"
+  },
+  "tools": {
+    "git": "git version 2.43.0",
+    "grit": "grit 0.5.21",
+    "grit_commit": "71efc5db081daa92a53db839e6e9fa7668e4498e"
+  },
+  "scenarios": [
+    {
+      "id": "reset/undo-commit@git-git",
+      "area": "worktree",
+      "description": "Undo the last commit on pinned git.git (deep history, many tags): grit reset --soft HEAD~1 vs git reset --soft HEAD~1",
+      "git": {
+        "median_wall_ms": 2.1310054999999997,
+        "peak_rss_bytes": 15269888,
+        "runs": 20,
+        "samples_ms": [
+          1.794,
+          1.998,
+          2.147,
+          2.189,
+          2.156,
+          2.015,
+          2.033,
+          2.144,
+          2.377,
+          2.137,
+          2.342,
+          2.086,
+          1.845,
+          2.166,
+          2.125,
+          1.861,
+          2.397,
+          1.999,
+          2.32,
+          2.121
+        ],
+        "min_ms": 1.794162,
+        "max_ms": 2.397489,
+        "stddev_ms": 0.16844129630914523
+      },
+      "grit": {
+        "median_wall_ms": 11.792303,
+        "peak_rss_bytes": 45883392,
+        "runs": 20,
+        "samples_ms": [
+          12.542,
+          11.79,
+          12.171,
+          12.005,
+          11.64,
+          11.745,
+          11.899,
+          11.772,
+          11.982,
+          12.195,
+          11.677,
+          12.105,
+          11.558,
+          11.794,
+          11.777,
+          11.729,
+          11.721,
+          11.37,
+          12.183,
+          12.575
+        ],
+        "min_ms": 11.3704,
+        "max_ms": 12.574615000000001,
+        "stddev_ms": 0.30954017326834576
+      },
+      "ratio": 5.53368022747947,
+      "detail": {
+        "prepare": "set -eu\ngrit-bench prepare-daily-reset --git git\ncd /tmp/grit-bench-scratch/daily-git-git-wt/worktree-run-git-git-wt && git -c user.name=grit-bench -c user.email=bench@example.com commit -q --allow-empty --no-verify -m daily-bench-wip",
+        "commands": {
+          "git": "git reset --soft HEAD~1",
+          "grit": "grit reset --soft HEAD~1"
+        },
+        "phases": {
+          "git": [
+            {
+              "name": "index: do_read_index",
+              "ms": 0.312,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: read",
+              "ms": 0.042,
+              "count": 1,
+              "depth": 0
+            }
+          ],
+          "grit": [
+            {
+              "name": "grit.repository.open",
+              "ms": 0.315,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.091,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.index.open",
+              "ms": 0.017,
+              "count": 1,
+              "depth": 0
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
