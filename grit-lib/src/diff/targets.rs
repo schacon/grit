@@ -249,6 +249,8 @@ pub fn resolve_diff_arguments(
 ///
 /// Working-tree pathspecs must match a known path; commit and range pathspecs only need to
 /// parse, so paths deleted on either side can still be named.
+/// An unresolved operand falls back to a working-tree path only when no path operands or
+/// pathspec-file entries were supplied; otherwise its revision error is preserved.
 ///
 /// # Parameters
 ///
@@ -350,7 +352,7 @@ pub fn resolve_diff_request(
                     pathspecs: resolve_commit_diff_pathspecs(repo, cwd_prefix, &path_tokens)?,
                 }),
                 // Neither a revision nor (per disambiguation) a known path: report it as a path.
-                Err(_) if path_args.is_empty() => Ok(DiffArguments {
+                Err(_) if path_tokens.is_empty() => Ok(DiffArguments {
                     target: DiffTarget::WorktreeVsIndex,
                     pathspecs: resolve_worktree_diff_pathspecs(
                         repo,
@@ -1592,6 +1594,22 @@ mod tests {
         let opts =
             DiffOptions::default().with_whitespace(crate::diff::WhitespaceMode::ignore_all_space());
         assert!(include_file_in_diff(&file, &opts));
+    }
+
+    #[test]
+    fn failed_revision_with_file_paths_keeps_revision_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo =
+            Repository::init(dir.path(), &crate::repo::InitOptions::default()).expect("init");
+        let request = DiffRequest {
+            positionals: vec!["unknown-revision".into()],
+            pathspec_file: Some(vec!["selected.txt".into()]),
+            ..DiffRequest::default()
+        };
+        let err = resolve_diff_request(&repo, None, &request).expect_err("unknown revision");
+        assert!(
+            matches!(err, ResolveDiffArgumentsError::UnresolvedRevision { spec, .. } if spec == "unknown-revision")
+        );
     }
 
     #[test]

@@ -146,3 +146,33 @@ fn diff_commit_and_known_path_still_works() {
         "expected diff output mentioning f or no changes: {stdout}"
     );
 }
+
+#[test]
+fn diff_unknown_revision_with_pathspec_file_reports_revision_in_every_output() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo_with_two_commits(dir.path());
+    std::fs::write(dir.path().join("paths.txt"), "f\n").expect("write pathspec file");
+
+    for (format, patch_text) in [
+        (None, false),
+        (Some("--json"), false),
+        (Some("--markdown"), false),
+        (None, true),
+    ] {
+        let mut args = vec!["diff", "nosuchbranch"];
+        args.extend(format);
+        if patch_text {
+            args.push("--patch-text");
+        }
+        let mut file_args = args.clone();
+        file_args.extend(["--pathspec-from-file", "paths.txt"]);
+        args.extend(["--", "f"]);
+        let expected = grit(dir.path(), &args);
+        assert_ne!(expected.0, 0, "{args:?}: {expected:?}");
+        assert!(
+            format!("{}{}", expected.1, expected.2).contains("revision 'nosuchbranch' not found"),
+            "{args:?}: {expected:?}"
+        );
+        assert_eq!(grit(dir.path(), &file_args), expected, "{file_args:?}");
+    }
+}

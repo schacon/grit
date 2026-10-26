@@ -143,6 +143,24 @@ fn unknown_revision_with_paths_reports_the_revision_and_keeps_the_cause() {
 }
 
 #[test]
+fn unknown_revision_with_pathspec_file_reports_the_revision() {
+    let (_dir, repo) = two_commit_repo();
+    for path in ["a.txt", "missing.txt"] {
+        let request = DiffRequest {
+            positionals: strings(&["no-such-rev"]),
+            pathspec_file: Some(strings(&[path])),
+            ..DiffRequest::default()
+        };
+        let err = resolve_err(&repo, &request);
+        assert!(
+            matches!(&err, ResolveDiffArgumentsError::UnresolvedRevision { spec, .. } if spec == "no-such-rev"),
+            "{path}: {err:?}"
+        );
+        assert!(err.source().is_some());
+    }
+}
+
+#[test]
 fn two_dot_range_diffs_the_endpoint_trees() {
     let (dir, repo) = two_commit_repo();
     let args = resolve(&repo, &positionals(&["HEAD~1..HEAD"]));
