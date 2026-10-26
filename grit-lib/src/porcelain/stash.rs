@@ -2876,6 +2876,28 @@ pub(crate) fn restore_operation_autostash(repo: &Repository, stash_oid: &ObjectI
     Ok(())
 }
 
+/// Move the merge autostash commit onto `refs/stash` without applying it, matching `git reset`
+/// clearing merge state (`save_autostash_ref`).
+///
+/// # Errors
+///
+/// Propagates parse, stash store, and I/O failures.
+pub(crate) fn save_merge_autostash_ref(repo: &Repository, identity: &str) -> Result<()> {
+    let path = repo.git_dir().join("MERGE_AUTOSTASH");
+    let Ok(content) = fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        let _ = fs::remove_file(&path);
+        return Ok(());
+    }
+    let stash_oid = ObjectId::from_hex(trimmed)?;
+    store_stash(repo, stash_oid, "autostash", identity)?;
+    fs::remove_file(&path).map_err(Error::Io)?;
+    Ok(())
+}
+
 /// Apply and drop the merge autostash recorded in `MERGE_AUTOSTASH`, matching `git commit` after
 /// `git merge --autostash`.
 ///

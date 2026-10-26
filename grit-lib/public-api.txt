@@ -25609,6 +25609,7 @@ impl core::marker::UnsafeUnpin for grit_lib::state::WtStatusState
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::state::WtStatusState
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::state::WtStatusState
 pub fn grit_lib::state::clear_merge_state(&std::path::Path) -> grit_lib::error::Result<()>
+pub fn grit_lib::state::clear_replay_state(&std::path::Path) -> grit_lib::error::Result<()>
 pub fn grit_lib::state::detect_in_progress(&std::path::Path) -> alloc::vec::Vec<grit_lib::state::InProgressOperation>
 pub fn grit_lib::state::finish_merge_state(&grit_lib::repo::Repository) -> grit_lib::error::Result<bool>
 pub fn grit_lib::state::merge_completion_sentinels() -> &'static [&'static str]

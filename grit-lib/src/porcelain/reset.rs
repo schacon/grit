@@ -13,7 +13,7 @@ use crate::porcelain::switch::{
 use crate::porcelain::worktree_guard::{load_worktree_snapshot, local_change_diffs};
 use crate::refs;
 use crate::repo::Repository;
-use crate::state::{resolve_head_for_repository, HeadState};
+use crate::state::{clear_merge_state, clear_replay_state, resolve_head_for_repository, HeadState};
 
 pub use crate::porcelain::orphans::{OrphanedCommitSummary, DEFAULT_ORPHAN_LIMIT};
 
@@ -176,6 +176,9 @@ pub fn reset_to_commit(
     }
 
     apply_reset_worktree(repo, opts, previous, progress, cancel)?;
+    crate::porcelain::stash::save_merge_autostash_ref(repo, &opts.identity)?;
+    clear_merge_state(repo.git_dir())?;
+    clear_replay_state(repo.git_dir())?;
     let ref_updated = if previous != opts.target {
         match &head {
             HeadState::Branch { refname, .. } => {
