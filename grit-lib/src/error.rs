@@ -1882,6 +1882,7 @@ impl From<crate::refs::store::RefStoreError> for Error {
 impl From<crate::lockfile::LockError> for Error {
     /// [`LockError::Held`](crate::lockfile::LockError::Held) becomes [`Error::LockHeld`] with the
     /// recorded [`LockHolder`](crate::lockfile::LockHolder), and I/O failures become [`Error::Io`].
+    #[cold]
     fn from(err: crate::lockfile::LockError) -> Self {
         use crate::lockfile::{LockError, LockHolder};
         match err {

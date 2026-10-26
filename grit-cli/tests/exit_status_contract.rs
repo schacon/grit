@@ -264,6 +264,18 @@ fn held_index_lock_reports_lock_held_kind_with_path() {
     assert!(!error.contains("entity already exists"), "{error}");
 
     let pid_file = root.path().join(".git/index~pid.lock");
+    fs::write(&pid_file, format!("pid {}\n", std::process::id())).expect("live pid sidecar");
+    let (code, stdout) = grit(root.path(), &["--json", "add", "n"]);
+    assert_eq!(code, 1, "{stdout}");
+    let v: Value = serde_json::from_str(stdout.trim()).expect("json error");
+    assert_eq!(v["kind"].as_str(), Some("lock_held"), "{v}");
+    assert_eq!(
+        v["lock"]["holder"]["pid"].as_u64(),
+        Some(u64::from(std::process::id())),
+        "{v}"
+    );
+    assert_eq!(v["lock"]["holder"]["running"].as_bool(), Some(true), "{v}");
+
     fs::write(&pid_file, "pid 999999999\n").expect("stale pid sidecar");
     let (code, stdout) = grit(root.path(), &["--json", "add", "n"]);
     assert_eq!(code, 1, "{stdout}");

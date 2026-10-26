@@ -78,7 +78,7 @@
           "type": "string"
         },
         {
-          "description": "A lock file such as `.git/index.lock` or a ref lock already exists (another process, or a stale lock); nothing was changed, so retrying is safe (`lock.path`, `lock.holder`).",
+          "description": "A lock file such as `.git/index.lock` or a ref lock already exists (another process, or a stale lock); the lock is left alone (`lock.path`, `lock.holder`).",
           "enum": [
             "lock_held"
           ],

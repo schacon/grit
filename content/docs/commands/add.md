@@ -144,6 +144,12 @@ Nothing to stage — working tree clean.
 
 `grit add` reads and writes the index while holding `.git/index.lock`, so parallel `grit add` (or `git add`) runs in one repository never undo each other: every run that exits `0` has its paths in the index. A run that cannot get the lock within `core.filesRefLockTimeout` (default 100 ms; `-1` waits forever) exits `1` with an `index.lock` error and stages nothing, so a script can simply retry it. `grit rm` follows the same rule.
 
+With `--json`, a held index lock returns `kind: "lock_held"` and `lock.path`. When a PID sidecar exists, `lock.holder.pid` identifies the recorded process and `lock.holder.running` reports whether it was running when checked. Grit leaves both files alone. Retry after the owner finishes, or remove a stale lock after checking that no writer is running.
+
+```json
+{"error":"another process holds /work/repo/.git/index.lock; if none is running, remove the stale lock and retry","kind":"lock_held","lock":{"path":"/work/repo/.git/index.lock"}}
+```
+
 See [Exit codes](../exit-codes/) for shared rules and structured `--json` `kind` values.
 
 ## See also

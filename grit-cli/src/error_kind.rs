@@ -23,7 +23,7 @@ pub enum ErrorKind {
     /// Incompatible flag combination (often with `--json` / `--markdown`).
     IncompatibleFlags,
     /// A lock file such as `.git/index.lock` or a ref lock already exists (another process, or a
-    /// stale lock); nothing was changed, so retrying is safe (`lock.path`, `lock.holder`).
+    /// stale lock); the lock is left alone (`lock.path`, `lock.holder`).
     LockHeld,
     /// Deprecated alias of `lock_held`, emitted by v0.5.21 for a held index lock. grit no
     /// longer emits it; it stays in the error schema for one release so v0.5.21 output still

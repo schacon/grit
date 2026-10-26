@@ -139,7 +139,7 @@ Each commit gets a stable **`change-id`** header (on by default) that survives `
 
 `grit switch`, `grit merge`, `grit pick`, `grit revert` and `grit pull` refuse to run when checkout would overwrite local edits or untracked files. Preflight with `grit switch <branch> --dry-run --json` (checks only; reports `changed_paths`) before switching. On refusal, `--json` emits `kind: would_overwrite` with `reason` (`local_changes` or `untracked`) and sorted `paths`.
 
-When another process holds `.git/index.lock` (or a ref lock), any mutating command fails without changing anything and `--json` emits `kind: lock_held` with `lock.path` (and `lock.holder.pid` / `lock.holder.running` when the owner was recorded). Retry later; remove `lock.path` only when no grit or git process is running, or when `lock.holder.running` is `false`.
+When another process holds `.git/index.lock`, staging and committing stop before updating the index or recording a commit, and `--json` emits `kind: lock_held` with `lock.path` (and `lock.holder.pid` / `lock.holder.running` when the owner was recorded). Retry later; remove `lock.path` only when no grit or git process is running, or when `lock.holder.running` is `false`.
 
 Failures with a known next step carry a `hint` in `--json` (and a `hint:` line on stderr) naming the command to run; branch on `kind`: `no_remote` / `remote_not_found` (`grit remote add <name> <url>`), `remote_no_url`, `auth_required` / `auth_rejected` (`grit auth` for github.com, else a `credential.helper` or a `GIT_ASKPASS` program), `remote_unreadable` (hint on a 404), `branch_no_upstream` (`grit pull origin <branch>` or `grit push -u origin <branch>`), `unmerged_paths` and `dirty_worktree` (both with `paths`).
 

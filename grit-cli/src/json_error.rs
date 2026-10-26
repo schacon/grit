@@ -296,6 +296,7 @@ pub fn map_lib_error(err: LibError) -> Error {
 }
 
 /// Build a structured CLI error for a lock file that already exists.
+#[cold]
 pub fn lock_held(path: &Path, holder: Option<LockHolder>) -> Error {
     let shown = path.display();
     let human = match holder {

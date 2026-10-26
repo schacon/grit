@@ -41,7 +41,7 @@ $ grit push --json
 | `invalid_pattern` | Invalid filter pattern (exit 129). |
 | `usage` | Subcommand usage mistake (exit 2), e.g. `grit branch` flag combinations. |
 | `incompatible_flags` | Flags that cannot be combined (often `--json` with human-only options). |
-| `lock_held` | A lock file such as `.git/index.lock` or `refs/heads/main.lock` already exists (exit 1). The operation stopped before changing refs, the reflog or the index, so retrying later is safe; the lock file is left alone. `lock.path` names the lock, and `lock.holder.pid` / `lock.holder.running` are present when `core.lockfilePid` recorded the owner. When no process is running (or `lock.holder.running` is `false`), the lock is stale and can be removed. |
+| `lock_held` | A lock file such as `.git/index.lock` or `refs/heads/main.lock` already exists (exit 1). The lock file is left alone. Staging and committing stop before changing the index or recording a commit; retry after the holder finishes. `lock.path` names the lock, and `lock.holder.pid` / `lock.holder.running` are present when `core.lockfilePid` recorded the owner. When no process is running (or `lock.holder.running` is `false`), the lock is stale and can be removed. |
 | `index_locked` | **Deprecated** alias of `lock_held`, emitted by v0.5.21 for a held index lock. grit no longer emits it; it stays in the [error schema](/schemas/error/v1.json) for one release so v0.5.21 output still validates, then it is removed. Match `lock_held` instead. |
 | `branch_already_exists` | Create branch when the name already exists. |
 | `branch_not_found` | Branch name not found. `grit switch` hints at `grit branch` and `grit switch -c <name>`. |

@@ -121,28 +121,52 @@ fn index_lock_acquire_reports_typed_lock_held_with_holder() {
 
 #[test]
 fn stage_with_held_index_lock_returns_lock_held_and_git_sees_no_change() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let wt = tmp.path();
-    git(wt, &["init", "-q", "-b", "main"]);
-    fs::write(wt.join("n"), "n\n").expect("write n");
-    let lock_path = wt.join(".git/index.lock");
-    fs::write(&lock_path, b"").expect("touch index.lock");
+    for pid in [None, Some(u64::from(std::process::id())), Some(DEAD_PID)] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wt = tmp.path();
+        git(wt, &["init", "-q", "-b", "main"]);
+        fs::write(wt.join("n"), "n\n").expect("write n");
+        let lock_path = wt.join(".git/index.lock");
+        hold_lock(&lock_path, pid);
 
-    let repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
-    let options = StageOptions {
-        pathspecs: vec!["n".into()],
-        ..Default::default()
-    };
-    let err = stage(&repo, &options, &mut NullProgress).expect_err("index.lock is held");
-    let (path, holder) = expect_lock_held(err);
-    assert_eq!(
-        path.canonicalize().expect("lock path"),
-        lock_path.canonicalize().expect("lock path")
-    );
-    assert_eq!(holder, None);
-    assert!(lock_path.is_file(), "the foreign lock must stay in place");
+        let repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
+        let options = StageOptions {
+            pathspecs: vec!["n".into()],
+            ..Default::default()
+        };
+        let err = stage(&repo, &options, &mut NullProgress).expect_err("index.lock is held");
+        let (path, holder) = expect_lock_held(err);
+        assert_eq!(
+            path.canonicalize().expect("lock path"),
+            lock_path.canonicalize().expect("lock path")
+        );
+        assert_eq!(
+            holder,
+            pid.map(|pid| LockHolder {
+                pid,
+                running: pid != DEAD_PID,
+            })
+        );
+        assert_eq!(fs::read(&lock_path).expect("foreign lock kept"), b"");
+        assert!(!wt.join(".git/index").exists(), "nothing was staged");
+        if let Some(pid) = pid {
+            assert_eq!(
+                fs::read_to_string(wt.join(".git/index~pid.lock")).expect("foreign pid kept"),
+                format!("pid {pid}\n")
+            );
+            fs::remove_file(wt.join(".git/index~pid.lock")).expect("release pid sidecar");
+        }
 
-    fs::remove_file(&lock_path).expect("release lock for git");
-    assert_eq!(git(wt, &["status", "--porcelain"]), "?? n\n");
-    git(wt, &["fsck", "--strict"]);
+        fs::remove_file(&lock_path).expect("release lock for git");
+        assert_eq!(git(wt, &["status", "--porcelain"]), "?? n\n");
+        stage(&repo, &options, &mut NullProgress).expect("retry after lock release");
+        assert_eq!(git(wt, &["show", ":n"]), "n\n");
+        git(wt, &["fsck", "--strict"]);
+
+        fs::write(wt.join("n"), "written by git\n").expect("modify n");
+        git(wt, &["add", "n"]);
+        let index = repo.index_handle().load().expect("read Git-written index");
+        let entry = index.get(b"n", 0).expect("Git-staged path");
+        assert_eq!(entry.oid.to_hex(), git(wt, &["rev-parse", ":n"]).trim());
+    }
 }
