@@ -9,7 +9,7 @@ use crate::command_runner::{
     ShellInvocation,
 };
 use crate::config::{parse_path, ConfigSet};
-use crate::git_path::{path_without_verbatim_prefix, strip_verbatim_path_prefix_str};
+use crate::git_path::path_without_verbatim_prefix;
 use crate::objects::ObjectId;
 use crate::repo::Repository;
 use crate::state::HeadState;
@@ -485,34 +485,13 @@ fn shebang_interpreter(head: &[u8]) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-/// Variables naming one repository path, which hooks hand on to `git` and shell tools.
-const HOOK_PATH_VARS: [&str; 5] = [
-    "GIT_DIR",
-    "GIT_COMMON_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-];
-
 /// Strip Windows `\\?\` prefixes from the path-valued `GIT_*` variables in `set`.
 ///
 /// Repository paths are canonicalized, which makes them verbatim on Windows, but Git for
 /// Windows does not open a verbatim `GIT_INDEX_FILE` (it reads an empty index instead) and
 /// MSYS tools cannot open such paths at all.
 fn strip_verbatim_prefix_from_path_vars(set: &mut [(OsString, OsString)]) {
-    for (key, value) in set.iter_mut() {
-        if !HOOK_PATH_VARS.iter().any(|var| key == *var) {
-            continue;
-        }
-        let Some(s) = value.to_str() else {
-            continue;
-        };
-        let stripped = strip_verbatim_path_prefix_str(s);
-        if stripped.len() != s.len() {
-            let stripped = OsString::from(stripped.into_owned());
-            *value = stripped;
-        }
-    }
+    crate::git_path::strip_verbatim_prefix_from_subprocess_path_vars(set);
 }
 
 /// Shell for `hook.<name>.command` entries and for scripts the OS will not execute directly.
