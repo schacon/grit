@@ -51,6 +51,18 @@ impl fmt::Debug for PackObjectSelection {
     }
 }
 
+/// How client `haves` bound the want-side object walk.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HaveBoundary {
+    /// Pre-walk all commits reachable from every `have` (upload-pack negotiation).
+    #[default]
+    CommitClosure,
+    /// Send-pack: `--revs` / `^have` negotiation — peel have tips, mark them
+    /// uninteresting, and interleave a commit-date walk with wants until the queue
+    /// is only uninteresting commits (no full have closure pre-walk).
+    TipsOnly,
+}
+
 /// Parameters for [`enumerate_pack_objects`].
 #[derive(Clone, Copy, Debug)]
 pub struct PackEnumerateOptions<'a> {
@@ -69,6 +81,8 @@ pub struct PackEnumerateOptions<'a> {
     pub exclude_objects: Option<&'a HashSet<ObjectId>>,
     /// When `wants` are read from another ODB, objects already stored here are boundaries.
     pub peer_odb: Option<&'a Odb>,
+    /// Whether `haves` are expanded to a full commit closure before the want walk.
+    pub have_boundary: HaveBoundary,
 }
 
 /// Select pack objects using bitmap reachability when possible, otherwise the object walk.
@@ -235,7 +249,12 @@ fn walk_enumeration(
     name_trees: NameTrees,
 ) -> Result<PackObjectSelection> {
     let have_shallow = opts.have_shallow_grafts.unwrap_or(opts.shallow_grafts);
-    let have_commits = commits_reachable_from_haves(odb, haves, have_shallow, true)?;
+    let have_commits = match opts.have_boundary {
+        HaveBoundary::CommitClosure => {
+            commits_reachable_from_haves(odb, haves, have_shallow, true)?
+        }
+        HaveBoundary::TipsOnly => send_pack_uninteresting_commits(odb, wants, haves, have_shallow)?,
+    };
     let mut boundary: HashSet<ObjectId> = HashSet::new();
     if let Some(extra) = opts.exclude_objects {
         boundary.extend(extra.iter().copied());
@@ -265,6 +284,136 @@ fn walk_enumeration(
         peer_held,
         name_hashes,
     })
+}
+
+const SEND_PACK_REACH_WANT: u8 = 1;
+const SEND_PACK_REACH_HAVE: u8 = 2;
+
+fn send_pack_reach_uninteresting(reach: u8) -> bool {
+    reach & SEND_PACK_REACH_HAVE != 0
+}
+
+/// Commits marked uninteresting for send-pack (`--revs` with `^have` lines).
+///
+/// Peels annotated tags on haves (skips missing ids and tags that peel to non-commits),
+/// seeds wants and haves on a committer-date heap, and walks parents until every queued
+/// commit is uninteresting or the heap is empty.
+fn send_pack_uninteresting_commits(
+    odb: &Odb,
+    wants: &[ObjectId],
+    haves: &[ObjectId],
+    shallow_grafts: &HashSet<ObjectId>,
+) -> Result<HashSet<ObjectId>> {
+    struct SendPackRevWalk<'a> {
+        odb: &'a Odb,
+        shallow_grafts: &'a HashSet<ObjectId>,
+        reach: HashMap<ObjectId, u8>,
+        heap: BinaryHeap<QueuedCommit>,
+        on_heap: HashSet<ObjectId>,
+        processed: HashSet<ObjectId>,
+        uninteresting: HashSet<ObjectId>,
+        next_seq: u64,
+    }
+
+    impl<'a> SendPackRevWalk<'a> {
+        fn note_reach(&mut self, oid: ObjectId, flag: u8) {
+            let entry = self.reach.entry(oid).or_insert(0);
+            *entry |= flag;
+            if send_pack_reach_uninteresting(*entry) {
+                self.uninteresting.insert(oid);
+            }
+        }
+
+        fn can_stop_after(&self) -> bool {
+            !self.heap.is_empty()
+                && self
+                    .heap
+                    .iter()
+                    .all(|c| self.uninteresting.contains(&c.oid))
+                && self
+                    .heap
+                    .iter()
+                    .all(|c| c.parents.iter().all(|p| self.uninteresting.contains(p)))
+        }
+
+        fn try_enqueue(&mut self, oid: ObjectId, flag: u8) -> Result<()> {
+            self.note_reach(oid, flag);
+            if self.processed.contains(&oid)
+                || self.on_heap.contains(&oid)
+                || self.shallow_grafts.contains(&oid)
+            {
+                return Ok(());
+            }
+            let obj = match self.odb.read(&oid) {
+                Ok(o) => o,
+                Err(_) => return Ok(()),
+            };
+            if obj.kind != ObjectKind::Commit {
+                return Ok(());
+            }
+            let parsed = CommitRef::parse(&obj.data)?;
+            self.on_heap.insert(oid);
+            self.heap.push(QueuedCommit {
+                time: parsed.committer_unix_seconds_for_ordering(),
+                seq: std::cmp::Reverse(self.next_seq),
+                oid,
+                tree: parsed.tree(),
+                parents: parsed.parents().to_vec(),
+            });
+            self.next_seq += 1;
+            Ok(())
+        }
+    }
+
+    let mut walk = SendPackRevWalk {
+        odb,
+        shallow_grafts,
+        reach: HashMap::new(),
+        heap: BinaryHeap::new(),
+        on_heap: HashSet::new(),
+        processed: HashSet::new(),
+        uninteresting: HashSet::new(),
+        next_seq: 0,
+    };
+
+    for &want in wants {
+        if let Ok(Some(commit)) = odb.peel_to_commit(want) {
+            walk.try_enqueue(commit, SEND_PACK_REACH_WANT)?;
+        }
+    }
+    for &have in haves {
+        if odb.read_info(&have).is_err() {
+            continue;
+        }
+        if let Ok(Some(commit)) = odb.peel_to_commit(have) {
+            walk.try_enqueue(commit, SEND_PACK_REACH_HAVE)?;
+        }
+    }
+
+    while let Some(commit) = walk.heap.pop() {
+        walk.on_heap.remove(&commit.oid);
+        if !walk.processed.insert(commit.oid) {
+            continue;
+        }
+        let flags = *walk.reach.get(&commit.oid).unwrap_or(&0);
+        if send_pack_reach_uninteresting(flags) {
+            walk.uninteresting.insert(commit.oid);
+        }
+        let parent_flag = if send_pack_reach_uninteresting(flags) {
+            SEND_PACK_REACH_HAVE
+        } else {
+            SEND_PACK_REACH_WANT
+        };
+        if !walk.shallow_grafts.contains(&commit.oid) {
+            for parent in commit.parents {
+                walk.try_enqueue(parent, parent_flag)?;
+            }
+        }
+        if walk.can_stop_after() {
+            break;
+        }
+    }
+    Ok(walk.uninteresting)
 }
 
 /// Commits reachable from client `haves` (commit graph only, no trees).
@@ -579,7 +728,7 @@ struct EnumerationWalk<'a> {
     exclude: &'a HashSet<ObjectId>,
     /// Negotiation boundaries: do not list or expand past these objects.
     boundary: &'a mut HashSet<ObjectId>,
-    /// Commits reachable from client `haves`; seal snapshot when met on the want walk.
+    /// Uninteresting commits (send-pack) or full have closure (upload-pack).
     have_commits: &'a HashSet<ObjectId>,
     /// Objects already on the peer (local fetch): stop without listing.
     peer_odb: Option<&'a Odb>,
@@ -637,7 +786,7 @@ impl Ord for QueuedCommit {
     }
 }
 
-impl EnumerationWalk<'_> {
+impl<'a> EnumerationWalk<'a> {
     fn list(&mut self, oid: ObjectId) {
         if !self.exclude.contains(&oid) {
             self.ordered.push(oid);
@@ -664,9 +813,13 @@ impl EnumerationWalk<'_> {
         Ok(())
     }
 
+    fn commit_on_have_side(&mut self, oid: ObjectId) -> Result<bool> {
+        Ok(self.have_commits.contains(&oid))
+    }
+
     /// An object that is sent whatever the filter says: a root or a tag target.
     fn push_object(&mut self, oid: ObjectId, path: String) {
-        if self.have_commits.contains(&oid) {
+        if let Ok(true) = self.commit_on_have_side(oid) {
             let _ = self.seal_have_reachable_commit(oid);
             return;
         }
@@ -685,7 +838,7 @@ impl EnumerationWalk<'_> {
     /// A root or tag target that may be a commit: read now so a commit enters the
     /// date-ordered heap at once; anything else waits in [`Self::queue`].
     fn push_root(&mut self, oid: ObjectId) -> Result<()> {
-        if self.have_commits.contains(&oid) {
+        if self.commit_on_have_side(oid)? {
             return self.seal_have_reachable_commit(oid);
         }
         if self.at_object_boundary(oid) {
@@ -712,7 +865,7 @@ impl EnumerationWalk<'_> {
     /// A parent commit: always walked, listed unless the filter keeps other types only.
     /// Read now so it enters the date-ordered heap before any tree is expanded.
     fn push_parent(&mut self, oid: ObjectId) -> Result<()> {
-        if self.have_commits.contains(&oid) {
+        if self.commit_on_have_side(oid)? {
             return self.seal_have_reachable_commit(oid);
         }
         if self.at_object_boundary(oid) {
@@ -882,6 +1035,7 @@ mod tests {
                 use_bitmaps: false,
                 exclude_objects: None,
                 peer_odb: None,
+                have_boundary: HaveBoundary::CommitClosure,
             },
             name_trees,
         )
@@ -918,6 +1072,160 @@ mod tests {
         repo.odb()
             .write(ObjectKind::Commit, body.as_bytes())
             .expect("commit")
+    }
+
+    #[test]
+    fn tips_only_boundary_matches_closure_on_linear_incremental_push() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+        let blob = |s: &str| repo.odb().write(ObjectKind::Blob, s.as_bytes()).unwrap();
+        let mut parent = write_commit(
+            &repo,
+            write_tree(&repo, &[(0o100644, "f", blob("0"))]),
+            &[],
+            0,
+        );
+        for i in 1..800 {
+            let tree = write_tree(&repo, &[(0o100644, "f", blob(&i.to_string()))]);
+            parent = write_commit(&repo, tree, &[parent], i);
+        }
+        let remote_tip = parent;
+        let new_tree = write_tree(&repo, &[(0o100644, "f", blob("new"))]);
+        let new_tip = write_commit(&repo, new_tree, &[remote_tip], 900);
+        let empty = HashSet::new();
+        let closure_opts = PackEnumerateOptions {
+            filter: None,
+            shallow_grafts: &empty,
+            have_shallow_grafts: Some(&empty),
+            use_bitmaps: false,
+            exclude_objects: None,
+            peer_odb: None,
+            have_boundary: HaveBoundary::CommitClosure,
+        };
+        let tips_opts = PackEnumerateOptions {
+            have_boundary: HaveBoundary::TipsOnly,
+            ..closure_opts
+        };
+        let closure = enumerate_pack_objects(repo.odb(), &[new_tip], &[remote_tip], &closure_opts)
+            .expect("closure");
+        let tips = enumerate_pack_objects(repo.odb(), &[new_tip], &[remote_tip], &tips_opts)
+            .expect("tips");
+        let closure_set: HashSet<ObjectId> = closure.send.iter().copied().collect();
+        let tips_set: HashSet<ObjectId> = tips.send.iter().copied().collect();
+        assert_eq!(closure_set, tips_set);
+        assert!(
+            tips.send.len() <= 8,
+            "one new commit should enumerate a handful of objects, got {}",
+            tips.send.len()
+        );
+    }
+
+    #[test]
+    fn tips_only_send_pack_does_not_prewalk_deep_history() {
+        use crate::merge_base::intersect_walk_test_hooks::{
+            commit_parent_lookups, reset_commit_parent_lookups,
+        };
+
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+        let blob = |s: &str| repo.odb().write(ObjectKind::Blob, s.as_bytes()).unwrap();
+        let mut parent = write_commit(
+            &repo,
+            write_tree(&repo, &[(0o100644, "f", blob("0"))]),
+            &[],
+            0,
+        );
+        for i in 1..800 {
+            let tree = write_tree(&repo, &[(0o100644, "f", blob(&i.to_string()))]);
+            parent = write_commit(&repo, tree, &[parent], i);
+        }
+        let remote_tip = parent;
+        let new_tree = write_tree(&repo, &[(0o100644, "f", blob("new"))]);
+        let new_tip = write_commit(&repo, new_tree, &[remote_tip], 900);
+        let haves = vec![remote_tip];
+        let empty = HashSet::new();
+        reset_commit_parent_lookups();
+        let _selection = enumerate_pack_objects(
+            repo.odb(),
+            &[new_tip],
+            &haves,
+            &PackEnumerateOptions {
+                filter: None,
+                shallow_grafts: &empty,
+                have_shallow_grafts: Some(&empty),
+                use_bitmaps: false,
+                exclude_objects: None,
+                peer_odb: None,
+                have_boundary: HaveBoundary::TipsOnly,
+            },
+        )
+        .expect("enumerate");
+        assert!(
+            commit_parent_lookups() <= 128,
+            "send-pack hide must stay coupled to the want walk ({} parent lookups)",
+            commit_parent_lookups()
+        );
+    }
+
+    #[test]
+    fn tips_only_many_advertised_haves_does_not_prewalk_deep_history() {
+        use crate::merge_base::intersect_walk_test_hooks::{
+            commit_parent_lookups, reset_commit_parent_lookups,
+        };
+
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+        let blob = |s: &str| repo.odb().write(ObjectKind::Blob, s.as_bytes()).unwrap();
+        let mut chain = Vec::new();
+        let mut parent = write_commit(
+            &repo,
+            write_tree(&repo, &[(0o100644, "f", blob("0"))]),
+            &[],
+            0,
+        );
+        chain.push(parent);
+        for i in 1..800 {
+            let tree = write_tree(&repo, &[(0o100644, "f", blob(&i.to_string()))]);
+            parent = write_commit(&repo, tree, &[parent], i);
+            chain.push(parent);
+        }
+        let remote_tip = parent;
+        let new_tree = write_tree(&repo, &[(0o100644, "f", blob("new"))]);
+        let new_tip = write_commit(&repo, new_tree, &[remote_tip], 900);
+        let mut haves = vec![remote_tip];
+        for n in (2..400).step_by(2) {
+            let idx = chain.len().checked_sub(1 + n);
+            if let Some(idx) = idx {
+                haves.push(chain[idx]);
+            }
+        }
+        let empty = HashSet::new();
+        reset_commit_parent_lookups();
+        let selection = enumerate_pack_objects(
+            repo.odb(),
+            &[new_tip],
+            &haves,
+            &PackEnumerateOptions {
+                filter: None,
+                shallow_grafts: &empty,
+                have_shallow_grafts: Some(&empty),
+                use_bitmaps: false,
+                exclude_objects: None,
+                peer_odb: None,
+                have_boundary: HaveBoundary::TipsOnly,
+            },
+        )
+        .expect("enumerate");
+        assert!(
+            selection.send.len() <= 8,
+            "one new commit should stay small with many haves, got {}",
+            selection.send.len()
+        );
+        assert!(
+            commit_parent_lookups() <= 512,
+            "many advertised haves must not pre-walk deep history ({} parent lookups)",
+            commit_parent_lookups()
+        );
     }
 
     #[test]
@@ -1016,6 +1324,7 @@ mod tests {
                 use_bitmaps: false,
                 exclude_objects: None,
                 peer_odb: None,
+                have_boundary: HaveBoundary::CommitClosure,
             },
         )
         .unwrap();

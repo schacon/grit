@@ -10594,9 +10594,31 @@ pub mod grit_lib::objects::pack_name_hash
 pub fn grit_lib::objects::pack_name_hash::pack_name_hash(&str) -> u32
 pub fn grit_lib::objects::pack_name_hash::pack_name_hash_v2(&[u8]) -> u32
 pub mod grit_lib::objects::pack_object_select
+pub enum grit_lib::objects::pack_object_select::HaveBoundary
+pub grit_lib::objects::pack_object_select::HaveBoundary::CommitClosure
+pub grit_lib::objects::pack_object_select::HaveBoundary::TipsOnly
+impl core::clone::Clone for grit_lib::objects::pack_object_select::HaveBoundary
+pub fn grit_lib::objects::pack_object_select::HaveBoundary::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::objects::pack_object_select::HaveBoundary
+impl core::cmp::PartialEq for grit_lib::objects::pack_object_select::HaveBoundary
+pub fn grit_lib::objects::pack_object_select::HaveBoundary::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::objects::pack_object_select::HaveBoundary
+pub fn grit_lib::objects::pack_object_select::HaveBoundary::default() -> Self
+impl core::fmt::Debug for grit_lib::objects::pack_object_select::HaveBoundary
+pub fn grit_lib::objects::pack_object_select::HaveBoundary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::objects::pack_object_select::HaveBoundary
+impl core::marker::StructuralPartialEq for grit_lib::objects::pack_object_select::HaveBoundary
+impl core::marker::Freeze for grit_lib::objects::pack_object_select::HaveBoundary
+impl core::marker::Send for grit_lib::objects::pack_object_select::HaveBoundary
+impl core::marker::Sync for grit_lib::objects::pack_object_select::HaveBoundary
+impl core::marker::Unpin for grit_lib::objects::pack_object_select::HaveBoundary
+impl core::marker::UnsafeUnpin for grit_lib::objects::pack_object_select::HaveBoundary
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::pack_object_select::HaveBoundary
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::pack_object_select::HaveBoundary
 pub struct grit_lib::objects::pack_object_select::PackEnumerateOptions<'a>
 pub grit_lib::objects::pack_object_select::PackEnumerateOptions::exclude_objects: core::option::Option<&'a std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>>
 pub grit_lib::objects::pack_object_select::PackEnumerateOptions::filter: core::option::Option<&'a grit_lib::revwalk::rev_list::ObjectFilter>
+pub grit_lib::objects::pack_object_select::PackEnumerateOptions::have_boundary: grit_lib::objects::pack_object_select::HaveBoundary
 pub grit_lib::objects::pack_object_select::PackEnumerateOptions::have_shallow_grafts: core::option::Option<&'a std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>>
 pub grit_lib::objects::pack_object_select::PackEnumerateOptions::peer_odb: core::option::Option<&'a grit_lib::objects::odb::Odb>
 pub grit_lib::objects::pack_object_select::PackEnumerateOptions::shallow_grafts: &'a std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>
@@ -10751,6 +10773,7 @@ impl core::marker::UnsafeUnpin for grit_lib::objects::pack_objects::PackStats
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::pack_objects::PackStats
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::pack_objects::PackStats
 pub fn grit_lib::objects::pack_objects::build_pack(&grit_lib::objects::odb::Odb, &[grit_lib::objects::ObjectId], &[grit_lib::objects::ObjectId], &grit_lib::objects::pack_objects::PackBuildOptions) -> grit_lib::error::Result<alloc::vec::Vec<u8>>
+pub fn grit_lib::objects::pack_objects::build_pack_for_push(&grit_lib::objects::odb::Odb, &[grit_lib::objects::ObjectId], &[grit_lib::objects::ObjectId], &grit_lib::objects::pack_objects::PackBuildOptions) -> grit_lib::error::Result<alloc::vec::Vec<u8>>
 pub fn grit_lib::objects::pack_objects::build_pack_from_send_list(&grit_lib::objects::odb::Odb, &[grit_lib::objects::ObjectId], &std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>, &grit_lib::objects::pack_objects::PackBuildOptions, &std::collections::hash::map::HashMap<grit_lib::objects::ObjectId, u32>) -> grit_lib::error::Result<alloc::vec::Vec<u8>>
 pub fn grit_lib::objects::pack_objects::build_pack_from_send_list_with_parallel_threads(&grit_lib::objects::odb::Odb, &[grit_lib::objects::ObjectId], &std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>, &grit_lib::objects::pack_objects::PackBuildOptions, &std::collections::hash::map::HashMap<grit_lib::objects::ObjectId, u32>, core::option::Option<usize>, core::option::Option<usize>) -> grit_lib::error::Result<alloc::vec::Vec<u8>>
 pub fn grit_lib::objects::pack_objects::build_pack_from_send_list_with_write_threads(&grit_lib::objects::odb::Odb, &[grit_lib::objects::ObjectId], &std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>, &grit_lib::objects::pack_objects::PackBuildOptions, &std::collections::hash::map::HashMap<grit_lib::objects::ObjectId, u32>, core::option::Option<usize>) -> grit_lib::error::Result<alloc::vec::Vec<u8>>
