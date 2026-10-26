@@ -1528,6 +1528,62 @@ pub fn git_conversion_is_identity(conv: &ConversionConfig, attrs: &FileAttrs) ->
         && input_eol_rule(conv, attrs) == InputEolRule::Never
 }
 
+/// Whether a regular worktree file can be hashed or stored by streaming raw bytes without
+/// loading it whole.
+///
+/// Matches [`git_conversion_is_identity`] when line-ending rules never apply. When the only
+/// blocker is `core.autocrlf` / `text=auto` (`InputEolRule::UnlessBinary`), probes the first
+/// 8000 bytes for a NUL (same as [`is_binary`]) and allows streaming when the file is binary.
+///
+/// Returns `false` when a clean filter, `working-tree-encoding`, `ident`, or a non-binary
+/// file needs the autocrlf index guard's stage-0 blob. Binary files stream even when indexed,
+/// matching Git's `convert.c` order (binary check before the index CRLF guard).
+///
+/// # Errors
+///
+/// Returns [`crate::error::Error::Io`] when the probe read or seek fails.
+pub(crate) fn worktree_allows_raw_byte_stream(
+    conv: &ConversionConfig,
+    attrs: &FileAttrs,
+    index_entry: Option<&crate::index::IndexEntry>,
+    file: &mut std::fs::File,
+    size: u64,
+) -> crate::error::Result<bool> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    if attrs.filter_process.is_some()
+        || attrs.filter_clean.is_some()
+        || attrs.filter_clean_required
+        || attrs.working_tree_encoding.is_some()
+        || attrs.ident
+    {
+        return Ok(false);
+    }
+    match input_eol_rule(conv, attrs) {
+        InputEolRule::Never => Ok(true),
+        InputEolRule::Always => Ok(false),
+        InputEolRule::UnlessBinary => {
+            let probe_len = usize::try_from(size).unwrap_or(8000).min(8000);
+            if probe_len == 0 {
+                return Ok(false);
+            }
+            file.seek(SeekFrom::Start(0))
+                .map_err(crate::error::Error::Io)?;
+            let mut buf = vec![0u8; probe_len];
+            file.read_exact(&mut buf).map_err(crate::error::Error::Io)?;
+            file.seek(SeekFrom::Start(0))
+                .map_err(crate::error::Error::Io)?;
+            if is_binary(&buf) {
+                return Ok(true);
+            }
+            if index_entry.is_some() && clean_uses_autocrlf_index_guard(attrs, conv) {
+                return Ok(false);
+            }
+            Ok(false)
+        }
+    }
+}
+
 /// Decide whether CRLF/LF conversion is configured for this file on input.
 /// Returns true if the file *would* be subject to conversion (even if no
 /// actual bytes need changing).
@@ -2377,6 +2433,63 @@ mod tests {
             }
         }
         assert!(identities > 0);
+    }
+
+    #[test]
+    fn raw_byte_streaming_under_autocrlf_when_binary() {
+        use std::io::{Seek, SeekFrom, Write};
+
+        let mut conv = ConversionConfig::from_config(&ConfigSet::new());
+        conv.autocrlf = AutoCrlf::True;
+        let attrs = FileAttrs::default();
+        assert!(!git_conversion_is_identity(&conv, &attrs));
+
+        let nul_file = tempfile::NamedTempFile::new().expect("temp");
+        nul_file.as_file().write_all(&[0u8; 9000]).expect("write");
+        let mut with_nul = nul_file.reopen().expect("reopen");
+        assert!(worktree_allows_raw_byte_stream(&conv, &attrs, None, &mut with_nul, 9000).unwrap());
+
+        let text_file = tempfile::NamedTempFile::new().expect("temp");
+        text_file
+            .as_file()
+            .write_all(b"hello\r\nworld")
+            .expect("write");
+        let mut text = text_file.reopen().expect("reopen");
+        assert!(!worktree_allows_raw_byte_stream(&conv, &attrs, None, &mut text, 12).unwrap());
+
+        let mut data = vec![1u8; 20_000];
+        data[500] = 0;
+        let huge_file = tempfile::NamedTempFile::new().expect("temp");
+        huge_file.as_file().write_all(&data).expect("write");
+        let mut huge = huge_file.reopen().expect("reopen");
+        huge.seek(SeekFrom::Start(10_000)).expect("seek");
+        assert!(worktree_allows_raw_byte_stream(&conv, &attrs, None, &mut huge, 20_000).unwrap());
+
+        use crate::index::{IndexEntry, MODE_REGULAR};
+        use crate::objects::ObjectId;
+        let indexed = IndexEntry {
+            ctime_sec: 1,
+            ctime_nsec: 0,
+            mtime_sec: 1,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: 9000,
+            oid: ObjectId::zero(),
+            flags: 0,
+            flags_extended: None,
+            path: b"f.bin".to_vec(),
+            base_index_pos: 0,
+        };
+        assert!(clean_uses_autocrlf_index_guard(&attrs, &conv));
+        let mut again = nul_file.reopen().expect("reopen");
+        assert!(
+            worktree_allows_raw_byte_stream(&conv, &attrs, Some(&indexed), &mut again, 9000)
+                .unwrap()
+        );
     }
 
     #[test]

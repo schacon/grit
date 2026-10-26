@@ -4385,7 +4385,12 @@ fn push_index_blob_worktree_diff(
     let file_attrs = file_attrs_for(path_str_ref);
     let store = (materialize_dirty_blobs && !hash_blobs_without_write)
         .then_some(crate::odb::BULK_NEW_LOOSE_WRITE);
-    let eff_oid = worktree_blob_content(
+    let stream_from = if store.is_some() {
+        odb.big_file_threshold()?
+    } else {
+        hash_stream_threshold(odb)?
+    };
+    let eff_oid = worktree_blob_content_from(
         odb,
         file_path,
         &meta,
@@ -4394,6 +4399,7 @@ fn push_index_blob_worktree_diff(
         path_str_ref,
         Some(ie),
         filter_process,
+        stream_from,
     )?
     .object_id(odb, store)?;
 
@@ -6494,9 +6500,9 @@ pub(crate) fn symlink_target_bytes(target: &Path) -> Vec<u8> {
 /// A worktree file's blob content: normalized bytes, or an open file that is hashed or
 /// stored as a stream.
 ///
-/// Regular files of at least [`Odb::big_file_threshold`] bytes whose clean conversion is the
-/// identity ([`crate::crlf::git_conversion_is_identity`]) are streamed so memory use does not depend
-/// on the file size.
+/// Regular files of at least the caller's size threshold whose bytes can be stored without clean
+/// conversion ([`crate::crlf::worktree_allows_raw_byte_stream`], including binary files under
+/// `core.autocrlf`) are streamed so memory use does not depend on the file size.
 pub(crate) enum WorktreeBlobContent {
     /// Content after the clean conversion (filters, encoding, line endings).
     Bytes(Vec<u8>),
@@ -6614,8 +6620,16 @@ fn read_regular_worktree_blob(
     filter_process: Option<&crate::filter_process::FilterProcessState>,
     stream_from: u64,
 ) -> Result<WorktreeBlobContent> {
-    let (file, size) = open_with_size(path, rel_path)?;
-    if crate::crlf::git_conversion_is_identity(conv, file_attrs) && size >= stream_from {
+    let (mut file, size) = open_with_size(path, rel_path)?;
+    if size >= stream_from
+        && crate::crlf::worktree_allows_raw_byte_stream(
+            conv,
+            file_attrs,
+            index_entry,
+            &mut file,
+            size,
+        )?
+    {
         #[cfg(test)]
         odb.hot_path_metrics().record_blob_content_read();
         return Ok(WorktreeBlobContent::Stream { file, size });
@@ -13102,6 +13116,97 @@ mod smudge_racily_clean_tests {
         );
         assert!(!smudged, "matching SHA-256 blob must not be smudged");
         assert_eq!(index.entries[0].size, entry.size);
+    }
+
+    #[test]
+    fn materialize_big_binary_under_autocrlf_streams_into_pack() {
+        use std::io::Write;
+
+        let td = tempfile::tempdir().expect("tempdir");
+        let wt = td.path();
+        let (git_dir, odb) =
+            minimal_repo(wt, "[core]\n\tautocrlf = true\n\tbigFileThreshold = 64k\n");
+        let path = wt.join("big.bin");
+        {
+            let mut f = fs::File::create(&path).expect("create");
+            f.write_all(&[0u8; 9000]).expect("nul prefix");
+            let chunk = vec![1u8; 256 * 1024];
+            for _ in 0..20 {
+                f.write_all(&chunk).expect("chunk");
+            }
+        }
+        let meta = fs::metadata(&path).expect("stat");
+        let mut conv = crlf::ConversionConfig::from_config(&ConfigSet::new());
+        conv.autocrlf = crlf::AutoCrlf::True;
+        let attrs = FileAttrs::default();
+        let oid =
+            materialize_worktree_blob(&odb, &path, &meta, &conv, &attrs, "big.bin", None, None)
+                .expect("materialize");
+        assert!(
+            !odb.object_path(&oid).exists(),
+            "big binary under autocrlf should pack, not write loose"
+        );
+        let pack_dir = git_dir.join("objects/pack");
+        let names: Vec<_> = fs::read_dir(&pack_dir)
+            .expect("pack dir")
+            .map(|e| e.expect("entry").file_name())
+            .collect();
+        assert!(
+            names.iter().any(|n| n.to_string_lossy().ends_with(".pack")),
+            "{names:?}"
+        );
+        assert!(odb.read(&oid).expect("read blob").data.len() > 9000);
+    }
+
+    #[test]
+    fn indexed_binary_under_autocrlf_rehash_streams() {
+        use std::io::Write;
+
+        let td = tempfile::tempdir().expect("tempdir");
+        let wt = td.path();
+        let (_git_dir, odb) =
+            minimal_repo(wt, "[core]\n\tautocrlf = true\n\tbigFileThreshold = 1m\n");
+        let path = wt.join("big.bin");
+        {
+            let mut f = fs::File::create(&path).expect("create");
+            f.write_all(&[0u8; 9000]).expect("nul prefix");
+            let chunk = vec![1u8; 512 * 1024];
+            for _ in 0..3 {
+                f.write_all(&chunk).expect("chunk");
+            }
+        }
+        let meta = fs::symlink_metadata(&path).expect("stat");
+        let oid = hash_worktree_file(
+            &odb,
+            &path,
+            &meta,
+            &crlf::ConversionConfig::from_config(&ConfigSet::new()),
+            &FileAttrs::default(),
+            "big.bin",
+            None,
+            None,
+        )
+        .expect("hash");
+        let entry = entry_from_metadata(&meta, b"big.bin", oid, MODE_REGULAR);
+        let mut conv = crlf::ConversionConfig::from_config(&ConfigSet::new());
+        conv.autocrlf = crlf::AutoCrlf::True;
+        let attrs = FileAttrs::default();
+        let content = read_regular_worktree_blob(
+            &odb,
+            &path,
+            &conv,
+            &attrs,
+            "big.bin",
+            Some(&entry),
+            None,
+            1024 * 1024,
+        )
+        .expect("read blob");
+        assert!(
+            matches!(content, WorktreeBlobContent::Stream { .. }),
+            "indexed binary re-hash must stream, not buffer"
+        );
+        assert_eq!(content.hash(&odb).expect("hash"), entry.oid);
     }
 
     #[test]
