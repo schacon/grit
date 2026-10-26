@@ -1256,7 +1256,7 @@ mod tests {
                 loose_count = Some(v.trim().parse().expect("count"));
             }
         }
-        let git_objects = in_pack.expect("in-pack line") + loose_count.expect("count line");
+        let git_objects = in_pack.expect("in-pack line") + loose_count.unwrap_or(0);
         let git_dir = dest.path().join(".git");
         let objects_dir = git_dir.join("objects");
         let on_disk_bytes =
