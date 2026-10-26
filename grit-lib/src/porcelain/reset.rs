@@ -1271,6 +1271,83 @@ mod tests {
         assert!(outcome.orphaned_commits.is_empty());
     }
 
+    #[test]
+    fn orphan_count_matches_git_rev_list_with_many_tags() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        git(root, &["init", "-q", "-b", "main", "."]);
+        for i in 1..=120 {
+            git(
+                root,
+                &["commit", "-q", "--allow-empty", "-m", &format!("c{i}")],
+            );
+            if i % 10 == 0 {
+                git(root, &["tag", "-a", "-m", "release", &format!("v{i}")]);
+            }
+            if i == 100 {
+                git(root, &["branch", "side"]);
+            }
+        }
+        git(root, &["tag", "-a", "-m", "outer", "outer", "v10"]);
+        let blob = git(root, &["hash-object", "-w", "--stdin"]);
+        git(root, &["tag", "-a", "-m", "key", "key", blob.trim()]);
+        git(root, &["switch", "-q", "side"]);
+        git(root, &["commit", "-q", "--allow-empty", "-m", "side work"]);
+        git(root, &["switch", "-q", "main"]);
+        let base = git(root, &["rev-parse", "HEAD"]).trim().to_owned();
+        for i in 1..=3 {
+            git(
+                root,
+                &["commit", "-q", "--allow-empty", "-m", &format!("local{i}")],
+            );
+            if i == 1 {
+                git(root, &["tag", "-a", "-m", "keep", "keep-local1"]);
+            }
+        }
+        let target = ObjectId::from_hex(&base).expect("oid");
+        let opts = reset_opts(target, ResetMode::Mixed);
+
+        for (packed, graph) in [(false, false), (true, false), (true, true)] {
+            if packed {
+                git(root, &["pack-refs", "--all"]);
+            }
+            if graph {
+                git(root, &["commit-graph", "write", "--reachable"]);
+            }
+            let repo = Repository::open(
+                &root.join(".git"),
+                &crate::environment::RepositoryOptions::empty().with_work_tree(root),
+            )
+            .expect("open");
+            let preview = preview_reset(&repo, &opts).expect("preview");
+            let mut expected: Vec<ObjectId> = git(
+                root,
+                &[
+                    "rev-list",
+                    "main",
+                    "--not",
+                    "--exclude=main",
+                    "--branches",
+                    "--tags",
+                    &base,
+                ],
+            )
+            .lines()
+            .map(|l| ObjectId::from_hex(l).expect("oid"))
+            .collect();
+            assert_eq!(expected.len(), 2, "local2 and local3 are only on main");
+            assert_eq!(
+                preview.orphaned_total,
+                expected.len(),
+                "packed={packed} graph={graph}"
+            );
+            let mut got: Vec<ObjectId> = preview.orphaned_commits.iter().map(|c| c.oid).collect();
+            got.sort_unstable();
+            expected.sort_unstable();
+            assert_eq!(got, expected, "packed={packed} graph={graph}");
+        }
+    }
+
     fn git(dir: &std::path::Path, args: &[&str]) -> String {
         let out = std::process::Command::new("git")
             .current_dir(dir)

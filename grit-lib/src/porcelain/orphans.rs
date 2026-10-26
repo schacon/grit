@@ -43,6 +43,12 @@ pub(crate) struct OrphanComputation {
 ///
 /// `limit` caps [`OrphanComputation::commits`]; [`OrphanComputation::total`] still counts all.
 ///
+/// The walk stays near the commits being left behind instead of walking history down to the
+/// oldest ref. With a commit-graph the result is exact. Without one it ends by committer
+/// date like Git's slop-based `git rev-list <previous> --not <refs>`, so the count can be
+/// wrong under heavy clock skew (a ref reaching a commit through history dated more than a
+/// day before it). The report is advisory; nothing is written based on it.
+///
 /// # Errors
 ///
 /// Ref listing, worktree listing, or commit reads fail.
@@ -81,12 +87,21 @@ fn orphan_hide_tips(
         _ => None,
     };
     // Tips stay unpeeled: the walk peels each one once and skips those that name no commit.
+    // A `packed-refs` peel line already names the tag's target, so that tag is never read.
+    // A malformed `packed-refs` only loses the shortcut.
+    let packed = refs::PackedRefPeels::for_store(repo.refs(), repo.git_dir()).ok();
     let mut hide = vec![target];
     hide.extend(
         refs::list_refs_for_repository(repo, "refs/")?
             .into_iter()
             .filter(|(refname, _)| moving_branch != Some(refname.as_str()))
-            .map(|(_, oid)| oid),
+            .map(|(refname, oid)| {
+                packed
+                    .as_ref()
+                    .and_then(|p| p.peeled(&refname, &oid))
+                    .flatten()
+                    .unwrap_or(oid)
+            }),
     );
     if let Ok(oid) = repo.resolve_ref_oid("refs/stash") {
         hide.push(oid);

@@ -678,6 +678,13 @@ enum HidePaintStop {
     /// exact. Committer dates promise nothing under clock skew, so without a commit-graph this
     /// is the converging walk.
     TipsResolved,
+    /// [`Self::TipsResolved`] for commits without a generation too: a queued commit keeps the
+    /// walk going only while the tips alone reach it, and once none does the walk ends by
+    /// committer date (see [`PaintWalk::unranked_hide_may_reach_left`]). Like Git's slop-based
+    /// `rev-list`, the result can be wrong under clock skew larger than
+    /// [`UNRANKED_SKEW_ALLOWANCE`]. Only the orphaned-commit report, which is advisory, uses it,
+    /// and only in repositories without a commit-graph.
+    TipsResolvedDateSlop,
 }
 
 /// Serializable snapshot of [`ReachableWalkState`] for resuming a bounded walk.
@@ -1056,11 +1063,13 @@ pub fn walk_commits_reachable_excluding_ancestors_of_cutoffs(
 /// `retain_newest` of them: the commits a ref move leaves behind.
 ///
 /// Same result as [`walk_commits_reachable_excluding_ancestors_of`] with
-/// [`ReachableWalkLimit::CountAllRetainNewest`]. With a commit-graph the hide paint stops as soon
-/// as `tips` are resolved ([`HidePaintStop::TipsResolved`]), so a hidden ref that forked from
-/// `tips` near the root costs nothing, which matters because callers hide every ref in the
-/// repository. Grafts and shallow boundaries rewrite parents behind the graph's back, so they
-/// keep the converging paint.
+/// [`ReachableWalkLimit::CountAllRetainNewest`] when every commit involved has a commit-graph
+/// generation: the hide paint stops as soon as `tips` are resolved, so a hidden ref that forked
+/// from `tips` near the root costs nothing, which matters because callers hide every ref in the
+/// repository. Without a commit-graph the paint ends by committer date instead
+/// ([`HidePaintStop::TipsResolvedDateSlop`]), so the count behaves like Git's slop-based
+/// `rev-list` and can be wrong under heavy clock skew. Grafts and shallow boundaries rewrite
+/// parents behind the graph's back, so they keep the converging paint.
 ///
 /// # Errors
 ///
@@ -1073,11 +1082,12 @@ pub(crate) fn count_commits_left_behind(
 ) -> Result<(usize, Vec<ObjectId>)> {
     let mut state = ReachableWalkState::new(repo, tips, hide)?;
     let mut cache = CommitGraphCache::new(repo);
-    if cache.graph.is_some()
-        && cache.graft_parents.is_empty()
-        && cache.shallow_boundaries.is_empty()
-    {
-        state.hide_paint_stop = HidePaintStop::TipsResolved;
+    if cache.graft_parents.is_empty() && cache.shallow_boundaries.is_empty() {
+        state.hide_paint_stop = if cache.graph.is_some() {
+            HidePaintStop::TipsResolved
+        } else {
+            HidePaintStop::TipsResolvedDateSlop
+        };
     }
     let mut newest = Vec::new();
     let mut total = 0usize;
@@ -1881,7 +1891,11 @@ impl SidePaint {
     ) -> Result<Self> {
         let walk = PaintWalk {
             skip_missing_right: true,
-            open_while_left_only: stop == HidePaintStop::TipsResolved,
+            open_while_left_only: matches!(
+                stop,
+                HidePaintStop::TipsResolved | HidePaintStop::TipsResolvedDateSlop
+            ),
+            date_slop: stop == HidePaintStop::TipsResolvedDateSlop,
             ..PaintWalk::default()
         };
         Self::paint(cache, tips, hide, walk)
@@ -1901,7 +1915,13 @@ impl SidePaint {
                 walk.mark(cache, tip, side)?;
             }
         }
-        while walk.open > 0 {
+        let mut slop = PAINT_SLOP;
+        loop {
+            if walk.open > 0 {
+                slop = PAINT_SLOP;
+            } else if !walk.unranked_hide_may_reach_left(&mut slop) {
+                break;
+            }
             let Some(node) = walk.heap.pop() else {
                 break;
             };
@@ -1910,6 +1930,12 @@ impl SidePaint {
             }
             walk.popped.insert(node.oid);
             let side = walk.sides.get(&node.oid).copied().unwrap_or(0);
+            if walk.date_slop && side == PAINT_LEFT && node.rank == UNRANKED_COMMIT {
+                walk.left_floor = Some(
+                    walk.left_floor
+                        .map_or(node.committed_at, |floor| floor.min(node.committed_at)),
+                );
+            }
             for parent in cache.parents_of(node.oid)? {
                 walk.mark(cache, parent, side)?;
             }
@@ -1961,9 +1987,53 @@ struct PaintWalk {
     /// Commits with a commit-graph generation keep the walk going only while the left side
     /// alone reaches them ([`HidePaintStop::TipsResolved`]).
     open_while_left_only: bool,
+    /// Commits without a generation follow the same rule, and the walk ends by committer date
+    /// ([`HidePaintStop::TipsResolvedDateSlop`]).
+    date_slop: bool,
+    /// Oldest committer date among commits without a generation popped while the left side
+    /// alone reached them.
+    left_floor: Option<i64>,
 }
 
+/// Commits a [`HidePaintStop::TipsResolvedDateSlop`] paint pops past its date guard, so a hide
+/// commit dated slightly too old still repaints the ancestor it reaches. Git's `rev-list` walks
+/// the same number of commits past its "everything left is uninteresting" point.
+const PAINT_SLOP: usize = 5;
+
+/// How much older than a popped left-only commit a queued hide commit without a generation may
+/// be dated and still keep a [`HidePaintStop::TipsResolvedDateSlop`] paint going: the clock
+/// skew it tolerates exactly.
+const UNRANKED_SKEW_ALLOWANCE: time::Duration = time::Duration::DAY;
+
 impl PaintWalk {
+    /// Date-slop paint with nothing left-only queued: whether a queued commit without a
+    /// generation may still reach a commit popped as left-only, so the walk goes on.
+    ///
+    /// A commit with a generation cannot: the graph holds every ancestor of its commits, and
+    /// those all sort below commits outside it. Otherwise the walk continues while the next
+    /// queued commit is dated within [`UNRANKED_SKEW_ALLOWANCE`] of the oldest left-only commit
+    /// popped, then for [`PAINT_SLOP`] more commits.
+    fn unranked_hide_may_reach_left(&self, slop: &mut usize) -> bool {
+        if !self.date_slop {
+            return false;
+        }
+        let (Some(floor), Some(next)) = (self.left_floor, self.heap.peek()) else {
+            return false;
+        };
+        if next.rank != UNRANKED_COMMIT {
+            return false;
+        }
+        let horizon = floor.saturating_sub(UNRANKED_SKEW_ALLOWANCE.whole_seconds());
+        if next.committed_at >= horizon {
+            return true;
+        }
+        if *slop == 0 {
+            return false;
+        }
+        *slop -= 1;
+        true
+    }
+
     /// Add `side` to `oid`, queueing it when its paint grows.
     ///
     /// A queued commit keeps the walk going while it is not reachable from both
@@ -1996,7 +2066,8 @@ impl PaintWalk {
             Err(e) => return Err(e),
         };
         let rank = commit_rank_for_walk(cache, oid);
-        let unresolved = if self.open_while_left_only && rank != UNRANKED_COMMIT {
+        let unresolved = if self.open_while_left_only && (rank != UNRANKED_COMMIT || self.date_slop)
+        {
             after == PAINT_LEFT
         } else {
             after != PAINT_BOTH
@@ -4116,6 +4187,70 @@ mod tests {
         assert_eq!(bounded, exhaustive);
         let capped = count_commits_left_behind(&repo, &[lost_b], &hide, 1)?;
         assert_eq!(capped, (2, vec![lost_b]));
+        Ok(())
+    }
+
+    #[test]
+    fn left_behind_walk_without_commit_graph_stops_near_the_tips() -> Result<()> {
+        use super::intersect_walk_test_hooks::{
+            commit_parent_lookups, reset_commit_parent_lookups,
+        };
+
+        const HOUR: i64 = 3_600;
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_test_bare(&dir)?;
+        let trunk = write_chain(&repo, 2000, |i| 1_000_000 + HOUR * i as i64)?;
+        let old_tag = trunk[3];
+        let wip =
+            write_commit_same_time(&repo.odb(), &[trunk[1999]], "wip", 1_000_000 + HOUR * 2000)?;
+        let hide = [trunk[1999], old_tag];
+
+        clear_commit_linkage(&repo);
+        reset_commit_parent_lookups();
+        let exhaustive = walk_commits_reachable_excluding_ancestors_of(
+            &repo,
+            &[wip],
+            &hide,
+            ReachableWalkLimit::CountAllRetainNewest(20),
+        )?;
+        let exhaustive_lookups = commit_parent_lookups();
+        clear_commit_linkage(&repo);
+        reset_commit_parent_lookups();
+        let bounded = count_commits_left_behind(&repo, &[wip], &hide, 20)?;
+        let lookups = commit_parent_lookups();
+
+        assert_eq!(bounded, (1, vec![wip]));
+        assert_eq!(bounded, exhaustive);
+        assert!(
+            exhaustive_lookups >= 1900,
+            "the converging paint walks down to the old tag ({exhaustive_lookups})"
+        );
+        // One day of hourly commits behind the tips, then the slop.
+        assert!(
+            lookups <= 24 + PAINT_SLOP + 10,
+            "without a commit-graph an old tag must not walk history ({lookups})"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn left_behind_walk_without_commit_graph_repaints_within_the_slop() -> Result<()> {
+        const DAY: i64 = 86_400;
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_test_bare(&dir)?;
+        let odb = repo.odb();
+        // `shared` is dated days after the hide chain that reaches it, so the walk pops it as
+        // left-only before that chain arrives, beyond the skew allowance.
+        let shared = write_commit_same_time(&odb, &[], "shared", 100 * DAY)?;
+        let old_tip = write_commit_same_time(&odb, &[shared], "old tip", 101 * DAY)?;
+        let mut held = shared;
+        for i in 0..3 {
+            held = write_commit_same_time(&odb, &[held], &format!("held {i}"), 10 * DAY + i)?;
+        }
+
+        let bounded = count_commits_left_behind(&repo, &[old_tip], &[held], 20)?;
+
+        assert_eq!(bounded, (1, vec![old_tip]));
         Ok(())
     }
 
