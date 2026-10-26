@@ -65,7 +65,7 @@ Assign **staged** hunks into the commits that last touched overlapping lines (be
 
 ### `rebase`
 
-Replay commits on the current branch onto `<upstream>` (or `--onto`), matching [`grit rebase`](rebase.md) including `--continue`, `--abort`, and `--skip`. Prefer the top-level command for everyday use; `grit history rebase` shares the same handler and JSON shape.
+Replay commits on the current branch onto `<upstream>` (or `--onto`), matching [`grit rebase`](rebase.md) including `--continue`, `--abort`, and `--skip`. Prefer the top-level command for everyday use; `grit history rebase` shares the same handler and JSON shape. Successful `--exec` commands that leave tracked edits stop with `exec_dirty`, preserve the index and worktree, and use the same [exec recovery](rebase.md#successful-exec-commands-that-leave-edits) workflow.
 
 ### `undo`
 
@@ -232,12 +232,12 @@ Pass `--json` on `grit history drop`, `grit history move`, `grit history reword`
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
 | `operation` | string | `"drop"`, `"move"`, `"reword"`, `"fixup"`, `"squash"`, `"split"`, `"absorb"`, `"undo"`, or `"rebase"`. |
-| `result` | string | `rebase` only: `completed`, `conflicts`, or `aborted`. |
+| `result` | string | `rebase` only: `completed`, `conflicts`, `exec_dirty`, or `aborted`. |
 | `rewritten` | array | `{old,new,change_id,subject}` full hex OIDs, stored change id (`null` when dropped or absent), and the first line of the replacement commit message (or the original when dropped). |
 | `refs` | array | `{ref,old,new}` for each ref that would move or moved. `name` duplicates `ref` and is deprecated; it will be removed in a future release. |
 | `head` | object or null | `{old,new}` when `HEAD`'s commit OID changes; `null` when unchanged. |
 | `dry_run` | boolean | `true` when `--dry-run` was set. |
-| `commit` | string | `rebase` when `result` is `conflicts`: source commit that stopped replay (full hex). |
+| `commit` | string | `rebase` when paused: source commit for `conflicts`, or checked-out replay commit for `exec_dirty` (full hex). |
 | `conflicts` | array | `rebase` when `result` is `conflicts`: `{path,kind,summary?}`. |
 | `next_steps` | array | `rebase` when paused: ordered follow-up `grit` commands. |
 | `alternatives` | array | `rebase` when paused: `grit rebase --abort` and `grit rebase --skip`. |
@@ -246,7 +246,9 @@ For `rebase` with `--exec`, the object also includes:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `exec` | array | `{commit,command,exit_code}` per successful `--exec` invocation (full hex `commit`). |
+| `exec` | array | `{commit,command,exit_code}` per successful `--exec` invocation through completion or a dirty stop (full hex `commit`). |
+| `command` | string or null | Successful command that left tracked edits when `result` is `exec_dirty`. |
+| `paths` | array | Changed tracked paths preserved when `result` is `exec_dirty`. |
 
 For `absorb`, the object also includes:
 
