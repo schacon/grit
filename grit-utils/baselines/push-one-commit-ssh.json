@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-10-26T12:04:44.150139Z",
+  "machine": {
+    "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+    "physical_cores": 4,
+    "logical_cores": 4,
+    "ram_bytes": 16766414848,
+    "os": "linux",
+    "kernel": "Linux 6.17.0-1022-azure",
+    "scratch_filesystem": "ext2/ext3",
+    "rustc_version": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "cargo_profile": "release"
+  },
+  "tools": {
+    "git": "git version 2.55.0",
+    "grit": "grit 0.5.21",
+    "grit_commit": "c52eefe2c94928caca7e557dd39820213ffc6f69"
+  },
+  "scenarios": [
+    {
+      "id": "push-one-commit-ssh-before",
+      "group": "network-push",
+      "fixture": "git/git master 7e34d8174dcda3435d1404c9a30bef46afe6c13e (82563 commits)",
+      "description": "One new commit over fake SSH; six warm runs, Python perf_counter + /usr/bin/time; origin/main c190a4fff before frontier cutoff",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 73.03907150007187,
+        "median_ms": 71.28900850000264,
+        "stddev_ms": 3.986070708754115,
+        "min_ms": 70.83800100008375,
+        "max_ms": 81.04886300020553,
+        "runs_ms": [
+          71.51124200004233,
+          71.06677499996295,
+          71.00349500001357,
+          72.76605300012307,
+          70.83800100008375,
+          81.04886300020553
+        ],
+        "peak_rss_bytes": 49561600
+      },
+      "grit": {
+        "mean_ms": 2631.3933151667093,
+        "median_ms": 2629.187569999999,
+        "stddev_ms": 22.12283857047081,
+        "min_ms": 2602.844123000068,
+        "max_ms": 2668.3760770001754,
+        "runs_ms": [
+          2640.1366640000106,
+          2626.4320339998903,
+          2602.844123000068,
+          2668.3760770001754,
+          2618.6278870000024,
+          2631.943106000108
+        ],
+        "peak_rss_bytes": 78196736
+      },
+      "ratio": 36.880686452525175
+    },
+    {
+      "id": "push-one-commit-ssh-after",
+      "group": "network-push",
+      "fixture": "git/git master 7e34d8174dcda3435d1404c9a30bef46afe6c13e (82563 commits)",
+      "description": "One new commit over fake SSH; six warm runs, Python perf_counter + /usr/bin/time; want-frontier cutoff",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 73.03907150007187,
+        "median_ms": 71.28900850000264,
+        "stddev_ms": 3.986070708754115,
+        "min_ms": 70.83800100008375,
+        "max_ms": 81.04886300020553,
+        "runs_ms": [
+          71.51124200004233,
+          71.06677499996295,
+          71.00349500001357,
+          72.76605300012307,
+          70.83800100008375,
+          81.04886300020553
+        ],
+        "peak_rss_bytes": 49561600
+      },
+      "grit": {
+        "mean_ms": 147.27439716667354,
+        "median_ms": 144.6968120000065,
+        "stddev_ms": 6.569051994365082,
+        "min_ms": 143.61988800010295,
+        "max_ms": 160.61261999993803,
+        "runs_ms": [
+          144.72233200012852,
+          145.70133799998075,
+          144.6712919998845,
+          144.31891300000643,
+          160.61261999993803,
+          143.61988800010295
+        ],
+        "peak_rss_bytes": 54435840
+      },
+      "ratio": 2.0297212016912978
+    }
+  ]
+}

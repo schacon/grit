@@ -24,7 +24,9 @@ grit push --remote <name>   # hidden alias for one release
 
 ## Description
 
-Pushes refs to a remote over the smart HTTP or `file://` transport. With no refspecs, grit pushes the current branch using the same remote-selection rules as Git (`branch.<name>.pushRemote`, `remote.pushDefault`, `branch.<name>.remote`, then `origin`) and applies `remote.<name>.push` refspecs when configured.
+Pushes refs to a remote over SSH, smart HTTP, or the `file://` transport. With no refspecs, grit pushes the current branch using the same remote-selection rules as Git (`branch.<name>.pushRemote`, `remote.pushDefault`, `branch.<name>.remote`, then `origin`) and applies `remote.<name>.push` refspecs when configured.
+
+Incremental SSH and HTTP pushes stop exploring advertised commit history once the new commit frontier is exhausted. A one-commit push does not need to walk every advertised branch and tag back to its root. Annotated tags targeting blobs or trees may be advertised alongside commit refs without preventing a push.
 
 Explicit refspecs follow Git push rules: any revision on the left (`HEAD`, tags, branches), optional `+` for force, `:dst` to delete, and a bare branch name DWIMs to the matching local ref (then through configured push refspecs when present).
 

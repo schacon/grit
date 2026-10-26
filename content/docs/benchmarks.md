@@ -75,6 +75,20 @@ Criterion bench **`abbreviate`** (`cargo bench -p grit-lib --bench abbreviate`) 
 
 Prefix matching now compares raw id bytes against a prefix parsed once ([`ObjectIdPrefix`](rustdoc:grit_lib::objects::ObjectIdPrefix)) instead of formatting every candidate as hex, and abbreviation makes one lookup per id instead of one per candidate length. A store without an index still scans every id once per lookup; override `lookup_prefix` with a range scan to avoid that (see [Object stores](../library/object-stores/#short-ids-and-prefix-lookup)).
 
+## Incremental push over SSH
+
+The send-pack walk stops when no queued commit remains reachable only from the wanted tips. Advertised commits still propagate exclusion flags through shared ancestry; unrelated old refs no longer force a walk to the roots. Regression tests bound actual commit reads with a direct-parent have plus a near-root have, compare merge-history packs with system Git, and push through Git's receive-pack with annotated blob/tree tags advertised.
+
+Factory VM, 2026-10-26, 4 vCPU, Rust 1.99, `release` profile, system Git 2.55.0: one new commit over a local fake-SSH wrapper on upstream `git/git` at `7e34d8174dcda3435d1404c9a30bef46afe6c13e` (82,563 commits on master). The source and bare receiver retain upstream refs and tags and use shared object storage without bitmaps. Before each run, reset the remote branch to the new commit's parent; push `HEAD:refs/heads/master` with each client. One warmup followed by six interleaved runs uses Python `perf_counter` wall time and `/usr/bin/time -f %M` peak RSS, with compilation paused. The committed samples are in `grit-utils/baselines/push-one-commit-ssh.json`.
+
+| Client | Median wall time | Peak RSS |
+| --- | ---: | ---: |
+| System Git | 71.3 ms | 47.3 MiB |
+| Grit before the cutoff fix (`c190a4fff`) | 2,629.2 ms | 74.6 MiB |
+| Grit after | 144.7 ms | 51.9 MiB |
+
+The cutoff reduces median push time by **18.2×**, with about **30% lower peak RSS**; Grit remains about **2.0×** slower than Git on this fixture. Every push updated the expected ref. `git fsck --strict --no-dangling` succeeded on the receiver, with warnings for historical upstream tag/tree objects. The small SSH regression fixture passes strict fsck without those historical objects.
+
 ## grit-lib: pack write (100k reuse vs fresh)
 
 Criterion group **`pack`** (`cargo bench -p grit-lib --bench pack_write`) rebuilds the full closure of the repacked **`pack_100k`** fixture (~100 000 objects) via [`build_pack_with_parallel_threads`](rustdoc:grit_lib::objects::pack_objects::build_pack_with_parallel_threads):

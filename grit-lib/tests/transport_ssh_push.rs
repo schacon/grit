@@ -341,3 +341,65 @@ fn push_over_ssh_lands_ref_and_objects_and_reports_nonff_rejection() {
         String::from_utf8_lossy(&fsck2.stderr)
     );
 }
+
+#[test]
+fn incremental_ssh_push_with_advertised_blob_and_tree_tags() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let local = tmp.path().join("local");
+    std::fs::create_dir_all(&local).unwrap();
+    build_source(&local);
+    let parent = rev_parse(&local, "HEAD~1");
+    let tip = rev_parse(&local, "HEAD");
+    let bare = tmp.path().join("remote.git");
+    std::fs::create_dir_all(&bare).unwrap();
+    git(&bare, &["init", "-q", "--bare", "."]);
+    git(
+        &bare,
+        &[
+            "fetch",
+            "-q",
+            local.to_str().unwrap(),
+            &format!("{}:refs/heads/main", parent.to_hex()),
+        ],
+    );
+    git(&bare, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    for (name, target) in [("blob-tag", "HEAD:a.txt"), ("tree-tag", "HEAD^{tree}")] {
+        git(&bare, &["tag", "-a", name, "-m", name, target]);
+    }
+    // Keep the advertised tags locally too: send-pack must peel them and skip
+    // non-commit targets rather than failing during have-boundary selection.
+    git(
+        &local,
+        &[
+            "fetch",
+            "-q",
+            bare.to_str().unwrap(),
+            "refs/tags/*:refs/tags/*",
+        ],
+    );
+    assert!(!open_odb(&bare).exists(&tip));
+    let script = write_fake_ssh(tmp.path()).expect("executable fake ssh");
+    let transport = SshTransport::with_program(script.as_os_str());
+    let url = format!("ssh://git@fakehost{}", bare.display());
+    let mut conn = transport
+        .connect(&url, Service::ReceivePack, &ConnectOptions::default())
+        .expect("receive-pack connection");
+    assert_eq!(conn.advertised_refs().len(), 3);
+    let outcome = push_remote(
+        &local.join(".git"),
+        &mut *conn,
+        &[spec_update(tip, "refs/heads/main", false)],
+        &PushOptions::default(),
+        &mut NoProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("incremental push with non-commit tags");
+    drop(conn);
+    assert_eq!(outcome.results.len(), 1);
+    assert_eq!(outcome.results[0].status, PushRefStatus::Ok);
+    assert_eq!(rev_parse(&bare, "refs/heads/main"), tip);
+    for name in ["blob-tag", "tree-tag"] {
+        assert_eq!(rev_parse(&bare, name), rev_parse(&local, name));
+    }
+    git(&bare, &["fsck", "--strict", "--no-dangling"]);
+}

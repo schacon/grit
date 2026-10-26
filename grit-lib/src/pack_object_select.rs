@@ -1266,6 +1266,7 @@ mod tests {
             &[],
             0,
         );
+        let near_root = parent;
         for i in 1..800 {
             let tree = write_tree(&repo, &[(0o100644, "f", blob(&i.to_string()))]);
             parent = write_commit(&repo, tree, &[parent], i);
@@ -1273,12 +1274,6 @@ mod tests {
         let direct_parent = parent;
         let new_tree = write_tree(&repo, &[(0o100644, "f", blob("new"))]);
         let new_tip = write_commit(&repo, new_tree, &[direct_parent], 900);
-        let near_root = write_commit(
-            &repo,
-            write_tree(&repo, &[(0o100644, "f", blob("root"))]),
-            &[],
-            -100,
-        );
         let empty = HashSet::new();
         reset_commit_reads();
         let have_commits = send_pack_uninteresting_commits(
