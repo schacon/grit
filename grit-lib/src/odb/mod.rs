@@ -2319,6 +2319,15 @@ impl Odb {
         self.read_info_after_promisor_miss(oid)
     }
 
+    /// Object metadata for upload-pack v2 `object-info` and similar serve paths.
+    ///
+    /// Like [`Self::read_info`], but does not resolve promisor misses by fetching
+    /// from a remote; missing local objects return [`Error::ObjectNotFound`].
+    pub(crate) fn read_info_for_serve(&self, oid: &ObjectId) -> Result<ObjectInfo> {
+        self.try_read_info_once(oid)?
+            .ok_or_else(|| Error::ObjectNotFound(oid.to_hex()))
+    }
+
     #[cold]
     #[inline(never)]
     fn read_info_after_promisor_miss(&self, oid: &ObjectId) -> Result<ObjectInfo> {
