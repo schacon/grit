@@ -144,7 +144,7 @@ pub fn commit_diff_files(
             config,
             thread_policy,
         )?;
-        let filtered = filter_entries(entries, pathspecs);
+        let filtered = filter_entries(repo, entries, pathspecs)?;
         let mut out = build_file_diffs(
             repo.odb(),
             filtered,
@@ -169,21 +169,54 @@ pub fn commit_diff_files(
     )
 }
 
-fn filter_entries(entries: Vec<DiffEntry>, pathspecs: &[String]) -> Vec<DiffEntry> {
+fn filter_entries(
+    repo: &Repository,
+    entries: Vec<DiffEntry>,
+    pathspecs: &[String],
+) -> Result<Vec<DiffEntry>> {
     if pathspecs.is_empty() {
-        return entries;
+        return Ok(entries);
     }
-    entries
+    let matcher = repo.pathspec_matcher(pathspecs)?;
+    Ok(entries
         .into_iter()
-        .filter(|e| {
-            let path = e
+        .filter(|entry| {
+            let path = entry
                 .new_path
                 .as_deref()
-                .or(e.old_path.as_deref())
+                .or(entry.old_path.as_deref())
                 .unwrap_or("");
-            crate::pathspec::path_allowed_by_pathspec_list(pathspecs, path)
+            matcher.matches_change(path, entry.old_path.as_deref())
         })
-        .collect()
+        .collect())
+}
+
+/// Tree diff entries for one commit vs its first parent (rename-aware).
+///
+/// # Errors
+///
+/// Propagates ODB and diff errors.
+pub(crate) fn commit_first_parent_diff_entries(
+    repo: &Repository,
+    commit: &crate::objects::CommitData,
+    pathspecs: &[String],
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
+) -> Result<Vec<DiffEntry>> {
+    let odb = repo.odb();
+    let old_tree = match commit.parents.first() {
+        Some(parent) => Some(parse_commit(&odb.read(parent)?.data)?.tree),
+        None => None,
+    };
+    let entries = tree_diff_entries(
+        odb,
+        old_tree.as_ref(),
+        Some(&commit.tree),
+        "",
+        config,
+        thread_policy,
+    )?;
+    filter_entries(repo, entries, pathspecs)
 }
 
 fn tree_diff_entries(

@@ -1,0 +1,262 @@
+//! `grit show` / `grit log --patch-text` git-apply compatibility (issue #2005).
+
+use std::fs;
+use std::process::Command;
+
+use tempfile::TempDir;
+
+#[test]
+fn show_log_patch_text_rejected_with_json() {
+    let grit = env!("CARGO_BIN_EXE_grit");
+    for args in [
+        &["show", "--patch-text", "--json"][..],
+        &["log", "-n1", "--patch-text", "--json"][..],
+    ] {
+        let out = Command::new(grit).args(args).output().expect("spawn grit");
+        assert!(!out.status.success(), "expected failure for {args:?}");
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            msg.contains("--patch-text") && msg.contains("--json"),
+            "expected clear error for {args:?}, got: {msg}"
+        );
+    }
+}
+
+fn git_in(dir: &std::path::Path, args: &[&str]) {
+    let out = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "t@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "t@example.com")
+        .output()
+        .expect("spawn git");
+    assert!(
+        out.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn init_two_commit_repo(dir: &std::path::Path) {
+    git_in(dir, &["init", "-b", "main"]);
+    git_in(dir, &["config", "user.email", "t@example.com"]);
+    git_in(dir, &["config", "user.name", "Test"]);
+    fs::write(dir.join("a.txt"), "a\nb\n").expect("write");
+    git_in(dir, &["add", "a.txt"]);
+    git_in(dir, &["commit", "-m", "one"]);
+    fs::write(dir.join("a.txt"), "a\nB\n").expect("write");
+    git_in(dir, &["add", "a.txt"]);
+    git_in(dir, &["commit", "-m", "two"]);
+}
+
+fn grit_patch_stdout(dir: &std::path::Path, args: &[&str]) -> Vec<u8> {
+    let grit = env!("CARGO_BIN_EXE_grit");
+    let out = Command::new(grit)
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .expect("spawn grit");
+    assert!(
+        out.status.success(),
+        "grit {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out.stdout
+}
+
+fn git_apply_check_reverse(dir: &std::path::Path, patch: &[u8]) {
+    let check = Command::new("git")
+        .current_dir(dir)
+        .args(["apply", "--check", "-R"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn git apply");
+    use std::io::Write;
+    let mut child = check;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(patch).expect("stdin");
+    }
+    let out = child.wait_with_output().expect("wait");
+    assert!(
+        out.status.success(),
+        "git apply --check -R failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn show_patch_text_git_apply_check() {
+    let dir = TempDir::new().expect("tempdir");
+    init_two_commit_repo(dir.path());
+    let patch = grit_patch_stdout(dir.path(), &["show", "--patch-text", "HEAD"]);
+    let text = String::from_utf8_lossy(&patch);
+    assert!(
+        text.contains("diff --git") && text.contains("index "),
+        "expected git-apply patch, got:\n{text}"
+    );
+    git_apply_check_reverse(dir.path(), &patch);
+}
+
+#[test]
+fn log_patch_text_git_apply_check() {
+    let dir = TempDir::new().expect("tempdir");
+    init_two_commit_repo(dir.path());
+    let patch = grit_patch_stdout(dir.path(), &["log", "-n1", "--patch-text"]);
+    let text = String::from_utf8_lossy(&patch);
+    assert!(
+        text.contains("diff --git") && text.contains("index "),
+        "expected git-apply patch, got:\n{text}"
+    );
+    git_apply_check_reverse(dir.path(), &patch);
+}
+
+#[test]
+fn diff_patch_text_still_git_apply_check() {
+    let dir = TempDir::new().expect("tempdir");
+    init_two_commit_repo(dir.path());
+    let patch = grit_patch_stdout(dir.path(), &["diff", "HEAD~1..HEAD", "--patch-text"]);
+    git_apply_check_reverse(dir.path(), &patch);
+}
+
+fn init_multi_file_repo(dir: &std::path::Path) {
+    git_in(dir, &["init", "-b", "main"]);
+    git_in(dir, &["config", "user.email", "t@example.com"]);
+    git_in(dir, &["config", "user.name", "Test"]);
+    fs::write(dir.join("a.txt"), "a\n").expect("write");
+    fs::write(dir.join("b.txt"), "b\n").expect("write");
+    fs::write(dir.join("bin.dat"), &[0u8, 1, 2]).expect("write");
+    git_in(dir, &["add", "."]);
+    git_in(dir, &["commit", "-m", "base"]);
+    fs::write(dir.join("a.txt"), "A\n").expect("write");
+    fs::write(dir.join("b.txt"), "B\n").expect("write");
+    fs::write(dir.join("bin.dat"), &[0u8, 1, 2, 3]).expect("write");
+    git_in(dir, &["add", "."]);
+    git_in(dir, &["commit", "-m", "change all"]);
+}
+
+#[test]
+fn show_log_patch_text_respects_pathspec() {
+    let dir = TempDir::new().expect("tempdir");
+    init_multi_file_repo(dir.path());
+    for args in [
+        &["show", "--patch-text", "HEAD", "--", "a.txt"][..],
+        &["log", "-n1", "--patch-text", "--", "a.txt"][..],
+    ] {
+        let patch = grit_patch_stdout(dir.path(), args);
+        let text = String::from_utf8_lossy(&patch);
+        assert!(
+            text.contains("a.txt") && text.contains("diff --git"),
+            "expected a.txt patch in {args:?}, got:\n{text}"
+        );
+        assert!(
+            !text.contains("b.txt") && !text.contains("bin.dat"),
+            "pathspec should exclude other files for {args:?}, got:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn show_patch_text_merge_first_parent_git_apply_check() {
+    let dir = TempDir::new().expect("tempdir");
+    let root = dir.path();
+    git_in(root, &["init", "-b", "main"]);
+    git_in(root, &["config", "user.email", "t@example.com"]);
+    git_in(root, &["config", "user.name", "Test"]);
+    fs::write(root.join("base.txt"), "base\n").expect("write");
+    git_in(root, &["add", "base.txt"]);
+    git_in(root, &["commit", "-m", "main tip"]);
+    git_in(root, &["branch", "side"]);
+    fs::write(root.join("side.txt"), "side\n").expect("write");
+    git_in(root, &["add", "side.txt"]);
+    git_in(root, &["commit", "-m", "side tip"]);
+    git_in(root, &["switch", "main"]);
+    fs::write(root.join("main.txt"), "main\n").expect("write");
+    git_in(root, &["add", "main.txt"]);
+    git_in(root, &["commit", "-m", "main line"]);
+    git_in(root, &["merge", "--no-edit", "side"]);
+    fs::write(root.join("merged.txt"), "merged\n").expect("write");
+    git_in(root, &["add", "merged.txt"]);
+    git_in(root, &["commit", "-m", "merge commit with tree change"]);
+
+    let patch = grit_patch_stdout(
+        root,
+        &[
+            "show",
+            "--patch-text",
+            "--diff-merges",
+            "first-parent",
+            "HEAD",
+        ],
+    );
+    let text = String::from_utf8_lossy(&patch);
+    assert!(
+        text.contains("diff --git") && text.contains("merged.txt"),
+        "expected first-parent merge patch, got:\n{text}"
+    );
+    git_apply_check_reverse(dir.path(), &patch);
+}
+
+#[test]
+fn show_log_patch_text_rename_matches_source_pathspec() {
+    let dir = TempDir::new().expect("tempdir");
+    let root = dir.path();
+    git_in(root, &["init", "-b", "main"]);
+    git_in(root, &["config", "user.email", "t@example.com"]);
+    git_in(root, &["config", "user.name", "Test"]);
+    fs::write(root.join("old.txt"), "content\n").expect("write");
+    git_in(root, &["add", "old.txt"]);
+    git_in(root, &["commit", "-m", "add old"]);
+    git_in(root, &["mv", "old.txt", "new.txt"]);
+    git_in(root, &["commit", "-m", "rename"]);
+
+    for args in [
+        &["show", "--patch-text", "HEAD", "--", "old.txt"][..],
+        &["log", "-n1", "--patch-text", "--", "old.txt"][..],
+    ] {
+        let patch = grit_patch_stdout(root, args);
+        let text = String::from_utf8_lossy(&patch);
+        assert_eq!(
+            text.matches("diff --git").count(),
+            1,
+            "expected one file patch for source pathspec {args:?}, got:\n{text}"
+        );
+        assert!(
+            text.contains("old.txt") && text.contains("new.txt"),
+            "expected rename in patch for {args:?}, got:\n{text}"
+        );
+        git_apply_check_reverse(root, &patch);
+    }
+}
+
+#[test]
+fn show_patch_text_binary_git_apply_check() {
+    let dir = TempDir::new().expect("tempdir");
+    let root = dir.path();
+    git_in(root, &["init", "-b", "main"]);
+    git_in(root, &["config", "user.email", "t@example.com"]);
+    git_in(root, &["config", "user.name", "Test"]);
+    fs::write(root.join("bin.dat"), &[0u8, 1, 2]).expect("write");
+    git_in(root, &["add", "bin.dat"]);
+    git_in(root, &["commit", "-m", "add binary"]);
+    fs::write(root.join("bin.dat"), &[0u8, 1, 2, 3, 4]).expect("write");
+    git_in(dir.path(), &["add", "bin.dat"]);
+    git_in(dir.path(), &["commit", "-m", "change binary"]);
+    let patch = grit_patch_stdout(dir.path(), &["show", "--patch-text", "HEAD"]);
+    let text = String::from_utf8_lossy(&patch);
+    assert!(
+        text.contains("GIT binary patch") || text.contains("index "),
+        "expected binary patch section, got:\n{text}"
+    );
+    git_apply_check_reverse(dir.path(), &patch);
+}

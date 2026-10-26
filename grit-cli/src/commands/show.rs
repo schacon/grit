@@ -26,7 +26,7 @@ use serde::Serialize;
 
 use crate::commands::diff::{
     resolve_cli_diff_pathspecs, CommitDiffOptions, DiffOutcome, DiffPathspecMode, DiffTotalsJson,
-    FileDiff,
+    FileDiff, ShowLogPatchTextParams,
 };
 use crate::commits_json::CommitJsonLoader;
 use crate::context;
@@ -236,6 +236,9 @@ pub struct ShowOutcome {
     #[serde(skip)]
     #[schemars(skip)]
     diff: DiffOutcome,
+    #[serde(skip)]
+    #[schemars(skip)]
+    patch_text: Option<ShowLogPatchTextParams>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -327,13 +330,27 @@ fn show_commit(spec: &str, opts: &ShowRunOptions) -> Result<ShowOutcome> {
     };
 
     let paths = resolve_cli_diff_pathspecs(&repo, &opts.pathspecs, &[], DiffPathspecMode::Commit)?;
-    let diff_opts = CommitDiffOptions {
-        paths: paths.clone(),
-        format: opts.format,
-        word_level_inline: opts.word_level_inline,
-        diff_merges: opts.diff_merges,
+    let patch_text = if opts.format.log_patch_text() {
+        Some(ShowLogPatchTextParams {
+            oid: commit_oid,
+            format: opts.format,
+            pathspecs: paths.clone(),
+            diff_merges: opts.diff_merges,
+        })
+    } else {
+        None
     };
-    let diff = crate::commands::diff::diff_for_commit(&repo, &commit_oid, diff_opts)?;
+    let diff = if opts.format.log_patch_text() {
+        crate::commands::diff::streamed_log_patch_text_outcome(opts.format)
+    } else {
+        let diff_opts = CommitDiffOptions {
+            paths: paths.clone(),
+            format: opts.format,
+            word_level_inline: opts.word_level_inline,
+            diff_merges: opts.diff_merges,
+        };
+        crate::commands::diff::diff_for_commit(&repo, &commit_oid, diff_opts)?
+    };
     let stat = match opts.format.detail() {
         grit_lib::diff::DiffDetail::NameOnly | grit_lib::diff::DiffDetail::NameStatus => {
             let stat_diff = crate::commands::diff::diff_for_commit(
@@ -367,6 +384,7 @@ fn show_commit(spec: &str, opts: &ShowRunOptions) -> Result<ShowOutcome> {
         totals: diff.totals,
         stat,
         diff,
+        patch_text,
     })
 }
 
@@ -659,6 +677,11 @@ impl HumanRender for ShowOutcome {
             }
         }
 
+        if let Some(params) = &self.patch_text {
+            let repo = context::discover()?;
+            crate::commands::diff::emit_show_log_patch_text(&repo, params)?;
+            return Ok(());
+        }
         outln!(
             w,
             "{}",
