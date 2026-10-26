@@ -4,7 +4,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use grit_lib::config::environment::RepositoryOptions;
@@ -52,8 +52,4 @@ pub fn run_rev_list_objects_v1(repo: &Repository) -> usize {
     };
     let result = rev_list(repo, &[String::from("v1.0.0")], &[], &opts).expect("rev-list s1");
     result.objects.len()
-}
-
-pub fn open_repo(path: &Path) -> Repository {
-    Repository::open(path, &RepositoryOptions::empty()).expect("open bare git.git")
 }

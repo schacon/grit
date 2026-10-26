@@ -661,3 +661,80 @@ fn read_packed_delta_dependency_reports_ofs_and_ref() {
         assert!(matches!(dep2, PackedDeltaDependency::RefBase { .. }));
     });
 }
+
+#[test]
+fn git_repacked_history_dependent_objects_round_trip_both_hashes_and_delta_kinds() {
+    for algo in [HashAlgo::Sha1, HashAlgo::Sha256] {
+        run_algo(algo, |algo| {
+            for ofs in [true, false] {
+                let fixture = RepoFixture::init(algo).expect("init");
+                let repo = grit_lib::repo::Repository::open(
+                    &fixture.path().join(".git"),
+                    &Default::default(),
+                )
+                .expect("open");
+                let text: String = (0..20_000)
+                    .map(|i| format!("history-dependent payload line {i:06}\n"))
+                    .collect();
+                let empty = repo.odb().write(ObjectKind::Blob, b"").expect("empty blob");
+                std::fs::write(fixture.path().join("empty"), b"").unwrap();
+                let mut expected = vec![(empty, Vec::new())];
+                for i in 0..6 {
+                    let data = format!("{text}revision {i}\n").into_bytes();
+                    let oid = repo
+                        .odb()
+                        .write(ObjectKind::Blob, &data)
+                        .expect("grit write");
+                    let cat = fixture.git(&["cat-file", "blob", &oid.to_string()]);
+                    assert!(cat.ok, "{}", cat.stderr);
+                    assert_eq!(cat.stdout.as_bytes(), data);
+                    std::fs::write(fixture.path().join("payload"), &data).unwrap();
+                    assert!(fixture.git(&["add", "."]).ok);
+                    assert!(fixture.git(&["commit", "-qm", &format!("revision {i}")]).ok);
+                    expected.push((oid, data));
+                }
+                let config = format!("repack.usedeltabaseoffset={ofs}");
+                let repack = fixture.git(&["-c", &config, "repack", "-adf"]);
+                assert!(repack.ok, "{}", repack.stderr);
+                let repo = grit_lib::repo::Repository::open(
+                    &fixture.path().join(".git"),
+                    &Default::default(),
+                )
+                .expect("reopen");
+                for (oid, data) in expected.iter().rev().chain(expected.iter()) {
+                    clear_pack_cache();
+                    assert_eq!(repo.odb().read(oid).expect("packed read").data, *data);
+                    assert_eq!(
+                        repo.odb().read_info(oid).expect("packed info").size,
+                        data.len() as u64
+                    );
+                }
+                let idx = std::fs::read_dir(fixture.objects_dir().join("pack"))
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| path.extension().is_some_and(|ext| ext == "idx"))
+                    .expect("pack index");
+                let verify = fixture.git(&["verify-pack", "-v", idx.to_str().unwrap()]);
+                assert!(verify.ok, "{}", verify.stderr);
+                assert!(
+                    verify
+                        .stdout
+                        .lines()
+                        .any(|line| line.split_whitespace().count() == 7),
+                    "fixture must contain deltas"
+                );
+                let records = verify_pack_and_collect(&idx).expect("grit verify pack");
+                let expected_type = if ofs {
+                    grit_lib::objects::pack::PackedType::OfsDelta
+                } else {
+                    grit_lib::objects::pack::PackedType::RefDelta
+                };
+                assert!(records
+                    .iter()
+                    .any(|record| record.packed_type == expected_type));
+                let fsck = git_fsck(fixture.path(), true);
+                assert!(fsck.ok, "git fsck --strict: {:?}", fsck.msg_ids);
+            }
+        });
+    }
+}

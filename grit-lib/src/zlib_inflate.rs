@@ -719,6 +719,102 @@ mod tests {
     }
 
     #[test]
+    fn fixed_members_validate_size_trailer_and_consumption() {
+        let mut scratch = ZlibInflateScratch::default();
+        for plain in [
+            Vec::new(),
+            b"small commit".to_vec(),
+            noise(150_000).repeat(3),
+            noise(32_000).repeat(10),
+        ] {
+            let compressed = deflate(&plain);
+            let mut adjacent = b"pack header".to_vec();
+            let start = adjacent.len();
+            adjacent.extend_from_slice(&compressed);
+            adjacent.extend_from_slice(&deflate(b"next member"));
+            adjacent.extend_from_slice(b"pack checksum");
+            let mut pos = start;
+            let mut out = Vec::new();
+            scratch
+                .decompress_fixed_into(&adjacent, &mut pos, plain.len() as u64, &mut out)
+                .unwrap();
+            assert_eq!(out, plain);
+            assert_eq!(pos, start + compressed.len());
+            assert_eq!(
+                scratch.decompress_fixed(&adjacent, &mut pos, 11).unwrap(),
+                b"next member"
+            );
+            assert_eq!(&adjacent[pos..], b"pack checksum");
+            for size in [plain.len().saturating_sub(1), plain.len() + 1] {
+                if size == plain.len() {
+                    continue;
+                }
+                let mut pos = 0;
+                let err = scratch
+                    .decompress_fixed(&compressed, &mut pos, size as u64)
+                    .unwrap_err();
+                assert!(matches!(err, Error::CorruptObject(_)), "{err:?}");
+                assert_eq!(pos, 0);
+            }
+            for missing in 1..=4 {
+                let mut pos = 0;
+                let err = scratch
+                    .decompress_fixed(
+                        &compressed[..compressed.len() - missing],
+                        &mut pos,
+                        plain.len() as u64,
+                    )
+                    .unwrap_err();
+                assert!(matches!(err, Error::Zlib(_)), "{err:?}");
+                assert_eq!(pos, 0);
+            }
+            let mut bad = compressed.clone();
+            *bad.last_mut().unwrap() ^= 1;
+            let err = scratch
+                .decompress_fixed(&bad, &mut 0, plain.len() as u64)
+                .unwrap_err();
+            assert!(matches!(err, Error::Zlib(_)), "{err:?}");
+            assert_eq!(
+                scratch
+                    .decompress_fixed(&compressed, &mut 0, plain.len() as u64)
+                    .unwrap(),
+                plain
+            );
+        }
+    }
+
+    #[test]
+    fn prefixes_and_reuse_after_partial_decode() {
+        let mut scratch = ZlibInflateScratch::default();
+        let plain = noise(100_000).repeat(4);
+        let compressed = deflate(&plain);
+        let mut out = Vec::new();
+        for len in [0, 1, 2, 31, 32, 257, plain.len(), plain.len() + 1] {
+            let used = scratch
+                .decompress_prefix_into(&compressed, len, &mut out)
+                .unwrap();
+            assert_eq!(out, plain[..len.min(plain.len())]);
+            assert!(used > 0 && used <= compressed.len());
+            assert_eq!(
+                scratch
+                    .decompress_fixed(&compressed, &mut 0, plain.len() as u64)
+                    .unwrap(),
+                plain
+            );
+        }
+        let small = deflate(b"ab");
+        scratch
+            .decompress_prefix_into(&small, 10, &mut out)
+            .unwrap();
+        assert_eq!(out, b"ab");
+        let err = scratch
+            .decompress_fixed(&[0x78, 0x20, 0, 0, 0, 0, 3, 0], &mut 0, 0)
+            .unwrap_err();
+        assert!(matches!(err, Error::Zlib(_)), "{err:?}");
+        assert_eq!(scratch.decompress_fixed(&small, &mut 0, 2).unwrap(), b"ab");
+    }
+
+    #[test]
     fn decompress_fixed_round_trip() {
         let plain = b"blob 11\0hello world";
         let zlib = deflate(plain);
