@@ -52,7 +52,7 @@ fn open_odb(dir: &Path) -> Odb {
     Odb::new(git_dir.join("objects").as_path()).with_config_git_dir(git_dir)
 }
 
-fn git_validate_pack(pack: &[u8], algo: HashAlgo, fix_thin: bool) {
+fn git_validate_pack(pack: &[u8], algo: HashAlgo, fix_thin: bool, base_objects: &Path) {
     if algo == HashAlgo::Sha256 {
         assert!(
             git_index_and_fsck_ok(pack, algo),
@@ -66,7 +66,18 @@ fn git_validate_pack(pack: &[u8], algo: HashAlgo, fix_thin: bool) {
     } else {
         args.push("--strict");
     }
+    // `--stdin` writes into the current repository, so give it a scratch one instead of
+    // whatever repository the test process runs in. Thin packs complete from the fixture's
+    // objects.
+    let scratch = tempfile::tempdir().expect("scratch");
+    git(scratch.path(), &["init", "-q", "--bare", "."]);
+    std::fs::write(
+        scratch.path().join("objects/info/alternates"),
+        format!("{}\n", base_objects.display()),
+    )
+    .expect("alternates");
     let mut child = Command::new("git")
+        .current_dir(scratch.path())
         .args(&args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
@@ -135,7 +146,7 @@ fn assert_byte_identical_threads(
 ) {
     let baseline = build_pack_with_write_threads(odb, wants, haves, opts, Some(1))
         .unwrap_or_else(|e| panic!("{label} baseline threads=1: {e}"));
-    git_validate_pack(&baseline, odb.hash_algo(), fix_thin);
+    git_validate_pack(&baseline, odb.hash_algo(), fix_thin, odb.objects_dir());
     for threads in [2_usize, 4, 8] {
         let pack = build_pack_with_write_threads(odb, wants, haves, opts, Some(threads))
             .unwrap_or_else(|e| panic!("{label} threads={threads}: {e}"));
