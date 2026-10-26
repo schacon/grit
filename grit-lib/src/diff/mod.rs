@@ -50,10 +50,7 @@ pub use hunk_id::{
     hunk_ids, hunk_ids_with_duplicate_peers, peer_hunks_by_primary_path, peer_scope_includes_path,
     DiffSide, HunkId, HunkIdError,
 };
-pub use merge_commit::{
-    combined_structured_patch_body, commit_diff_files, commit_first_parent_diff_entries,
-    filter_diff_entries_by_pathspec, DiffMerges,
-};
+pub use merge_commit::{combined_structured_patch_body, commit_diff_files, DiffMerges};
 pub use no_index::{diff_paths, write_paths_patch, NoIndexError};
 pub use options::{
     renames_from_config, DiffAlgorithm, DiffOptions, RenameDetection, UnknownDiffAlgorithm,

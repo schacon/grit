@@ -28,9 +28,7 @@ use crate::worktree_rules::WorktreeRules;
 
 use super::merge_commit::commit_first_parent_diff_entries;
 use super::merge_commit::DiffMerges;
-use super::{
-    empty_blob_oid, read_worktree_side_bytes_for_diff, zero_oid, DiffEntry, DiffStatus,
-};
+use super::{empty_blob_oid, read_worktree_side_bytes_for_diff, zero_oid, DiffEntry, DiffStatus};
 
 /// How much commit metadata precedes each patch in [`write_commit_log_patch`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

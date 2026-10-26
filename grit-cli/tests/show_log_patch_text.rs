@@ -208,6 +208,38 @@ fn show_patch_text_merge_first_parent_git_apply_check() {
 }
 
 #[test]
+fn show_log_patch_text_rename_matches_source_pathspec() {
+    let dir = TempDir::new().expect("tempdir");
+    let root = dir.path();
+    git_in(root, &["init", "-b", "main"]);
+    git_in(root, &["config", "user.email", "t@example.com"]);
+    git_in(root, &["config", "user.name", "Test"]);
+    fs::write(root.join("old.txt"), "content\n").expect("write");
+    git_in(root, &["add", "old.txt"]);
+    git_in(root, &["commit", "-m", "add old"]);
+    git_in(root, &["mv", "old.txt", "new.txt"]);
+    git_in(root, &["commit", "-m", "rename"]);
+
+    for args in [
+        &["show", "--patch-text", "HEAD", "--", "old.txt"][..],
+        &["log", "-n1", "--patch-text", "--", "old.txt"][..],
+    ] {
+        let patch = grit_patch_stdout(root, args);
+        let text = String::from_utf8_lossy(&patch);
+        assert_eq!(
+            text.matches("diff --git").count(),
+            1,
+            "expected one file patch for source pathspec {args:?}, got:\n{text}"
+        );
+        assert!(
+            text.contains("old.txt") && text.contains("new.txt"),
+            "expected rename in patch for {args:?}, got:\n{text}"
+        );
+        git_apply_check_reverse(root, &patch);
+    }
+}
+
+#[test]
 fn show_patch_text_binary_git_apply_check() {
     let dir = TempDir::new().expect("tempdir");
     let root = dir.path();
