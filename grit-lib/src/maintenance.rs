@@ -748,7 +748,8 @@ pub struct GcStats {
 /// Mirrors a minimal `git repack -ad`: one pack for [`reachability_roots`](crate::fsck::reachability_roots), optional `.rev` /
 /// `.bitmap` sidecars, delete other packs, [`prune_packed_objects`], and optional unreachable
 /// loose-object pruning. Existing promisor packs and all their sidecars are retained
-/// separately. Promised objects are excluded from the local pack; missing promised
+/// separately, as are ordinary packs holding promised objects unavailable in those
+/// promisor packs. Promised objects are excluded from the local pack; missing promised
 /// targets never trigger remote reads. Bitmaps are omitted when promises prevent a
 /// complete closure. Dry runs and incremental repacks use the same promise boundary.
 ///
@@ -861,6 +862,11 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         });
     }
 
+    let retained_packs = if run_incremental {
+        HashSet::new()
+    } else {
+        packs_holding_available_promises(odb, promised)?
+    };
     let built_pack = if run_incremental {
         SerializedDeltaPack {
             bytes: pack_loose_objects_incremental(odb, &reachable, &pack_opts, opts.threads)?,
@@ -960,7 +966,11 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         // Incremental repack keeps every existing pack, so nothing is superseded.
         if !opts.incremental {
             odb.loosen_unreachable_from_superseded_packs(
-                &pack_dir, &pack_path, &reachable, retention,
+                &pack_dir,
+                &pack_path,
+                &reachable,
+                retention,
+                &retained_packs,
             )?;
         }
 
@@ -970,7 +980,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         report.packs_removed = if opts.incremental {
             0
         } else {
-            remove_superseded_pack_files(&pack_dir, &pack_path)?
+            remove_superseded_pack_files_retaining(&pack_dir, &pack_path, &retained_packs)?
         };
 
         prune_packed_loose =
@@ -1847,9 +1857,46 @@ fn count_pack_files(pack_dir: &Path) -> usize {
     packs.difference(&kept).count()
 }
 
+/// Promises may be stored outside marked packs. Keep their source ordinary packs
+/// when no retained promisor pack supplies a copy, so repacking cannot turn an
+/// available promise into a missing one. Only indexes are read; no object fetches.
+fn packs_holding_available_promises(
+    odb: &Odb,
+    promised: &HashSet<ObjectId>,
+) -> Result<HashSet<PathBuf>> {
+    if promised.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let indexes = crate::pack::read_local_pack_indexes_cached(odb.objects_dir())?;
+    let promisor_indexes: Vec<_> = indexes.iter().filter(|idx| idx.is_promisor).collect();
+    let mut retained = HashSet::new();
+    for idx in indexes.iter().filter(|idx| !idx.is_promisor) {
+        for entry in idx.iter() {
+            let oid = ObjectId::from_bytes(entry.oid())?;
+            if promised.contains(&oid)
+                && !promisor_indexes
+                    .iter()
+                    .any(|idx| idx.find_position(&oid).is_some())
+            {
+                retained.insert(idx.pack_path.clone());
+                break;
+            }
+        }
+    }
+    Ok(retained)
+}
+
 /// Remove pack artifacts in `pack_dir` except `keep_pack`, `.keep` packs, and
 /// promisor packs (including every sidecar of those retained packs).
 pub fn remove_superseded_pack_files(pack_dir: &Path, keep_pack: &Path) -> Result<usize> {
+    remove_superseded_pack_files_retaining(pack_dir, keep_pack, &HashSet::new())
+}
+
+fn remove_superseded_pack_files_retaining(
+    pack_dir: &Path,
+    keep_pack: &Path,
+    retained_packs: &HashSet<PathBuf>,
+) -> Result<usize> {
     let git_dir = crate::git_dir::io_error::git_dir_from_pack_dir(pack_dir);
     let keep_stem = keep_pack
         .file_stem()
@@ -1883,7 +1930,10 @@ pub fn remove_superseded_pack_files(pack_dir: &Path, keep_pack: &Path) -> Result
         }
         let path = entry.path();
         if path.is_file() {
-            if pack_has_keep_marker(pack_dir, &path) || path.with_extension("promisor").is_file() {
+            if pack_has_keep_marker(pack_dir, &path)
+                || path.with_extension("promisor").is_file()
+                || retained_packs.contains(&path.with_extension("pack"))
+            {
                 continue;
             }
             crate::git_dir::io_error::io_with_git_path(

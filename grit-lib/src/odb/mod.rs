@@ -1173,7 +1173,8 @@ impl Odb {
     /// loose (with preserved mtimes) so later loose pruning can apply `gc.pruneExpire`.
     ///
     /// `reachable` is only walked when a superseded pack holds an object that is in
-    /// neither the new pack nor a `.keep` pack.
+    /// neither the new pack nor a `.keep` pack. `retained_packs` protects ordinary
+    /// packs that supply available promises from being superseded or loosened.
     ///
     /// # Errors
     ///
@@ -1185,6 +1186,7 @@ impl Odb {
         keep_pack: &Path,
         reachable: &crate::gc::LazyReachable<'_>,
         retention: UnreachablePackRetention,
+        retained_packs: &HashSet<PathBuf>,
     ) -> Result<usize> {
         if matches!(retention, UnreachablePackRetention::DropAll) {
             return Ok(0);
@@ -1198,7 +1200,8 @@ impl Odb {
         };
         let kept_pack_oids = oids_in_marker_kept_packs(pack_dir, keep_pack)?;
         let mut loosened = 0usize;
-        for (idx_path, pack_mtime) in superseded_pack_indexes(pack_dir, keep_pack)? {
+        for (idx_path, pack_mtime) in superseded_pack_indexes(pack_dir, keep_pack, retained_packs)?
+        {
             let oids = PackedObjects::object_ids_from_index_path(&idx_path)?;
             for oid in oids {
                 let keep = match retention {
@@ -3372,6 +3375,7 @@ fn system_time_to_file_time(t: std::time::SystemTime) -> FileTime {
 fn superseded_pack_indexes(
     pack_dir: &Path,
     keep_pack: &Path,
+    retained_packs: &HashSet<PathBuf>,
 ) -> Result<Vec<(PathBuf, std::time::SystemTime)>> {
     let keep_stem = keep_pack
         .file_stem()
@@ -3403,6 +3407,7 @@ fn superseded_pack_indexes(
         }
         if superseded_pack_has_keep_marker(pack_dir, &pack_path)
             || pack_path.with_extension("promisor").is_file()
+            || retained_packs.contains(&pack_path)
         {
             continue;
         }

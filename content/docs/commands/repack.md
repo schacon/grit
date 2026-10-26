@@ -24,24 +24,26 @@ Unreachable objects that lived only in removed packs are written loose first so 
 
 In a shallow clone (`grit clone --depth` or `git clone --depth`), the commits listed in `.git/shallow` (in the common Git directory, shared by linked worktrees) are history boundaries, as in Git: their trees are packed, but their parents are neither packed nor required to exist.
 
-In a partial clone, maintenance works offline after local commits. Existing `.promisor` packs and all their sidecars stay in place. The new unmarked pack contains local objects only; promised historical blobs or trees may remain absent. Promisor packs are never loosened or folded into the local pack. Bitmap generation is skipped when promises prevent a complete object closure. `--dry-run` follows the same boundary without fetching. `pack_path` and `pack_bytes` describe the newly written local pack even when promisor packs remain alongside it.
+In a partial clone, maintenance works offline after local commits. Existing `.promisor` packs and all their sidecars stay in place. Ordinary packs that hold promised objects unavailable in those promisor packs are also retained with their sidecars, so already available content stays readable offline. These retained ordinary packs may contain both local and promised objects. The new unmarked pack contains local objects only; promised historical blobs or trees may remain absent. Promisor packs are never loosened or folded into the local pack. Bitmap generation is skipped when promises prevent a complete object closure. `--dry-run` follows the same boundary without fetching. `pack_path` and `pack_bytes` describe the newly written local pack even when promisor packs remain alongside it.
 
 Use this when a repository has accumulated many loose objects after local commits. Clones and fetches already install packs; repack is mainly for long-lived worktrees built entirely with `grit commit`.
 
 ## Benchmarking
 
-Measured on 2026-10-26 using Linux x86_64, four CPUs, 15 GiB RAM, system Git 2.55.0, and Rust 1.99.0 with the `release` profile. The real Grit repository fixture has 11,273 commits and 124,971 objects after adding one local indexed-file commit. Its blobless copy leaves 54,098 blobs promised, with the origin unavailable. Neither fixture has a checkout.
+Measured on 2026-10-26 using Linux x86_64, four CPUs, 15 GiB RAM, system Git 2.55.0, and Rust 1.99.0 with the `release` profile. The real Grit repository fixture has 11,278 commits and 125,062 reachable objects after adding one local indexed-file commit. Its blobless copy leaves 54,133 blobs promised, with the origin unavailable. Neither fixture has a checkout.
 
-Each cell shows **wall time in ms / peak RSS in KiB**, as medians of seven fresh repository copies. Wall time includes process launch; RSS comes from `/usr/bin/time -v`. Complete-repository baseline and fixed runs alternate to control measurement variation. Git runs `gc` or `repack -a -d`; Grit runs `gc --json` or `repack --json`.
+Each cell shows **wall time in ms / peak RSS in KiB**, as medians of five fresh repository copies. Runs alternate among all four binaries to control measurement variation. Wall time includes process launch, measured with a monotonic clock around `/usr/bin/time -v`; RSS comes from that same invocation. Git runs `gc` or `repack -a -d`; Grit runs `gc --json` or `repack --json`.
 
-| Repository / operation | System Git | Baseline main (`8a358bf6a`) | Fixed |
-| --- | ---: | ---: | ---: |
-| Complete / gc | 1,687.1 / 296,896 | 1,707.2 / 294,292 | 1,707.7 / 294,988 |
-| Complete / repack | 1,535.9 / 295,424 | 1,539.7 / 293,856 | 1,536.1 / 294,168 |
-| Blobless / gc | 448.6 / 34,936 | 1,161.5 / 173,688 (failed) | 1,895.2 / 174,608 |
-| Blobless / repack | 310.5 / 35,036 | 1,174.5 / 173,592 (failed) | 1,673.3 / 173,788 |
+| Repository / operation | System Git | Main (`a33000428`) | Reviewed (`a3a1bbce`) | Fixed |
+| --- | ---: | ---: | ---: | ---: |
+| Complete / gc | 1,663.0 / 296,124 | 1,710.3 / 293,256 | 1,712.5 / 293,104 | 1,729.1 / 293,304 |
+| Complete / repack | 1,516.1 / 296,228 | 1,545.4 / 291,068 | 1,550.9 / 291,128 | 1,562.5 / 296,268 |
+| Blobless / gc | 401.4 / 34,976 | 1,193.3 / 174,592 (failed) | 1,748.5 / 166,468 | 1,751.1 / 166,360 |
+| Blobless / repack | 274.2 / 35,040 | 1,210.0 / 174,728 (failed) | 1,545.9 / 166,176 | 1,551.1 / 165,836 |
 
-Baseline blobless GC exits 128 and repack exits 1 while trying the unavailable remote; those measurements cover failed operations. Fixed runs finish offline. Promisor classification still costs more time and memory than Git on this metadata-heavy fixture.
+Main blobless GC exits 128 and repack exits 1 while trying the unavailable remote; those measurements cover failed operations. Reviewed and fixed runs finish offline. The fixed complete-repository median times are within 1% of the reviewed revision, with overlapping sample ranges and peak RSS within 1.8%. Blobless median times are within 0.4%. Promisor classification still costs more time and memory than Git on this metadata-heavy fixture.
+
+The availability regression covered by the maintenance tests uses a different storage shape: a marked tree references a blob or subtree stored only in an ordinary pack. Fixed maintenance retains that source pack; the reviewed revision could delete its only available copy even though `git fsck --strict` passed.
 
 ## Options
 

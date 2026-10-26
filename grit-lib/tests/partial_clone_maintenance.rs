@@ -393,3 +393,166 @@ fn all_promisor_repack_writes_no_empty_pack_and_still_prunes() {
     assert_eq!(f.fetcher.0.load(Ordering::SeqCst), 0);
     git(&f.path, &["fsck", "--strict"]);
 }
+
+/// A promised tree or blob can be available only in an ordinary pack, for example
+/// after importing objects locally before configuring a promisor remote.
+struct AvailablePromiseFixture {
+    _dir: TempDir,
+    path: PathBuf,
+    repo: Repository,
+    fetcher: Arc<OfflineFetcher>,
+    head: String,
+    tree: String,
+    blob: String,
+    file_spec: String,
+}
+
+impl AvailablePromiseFixture {
+    fn new(promise_tree: bool) -> Self {
+        use std::io::Write;
+        use std::process::Stdio;
+
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().to_path_buf();
+        git(&path, &["init", "-q", "-b", "main"]);
+        let file_path = if promise_tree { "dir/a" } else { "a" };
+        if promise_tree {
+            fs::create_dir(path.join("dir")).expect("directory");
+        }
+        fs::write(path.join(file_path), "content\n").expect("file");
+        git(&path, &["add", "."]);
+        git(&path, &["commit", "-qm", "base"]);
+        git(&path, &["repack", "-a", "-d"]);
+        let head = git(&path, &["rev-parse", "HEAD"]);
+        let seed = git(&path, &["rev-parse", "HEAD^{tree}"]);
+        let tree = git(
+            &path,
+            &[
+                "rev-parse",
+                if promise_tree {
+                    "HEAD:dir"
+                } else {
+                    "HEAD^{tree}"
+                },
+            ],
+        );
+        let file_spec = format!("HEAD:{file_path}");
+        let blob = git(&path, &["rev-parse", &file_spec]);
+        // A single marked object promises its closure, but the tree/blob itself
+        // remains stored exclusively in the original unmarked pack.
+        let mut child = Command::new("git")
+            .current_dir(&path)
+            .args(["pack-objects", ".git/objects/pack/pack"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("pack-objects");
+        writeln!(child.stdin.take().expect("stdin"), "{seed}").expect("oid");
+        let out = child.wait_with_output().expect("pack");
+        assert!(out.status.success());
+        let hash = String::from_utf8(out.stdout).expect("hash");
+        fs::write(
+            path.join(format!(".git/objects/pack/pack-{}.promisor", hash.trim())),
+            b"",
+        )
+        .expect("marker");
+        git(&path, &["config", "remote.origin.promisor", "true"]);
+        git(
+            &path,
+            &["config", "remote.origin.url", "file:///unavailable.git"],
+        );
+        let fetcher = Arc::new(OfflineFetcher::default());
+        let repo = Repository::open(
+            &path.join(".git"),
+            &RepositoryOptions::empty()
+                .with_work_tree(&path)
+                .with_promisor_fetcher(Some(fetcher.clone())),
+        )
+        .expect("open");
+        let f = Self {
+            _dir: dir,
+            path,
+            repo,
+            fetcher,
+            head,
+            tree,
+            blob,
+            file_spec,
+        };
+        f.check();
+        f
+    }
+
+    fn check(&self) {
+        assert_eq!(git(&self.path, &["rev-parse", "HEAD"]), self.head);
+        assert_eq!(
+            git(&self.path, &["--no-lazy-fetch", "show", &self.file_spec]),
+            "content"
+        );
+        git(
+            &self.path,
+            &["--no-lazy-fetch", "cat-file", "-p", &self.tree],
+        );
+        assert!(
+            !promisor_pack_object_ids(self.repo.odb().objects_dir())
+                .contains(&self.head.parse().expect("head")),
+            "local commit must not become promised"
+        );
+        for oid in [&self.head, &self.tree, &self.blob] {
+            assert!(
+                self.repo.odb().exists(&oid.parse().expect("oid")),
+                "lost {oid}"
+            );
+        }
+        assert_eq!(
+            self.fetcher.0.load(Ordering::SeqCst),
+            0,
+            "must stay offline"
+        );
+        git(&self.path, &["fsck", "--strict"]);
+    }
+}
+
+#[test]
+fn gc_preserves_available_promised_blob_and_tree() {
+    for promise_tree in [false, true] {
+        // An independent Git fixture verifies the offline retention contract.
+        let control = AvailablePromiseFixture::new(promise_tree);
+        git(&control.path, &["gc"]);
+        control.check();
+        let f = AvailablePromiseFixture::new(promise_tree);
+        gc(&f.repo, &GcOptions::full_run(false, 1_704_000_000)).expect("gc");
+        f.check();
+        git(&f.path, &["gc"]);
+        f.check();
+    }
+}
+
+#[test]
+fn repack_preserves_available_promised_blob_and_tree() {
+    for promise_tree in [false, true] {
+        for force in [false, true] {
+            let control = AvailablePromiseFixture::new(promise_tree);
+            let mut args = vec!["repack", "-a", "-d"];
+            if force {
+                args.push("-f");
+            }
+            git(&control.path, &args);
+            control.check();
+            for keep_unreachable in [false, true] {
+                let f = AvailablePromiseFixture::new(promise_tree);
+                let mut opts = RepackOptions::default();
+                opts.force_recompress = force;
+                opts.keep_unreachable = keep_unreachable;
+                opts.dry_run = true;
+                repack_all(&f.repo, &opts).expect("preview");
+                f.check();
+                opts.dry_run = false;
+                repack_all(&f.repo, &opts).expect("repack");
+                f.check();
+                git(&f.path, &args);
+                f.check();
+            }
+        }
+    }
+}
