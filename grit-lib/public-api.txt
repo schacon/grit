@@ -2469,6 +2469,7 @@ impl grit_lib::ident::Signature
 pub fn grit_lib::ident::Signature::format_rfc3339(&self) -> core::option::Option<alloc::string::String>
 pub fn grit_lib::ident::Signature::header_line(&self) -> alloc::string::String
 pub fn grit_lib::ident::Signature::new(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>, time::offset_date_time::OffsetDateTime) -> core::result::Result<Self, grit_lib::ident::SignatureError>
+pub fn grit_lib::ident::Signature::reflog_name_email(&self) -> alloc::string::String
 pub fn grit_lib::ident::Signature::validate(&self) -> core::result::Result<(), grit_lib::ident::SignatureError>
 impl core::clone::Clone for grit_lib::ident::Signature
 pub fn grit_lib::ident::Signature::clone(&self) -> Self
@@ -6491,6 +6492,7 @@ impl grit_lib::ident::Signature
 pub fn grit_lib::ident::Signature::format_rfc3339(&self) -> core::option::Option<alloc::string::String>
 pub fn grit_lib::ident::Signature::header_line(&self) -> alloc::string::String
 pub fn grit_lib::ident::Signature::new(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>, time::offset_date_time::OffsetDateTime) -> core::result::Result<Self, grit_lib::ident::SignatureError>
+pub fn grit_lib::ident::Signature::reflog_name_email(&self) -> alloc::string::String
 pub fn grit_lib::ident::Signature::validate(&self) -> core::result::Result<(), grit_lib::ident::SignatureError>
 impl core::clone::Clone for grit_lib::ident::Signature
 pub fn grit_lib::ident::Signature::clone(&self) -> Self
@@ -14271,7 +14273,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::replay::Re
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::replay::ReplayOutcome
 pub struct grit_lib::porcelain::replay::ReplayRequest
 pub grit_lib::porcelain::replay::ReplayRequest::commit: grit_lib::objects::ObjectId
-pub grit_lib::porcelain::replay::ReplayRequest::committer: alloc::string::String
+pub grit_lib::porcelain::replay::ReplayRequest::committer: grit_lib::ident::Signature
 pub grit_lib::porcelain::replay::ReplayRequest::direction: grit_lib::porcelain::replay::ReplayDirection
 pub grit_lib::porcelain::replay::ReplayRequest::message_override: core::option::Option<alloc::string::String>
 impl core::clone::Clone for grit_lib::porcelain::replay::ReplayRequest
@@ -14408,7 +14410,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::replay_seq
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::replay_sequence::ReplayOptions
 pub struct grit_lib::porcelain::replay_sequence::ReplaySequenceRequest
 pub grit_lib::porcelain::replay_sequence::ReplaySequenceRequest::commits: alloc::vec::Vec<grit_lib::objects::ObjectId>
-pub grit_lib::porcelain::replay_sequence::ReplaySequenceRequest::committer: alloc::string::String
+pub grit_lib::porcelain::replay_sequence::ReplaySequenceRequest::committer: grit_lib::ident::Signature
 pub grit_lib::porcelain::replay_sequence::ReplaySequenceRequest::direction: grit_lib::porcelain::replay::ReplayDirection
 pub grit_lib::porcelain::replay_sequence::ReplaySequenceRequest::options: grit_lib::porcelain::replay_sequence::ReplayOptions
 impl core::clone::Clone for grit_lib::porcelain::replay_sequence::ReplaySequenceRequest
@@ -14424,9 +14426,9 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::replay_seq
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::replay_sequence::ReplaySequenceRequest
 pub fn grit_lib::porcelain::replay_sequence::abort_replay_sequence(&grit_lib::repo::Repository) -> grit_lib::error::Result<()>
 pub fn grit_lib::porcelain::replay_sequence::commits_to_replay(&grit_lib::repo::Repository, &[alloc::string::String]) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
-pub fn grit_lib::porcelain::replay_sequence::continue_replay_sequence(&grit_lib::repo::Repository, &str) -> grit_lib::error::Result<grit_lib::porcelain::replay_sequence::SequenceOutcome>
+pub fn grit_lib::porcelain::replay_sequence::continue_replay_sequence(&grit_lib::repo::Repository, &grit_lib::ident::Signature) -> grit_lib::error::Result<grit_lib::porcelain::replay_sequence::SequenceOutcome>
 pub fn grit_lib::porcelain::replay_sequence::predict_replay_sequence(&grit_lib::repo::Repository, &grit_lib::porcelain::replay_sequence::ReplaySequenceRequest) -> grit_lib::error::Result<grit_lib::porcelain::replay_sequence::SequencePrediction>
-pub fn grit_lib::porcelain::replay_sequence::skip_replay_step(&grit_lib::repo::Repository, &str) -> grit_lib::error::Result<grit_lib::porcelain::replay_sequence::SequenceOutcome>
+pub fn grit_lib::porcelain::replay_sequence::skip_replay_step(&grit_lib::repo::Repository, &grit_lib::ident::Signature) -> grit_lib::error::Result<grit_lib::porcelain::replay_sequence::SequenceOutcome>
 pub fn grit_lib::porcelain::replay_sequence::start_replay_sequence(&grit_lib::repo::Repository, &grit_lib::porcelain::replay_sequence::ReplaySequenceRequest) -> grit_lib::error::Result<grit_lib::porcelain::replay_sequence::SequenceOutcome>
 pub mod grit_lib::porcelain::reset
 pub enum grit_lib::porcelain::reset::ResetMode
@@ -14475,14 +14477,14 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::reset::Orp
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::reset::OrphanedCommitSummary
 pub struct grit_lib::porcelain::reset::ResetOptions
 pub grit_lib::porcelain::reset::ResetOptions::dry_run: bool
-pub grit_lib::porcelain::reset::ResetOptions::identity: alloc::string::String
+pub grit_lib::porcelain::reset::ResetOptions::identity: grit_lib::ident::Signature
 pub grit_lib::porcelain::reset::ResetOptions::message: alloc::string::String
 pub grit_lib::porcelain::reset::ResetOptions::mode: grit_lib::porcelain::reset::ResetMode
 pub grit_lib::porcelain::reset::ResetOptions::orphan_limit: usize
 pub grit_lib::porcelain::reset::ResetOptions::target: grit_lib::objects::ObjectId
 impl grit_lib::porcelain::reset::ResetOptions
 pub fn grit_lib::porcelain::reset::ResetOptions::effective_orphan_limit(&self) -> usize
-pub fn grit_lib::porcelain::reset::ResetOptions::new(grit_lib::objects::ObjectId, grit_lib::porcelain::reset::ResetMode, impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn grit_lib::porcelain::reset::ResetOptions::new(grit_lib::objects::ObjectId, grit_lib::porcelain::reset::ResetMode, grit_lib::ident::Signature, impl core::convert::Into<alloc::string::String>) -> Self
 impl core::clone::Clone for grit_lib::porcelain::reset::ResetOptions
 pub fn grit_lib::porcelain::reset::ResetOptions::clone(&self) -> Self
 impl core::fmt::Debug for grit_lib::porcelain::reset::ResetOptions
@@ -19134,6 +19136,7 @@ impl<'repo> !core::panic::unwind_safe::UnwindSafe for grit_lib::refs::handle::Re
 pub const grit_lib::refs::SYMREF_MAXDEPTH: usize
 pub fn grit_lib::refs::append_reflog(&std::path::Path, &str, &grit_lib::objects::ObjectId, &grit_lib::objects::ObjectId, &str, &str, bool) -> grit_lib::error::Result<()>
 pub fn grit_lib::refs::append_reflog_with_config(&std::path::Path, &str, &grit_lib::objects::ObjectId, &grit_lib::objects::ObjectId, &str, &str, bool, core::option::Option<&grit_lib::config::ConfigSet>) -> grit_lib::error::Result<()>
+pub fn grit_lib::refs::append_reflog_with_signature(&std::path::Path, &str, &grit_lib::objects::ObjectId, &grit_lib::objects::ObjectId, &grit_lib::ident::Signature, &str, bool) -> grit_lib::error::Result<()>
 pub fn grit_lib::refs::collect_alternate_ref_oids(&std::path::Path) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
 pub fn grit_lib::refs::commit_ref_batch_on_store(&dyn grit_lib::refs::store::RefStore, &[grit_lib::refs::store::RefUpdate], &[grit_lib::refs::store::RefReflogRename], &[grit_lib::refs::store::RefCaseOnlyRename]) -> grit_lib::error::Result<()>
 pub fn grit_lib::refs::commit_ref_store_batch(&std::path::Path, &[grit_lib::refs::store::RefUpdate]) -> grit_lib::error::Result<()>
@@ -19432,7 +19435,7 @@ pub fn grit_lib::remote::fetch::NoProgress::message(&mut self, &[u8])
 pub fn grit_lib::remote::fetch::NoProgress::received_objects(&mut self, grit_lib::progress::ReceivedObjects)
 pub fn grit_lib::remote::fetch::NoProgress::remote_sideband_progress(&self) -> bool
 pub fn grit_lib::remote::fetch::NoProgress::wants_received_objects(&self) -> bool
-pub fn grit_lib::remote::fetch::fetch_operation_identity(&grit_lib::config::environment::Environment, &std::path::Path) -> grit_lib::error::Result<alloc::string::String>
+pub fn grit_lib::remote::fetch::fetch_operation_identity(&grit_lib::config::environment::Environment, &std::path::Path) -> grit_lib::error::Result<grit_lib::ident::Signature>
 pub fn grit_lib::remote::fetch::fetch_remote(&std::path::Path, &mut dyn grit_lib::remote::transport::Connection, &mut grit_lib::remote::transfer::FetchOptions, &mut dyn grit_lib::remote::fetch::Progress, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<grit_lib::remote::transfer::FetchOutcome>
 pub mod grit_lib::remote::fetch_head
 pub fn grit_lib::remote::fetch_head::merge_object_ids_hex(&str) -> alloc::vec::Vec<alloc::string::String>
@@ -20694,7 +20697,7 @@ impl core::marker::UnsafeUnpin for grit_lib::remote::transfer::UpdateMode
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::transfer::UpdateMode
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::transfer::UpdateMode
 pub struct grit_lib::remote::transfer::CloneReflog
-pub grit_lib::remote::transfer::CloneReflog::identity: alloc::string::String
+pub grit_lib::remote::transfer::CloneReflog::identity: grit_lib::ident::Signature
 pub grit_lib::remote::transfer::CloneReflog::message: alloc::string::String
 impl core::clone::Clone for grit_lib::remote::transfer::CloneReflog
 pub fn grit_lib::remote::transfer::CloneReflog::clone(&self) -> Self
@@ -23472,7 +23475,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::App
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::AppliedRewrite
 pub struct grit_lib::revwalk::history::ApplyOptions
 pub grit_lib::revwalk::history::ApplyOptions::hooks: grit_lib::command_runner::hooks::PostOperationHooks
-pub grit_lib::revwalk::history::ApplyOptions::identity: alloc::string::String
+pub grit_lib::revwalk::history::ApplyOptions::identity: grit_lib::ident::Signature
 pub grit_lib::revwalk::history::ApplyOptions::record_operation: core::option::Option<alloc::string::String>
 pub grit_lib::revwalk::history::ApplyOptions::reflog_message: alloc::string::String
 impl core::clone::Clone for grit_lib::revwalk::history::ApplyOptions
@@ -23957,8 +23960,14 @@ impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::UndoOutcome
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::UndoOutcome
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::UndoOutcome
 pub const grit_lib::revwalk::history::DEFAULT_ABSORB_STACK_LIMIT: usize
+<<<<<<< New base: Fixes #1972: use Signature for reflog identity in reset, history, clone, and rep
 pub fn grit_lib::revwalk::history::abort_interrupted_rewrite_apply(&grit_lib::repo::Repository) -> core::result::Result<grit_lib::revwalk::history::RewriteApplyRecovery, grit_lib::revwalk::history::HistoryError>
 pub fn grit_lib::revwalk::history::abort_rebase(&grit_lib::repo::Repository, &str) -> core::result::Result<(), grit_lib::revwalk::history::RebaseSessionError>
+||||||| Common ancestor
+pub fn grit_lib::revwalk::history::abort_rebase(&grit_lib::repo::Repository, &str) -> core::result::Result<(), grit_lib::revwalk::history::RebaseSessionError>
+=======
+pub fn grit_lib::revwalk::history::abort_rebase(&grit_lib::repo::Repository, &grit_lib::ident::Signature) -> core::result::Result<(), grit_lib::revwalk::history::RebaseSessionError>
+>>>>>>> Current commit: Address review: validate ReflogUpdate on ref transactions, public-api snapshot, 
 pub fn grit_lib::revwalk::history::absorb(&grit_lib::repo::Repository, &grit_lib::revwalk::history::AbsorbOptions) -> core::result::Result<grit_lib::revwalk::history::AbsorbPlan, grit_lib::revwalk::history::HistoryError>
 pub fn grit_lib::revwalk::history::apply_absorb_rewrite(&grit_lib::repo::Repository, &grit_lib::revwalk::history::AbsorbPlan, &grit_lib::revwalk::history::ApplyOptions) -> core::result::Result<grit_lib::revwalk::history::AppliedRewrite, grit_lib::revwalk::history::HistoryError>
 pub fn grit_lib::revwalk::history::apply_fixup_hunk_selection(&grit_lib::repo::Repository, &grit_lib::revwalk::history::RewritePlan, &grit_lib::revwalk::history::ApplyOptions, &grit_lib::porcelain::hunk_select::HunkSelection, &[alloc::string::String]) -> core::result::Result<grit_lib::revwalk::history::AppliedRewrite, grit_lib::revwalk::history::HistoryError>

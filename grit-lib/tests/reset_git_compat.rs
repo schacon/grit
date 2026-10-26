@@ -439,6 +439,58 @@ fn reset_forward_has_no_orphan_walk() {
 }
 
 #[test]
+fn reset_reflog_identity_includes_signature_timestamp_and_git_reads_it() {
+    use grit_lib::ident::Signature;
+    use time::{OffsetDateTime, UtcOffset};
+
+    let dir = TempDir::new().expect("tempdir");
+    let repo = Repository::init(
+        dir.path(),
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(RefStorageFormat::Files),
+    )
+    .expect("init");
+    repo.config_handle()
+        .set_local("user.name", "Solo Dev")
+        .expect("name");
+    repo.config_handle()
+        .set_local("user.email", "solo@example.com")
+        .expect("email");
+    let repo = Repository::open(
+        repo.git_dir(),
+        &grit_lib::config::environment::RepositoryOptions::empty().with_work_tree(dir.path()),
+    )
+    .expect("reopen");
+    let c1 = commit_file(&repo, "a.txt", "v0\n", None);
+    commit_file(&repo, "a.txt", "v1\n", Some(c1));
+    let time = OffsetDateTime::from_unix_timestamp(1_700_000_000)
+        .expect("time")
+        .to_offset(UtcOffset::UTC);
+    let sig = Signature::new("Solo Dev", "solo@example.com", time).expect("sig");
+    reset_to_commit(
+        &repo,
+        &ResetOptions::new(c1, ResetMode::Soft, sig.clone(), "reset: test"),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("reset");
+    let log = std::fs::read_to_string(repo.git_dir().join("logs/HEAD")).expect("log");
+    assert!(
+        log.contains(&format!("{}", time.unix_timestamp())),
+        "reflog line should include signature epoch: {log}"
+    );
+    let out = git_cmd(&["log", "-g", "-1", "--format=%gn <%ge>"])
+        .in_dir(dir.path())
+        .suc()
+        .stdout;
+    assert!(
+        out.contains("Solo Dev") && out.contains("solo@example.com"),
+        "git log -g should read identity: {out}"
+    );
+}
+
+#[test]
 fn append_reflog_rejects_malformed_identity() {
     let dir = TempDir::new().expect("tempdir");
     let repo = Repository::init(

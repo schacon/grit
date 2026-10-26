@@ -18,6 +18,10 @@ use grit_lib::porcelain::replay_sequence::{
 use grit_lib::repo::Repository;
 const IDENT: &str = "Test User <t@example.com> 1700000000 +0000";
 
+fn replay_ident() -> grit_lib::ident::Signature {
+    IDENT.parse().expect("IDENT")
+}
+
 fn git(root: &Path, args: &[&str]) -> String {
     let home = root.join(".git-home");
     let _ = fs::create_dir_all(&home);
@@ -266,7 +270,7 @@ fn git_cherry_pick_stop_then_grit_continue() {
     fs::write(root.path().join("f"), "resolved\n").unwrap();
     git(root.path(), &["add", "f"]);
     let repo = open_repo(root.path());
-    let out = continue_replay_sequence(&repo, IDENT).expect("continue");
+    let out = continue_replay_sequence(&repo, &replay_ident()).expect("continue");
     assert!(matches!(out, SequenceOutcome::Completed { .. }));
     git_fsck_strict(root.path());
 }
@@ -331,7 +335,7 @@ fn skip_moves_to_next() {
 
     let repo = open_repo(root.path());
     start_replay_sequence(&repo, &pick_req(vec![c1, c2], ReplayOptions::default())).expect("pick");
-    let out = skip_replay_step(&repo, IDENT).expect("skip");
+    let out = skip_replay_step(&repo, &replay_ident()).expect("skip");
     assert!(matches!(out, SequenceOutcome::Completed { .. }));
     assert!(root.path().join("a.txt").is_file());
     git_fsck_strict(root.path());
@@ -394,7 +398,7 @@ fn continue_refuses_unmerged() {
 
     let repo = open_repo(root.path());
     start_replay_sequence(&repo, &pick_req(vec![pick], ReplayOptions::default())).expect("pick");
-    let err = continue_replay_sequence(&repo, IDENT).unwrap_err();
+    let err = continue_replay_sequence(&repo, &replay_ident()).unwrap_err();
     assert!(matches!(
         err,
         grit_lib::error::Error::ReplayContinueUnmerged
@@ -680,7 +684,7 @@ fn continue_after_no_commit_conflict_leaves_head() {
     assert!(matches!(out, SequenceOutcome::Conflicts { .. }));
     fs::write(root.path().join("f"), "resolved\n").unwrap();
     git(root.path(), &["add", "f"]);
-    let done = continue_replay_sequence(&repo, IDENT).expect("continue");
+    let done = continue_replay_sequence(&repo, &replay_ident()).expect("continue");
     assert!(matches!(done, SequenceOutcome::Completed { .. }));
     assert_eq!(oid_from_rev(root.path(), "HEAD"), start);
     git_fsck_strict(root.path());
@@ -720,7 +724,7 @@ fn continue_after_range_conflict_pairs_all_created_sources() {
     assert!(matches!(out, SequenceOutcome::Conflicts { .. }));
     fs::write(root.path().join("shared.txt"), "resolved\n").unwrap();
     git(root.path(), &["add", "shared.txt"]);
-    let done = continue_replay_sequence(&repo, IDENT).expect("continue");
+    let done = continue_replay_sequence(&repo, &replay_ident()).expect("continue");
     let created = match done {
         SequenceOutcome::Completed { created, .. } => created,
         _ => panic!("expected completed"),
@@ -769,7 +773,7 @@ fn continue_omits_conflict_comment_lines_from_merge_msg() {
         "topic-f\n\n# Conflicts:\n# f\n",
     )
     .unwrap();
-    continue_replay_sequence(&repo, IDENT).expect("continue");
+    continue_replay_sequence(&repo, &replay_ident()).expect("continue");
     let msg = git(root.path(), &["log", "-1", "--format=%B"]);
     assert!(!msg.contains("# Conflicts:"));
     assert!(msg.contains("topic-f"));
@@ -795,7 +799,7 @@ fn skip_after_partial_range_returns_earlier_created_records() {
 
     let repo = open_repo(root.path());
     start_replay_sequence(&repo, &pick_req(vec![c1, c2], ReplayOptions::default())).expect("pick");
-    let out = skip_replay_step(&repo, IDENT).expect("skip");
+    let out = skip_replay_step(&repo, &replay_ident()).expect("skip");
     match out {
         SequenceOutcome::Completed { created, .. } => {
             assert_eq!(created.len(), 1);
@@ -827,7 +831,7 @@ fn continue_honours_persisted_no_commit() {
     assert!(matches!(out, SequenceOutcome::Conflicts { .. }));
     fs::write(root.path().join("f"), "resolved\n").unwrap();
     git(root.path(), &["add", "f"]);
-    let done = continue_replay_sequence(&repo, IDENT).expect("continue");
+    let done = continue_replay_sequence(&repo, &replay_ident()).expect("continue");
     assert!(matches!(done, SequenceOutcome::Completed { .. }));
     assert_eq!(oid_from_rev(root.path(), "HEAD"), start);
     git_fsck_strict(root.path());
@@ -872,7 +876,7 @@ fn continued_commit_gets_new_change_id() {
     start_replay_sequence(&repo, &pick_req(vec![pick], ReplayOptions::default())).expect("pick");
     fs::write(root.path().join("f"), "merged\n").unwrap();
     git(root.path(), &["add", "f"]);
-    let out = continue_replay_sequence(&repo, IDENT).expect("continue");
+    let out = continue_replay_sequence(&repo, &replay_ident()).expect("continue");
     let created = match out {
         SequenceOutcome::Completed { created, .. } => created,
         _ => panic!("expected completed"),
@@ -1027,7 +1031,7 @@ fn revert_continue_reports_subjects_and_change_ids_of_earlier_steps() {
     fs::write(root.path().join("shared.txt"), "resolved\n").unwrap();
     git(root.path(), &["add", "shared.txt"]);
     let SequenceOutcome::Completed { created, .. } =
-        continue_replay_sequence(&repo, IDENT).expect("continue")
+        continue_replay_sequence(&repo, &replay_ident()).expect("continue")
     else {
         panic!("expected completed");
     };
@@ -1144,7 +1148,7 @@ fn subjects_skip_leading_blank_message_lines_like_git() {
     fs::write(root.path().join("f"), "resolved\n").unwrap();
     git(root.path(), &["add", "f"]);
     let SequenceOutcome::Completed { created, .. } =
-        continue_replay_sequence(&repo, IDENT).expect("continue")
+        continue_replay_sequence(&repo, &replay_ident()).expect("continue")
     else {
         panic!("expected completed");
     };

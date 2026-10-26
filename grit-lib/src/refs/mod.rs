@@ -131,6 +131,9 @@ pub(crate) fn commit_store_update(git_dir: &Path, update: RefUpdate) -> Result<(
 ///
 /// Propagates validation, compare-and-swap, and backend errors.
 pub fn commit_ref_update_on_store(store: &dyn RefStore, update: RefUpdate) -> Result<()> {
+    if let Some(ref log) = update.reflog {
+        validate_reflog_update(log)?;
+    }
     let refname = update.name.clone();
     let txn = RefTransaction::new()
         .update(update)
@@ -262,6 +265,14 @@ fn commit_owned_ref_batch_on_store(
     reflog_renames: Vec<RefReflogRename>,
     case_only_renames: Vec<RefCaseOnlyRename>,
 ) -> Result<()> {
+    for update in &updates {
+        if let Some(ref log) = update.reflog {
+            validate_reflog_update(log)?;
+        }
+    }
+    for rename in &reflog_renames {
+        validate_reflog_update(&rename.append)?;
+    }
     let label = updates
         .first()
         .map(|u| u.name.clone())
@@ -2776,6 +2787,13 @@ pub(crate) fn reflog_oid_hex_pair(old: &ObjectId, new: &ObjectId) -> (String, St
     (render(old), render(new))
 }
 
+fn validate_reflog_message(message: &str) -> Result<()> {
+    if message.bytes().any(|b| b == b'\n' || b == b'\r') {
+        return Err(Error::InvalidSignature(SignatureError::Malformed));
+    }
+    Ok(())
+}
+
 fn validate_reflog_identity_string(identity: &str) -> Result<()> {
     if identity
         .bytes()
@@ -2789,6 +2807,13 @@ fn validate_reflog_identity_string(identity: &str) -> Result<()> {
         parse_author_arg(identity)
             .map_err(|_| Error::InvalidSignature(SignatureError::Malformed))?;
     }
+    Ok(())
+}
+
+/// Reject reflog metadata that would forge or corrupt a log line on either backend.
+fn validate_reflog_update(log: &ReflogUpdate) -> Result<()> {
+    validate_reflog_identity_string(&log.identity)?;
+    validate_reflog_message(&log.message)?;
     Ok(())
 }
 
