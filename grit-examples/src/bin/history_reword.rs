@@ -54,9 +54,8 @@ fn main() -> Result<(), grit_lib::error::Error> {
         &repo,
         &plan,
         &ApplyOptions {
-            identity: "History Guide <guide@grit.test> 1 +0000"
-                .parse()
-                .expect("identity"),
+            identity: grit_lib::ident::parse_signature("History Guide <guide@grit.test> 1 +0000")
+                .unwrap_or_else(|| panic!("guide identity must parse as a signature")),
             reflog_message: "history reword".into(),
             record_operation: None,
             hooks: grit_lib::PostOperationHooks::Run,

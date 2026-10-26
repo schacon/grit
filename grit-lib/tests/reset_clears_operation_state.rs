@@ -22,6 +22,10 @@ use grit_lib::state::{primary_in_progress_operation, resolve_head_for_repository
 
 const IDENT: &str = "Test User <t@example.com> 1700000000 +0000";
 
+fn test_ident() -> grit_lib::ident::Signature {
+    IDENT.parse().expect("IDENT")
+}
+
 fn git(root: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .current_dir(root)
@@ -96,7 +100,7 @@ fn pick_req(commits: Vec<ObjectId>) -> ReplaySequenceRequest {
     ReplaySequenceRequest {
         commits,
         direction: ReplayDirection::Pick,
-        committer: IDENT.to_owned(),
+        committer: test_ident(),
         options: ReplayOptions {
             empty: ReplayEmptyPolicy::Stop,
             ..ReplayOptions::default()
@@ -140,7 +144,7 @@ fn assert_no_operation_state(repo: &Repository) {
 fn reset_head(repo: &Repository, head: ObjectId, mode: ResetMode) {
     reset_to_commit(
         repo,
-        &ResetOptions::new(head, mode, IDENT, "reset"),
+        &ResetOptions::new(head, mode, test_ident(), "reset"),
         &mut NullProgress,
         &grit_lib::progress::NeverCancel,
     )

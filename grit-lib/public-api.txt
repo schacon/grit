@@ -23967,14 +23967,8 @@ impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::UndoOutcome
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::UndoOutcome
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::UndoOutcome
 pub const grit_lib::revwalk::history::DEFAULT_ABSORB_STACK_LIMIT: usize
-<<<<<<< New base: Fixes #1972: use Signature for reflog identity in reset, history, clone, and rep
 pub fn grit_lib::revwalk::history::abort_interrupted_rewrite_apply(&grit_lib::repo::Repository) -> core::result::Result<grit_lib::revwalk::history::RewriteApplyRecovery, grit_lib::revwalk::history::HistoryError>
-pub fn grit_lib::revwalk::history::abort_rebase(&grit_lib::repo::Repository, &str) -> core::result::Result<(), grit_lib::revwalk::history::RebaseSessionError>
-||||||| Common ancestor
-pub fn grit_lib::revwalk::history::abort_rebase(&grit_lib::repo::Repository, &str) -> core::result::Result<(), grit_lib::revwalk::history::RebaseSessionError>
-=======
 pub fn grit_lib::revwalk::history::abort_rebase(&grit_lib::repo::Repository, &grit_lib::ident::Signature) -> core::result::Result<(), grit_lib::revwalk::history::RebaseSessionError>
->>>>>>> Current commit: Address review: validate ReflogUpdate on ref transactions, public-api snapshot, 
 pub fn grit_lib::revwalk::history::absorb(&grit_lib::repo::Repository, &grit_lib::revwalk::history::AbsorbOptions) -> core::result::Result<grit_lib::revwalk::history::AbsorbPlan, grit_lib::revwalk::history::HistoryError>
 pub fn grit_lib::revwalk::history::apply_absorb_rewrite(&grit_lib::repo::Repository, &grit_lib::revwalk::history::AbsorbPlan, &grit_lib::revwalk::history::ApplyOptions) -> core::result::Result<grit_lib::revwalk::history::AppliedRewrite, grit_lib::revwalk::history::HistoryError>
 pub fn grit_lib::revwalk::history::apply_fixup_hunk_selection(&grit_lib::repo::Repository, &grit_lib::revwalk::history::RewritePlan, &grit_lib::revwalk::history::ApplyOptions, &grit_lib::porcelain::hunk_select::HunkSelection, &[alloc::string::String]) -> core::result::Result<grit_lib::revwalk::history::AppliedRewrite, grit_lib::revwalk::history::HistoryError>

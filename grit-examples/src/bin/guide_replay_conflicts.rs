@@ -19,7 +19,8 @@ use std::process::Command;
 const IDENT: &str = "Library Guide <guide@grit-scm.com> 1735689600 +0000";
 
 fn replay_identity() -> grit_lib::ident::Signature {
-    IDENT.parse().expect("IDENT")
+    grit_lib::ident::parse_signature(IDENT)
+        .unwrap_or_else(|| panic!("guide IDENT must parse as a signature: {IDENT}"))
 }
 
 fn open_repo(root: &Path) -> Result<Repository, grit_lib::error::Error> {

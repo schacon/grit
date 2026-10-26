@@ -16,6 +16,12 @@ use grit_test_support::{git, git_fsck, unique_tmp, write_file};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+fn test_sig() -> grit_lib::ident::Signature {
+    "T <t@example.com> 1700000000 +0000"
+        .parse()
+        .expect("test signature")
+}
+
 fn commit(dir: &Path, file: &str, content: &str, message: &str) {
     write_file(dir, file, content);
     git(dir, &["add", file]);
@@ -471,7 +477,7 @@ fn pull_rebase_conflict_stops_like_git_and_continues() {
             sign: false,
         }),
         apply: ApplyOptions {
-            identity: "T <t@example.com> 1700000000 +0000".into(),
+            identity: test_sig(),
             reflog_message: "rebase: continue".into(),
             record_operation: None,
             hooks: grit_lib::PostOperationHooks::Skip,
@@ -510,7 +516,7 @@ fn pull_rebase_conflict_abort_restores_tip_with_grit_and_git() {
         if use_git_abort {
             git(&grit_dir, &["rebase", "--abort"]);
         } else {
-            abort_rebase(&open(&grit_dir), "T <t@example.com> 1700000000 +0000").expect("abort");
+            abort_rebase(&open(&grit_dir), &test_sig()).expect("abort");
         }
         assert_eq!(rev(&grit_dir, "HEAD"), local_tip);
         assert_eq!(

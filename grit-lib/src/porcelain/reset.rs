@@ -178,7 +178,7 @@ pub fn reset_to_commit(
     }
 
     apply_reset_worktree(repo, opts, previous, progress, cancel)?;
-    crate::porcelain::stash::save_merge_autostash_ref(repo, &opts.identity)?;
+    crate::porcelain::stash::save_merge_autostash_ref(repo, &opts.identity.header_line())?;
     clear_merge_state(repo.git_dir())?;
     clear_replay_state(repo.git_dir())?;
     let ref_updated = if previous != opts.target {

@@ -280,7 +280,7 @@ fn journal_read_err(e: impl std::fmt::Display) -> HistoryError {
 fn serialize_meta(plan: &RewritePlan, opts: &ApplyOptions, apply_kind: RewriteApplyKind) -> String {
     let mut out = format!("version {FORMAT_VERSION}\n");
     out.push_str(&format!("apply-kind {}\n", apply_kind.as_str()));
-    out.push_str(&format!("apply-identity {}\n", opts.identity));
+    out.push_str(&format!("apply-identity {}\n", opts.identity.header_line()));
     out.push_str(&format!("apply-reflog {}\n", opts.reflog_message));
     if let Some(op) = &opts.record_operation {
         out.push_str(&format!("operation {op}\n"));
@@ -377,7 +377,11 @@ fn parse_meta(text: &str) -> Result<RewriteApplyJournal, HistoryError> {
         });
     }
     let apply_options = ApplyOptions {
-        identity: identity.ok_or_else(|| parse_err(0, "missing apply-identity"))?,
+        identity: {
+            let raw = identity.ok_or_else(|| parse_err(0, "missing apply-identity"))?;
+            crate::ident::parse_signature(&raw)
+                .ok_or_else(|| parse_err(0, "invalid apply-identity"))?
+        },
         reflog_message: reflog.ok_or_else(|| parse_err(0, "missing apply-reflog"))?,
         record_operation,
         hooks: Default::default(),
@@ -622,6 +626,11 @@ mod tests {
     use crate::repo::{init_repository, Repository};
     use crate::RefStorageFormat;
 
+    fn test_apply_identity() -> crate::ident::Signature {
+        crate::ident::parse_signature("t <t@t> 0 +0000")
+            .unwrap_or_else(|| panic!("test apply identity must parse"))
+    }
+
     fn temp_repo() -> (tempfile::TempDir, Repository) {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)
@@ -648,7 +657,7 @@ mod tests {
             head: HeadEffect::default(),
         };
         let opts = ApplyOptions {
-            identity: "t <t@t>".into(),
+            identity: test_apply_identity(),
             reflog_message: "test".into(),
             record_operation: None,
             hooks: Default::default(),
@@ -690,7 +699,7 @@ mod tests {
             head: HeadEffect::default(),
         };
         let opts = ApplyOptions {
-            identity: "t <t@t>".into(),
+            identity: test_apply_identity(),
             reflog_message: "test".into(),
             record_operation: None,
             hooks: Default::default(),
@@ -743,7 +752,7 @@ mod tests {
             head: HeadEffect::default(),
         };
         let opts = ApplyOptions {
-            identity: "t <t@t>".into(),
+            identity: test_apply_identity(),
             reflog_message: "test".into(),
             record_operation: None,
             hooks: Default::default(),
@@ -790,7 +799,7 @@ mod tests {
             head: HeadEffect::default(),
         };
         let opts = ApplyOptions {
-            identity: "t <t@t>".into(),
+            identity: test_apply_identity(),
             reflog_message: "test".into(),
             record_operation: None,
             hooks: Default::default(),
