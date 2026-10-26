@@ -108,6 +108,9 @@ pub enum InProgressOperation {
     Bisect,
     /// An `am` (apply mailbox) is in progress (`rebase-apply/applying` exists).
     Am,
+    /// A history rewrite updated refs but has not finished updating the worktree
+    /// (`.git/grit/rewrite-apply/` exists).
+    RewriteApply,
 }
 
 impl InProgressOperation {
@@ -122,6 +125,7 @@ impl InProgressOperation {
             Self::Revert => "revert",
             Self::Bisect => "bisect",
             Self::Am => "am",
+            Self::RewriteApply => "rewrite apply",
         }
     }
 }
@@ -166,7 +170,7 @@ impl NextStep {
             InProgressOperation::CherryPick => "cherry-pick",
             InProgressOperation::Revert => "revert",
             InProgressOperation::Am => "am",
-            InProgressOperation::Bisect => return None,
+            InProgressOperation::Bisect | InProgressOperation::RewriteApply => return None,
         };
         Some(format!("git {verb} --continue"))
     }
@@ -197,6 +201,12 @@ impl NextStep {
                 Some("grit rebase --abort".to_owned())
             }
             Self::Skip(InProgressOperation::Rebase) => Some("grit rebase --skip".to_owned()),
+            Self::Continue(InProgressOperation::RewriteApply) => {
+                Some("grit rebase --continue".to_owned())
+            }
+            Self::Abort(InProgressOperation::RewriteApply) => {
+                Some("grit rebase --abort".to_owned())
+            }
             Self::ContinueWithGit(_)
             | Self::Abort(InProgressOperation::Am | InProgressOperation::Bisect)
             | Self::Continue(
@@ -208,7 +218,8 @@ impl NextStep {
             | Self::Skip(
                 InProgressOperation::RebaseInteractive
                 | InProgressOperation::Am
-                | InProgressOperation::Bisect,
+                | InProgressOperation::Bisect
+                | InProgressOperation::RewriteApply,
             ) => None,
         }
     }
@@ -236,6 +247,9 @@ pub fn primary_in_progress_operation(state: &WtStatusState) -> Option<InProgress
     }
     if state.rebase_in_progress {
         return Some(InProgressOperation::Rebase);
+    }
+    if state.rewrite_apply_in_progress {
+        return Some(InProgressOperation::RewriteApply);
     }
     if state.am_in_progress {
         return Some(InProgressOperation::Am);
@@ -302,6 +316,9 @@ pub fn operation_next_steps(
         InProgressOperation::RebaseInteractive
         | InProgressOperation::Am
         | InProgressOperation::Bisect => vec![],
+        InProgressOperation::RewriteApply => {
+            vec![NextStep::Continue(InProgressOperation::RewriteApply)]
+        }
     }
 }
 
@@ -325,6 +342,9 @@ pub fn operation_alternatives(kind: InProgressOperation) -> Vec<NextStep> {
         InProgressOperation::RebaseInteractive
         | InProgressOperation::Am
         | InProgressOperation::Bisect => vec![],
+        InProgressOperation::RewriteApply => {
+            vec![NextStep::Abort(InProgressOperation::RewriteApply)]
+        }
     }
 }
 
@@ -366,6 +386,8 @@ pub fn status_operation(state: &WtStatusState, has_unmerged_conflicts: bool) -> 
         InProgressOperation::CherryPick
     } else if state.revert_in_progress {
         InProgressOperation::Revert
+    } else if state.rewrite_apply_in_progress {
+        InProgressOperation::RewriteApply
     } else {
         return None;
     };
@@ -618,6 +640,10 @@ pub fn detect_in_progress(git_dir: &Path) -> Vec<InProgressOperation> {
         ops.push(InProgressOperation::Bisect);
     }
 
+    if crate::history::rewrite_apply_journal_active(git_dir) {
+        ops.push(InProgressOperation::RewriteApply);
+    }
+
     ops
 }
 
@@ -683,6 +709,8 @@ pub struct WtStatusState {
     pub grit_replay_empty_stop: bool,
     /// Grit wrote `.git/rebase-merge/grit-plan` for a resumable rebase session.
     pub grit_rebase_in_progress: bool,
+    /// Grit recorded an incomplete rewrite apply under `.git/grit/rewrite-apply/`.
+    pub rewrite_apply_in_progress: bool,
 }
 
 fn abbrev_oid(oid: &ObjectId) -> String {
@@ -906,6 +934,8 @@ pub fn wt_status_get_state(
             }
         }
     }
+
+    state.rewrite_apply_in_progress = crate::history::rewrite_apply_journal_active(git_dir);
 
     state.grit_replay_sequencer = git_dir.join("sequencer").join("grit-opts").is_file();
     if state.grit_replay_sequencer {

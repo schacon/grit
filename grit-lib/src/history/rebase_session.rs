@@ -146,6 +146,7 @@ pub fn start_rebase(
     repo: &Repository,
     opts: &StartRebaseOptions,
 ) -> Result<RebaseOutcome, RebaseSessionError> {
+    super::ensure_rewrite_apply_ready(repo)?;
     if active_rebase(repo.git_dir()).is_some() {
         return Err(RebaseSessionError::RebaseAlreadyInProgress);
     }
@@ -213,6 +214,7 @@ pub fn continue_rebase(
     repo: &Repository,
     opts: &StartRebaseOptions,
 ) -> Result<RebaseOutcome, RebaseSessionError> {
+    super::ensure_rewrite_apply_ready(repo)?;
     let state = load_persisted_state(repo.git_dir())?;
     if repo.load_index()?.has_unmerged_entries() {
         return Err(RebaseSessionError::UnmergedPaths);
@@ -317,8 +319,18 @@ pub fn skip_rebase(
 /// [`RebaseSessionError::ForeignRebaseInProgress`] when a git-started rebase recorded an
 /// autostash or has no readable `orig-head` (finish those with `git rebase --abort`).
 pub fn abort_rebase(repo: &Repository, identity: &str) -> Result<(), RebaseSessionError> {
+    let had_journal = super::rewrite_apply_journal_active(repo.git_dir());
+    if had_journal {
+        super::abort_interrupted_rewrite_apply(repo)?;
+    }
     match active_rebase(repo.git_dir()) {
-        None => Err(RebaseSessionError::NoRebaseInProgress),
+        None => {
+            if had_journal {
+                Ok(())
+            } else {
+                Err(RebaseSessionError::NoRebaseInProgress)
+            }
+        }
         Some(ActiveRebase::Foreign(dir)) => abort_foreign_rebase(repo, &dir, identity),
         Some(ActiveRebase::Grit) => {
             let state = load_persisted_state(repo.git_dir())?;
