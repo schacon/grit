@@ -1,6 +1,7 @@
 //! CLI rendering for [`grit_lib::diagnostics`] warnings and network traces.
 
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use grit_lib::diagnostics::{DiagnosticSink, Trace, Warning};
@@ -148,9 +149,21 @@ pub fn format_warning_message(w: &Warning) -> String {
         Warning::ReflogNotWritten { refname, detail } => {
             format!("{refname} was updated, but its reflog could not be written: {detail}")
         }
-        Warning::NonExecutableHookIgnored { hook_name } => format!(
-            "the '{hook_name}' hook was ignored because it is not executable (see `grit config set advice.ignoredHook false` to silence)"
-        ),
+        Warning::NonExecutableHookIgnored {
+            hook_name,
+            hook_path,
+        } => {
+            let silence = "see `grit config advice.ignoredHook false` to silence";
+            match hook_path {
+                Some(path) => format!(
+                    "the '{hook_name}' hook was ignored because it is not executable (run `chmod +x {}` to enable it, or {silence})",
+                    shell_quote_path(path.as_path())
+                ),
+                None => format!(
+                    "the '{hook_name}' hook was ignored because it is not executable ({silence})"
+                ),
+            }
+        }
         Warning::HookNotRun { hook_name, detail } => {
             format!("the '{hook_name}' hook did not run: {detail}")
         }
@@ -250,4 +263,101 @@ pub fn repository_options(
         )),
     ));
     (options, sink)
+}
+
+/// Single-quoted path safe to paste into a POSIX `sh -c` one-liner (e.g. `chmod +x …`).
+fn shell_quote_path(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    if s.contains('\'') {
+        format!("'{}'", s.replace('\'', "'\"'\"'"))
+    } else {
+        format!("'{s}'")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    fn chmod_hint_from_message(message: &str) -> &str {
+        const PREFIX: &str = "`chmod +x ";
+        let start = message.find(PREFIX).expect("chmod hint").saturating_add(1);
+        let rest = &message[start..];
+        let end = rest.find('`').expect("closing backtick");
+        &rest[..end]
+    }
+
+    #[test]
+    fn non_executable_hook_warning_names_valid_config_command() {
+        let warning = Warning::NonExecutableHookIgnored {
+            hook_name: "pre-commit".into(),
+            hook_path: Some(PathBuf::from(".git/hooks/pre-commit")),
+        };
+        let message = format_warning_message(&warning);
+        assert!(message.contains("grit config advice.ignoredHook false"));
+        assert!(!message.contains("config set"));
+        assert!(message.contains("chmod +x '.git/hooks/pre-commit'"));
+    }
+
+    #[test]
+    fn non_executable_hook_warning_chmod_hint_is_shell_safe_with_spaces() {
+        let hook = PathBuf::from("/tmp/repo with spaces/.git/hooks/pre-commit");
+        let message = format_warning_message(&Warning::NonExecutableHookIgnored {
+            hook_name: "pre-commit".into(),
+            hook_path: Some(hook.clone()),
+        });
+        assert!(message.contains("chmod +x '/tmp/repo with spaces/.git/hooks/pre-commit'"));
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = dir.path().join("repo with spaces");
+        let hook_path = repo.join(".git/hooks/pre-commit");
+        std::fs::create_dir_all(hook_path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&hook_path, "#!/bin/sh\n").expect("hook");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&hook_path).expect("meta").permissions();
+            perms.set_mode(0o644);
+            std::fs::set_permissions(&hook_path, perms).expect("perms");
+        }
+
+        let warning = Warning::NonExecutableHookIgnored {
+            hook_name: "pre-commit".into(),
+            hook_path: Some(hook_path.clone()),
+        };
+        let message = format_warning_message(&warning);
+        let cmd = chmod_hint_from_message(&message);
+        Command::new("sh")
+            .arg("-c")
+            .arg(cmd)
+            .status()
+            .expect("chmod sh -c");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&hook_path)
+                .expect("meta")
+                .permissions()
+                .mode();
+            assert_ne!(
+                mode & 0o111,
+                0,
+                "hook should be executable after hinted chmod"
+            );
+        }
+    }
+
+    #[test]
+    fn non_executable_hook_warning_chmod_hint_quotes_shell_metacharacters() {
+        let hook = PathBuf::from("/tmp/a'b $(rm -rf /)/.git/hooks/pre-commit");
+        let message = format_warning_message(&Warning::NonExecutableHookIgnored {
+            hook_name: "pre-commit".into(),
+            hook_path: Some(hook),
+        });
+        assert!(message.contains("chmod +x '/tmp/a'\"'\"'b $(rm -rf /)/.git/hooks/pre-commit'"));
+        let cmd = chmod_hint_from_message(&message);
+        assert_eq!(cmd.matches("rm -rf").count(), 1);
+    }
 }
