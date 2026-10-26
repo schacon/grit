@@ -1043,7 +1043,9 @@ fn checkout_prepared_tree_transition(
             {
                 continue;
             }
-            let include_in_checkout = change.status != DiffStatus::Deleted
+            // Always keep delete entries even under wholesale directory candidates: directory
+            // removal can fail (permissions, open files) and checkout must still unlink each file.
+            let include_in_checkout = change.status == DiffStatus::Deleted
                 || !filter_wholesale_deletes
                 || change.old_path.as_ref().is_none_or(|path| {
                     !crate::porcelain::checkout::path_under_wholesale_directory(
