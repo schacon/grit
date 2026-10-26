@@ -12,6 +12,7 @@ use grit_lib::porcelain::commit::{
 };
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
+use grit_lib::worktree::pathspec::ResolvedPathspecs;
 
 fn commit_req(message: &str) -> CommitRequest {
     let id = "Test <t@example.com> 1700000000 +0000";
@@ -106,6 +107,37 @@ fn default_scope_with_autostage_off_is_staged_and_reports_nothing_staged() {
     assert!(
         matches!(err, Error::NothingStagedToCommit { .. }),
         "got {err:?}"
+    );
+}
+
+#[test]
+fn paths_scope_with_other_paths_staged_reports_nothing_to_commit_not_false_unstaged() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_out(root, &["init", "-q", "-b", "main"]);
+    std::fs::write(root.join("a.txt"), "a\n").expect("write a");
+    std::fs::write(root.join("b.txt"), "b\n").expect("write b");
+    git_out(root, &["add", "."]);
+    git_out(root, &["commit", "-q", "-m", "base"]);
+    std::fs::write(root.join("b.txt"), "b\nmore\n").expect("modify b");
+    git_out(root, &["add", "b.txt"]);
+
+    let repo = open_grit(root);
+    let paths = ResolvedPathspecs {
+        specs: vec!["a.txt".into()],
+        sources: vec!["a.txt".into()],
+        scoped: true,
+    };
+    let err = commit_with_scope(
+        &repo,
+        &commit_req("nope"),
+        CommitScope::Paths(paths),
+        &mut NullProgress,
+    )
+    .expect_err("path a.txt has nothing to commit");
+    assert!(
+        matches!(err, Error::NothingToCommit),
+        "must not treat staged b.txt as unstaged in the path index: {err:?}"
     );
 }
 

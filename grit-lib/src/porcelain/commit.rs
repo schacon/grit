@@ -528,6 +528,7 @@ fn commit_paths_scope(
     req.assume_worktree_synced = true;
     req.skip_pre_commit_tree_match = false;
     req.staged_change_count = Some(staged_commit.total().max(1));
+    req.index_only = true;
 
     create_commit_with_index(repo, head, &mut commit_index, &req, progress, real_index)
 }
@@ -1573,8 +1574,12 @@ pub fn write_commit_object(
 
 fn empty_commit_error(repo: &Repository, index: &mut Index, req: &CommitRequest) -> Error {
     if req.index_only {
+        let mut worktree_index = match repo.load_index() {
+            Ok(real) => real,
+            Err(_) => index.clone(),
+        };
         if let Ok((unstaged, untracked)) =
-            crate::porcelain::status::count_unstaged_and_untracked_paths(repo, index)
+            crate::porcelain::status::count_unstaged_and_untracked_paths(repo, &mut worktree_index)
         {
             if unstaged + untracked > 0 {
                 return Error::NothingStagedToCommit {
