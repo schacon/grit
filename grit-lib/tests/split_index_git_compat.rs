@@ -405,7 +405,6 @@ fn grit_dump_split_index_reports_base_and_bitmaps() {
     assert!(dump.contains("deletions:"));
 }
 
-#[test]
 /// Regression for <https://github.com/gitbutlerapp/grit/issues/2003>: locked index updates
 /// (`remove_paths`, `move_path`) must emit split-index delete/replace bitmaps, not a unified
 /// write that leaves shared-index paths behind.
@@ -500,6 +499,7 @@ fn issue_2003_split_index_rm_mv_many_files_status_matches_git() {
     );
 }
 
+#[test]
 fn split_index_explicit_no_split_writes_unified_index() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();

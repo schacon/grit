@@ -111,6 +111,30 @@ fn adjust_shared_perm_file(_path: &Path, _shared_repo: i32) -> io::Result<()> {
     Ok(())
 }
 
+/// Apply `core.sharedRepository` to the file that was just written.
+///
+/// When `staged_lock_path` is set, bytes were staged in the lock file (flush without commit); do
+/// not chmod the live index path until [`crate::index::IndexLock::commit_replace_index`].
+fn adjust_shared_perm_written_index(
+    index_path: &Path,
+    staged_lock_path: Option<&Path>,
+    shared_repo: i32,
+) -> Result<()> {
+    let target = staged_lock_path.unwrap_or(index_path);
+    adjust_shared_perm_file(target, shared_repo).map_err(Error::Io)
+}
+
+fn staged_lock_path_buf_for_perm(
+    existing_lock: Option<&crate::index::IndexLock>,
+    commit_lock: bool,
+) -> Option<PathBuf> {
+    if commit_lock {
+        None
+    } else {
+        existing_lock.map(|lock| lock.lock_path.clone())
+    }
+}
+
 /// Compare on-disk-relevant fields (Git `compare_ce_content` in `split-index.c`).
 pub(crate) fn entries_equal_for_split(a: &IndexEntry, b: &IndexEntry) -> bool {
     let mask: u16 = 0xF000 | 0x8000;
@@ -630,6 +654,7 @@ pub(crate) fn write_index_file_split(
         for e in &mut index.entries {
             e.base_index_pos = 0;
         }
+        let perm_lock = staged_lock_path_buf_for_perm(existing_lock.as_deref(), commit_lock);
         write_index_through_lock(
             index,
             path,
@@ -639,7 +664,7 @@ pub(crate) fn write_index_file_split(
             commit_lock,
             thread_policy,
         )?;
-        adjust_shared_perm_file(path, shared_repo).map_err(Error::Io)?;
+        adjust_shared_perm_written_index(path, perm_lock.as_deref(), shared_repo)?;
         return Ok(());
     }
 
@@ -657,6 +682,7 @@ pub(crate) fn write_index_file_split(
         for e in &mut index.entries {
             e.base_index_pos = 0;
         }
+        let perm_lock = staged_lock_path_buf_for_perm(existing_lock.as_deref(), commit_lock);
         write_index_through_lock(
             index,
             path,
@@ -666,7 +692,7 @@ pub(crate) fn write_index_file_split(
             commit_lock,
             thread_policy,
         )?;
-        adjust_shared_perm_file(path, shared_repo).map_err(Error::Io)?;
+        adjust_shared_perm_written_index(path, perm_lock.as_deref(), shared_repo)?;
         return Ok(());
     }
 
@@ -747,6 +773,8 @@ pub(crate) fn write_index_file_split(
                 for e in &mut index.entries {
                     e.base_index_pos = 0;
                 }
+                let perm_lock =
+                    staged_lock_path_buf_for_perm(existing_lock.as_deref(), commit_lock);
                 write_index_through_lock(
                     index,
                     path,
@@ -756,7 +784,7 @@ pub(crate) fn write_index_file_split(
                     commit_lock,
                     thread_policy,
                 )?;
-                adjust_shared_perm_file(path, shared_repo).map_err(Error::Io)?;
+                adjust_shared_perm_written_index(path, perm_lock.as_deref(), shared_repo)?;
                 return Ok(());
             }
             Err(e) => return Err(Error::Io(e)),
@@ -781,6 +809,8 @@ pub(crate) fn write_index_file_split(
                 for ent in &mut index.entries {
                     ent.base_index_pos = 0;
                 }
+                let perm_lock =
+                    staged_lock_path_buf_for_perm(existing_lock.as_deref(), commit_lock);
                 write_index_through_lock(
                     index,
                     path,
@@ -790,7 +820,7 @@ pub(crate) fn write_index_file_split(
                     commit_lock,
                     thread_policy,
                 )?;
-                adjust_shared_perm_file(path, shared_repo).map_err(Error::Io)?;
+                adjust_shared_perm_written_index(path, perm_lock.as_deref(), shared_repo)?;
                 return Ok(());
             }
             return Err(Error::Io(e));
@@ -899,6 +929,7 @@ pub(crate) fn write_index_file_split(
         suppress_pre_write_index_housekeeping: index.suppress_pre_write_index_housekeeping,
     };
 
+    let perm_lock = staged_lock_path_buf_for_perm(existing_lock.as_deref(), commit_lock);
     write_index_through_lock(
         &mut out_index,
         path,
@@ -908,7 +939,7 @@ pub(crate) fn write_index_file_split(
         commit_lock,
         thread_policy,
     )?;
-    adjust_shared_perm_file(path, shared_repo).map_err(Error::Io)?;
+    adjust_shared_perm_written_index(path, perm_lock.as_deref(), shared_repo)?;
 
     for e in &mut index.entries {
         if let Some(pos) = find_entry_pos_sorted(&base_snapshot, &e.path, e.stage()) {
@@ -1142,6 +1173,44 @@ mod tests {
         .expect("write config");
         let cfg = ConfigSet::load(&Environment::empty(), Some(dir.path()), true).expect("load");
         assert!(!should_rebuild_shared_index(&idx, &cfg));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_perm_adjustment_targets_lock_file_on_uncommitted_flush() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let index_path = dir.path().join("index");
+        fs::write(&index_path, b"live").expect("write index");
+        fs::set_permissions(&index_path, fs::Permissions::from_mode(0o644)).expect("index mode");
+
+        let mut lock = crate::index::IndexLock::acquire(&index_path, None).expect("lock");
+        fs::write(&lock.lock_path, b"staged").expect("write lock");
+        fs::set_permissions(&lock.lock_path, fs::Permissions::from_mode(0o644)).expect("lock mode");
+
+        super::adjust_shared_perm_written_index(&index_path, Some(lock.lock_path.as_path()), 0o660)
+            .expect("adjust perm");
+
+        assert_eq!(
+            fs::metadata(&index_path)
+                .expect("index meta")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o644,
+            "live index mode must stay unchanged before commit_replace_index"
+        );
+        assert_eq!(
+            fs::metadata(&lock.lock_path)
+                .expect("lock meta")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o664,
+            "sharedRepository perm applies to staged lock bytes"
+        );
+        drop(lock);
     }
 
     #[test]
