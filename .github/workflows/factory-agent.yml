@@ -1,0 +1,158 @@
+name: Factory agent
+run-name: Factory agent ${{ inputs.run }}
+
+# The grit factory runs one of its agents here per dispatch while its agent backend is Codex:
+# the Codex CLI on a fresh runner, signed in with the maintainer's ChatGPT plan. The runner
+# proves itself to the factory with this job's OIDC token, fetches its brief (prompt,
+# environment, the factory's MCP server) and posts the result back when Codex finishes. Work is
+# shared through GitButler Mesh; the agent pushes to GitHub only when its brief says to.
+#
+# This repository is public, so nothing the agent does is printed here: Codex's transcript and
+# logs stay on the runner and only the result goes back to the factory.
+#
+# Needs the CODEX_AUTH_JSON secret: the contents of ~/.codex/auth.json after `codex login` with
+# the ChatGPT account whose Codex plan the factory should use.
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Factory task id"
+        required: true
+      run:
+        description: "Factory run id"
+        required: true
+      factory:
+        description: "Factory URL"
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    env:
+      TASK: ${{ inputs.task }}
+      RUN: ${{ inputs.run }}
+      FACTORY: ${{ inputs.factory }}
+    steps:
+      - name: Fetch the brief
+        run: |
+          set -euo pipefail
+          [[ "$TASK" =~ ^[0-9]+$ ]] || { echo "::error::bad task id '$TASK'"; exit 1; }
+          [[ "$RUN" =~ ^[0-9a-z-]+$ ]] || { echo "::error::bad run id '$RUN'"; exit 1; }
+          [[ "$FACTORY" =~ ^https://[a-z0-9.-]+$ ]] || { echo "::error::bad factory URL '$FACTORY'"; exit 1; }
+          oidc=$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$FACTORY" | jq -r .value)
+          echo "::add-mask::$oidc"
+          brief="$RUNNER_TEMP/brief.json"
+          curl -fsS -H "Authorization: Bearer $oidc" "$FACTORY/api/runner/$TASK?run=$RUN" -o "$brief"
+          token=$(jq -r .mcpToken "$brief")
+          echo "::add-mask::$token"
+          # Mask every value but the commit identity and the mesh server before writing them out.
+          while IFS=$'\t' read -r key value; do
+            case "$key" in GIT_*|BUT_MESH_SERVER) ;; *) echo "::add-mask::$value" ;; esac
+          done < <(jq -r '.env | to_entries[] | "\(.key)\t\(.value)"' "$brief")
+          {
+            printf 'export FACTORY_MCP_TOKEN=%q\n' "$token"
+            while IFS=$'\t' read -r key value; do
+              printf 'export %s=%q\n' "$key" "$value"
+            done < <(jq -r '.env | to_entries[] | "\(.key)\t\(.value)"' "$brief")
+          } > "$RUNNER_TEMP/agent.env"
+          echo "Brief for task #$TASK fetched"
+
+      - name: Install Codex
+        run: npm install -g @openai/codex@0.160.1 > /dev/null
+
+      - name: Sign in to Codex
+        env:
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          if [ -z "$CODEX_AUTH_JSON" ]; then
+            echo "::error::The CODEX_AUTH_JSON secret is not set, so Codex can't sign in."
+            exit 1
+          fi
+          mkdir -p ~/.codex
+          (umask 077; printf '%s' "$CODEX_AUTH_JSON" > ~/.codex/auth.json)
+
+      - name: Run the agent
+        id: agent
+        run: |
+          set -u
+          source "$RUNNER_TEMP/agent.env"
+          brief="$RUNNER_TEMP/brief.json"
+          model=$(jq -r '.model // empty' "$brief")
+          effort=$(jq -r '.effort // empty' "$brief")
+          mcp=$(jq -r .mcpUrl "$brief")
+          args=(exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -C "$HOME"
+            -c "mcp_servers.factory.url=\"$mcp\""
+            -c 'mcp_servers.factory.bearer_token_env_var="FACTORY_MCP_TOKEN"'
+            -c 'mcp_servers.factory.default_tools_approval_mode="approve"'
+            -c 'mcp_servers.factory.tool_timeout_sec=300'
+            -c 'shell_environment_policy.inherit="all"'
+            -c 'shell_environment_policy.ignore_default_excludes=true'
+            -o "$RUNNER_TEMP/last-message.md")
+          if [ -n "$model" ]; then args+=(-m "$model"); fi
+          if [ -n "$effort" ]; then args+=(-c "model_reasoning_effort=\"$effort\""); fi
+          started=$(date +%s)
+          code=0
+          # The runner's own tokens stay out of the agent's environment.
+          jq -r .prompt "$brief" \
+            | env -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_RUNTIME_TOKEN \
+              codex "${args[@]}" - > "$RUNNER_TEMP/events.jsonl" 2> "$RUNNER_TEMP/codex.log" || code=$?
+          seconds=$(( $(date +%s) - started ))
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
+          echo "Codex exited with $code after $(( seconds / 60 )) min"
+
+      # The mesh daemon shares commits in the background; give it time to send the last ones
+      # before the runner goes away.
+      - name: Let the mesh catch up
+        if: always() && steps.agent.outcome != 'skipped'
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          [ -d ~/grit/.git ] && command -v but > /dev/null || exit 0
+          tips=$(git -C ~/grit for-each-ref --format='%(objectname) %(refname:short)' refs/heads \
+            | awk '$2 != "main" && $2 !~ /^gitbutler\// { print $1 }' | sort -u)
+          [ -n "$tips" ] || exit 0
+          for _ in $(seq 1 36); do
+            listing=$(but mesh ls --json 2> /dev/null || true)
+            missing=0
+            for tip in $tips; do grep -q "$tip" <<< "$listing" || missing=$((missing + 1)); done
+            if [ "$missing" -eq 0 ]; then echo "The mesh has every branch tip"; exit 0; fi
+            sleep 5
+          done
+          echo "::warning::$missing branch tip(s) not in the mesh after 3 minutes"
+
+      - name: Report back
+        if: always() && steps.agent.outcome != 'skipped'
+        env:
+          JOB_STATUS: ${{ job.status }}
+          AGENT_EXIT: ${{ steps.agent.outputs.exit }}
+          AGENT_SECONDS: ${{ steps.agent.outputs.seconds }}
+        run: |
+          set -u
+          events="$RUNNER_TEMP/events.jsonl"
+          last="$RUNNER_TEMP/last-message.md"
+          touch "$events" "$last" "$RUNNER_TEMP/codex.log"
+          if [ "$JOB_STATUS" = "cancelled" ]; then status=cancelled
+          elif [ "${AGENT_EXIT:-1}" = "0" ] && [ -s "$last" ]; then status=finished
+          else status=error; fi
+          error=$(jq -rs 'map(select(.type == "turn.failed" or .type == "error") | (.error.message // .message)) | last // empty' "$events" 2> /dev/null || true)
+          if [ -z "$error" ] && [ "$status" != "finished" ]; then error=$(tail -c 4000 "$RUNNER_TEMP/codex.log"); fi
+          usage=$(jq -cs '[.[] | select(.type == "turn.completed") | .usage] | {
+              input_tokens: (map(.input_tokens // 0) | add // 0),
+              cached_input_tokens: (map(.cached_input_tokens // 0) | add // 0),
+              output_tokens: (map(.output_tokens // 0) | add // 0)}' "$events" 2> /dev/null || echo '{}')
+          jq -n --arg run "$RUN" --arg status "$status" --rawfile result "$last" --arg error "$error" \
+            --argjson usage "$usage" --argjson seconds "${AGENT_SECONDS:-0}" \
+            '{run: $run, status: $status, result: $result, error: (if $error == "" then null else $error end),
+              durationMs: ($seconds * 1000), usage: $usage}' > "$RUNNER_TEMP/report.json"
+          oidc=$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$FACTORY" | jq -r .value)
+          echo "::add-mask::$oidc"
+          curl -fsS -X POST -H "Authorization: Bearer $oidc" -H "Content-Type: application/json" \
+            --data-binary @"$RUNNER_TEMP/report.json" "$FACTORY/api/runner/$TASK" > /dev/null
+          echo "Reported $status to the factory"
