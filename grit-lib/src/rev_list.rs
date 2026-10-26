@@ -11761,6 +11761,10 @@ mod line_coverage_tests {
         Ok(())
     }
 
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
     #[test]
     fn filtered_count_reads_shared_ancestry_once() -> Result<()> {
         let (_dir, seeded, tip) = seed_repo(24, true);
@@ -11804,6 +11808,10 @@ mod line_coverage_tests {
         Ok(())
     }
 
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
     #[test]
     fn filtered_count_uses_graph_for_excluded_ancestry() -> Result<()> {
         let (_dir, seeded, tip) = seed_repo(32, true);
