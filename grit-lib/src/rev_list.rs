@@ -7971,10 +7971,11 @@ pub fn shallow_borders_reachable_from_wants(
 
 /// Compute new shallow boundary commits for `upload-pack` when the client sends `deepen <n>`.
 ///
-/// This approximates Git's `get_shallow_commits` / `get_shallows_or_depth` for the common case:
-/// non-`deepen-relative` fetches where the client lists its shallow commits and requests more
-/// history. Returns commit OIDs that should be sent as `shallow` lines and registered as grafts
-/// for `pack-objects --shallow`.
+/// Absolute depth from wanted tips (`fetch --depth N`, wire `deepen N` without
+/// `deepen-relative`). Returns shallow border commits for `shallow` lines and
+/// `pack-objects --shallow`. Relative deepen uses
+/// [`shallow_grafts_for_upload_pack_target_depth`] after
+/// [`crate::serve::relative_deepen_depth_for_request`].
 ///
 /// # Parameters
 ///
@@ -7996,22 +7997,7 @@ pub fn shallow_grafts_for_upload_pack_deepen(
     }
     let wants = wants.as_slice();
 
-    let server_shallow = shallow_boundary_oids(repo.git_dir());
-    let client_set: HashSet<ObjectId> = client_shallow.iter().copied().collect();
-
-    // For a fresh (non-shallow) client, an absolute `deepen N` keeps exactly N commits counting
-    // from the wanted tips, so the boundary sits at the N-th commit and the base offset is 0.
-    // Using 1 here over-counts by one: with `deepen 2` on a 3-commit history the border lands on
-    // the root commit (which has no parents) and no `shallow` line is advertised at all, leaving
-    // the client believing it received full history and failing connectivity/fsck for the cut-off
-    // parents (t5537 "shallow fetches check connectivity before writing shallow file"). When the
-    // client already has a shallow boundary, `min_client_shallow_distance` supplies the real base.
-    let min_hit = min_client_shallow_distance(repo, wants, &client_set, &server_shallow);
-    let base = min_hit.unwrap_or(0);
-    let target_depth = base.saturating_add(deepen);
-
-    let included_depths = commits_within_parent_depth(repo, wants, target_depth, &server_shallow);
-    border_commits_for_depth_fetch(repo, &included_depths, target_depth, &client_set)
+    shallow_grafts_for_upload_pack_target_depth(repo, wants, client_shallow, deepen)
 }
 
 /// Shallow borders when the client sent `deepen-relative` and the caller already computed
@@ -8025,6 +8011,24 @@ pub fn shallow_grafts_for_upload_pack_target_depth(
     client_shallow: &[ObjectId],
     target_depth: usize,
 ) -> Vec<ObjectId> {
+    shallow_grafts_for_upload_pack_target_depth_with_policy(
+        repo,
+        wants,
+        client_shallow,
+        target_depth,
+        true,
+    )
+}
+
+/// Like [`shallow_grafts_for_upload_pack_target_depth`], but can treat commits the
+/// client already marked shallow as borders (for absolute `fetch --depth` retention).
+pub(crate) fn shallow_grafts_for_upload_pack_target_depth_with_policy(
+    repo: &Repository,
+    wants: &[ObjectId],
+    client_shallow: &[ObjectId],
+    target_depth: usize,
+    omit_existing_client_shallows: bool,
+) -> Vec<ObjectId> {
     let wants = peel_to_commit_tips(repo, wants);
     if target_depth == 0 || wants.is_empty() {
         return Vec::new();
@@ -8032,7 +8036,13 @@ pub fn shallow_grafts_for_upload_pack_target_depth(
     let server_shallow = shallow_boundary_oids(repo.git_dir());
     let client_set: HashSet<ObjectId> = client_shallow.iter().copied().collect();
     let included_depths = commits_within_parent_depth(repo, &wants, target_depth, &server_shallow);
-    border_commits_for_depth_fetch(repo, &included_depths, target_depth, &client_set)
+    border_commits_for_depth_fetch(
+        repo,
+        &included_depths,
+        target_depth,
+        &client_set,
+        omit_existing_client_shallows,
+    )
 }
 
 /// Peel `wants` through annotated tags and keep the distinct commits, in order.
@@ -8062,42 +8072,6 @@ fn commit_parent_ids(repo: &Repository, oid: ObjectId) -> Vec<ObjectId> {
     parse_commit(&obj.data)
         .map(|c| c.parents)
         .unwrap_or_default()
-}
-
-fn min_client_shallow_distance(
-    repo: &Repository,
-    wants: &[ObjectId],
-    client_shallow: &HashSet<ObjectId>,
-    server_shallow: &HashSet<ObjectId>,
-) -> Option<usize> {
-    if client_shallow.is_empty() {
-        return None;
-    }
-    let mut best: Option<usize> = None;
-    let mut dist: HashMap<ObjectId, usize> = HashMap::new();
-    let mut q: VecDeque<(ObjectId, usize)> = VecDeque::new();
-    // Match Git `get_shallows_depth`: commit counts from wanted tips start at 1.
-    for &w in wants {
-        dist.insert(w, 1);
-        q.push_back((w, 1));
-    }
-    while let Some((oid, d)) = q.pop_front() {
-        if client_shallow.contains(&oid) {
-            best = Some(best.map(|b| b.min(d)).unwrap_or(d));
-        }
-        if server_shallow.contains(&oid) {
-            continue;
-        }
-        for p in commit_parent_ids(repo, oid) {
-            let nd = d.saturating_add(1);
-            let prev = dist.get(&p).copied().unwrap_or(usize::MAX);
-            if nd < prev {
-                dist.insert(p, nd);
-                q.push_back((p, nd));
-            }
-        }
-    }
-    best
 }
 
 fn commits_within_parent_depth(
@@ -8146,12 +8120,13 @@ fn border_commits_for_depth_fetch(
     included_depths: &HashMap<ObjectId, usize>,
     target_depth: usize,
     client_shallow: &HashSet<ObjectId>,
+    omit_existing_client_shallows: bool,
 ) -> Vec<ObjectId> {
     let included: HashSet<ObjectId> = included_depths.keys().copied().collect();
     let mut out = Vec::new();
     let mut seen_out = HashSet::new();
     for &c in included.iter() {
-        if client_shallow.contains(&c) {
+        if omit_existing_client_shallows && client_shallow.contains(&c) {
             continue;
         }
         let parents = commit_parent_ids(repo, c);

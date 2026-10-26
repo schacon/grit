@@ -214,6 +214,9 @@ fn append_shallow_request_v0(
             return Err(Error::FetchDeepenRelativeUnsupported);
         }
         pkt_line::write_line_to_vec(req, &format!("deepen {depth}"))?;
+        if relative {
+            pkt_line::write_line_to_vec(req, "deepen-relative")?;
+        }
     }
     if let Some(since) = opts
         .deepen_since
@@ -416,6 +419,13 @@ fn negotiate_pack(
     pkt_line::write_line_to_vec(&mut tail, "done")?;
     conn.writer().write_all(&tail)?;
     conn.writer().flush()?;
+
+    // Stateless v0 repeats shallow/unshallow lines after `done` before NAK/pack.
+    if shallow_request && conn.stateless_rpc() {
+        let (sh, unsh) = crate::shallow::read_shallow_info_section(&mut conn.reader())?;
+        shallow_update.shallow.extend(sh);
+        shallow_update.unshallow.extend(unsh);
+    }
 
     match pkt_line::read_packet(&mut conn.reader())? {
         None => return Err(Error::Message("unexpected EOF after done".to_owned())),
