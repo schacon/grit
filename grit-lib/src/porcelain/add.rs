@@ -23,7 +23,9 @@ use crate::index::{
 };
 use crate::objects::ObjectId;
 use crate::odb::BULK_NEW_LOOSE_WRITE;
-use crate::path_icase::{paths_equal, worktree_path_for_index_entry, Stage0IcasePathMap};
+use crate::path_icase::{
+    paths_equal, worktree_dentry_spelling, IcaseIndexCollisionGroups, Stage0IcasePathMap,
+};
 use crate::path_validate::{validate_path, EntryMode, PathValidationKind, ProtectOptions};
 use crate::pathspec::{
     exact_literal_pathspec_set, has_glob_chars, pathspec_is_exclude, sorted_paths_match_pathspec,
@@ -944,6 +946,7 @@ fn stage_ignorecase_spelling_updates(
         .filter(|e| e.stage() == 0 && e.mode != MODE_GITLINK && e.mode != MODE_TREE)
         .map(|e| e.path.clone())
         .collect();
+    let collision_groups = IcaseIndexCollisionGroups::from_index(index, true);
 
     for raw_path in stage0 {
         let index_rel = match std::str::from_utf8(&raw_path) {
@@ -953,14 +956,12 @@ fn stage_ignorecase_spelling_updates(
         if !matches(index_rel) {
             continue;
         }
-        if crate::path_icase::has_icase_checkout_collision_sibling(index, index_rel) {
+        if collision_groups.has_collision_sibling(index_rel) {
             continue;
         }
-        let abs = worktree_path_for_index_entry(work_tree, index_rel, true);
-        let Ok(rel) = abs.strip_prefix(work_tree) else {
+        let Some(actual_rel) = worktree_dentry_spelling(work_tree, index_rel) else {
             continue;
         };
-        let actual_rel = rel.to_string_lossy().replace('\\', "/");
         if actual_rel == index_rel {
             continue;
         }

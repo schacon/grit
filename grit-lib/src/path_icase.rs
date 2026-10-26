@@ -239,12 +239,14 @@ pub fn worktree_path_for_index_entry(
     index_rel: &str,
     ignorecase: bool,
 ) -> PathBuf {
-    if ignorecase {
-        if let Some(spelling) = worktree_dentry_spelling(work_tree, index_rel) {
-            return work_tree.join(spelling);
-        }
+    let direct = work_tree.join(index_rel);
+    if !ignorecase || direct.exists() {
+        return direct;
     }
-    work_tree.join(index_rel)
+    if let Some(spelling) = worktree_dentry_spelling(work_tree, index_rel) {
+        return work_tree.join(spelling);
+    }
+    direct
 }
 
 /// Stage-0 blob paths that share a worktree slot under `core.ignorecase` (sorted, unique).
@@ -657,10 +659,33 @@ mod tests {
         assert!(!index_path_matches_worktree_dentry(wt, "File.txt"));
     }
 
+    fn worktree_has_distinct_icase_dentries(base: &Path) -> bool {
+        let upper = base.join(".grit_icase_probe_upper");
+        let lower = base.join(".grit_icase_probe_lower");
+        let _ = std::fs::remove_dir_all(&upper);
+        let _ = std::fs::remove_dir_all(&lower);
+        if std::fs::create_dir(&upper).is_err() {
+            return false;
+        }
+        let distinct = !lower.exists();
+        let _ = std::fs::remove_dir_all(&upper);
+        distinct
+    }
+
     #[test]
     fn dentry_spelling_skips_empty_case_duplicate_dir() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let wt = tmp.path();
+        if !worktree_has_distinct_icase_dentries(wt) {
+            std::fs::create_dir_all(wt.join("dir")).expect("dir");
+            std::fs::write(wt.join("dir/A.txt"), b"x").expect("write");
+            assert_eq!(
+                worktree_dentry_spelling(wt, "Dir/a.txt").as_deref(),
+                Some("dir/A.txt")
+            );
+            assert!(!index_path_matches_worktree_dentry(wt, "Dir/a.txt"));
+            return;
+        }
         std::fs::create_dir(wt.join("Dir")).expect("Dir");
         std::fs::create_dir_all(wt.join("dir")).expect("dir");
         std::fs::write(wt.join("dir/A.txt"), b"x").expect("write");
@@ -669,6 +694,27 @@ mod tests {
             Some("dir/A.txt")
         );
         assert!(!index_path_matches_worktree_dentry(wt, "Dir/a.txt"));
+    }
+
+    #[test]
+    fn worktree_path_for_index_entry_uses_direct_path_when_present() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wt = tmp.path();
+        std::fs::write(wt.join("tracked.txt"), b"x").expect("write");
+        let resolved = worktree_path_for_index_entry(wt, "tracked.txt", true);
+        assert_eq!(resolved, wt.join("tracked.txt"));
+    }
+
+    #[test]
+    fn worktree_path_for_index_entry_resolves_missing_direct_spelling() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wt = tmp.path();
+        std::fs::write(wt.join("file.txt"), b"x").expect("write");
+        if wt.join("File.txt").exists() {
+            return;
+        }
+        let resolved = worktree_path_for_index_entry(wt, "File.txt", true);
+        assert_eq!(resolved, wt.join("file.txt"));
     }
 
     #[test]
