@@ -1,0 +1,355 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-10-26T17:16:54.469618+00:00",
+  "machine": {
+    "cpu_model": "AMD EPYC 7763 64-Core Processor",
+    "physical_cores": 2,
+    "logical_cores": 4,
+    "ram_bytes": 16766414848,
+    "os": "linux",
+    "kernel": "Linux 6.17.0-1022-azure",
+    "scratch_filesystem": "ext4",
+    "rustc_version": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "cargo_profile": "release"
+  },
+  "tools": {
+    "git": "git version 2.55.0",
+    "grit": "grit 0.5.21",
+    "grit_commit": "9d66d522369c5c4cedd97ed7cfbccd7eb9a37463"
+  },
+  "fixtures": [
+    {
+      "name": "git-git-2035-10k-unique-packed-tips",
+      "head_oid": "7e34d8174dcda3435d1404c9a30bef46afe6c13e",
+      "object_count": 422320,
+      "ref_count": 11022,
+      "file_count": 4857
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "branch/contains-json-1-reviewed@git-git-10k-refs",
+      "group": "branch_contains",
+      "fixture": "git-git-2035-10k-unique-packed-tips",
+      "description": "Review correction, reviewed: json, limit=1, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 3 samples; wall surrounds subprocess",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 35.51283333338991,
+        "median_ms": 33.822259000089616,
+        "stddev_ms": 2.464838653597105,
+        "min_ms": 33.71811800002433,
+        "max_ms": 38.998123000055784,
+        "runs_ms": [
+          38.998123000055784,
+          33.71811800002433,
+          33.822259000089616
+        ],
+        "peak_rss_bytes": 19623936
+      },
+      "grit": {
+        "mean_ms": 14.737134333245194,
+        "median_ms": 14.743718999852717,
+        "stddev_ms": 0.03674540561407668,
+        "min_ms": 14.689201000010144,
+        "max_ms": 14.778482999872722,
+        "runs_ms": [
+          14.743718999852717,
+          14.689201000010144,
+          14.778482999872722
+        ],
+        "peak_rss_bytes": 27643904
+      },
+      "ratio": 0.4359176304519947
+    },
+    {
+      "id": "branch/contains-json-reviewed@git-git-10k-refs",
+      "group": "branch_contains",
+      "fixture": "git-git-2035-10k-unique-packed-tips",
+      "description": "Review correction, reviewed: json, limit=100, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 3 samples; wall surrounds subprocess",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 199.2377569999159,
+        "median_ms": 199.06743199999255,
+        "stddev_ms": 1.018129362279187,
+        "min_ms": 198.08472599993365,
+        "max_ms": 200.5611129998215,
+        "runs_ms": [
+          200.5611129998215,
+          198.08472599993365,
+          199.06743199999255
+        ],
+        "peak_rss_bytes": 32063488
+      },
+      "grit": {
+        "mean_ms": 34.257025999977486,
+        "median_ms": 34.28180499986411,
+        "stddev_ms": 0.08965685528227346,
+        "min_ms": 34.136946999979045,
+        "max_ms": 34.352326000089306,
+        "runs_ms": [
+          34.28180499986411,
+          34.352326000089306,
+          34.136946999979045
+        ],
+        "peak_rss_bytes": 35237888
+      },
+      "ratio": 0.1722120221044766
+    },
+    {
+      "id": "branch/contains-json-1000-reviewed@git-git-10k-refs",
+      "group": "branch_contains",
+      "fixture": "git-git-2035-10k-unique-packed-tips",
+      "description": "Review correction, reviewed: json, limit=1000, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 1 samples; wall surrounds subprocess",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 34184.820514999956,
+        "median_ms": 34184.820514999956,
+        "stddev_ms": 0.0,
+        "min_ms": 34184.820514999956,
+        "max_ms": 34184.820514999956,
+        "runs_ms": [
+          34184.820514999956
+        ],
+        "peak_rss_bytes": 72581120
+      },
+      "grit": {
+        "mean_ms": 249.73467399991023,
+        "median_ms": 249.73467399991023,
+        "stddev_ms": 0.0,
+        "min_ms": 249.73467399991023,
+        "max_ms": 249.73467399991023,
+        "runs_ms": [
+          249.73467399991023
+        ],
+        "peak_rss_bytes": 61337600
+      },
+      "ratio": 0.007305425924068525
+    },
+    {
+      "id": "branch/contains-json-unlimited-reviewed@git-git-10k-refs",
+      "group": "branch_contains",
+      "fixture": "git-git-2035-10k-unique-packed-tips",
+      "description": "Review correction, reviewed: json, limit=None, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 1 samples; wall surrounds subprocess",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 34139.51326399979,
+        "median_ms": 34139.51326399979,
+        "stddev_ms": 0.0,
+        "min_ms": 34139.51326399979,
+        "max_ms": 34139.51326399979,
+        "runs_ms": [
+          34139.51326399979
+        ],
+        "peak_rss_bytes": 72572928
+      },
+      "grit": {
+        "mean_ms": 2366.6191769998477,
+        "median_ms": 2366.6191769998477,
+        "stddev_ms": 0.0,
+        "min_ms": 2366.6191769998477,
+        "max_ms": 2366.6191769998477,
+        "runs_ms": [
+          2366.6191769998477
+        ],
+        "peak_rss_bytes": 105070592
+      },
+      "ratio": 0.06932199526978769
+    },
+    {
+      "id": "branch/unfiltered-json-unfiltered-reviewed@git-git-10k-refs",
+      "group": "branch_contains",
+      "fixture": "git-git-2035-10k-unique-packed-tips",
+      "description": "Review correction, reviewed: json, limit=None, contains=False; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 3 samples; wall surrounds subprocess",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 158.86794233332088,
+        "median_ms": 158.3907049998743,
+        "stddev_ms": 0.9816040851399375,
+        "min_ms": 157.97762200008947,
+        "max_ms": 160.23549999999886,
+        "runs_ms": [
+          158.3907049998743,
+          157.97762200008947,
+          160.23549999999886
+        ],
+        "peak_rss_bytes": 26218496
+      },
+      "grit": {
+        "mean_ms": 180.21790233334892,
+        "median_ms": 180.5098040001667,
+        "stddev_ms": 1.0287777436113688,
+        "min_ms": 178.8375809999252,
+        "max_ms": 181.3063219999549,
+        "runs_ms": [
+          181.3063219999549,
+          180.5098040001667,
+          178.8375809999252
+        ],
+        "peak_rss_bytes": 39485440
+      },
+      "ratio": 1.139648971196321
+    },
+    {
+      "id": "branch/contains-1-reviewed@git-git-10k-refs",
+      "group": "branch_contains",
+      "fixture": "git-git-2035-10k-unique-packed-tips",
+      "description": "Review correction, reviewed: human, limit=1, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 3 samples; wall surrounds subprocess",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 34.403078333298254,
+        "median_ms": 34.27065300002141,
+        "stddev_ms": 0.38153321016158426,
+        "min_ms": 34.016302000054566,
+        "max_ms": 34.922279999818784,
+        "runs_ms": [
+          34.27065300002141,
+          34.922279999818784,
+          34.016302000054566
+        ],
+        "peak_rss_bytes": 19595264
+      },
+      "grit": {
+        "mean_ms": 14.73835533329293,
+        "median_ms": 14.820738000025813,
+        "stddev_ms": 0.16985719504221578,
+        "min_ms": 14.501748999919073,
+        "max_ms": 14.892578999933903,
+        "runs_ms": [
+          14.892578999933903,
+          14.501748999919073,
+          14.820738000025813
+        ],
+        "peak_rss_bytes": 27639808
+      },
+      "ratio": 0.432461499931634
+    },
+    {
+      "id": "branch/contains-reviewed@git-git-10k-refs",
+      "group": "branch_contains",
+      "fixture": "git-git-2035-10k-unique-packed-tips",
+      "description": "Review correction, reviewed: human, limit=100, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 3 samples; wall surrounds subprocess",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 199.38721100000598,
+        "median_ms": 198.34758299998612,
+        "stddev_ms": 2.1136047589411677,
+        "min_ms": 197.480017000089,
+        "max_ms": 202.3340329999428,
+        "runs_ms": [
+          202.3340329999428,
+          198.34758299998612,
+          197.480017000089
+        ],
+        "peak_rss_bytes": 31899648
+      },
+      "grit": {
+        "mean_ms": 33.653219666651545,
+        "median_ms": 33.585604999871066,
+        "stddev_ms": 0.455850243119823,
+        "min_ms": 33.13180600002852,
+        "max_ms": 34.24224800005504,
+        "runs_ms": [
+          34.24224800005504,
+          33.13180600002852,
+          33.585604999871066
+        ],
+        "peak_rss_bytes": 34836480
+      },
+      "ratio": 0.16932701922500068
+    },
+    {
+      "id": "branch/contains-1000-reviewed@git-git-10k-refs",
+      "group": "branch_contains",
+      "fixture": "git-git-2035-10k-unique-packed-tips",
+      "description": "Review correction, reviewed: human, limit=1000, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 1 samples; wall surrounds subprocess",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 34608.54864099997,
+        "median_ms": 34608.54864099997,
+        "stddev_ms": 0.0,
+        "min_ms": 34608.54864099997,
+        "max_ms": 34608.54864099997,
+        "runs_ms": [
+          34608.54864099997
+        ],
+        "peak_rss_bytes": 72364032
+      },
+      "grit": {
+        "mean_ms": 227.78908100008266,
+        "median_ms": 227.78908100008266,
+        "stddev_ms": 0.0,
+        "min_ms": 227.78908100008266,
+        "max_ms": 227.78908100008266,
+        "runs_ms": [
+          227.78908100008266
+        ],
+        "peak_rss_bytes": 61415424
+      },
+      "ratio": 0.006581873263827829
+    },
+    {
+      "id": "branch/contains-unlimited-reviewed@git-git-10k-refs",
+      "group": "branch_contains",
+      "fixture": "git-git-2035-10k-unique-packed-tips",
+      "description": "Review correction, reviewed: human, limit=None, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 1 samples; wall surrounds subprocess",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 34405.207345999996,
+        "median_ms": 34405.207345999996,
+        "stddev_ms": 0.0,
+        "min_ms": 34405.207345999996,
+        "max_ms": 34405.207345999996,
+        "runs_ms": [
+          34405.207345999996
+        ],
+        "peak_rss_bytes": 72429568
+      },
+      "grit": {
+        "mean_ms": 2393.6587129999225,
+        "median_ms": 2393.6587129999225,
+        "stddev_ms": 0.0,
+        "min_ms": 2393.6587129999225,
+        "max_ms": 2393.6587129999225,
+        "runs_ms": [
+          2393.6587129999225
+        ],
+        "peak_rss_bytes": 104550400
+      },
+      "ratio": 0.0695725704812011
+    },
+    {
+      "id": "branch/unfiltered-unfiltered-reviewed@git-git-10k-refs",
+      "group": "branch_contains",
+      "fixture": "git-git-2035-10k-unique-packed-tips",
+      "description": "Review correction, reviewed: human, limit=None, contains=False; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 3 samples; wall surrounds subprocess",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 161.58224500001475,
+        "median_ms": 161.6958849999719,
+        "stddev_ms": 0.33832272288554516,
+        "min_ms": 161.12292299999353,
+        "max_ms": 161.92792700007885,
+        "runs_ms": [
+          161.6958849999719,
+          161.92792700007885,
+          161.12292299999353
+        ],
+        "peak_rss_bytes": 5365760
+      },
+      "grit": {
+        "mean_ms": 134.83823000001394,
+        "median_ms": 134.94351500003177,
+        "stddev_ms": 0.31858280291113833,
+        "min_ms": 134.40620799997305,
+        "max_ms": 135.164967000037,
+        "runs_ms": [
+          134.94351500003177,
+          135.164967000037,
+          134.40620799997305
+        ],
+        "peak_rss_bytes": 20160512
+      },
+      "ratio": 0.8345513245439439
+    }
+  ]
+}

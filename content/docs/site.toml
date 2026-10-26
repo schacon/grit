@@ -108,6 +108,7 @@ baseline = [
   "grit-utils/baselines/daily-fetch-local-many-refs-after.json",
   "grit-utils/baselines/daily-fetch-local-many-refs-before.json",
   "grit-utils/baselines/bounded-branch-contains-before.json",
+  "grit-utils/baselines/bounded-branch-contains-reviewed.json",
   "grit-utils/baselines/bounded-branch-contains-after.json",
   "grit-utils/baselines/large-blob-memory-after.json",
   "grit-utils/baselines/hot-paths-after.json",

@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "timestamp": "2026-10-26T15:37:09.247867Z",
+  "timestamp": "2026-10-26T17:16:54.471317+00:00",
   "machine": {
-    "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C",
+    "cpu_model": "AMD EPYC 7763 64-Core Processor",
     "physical_cores": 2,
     "logical_cores": 4,
-    "ram_bytes": 16765370368,
+    "ram_bytes": 16766414848,
     "os": "linux",
     "kernel": "Linux 6.17.0-1022-azure",
     "scratch_filesystem": "ext4",
@@ -15,341 +15,341 @@
   "tools": {
     "git": "git version 2.55.0",
     "grit": "grit 0.5.21",
-    "grit_commit": "9d66d522369c5c4cedd97ed7cfbccd7eb9a37463"
+    "grit_commit": "da77132c09dd76fa6a547bcad901f0c497eb3902"
   },
   "fixtures": [
     {
       "name": "git-git-2035-10k-unique-packed-tips",
       "head_oid": "7e34d8174dcda3435d1404c9a30bef46afe6c13e",
       "object_count": 422320,
-      "ref_count": 10001,
+      "ref_count": 11022,
       "file_count": 4857
     }
   ],
   "scenarios": [
     {
-      "id": "branch/contains-json@git-git-10k-refs",
-      "group": "branch_contains",
-      "fixture": "git-git-2035-10k-unique-packed-tips",
-      "description": "contains json, limit=100; GNU time -v, one warmup, alternating Git/main/fix; measured working tree fixing #2035",
-      "driver": "cli",
-      "git": {
-        "mean_ms": 238.067,
-        "median_ms": 239.265,
-        "stddev_ms": 2.2357040650915034,
-        "min_ms": 234.934,
-        "max_ms": 240.002,
-        "runs_ms": [
-          239.265,
-          240.002,
-          234.934
-        ],
-        "peak_rss_bytes": 32174080
-      },
-      "grit": {
-        "mean_ms": 34.62866666666667,
-        "median_ms": 34.492,
-        "stddev_ms": 0.23771738589248445,
-        "min_ms": 34.431,
-        "max_ms": 34.963,
-        "runs_ms": [
-          34.963,
-          34.492,
-          34.431
-        ],
-        "peak_rss_bytes": 35725312
-      },
-      "ratio": 0.14415815100411677
-    },
-    {
       "id": "branch/contains-json-1@git-git-10k-refs",
       "group": "branch_contains",
       "fixture": "git-git-2035-10k-unique-packed-tips",
-      "description": "contains json, limit=1; GNU time -v, one warmup, alternating Git/main/fix; measured working tree fixing #2035",
+      "description": "Review correction, fixed: json, limit=1, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 3 samples; wall surrounds subprocess",
       "driver": "cli",
       "git": {
-        "mean_ms": 40.678,
-        "median_ms": 40.703,
-        "stddev_ms": 0.048641546028060985,
-        "min_ms": 40.61,
-        "max_ms": 40.721,
+        "mean_ms": 35.51283333338991,
+        "median_ms": 33.822259000089616,
+        "stddev_ms": 2.464838653597105,
+        "min_ms": 33.71811800002433,
+        "max_ms": 38.998123000055784,
         "runs_ms": [
-          40.703,
-          40.721,
-          40.61
+          38.998123000055784,
+          33.71811800002433,
+          33.822259000089616
         ],
-        "peak_rss_bytes": 19697664
+        "peak_rss_bytes": 19623936
       },
       "grit": {
-        "mean_ms": 13.641333333333334,
-        "median_ms": 13.557,
-        "stddev_ms": 0.1432348498872473,
-        "min_ms": 13.524,
-        "max_ms": 13.843,
+        "mean_ms": 14.371835666679544,
+        "median_ms": 14.302633999932368,
+        "stddev_ms": 0.24337993485715814,
+        "min_ms": 14.114445000132037,
+        "max_ms": 14.698427999974228,
         "runs_ms": [
-          13.524,
-          13.557,
-          13.843
+          14.698427999974228,
+          14.302633999932368,
+          14.114445000132037
         ],
-        "peak_rss_bytes": 28073984
+        "peak_rss_bytes": 27770880
       },
-      "ratio": 0.33307127238778467
+      "ratio": 0.4228763667114746
+    },
+    {
+      "id": "branch/contains-json@git-git-10k-refs",
+      "group": "branch_contains",
+      "fixture": "git-git-2035-10k-unique-packed-tips",
+      "description": "Review correction, fixed: json, limit=100, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 3 samples; wall surrounds subprocess",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 199.2377569999159,
+        "median_ms": 199.06743199999255,
+        "stddev_ms": 1.018129362279187,
+        "min_ms": 198.08472599993365,
+        "max_ms": 200.5611129998215,
+        "runs_ms": [
+          200.5611129998215,
+          198.08472599993365,
+          199.06743199999255
+        ],
+        "peak_rss_bytes": 32063488
+      },
+      "grit": {
+        "mean_ms": 33.886642999959804,
+        "median_ms": 33.9074650000839,
+        "stddev_ms": 0.2570265128006788,
+        "min_ms": 33.5619569998471,
+        "max_ms": 34.19050699994841,
+        "runs_ms": [
+          33.9074650000839,
+          33.5619569998471,
+          34.19050699994841
+        ],
+        "peak_rss_bytes": 35500032
+      },
+      "ratio": 0.17033155378266582
     },
     {
       "id": "branch/contains-json-1000@git-git-10k-refs",
       "group": "branch_contains",
       "fixture": "git-git-2035-10k-unique-packed-tips",
-      "description": "contains json, limit=1000; GNU time -v, one warmup, alternating Git/main/fix; measured working tree fixing #2035",
+      "description": "Review correction, fixed: json, limit=1000, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 1 samples; wall surrounds subprocess",
       "driver": "cli",
       "git": {
-        "mean_ms": 35049.413,
-        "median_ms": 35049.413,
+        "mean_ms": 34184.820514999956,
+        "median_ms": 34184.820514999956,
         "stddev_ms": 0.0,
-        "min_ms": 35049.413,
-        "max_ms": 35049.413,
+        "min_ms": 34184.820514999956,
+        "max_ms": 34184.820514999956,
         "runs_ms": [
-          35049.413
+          34184.820514999956
         ],
-        "peak_rss_bytes": 72720384
+        "peak_rss_bytes": 72581120
       },
       "grit": {
-        "mean_ms": 249.568,
-        "median_ms": 249.568,
+        "mean_ms": 232.9618890000802,
+        "median_ms": 232.9618890000802,
         "stddev_ms": 0.0,
-        "min_ms": 249.568,
-        "max_ms": 249.568,
+        "min_ms": 232.9618890000802,
+        "max_ms": 232.9618890000802,
         "runs_ms": [
-          249.568
+          232.9618890000802
         ],
-        "peak_rss_bytes": 62083072
+        "peak_rss_bytes": 61800448
       },
-      "ratio": 0.0071204616180019905
+      "ratio": 0.006814775841747037
     },
     {
       "id": "branch/contains-json-unlimited@git-git-10k-refs",
       "group": "branch_contains",
       "fixture": "git-git-2035-10k-unique-packed-tips",
-      "description": "contains json, limit=None; GNU time -v, one warmup, alternating Git/main/fix; measured working tree fixing #2035",
+      "description": "Review correction, fixed: json, limit=None, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 1 samples; wall surrounds subprocess",
       "driver": "cli",
       "git": {
-        "mean_ms": 35237.135,
-        "median_ms": 35237.135,
+        "mean_ms": 34139.51326399979,
+        "median_ms": 34139.51326399979,
         "stddev_ms": 0.0,
-        "min_ms": 35237.135,
-        "max_ms": 35237.135,
+        "min_ms": 34139.51326399979,
+        "max_ms": 34139.51326399979,
         "runs_ms": [
-          35237.135
+          34139.51326399979
         ],
-        "peak_rss_bytes": 72794112
+        "peak_rss_bytes": 72572928
       },
       "grit": {
-        "mean_ms": 2502.997,
-        "median_ms": 2502.997,
+        "mean_ms": 2389.43591799989,
+        "median_ms": 2389.43591799989,
         "stddev_ms": 0.0,
-        "min_ms": 2502.997,
-        "max_ms": 2502.997,
+        "min_ms": 2389.43591799989,
+        "max_ms": 2389.43591799989,
         "runs_ms": [
-          2502.997
+          2389.43591799989
         ],
-        "peak_rss_bytes": 105005056
+        "peak_rss_bytes": 104878080
       },
-      "ratio": 0.07103293159333185
+      "ratio": 0.0699903334743661
     },
     {
       "id": "branch/unfiltered-json-unfiltered@git-git-10k-refs",
       "group": "branch_contains",
       "fixture": "git-git-2035-10k-unique-packed-tips",
-      "description": "unfiltered json, limit=unfiltered; GNU time -v, one warmup, alternating Git/main/fix; measured working tree fixing #2035",
+      "description": "Review correction, fixed: json, limit=None, contains=False; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 3 samples; wall surrounds subprocess",
       "driver": "cli",
       "git": {
-        "mean_ms": 159.159,
-        "median_ms": 158.458,
-        "stddev_ms": 2.3317291151989976,
-        "min_ms": 156.719,
-        "max_ms": 162.3,
+        "mean_ms": 158.86794233332088,
+        "median_ms": 158.3907049998743,
+        "stddev_ms": 0.9816040851399375,
+        "min_ms": 157.97762200008947,
+        "max_ms": 160.23549999999886,
         "runs_ms": [
-          162.3,
-          158.458,
-          156.719
+          158.3907049998743,
+          157.97762200008947,
+          160.23549999999886
         ],
-        "peak_rss_bytes": 26234880
+        "peak_rss_bytes": 26218496
       },
       "grit": {
-        "mean_ms": 130.78033333333335,
-        "median_ms": 130.86,
-        "stddev_ms": 0.9581831186620351,
-        "min_ms": 129.569,
-        "max_ms": 131.912,
+        "mean_ms": 180.89304333337472,
+        "median_ms": 180.8942229999957,
+        "stddev_ms": 0.13347571081379964,
+        "min_ms": 180.7289830001082,
+        "max_ms": 181.05592400002024,
         "runs_ms": [
-          131.912,
-          129.569,
-          130.86
+          181.05592400002024,
+          180.8942229999957,
+          180.7289830001082
         ],
-        "peak_rss_bytes": 41668608
+        "peak_rss_bytes": 39571456
       },
-      "ratio": 0.8258339749334209
-    },
-    {
-      "id": "branch/contains@git-git-10k-refs",
-      "group": "branch_contains",
-      "fixture": "git-git-2035-10k-unique-packed-tips",
-      "description": "contains human, limit=100; GNU time -v, one warmup, alternating Git/main/fix; measured working tree fixing #2035",
-      "driver": "cli",
-      "git": {
-        "mean_ms": 240.30033333333333,
-        "median_ms": 234.741,
-        "stddev_ms": 8.533946696706172,
-        "min_ms": 233.803,
-        "max_ms": 252.357,
-        "runs_ms": [
-          252.357,
-          234.741,
-          233.803
-        ],
-        "peak_rss_bytes": 32292864
-      },
-      "grit": {
-        "mean_ms": 33.858333333333334,
-        "median_ms": 33.878,
-        "stddev_ms": 0.250642286048375,
-        "min_ms": 33.542,
-        "max_ms": 34.155,
-        "runs_ms": [
-          33.542,
-          34.155,
-          33.878
-        ],
-        "peak_rss_bytes": 34885632
-      },
-      "ratio": 0.14432076203134517
+      "ratio": 1.1420760012409772
     },
     {
       "id": "branch/contains-1@git-git-10k-refs",
       "group": "branch_contains",
       "fixture": "git-git-2035-10k-unique-packed-tips",
-      "description": "contains human, limit=1; GNU time -v, one warmup, alternating Git/main/fix; measured working tree fixing #2035",
+      "description": "Review correction, fixed: human, limit=1, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 3 samples; wall surrounds subprocess",
       "driver": "cli",
       "git": {
-        "mean_ms": 40.67933333333333,
-        "median_ms": 40.663,
-        "stddev_ms": 0.24399772312234344,
-        "min_ms": 40.389,
-        "max_ms": 40.986,
+        "mean_ms": 34.403078333298254,
+        "median_ms": 34.27065300002141,
+        "stddev_ms": 0.38153321016158426,
+        "min_ms": 34.016302000054566,
+        "max_ms": 34.922279999818784,
         "runs_ms": [
-          40.986,
-          40.389,
-          40.663
+          34.27065300002141,
+          34.922279999818784,
+          34.016302000054566
         ],
-        "peak_rss_bytes": 19648512
+        "peak_rss_bytes": 19595264
       },
       "grit": {
-        "mean_ms": 14.000666666666667,
-        "median_ms": 13.855,
-        "stddev_ms": 0.24963484443393633,
-        "min_ms": 13.795,
-        "max_ms": 14.352,
+        "mean_ms": 14.747670666641474,
+        "median_ms": 14.726532999929987,
+        "stddev_ms": 0.3934169234437403,
+        "min_ms": 14.276751999886983,
+        "max_ms": 15.23972700010745,
         "runs_ms": [
-          13.795,
-          13.855,
-          14.352
+          15.23972700010745,
+          14.276751999886983,
+          14.726532999929987
         ],
-        "peak_rss_bytes": 27807744
+        "peak_rss_bytes": 27578368
       },
-      "ratio": 0.3407274426382707
+      "ratio": 0.4297126465585814
+    },
+    {
+      "id": "branch/contains@git-git-10k-refs",
+      "group": "branch_contains",
+      "fixture": "git-git-2035-10k-unique-packed-tips",
+      "description": "Review correction, fixed: human, limit=100, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 3 samples; wall surrounds subprocess",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 199.38721100000598,
+        "median_ms": 198.34758299998612,
+        "stddev_ms": 2.1136047589411677,
+        "min_ms": 197.480017000089,
+        "max_ms": 202.3340329999428,
+        "runs_ms": [
+          202.3340329999428,
+          198.34758299998612,
+          197.480017000089
+        ],
+        "peak_rss_bytes": 31899648
+      },
+      "grit": {
+        "mean_ms": 33.66764733330759,
+        "median_ms": 33.538575999955356,
+        "stddev_ms": 0.2688007638010695,
+        "min_ms": 33.42252799984635,
+        "max_ms": 34.04183800012106,
+        "runs_ms": [
+          34.04183800012106,
+          33.42252799984635,
+          33.538575999955356
+        ],
+        "peak_rss_bytes": 35110912
+      },
+      "ratio": 0.16908991525224537
     },
     {
       "id": "branch/contains-1000@git-git-10k-refs",
       "group": "branch_contains",
       "fixture": "git-git-2035-10k-unique-packed-tips",
-      "description": "contains human, limit=1000; GNU time -v, one warmup, alternating Git/main/fix; measured working tree fixing #2035",
+      "description": "Review correction, fixed: human, limit=1000, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 1 samples; wall surrounds subprocess",
       "driver": "cli",
       "git": {
-        "mean_ms": 35074.216,
-        "median_ms": 35074.216,
+        "mean_ms": 34608.54864099997,
+        "median_ms": 34608.54864099997,
         "stddev_ms": 0.0,
-        "min_ms": 35074.216,
-        "max_ms": 35074.216,
+        "min_ms": 34608.54864099997,
+        "max_ms": 34608.54864099997,
         "runs_ms": [
-          35074.216
+          34608.54864099997
         ],
-        "peak_rss_bytes": 72785920
+        "peak_rss_bytes": 72364032
       },
       "grit": {
-        "mean_ms": 246.953,
-        "median_ms": 246.953,
+        "mean_ms": 229.8589819999961,
+        "median_ms": 229.8589819999961,
         "stddev_ms": 0.0,
-        "min_ms": 246.953,
-        "max_ms": 246.953,
+        "min_ms": 229.8589819999961,
+        "max_ms": 229.8589819999961,
         "runs_ms": [
-          246.953
+          229.8589819999961
         ],
-        "peak_rss_bytes": 61964288
+        "peak_rss_bytes": 61685760
       },
-      "ratio": 0.00704087013662686
+      "ratio": 0.006641682215118588
     },
     {
       "id": "branch/contains-unlimited@git-git-10k-refs",
       "group": "branch_contains",
       "fixture": "git-git-2035-10k-unique-packed-tips",
-      "description": "contains human, limit=None; GNU time -v, one warmup, alternating Git/main/fix; measured working tree fixing #2035",
+      "description": "Review correction, fixed: human, limit=None, contains=True; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 1 samples; wall surrounds subprocess",
       "driver": "cli",
       "git": {
-        "mean_ms": 35218.041,
-        "median_ms": 35218.041,
+        "mean_ms": 34405.207345999996,
+        "median_ms": 34405.207345999996,
         "stddev_ms": 0.0,
-        "min_ms": 35218.041,
-        "max_ms": 35218.041,
+        "min_ms": 34405.207345999996,
+        "max_ms": 34405.207345999996,
         "runs_ms": [
-          35218.041
+          34405.207345999996
         ],
-        "peak_rss_bytes": 72462336
+        "peak_rss_bytes": 72429568
       },
       "grit": {
-        "mean_ms": 2461.209,
-        "median_ms": 2461.209,
+        "mean_ms": 2352.269207000063,
+        "median_ms": 2352.269207000063,
         "stddev_ms": 0.0,
-        "min_ms": 2461.209,
-        "max_ms": 2461.209,
+        "min_ms": 2352.269207000063,
+        "max_ms": 2352.269207000063,
         "runs_ms": [
-          2461.209
+          2352.269207000063
         ],
-        "peak_rss_bytes": 105062400
+        "peak_rss_bytes": 104869888
       },
-      "ratio": 0.06988489223463622
+      "ratio": 0.06836956927316823
     },
     {
       "id": "branch/unfiltered-unfiltered@git-git-10k-refs",
       "group": "branch_contains",
       "fixture": "git-git-2035-10k-unique-packed-tips",
-      "description": "unfiltered human, limit=unfiltered; GNU time -v, one warmup, alternating Git/main/fix; measured working tree fixing #2035",
+      "description": "Review correction, fixed: human, limit=None, contains=False; GNU time -v; common 100-row warmup; alternating Git/main/reviewed/fixed; 3 samples; wall surrounds subprocess",
       "driver": "cli",
       "git": {
-        "mean_ms": 91.73333333333333,
-        "median_ms": 88.802,
-        "stddev_ms": 4.688804917626187,
-        "min_ms": 88.048,
-        "max_ms": 98.35,
+        "mean_ms": 161.58224500001475,
+        "median_ms": 161.6958849999719,
+        "stddev_ms": 0.33832272288554516,
+        "min_ms": 161.12292299999353,
+        "max_ms": 161.92792700007885,
         "runs_ms": [
-          98.35,
-          88.048,
-          88.802
+          161.6958849999719,
+          161.92792700007885,
+          161.12292299999353
         ],
-        "peak_rss_bytes": 5517312
+        "peak_rss_bytes": 5365760
       },
       "grit": {
-        "mean_ms": 82.37966666666667,
-        "median_ms": 82.622,
-        "stddev_ms": 0.47341618993111034,
-        "min_ms": 81.718,
-        "max_ms": 82.799,
+        "mean_ms": 134.12639900010012,
+        "median_ms": 134.10642300004838,
+        "stddev_ms": 0.4334812470854873,
+        "min_ms": 133.60576500008392,
+        "max_ms": 134.66700900016804,
         "runs_ms": [
-          81.718,
-          82.799,
-          82.622
+          134.66700900016804,
+          134.10642300004838,
+          133.60576500008392
         ],
-        "peak_rss_bytes": 20414464
+        "peak_rss_bytes": 20193280
       },
-      "ratio": 0.9304069728159275
+      "ratio": 0.8293743715251114
     }
   ]
 }

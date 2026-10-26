@@ -96,7 +96,7 @@ The Criterion suite exercises the public `fetch_local` API with `Following`, `No
 
 ## Bounded branch containment on 10,000 unique tips
 
-Issue #2035 is measured on a full clone of git.git at `7e34d8174dcda3435d1404c9a30bef46afe6c13e` (82,563 reachable commits). Create 10,000 distinct `refs/heads/dogfood/NNNNN` tips from `git rev-list -n 10000 HEAD`, then run `git pack-refs --all`. This fixture has no commit-graph. On 2026-10-26, compare the saved origin/main (`74adad7a5732`) release binary and the fixed release binary with stock Git 2.55.0 on the same checkout: Ubuntu 24.04.5, four vCPUs (Intel Xeon Platinum 8573C), 16 GiB RAM, Rust 1.99.0. No compiler runs during measurement.
+Issue #2035 is measured on a full clone of git.git at `7e34d8174dcda3435d1404c9a30bef46afe6c13e` (82,563 reachable commits). Create 10,000 distinct `refs/heads/dogfood/NNNNN` tips from `git rev-list -n 10000 HEAD`, then run `git pack-refs --all`. This fixture has no commit-graph. The review correction was measured on 2026-10-26 against stock Git 2.55.0: Ubuntu 24.04.5, four vCPUs (AMD EPYC 7763), 16 GiB RAM, Rust 1.99.0, `release` profile. Main is `a61c6cf784d65`, reviewed is `9d66d522369c`, and corrected is `da77132c09dd`. No compiler or test suite runs during measurement.
 
 ```bash
 grit branch --contains HEAD~100 -n 100 --json
@@ -106,26 +106,26 @@ git for-each-ref --contains=HEAD~100 --count=100 \
 # Unlimited comparison: omit -n / --count; unfiltered control: omit --contains too.
 ```
 
-Each command gets one warmup. Limits 1 and 100 and the unfiltered control use three alternating Git/main/fix samples; limit 1,000 and unlimited containment use one sample because Git scans the whole ref inventory. Wall time surrounds the subprocess, and peak RSS comes from `/usr/bin/time -v`. JSON ref order and truncation are checked against system Git. The before/after JSON baselines retain the raw timing samples and maximum RSS.
+A 100-row JSON query warms every executable before alternating measurements. Limits 1 and 100 and the unfiltered control use three alternating Git/main/reviewed/corrected samples; limit 1,000 and unlimited containment use one sample because Git scans the whole ref inventory. Wall time surrounds the subprocess, and peak RSS comes from `/usr/bin/time -v`. Ordered JSON and human refs and JSON truncation are checked against system Git. The before/reviewed/after baseline JSON files retain every timing sample, maximum RSS, and the measured commit in `tools.grit_commit`.
 
-| Output / limit | Git ms / KiB | Main ms / KiB | Fixed ms / KiB |
-| --- | ---: | ---: | ---: |
-| JSON / 1 | 40.70 / 19,236 | 2460.89 / 101,376 | 13.56 / 27,416 |
-| JSON / 100 | 239.26 / 31,420 | 2467.44 / 101,312 | 34.49 / 34,888 |
-| JSON / 1000 | 35049.41 / 71,016 | 2457.33 / 101,124 | 249.57 / 60,628 |
-| JSON / unlimited | 35237.14 / 71,088 | 2459.31 / 101,332 | 2503.00 / 102,544 |
-| JSON / unfiltered, unlimited | 158.46 / 25,620 | 131.43 / 39,196 | 130.86 / 40,692 |
-| Human / 1 | 40.66 / 19,188 | 2453.82 / 101,296 | 13.86 / 27,156 |
-| Human / 100 | 234.74 / 31,536 | 2462.37 / 101,344 | 33.88 / 34,068 |
-| Human / 1000 | 35074.22 / 71,080 | 2450.47 / 101,120 | 246.95 / 60,512 |
-| Human / unlimited | 35218.04 / 70,764 | 2463.11 / 101,344 | 2461.21 / 102,600 |
-| Human / unfiltered, unlimited | 88.80 / 5,388 | 83.11 / 18,728 | 82.62 / 19,936 |
+| Output / limit | Git ms / KiB | Main ms / KiB | Reviewed ms / KiB | Corrected ms / KiB |
+| --- | ---: | ---: | ---: | ---: |
+| JSON / 1 | 33.82 / 19,164 | 2608.18 / 100,924 | 14.74 / 26,996 | 14.30 / 27,120 |
+| JSON / 100 | 199.07 / 31,312 | 2612.84 / 101,288 | 34.28 / 34,412 | 33.91 / 34,668 |
+| JSON / 1000 | 34184.82 / 70,880 | 2630.10 / 100,904 | 249.73 / 59,900 | 232.96 / 60,352 |
+| JSON / unlimited | 34139.51 / 70,872 | 2622.00 / 101,032 | 2366.62 / 102,608 | 2389.44 / 102,420 |
+| JSON / unfiltered, unlimited | 158.39 / 25,604 | 182.69 / 37,100 | 180.51 / 38,560 | 180.89 / 38,644 |
+| Human / 1 | 34.27 / 19,136 | 2637.82 / 101,036 | 14.82 / 26,992 | 14.73 / 26,932 |
+| Human / 100 | 198.35 / 31,152 | 2608.95 / 102,092 | 33.59 / 34,020 | 33.54 / 34,288 |
+| Human / 1000 | 34608.55 / 70,668 | 2636.97 / 102,468 | 227.79 / 59,976 | 229.86 / 60,240 |
+| Human / unlimited | 34405.21 / 70,732 | 2625.78 / 102,072 | 2393.66 / 102,100 | 2352.27 / 102,412 |
+| Human / unfiltered, unlimited | 161.70 / 5,240 | 135.36 / 19,816 | 134.94 / 19,688 | 134.11 / 19,720 |
 
 The finite name-ordered path shares positive and negative ancestry between evaluated tips and stops after enough matches, including the CLI's extra truncation probe. Without a commit-graph, expensive negative probes can meet an incrementally explored boundary of proven target ancestors. Committer dates order that exploration but never exclude ancestry. Unlimited queries, version/date sorts and combined filters retain the batch path. Grafts and enabled replacement refs also use the batch path: rewritten parents can form cycles, so a target's ancestors are not necessarily nonmatches. Commit-graph linkage and generations are ignored for these rewritten histories.
 
-Unlimited containment remains around 2.5 seconds in both builds; unfiltered JSON listing remains around 131 ms. The control RSS samples vary by roughly 1–2 MiB, as retained in the baselines.
+The correction retains the reviewed build's bounded-query speed and memory use on ordinary histories; the unlimited and unfiltered controls remain comparable. Rewritten histories use the general batch path for correctness.
 
-The fixed library's synthetic 10,000-tip Criterion fixture measured these means (10 samples, 0.1-second warmup and 0.2-second requested measurement, extended automatically for long queries):
+The original bounded-query implementation (`9d66d522369c`) measured these means on its synthetic 10,000-tip Criterion fixture (10 samples, 0.1-second warmup and 0.2-second requested measurement, extended automatically for long queries):
 
 | Matching-row limit | No commit-graph ms | Commit-graph ms |
 | --- | ---: | ---: |
