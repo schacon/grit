@@ -621,9 +621,12 @@ fn filtered_counts_across_shared_ancestry_and_exclusions_match_git() {
     git(wt, &["update-ref", "refs/heads/base", &root.to_hex()]);
     git(wt, &["fsck", "--strict"]);
 
-    for packed in [false, true] {
-        if packed {
+    for storage in ["loose", "packed", "commit-graph"] {
+        if storage != "loose" {
             git(wt, &["repack", "-ad"]);
+        }
+        if storage == "commit-graph" {
+            git_commit_graph_write(wt);
         }
         let repo = open_grit_repo(wt);
         for args in [
@@ -666,10 +669,12 @@ fn filtered_counts_across_shared_ancestry_and_exclusions_match_git() {
     std::fs::write(wt.join(".git/shallow"), format!("{left}\n{right}\n")).expect("shallow");
     let repo = open_grit_repo(wt);
     assert_rev_list_filter_matches_git(wt, &repo, &["--count", "--author=.", "main"]);
+    assert_rev_list_filter_matches_git(wt, &repo, &["--count", "--author=.", "base..main"]);
     std::fs::remove_file(wt.join(".git/shallow")).expect("remove shallow");
     std::fs::write(wt.join(".git/info/grafts"), format!("{merge} {right}\n")).expect("graft");
     let repo = open_grit_repo(wt);
     assert_rev_list_filter_matches_git(wt, &repo, &["--count", "--author=.", "main"]);
+    assert_rev_list_filter_matches_git(wt, &repo, &["--count", "--author=.", "base..main"]);
 }
 
 #[test]

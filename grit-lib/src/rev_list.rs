@@ -6119,6 +6119,11 @@ fn try_filtered_count_only(
         .into_iter()
         .collect();
     let grafts = crate::rev_parse::load_graft_parents(repo.git_dir());
+    let graph_chain = if options.use_commit_graph && !exclude.is_empty() {
+        repo.caches().commit_graph_chain(repo.odb().objects_dir())
+    } else {
+        None
+    };
     repo.odb().with_pack_read_context(|| {
         let mut visited = oid_hash_set();
         let mut stack = Vec::new();
@@ -6131,6 +6136,21 @@ fn try_filtered_count_only(
             while let Some(oid) = stack.pop() {
                 if !visited.insert(oid) {
                     continue;
+                }
+                // Exclusions need only ancestry, so graph-covered commits do not
+                // need their identity or message inflated from the object store.
+                if !count_matches {
+                    if let Some((parents, _)) = graph_chain
+                        .as_ref()
+                        .and_then(|chain| chain.graph_commit(&oid))
+                    {
+                        if let Some(grafted) = grafts.get(&oid) {
+                            stack.extend_from_slice(grafted);
+                        } else if !shallow.contains(&oid) {
+                            stack.extend(parents);
+                        }
+                        continue;
+                    }
                 }
                 if repo.odb().read_into_caching_delta_bases(&oid, &mut buf)? != ObjectKind::Commit {
                     return Err(rev_list_unexpected_kind(oid, "commit"));
@@ -11767,6 +11787,88 @@ mod line_coverage_tests {
             .output()?
             .status
             .success());
+        Ok(())
+    }
+
+    #[test]
+    fn filtered_count_uses_graph_for_excluded_ancestry() -> Result<()> {
+        let (_dir, seeded, tip) = seed_repo(32, true);
+        assert!(std::process::Command::new("git")
+            .arg("--git-dir")
+            .arg(seeded.git_dir())
+            .args(["commit-graph", "write", "--reachable"])
+            .output()?
+            .status
+            .success());
+        let excluded = parse_commit(&seeded.odb().read(&tip)?.data)?.parents[0];
+        let filter = Arc::new(
+            crate::revwalk::filter::CommitFilterBuilder::new()
+                .author("T")
+                .build()
+                .expect("filter"),
+        );
+        for use_graph in [false, true] {
+            let repo = Repository::open(
+                seeded.git_dir(),
+                &crate::environment::RepositoryOptions::empty(),
+            )?;
+            let metrics = repo.odb().hot_path_metrics();
+            metrics.set_loose_open_counting(true);
+            let _scope = crate::hot_path_test_metrics::HotPathMetricsScope::install(
+                repo.odb().hot_path_metrics_arc(),
+            );
+            assert_eq!(
+                try_filtered_count_only(
+                    &repo,
+                    &[tip],
+                    &[excluded],
+                    &RevListOptions {
+                        count: true,
+                        use_commit_graph: use_graph,
+                        commit_filter: Some(Arc::clone(&filter)),
+                        ..RevListOptions::default()
+                    },
+                )?,
+                Some(2)
+            );
+            assert_eq!(
+                metrics.loose_path_open_attempts(),
+                if use_graph { 2 } else { 34 }
+            );
+        }
+
+        // New excluded commits can sit above the last commit-graph write.
+        let body = seeded.odb().read(&tip)?.data;
+        let extra = seeded.odb().write(
+            ObjectKind::Commit,
+            &String::from_utf8(body)
+                .expect("fixture UTF-8")
+                .replace("\n\nmerge\n", "\n\nnew merge\n")
+                .into_bytes(),
+        )?;
+        let repo = Repository::open(
+            seeded.git_dir(),
+            &crate::environment::RepositoryOptions::empty(),
+        )?;
+        let metrics = repo.odb().hot_path_metrics();
+        metrics.set_loose_open_counting(true);
+        let _scope = crate::hot_path_test_metrics::HotPathMetricsScope::install(
+            repo.odb().hot_path_metrics_arc(),
+        );
+        assert_eq!(
+            try_filtered_count_only(
+                &repo,
+                &[tip],
+                &[extra],
+                &RevListOptions {
+                    count: true,
+                    commit_filter: Some(filter),
+                    ..RevListOptions::default()
+                },
+            )?,
+            Some(1)
+        );
+        assert_eq!(metrics.loose_path_open_attempts(), 2);
         Ok(())
     }
 
