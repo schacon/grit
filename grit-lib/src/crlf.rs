@@ -1351,8 +1351,10 @@ fn encode_utf_with_encoding_rs(src: &[u8], target: &str) -> Option<Vec<u8>> {
 ///
 /// This handles:
 /// 1. Clean filter execution
-/// 2. CRLF → LF conversion based on config + attributes
-/// 3. safecrlf checking
+/// 2. `working-tree-encoding` decode to UTF-8
+/// 3. CRLF → LF conversion based on config + attributes
+/// 4. `$Id: … $` → `$Id$` collapse when `ident` is set
+/// 5. safecrlf checking
 ///
 /// Returns `Ok(data)` on success, or an error if safecrlf rejects it.
 pub fn convert_to_git(
@@ -1496,6 +1498,11 @@ pub(crate) fn convert_to_git_owned(
         buf = crlf_to_lf(&buf);
     }
 
+    // 6. Ident collapse (Git `ident_to_git` after filter / encode / crlf_to_git).
+    if file_attrs.ident && count_ident_regions(&buf) {
+        buf = collapse_ident(&buf);
+    }
+
     Ok(buf)
 }
 
@@ -1503,9 +1510,9 @@ pub(crate) fn convert_to_git_owned(
 /// unchanged.
 ///
 /// Decided from configuration and attributes alone, without looking at content: no clean or
-/// process filter (required or not) and no `working-tree-encoding` applies, and no line-ending
-/// setting can turn CRLF into LF. When this holds, a work-tree file's blob id can be computed
-/// by hashing the file as it is, for example in chunks without loading it whole.
+/// process filter (required or not) and no `working-tree-encoding` applies, no `ident` collapse,
+/// and no line-ending setting can turn CRLF into LF. When this holds, a work-tree file's blob id
+/// can be computed by hashing the file as it is, for example in chunks without loading it whole.
 ///
 /// # Parameters
 ///
@@ -1517,6 +1524,7 @@ pub fn git_conversion_is_identity(conv: &ConversionConfig, attrs: &FileAttrs) ->
         && attrs.filter_clean.is_none()
         && !attrs.filter_clean_required
         && attrs.working_tree_encoding.is_none()
+        && !attrs.ident
         && input_eol_rule(conv, attrs) == InputEolRule::Never
 }
 
@@ -2085,7 +2093,9 @@ fn count_ident_regions(data: &[u8]) -> bool {
                             found = true;
                             break;
                         }
-                        b'\n' | b'\r' => break,
+                        // Git `ident_to_git` / `count_ident`: LF ends the scan; CR may appear
+                        // inside the payload before the closing `$`.
+                        b'\n' => break,
                         _ => j += 1,
                     }
                 }
@@ -2107,10 +2117,7 @@ pub fn collapse_ident(data: &[u8]) -> Vec<u8> {
     while i < data.len() {
         if i + 4 <= data.len() && &data[i..i + 4] == b"$Id:" {
             let rest = &data[i + 4..];
-            let line_end = rest
-                .iter()
-                .position(|&b| b == b'\n' || b == b'\r')
-                .unwrap_or(rest.len());
+            let line_end = rest.iter().position(|&b| b == b'\n').unwrap_or(rest.len());
             let line = &rest[..line_end];
             if let Some(end) = line.iter().position(|&b| b == b'$') {
                 out.extend_from_slice(b"$Id$");
@@ -2395,6 +2402,7 @@ mod tests {
             assert!(!worktree_conversion_is_identity(&conv, &attrs), "{attrs:?}");
         }
         for attrs in [
+            with(&|a| a.ident = true),
             with(&|a| a.working_tree_encoding = Some("UTF-16".into())),
             with(&|a| a.filter_clean = Some("cat".into())),
             with(&|a| a.filter_process = Some("proc".into())),
@@ -2402,6 +2410,32 @@ mod tests {
         ] {
             assert!(!git_conversion_is_identity(&conv, &attrs), "{attrs:?}");
         }
+    }
+
+    #[test]
+    fn collapse_ident_allows_cr_before_closing_dollar() {
+        let data = b"$Id: abc\r$\n";
+        assert_eq!(collapse_ident(data), b"$Id$\n");
+    }
+
+    #[test]
+    fn convert_to_git_collapses_ident_with_cr_before_closing_dollar() {
+        let conv = ConversionConfig::from_config(&ConfigSet::new());
+        let mut attrs = FileAttrs::default();
+        attrs.ident = true;
+        let data = b"$Id: abc\r$\n";
+        let out = convert_to_git(data, "f", &conv, &attrs).expect("convert");
+        assert_eq!(out, b"$Id$\n");
+    }
+
+    #[test]
+    fn convert_to_git_collapses_expanded_ident_to_keyword() {
+        let conv = ConversionConfig::from_config(&ConfigSet::new());
+        let mut attrs = FileAttrs::default();
+        attrs.ident = true;
+        let expanded = b"$Id: 10d2a9379e5d822c92a372599358dd0e616aadac $\nfoo\n";
+        let out = convert_to_git(expanded, "id.txt", &conv, &attrs).expect("convert");
+        assert_eq!(out, b"$Id$\nfoo\n");
     }
 
     #[test]
