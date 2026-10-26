@@ -475,12 +475,6 @@ pub fn icase_worktree_file_stats(
     (files, bytes)
 }
 
-/// Whether another stage-0 path shares this index entry's worktree slot under `core.ignorecase`.
-#[must_use]
-pub fn has_icase_checkout_collision_sibling(index: &Index, index_rel: &str) -> bool {
-    IcaseIndexCollisionGroups::from_index(index, true).has_collision_sibling(index_rel)
-}
-
 fn icase_collision_groups(paths: &[String], ignorecase: bool) -> Vec<Vec<String>> {
     let n = paths.len();
     if n == 0 {
