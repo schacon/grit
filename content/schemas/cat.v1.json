@@ -23,6 +23,13 @@
               ],
               "type": "string"
             },
+            "omitted_inline": {
+              "description": "When the blob is too large to embed inline in JSON.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "text": {
               "type": [
                 "string",

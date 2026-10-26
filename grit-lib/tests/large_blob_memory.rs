@@ -119,6 +119,12 @@ fn large_blob_commands_stay_within_memory_budget() {
         "status peak {status_rss} > {MAX_GROWTH_BYTES}"
     );
 
+    std::process::Command::new("sh")
+        .arg("-c")
+        .arg("python3 -c \"import os,time; os.utime('big.bin', (time.time()+10, time.time()+10))\"")
+        .current_dir(root)
+        .status()
+        .expect("retouch before add");
     let add_rss = measure_peak_rss(root, &format!("{grit_s} add big.bin"), &grit_bench);
     assert!(
         add_rss <= MAX_GROWTH_BYTES,

@@ -831,9 +831,7 @@ fn refresh_present_tracked_path(
                     (staged_oid, RestagePayload::Bytes(data))
                 }
                 WorktreeBlobContent::Stream { mut file, size } => {
-                    let staged_oid = repo
-                        .odb()
-                        .hash_stream(ObjectKind::Blob, size, &mut file)?;
+                    let staged_oid = repo.odb().hash_stream(ObjectKind::Blob, size, &mut file)?;
                     use std::io::{Seek, SeekFrom};
                     file.seek(SeekFrom::Start(0)).map_err(|source| {
                         map_worktree_io(rel_path, WorktreePathOperation::Read, source)

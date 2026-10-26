@@ -425,6 +425,48 @@ fn display_stream_reports_missing_objects_and_callback_errors() {
 }
 
 #[test]
+fn stream_object_payload_follows_replace_refs() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    commit_file(wt, "f.txt", "x\n", "init");
+    let head = git_rev_parse_verify(wt, "HEAD").expect("HEAD");
+    let mut blob_body: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+    blob_body[0] = 0;
+    let mut child = Command::new("git")
+        .current_dir(wt)
+        .args(["hash-object", "-w", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("hash-object");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(&blob_body)
+        .expect("write blob");
+    let out = child.wait_with_output().expect("hash-object wait");
+    assert!(out.status.success());
+    let blob_hex = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    std::fs::create_dir_all(wt.join(".git/refs/replace")).expect("mkdir replace");
+    std::fs::write(
+        wt.join(".git/refs/replace").join(head.to_hex()),
+        format!("{blob_hex}\n"),
+    )
+    .expect("replace ref");
+
+    let repo = open_grit_repo(wt);
+    let mut streamed = Vec::new();
+    let n = repo
+        .stream_object_payload_to(&head, &mut streamed)
+        .expect("stream")
+        .expect("present");
+    assert_eq!(n, blob_body.len() as u64);
+    assert_eq!(streamed, blob_body);
+    assert_eq!(git_cat_file_p(wt, "HEAD").expect("git"), streamed);
+}
+
+#[test]
 fn resolve_and_cat_respect_git_no_replace_objects() {
     let hist = HistoryRepo::init();
     let wt = hist.worktree();

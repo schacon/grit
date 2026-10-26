@@ -423,11 +423,11 @@ impl Repository {
         writer: &mut dyn std::io::Write,
     ) -> Result<Option<u64>> {
         use std::io::copy;
-        self.odb()
-            .with_stream(oid, |mut stream| {
-                copy(&mut stream.reader, writer).map_err(Error::Io)?;
-                Ok(stream.size)
-            })
+        let effective = self.object_id_after_replace(oid);
+        self.odb().with_stream(&effective, |mut stream| {
+            copy(&mut stream.reader, writer).map_err(Error::Io)?;
+            Ok(stream.size)
+        })
     }
 }
 
