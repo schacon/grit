@@ -322,6 +322,7 @@ fn stage_with_hint(
         dry_run,
         intent_to_add,
         force_ignored,
+        ..StageOptions::default()
     };
     stage_paths(repo, &opts, &mut NullProgress).map_err(map_add_error)
 }

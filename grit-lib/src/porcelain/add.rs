@@ -82,6 +82,9 @@ pub struct StageOptions {
     pub intent_to_add: bool,
     /// Stage explicitly named ignored paths instead of returning [`Error::PathspecIgnored`].
     pub force_ignored: bool,
+    /// Skip [`Error::PathspecIgnored`] validation (caller already checked ignore rules).
+    #[doc(hidden)]
+    pub skip_pathspec_ignore_check: bool,
 }
 
 /// Paths returned by [`stage`] (repository-relative, `/` separators).
@@ -191,7 +194,7 @@ pub(crate) fn stage_for_commit_on_index(
         ..StageOptions::default()
     };
     // Tracked-scan staging writes blobs; use the diff-only path when previewing.
-    stage_inner_on_index(repo, &opts, progress, !dry_run, index, false, None)
+    stage_inner_on_index(repo, &opts, progress, !dry_run, index, false, None, None)
 }
 
 /// Stage paths into a caller-owned index without writing it to disk.
@@ -203,7 +206,28 @@ pub fn stage_on_index(
     opts: &StageOptions,
     progress: &mut dyn ProgressSink,
 ) -> Result<StageOutcome> {
-    stage_inner_on_index(repo, opts, progress, false, index, false, None)
+    stage_on_index_with_pathspec_ignore_exempt(repo, index, opts, progress, None)
+}
+
+/// Like [`stage_on_index`], but paths already staged at stage 0 in `ignore_exempt_index` skip
+/// [`Error::PathspecIgnored`] (used by path-scoped commits that stage on a parent-tree index).
+pub(crate) fn stage_on_index_with_pathspec_ignore_exempt(
+    repo: &Repository,
+    index: &mut Index,
+    opts: &StageOptions,
+    progress: &mut dyn ProgressSink,
+    ignore_exempt_index: Option<&Index>,
+) -> Result<StageOutcome> {
+    stage_inner_on_index(
+        repo,
+        opts,
+        progress,
+        false,
+        index,
+        false,
+        None,
+        ignore_exempt_index,
+    )
 }
 
 /// Stage paths matching `opts` into the index.
@@ -321,7 +345,16 @@ fn stage_inner(
 ) -> Result<StageOutcome> {
     if opts.dry_run {
         let mut index = repo.load_index()?;
-        return stage_inner_on_index(repo, opts, progress, tracked_scan, &mut index, true, None);
+        return stage_inner_on_index(
+            repo,
+            opts,
+            progress,
+            tracked_scan,
+            &mut index,
+            true,
+            None,
+            None,
+        );
     }
     let (mut lock, mut index) = repo.lock_and_load_index()?;
     stage_inner_on_index(
@@ -332,6 +365,7 @@ fn stage_inner(
         &mut index,
         true,
         Some(&mut lock),
+        None,
     )
 }
 
@@ -339,6 +373,7 @@ fn stage_inner(
 ///
 /// `on_disk` selects the on-disk `add` semantics (a dry run only lists paths). The index is
 /// persisted only through `lock`, which the caller must have taken before loading `index`.
+#[allow(clippy::too_many_arguments)]
 fn stage_inner_on_index(
     repo: &Repository,
     opts: &StageOptions,
@@ -347,6 +382,7 @@ fn stage_inner_on_index(
     index: &mut Index,
     on_disk: bool,
     lock: Option<&mut IndexLock>,
+    ignore_exempt_index: Option<&Index>,
 ) -> Result<StageOutcome> {
     let dry_run = opts.dry_run;
     let dry_run_list_only = dry_run && on_disk;
@@ -484,7 +520,16 @@ fn stage_inner_on_index(
     }
 
     if !opts.pathspecs.is_empty() {
-        validate_pathspecs(repo, index, work_tree, &unstaged, &untracked, opts, &rules)?;
+        validate_pathspecs(
+            repo,
+            index,
+            work_tree,
+            &unstaged,
+            &untracked,
+            opts,
+            &rules,
+            ignore_exempt_index,
+        )?;
     }
 
     if opts.mode == StageMode::All {
@@ -1259,7 +1304,33 @@ fn unmerged_index_paths(index: &Index) -> Vec<String> {
     paths
 }
 
-/// Whether `resolved` names an unmerged index row (stages 1–3), without scanning stage 0.
+/// Whether `resolved` matches a stage-0 index row (already staged / tracked for commit).
+fn pathspec_matches_stage0_index_entries(
+    index: &Index,
+    resolved: &str,
+    ctx: crate::pathspec::PathspecMatchContext,
+) -> bool {
+    if exact_literal_pathspec_set(&[resolved.to_owned()], ctx).is_some() {
+        let path_bytes = resolved.as_bytes();
+        if index.get(path_bytes, 0).is_some() {
+            return true;
+        }
+    }
+    let stage0_sorted: Vec<String> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .filter_map(|e| std::str::from_utf8(&e.path).ok().map(str::to_owned))
+        .collect();
+    if stage0_sorted.is_empty() {
+        return false;
+    }
+    let mut stage0_sorted = stage0_sorted;
+    stage0_sorted.sort_unstable();
+    stage0_sorted.dedup();
+    sorted_paths_match_pathspec(resolved, &stage0_sorted, ctx)
+}
+
 fn pathspec_matches_unmerged_index_entries(
     index: &Index,
     unmerged_sorted: &[String],
@@ -1278,6 +1349,7 @@ fn pathspec_matches_unmerged_index_entries(
     sorted_paths_match_pathspec(resolved, unmerged_sorted, ctx)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_pathspecs(
     repo: &Repository,
     index: &Index,
@@ -1286,6 +1358,7 @@ fn validate_pathspecs(
     untracked: &[String],
     opts: &StageOptions,
     rules: &WorktreeRules,
+    ignore_exempt_index: Option<&Index>,
 ) -> Result<()> {
     let sources = pathspec_sources(opts);
     let positive = sources
@@ -1318,7 +1391,12 @@ fn validate_pathspecs(
                 "pathspec '{label}' did not match any files"
             )));
         }
-        if opts.force_ignored {
+        if opts.force_ignored || opts.skip_pathspec_ignore_check {
+            continue;
+        }
+        if ignore_exempt_index
+            .is_some_and(|exempt| pathspec_matches_stage0_index_entries(exempt, resolved, ctx))
+        {
             continue;
         }
         if let Some(display) = ignored_display_for_explicit_add(
@@ -1359,6 +1437,7 @@ fn ignored_display_for_explicit_add<'i>(
     {
         return Ok(None);
     }
+    let ctx = repo.pathspec_match_context();
     let precompose = repo.pathspec_precompose_enabled();
     let staged = resolve_worktree_path_for_staging(work_tree, resolved, precompose);
     if !staged.abs.exists() {
@@ -1368,6 +1447,9 @@ fn ignored_display_for_explicit_add<'i>(
     let is_dir = staged.abs.is_dir();
     let mut ignore = rules.ignore_mut();
     if is_dir {
+        if pathspec_matches_stage0_index_entries(index, resolved, ctx) {
+            return Ok(None);
+        }
         let (ignored, _) = ignore.check_path(repo, Some(index), &rel, true)?;
         return Ok(ignored.then(|| label.to_owned()));
     }
