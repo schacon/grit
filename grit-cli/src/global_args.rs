@@ -9,6 +9,9 @@ use clap::builder::TypedValueParser as _;
 use clap::Args;
 use grit_lib::config::environment::ConfigOverride;
 
+use crate::error_kind::ErrorKind;
+use crate::json_error::{StructuredCliError, StructuredJsonError};
+
 /// Repository selection and config overrides applied before any command runs.
 #[derive(Debug, Args, Default)]
 pub struct GlobalRepoArgs {
@@ -45,6 +48,8 @@ impl GlobalRepoArgs {
     /// spawned `grit` process sees the same repository and config.
     ///
     /// Call once at startup, before any thread is spawned.
+    /// Returns a structured usage error if the final cwd or repository globals
+    /// cannot be represented by the library's UTF-8 discovery environment.
     pub fn apply(&self) -> Result<()> {
         let mut changed_dir = false;
         for dir in self.dirs.iter().filter(|d| !d.as_os_str().is_empty()) {
@@ -52,10 +57,25 @@ impl GlobalRepoArgs {
                 .with_context(|| format!("cannot change to '{}'", dir.display()))?;
             changed_dir = true;
         }
-        if changed_dir {
-            if let Ok(cwd) = std::env::current_dir() {
-                std::env::set_var("PWD", cwd);
+        let cwd = std::env::current_dir().context("cannot resolve current working directory")?;
+        // Validate after all -C traversal, but before repository discovery or the
+        // environment builders can replace invalid bytes with U+FFFD.
+        for (label, path) in [
+            ("working directory", Some(cwd.as_path())),
+            ("--git-dir path", self.git_dir.as_deref()),
+            ("--work-tree path", self.work_tree.as_deref()),
+        ] {
+            if path.is_some_and(|path| path.to_str().is_none()) {
+                let message = format!("{label} must be valid UTF-8 for repository selection");
+                return Err(StructuredCliError {
+                    payload: StructuredJsonError::new(message.clone(), ErrorKind::Usage),
+                    human: message,
+                }
+                .into());
             }
+        }
+        if changed_dir {
+            std::env::set_var("PWD", cwd);
         }
         if self.git_dir.is_none() && self.work_tree.is_none() && self.config.is_empty() {
             return Ok(());

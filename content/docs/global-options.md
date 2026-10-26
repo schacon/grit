@@ -38,6 +38,8 @@ $ grit -c user.name="CI Bot" -c user.email=ci@example.com commit -m "Update lock
 $ grit --git-dir /srv/site.git --work-tree /var/www/site status
 ```
 
+On Unix, the final working directory after all `-C` options, and the paths supplied to `--git-dir` and `--work-tree`, must be valid UTF-8. Unsupported repository selections are rejected before discovery or command execution with exit **2**, so a raw-byte name cannot select a similarly named Unicode repository. Human output reports the usage error on stderr; `--json` writes an error object with `kind: "usage"` on stdout; `--markdown` writes `**Error:**` on stdout. Traversing a non-UTF-8 directory with `-C` is supported when a subsequent `-C` returns to a UTF-8 working directory.
+
 Library embedders get the same behavior from [`Environment::with_git_dir`](rustdoc:grit_lib::config::environment::Environment), [`Environment::with_work_tree`](rustdoc:grit_lib::config::environment::Environment) and [`Environment::push_config_override`](rustdoc:grit_lib::config::environment::Environment) with a parsed [`ConfigOverride`](rustdoc:grit_lib::config::environment::ConfigOverride).
 
 ## Environment variables

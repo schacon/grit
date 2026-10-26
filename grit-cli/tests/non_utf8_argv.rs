@@ -254,3 +254,136 @@ fn unfiltered_status_retains_distinct_non_utf8_paths() {
     }
     git(dir.path(), &["fsck", "--strict"]);
 }
+
+#[test]
+fn raw_repository_selection_cannot_mutate_a_unicode_sibling() {
+    let root = tempfile::tempdir().unwrap();
+    let names = [
+        OsString::from_vec(b"repo\xff".to_vec()),
+        OsString::from_vec(b"repo\xfe".to_vec()),
+        OsString::from("repo\u{fffd}"),
+    ];
+    let repos: Vec<_> = names.iter().map(|name| root.path().join(name)).collect();
+    for (i, repo) in repos.iter().enumerate() {
+        fs::create_dir(repo).unwrap();
+        git(repo, &["init", "-q", "-b", &format!("branch-{i}")]);
+        git(repo, &["config", "user.name", "Tool"]);
+        git(repo, &["config", "user.email", "tool@example.com"]);
+        fs::write(repo.join("file"), format!("initial {i}\n")).unwrap();
+        git(repo, &["add", "file"]);
+        git(repo, &["commit", "-qm", "initial"]);
+        assert!(git(repo, &["status", "--porcelain=v1"]).stdout.is_empty());
+        fs::write(repo.join("file"), format!("changed {i}\n")).unwrap();
+    }
+    let snapshot = || {
+        repos
+            .iter()
+            .map(|repo| {
+                [
+                    fs::read(repo.join(".git/index")).unwrap(),
+                    git(repo, &["rev-parse", "HEAD"]).stdout,
+                    fs::read(repo.join("file")).unwrap(),
+                ]
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = snapshot();
+    for (name, repo) in names[..2].iter().zip(&repos) {
+        let mut attached_c = OsString::from("-C");
+        attached_c.push(name);
+        let mut attached_git_dir = OsString::from("--git-dir=");
+        attached_git_dir.push(repo.join(".git"));
+        let mut attached_work_tree = OsString::from("--work-tree=");
+        attached_work_tree.push(repo);
+        let unicode = &repos[2];
+        let selections = [
+            vec!["-C".into(), name.clone()],
+            vec![attached_c],
+            vec!["-C".into(), repo.as_os_str().to_owned()],
+            vec![
+                "--git-dir".into(),
+                repo.join(".git").into_os_string(),
+                "--work-tree".into(),
+                repo.as_os_str().to_owned(),
+            ],
+            vec![attached_git_dir, attached_work_tree],
+            vec![
+                "--git-dir".into(),
+                repo.join(".git").into_os_string(),
+                "--work-tree".into(),
+                unicode.as_os_str().to_owned(),
+            ],
+            vec![
+                "--git-dir".into(),
+                unicode.join(".git").into_os_string(),
+                "--work-tree".into(),
+                repo.as_os_str().to_owned(),
+            ],
+        ];
+        for mode in ["", "--json", "--markdown"] {
+            for global_first in [false, true] {
+                for subcommand in ["add", "status"] {
+                    for selection in &selections {
+                        let mut cmd = command(GRIT, root.path());
+                        cmd.args(selection);
+                        if global_first && !mode.is_empty() {
+                            cmd.arg(mode);
+                        }
+                        cmd.arg(subcommand);
+                        if !global_first && !mode.is_empty() {
+                            cmd.arg(mode);
+                        }
+                        let out = cmd.output().unwrap();
+                        assert!(
+                            snapshot() == before,
+                            "repository state changed: {selection:?}: {out:?}"
+                        );
+                        assert_usage(&out, mode, "UTF-8");
+                    }
+                    // A native cwd also needs validation, including a UTF-8 symlink
+                    // whose resolved directory contains invalid bytes.
+                    let alias = root.path().join("alias");
+                    std::os::unix::fs::symlink(repo, &alias).unwrap();
+                    for cwd in [repo, &alias] {
+                        let mut cmd = command(GRIT, cwd);
+                        if global_first && !mode.is_empty() {
+                            cmd.arg(mode);
+                        }
+                        cmd.arg(subcommand);
+                        if !global_first && !mode.is_empty() {
+                            cmd.arg(mode);
+                        }
+                        let out = cmd.output().unwrap();
+                        assert!(
+                            snapshot() == before,
+                            "repository state changed: {cwd:?}: {out:?}"
+                        );
+                        assert_usage(&out, mode, "UTF-8");
+                    }
+                    fs::remove_file(alias).unwrap();
+                }
+            }
+        }
+    }
+    // Valid Unicode selection still works. System Git can stage raw roots by
+    // their bytes, and all three repositories remain valid on disk.
+    let out = command(GRIT, root.path())
+        .arg("-C")
+        .arg(&repos[2])
+        .args(["add", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(&snapshot()[..2], &before[..2]);
+    for repo in &repos[..2] {
+        git(repo, &["add", "file"]);
+    }
+    for repo in &repos {
+        assert!(git(repo, &["diff", "--name-only"]).stdout.is_empty());
+        assert_eq!(
+            git(repo, &["diff", "--cached", "--name-only"]).stdout,
+            b"file\n"
+        );
+        git(repo, &["fsck", "--strict"]);
+    }
+}

@@ -2180,7 +2180,7 @@ fn run() -> Result<ExitStatus, anyhow::Error> {
     }
     if let Err(err) = cli.repo.apply() {
         output::emit_error(&err, &opts);
-        return Ok(ExitStatus::Failure);
+        return Ok(ExitStatus::for_error(&err));
     }
     let env = context::environment();
     let render_ctx = RenderContext {
