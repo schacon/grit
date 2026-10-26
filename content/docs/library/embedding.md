@@ -78,7 +78,11 @@ unchanged. For a raw byte path, build the input with
 `repo_relpath::storage_string`. Ordinary UTF-8
 paths remain readable; non-UTF-8 paths and names beginning with the reserved
 `grit+pathhex:` prefix are escaped. Encoded inputs identify repository-relative
-paths without applying the caller's working-directory prefix.
+paths without applying the caller's working-directory prefix. For `blame_file`
+and `resolve_blame_line_range`, ordinary UTF-8 operands are normalized against
+the working directory before storage escaping, so
+`./grit+pathhex:6162` (or `../grit+pathhex:6162` from a subdirectory)
+addresses that literal filename rather than the file `ab`.
 
 Every blame `original_path`, including hunks and rename/copy origins, uses that
 same storage representation. Recover its exact bytes with

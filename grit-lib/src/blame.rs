@@ -3984,7 +3984,8 @@ fn blame_lines_share_hunk(prev: &BlameAttributedLine, next: &BlameAttributedLine
 /// `repo_relpath::storage_string`. Encoded paths are repository-relative;
 /// ordinary UTF-8 paths retain work-tree cwd resolution. Decoding happens once,
 /// keeping literal reserved-prefix names distinct. Returned `original_path` values
-/// use the same storage encoding.
+/// use the same storage encoding. Ordinary operands such as `./grit+pathhex:6162`
+/// are normalized before storage escaping, so they name the literal file.
 ///
 /// # Errors
 ///
@@ -4079,7 +4080,7 @@ fn normalize_blame_path(repo: &Repository, path: &str) -> String {
         // ASCII encoding against the work tree or decode a literal prefix twice.
         return storage_string(&bytes);
     }
-    if let Some(work_tree) = repo.work_tree() {
+    let normalized = if let Some(work_tree) = repo.work_tree() {
         crate::pathspec::normalize_worktree_file_path_with_git_dir(
             path,
             work_tree,
@@ -4088,6 +4089,12 @@ fn normalize_blame_path(repo: &Repository, path: &str) -> String {
         )
     } else {
         path.to_string()
+    };
+    // Normalization can expose a literal reserved prefix (for example after `./`).
+    if normalized.starts_with(crate::repo_relpath::STORAGE_PREFIX) {
+        storage_string(normalized.as_bytes())
+    } else {
+        normalized
     }
 }
 

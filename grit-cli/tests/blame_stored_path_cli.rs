@@ -74,3 +74,37 @@ fn status_encoded_paths_feed_blame_lines_and_grouped_ranges() {
     );
     assert!(String::from_utf8(out.stdout).unwrap().contains("second"));
 }
+
+#[test]
+fn normalized_literal_prefix_blames_literal_file_and_range() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    git(root, &["config", "user.name", "Tool"]);
+    git(root, &["config", "user.email", "tool@example.com"]);
+    std::fs::write(root.join("ab"), "decoy\n").unwrap();
+    std::fs::write(root.join("grit+pathhex:6162"), "literal\n").unwrap();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "initial"]);
+    let sub = root.join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    for (cwd, operand) in [
+        (root, "./grit+pathhex:6162"),
+        (sub.as_path(), "../grit+pathhex:6162"),
+    ] {
+        let blame = json(cwd, &["blame", operand]);
+        assert_eq!(blame["lines"][0]["content"], "literal");
+        assert_eq!(
+            storage_bytes(blame["lines"][0]["original_path"].as_str().unwrap()).as_ref(),
+            b"grit+pathhex:6162"
+        );
+        let ranged = json(cwd, &["blame", "-L", "/literal/,+1", operand]);
+        assert_eq!(ranged["lines"], blame["lines"]);
+        let grouped = json(cwd, &["blame", "--group", "-L", "/literal/,+1", operand]);
+        assert_eq!(grouped["hunks"][0]["count"], 1);
+        assert_eq!(
+            storage_bytes(grouped["hunks"][0]["original_path"].as_str().unwrap()).as_ref(),
+            b"grit+pathhex:6162"
+        );
+    }
+}

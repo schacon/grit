@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use crate::index::worktree_path_from_index_rel;
 use crate::quote_path::{quote_c_style, quote_c_style_bytes};
 
-const STORAGE_PREFIX: &str = "grit+pathhex:";
+pub(crate) const STORAGE_PREFIX: &str = "grit+pathhex:";
 
 /// Parent directory prefix of a repository-relative path (empty when at repository root).
 #[must_use]

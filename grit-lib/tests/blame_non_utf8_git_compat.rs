@@ -405,3 +405,58 @@ fn grit_written_raw_path_objects_are_readable_by_git_blame() {
     assert_eq!(result.lines[0].commit, tip);
     git(root, &["fsck", "--strict"]);
 }
+
+fn assert_literal_prefix_blame(root: &Path, cwd: &Path, operand: &str) {
+    let mut options = RepositoryOptions::empty();
+    options.environment.cwd = cwd.to_owned();
+    let repo = Repository::discover(Some(root), &options).unwrap();
+    let result = blame_file(&repo, operand, &BlameOptions::default()).unwrap();
+    assert_eq!(result.lines[0].content, "literal");
+    let expected = git_blame(root, b"grit+pathhex:6162", false);
+    assert_attribution(&result, &expected);
+    let range = resolve_blame_line_range(&repo, head(root), operand, "/literal/,+1").unwrap();
+    assert_eq!(range, 1..=1);
+    let ranged = blame_file(
+        &repo,
+        operand,
+        &BlameOptions {
+            line_range: Some(range),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_attribution(&ranged, &expected);
+}
+
+#[test]
+fn dot_relative_literal_prefix_does_not_decode_after_normalization() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    setup(root);
+    write(root, b"ab", "decoy\n");
+    write(root, b"grit+pathhex:6162", "literal\n");
+    commit(root);
+    std::fs::create_dir(root.join("sub")).unwrap();
+    for operand in ["./grit+pathhex:6162", "sub/../grit+pathhex:6162"] {
+        assert_literal_prefix_blame(root, root, operand);
+    }
+    git(root, &["fsck", "--strict"]);
+}
+
+#[test]
+fn cwd_relative_literal_prefix_does_not_decode_after_normalization() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    setup(root);
+    write(root, b"ab", "decoy\n");
+    write(root, b"grit+pathhex:6162", "literal\n");
+    commit(root);
+    let cwd = root.join("sub");
+    std::fs::create_dir(&cwd).unwrap();
+    for operand in ["../grit+pathhex:6162", "./../grit+pathhex:6162"] {
+        assert_literal_prefix_blame(root, &cwd, operand);
+    }
+    // An explicitly stored path still bypasses cwd resolution and decodes only once.
+    assert_literal_prefix_blame(root, &cwd, &storage_string(b"grit+pathhex:6162"));
+    git(root, &["fsck", "--strict"]);
+}
