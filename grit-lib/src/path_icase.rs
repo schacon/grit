@@ -660,8 +660,9 @@ mod tests {
     }
 
     fn worktree_has_distinct_icase_dentries(base: &Path) -> bool {
-        let upper = base.join(".grit_icase_probe_upper");
-        let lower = base.join(".grit_icase_probe_lower");
+        // Only case may differ, so alias lookup detects filesystem case folding.
+        let upper = base.join(".GRIT_ICASE_PROBE");
+        let lower = base.join(".grit_icase_probe");
         let _ = std::fs::remove_dir_all(&upper);
         let _ = std::fs::remove_dir_all(&lower);
         if std::fs::create_dir(&upper).is_err() {
