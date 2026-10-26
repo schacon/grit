@@ -4390,9 +4390,10 @@ fn push_index_blob_worktree_diff(
     } else {
         hash_stream_threshold(odb)?
     };
-    let eff_oid = read_regular_worktree_blob(
+    let eff_oid = worktree_blob_content_from(
         odb,
         file_path,
+        &meta,
         conv,
         &file_attrs,
         path_str_ref,
@@ -13155,6 +13156,57 @@ mod smudge_racily_clean_tests {
             "{names:?}"
         );
         assert!(odb.read(&oid).expect("read blob").data.len() > 9000);
+    }
+
+    #[test]
+    fn indexed_binary_under_autocrlf_rehash_streams() {
+        use std::io::Write;
+
+        let td = tempfile::tempdir().expect("tempdir");
+        let wt = td.path();
+        let (_git_dir, odb) =
+            minimal_repo(wt, "[core]\n\tautocrlf = true\n\tbigFileThreshold = 1m\n");
+        let path = wt.join("big.bin");
+        {
+            let mut f = fs::File::create(&path).expect("create");
+            f.write_all(&[0u8; 9000]).expect("nul prefix");
+            let chunk = vec![1u8; 512 * 1024];
+            for _ in 0..3 {
+                f.write_all(&chunk).expect("chunk");
+            }
+        }
+        let meta = fs::symlink_metadata(&path).expect("stat");
+        let oid = hash_worktree_file(
+            &odb,
+            &path,
+            &meta,
+            &crlf::ConversionConfig::from_config(&ConfigSet::new()),
+            &FileAttrs::default(),
+            "big.bin",
+            None,
+            None,
+        )
+        .expect("hash");
+        let entry = entry_from_metadata(&meta, b"big.bin", oid, MODE_REGULAR);
+        let mut conv = crlf::ConversionConfig::from_config(&ConfigSet::new());
+        conv.autocrlf = crlf::AutoCrlf::True;
+        let attrs = FileAttrs::default();
+        let content = read_regular_worktree_blob(
+            &odb,
+            &path,
+            &conv,
+            &attrs,
+            "big.bin",
+            Some(&entry),
+            None,
+            1024 * 1024,
+        )
+        .expect("read blob");
+        assert!(
+            matches!(content, WorktreeBlobContent::Stream { .. }),
+            "indexed binary re-hash must stream, not buffer"
+        );
+        assert_eq!(content.hash(&odb).expect("hash"), entry.oid);
     }
 
     #[test]

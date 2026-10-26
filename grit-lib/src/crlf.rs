@@ -1535,8 +1535,9 @@ pub fn git_conversion_is_identity(conv: &ConversionConfig, attrs: &FileAttrs) ->
 /// blocker is `core.autocrlf` / `text=auto` (`InputEolRule::UnlessBinary`), probes the first
 /// 8000 bytes for a NUL (same as [`is_binary`]) and allows streaming when the file is binary.
 ///
-/// Returns `false` when a clean filter, `working-tree-encoding`, `ident`, or the autocrlf
-/// index guard needs the stage-0 index blob.
+/// Returns `false` when a clean filter, `working-tree-encoding`, `ident`, or a non-binary
+/// file needs the autocrlf index guard's stage-0 blob. Binary files stream even when indexed,
+/// matching Git's `convert.c` order (binary check before the index CRLF guard).
 ///
 /// # Errors
 ///
@@ -1558,9 +1559,6 @@ pub(crate) fn worktree_allows_raw_byte_stream(
     {
         return Ok(false);
     }
-    if index_entry.is_some() && clean_uses_autocrlf_index_guard(attrs, conv) {
-        return Ok(false);
-    }
     match input_eol_rule(conv, attrs) {
         InputEolRule::Never => Ok(true),
         InputEolRule::Always => Ok(false),
@@ -1575,7 +1573,13 @@ pub(crate) fn worktree_allows_raw_byte_stream(
             file.read_exact(&mut buf).map_err(crate::error::Error::Io)?;
             file.seek(SeekFrom::Start(0))
                 .map_err(crate::error::Error::Io)?;
-            Ok(is_binary(&buf))
+            if is_binary(&buf) {
+                return Ok(true);
+            }
+            if index_entry.is_some() && clean_uses_autocrlf_index_guard(attrs, conv) {
+                return Ok(false);
+            }
+            Ok(false)
         }
     }
 }
@@ -2459,8 +2463,32 @@ mod tests {
         huge_file.as_file().write_all(&data).expect("write");
         let mut huge = huge_file.reopen().expect("reopen");
         huge.seek(SeekFrom::Start(10_000)).expect("seek");
+        assert!(worktree_allows_raw_byte_stream(&conv, &attrs, None, &mut huge, 20_000).unwrap());
+
+        use crate::index::{IndexEntry, MODE_REGULAR};
+        use crate::objects::ObjectId;
+        let indexed = IndexEntry {
+            ctime_sec: 1,
+            ctime_nsec: 0,
+            mtime_sec: 1,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: 9000,
+            oid: ObjectId::zero(),
+            flags: 0,
+            flags_extended: None,
+            path: b"f.bin".to_vec(),
+            base_index_pos: 0,
+        };
+        assert!(clean_uses_autocrlf_index_guard(&attrs, &conv));
+        let mut again = nul_file.reopen().expect("reopen");
         assert!(
-            worktree_allows_raw_byte_stream(&conv, &attrs, None, &mut huge, 20_000).unwrap()
+            worktree_allows_raw_byte_stream(&conv, &attrs, Some(&indexed), &mut again, 9000)
+                .unwrap()
         );
     }
 
