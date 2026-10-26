@@ -615,9 +615,21 @@ The daily matrix row `switch/large-blob@big-asset` switches away from a 300 MB l
 
 Checkouts of many small files did not change: switching both ways between two commits that differ in every file of a 30 000-file tree measured 1.195 s → 1.188 s packed and 1.167 s → 1.107 s loose (hyperfine, 20 runs), and cloning that repository 564 → 543 ms.
 
-`grit clone` of a repository whose big file is still loose takes 5.1 s and about 1.1 GB on this repository (Git: 1.0 s and 91 MB, copying the loose objects). Grit packs the objects for a local clone, and building that pack holds the big blob in memory. That pack-building path is separate from checkout and not changed here.
+Local clones now link loose objects, or copy their compressed files when linking is unavailable, before considering a new pack. Their transfer-statistics walk reads large blobs' headers instead of inflating their bodies: blobs have no outgoing links to traverse. This removes the remaining allocation proportional to a loose blob's size during clone. Human `grit cat` output also streams blobs of at least 1 MiB through the library's replace-aware display API; JSON and Markdown retain their content fields.
 
-The `checkout_large_blob_rss` integration test restores and switches to a 64 MiB blob, loose and packed, and fails if the process's peak RSS grows by 16 MiB or more. On `origin/main` it grows by 139 MiB.
+Follow-up measurements on 2026-10-26 used an AMD EPYC 7763 VM (4 vCPU), system Git 2.55.0, and identical `dist` profiles for current main (`a1f4e2168`) and this change (`c858ca944`). Builds and tests finished before timing began. The fixture is the issue's `seq 1 40000000` (348,888,897 bytes), stored loose. Each large scenario ran three times; the small-file clone ran seven times. Times are medians and RSS is the maximum across runs, measured with `/usr/bin/time -v`. Clone results pass system `git fsck` and have a clean `git status`; restored and switched files pass `git diff --exit-code`.
+
+| Command | Git seconds / MiB | Grit main seconds / MiB | Grit after seconds / MiB |
+| --- | ---: | ---: | ---: |
+| `restore big.txt` | 0.88 / 90.8 | 0.77 / 11.2 | **0.76 / 11.2** |
+| `switch main` (writes the file) | 0.88 / 91.0 | 0.50 / 12.1 | **0.50 / 12.4** |
+| Local `clone` | 0.88 / 91.2 | 1.01 / 676.2 | **0.50 / 13.4** |
+| `cat HEAD:big.txt` (Git: `cat-file blob`) | 0.74 / 90.5 | 0.70 / 1340.1 | **0.54 / 9.9** |
+| Local clone, 5,000 small files | 0.37 / 6.1 | 0.43 / 18.0 | **0.42 / 18.0** |
+
+Raw samples, including current main in each scenario's `baseline_grit` field, are committed in `grit-utils/baselines/large-blob-materialization.json`. The `clone_large_blob_rss` integration test clones a 64 MiB loose blob through the public library API, checks that it is linked, runs system Git's fsck/status checks, and limits peak-RSS growth to 16 MiB. Before the statistics-walk fix it grew by 128 MiB and failed; afterward it passes.
+
+The `checkout_large_blob_rss` integration test restores and switches to a 64 MiB blob, loose and packed, and fails if the process's peak RSS grows by 16 MiB or more. On the original pre-streaming baseline (`5d5136859`) it grows by 139 MiB. Packed-object RSS also includes resident pages of the compressed pack mapping; this can make the strict RSS-growth assertion sensitive to the process's earlier high-water mark.
 
 ```bash
 cargo test -p grit-lib --test checkout_large_blob_rss --test checkout_large_blob_streaming

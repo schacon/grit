@@ -130,6 +130,7 @@ baseline = [
   "grit-utils/baselines/revwalk-queries.json",
   "grit-utils/baselines/revision-selection.json",
   "grit-utils/baselines/resolve-cat.json",
+  "grit-utils/baselines/large-blob-materialization.json",
   "grit-utils/baselines/fsck-medium.json",
   "grit-utils/baselines/hash-before.json",
   "grit-utils/baselines/hash-after.json",
