@@ -278,3 +278,7 @@ required-features = ["serde-models"]
 [[bench]]
 name = "pack_frontier"
 harness = false
+
+[[bench]]
+name = "log_stat"
+harness = false
