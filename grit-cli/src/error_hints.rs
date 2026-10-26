@@ -18,6 +18,7 @@ use grit_lib::remote::{RemoteError, DEFAULT_REMOTE};
 
 use crate::error_kind::ErrorKind;
 use crate::json_error::{StructuredCliError, StructuredJsonError};
+use crate::usage_hints;
 
 /// Paths shown in human messages and hints before the rest are summarized as a count.
 const MAX_LISTED_PATHS: usize = 10;
@@ -209,17 +210,26 @@ fn guide_branch(err: &BranchError) -> Option<Error> {
             None,
         )),
         BranchError::NotFound { name } => {
-            let hint = (!looks_like_rev_syntax(name)).then(|| {
-                format!(
-                    "`grit branch` lists your branches; create this one with `grit switch -c {name}`"
-                )
-            });
-            Some(guided(
-                ErrorKind::BranchNotFound,
-                format!("no branch named '{name}'"),
-                hint,
-                None,
-            ))
+            if let Some(hint) = usage_hints::checkout_restore_hint(name) {
+                Some(guided(
+                    ErrorKind::BranchNotFound,
+                    format!("no branch named '{name}'"),
+                    Some(hint),
+                    None,
+                ))
+            } else {
+                let hint = (!looks_like_rev_syntax(name)).then(|| {
+                    format!(
+                        "`grit branch` lists your branches; create this one with `grit switch -c {name}`"
+                    )
+                });
+                Some(guided(
+                    ErrorKind::BranchNotFound,
+                    format!("no branch named '{name}'"),
+                    hint,
+                    None,
+                ))
+            }
         }
         _ => None,
     }
