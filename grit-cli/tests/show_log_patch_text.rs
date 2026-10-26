@@ -128,3 +128,103 @@ fn diff_patch_text_still_git_apply_check() {
     let patch = grit_patch_stdout(dir.path(), &["diff", "HEAD~1..HEAD", "--patch-text"]);
     git_apply_check_reverse(dir.path(), &patch);
 }
+
+fn init_multi_file_repo(dir: &std::path::Path) {
+    git_in(dir, &["init", "-b", "main"]);
+    git_in(dir, &["config", "user.email", "t@example.com"]);
+    git_in(dir, &["config", "user.name", "Test"]);
+    fs::write(dir.join("a.txt"), "a\n").expect("write");
+    fs::write(dir.join("b.txt"), "b\n").expect("write");
+    fs::write(dir.join("bin.dat"), &[0u8, 1, 2]).expect("write");
+    git_in(dir, &["add", "."]);
+    git_in(dir, &["commit", "-m", "base"]);
+    fs::write(dir.join("a.txt"), "A\n").expect("write");
+    fs::write(dir.join("b.txt"), "B\n").expect("write");
+    fs::write(dir.join("bin.dat"), &[0u8, 1, 2, 3]).expect("write");
+    git_in(dir, &["add", "."]);
+    git_in(dir, &["commit", "-m", "change all"]);
+}
+
+#[test]
+fn show_log_patch_text_respects_pathspec() {
+    let dir = TempDir::new().expect("tempdir");
+    init_multi_file_repo(dir.path());
+    for args in [
+        &["show", "--patch-text", "HEAD", "--", "a.txt"][..],
+        &["log", "-n1", "--patch-text", "--", "a.txt"][..],
+    ] {
+        let patch = grit_patch_stdout(dir.path(), args);
+        let text = String::from_utf8_lossy(&patch);
+        assert!(
+            text.contains("a.txt") && text.contains("diff --git"),
+            "expected a.txt patch in {args:?}, got:\n{text}"
+        );
+        assert!(
+            !text.contains("b.txt") && !text.contains("bin.dat"),
+            "pathspec should exclude other files for {args:?}, got:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn show_patch_text_merge_first_parent_git_apply_check() {
+    let dir = TempDir::new().expect("tempdir");
+    let root = dir.path();
+    git_in(root, &["init", "-b", "main"]);
+    git_in(root, &["config", "user.email", "t@example.com"]);
+    git_in(root, &["config", "user.name", "Test"]);
+    fs::write(root.join("base.txt"), "base\n").expect("write");
+    git_in(root, &["add", "base.txt"]);
+    git_in(root, &["commit", "-m", "main tip"]);
+    git_in(root, &["branch", "side"]);
+    fs::write(root.join("side.txt"), "side\n").expect("write");
+    git_in(root, &["add", "side.txt"]);
+    git_in(root, &["commit", "-m", "side tip"]);
+    git_in(root, &["switch", "main"]);
+    fs::write(root.join("main.txt"), "main\n").expect("write");
+    git_in(root, &["add", "main.txt"]);
+    git_in(root, &["commit", "-m", "main line"]);
+    git_in(root, &["merge", "--no-edit", "side"]);
+    fs::write(root.join("merged.txt"), "merged\n").expect("write");
+    git_in(root, &["add", "merged.txt"]);
+    git_in(root, &["commit", "-m", "merge commit with tree change"]);
+
+    let patch = grit_patch_stdout(
+        root,
+        &[
+            "show",
+            "--patch-text",
+            "--diff-merges",
+            "first-parent",
+            "HEAD",
+        ],
+    );
+    let text = String::from_utf8_lossy(&patch);
+    assert!(
+        text.contains("diff --git") && text.contains("merged.txt"),
+        "expected first-parent merge patch, got:\n{text}"
+    );
+    git_apply_check_reverse(dir.path(), &patch);
+}
+
+#[test]
+fn show_patch_text_binary_git_apply_check() {
+    let dir = TempDir::new().expect("tempdir");
+    let root = dir.path();
+    git_in(root, &["init", "-b", "main"]);
+    git_in(root, &["config", "user.email", "t@example.com"]);
+    git_in(root, &["config", "user.name", "Test"]);
+    fs::write(root.join("bin.dat"), &[0u8, 1, 2]).expect("write");
+    git_in(root, &["add", "bin.dat"]);
+    git_in(root, &["commit", "-m", "add binary"]);
+    fs::write(root.join("bin.dat"), &[0u8, 1, 2, 3, 4]).expect("write");
+    git_in(dir.path(), &["add", "bin.dat"]);
+    git_in(dir.path(), &["commit", "-m", "change binary"]);
+    let patch = grit_patch_stdout(dir.path(), &["show", "--patch-text", "HEAD"]);
+    let text = String::from_utf8_lossy(&patch);
+    assert!(
+        text.contains("GIT binary patch") || text.contains("index "),
+        "expected binary patch section, got:\n{text}"
+    );
+    git_apply_check_reverse(dir.path(), &patch);
+}

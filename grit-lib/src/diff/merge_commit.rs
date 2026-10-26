@@ -169,6 +169,15 @@ pub fn commit_diff_files(
     )
 }
 
+/// Keep diff entries whose path matches any pathspec (empty list = all entries).
+#[must_use]
+pub fn filter_diff_entries_by_pathspec(
+    entries: Vec<DiffEntry>,
+    pathspecs: &[String],
+) -> Vec<DiffEntry> {
+    filter_entries(entries, pathspecs)
+}
+
 fn filter_entries(entries: Vec<DiffEntry>, pathspecs: &[String]) -> Vec<DiffEntry> {
     if pathspecs.is_empty() {
         return entries;
@@ -184,6 +193,34 @@ fn filter_entries(entries: Vec<DiffEntry>, pathspecs: &[String]) -> Vec<DiffEntr
             crate::pathspec::path_allowed_by_pathspec_list(pathspecs, path)
         })
         .collect()
+}
+
+/// Tree diff entries for one commit vs its first parent (rename-aware).
+///
+/// # Errors
+///
+/// Propagates ODB and diff errors.
+pub fn commit_first_parent_diff_entries(
+    repo: &Repository,
+    commit: &crate::objects::CommitData,
+    pathspecs: &[String],
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
+) -> Result<Vec<DiffEntry>> {
+    let odb = repo.odb();
+    let old_tree = match commit.parents.first() {
+        Some(parent) => Some(parse_commit(&odb.read(parent)?.data)?.tree),
+        None => None,
+    };
+    let entries = tree_diff_entries(
+        odb,
+        old_tree.as_ref(),
+        Some(&commit.tree),
+        "",
+        config,
+        thread_policy,
+    )?;
+    Ok(filter_entries(entries, pathspecs))
 }
 
 fn tree_diff_entries(

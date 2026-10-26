@@ -711,7 +711,12 @@ fn build_commit_outcome(
     };
 
     if format.log_patch_text() {
-        crate::commands::diff::emit_commits_log_patch_text(repo, oids, format)?;
+        let pathspecs = if path_args.is_empty() {
+            Vec::new()
+        } else {
+            resolve_commit_diff_pathspecs(repo, path_args)?
+        };
+        crate::commands::diff::emit_commits_log_patch_text(repo, oids, format, &pathspecs)?;
         return Ok(LogOutcome {
             commits: Vec::new(),
             groups: None,

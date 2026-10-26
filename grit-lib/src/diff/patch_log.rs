@@ -26,8 +26,10 @@ use crate::repo::Repository;
 use crate::userdiff::{matcher_for_path_parsed, FuncnameMatcher};
 use crate::worktree_rules::WorktreeRules;
 
+use super::merge_commit::commit_first_parent_diff_entries;
+use super::merge_commit::DiffMerges;
 use super::{
-    diff_trees, empty_blob_oid, read_worktree_side_bytes_for_diff, zero_oid, DiffEntry, DiffStatus,
+    empty_blob_oid, read_worktree_side_bytes_for_diff, zero_oid, DiffEntry, DiffStatus,
 };
 
 /// How much commit metadata precedes each patch in [`write_commit_log_patch`].
@@ -61,6 +63,10 @@ pub struct LogPatchOptions {
     pub commit_header: LogPatchCommitHeader,
     /// How to encode binary file changes in the patch body.
     pub binary_format: LogPatchBinaryFormat,
+    /// Limit patches to these pathspecs (empty = all paths).
+    pub pathspecs: Vec<String>,
+    /// How to diff merge commits (`combined` omits apply-ready patch bodies).
+    pub diff_merges: DiffMerges,
 }
 
 impl LogPatchOptions {
@@ -72,6 +78,8 @@ impl LogPatchOptions {
             abbrev_len: 7,
             commit_header: LogPatchCommitHeader::Full,
             binary_format: LogPatchBinaryFormat::default(),
+            pathspecs: Vec::new(),
+            diff_merges: DiffMerges::Combined,
         }
     }
 }
@@ -124,6 +132,8 @@ pub fn write_patch<W: Write>(
         abbrev_len: opts.abbrev_len,
         commit_header: LogPatchCommitHeader::FormatPercentH,
         binary_format: LogPatchBinaryFormat::GitApplyBinaryPatch,
+        pathspecs: Vec::new(),
+        diff_merges: DiffMerges::FirstParent,
     };
     let abbrev_len = opts.abbrev_len;
     let mut abbrev_cache = OidAbbrevCache::new(abbrev_len);
@@ -212,6 +222,8 @@ pub fn write_patch_structured<W: Write>(
         abbrev_len: opts.abbrev_len,
         commit_header: LogPatchCommitHeader::FormatPercentH,
         binary_format: LogPatchBinaryFormat::GitApplyBinaryPatch,
+        pathspecs: Vec::new(),
+        diff_merges: DiffMerges::FirstParent,
     };
     let mut abbrev_cache = OidAbbrevCache::new(opts.abbrev_len);
     let oids = items
@@ -579,14 +591,16 @@ fn write_parsed_commit_log_patch<W: Write>(
     odb: &Odb,
     oid: &ObjectId,
     commit: &CommitData,
-    parent_tree: Option<ObjectId>,
+    _parent_tree: Option<ObjectId>,
     opts: &LogPatchOptions,
     abbrev_cache: &mut OidAbbrevCache,
 ) -> Result<()> {
+    let is_merge = commit.parents.len() > 1;
+    let omit_merge_patch = is_merge && opts.diff_merges == DiffMerges::Combined;
     match opts.commit_header {
         LogPatchCommitHeader::Full => {
             writeln!(out, "commit {oid}")?;
-            if commit.parents.len() > 1 {
+            if is_merge {
                 let mut parts = Vec::with_capacity(commit.parents.len());
                 for parent in &commit.parents {
                     parts.push(abbrev_for_index_line(
@@ -599,21 +613,23 @@ fn write_parsed_commit_log_patch<W: Write>(
                 writeln!(out, "Merge: {}", parts.join(" "))?;
             }
             write_commit_header_and_message(out, &commit.author, &commit.message)?;
-            if commit.parents.len() > 1 {
+            if omit_merge_patch {
                 return Ok(());
             }
             writeln!(out)?;
         }
         LogPatchCommitHeader::FormatPercentH => {
             writeln!(out, "{oid}")?;
-            if commit.parents.len() > 1 {
+            if omit_merge_patch {
                 return Ok(());
             }
             writeln!(out)?;
         }
     }
     let config = repo.config()?.clone();
-    let entries = diff_trees(odb, parent_tree.as_ref(), Some(&commit.tree), "")?;
+    let thread_policy = repo.thread_policy();
+    let entries =
+        commit_first_parent_diff_entries(repo, commit, &opts.pathspecs, &config, &thread_policy)?;
     for entry in entries {
         write_diff_entry_patch(
             out,
@@ -1064,6 +1080,8 @@ pub fn write_patch_resolved<W: Write>(
         abbrev_len: opts.abbrev_len,
         commit_header: LogPatchCommitHeader::FormatPercentH,
         binary_format: LogPatchBinaryFormat::GitApplyBinaryPatch,
+        pathspecs: Vec::new(),
+        diff_merges: DiffMerges::FirstParent,
     };
     let mut abbrev_cache = OidAbbrevCache::new(opts.abbrev_len);
     let oids = files
