@@ -340,7 +340,7 @@ fn stream_for_display_follows_replace_refs_on_large_blob() {
     let hist = HistoryRepo::init();
     let wt = hist.worktree();
     let original: Vec<u8> = (0..SIZE).map(|i| (i % 251) as u8).collect();
-    let replacement: Vec<u8> = (0..SIZE).map(|i| i.wrapping_mul(7) as u8).collect();
+    let replacement: Vec<u8> = (0..SIZE + 73).map(|i| i.wrapping_mul(7) as u8).collect();
     let setup = open_grit_repo(wt);
     let oid_orig = setup
         .odb()
@@ -358,6 +358,9 @@ fn stream_for_display_follows_replace_refs_on_large_blob() {
     .expect("replace ref");
     let repo = open_grit_repo(wt);
 
+    let info = repo.read_object_info_for_display(&oid_orig).expect("info");
+    assert_eq!(info.kind, ObjectKind::Blob);
+    assert_eq!(info.size, replacement.len() as u64);
     let mut streamed = Vec::new();
     repo.with_object_stream_for_display(&oid_orig, |mut stream| {
         stream
@@ -368,10 +371,57 @@ fn stream_for_display_follows_replace_refs_on_large_blob() {
     })
     .expect("stream")
     .expect("object");
-    assert_eq!(streamed.len(), replacement.len());
-    assert_eq!(&streamed[..32], &replacement[..32]);
-    assert_eq!(&streamed[SIZE - 32..], &replacement[SIZE - 32..]);
-    assert_ne!(streamed[..32], original[..32]);
+    assert_eq!(streamed, replacement);
+
+    let mut env = Environment::empty();
+    env.git_no_replace_objects = true;
+    let repo = Repository::discover(Some(wt), &RepositoryOptions::with_environment(env))
+        .expect("discover without replacements");
+    assert_eq!(
+        repo.read_object_info_for_display(&oid_orig)
+            .expect("info")
+            .size,
+        original.len() as u64
+    );
+    streamed.clear();
+    repo.with_object_stream_for_display(&oid_orig, |mut stream| {
+        stream.reader.read_to_end(&mut streamed)?;
+        Ok(())
+    })
+    .expect("stream without replacements")
+    .expect("object");
+    assert_eq!(streamed, original);
+}
+
+#[test]
+fn display_stream_reports_missing_objects_and_callback_errors() {
+    use grit_lib::error::Error;
+    use grit_lib::objects::ObjectId;
+
+    let hist = HistoryRepo::init();
+    let repo = open_grit_repo(hist.worktree());
+    let missing = ObjectId::from_hex("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef").expect("oid");
+    assert!(matches!(
+        repo.read_object_info_for_display(&missing),
+        Err(Error::ObjectNotFound(_))
+    ));
+    let result = repo
+        .with_object_stream_for_display(&missing, |_| -> grit_lib::error::Result<()> {
+            panic!("missing object must not call the callback")
+        })
+        .expect("missing object is not a stream error");
+    assert_eq!(result, None);
+
+    let oid = repo
+        .odb()
+        .write(ObjectKind::Blob, b"contents")
+        .expect("blob");
+    let error = repo
+        .with_object_stream_for_display(&oid, |_| -> grit_lib::error::Result<()> {
+            Err(Error::Io(std::io::Error::other("destination failed")))
+        })
+        .expect_err("callback failure");
+    assert!(matches!(error, Error::Io(e) if e.to_string() == "destination failed"));
 }
 
 #[test]

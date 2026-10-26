@@ -362,6 +362,9 @@ impl Repository {
 
     /// Object kind and size for display, following replace refs when enabled.
     ///
+    /// `oid` names the original object. Returns metadata for its replacement when
+    /// replacement is enabled, without loading loose or whole packed blob payloads.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::ObjectNotFound`] when the object is missing.
@@ -371,9 +374,15 @@ impl Repository {
 
     /// Stream an object's payload for display, following replace refs when enabled.
     ///
+    /// `oid` names the original object and `f` consumes the effective object's stream.
+    /// Returns `Ok(Some(result))` with the callback's result, or `Ok(None)` when the
+    /// object is missing (without calling `f`). Loose and whole packed objects are
+    /// inflated as the callback reads; pack deltas are reconstructed in memory.
+    ///
     /// # Errors
     ///
-    /// Propagates [`Error::ObjectNotFound`] and stream read failures from `f`.
+    /// Propagates backend failures and errors from `f`. Corrupt or truncated payloads
+    /// surface as [`std::io::Error`] values when reading the stream.
     pub fn with_object_stream_for_display<R>(
         &self,
         oid: &ObjectId,

@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::error::{Error, Result};
 use crate::fs_publish::hard_link_or_copy;
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
-use crate::odb::Odb;
+use crate::odb::{BoundedRead, Odb};
 use crate::pack;
 
 fn is_stored_loose(objects_dir: &Path, oid: &ObjectId) -> bool {
@@ -138,7 +138,13 @@ pub(crate) fn loose_reachable_from_roots(
             continue;
         }
         reachable.insert(oid);
-        let obj = odb.read(&oid)?;
+        // Blobs have no outgoing edges. Keep large payloads out of memory while
+        // still reading small commits and trees with a single object lookup.
+        let obj = match odb.read_unless_larger(&oid, 1024 * 1024)? {
+            BoundedRead::Object(obj) => obj,
+            BoundedRead::Larger if odb.read_info(&oid)?.kind == ObjectKind::Blob => continue,
+            BoundedRead::Larger => odb.read(&oid)?,
+        };
         match obj.kind {
             ObjectKind::Commit => {
                 let commit = parse_commit(&obj.data)?;

@@ -68,6 +68,8 @@ When you only need type and size (for example listing objects without loading bl
 
 ## Streaming large objects
 
+For user-facing object inspection, [`Repository::read_object_info_for_display`](rustdoc:grit_lib::repo::Repository::read_object_info_for_display) returns kind and size, and [`Repository::with_object_stream_for_display`](rustdoc:grit_lib::repo::Repository::with_object_stream_for_display) passes the payload reader to a callback. Both follow replace refs unless the repository environment disables them. `grit cat` uses these APIs to stream large blobs in human output; JSON and Markdown keep their documented content fields.
+
 [`Odb::with_stream`](rustdoc:grit_lib::objects::odb::Odb::with_stream) hands a callback an [`ObjectStream`](rustdoc:grit_lib::objects::odb::ObjectStream) (kind, size and a reader over the payload) and returns the callback's result, or `None` when the object is missing. Loose objects and objects stored whole in a pack are inflated as you read, in fixed-size chunks, so copying a multi-gigabyte blob to a file takes a few hundred KiB of memory. Pack deltas are rebuilt in memory first, which Git also has to do. A truncated or corrupt object, including one whose zlib checksum fails, comes back as an `io::Error` from the reader. [`Odb::open_stream`](rustdoc:grit_lib::objects::odb::Odb::open_stream) returns a stream that owns its payload, so it reads the whole object first. Use it only for small objects.
 
 ```rust
