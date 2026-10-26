@@ -177,5 +177,7 @@ baseline = [
   "grit-utils/baselines/daily-log-path-4526.json",
   "grit-utils/baselines/daily-fetch-pull-git-git-before.json",
   "grit-utils/baselines/daily-fetch-pull-git-git-after.json",
+  "grit-utils/baselines/daily-checkout-chunks-before.json",
+  "grit-utils/baselines/daily-checkout-chunks-after.json",
   "grit-utils/baselines/daily/latest.json",
 ]
