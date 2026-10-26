@@ -679,7 +679,7 @@ impl HumanRender for ShowOutcome {
 
         if let Some(params) = &self.patch_text {
             let repo = context::discover()?;
-            crate::commands::diff::emit_show_log_patch_text(&repo, params)?;
+            crate::commands::diff::emit_show_log_patch_text(&repo, params, w)?;
             return Ok(());
         }
         outln!(

@@ -176,7 +176,7 @@ fn show_patch_text_merge_first_parent_git_apply_check() {
     fs::write(root.join("base.txt"), "base\n").expect("write");
     git_in(root, &["add", "base.txt"]);
     git_in(root, &["commit", "-m", "main tip"]);
-    git_in(root, &["branch", "side"]);
+    git_in(root, &["switch", "-c", "side"]);
     fs::write(root.join("side.txt"), "side\n").expect("write");
     git_in(root, &["add", "side.txt"]);
     git_in(root, &["commit", "-m", "side tip"]);
@@ -185,9 +185,7 @@ fn show_patch_text_merge_first_parent_git_apply_check() {
     git_in(root, &["add", "main.txt"]);
     git_in(root, &["commit", "-m", "main line"]);
     git_in(root, &["merge", "--no-edit", "side"]);
-    fs::write(root.join("merged.txt"), "merged\n").expect("write");
-    git_in(root, &["add", "merged.txt"]);
-    git_in(root, &["commit", "-m", "merge commit with tree change"]);
+    git_in(root, &["rev-parse", "HEAD^2"]);
 
     let patch = grit_patch_stdout(
         root,
@@ -201,7 +199,7 @@ fn show_patch_text_merge_first_parent_git_apply_check() {
     );
     let text = String::from_utf8_lossy(&patch);
     assert!(
-        text.contains("diff --git") && text.contains("merged.txt"),
+        text.contains("diff --git") && text.contains("side.txt") && !text.contains("main.txt"),
         "expected first-parent merge patch, got:\n{text}"
     );
     git_apply_check_reverse(dir.path(), &patch);
@@ -259,4 +257,123 @@ fn show_patch_text_binary_git_apply_check() {
         "expected binary patch section, got:\n{text}"
     );
     git_apply_check_reverse(dir.path(), &patch);
+}
+
+fn grit_patch_redirected_stdout(dir: &std::path::Path, args: &[&str]) -> Vec<u8> {
+    let file = tempfile::NamedTempFile::new().expect("output file");
+    let out = Command::new(env!("CARGO_BIN_EXE_grit"))
+        .current_dir(dir)
+        .args(args)
+        .stdout(file.reopen().expect("reopen output file"))
+        .output()
+        .expect("spawn grit");
+    assert!(
+        out.status.success(),
+        "grit {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    fs::read(file.path()).expect("read redirected output")
+}
+
+fn line_index(text: &str, needle: &str) -> Option<usize> {
+    text.lines().position(|line| line.contains(needle))
+}
+
+/// Non-TTY stdout (pipe capture) must keep ref decoration before the streamed patch.
+#[test]
+fn show_patch_text_redirected_branch_before_patch() {
+    let dir = TempDir::new().expect("tempdir");
+    init_two_commit_repo(dir.path());
+    let args = &["show", "--patch-text", "main"];
+    for bytes in [
+        grit_patch_stdout(dir.path(), args),
+        grit_patch_redirected_stdout(dir.path(), args),
+    ] {
+        let out = String::from_utf8_lossy(&bytes);
+        let branch = line_index(&out, "branch main").expect("branch main line");
+        let commit = line_index(&out, "commit ").expect("commit line");
+        let diff = line_index(&out, "diff --git").expect("diff --git line");
+        assert!(
+            branch < commit && commit < diff,
+            "expected branch, commit, then patch; got:\n{out}"
+        );
+    }
+}
+
+#[test]
+fn show_patch_text_redirected_annotated_tag_before_patch() {
+    let dir = TempDir::new().expect("tempdir");
+    init_two_commit_repo(dir.path());
+    git_in(dir.path(), &["tag", "-a", "v1", "-m", "release note"]);
+    let args = &["show", "--patch-text", "v1"];
+    for bytes in [
+        grit_patch_stdout(dir.path(), args),
+        grit_patch_redirected_stdout(dir.path(), args),
+    ] {
+        let out = String::from_utf8_lossy(&bytes);
+        let tag = line_index(&out, "tag v1").expect("tag v1 line");
+        let commit = line_index(&out, "commit ").expect("commit line");
+        let diff = line_index(&out, "diff --git").expect("diff --git line");
+        assert!(
+            tag < commit && commit < diff,
+            "expected tag, commit, then patch; got:\n{out}"
+        );
+    }
+}
+
+#[test]
+fn log_patch_text_continuation_follows_patch_and_resumes() {
+    let dir = TempDir::new().expect("tempdir");
+    let root = dir.path();
+    init_two_commit_repo(root);
+    for i in 3..=22 {
+        fs::write(root.join("a.txt"), format!("commit {i}\n")).expect("write");
+        git_in(root, &["add", "a.txt"]);
+        git_in(root, &["commit", "-m", &format!("commit {i}")]);
+    }
+
+    let mut args = vec!["log".to_owned(), "--patch-text".to_owned()];
+    for expected in [10, 10, 2] {
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let bytes = grit_patch_stdout(root, &arg_refs);
+        let out = String::from_utf8_lossy(&bytes);
+        assert_eq!(
+            out.lines()
+                .filter(|line| line.starts_with("commit "))
+                .count(),
+            expected,
+            "unexpected page size:\n{out}"
+        );
+        let continuation = out
+            .lines()
+            .find_map(|line| line.strip_prefix("→ more: grit log --cursor="));
+        if expected == 2 {
+            assert!(
+                continuation.is_none(),
+                "last page has no continuation:\n{out}"
+            );
+            break;
+        }
+        let cursor = continuation.expect("patch page continuation");
+        assert!(
+            cursor.starts_with("lw1."),
+            "expected full opaque cursor: {cursor}"
+        );
+        let last_diff = out
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| line.starts_with("diff --git"))
+            .map(|(i, _)| i)
+            .last()
+            .expect("patch on page");
+        assert!(
+            line_index(&out, "→ more:").expect("continuation line") > last_diff,
+            "continuation must follow all patches:\n{out}"
+        );
+        args = vec![
+            "log".to_owned(),
+            "--patch-text".to_owned(),
+            format!("--cursor={cursor}"),
+        ];
+    }
 }

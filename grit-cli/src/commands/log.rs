@@ -102,6 +102,15 @@ pub struct LogOutcome {
     #[serde(skip)]
     #[schemars(skip)]
     commit_diffs: Vec<Option<DiffOutcome>>,
+    /// Resolved inputs for patch output deferred until human rendering.
+    #[serde(skip)]
+    #[schemars(skip)]
+    patch_text: Option<LogPatchTextParams>,
+}
+
+struct LogPatchTextParams {
+    oids: Vec<ObjectId>,
+    pathspecs: Vec<String>,
 }
 
 fn format_log_cursor_command(rev_args: Option<&str>, cursor: &str) -> String {
@@ -123,8 +132,16 @@ pub struct LogAuthorGroupJson {
 
 impl HumanRender for LogOutcome {
     fn render_human(&self, w: &mut dyn Write, ctx: &RenderContext) -> Result<()> {
-        if self.format.log_patch_text() {
-            return Ok(());
+        if let Some(params) = &self.patch_text {
+            let repo = context::discover()?;
+            crate::commands::diff::emit_commits_log_patch_text(
+                &repo,
+                &params.oids,
+                self.format,
+                &params.pathspecs,
+                w,
+            )?;
+            return self.render_continuation(w);
         }
         if self.display.group_by.is_some() {
             if self.author_group_rows.is_empty() {
@@ -171,6 +188,12 @@ impl HumanRender for LogOutcome {
                 }
             }
         }
+        self.render_continuation(w)
+    }
+}
+
+impl LogOutcome {
+    fn render_continuation(&self, w: &mut dyn Write) -> Result<()> {
         if let Some(next) = &self.next {
             outln!(w);
             outln!(
@@ -495,6 +518,7 @@ fn empty_outcome(display: LogDisplayOptions) -> Result<LogOutcome> {
         continuation_args: None,
         format: DiffFormatArgs::default(),
         commit_diffs: Vec::new(),
+        patch_text: None,
     })
 }
 
@@ -565,6 +589,7 @@ fn build_author_group_outcome_from_groups(
         continuation_args: None,
         format: DiffFormatArgs::default(),
         commit_diffs: Vec::new(),
+        patch_text: None,
     })
 }
 
@@ -716,7 +741,6 @@ fn build_commit_outcome(
         } else {
             resolve_commit_diff_pathspecs(repo, path_args)?
         };
-        crate::commands::diff::emit_commits_log_patch_text(repo, oids, format, &pathspecs)?;
         return Ok(LogOutcome {
             commits: Vec::new(),
             groups: None,
@@ -732,6 +756,10 @@ fn build_commit_outcome(
             continuation_args,
             format,
             commit_diffs: Vec::new(),
+            patch_text: Some(LogPatchTextParams {
+                oids: oids.to_vec(),
+                pathspecs,
+            }),
         });
     }
 
@@ -752,6 +780,7 @@ fn build_commit_outcome(
             continuation_args,
             format,
             commit_diffs: Vec::new(),
+            patch_text: None,
         });
     }
 
@@ -823,6 +852,7 @@ fn build_commit_outcome(
         continuation_args,
         format,
         commit_diffs,
+        patch_text: None,
     })
 }
 

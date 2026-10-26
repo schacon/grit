@@ -839,6 +839,7 @@ pub fn streamed_log_patch_text_outcome(format: DiffFormatArgs) -> DiffOutcome {
 pub fn emit_show_log_patch_text(
     repo: &grit_lib::repo::Repository,
     params: &ShowLogPatchTextParams,
+    mut out: &mut dyn Write,
 ) -> Result<()> {
     let opts = log_patch_options_for_patch_text(
         repo,
@@ -846,9 +847,8 @@ pub fn emit_show_log_patch_text(
         &params.pathspecs,
         params.diff_merges,
     )?;
-    let mut stdout = std::io::stdout();
     repo.odb()
-        .with_pack_read_context(|| write_commit_log_patch(repo, &mut stdout, &params.oid, &opts))
+        .with_pack_read_context(|| write_commit_log_patch(repo, &mut out, &params.oid, &opts))
         .map_err(map_log_patch_error)
 }
 
@@ -858,14 +858,14 @@ pub fn emit_commits_log_patch_text(
     oids: &[ObjectId],
     format: DiffFormatArgs,
     pathspecs: &[String],
+    mut out: &mut dyn Write,
 ) -> Result<()> {
     if oids.is_empty() {
         return Ok(());
     }
     let opts = log_patch_options_for_patch_text(repo, format, pathspecs, DiffMerges::Combined)?;
-    let mut stdout = std::io::stdout();
     repo.odb()
-        .with_pack_read_context(|| write_commits_log_patch(repo, &mut stdout, oids, &opts))
+        .with_pack_read_context(|| write_commits_log_patch(repo, &mut out, oids, &opts))
         .map_err(map_log_patch_error)
 }
 
