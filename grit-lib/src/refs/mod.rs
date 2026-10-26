@@ -66,10 +66,10 @@ use store::{
 use crate::check_ref_format::{check_refname_format, RefNameOptions};
 use crate::config::ConfigSet;
 use crate::error::{Error, RefLockError, Result};
-use crate::ident::{parse_author_arg, parse_signature, Signature, SignatureError};
+use crate::ident::Signature;
 use crate::objects::{HashAlgo, ObjectId};
 use crate::pack;
-use store::{format_reflog_identity, reflog_identity_has_timestamp};
+use store::format_reflog_identity;
 
 /// Maximum symbolic ref hops when resolving a ref (Git `SYMREF_MAXDEPTH`).
 pub const SYMREF_MAXDEPTH: usize = 5;
@@ -2787,34 +2787,24 @@ pub(crate) fn reflog_oid_hex_pair(old: &ObjectId, new: &ObjectId) -> (String, St
     (render(old), render(new))
 }
 
-fn validate_reflog_message(message: &str) -> Result<()> {
-    if message.bytes().any(|b| b == b'\n' || b == b'\r') {
-        return Err(Error::InvalidSignature(SignatureError::Malformed));
+fn map_reflog_store_validation(err: store::RefStoreError) -> Error {
+    match err {
+        store::RefStoreError::InvalidReflog(sig) => Error::InvalidSignature(sig),
+        other => Error::from(other),
     }
-    Ok(())
+}
+
+fn validate_reflog_message(message: &str) -> Result<()> {
+    store::validate_reflog_message(message).map_err(map_reflog_store_validation)
 }
 
 fn validate_reflog_identity_string(identity: &str) -> Result<()> {
-    if identity
-        .bytes()
-        .any(|b| b == b'\n' || b == b'\r' || (b < 0x20 && b != b'\t'))
-    {
-        return Err(Error::InvalidSignature(SignatureError::Malformed));
-    }
-    if reflog_identity_has_timestamp(identity) {
-        parse_signature(identity).ok_or(Error::InvalidSignature(SignatureError::Malformed))?;
-    } else {
-        parse_author_arg(identity)
-            .map_err(|_| Error::InvalidSignature(SignatureError::Malformed))?;
-    }
-    Ok(())
+    store::validate_reflog_identity_string(identity).map_err(map_reflog_store_validation)
 }
 
 /// Reject reflog metadata that would forge or corrupt a log line on either backend.
 fn validate_reflog_update(log: &ReflogUpdate) -> Result<()> {
-    validate_reflog_identity_string(&log.identity)?;
-    validate_reflog_message(&log.message)?;
-    Ok(())
+    store::validate_reflog_update(log).map_err(map_reflog_store_validation)
 }
 
 /// Append one line to the reflog for `refname` using a validated [`Signature`].
@@ -2887,6 +2877,7 @@ pub fn append_reflog_with_config(
     config: Option<&ConfigSet>,
 ) -> Result<()> {
     validate_reflog_identity_string(identity)?;
+    validate_reflog_message(message)?;
     test_inject_reflog_fail(refname)?;
     if open_ref_store(git_dir)?.format() != RefStorageFormat::Files {
         return crate::reftable::reftable_append_reflog(

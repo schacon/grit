@@ -91,6 +91,10 @@ pub enum RefStoreError {
         name: String,
     },
 
+    /// Reflog identity or message would forge or corrupt a log line.
+    #[error(transparent)]
+    InvalidReflog(#[from] crate::ident::SignatureError),
+
     /// A custom backend's own storage failed (database, network, …).
     ///
     /// Built-in backends never return this; their I/O failures stay typed elsewhere.

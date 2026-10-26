@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use super::error::RefStoreError;
 use super::types::{Expected, RawRef, RefCaseOnlyRename, RefReflogRename, RefUpdate};
-use super::validation::validate_storable_refname;
+use super::validation::{validate_reflog_update, validate_storable_refname};
 
 /// Batch of ref updates prepared for [`super::RefStore::prepare`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -120,6 +120,12 @@ impl RefTransaction {
                     name: update.name.clone(),
                 });
             }
+            if let Some(ref log) = update.reflog {
+                validate_reflog_update(log)?;
+            }
+        }
+        for rename in &self.reflog_renames {
+            validate_reflog_update(&rename.append)?;
         }
         let renames = self
             .reflog_renames
@@ -285,6 +291,61 @@ mod tests {
             .unwrap()
             .validate()
             .is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_forged_reflog_identity_and_message() {
+        let mut update = direct("HEAD", oid(1));
+        update.flags.log_only = true;
+        update.reflog = Some(super::super::ReflogUpdate {
+            identity: "Evil <a@b>\nforged".to_owned(),
+            message: "ok".to_owned(),
+            time: time::OffsetDateTime::UNIX_EPOCH,
+            old_oid: None,
+            new_oid: None,
+        });
+        assert!(matches!(
+            RefTransaction::new()
+                .update(update)
+                .unwrap()
+                .validate()
+                .unwrap_err(),
+            RefStoreError::InvalidReflog(_)
+        ));
+
+        let mut update = direct("HEAD", oid(1));
+        update.flags.log_only = true;
+        update.reflog = Some(super::super::ReflogUpdate {
+            identity: "A <a@example.com>".to_owned(),
+            message: "bad\nline".to_owned(),
+            time: time::OffsetDateTime::UNIX_EPOCH,
+            old_oid: None,
+            new_oid: None,
+        });
+        assert!(matches!(
+            RefTransaction::new()
+                .update(update)
+                .unwrap()
+                .validate()
+                .unwrap_err(),
+            RefStoreError::InvalidReflog(_)
+        ));
+
+        let txn = RefTransaction::new().with_reflog_rename(RefReflogRename {
+            from: "refs/heads/a".to_owned(),
+            to: "refs/heads/b".to_owned(),
+            append: super::super::ReflogUpdate {
+                identity: "Evil <a@b>\nforged".to_owned(),
+                message: "rename".to_owned(),
+                time: time::OffsetDateTime::UNIX_EPOCH,
+                old_oid: None,
+                new_oid: None,
+            },
+        });
+        assert!(matches!(
+            txn.validate().unwrap_err(),
+            RefStoreError::InvalidReflog(_)
+        ));
     }
 
     #[test]

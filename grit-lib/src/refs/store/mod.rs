@@ -30,11 +30,14 @@ pub use memory::MemoryRefStore;
 pub use open::open_ref_store;
 pub(crate) use open::{open_files_ref_store, open_ref_store_uncached};
 pub use reftable::ReftableRefStore;
-pub(crate) use semantics::{format_reflog_identity, reflog_identity_has_timestamp};
+pub(crate) use semantics::format_reflog_identity;
 pub use transaction::RefTransaction;
 pub use types::{
     Expected, RawRef, RefCaseOnlyRename, RefEntry, RefName, RefReflogRename, RefStorageFormat,
     RefUpdate, RefUpdateFlags, ReflogUpdate,
+};
+pub(crate) use validation::{
+    validate_reflog_identity_string, validate_reflog_message, validate_reflog_update,
 };
 
 use std::fmt::Debug;
@@ -131,9 +134,10 @@ pub trait RefStore: Send + Sync + Debug {
     /// unchanged and unlocked. A store must:
     ///
     /// 1. Before taking locks, reject names Git refuses to store (an update name or either
-    ///    side of a reflog or case-only rename) with [`RefStoreError::InvalidRefName`], and an
+    ///    side of a reflog or case-only rename) with [`RefStoreError::InvalidRefName`], an
     ///    update other than a reflog-only one that would store the null object id with
-    ///    [`RefStoreError::NullOid`].
+    ///    [`RefStoreError::NullOid`], and malformed reflog identity or message fields with
+    ///    [`RefStoreError::InvalidReflog`].
     /// 2. While another prepared transaction holds the lock, fail with
     ///    [`RefStoreError::LockHeld`] (do not wait indefinitely).
     /// 3. Reject a created ref whose name is a directory prefix of a stored ref or of

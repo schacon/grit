@@ -3,17 +3,52 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
+use crate::ident::{parse_author_arg, parse_signature, SignatureError};
 use crate::refs::RefnameUnavailable;
 
 use super::error::RefStoreError;
+use super::semantics::reflog_identity_has_timestamp;
 use super::RawRef;
 use super::RefUpdate;
+use super::ReflogUpdate;
 
 /// Reject ref names that must not touch the filesystem (path traversal, illegal `refs/` shape).
 pub fn validate_storable_refname(name: &str) -> Result<(), RefStoreError> {
     crate::refs::ensure_refname_safe_for_storage(name).map_err(|_| RefStoreError::InvalidRefName {
         name: name.to_owned(),
     })
+}
+
+/// Reject reflog message bytes that would split a physical log line.
+pub fn validate_reflog_message(message: &str) -> Result<(), RefStoreError> {
+    if message.bytes().any(|b| b == b'\n' || b == b'\r') {
+        return Err(RefStoreError::InvalidReflog(SignatureError::Malformed));
+    }
+    Ok(())
+}
+
+/// Reject reflog identity strings that would forge or corrupt a log line.
+pub fn validate_reflog_identity_string(identity: &str) -> Result<(), RefStoreError> {
+    if identity
+        .bytes()
+        .any(|b| b == b'\n' || b == b'\r' || (b < 0x20 && b != b'\t'))
+    {
+        return Err(RefStoreError::InvalidReflog(SignatureError::Malformed));
+    }
+    if reflog_identity_has_timestamp(identity) {
+        parse_signature(identity).ok_or(RefStoreError::InvalidReflog(SignatureError::Malformed))?;
+    } else {
+        parse_author_arg(identity)
+            .map_err(|_| RefStoreError::InvalidReflog(SignatureError::Malformed))?;
+    }
+    Ok(())
+}
+
+/// Reject reflog metadata bundled with a ref update or rename.
+pub fn validate_reflog_update(log: &ReflogUpdate) -> Result<(), RefStoreError> {
+    validate_reflog_identity_string(&log.identity)?;
+    validate_reflog_message(&log.message)?;
+    Ok(())
 }
 
 fn refname_is_strict_prefix(parent: &str, child: &str) -> bool {

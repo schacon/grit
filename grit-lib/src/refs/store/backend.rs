@@ -57,8 +57,9 @@ pub fn validate_storable_refname(name: &str) -> Result<(), RefStoreError> {
 ///
 /// # Errors
 ///
-/// Returns [`RefStoreError::InvalidRefName`] for the first name Git would refuse to store, or
-/// [`RefStoreError::NullOid`] for an update pointing a ref at the null id.
+/// Returns [`RefStoreError::InvalidRefName`] for the first name Git would refuse to store,
+/// [`RefStoreError::NullOid`] for an update pointing a ref at the null id, or
+/// [`RefStoreError::InvalidReflog`] for forged reflog metadata.
 pub fn validate_transaction(txn: &RefTransaction) -> Result<(), RefStoreError> {
     txn.validate()
 }

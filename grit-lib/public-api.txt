@@ -2350,6 +2350,8 @@ impl core::convert::From<grit_lib::ident::SignatureError> for grit_lib::config::
 pub fn grit_lib::config::ident_resolve::IdentityError::from(grit_lib::ident::SignatureError) -> Self
 impl core::convert::From<grit_lib::ident::SignatureError> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(grit_lib::ident::SignatureError) -> Self
+impl core::convert::From<grit_lib::ident::SignatureError> for grit_lib::refs::store::RefStoreError
+pub fn grit_lib::refs::store::RefStoreError::from(grit_lib::ident::SignatureError) -> Self
 impl core::error::Error for grit_lib::ident::SignatureError
 impl core::fmt::Debug for grit_lib::ident::SignatureError
 pub fn grit_lib::ident::SignatureError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -6373,6 +6375,8 @@ impl core::convert::From<grit_lib::ident::SignatureError> for grit_lib::config::
 pub fn grit_lib::config::ident_resolve::IdentityError::from(grit_lib::ident::SignatureError) -> Self
 impl core::convert::From<grit_lib::ident::SignatureError> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(grit_lib::ident::SignatureError) -> Self
+impl core::convert::From<grit_lib::ident::SignatureError> for grit_lib::refs::store::RefStoreError
+pub fn grit_lib::refs::store::RefStoreError::from(grit_lib::ident::SignatureError) -> Self
 impl core::error::Error for grit_lib::ident::SignatureError
 impl core::fmt::Debug for grit_lib::ident::SignatureError
 pub fn grit_lib::ident::SignatureError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -18557,6 +18561,7 @@ pub grit_lib::refs::store::RefStoreError::GitDirPathIo::os_error: i32
 pub grit_lib::refs::store::RefStoreError::GitDirPathIo::path: alloc::string::String
 pub grit_lib::refs::store::RefStoreError::InvalidRefName
 pub grit_lib::refs::store::RefStoreError::InvalidRefName::name: alloc::string::String
+pub grit_lib::refs::store::RefStoreError::InvalidReflog(grit_lib::ident::SignatureError)
 pub grit_lib::refs::store::RefStoreError::LockHeld
 pub grit_lib::refs::store::RefStoreError::LockHeld::name: alloc::string::String
 pub grit_lib::refs::store::RefStoreError::NameUnavailable
@@ -18573,6 +18578,8 @@ pub fn grit_lib::refs::store::RefStoreError::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::refs::store::RefStoreError
 impl core::cmp::PartialEq for grit_lib::refs::store::RefStoreError
 pub fn grit_lib::refs::store::RefStoreError::eq(&self, &Self) -> bool
+impl core::convert::From<grit_lib::ident::SignatureError> for grit_lib::refs::store::RefStoreError
+pub fn grit_lib::refs::store::RefStoreError::from(grit_lib::ident::SignatureError) -> Self
 impl core::convert::From<grit_lib::refs::RefnameUnavailable> for grit_lib::refs::store::RefStoreError
 pub fn grit_lib::refs::store::RefStoreError::from(grit_lib::refs::RefnameUnavailable) -> Self
 impl core::convert::From<grit_lib::refs::store::BackendError> for grit_lib::refs::store::RefStoreError
