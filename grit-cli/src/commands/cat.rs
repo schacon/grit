@@ -186,8 +186,10 @@ fn run_blob(
     let large = size >= JSON_INLINE_BLOB_MAX;
     let stream_human = matches!(output, OutputMode::Human) && large;
     if stream_human {
-        repo.stream_object_payload_to(&oid, &mut io::stdout())?
-            .ok_or_else(|| anyhow::anyhow!("object not found: {}", oid.to_hex()))?;
+        repo.with_object_stream_for_display(&oid, |mut stream| {
+            std::io::copy(&mut stream.reader, &mut io::stdout()).map_err(grit_lib::error::Error::Io)
+        })?
+        .ok_or_else(|| anyhow::anyhow!("object not found: {}", oid.to_hex()))?;
     }
 
     let omitted_blob = || {

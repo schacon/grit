@@ -425,7 +425,7 @@ fn display_stream_reports_missing_objects_and_callback_errors() {
 }
 
 #[test]
-fn stream_object_payload_follows_replace_refs() {
+fn display_stream_follows_commit_to_blob_replace_ref() {
     let hist = HistoryRepo::init();
     let wt = hist.worktree();
     commit_file(wt, "f.txt", "x\n", "init");
@@ -458,7 +458,9 @@ fn stream_object_payload_follows_replace_refs() {
     let repo = open_grit_repo(wt);
     let mut streamed = Vec::new();
     let n = repo
-        .stream_object_payload_to(&head, &mut streamed)
+        .with_object_stream_for_display(&head, |mut stream| {
+            std::io::copy(&mut stream.reader, &mut streamed).map_err(grit_lib::error::Error::Io)
+        })
         .expect("stream")
         .expect("present");
     assert_eq!(n, blob_body.len() as u64);
@@ -467,7 +469,7 @@ fn stream_object_payload_follows_replace_refs() {
 }
 
 #[test]
-fn stream_object_payload_reports_missing_objects_and_writer_errors() {
+fn display_stream_propagates_writer_failures() {
     struct FailingWriter;
 
     impl Write for FailingWriter {
@@ -487,13 +489,18 @@ fn stream_object_payload_reports_missing_objects_and_writer_errors() {
     let missing = grit_lib::objects::ObjectId::from_hex("0000000000000000000000000000000000000000")
         .expect("oid");
     assert_eq!(
-        repo.stream_object_payload_to(&missing, &mut Vec::new())
-            .expect("missing object"),
+        repo.with_object_stream_for_display(&missing, |_| -> grit_lib::error::Result<u64> {
+            panic!("missing object must not call writer")
+        })
+        .expect("missing object"),
         None
     );
     let oid = repo.resolve("HEAD:f.txt").expect("resolve").oid;
     assert!(matches!(
-        repo.stream_object_payload_to(&oid, &mut FailingWriter),
+        repo.with_object_stream_for_display(&oid, |mut stream| {
+            std::io::copy(&mut stream.reader, &mut FailingWriter)
+                .map_err(grit_lib::error::Error::Io)
+        }),
         Err(grit_lib::error::Error::Io(_))
     ));
 }

@@ -141,6 +141,15 @@ fn large_blob_commands_stay_within_memory_budget() {
         "cat peak {cat_rss} > {MAX_GROWTH_BYTES}"
     );
 
+    for format in ["--json", "--markdown"] {
+        let rss = measure_peak_rss(
+            root,
+            &format!("{grit_s} cat HEAD:big.bin {format} > /dev/null"),
+            &grit_bench,
+        );
+        assert!(rss <= MAX_GROWTH_BYTES, "cat {format} peak {rss} too high");
+    }
+
     let restore_rss = measure_peak_rss(
         root,
         &format!("rm -f big.bin && {grit_s} restore big.bin"),

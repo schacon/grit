@@ -342,6 +342,15 @@ add are single runs after moving the file's mtime into the future without
 changing its bytes. Every clone passes system `git fsck --strict` and a blob
 hash comparison.
 
+This capture predates the related #1849 integration. Current main also contains
+the matching human-mode cat stream and loose-clone optimizations; this change
+reuses that display API and keeps the restaging, structured-output bounds,
+pack serialization and regression coverage described here.
+
+After rebasing onto that integration, `grit cat HEAD:big.bin --json` on the
+1 GiB packed fixture returned 173 bytes of metadata at 13.4 MiB peak RSS.
+The RSS guard also covers JSON and Markdown output.
+
 | Operation | Git seconds | Main seconds | After seconds | Git RSS MiB | Main RSS MiB | After RSS MiB |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Status, 128 MiB | 0.36 | 0.13 | 0.09 | 133.1 | 13.7 | 14.8 |

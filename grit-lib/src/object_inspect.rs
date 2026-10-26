@@ -407,32 +407,6 @@ impl Repository {
             ObjectKind::Tag => Ok(ObjectContents::Tag(parse_tag(&obj.data)?)),
         }
     }
-
-    /// Copy an object's uncompressed payload to `writer`, honoring replacement refs.
-    ///
-    /// Loose objects and objects stored whole in a pack stream in bounded memory.
-    /// Pack deltas are reconstructed in memory before copying, as with
-    /// [`crate::odb::Odb::with_stream`].
-    ///
-    /// Returns `Ok(None)` when the object is missing. On success, returns the number of
-    /// payload bytes written (the size recorded in the object database).
-    ///
-    /// # Errors
-    ///
-    /// Returns I/O errors from `writer` or the object store, and backend failures from
-    /// the object database.
-    pub fn stream_object_payload_to(
-        &self,
-        oid: &ObjectId,
-        writer: &mut dyn std::io::Write,
-    ) -> Result<Option<u64>> {
-        use std::io::copy;
-        let effective = self.object_id_after_replace(oid);
-        self.odb().with_stream(&effective, |mut stream| {
-            copy(&mut stream.reader, writer).map_err(Error::Io)?;
-            Ok(stream.size)
-        })
-    }
 }
 
 /// Format a tree entry mode for `git cat-file -p` output (six-digit tree modes).

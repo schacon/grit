@@ -52,12 +52,32 @@ fn large_cat_matches_git_with_replace_refs_in_every_output_mode() {
     assert_eq!(cat(&[], false), expected.stdout);
     assert_eq!(cat(&[], true), b"original");
 
-    let json: serde_json::Value = serde_json::from_slice(&cat(&["--json"], false)).expect("json");
+    let output = cat(&["--json"], false);
+    assert!(output.len() < 1024, "large blob output must stay bounded");
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("json");
     assert_eq!(json["size"], payload.len());
     assert_eq!(json["content"]["kind"], "blob");
     assert_eq!(json["content"]["encoding"], "base64");
-    assert_eq!(json["content"]["data_base64"], STANDARD.encode(&payload));
+    assert_eq!(json["content"]["omitted_inline"], true);
+    assert!(json["content"].get("data_base64").is_none());
     let markdown = String::from_utf8(cat(&["--markdown"], false)).expect("markdown");
     assert!(markdown.contains("binary blob"));
     assert!(markdown.contains(&format!("- **size:** {}", payload.len())));
+    assert!(markdown.contains("omitted"));
+
+    // Smaller binary replacements still carry their complete base64 payload.
+    let small = [0, 255, 1];
+    let replacement = repo
+        .odb()
+        .write(ObjectKind::Blob, &small)
+        .expect("small blob");
+    std::fs::write(
+        replacements.join(original.to_hex()),
+        format!("{}\n", replacement.to_hex()),
+    )
+    .expect("replace ref");
+    let json: serde_json::Value = serde_json::from_slice(&cat(&["--json"], false)).expect("json");
+    assert_eq!(json["size"], small.len());
+    assert_eq!(json["content"]["data_base64"], STANDARD.encode(small));
+    assert!(json["content"].get("omitted_inline").is_none());
 }

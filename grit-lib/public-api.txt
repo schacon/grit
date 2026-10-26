@@ -16719,7 +16719,6 @@ pub fn grit_lib::repo::Repository::read_object_info_for_display(&self, &grit_lib
 pub fn grit_lib::repo::Repository::read_object_raw_for_display(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<grit_lib::objects::Object>
 pub fn grit_lib::repo::Repository::resolve(&self, &str) -> core::result::Result<grit_lib::revwalk::object_inspect::ResolvedObject, grit_lib::revwalk::object_inspect::ResolveError>
 pub fn grit_lib::repo::Repository::resolve_ref_name(&self, &str) -> core::result::Result<core::option::Option<grit_lib::revwalk::object_inspect::ResolvedRefName>, grit_lib::revwalk::rev_parse_error::RevParseError>
-pub fn grit_lib::repo::Repository::stream_object_payload_to(&self, &grit_lib::objects::ObjectId, &mut dyn core::io::write::Write) -> grit_lib::error::Result<core::option::Option<u64>>
 pub fn grit_lib::repo::Repository::verify_object(&self, &str, core::option::Option<grit_lib::objects::ObjectKind>) -> core::result::Result<grit_lib::objects::ObjectId, grit_lib::revwalk::object_inspect::ResolveError>
 pub fn grit_lib::repo::Repository::with_object_stream_for_display<R>(&self, &grit_lib::objects::ObjectId, impl core::ops::function::FnOnce(grit_lib::objects::odb::store::ObjectStream<'_>) -> grit_lib::error::Result<R>) -> grit_lib::error::Result<core::option::Option<R>>
 impl grit_lib::repo::Repository
@@ -21897,7 +21896,6 @@ pub fn grit_lib::repo::Repository::read_object_info_for_display(&self, &grit_lib
 pub fn grit_lib::repo::Repository::read_object_raw_for_display(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<grit_lib::objects::Object>
 pub fn grit_lib::repo::Repository::resolve(&self, &str) -> core::result::Result<grit_lib::revwalk::object_inspect::ResolvedObject, grit_lib::revwalk::object_inspect::ResolveError>
 pub fn grit_lib::repo::Repository::resolve_ref_name(&self, &str) -> core::result::Result<core::option::Option<grit_lib::revwalk::object_inspect::ResolvedRefName>, grit_lib::revwalk::rev_parse_error::RevParseError>
-pub fn grit_lib::repo::Repository::stream_object_payload_to(&self, &grit_lib::objects::ObjectId, &mut dyn core::io::write::Write) -> grit_lib::error::Result<core::option::Option<u64>>
 pub fn grit_lib::repo::Repository::verify_object(&self, &str, core::option::Option<grit_lib::objects::ObjectKind>) -> core::result::Result<grit_lib::objects::ObjectId, grit_lib::revwalk::object_inspect::ResolveError>
 pub fn grit_lib::repo::Repository::with_object_stream_for_display<R>(&self, &grit_lib::objects::ObjectId, impl core::ops::function::FnOnce(grit_lib::objects::odb::store::ObjectStream<'_>) -> grit_lib::error::Result<R>) -> grit_lib::error::Result<core::option::Option<R>>
 impl grit_lib::repo::Repository
