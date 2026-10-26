@@ -976,6 +976,16 @@ pub fn split_triple_dot_range(spec: &str) -> Option<(&str, &str)> {
     None
 }
 
+// A bare brace may belong to a ref name; only ^{ and @{ open selectors.
+// Within a selector, retain nesting for message patterns such as a{2}..b.
+fn selector_depth_after(bytes: &[u8], i: usize, depth: usize) -> usize {
+    match bytes[i] {
+        b'{' if depth > 0 || (i > 0 && matches!(bytes[i - 1], b'^' | b'@')) => depth + 1,
+        b'}' => depth.saturating_sub(1),
+        _ => depth,
+    }
+}
+
 /// Whether `spec` is a range (`a..b`, `a...b`, `..b`, `a..`) rather than a single revision.
 ///
 /// Only a `..` outside `^{…}` / `@{…}` selectors and before any `:` counts, so a dotted
@@ -990,10 +1000,8 @@ pub(crate) fn is_top_level_range(spec: &str) -> bool {
     let bytes = spec.as_bytes();
     let mut depth = 0usize;
     for (i, &b) in bytes.iter().enumerate() {
+        depth = selector_depth_after(bytes, i, depth);
         match b {
-            b'{' if depth > 0 => depth += 1,
-            b'{' if i > 0 && matches!(bytes[i - 1], b'^' | b'@') => depth = 1,
-            b'}' if depth > 0 => depth -= 1,
             b':' if depth == 0 => return false,
             b'.' if depth == 0 && bytes.get(i + 1) == Some(&b'.') => return true,
             _ => {}
@@ -1004,8 +1012,8 @@ pub(crate) fn is_top_level_range(spec: &str) -> bool {
 
 /// Split `spec` at a top-level `...` symmetric-difference operator.
 ///
-/// Like [`split_triple_dot_range`], but dots inside `{…}` selectors or after a `:` are literal
-/// text (`main^{/fix...up}`, `:/fix...up`, `HEAD:a...b`), the same rule as
+/// Like [`split_triple_dot_range`], but dots inside `^{…}` / `@{…}` selectors or after a `:`
+/// are literal text (`main^{/fix...up}`, `:/fix...up`, `HEAD:a...b`), the same rule as
 /// [`is_top_level_range`]. Either side of the result may be empty.
 #[must_use]
 pub(crate) fn split_top_level_triple_dot_range(spec: &str) -> Option<(&str, &str)> {
@@ -1013,9 +1021,8 @@ pub(crate) fn split_top_level_triple_dot_range(spec: &str) -> Option<(&str, &str
     let mut depth = 0usize;
     let mut i = 0;
     while i < bytes.len() {
+        depth = selector_depth_after(bytes, i, depth);
         match bytes[i] {
-            b'{' => depth += 1,
-            b'}' => depth = depth.saturating_sub(1),
             b':' if depth == 0 => return None,
             b'.' if depth == 0 => {
                 let run = bytes[i..].iter().take_while(|&&b| b == b'.').count();
@@ -4148,7 +4155,24 @@ mod line_coverage_tests {
             split_top_level_triple_dot_range("main^{/a...b}...side"),
             Some(("main^{/a...b}", "side"))
         );
+        for (spec, left, right) in [
+            ("foo{bar...main", "foo{bar", "main"),
+            ("main...foo{bar", "main", "foo{bar"),
+            ("foo}bar...main", "foo}bar", "main"),
+            ("a{b}c...main", "a{b}c", "main"),
+            ("foo{bar@{0}...main", "foo{bar@{0}", "main"),
+            ("main^{/a{2}...b}...side", "main^{/a{2}...b}", "side"),
+        ] {
+            assert_eq!(
+                split_top_level_triple_dot_range(spec),
+                Some((left, right)),
+                "{spec}"
+            );
+        }
         for single in [
+            "foo{bar",
+            "foo{bar^{/fix...up}",
+            "main^{/a{2}...b}",
             ":/fix...up",
             "main^{/fix...up}",
             "HEAD:dir/a...b",

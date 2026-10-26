@@ -537,7 +537,9 @@ pub struct MergeSource {
 /// `refs/remotes/<spec>`, then `refs/tags/<spec>`. Anything else goes through the revision
 /// parser, so object ids (full or abbreviated), `ORIG_HEAD`, `topic~3` and `origin/main^2`
 /// all work. Annotated tags are peeled to the commit they name. Range expressions (`a..b`, `a...b`)
-/// do not name a single commit and are reported as not found.
+/// do not name a single commit and are reported as not found. Ref names can contain literal
+/// braces: `foo{bar` is a valid source, while `foo{bar...main` is still a range.
+/// Dots within selectors such as `main^{/release..candidate}` do not form a range.
 ///
 /// # Parameters
 ///

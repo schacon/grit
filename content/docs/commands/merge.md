@@ -30,6 +30,8 @@ After a fast-forward or a merge commit, grit runs the `post-merge` hook with `0`
 
 `<rev>` can be any branch, tag or commit: a local branch, a remote-tracking branch such as `origin/main`, a tag such as `v1.2` (annotated tags merge the commit they point at), a full or abbreviated commit id, or a revision expression such as `topic~2`, `origin/main^` or `ORIG_HEAD`. A name is looked up as a local branch first, then a remote-tracking branch, then a tag, then as a revision. Ranges (`a..b`, `a...b`) and trees or blobs are refused.
 
+Literal braces are allowed in ref names: `grit merge 'foo{bar'` merges that branch, while `grit merge 'foo{bar...main'` refuses the range without moving HEAD. Dots within selectors, such as `main^{/release..candidate}`, remain part of a single revision.
+
 Local edits are allowed when they only touch paths the merge does not change, or when a changed path already matches the post-merge tree in the index (same scoped rule as [`grit switch`](../switch/)). Grit refuses when your changes would be overwritten by files the merge updates, when an untracked file would be replaced by a path the merge would check out, on a branch with no commits, or with a detached HEAD; the branch and file are left unchanged.
 
 ### Merge modes

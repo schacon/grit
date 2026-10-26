@@ -250,5 +250,17 @@ fn ranges_over_brace_containing_branch_are_not_found() {
             Err(Error::RevisionNotFound(s)) => assert_eq!(s, spec),
             other => panic!("{spec}: expected RevisionNotFound, got {other:?}"),
         }
+        // The general resolver supports merge-base shorthand, but merge sources must
+        // reject the same expression even when it resolves to an existing commit.
+        if let Some((left, right)) = spec.split_once("...") {
+            let expected: ObjectId = git(dir.path(), &["merge-base", left, right])
+                .trim()
+                .parse()
+                .expect("merge base");
+            let actual =
+                grit_lib::revwalk::rev_parse::resolve_revision_without_index_dwim(&repo, spec)
+                    .unwrap_or_else(|e| panic!("{spec}: {e}"));
+            assert_eq!(actual, expected, "{spec}");
+        }
     }
 }

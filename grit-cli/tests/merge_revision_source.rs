@@ -180,6 +180,28 @@ fn merge_rejects_ranges_over_brace_containing_branch_like_git() {
         assert_eq!(rev(&fixture, "HEAD"), head, "grit merge {range}");
     }
 
+    for args in [
+        vec!["--markdown", "merge", "foo{bar...main"],
+        vec!["merge", "foo{bar...main"],
+    ] {
+        let out = fixture.run(&args);
+        assert_eq!(out.status, Some(1), "{}", out.dump("merge range"));
+        let message = if args[0] == "--markdown" {
+            assert!(out.stderr.is_empty(), "{}", out.dump("merge range"));
+            assert!(out.stdout.starts_with("**Error:**"), "{}", out.stdout);
+            &out.stdout
+        } else {
+            &out.stderr
+        };
+        assert!(
+            message.contains("foo{bar...main"),
+            "{}",
+            out.dump("merge range")
+        );
+        assert_eq!(rev(&fixture, "HEAD"), head, "{args:?}");
+    }
+    assert!(!fixture.path().join(".git/MERGE_HEAD").exists());
+
     let target = rev(&fixture, "foo{bar");
     assert_merged(&fixture, "foo{bar", &target);
 }
