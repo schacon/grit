@@ -281,6 +281,7 @@ fn fresh_repo_log_and_show_say_no_commits_yet() {
         &["show"][..],
         &["reset"][..],
         &["reset", "--hard"][..],
+        &["rebase", "main"][..],
     ] {
         let failure = fails(repo.path(), home.path(), args);
         assert_eq!(failure.json["kind"], "branch_no_commits", "{args:?}");

@@ -251,6 +251,16 @@ More history: run `grit log --cursor=lw1.R0x…`
 ```
 
 
+When the current branch has no commits yet (for example right after [`grit init`](init.md)):
+
+```console
+$ grit log
+error: no commits yet on branch main — make one with `grit commit "message"`
+hint: make one with `grit commit "message"`
+```
+
+Structured `--json` failures use `kind` `branch_no_commits` (see [Exit codes](../exit-codes/)).
+
 ## Exit status
 
 | Code | Meaning |

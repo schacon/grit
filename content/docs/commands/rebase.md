@@ -137,6 +137,8 @@ Pass [`--markdown`](../global-options/) for a `## Rebase` heading (or `## Histor
 - Already up to date
 ```
 
+On a branch with no commits yet, rebase onto any upstream fails with `branch_no_commits` and a hint to make the first commit (see [`grit log`](log.md)).
+
 ## Exit status
 
 | Code | Meaning |

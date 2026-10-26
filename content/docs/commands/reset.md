@@ -133,6 +133,8 @@ Pass `--markdown` for agent-friendly output: a short heading plus bullet list of
 - **orphaned_total:** `1` (truncated: `false`)
 ```
 
+Resetting to default `HEAD` on an unborn branch reports `branch_no_commits` (same message as [`grit log`](log.md)) instead of an opaque revision error.
+
 ## Exit status
 
 | Code | Meaning |

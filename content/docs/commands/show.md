@@ -260,6 +260,14 @@ Pass [`--markdown`](../global-options/) for headings, commit metadata, message b
 ```
 
 
+With no commits on the current branch yet, default `HEAD` fails with `branch_no_commits`:
+
+```console
+$ grit show
+error: no commits yet on branch main — make one with `grit commit "message"`
+hint: make one with `grit commit "message"`
+```
+
 ## Exit status
 
 | Code | Meaning |

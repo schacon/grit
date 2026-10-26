@@ -326,6 +326,14 @@ A conflicted pop lists the paths and the next steps:
 → resolve conflicts, `grit add PATH`, then `grit stash drop`
 ```
 
+When the stash is empty, `pop` (and `apply` with no entries) reports a plain message instead of stash ref syntax:
+
+```console
+$ grit stash pop
+error: no stash entries
+hint: save local changes with `grit stash push`
+```
+
 ## Exit status
 
 | Code | Meaning |

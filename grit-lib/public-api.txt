@@ -12518,6 +12518,7 @@ pub grit_lib::porcelain::branch::BranchError::InvalidStartPoint
 pub grit_lib::porcelain::branch::BranchError::InvalidStartPoint::label: alloc::string::String
 pub grit_lib::porcelain::branch::BranchError::InvalidStartPoint::reason: alloc::string::String
 pub grit_lib::porcelain::branch::BranchError::NoCommits
+pub grit_lib::porcelain::branch::BranchError::NoPreviousBranch
 pub grit_lib::porcelain::branch::BranchError::NoUpstream
 pub grit_lib::porcelain::branch::BranchError::NoUpstream::name: alloc::string::String
 pub grit_lib::porcelain::branch::BranchError::NotFound
@@ -12769,6 +12770,7 @@ pub grit_lib::porcelain::branch_error::BranchError::InvalidStartPoint
 pub grit_lib::porcelain::branch_error::BranchError::InvalidStartPoint::label: alloc::string::String
 pub grit_lib::porcelain::branch_error::BranchError::InvalidStartPoint::reason: alloc::string::String
 pub grit_lib::porcelain::branch_error::BranchError::NoCommits
+pub grit_lib::porcelain::branch_error::BranchError::NoPreviousBranch
 pub grit_lib::porcelain::branch_error::BranchError::NoUpstream
 pub grit_lib::porcelain::branch_error::BranchError::NoUpstream::name: alloc::string::String
 pub grit_lib::porcelain::branch_error::BranchError::NotFound
