@@ -50,6 +50,21 @@ impl SidebandLines {
             emit(item);
         }
     }
+
+    /// Emit bytes not yet terminated by `\r` or `\n` as one final [`RemoteLine::Line`].
+    pub fn finish<F>(&mut self, mut emit: F)
+    where
+        F: FnMut(RemoteLine),
+    {
+        if self.pending.is_empty() {
+            return;
+        }
+        let text = String::from_utf8_lossy(&self.pending).into_owned();
+        self.pending.clear();
+        if !text.is_empty() {
+            emit(RemoteLine::Line(text));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -96,6 +111,15 @@ mod tests {
                 RemoteLine::Line("world".into()),
             ]
         );
+    }
+
+    #[test]
+    fn finish_emits_trailing_bytes_without_delimiter() {
+        let mut splitter = SidebandLines::new();
+        let mut out = Vec::new();
+        splitter.feed(b"no trailing newline", |line| out.push(line));
+        splitter.finish(|line| out.push(line));
+        assert_eq!(out, vec![RemoteLine::Line("no trailing newline".into())]);
     }
 
     #[test]

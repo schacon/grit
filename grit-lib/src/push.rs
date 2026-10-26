@@ -34,8 +34,9 @@ use crate::error::{Error, Result};
 use crate::fetch::Progress;
 use crate::objects::{HashAlgo, ObjectId};
 use crate::pkt_line::{self, Packet};
-use crate::progress::{poll_cancel, Cancel};
+use crate::progress::{poll_cancel, Cancel, ProgressPhase, ProgressUnit, ReceivedObjects};
 use crate::push_report::{PushRefResult, PushRefStatus};
+use crate::sideband_lines::{RemoteLine, SidebandLines};
 use crate::transfer::{
     build_pack, open_odb, PackBuildOptions, PushOptions, PushOutcome, PushRefSpec,
 };
@@ -45,13 +46,95 @@ fn finish_push_outcome(
     local_git_dir: &Path,
     opts: &PushOptions,
     results: Vec<PushRefResult>,
+    remote_messages: Vec<String>,
 ) -> Result<PushOutcome> {
     if !opts.dry_run {
         if let Some(remote) = opts.tracking_remote.as_deref() {
             branch_tracking::apply_push_remote_tracking_updates(local_git_dir, remote, &results)?;
         }
     }
-    Ok(PushOutcome { results })
+    Ok(PushOutcome {
+        results,
+        remote_messages,
+    })
+}
+
+/// Forwards side-band channel 2 to an inner [`Progress`] sink and records complete lines.
+struct PushSidebandCollector<'a> {
+    inner: &'a mut dyn Progress,
+    remote_messages: Vec<String>,
+    pending: SidebandLines,
+}
+
+impl PushSidebandCollector<'_> {
+    fn record_remote_chunk(&mut self, bytes: &[u8]) {
+        let mut lines = Vec::new();
+        self.pending.feed(bytes, |line| lines.push(line));
+        for line in lines {
+            self.record_remote_line(line);
+        }
+    }
+
+    fn record_remote_line(&mut self, line: RemoteLine) {
+        if let RemoteLine::Line(text) = line {
+            if !text.is_empty() {
+                self.remote_messages.push(text);
+            }
+        }
+    }
+
+    fn finish_pending(&mut self) {
+        let mut lines = Vec::new();
+        self.pending.finish(|line| lines.push(line));
+        for line in lines {
+            self.record_remote_line(line);
+        }
+    }
+}
+
+impl crate::progress::ProgressSink for PushSidebandCollector<'_> {
+    fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
+        self.inner.start(phase, total);
+    }
+
+    fn start_with_unit(&mut self, phase: ProgressPhase, unit: ProgressUnit, total: Option<u64>) {
+        self.inner.start_with_unit(phase, unit, total);
+    }
+
+    fn inc(&mut self, units: u64) {
+        self.inner.inc(units);
+    }
+
+    fn set(&mut self, current: u64) {
+        self.inner.set(current);
+    }
+
+    fn finish(&mut self) {
+        self.inner.finish();
+    }
+
+    fn should_cancel(&self) -> bool {
+        self.inner.should_cancel()
+    }
+}
+
+impl Progress for PushSidebandCollector<'_> {
+    fn message(&mut self, bytes: &[u8]) {
+        self.inner.message(bytes);
+        self.record_remote_chunk(bytes);
+    }
+
+    fn remote_sideband_progress(&self) -> bool {
+        self.inner.remote_sideband_progress()
+    }
+
+    fn wants_received_objects(&self) -> bool {
+        self.inner.wants_received_objects()
+    }
+
+    fn received_objects(&mut self, counts: ReceivedObjects) {
+        self.inner.received_objects(counts);
+    }
 }
 
 /// The receive-pack capabilities we negotiate, in the order Git's `send-pack`
@@ -105,7 +188,12 @@ pub fn push_remote(
     cancel: &dyn Cancel,
 ) -> Result<PushOutcome> {
     crate::trace::trace_span!("grit.push");
-    poll_cancel(progress, cancel)?;
+    let mut sideband = PushSidebandCollector {
+        inner: progress,
+        remote_messages: Vec::new(),
+        pending: SidebandLines::new(),
+    };
+    poll_cancel(&mut sideband, cancel)?;
     use crate::net_trace::net_trace;
     net_trace!(
         opts.network_trace,
@@ -146,7 +234,7 @@ pub fn push_remote(
             if !opts.dry_run {
                 crate::transport::send_client_flush(conn)?;
             }
-            return finish_push_outcome(local_git_dir, opts, results);
+            return finish_push_outcome(local_git_dir, opts, results, Vec::new());
         }
     };
 
@@ -166,7 +254,7 @@ pub fn push_remote(
     conn.writer().flush()?;
 
     if let Some(pack) = build_push_pack(&plan, local_git_dir, &local_odb, &adv)? {
-        poll_cancel(progress, cancel)?;
+        poll_cancel(&mut sideband, cancel)?;
         net_trace!(
             opts.network_trace,
             opts.diagnostics.as_ref(),
@@ -208,7 +296,7 @@ pub fn push_remote(
         .collect();
     let raw = read_receive_pack_response(conn.reader(), &sent_refs, adv.server_sideband)?;
     let report = if adv.server_sideband {
-        demux_report_and_remote_messages(&raw, progress)?
+        demux_report_and_remote_messages(&raw, &mut sideband)?
     } else {
         raw
     };
@@ -216,13 +304,15 @@ pub fn push_remote(
     apply_report_status(&report, &mut plan.decisions);
 
     let results: Vec<_> = plan.decisions.into_iter().map(|d| d.result).collect();
+    sideband.finish_pending();
+    let remote_messages = sideband.remote_messages;
     net_trace!(
         opts.network_trace,
         opts.diagnostics.as_ref(),
         "push_remote: done — {} result(s)",
         results.len()
     );
-    finish_push_outcome(local_git_dir, opts, results)
+    finish_push_outcome(local_git_dir, opts, results, remote_messages)
 }
 
 /// Push refs to a remote over smart HTTP (`git-receive-pack`), returning a
@@ -1300,6 +1390,27 @@ mod tests {
         assert!(
             matches!(err, Error::Io(_)),
             "incomplete report must stay an I/O error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn sideband_remote_messages_flush_unterminated_hook_text() {
+        struct Noop;
+        impl crate::progress::ProgressSink for Noop {}
+        impl Progress for Noop {}
+        let mut inner = Noop;
+        let mut sideband = PushSidebandCollector {
+            inner: &mut inner,
+            remote_messages: Vec::new(),
+            pending: SidebandLines::new(),
+        };
+        let hook = b"policy: no ticket";
+        let wire = sideband_receive_pack_wire(hook);
+        demux_report_and_remote_messages(&wire, &mut sideband).unwrap();
+        sideband.finish_pending();
+        assert_eq!(
+            sideband.remote_messages,
+            vec!["policy: no ticket".to_owned()]
         );
     }
 

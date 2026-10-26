@@ -137,6 +137,8 @@ pub struct TerminalProgress {
     last_draw: Instant,
     frame: usize,
     remote_lines: SidebandLines,
+    /// Print side-band hook/diagnostic lines on stderr (human mode, not quiet).
+    emit_remote: bool,
     /// Present when the overall bar is drawn under the live line.
     overall: Option<OverallEstimator>,
     /// Whether the overall bar is on screen and must be cleared at the end.
@@ -158,6 +160,7 @@ impl TerminalProgress {
 
     fn new_inner(mode: OutputMode, force_silent: bool) -> Self {
         let draw = !force_silent && mode == OutputMode::Human && io::stderr().is_terminal();
+        let emit_remote = !force_silent && mode == OutputMode::Human;
         Self {
             origin: Instant::now(),
             draw,
@@ -169,6 +172,7 @@ impl TerminalProgress {
             last_draw: Instant::now() - MIN_REDRAW,
             frame: 0,
             remote_lines: SidebandLines::new(),
+            emit_remote,
             overall: None,
             overall_on_screen: false,
         }
@@ -285,24 +289,41 @@ impl TerminalProgress {
         }
         let shown = paint(self.color, DIM, &format!("  remote: {text}"));
         let mut err = io::stderr();
-        let _ = write!(err, "\r{}", clear_seq(self.color));
-        match line {
-            RemoteLine::Update(_) => {
-                let _ = write!(err, "{shown}");
+        if self.draw {
+            let _ = write!(err, "\r{}", clear_seq(self.color));
+            match line {
+                RemoteLine::Update(_) => {
+                    let _ = write!(err, "{shown}");
+                }
+                RemoteLine::Line(_) => {
+                    let _ = writeln!(err, "{shown}");
+                }
             }
-            RemoteLine::Line(_) => {
-                let _ = writeln!(err, "{shown}");
-            }
+            let _ = err.flush();
+            // Put the live phase line back underneath the remote message.
+            self.redraw(true);
+        } else {
+            // Non-TTY human output: each side-band fragment on its own line (no \r overwrites).
+            let _ = writeln!(err, "{shown}");
+            let _ = err.flush();
         }
-        let _ = err.flush();
-        // Put the live phase line back underneath the remote message.
-        self.redraw(true);
+    }
+
+    fn flush_remote_pending(&mut self) {
+        if !self.emit_remote {
+            return;
+        }
+        let mut lines = Vec::new();
+        self.remote_lines.finish(|line| lines.push(line));
+        for line in lines {
+            self.render_remote(line);
+        }
     }
 }
 
 impl Progress for TerminalProgress {
     fn message(&mut self, bytes: &[u8]) {
-        if !self.draw {
+        if !self.emit_remote {
             return;
         }
         let mut lines = Vec::new();
@@ -334,6 +355,7 @@ impl Progress for TerminalProgress {
 
 impl Drop for TerminalProgress {
     fn drop(&mut self) {
+        self.flush_remote_pending();
         if self.overall_on_screen {
             // The bar is only an estimate; take it down once the work is over.
             let mut err = io::stderr();

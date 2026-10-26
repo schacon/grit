@@ -93,6 +93,13 @@
     "remote": {
       "type": "string"
     },
+    "remote_messages": {
+      "description": "Hook and diagnostic lines from the remote (`remote: …` in human output).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
     "results": {
       "items": {
         "$ref": "#/definitions/PushRefResult"
