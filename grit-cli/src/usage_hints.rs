@@ -34,7 +34,7 @@ pub fn checkout_restore_hint(name: &str) -> Option<String> {
             "restore worktree files with `grit restore {name}` (you ran `grit {display}`)"
         ));
     }
-    if looks_like_path(name) || path_exists_in_worktree(name) {
+    if path_exists_in_worktree(name) {
         return Some(format!(
             "restore worktree files with `grit restore {name}` (you ran `grit {display}`)"
         ));
@@ -76,12 +76,12 @@ fn migration_hint(argv: &[String], err: &clap::Error) -> Option<String> {
     let bad = unexpected_argument(err)?;
     let sub = user_subcommand(argv)?;
 
-    if matches!(sub.as_str(), "switch" | "checkout" | "co") && matches!(bad.as_str(), "-b" | "--branch")
+    if matches!(sub.as_str(), "switch" | "checkout" | "co")
+        && matches!(bad.as_str(), "-b" | "--branch")
     {
-        let display = user_switch_display(argv).unwrap_or("switch");
         let name = branch_name_after_git_create_flag(argv).unwrap_or_else(|| "<name>".to_owned());
         return Some(format!(
-            "create a branch and switch with `grit {display} -c {name}`"
+            "create a branch and switch with `grit switch -c {name}`"
         ));
     }
 
@@ -174,16 +174,39 @@ fn unexpected_argument(err: &clap::Error) -> Option<String> {
 }
 
 fn user_subcommand(argv: &[String]) -> Option<String> {
-    for arg in argv.iter().skip(1) {
+    let mut i = 1;
+    while i < argv.len() {
+        let arg = &argv[i];
         if arg == "--" {
             break;
         }
         if arg.starts_with('-') {
+            i = index_after_flag(i, argv);
             continue;
         }
         return Some(arg.clone());
     }
     None
+}
+
+/// Index of the argv slot after `argv[i]` (a flag), consuming an attached or following value.
+fn index_after_flag(i: usize, argv: &[String]) -> usize {
+    let arg = &argv[i];
+    if arg.contains('=') {
+        return i + 1;
+    }
+    if flag_takes_value(arg) {
+        return (i + 2).min(argv.len());
+    }
+    i + 1
+}
+
+/// Flags that consume the next argv word (keep in sync with [`crate::Cli`] globals and `-C`/`-c`).
+fn flag_takes_value(arg: &str) -> bool {
+    matches!(
+        arg,
+        "--filter" | "--threads" | "--git-dir" | "--work-tree" | "-C" | "-c"
+    )
 }
 
 fn user_switch_display(argv: &[String]) -> Option<&'static str> {
@@ -214,10 +237,6 @@ fn tokens_after_separator(argv: &[String]) -> impl Iterator<Item = &str> {
         .flatten()
 }
 
-fn looks_like_path(name: &str) -> bool {
-    name.contains('/') || name.contains('\\') || name.contains('.')
-}
-
 fn path_exists_in_worktree(name: &str) -> bool {
     Path::new(name).exists()
 }
@@ -237,12 +256,16 @@ fn shell_word(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
     use crate::json_error::structured_json_payload;
+    use clap::Parser;
 
     #[derive(Debug, Parser)]
     #[command(name = "grit")]
     struct Mini {
+        #[arg(long, global = true, value_name = "EXPR")]
+        filter: Option<String>,
+        #[arg(long, global = true, value_name = "N")]
+        threads: Option<usize>,
         #[command(subcommand)]
         cmd: MiniCmd,
     }
@@ -282,7 +305,27 @@ mod tests {
 
     #[test]
     fn checkout_dash_b_points_at_switch_create() {
-        assert!(hint_for(&["grit", "checkout", "-b", "feature"]).contains("grit checkout -c feature"));
+        assert!(hint_for(&["grit", "checkout", "-b", "feature"]).contains("grit switch -c feature"));
+    }
+
+    #[test]
+    fn global_filter_before_subcommand_still_matches_add_dash_a() {
+        let hint = hint_for(&["grit", "--filter", ".paths", "add", "-A"]);
+        assert!(hint.contains("no paths stages everything"));
+    }
+
+    #[test]
+    fn global_threads_before_subcommand_still_matches_checkout_dash_b() {
+        let hint = hint_for(&["grit", "--threads", "2", "checkout", "-b", "feature"]);
+        assert!(hint.contains("grit switch -c feature"));
+    }
+
+    #[test]
+    fn slash_or_dotted_missing_branch_does_not_get_restore_hint() {
+        capture_argv(vec!["grit".into(), "checkout".into(), "feature/foo".into()]);
+        assert!(checkout_restore_hint("feature/foo").is_none());
+        capture_argv(vec!["grit".into(), "checkout".into(), "release-1.0".into()]);
+        assert!(checkout_restore_hint("release-1.0").is_none());
     }
 
     #[test]

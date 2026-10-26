@@ -45,11 +45,11 @@ mod quiet_args;
 mod ref_name_messages;
 mod rev_select;
 mod revision_errors;
-mod usage_hints;
 mod stdio;
 mod terminal_progress;
 mod ui;
 mod unborn_errors;
+mod usage_hints;
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};

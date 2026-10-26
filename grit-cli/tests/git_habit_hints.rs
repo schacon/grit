@@ -96,7 +96,7 @@ fn fresh_repo() -> (tempfile::TempDir, tempfile::TempDir) {
 fn checkout_dash_b_suggests_switch_create() {
     let (repo, home) = fresh_repo();
     let failure = fails(repo.path(), home.path(), &["checkout", "-b", "feature"]);
-    failure.assert_usage_hint("grit checkout -c feature");
+    failure.assert_usage_hint("grit switch -c feature");
     assert!(
         failure.stderr.contains("Usage: grit checkout"),
         "{}",
@@ -156,5 +156,19 @@ fn markdown_usage_hint_for_checkout_dash_b() {
     assert_eq!(out.status.code(), Some(2));
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("**Hint:**"));
-    assert!(stdout.contains("grit checkout -c feature"));
+    assert!(stdout.contains("grit switch -c feature"));
+}
+
+#[test]
+fn checkout_slash_or_dotted_branch_names_suggest_switch_create() {
+    let (repo, home) = fresh_repo();
+    for branch in ["feature/foo", "release-1.0"] {
+        let failure = fails_with(repo.path(), home.path(), &["checkout", branch], 1);
+        failure.assert_hint("branch_not_found", &format!("grit switch -c {branch}"));
+        let hint = failure.json["hint"].as_str().unwrap_or("");
+        assert!(
+            !hint.contains("restore"),
+            "branch name {branch} must not look like restore: {hint}"
+        );
+    }
 }
