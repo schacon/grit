@@ -33,8 +33,10 @@ use crate::ident::{
 use crate::index::{Index, IndexLock};
 use crate::objects::odb::Odb;
 use crate::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
-use crate::pathspec::{pathspec_is_exclude, ResolvedPathspecs};
-use crate::porcelain::add::{stage_on_index, StageMode, StageOptions};
+use crate::pathspec::{matches_pathspec_list_with_context, pathspec_is_exclude, ResolvedPathspecs};
+use crate::porcelain::add::{
+    stage_on_index, stage_on_index_with_pathspec_ignore_exempt, StageMode, StageOptions,
+};
 use crate::porcelain::hunk_select::{
     diff_options_for_hunk_select, resolve_selection, HunkSelectError, HunkSelection,
 };
@@ -461,6 +463,47 @@ pub fn plan_commit(
     })
 }
 
+/// Copy stage-0 rows from `source` into `commit_index` when they are absent from the parent-tree
+/// snapshot but needed for path-scoped staging.
+///
+/// Path-scoped commits build `commit_index` from the parent tree. Ignored paths that are
+/// already staged in the repository index (force-added or tracked) must appear there before
+/// worktree staging runs, or ignored untracked collection skips them. Rows already present from
+/// the parent tree are left untouched so explicitly excluded paths keep their HEAD versions.
+fn seed_commit_index_stage0_from_index(
+    repo: &Repository,
+    commit_index: &mut Index,
+    source: &Index,
+    paths: &ResolvedPathspecs,
+) -> Result<()> {
+    if paths.specs.is_empty() {
+        return Ok(());
+    }
+    let ctx = repo.pathspec_match_context();
+    let mut seeded = false;
+    for entry in &source.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path = match std::str::from_utf8(&entry.path) {
+            Ok(p) if !p.is_empty() => p,
+            _ => continue,
+        };
+        if commit_index.get(path.as_bytes(), 0).is_some() {
+            continue;
+        }
+        if !matches_pathspec_list_with_context(path, &paths.specs, ctx) {
+            continue;
+        }
+        commit_index.stage_file(entry.clone());
+        seeded = true;
+    }
+    if seeded {
+        commit_index.ensure_canonical_order();
+    }
+    Ok(())
+}
+
 fn commit_paths_scope(
     repo: &Repository,
     req: &CommitRequest,
@@ -495,12 +538,7 @@ fn commit_paths_scope(
     if real_index.has_unmerged_entries() {
         return Err(Error::IndexUnmerged);
     }
-    let mut commit_index = match parent_tree.as_ref() {
-        Some(tree) => index_from_tree_with_seeded_worktree_stats(repo, tree, &real_index)?,
-        None => Index::new(),
-    };
-
-    let stage_opts = StageOptions {
+    let mut stage_opts = StageOptions {
         pathspecs: paths.specs.clone(),
         pathspec_sources: if paths.sources.is_empty() {
             paths.specs.clone()
@@ -511,6 +549,26 @@ fn commit_paths_scope(
         dry_run: req.dry_run,
         ..StageOptions::default()
     };
+
+    {
+        let mut validate_opts = stage_opts.clone();
+        validate_opts.dry_run = true;
+        let mut probe = real_index.clone();
+        stage_on_index_with_pathspec_ignore_exempt(
+            repo,
+            &mut probe,
+            &validate_opts,
+            progress,
+            Some(&real_index),
+        )?;
+    }
+    stage_opts.skip_pathspec_ignore_check = true;
+
+    let mut commit_index = match parent_tree.as_ref() {
+        Some(tree) => index_from_tree_with_seeded_worktree_stats(repo, tree, &real_index)?,
+        None => Index::new(),
+    };
+    seed_commit_index_stage0_from_index(repo, &mut commit_index, &real_index, paths)?;
 
     let staged_commit = stage_on_index(repo, &mut commit_index, &stage_opts, progress)?;
     let real_index = match index_lock {
