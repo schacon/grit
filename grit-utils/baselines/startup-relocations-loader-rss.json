@@ -1,0 +1,4001 @@
+{
+  "method": "30 rotating LD_DEBUG=statistics invocations per tool; 10 independent /usr/bin/time -v peak RSS samples; tiny fixture; separate from wall-time runs",
+  "profiles": {
+    "release": [
+      {
+        "command": "branch",
+        "loader": {
+          "stock": [
+            {
+              "startup_cycles": 191263,
+              "relocation_cycles": 114826,
+              "load_objects_cycles": 30602
+            },
+            {
+              "startup_cycles": 155456,
+              "relocation_cycles": 100495,
+              "load_objects_cycles": 23225
+            },
+            {
+              "startup_cycles": 149520,
+              "relocation_cycles": 95170,
+              "load_objects_cycles": 23184
+            },
+            {
+              "startup_cycles": 151463,
+              "relocation_cycles": 96233,
+              "load_objects_cycles": 22627
+            },
+            {
+              "startup_cycles": 151723,
+              "relocation_cycles": 97110,
+              "load_objects_cycles": 23194
+            },
+            {
+              "startup_cycles": 146564,
+              "relocation_cycles": 90623,
+              "load_objects_cycles": 23348
+            },
+            {
+              "startup_cycles": 147880,
+              "relocation_cycles": 92008,
+              "load_objects_cycles": 23979
+            },
+            {
+              "startup_cycles": 152895,
+              "relocation_cycles": 93090,
+              "load_objects_cycles": 27814
+            },
+            {
+              "startup_cycles": 140046,
+              "relocation_cycles": 86314,
+              "load_objects_cycles": 22058
+            },
+            {
+              "startup_cycles": 136884,
+              "relocation_cycles": 83574,
+              "load_objects_cycles": 21938
+            },
+            {
+              "startup_cycles": 150586,
+              "relocation_cycles": 94055,
+              "load_objects_cycles": 24512
+            },
+            {
+              "startup_cycles": 148660,
+              "relocation_cycles": 88480,
+              "load_objects_cycles": 26819
+            },
+            {
+              "startup_cycles": 140171,
+              "relocation_cycles": 85805,
+              "load_objects_cycles": 22986
+            },
+            {
+              "startup_cycles": 162279,
+              "relocation_cycles": 92214,
+              "load_objects_cycles": 38105
+            },
+            {
+              "startup_cycles": 163956,
+              "relocation_cycles": 108014,
+              "load_objects_cycles": 23223
+            },
+            {
+              "startup_cycles": 145821,
+              "relocation_cycles": 87812,
+              "load_objects_cycles": 25006
+            },
+            {
+              "startup_cycles": 140761,
+              "relocation_cycles": 85735,
+              "load_objects_cycles": 22549
+            },
+            {
+              "startup_cycles": 142651,
+              "relocation_cycles": 87474,
+              "load_objects_cycles": 22604
+            },
+            {
+              "startup_cycles": 135015,
+              "relocation_cycles": 81541,
+              "load_objects_cycles": 22643
+            },
+            {
+              "startup_cycles": 136507,
+              "relocation_cycles": 82141,
+              "load_objects_cycles": 22084
+            },
+            {
+              "startup_cycles": 151767,
+              "relocation_cycles": 98085,
+              "load_objects_cycles": 22542
+            },
+            {
+              "startup_cycles": 138411,
+              "relocation_cycles": 83304,
+              "load_objects_cycles": 22456
+            },
+            {
+              "startup_cycles": 141146,
+              "relocation_cycles": 86811,
+              "load_objects_cycles": 22115
+            },
+            {
+              "startup_cycles": 146681,
+              "relocation_cycles": 88509,
+              "load_objects_cycles": 24915
+            },
+            {
+              "startup_cycles": 167167,
+              "relocation_cycles": 110286,
+              "load_objects_cycles": 24055
+            },
+            {
+              "startup_cycles": 146902,
+              "relocation_cycles": 95420,
+              "load_objects_cycles": 19936
+            },
+            {
+              "startup_cycles": 146252,
+              "relocation_cycles": 94811,
+              "load_objects_cycles": 19520
+            },
+            {
+              "startup_cycles": 139029,
+              "relocation_cycles": 85441,
+              "load_objects_cycles": 20137
+            },
+            {
+              "startup_cycles": 139487,
+              "relocation_cycles": 87362,
+              "load_objects_cycles": 19437
+            },
+            {
+              "startup_cycles": 140478,
+              "relocation_cycles": 89486,
+              "load_objects_cycles": 19385
+            }
+          ],
+          "candidate": [
+            {
+              "startup_cycles": 149052,
+              "relocation_cycles": 91156,
+              "load_objects_cycles": 23303
+            },
+            {
+              "startup_cycles": 150865,
+              "relocation_cycles": 96491,
+              "load_objects_cycles": 22965
+            },
+            {
+              "startup_cycles": 145007,
+              "relocation_cycles": 90474,
+              "load_objects_cycles": 23569
+            },
+            {
+              "startup_cycles": 142740,
+              "relocation_cycles": 88316,
+              "load_objects_cycles": 23145
+            },
+            {
+              "startup_cycles": 142594,
+              "relocation_cycles": 87237,
+              "load_objects_cycles": 23075
+            },
+            {
+              "startup_cycles": 163472,
+              "relocation_cycles": 90272,
+              "load_objects_cycles": 41100
+            },
+            {
+              "startup_cycles": 144755,
+              "relocation_cycles": 86424,
+              "load_objects_cycles": 26595
+            },
+            {
+              "startup_cycles": 140589,
+              "relocation_cycles": 86847,
+              "load_objects_cycles": 22131
+            },
+            {
+              "startup_cycles": 146663,
+              "relocation_cycles": 92336,
+              "load_objects_cycles": 22716
+            },
+            {
+              "startup_cycles": 157099,
+              "relocation_cycles": 101641,
+              "load_objects_cycles": 22565
+            },
+            {
+              "startup_cycles": 147633,
+              "relocation_cycles": 93233,
+              "load_objects_cycles": 22926
+            },
+            {
+              "startup_cycles": 141767,
+              "relocation_cycles": 85857,
+              "load_objects_cycles": 23610
+            },
+            {
+              "startup_cycles": 144193,
+              "relocation_cycles": 87448,
+              "load_objects_cycles": 22854
+            },
+            {
+              "startup_cycles": 142516,
+              "relocation_cycles": 84175,
+              "load_objects_cycles": 25110
+            },
+            {
+              "startup_cycles": 144547,
+              "relocation_cycles": 85696,
+              "load_objects_cycles": 23155
+            },
+            {
+              "startup_cycles": 140758,
+              "relocation_cycles": 84471,
+              "load_objects_cycles": 23394
+            },
+            {
+              "startup_cycles": 139102,
+              "relocation_cycles": 82495,
+              "load_objects_cycles": 22440
+            },
+            {
+              "startup_cycles": 140816,
+              "relocation_cycles": 84013,
+              "load_objects_cycles": 25477
+            },
+            {
+              "startup_cycles": 142014,
+              "relocation_cycles": 81850,
+              "load_objects_cycles": 27632
+            },
+            {
+              "startup_cycles": 137672,
+              "relocation_cycles": 83106,
+              "load_objects_cycles": 22191
+            },
+            {
+              "startup_cycles": 141135,
+              "relocation_cycles": 84648,
+              "load_objects_cycles": 24863
+            },
+            {
+              "startup_cycles": 138507,
+              "relocation_cycles": 82898,
+              "load_objects_cycles": 22562
+            },
+            {
+              "startup_cycles": 139464,
+              "relocation_cycles": 84052,
+              "load_objects_cycles": 24710
+            },
+            {
+              "startup_cycles": 148613,
+              "relocation_cycles": 89934,
+              "load_objects_cycles": 24614
+            },
+            {
+              "startup_cycles": 158462,
+              "relocation_cycles": 99907,
+              "load_objects_cycles": 25680
+            },
+            {
+              "startup_cycles": 151112,
+              "relocation_cycles": 96883,
+              "load_objects_cycles": 21031
+            },
+            {
+              "startup_cycles": 146489,
+              "relocation_cycles": 87305,
+              "load_objects_cycles": 25430
+            },
+            {
+              "startup_cycles": 144861,
+              "relocation_cycles": 91286,
+              "load_objects_cycles": 20443
+            },
+            {
+              "startup_cycles": 143943,
+              "relocation_cycles": 86894,
+              "load_objects_cycles": 25420
+            },
+            {
+              "startup_cycles": 140540,
+              "relocation_cycles": 84645,
+              "load_objects_cycles": 19908
+            }
+          ],
+          "git": [
+            {
+              "startup_cycles": 99304,
+              "relocation_cycles": 29109,
+              "load_objects_cycles": 37299
+            },
+            {
+              "startup_cycles": 94200,
+              "relocation_cycles": 25383,
+              "load_objects_cycles": 32448
+            },
+            {
+              "startup_cycles": 87183,
+              "relocation_cycles": 24463,
+              "load_objects_cycles": 31460
+            },
+            {
+              "startup_cycles": 92726,
+              "relocation_cycles": 28899,
+              "load_objects_cycles": 32492
+            },
+            {
+              "startup_cycles": 86504,
+              "relocation_cycles": 24299,
+              "load_objects_cycles": 30394
+            },
+            {
+              "startup_cycles": 90534,
+              "relocation_cycles": 25412,
+              "load_objects_cycles": 33350
+            },
+            {
+              "startup_cycles": 93844,
+              "relocation_cycles": 28722,
+              "load_objects_cycles": 33651
+            },
+            {
+              "startup_cycles": 84013,
+              "relocation_cycles": 22074,
+              "load_objects_cycles": 30612
+            },
+            {
+              "startup_cycles": 93860,
+              "relocation_cycles": 29143,
+              "load_objects_cycles": 32414
+            },
+            {
+              "startup_cycles": 100131,
+              "relocation_cycles": 29767,
+              "load_objects_cycles": 32468
+            },
+            {
+              "startup_cycles": 95687,
+              "relocation_cycles": 22323,
+              "load_objects_cycles": 31018
+            },
+            {
+              "startup_cycles": 85867,
+              "relocation_cycles": 22971,
+              "load_objects_cycles": 31015
+            },
+            {
+              "startup_cycles": 96285,
+              "relocation_cycles": 27456,
+              "load_objects_cycles": 35497
+            },
+            {
+              "startup_cycles": 93051,
+              "relocation_cycles": 26720,
+              "load_objects_cycles": 32762
+            },
+            {
+              "startup_cycles": 88894,
+              "relocation_cycles": 26039,
+              "load_objects_cycles": 32299
+            },
+            {
+              "startup_cycles": 88002,
+              "relocation_cycles": 24744,
+              "load_objects_cycles": 32032
+            },
+            {
+              "startup_cycles": 88249,
+              "relocation_cycles": 23389,
+              "load_objects_cycles": 31002
+            },
+            {
+              "startup_cycles": 83782,
+              "relocation_cycles": 22092,
+              "load_objects_cycles": 31808
+            },
+            {
+              "startup_cycles": 86554,
+              "relocation_cycles": 24031,
+              "load_objects_cycles": 30851
+            },
+            {
+              "startup_cycles": 98147,
+              "relocation_cycles": 22061,
+              "load_objects_cycles": 44803
+            },
+            {
+              "startup_cycles": 86769,
+              "relocation_cycles": 24299,
+              "load_objects_cycles": 30516
+            },
+            {
+              "startup_cycles": 89473,
+              "relocation_cycles": 24913,
+              "load_objects_cycles": 33389
+            },
+            {
+              "startup_cycles": 86728,
+              "relocation_cycles": 24258,
+              "load_objects_cycles": 30989
+            },
+            {
+              "startup_cycles": 88114,
+              "relocation_cycles": 23888,
+              "load_objects_cycles": 31231
+            },
+            {
+              "startup_cycles": 90407,
+              "relocation_cycles": 27622,
+              "load_objects_cycles": 29910
+            },
+            {
+              "startup_cycles": 97562,
+              "relocation_cycles": 26018,
+              "load_objects_cycles": 39132
+            },
+            {
+              "startup_cycles": 85485,
+              "relocation_cycles": 25084,
+              "load_objects_cycles": 28457
+            },
+            {
+              "startup_cycles": 85467,
+              "relocation_cycles": 25485,
+              "load_objects_cycles": 28836
+            },
+            {
+              "startup_cycles": 83168,
+              "relocation_cycles": 23301,
+              "load_objects_cycles": 28064
+            },
+            {
+              "startup_cycles": 82165,
+              "relocation_cycles": 22230,
+              "load_objects_cycles": 28860
+            }
+          ]
+        },
+        "time_v_rss_kib": {
+          "stock": [
+            12164,
+            12104,
+            12160,
+            12164,
+            11672,
+            12412,
+            12160,
+            11864,
+            11976,
+            11732
+          ],
+          "candidate": [
+            11316,
+            11060,
+            11060,
+            11124,
+            11108,
+            11488,
+            11424,
+            11640,
+            11456,
+            10936
+          ],
+          "git": [
+            4456,
+            4460,
+            4644,
+            4464,
+            4456,
+            4592,
+            4656,
+            4656,
+            4384,
+            4776
+          ]
+        }
+      },
+      {
+        "command": "status",
+        "loader": {
+          "stock": [
+            {
+              "startup_cycles": 134279,
+              "relocation_cycles": 82758,
+              "load_objects_cycles": 19819
+            },
+            {
+              "startup_cycles": 163490,
+              "relocation_cycles": 107359,
+              "load_objects_cycles": 23166
+            },
+            {
+              "startup_cycles": 153774,
+              "relocation_cycles": 97848,
+              "load_objects_cycles": 23436
+            },
+            {
+              "startup_cycles": 147557,
+              "relocation_cycles": 92955,
+              "load_objects_cycles": 22305
+            },
+            {
+              "startup_cycles": 164574,
+              "relocation_cycles": 109499,
+              "load_objects_cycles": 22687
+            },
+            {
+              "startup_cycles": 154757,
+              "relocation_cycles": 94364,
+              "load_objects_cycles": 26010
+            },
+            {
+              "startup_cycles": 149263,
+              "relocation_cycles": 93672,
+              "load_objects_cycles": 23670
+            },
+            {
+              "startup_cycles": 155308,
+              "relocation_cycles": 100614,
+              "load_objects_cycles": 22071
+            },
+            {
+              "startup_cycles": 141107,
+              "relocation_cycles": 87149,
+              "load_objects_cycles": 22401
+            },
+            {
+              "startup_cycles": 147997,
+              "relocation_cycles": 92112,
+              "load_objects_cycles": 22674
+            },
+            {
+              "startup_cycles": 154970,
+              "relocation_cycles": 95524,
+              "load_objects_cycles": 23038
+            },
+            {
+              "startup_cycles": 144669,
+              "relocation_cycles": 90919,
+              "load_objects_cycles": 22183
+            },
+            {
+              "startup_cycles": 141999,
+              "relocation_cycles": 87344,
+              "load_objects_cycles": 21944
+            },
+            {
+              "startup_cycles": 145893,
+              "relocation_cycles": 91221,
+              "load_objects_cycles": 23010
+            },
+            {
+              "startup_cycles": 148995,
+              "relocation_cycles": 92661,
+              "load_objects_cycles": 24445
+            },
+            {
+              "startup_cycles": 140563,
+              "relocation_cycles": 84572,
+              "load_objects_cycles": 24562
+            },
+            {
+              "startup_cycles": 153953,
+              "relocation_cycles": 95823,
+              "load_objects_cycles": 25337
+            },
+            {
+              "startup_cycles": 145020,
+              "relocation_cycles": 82451,
+              "load_objects_cycles": 24801
+            },
+            {
+              "startup_cycles": 152633,
+              "relocation_cycles": 96028,
+              "load_objects_cycles": 23249
+            },
+            {
+              "startup_cycles": 137545,
+              "relocation_cycles": 81996,
+              "load_objects_cycles": 22659
+            },
+            {
+              "startup_cycles": 137992,
+              "relocation_cycles": 84442,
+              "load_objects_cycles": 22292
+            },
+            {
+              "startup_cycles": 141910,
+              "relocation_cycles": 78969,
+              "load_objects_cycles": 23561
+            },
+            {
+              "startup_cycles": 143382,
+              "relocation_cycles": 84806,
+              "load_objects_cycles": 27677
+            },
+            {
+              "startup_cycles": 134765,
+              "relocation_cycles": 80303,
+              "load_objects_cycles": 22708
+            },
+            {
+              "startup_cycles": 132423,
+              "relocation_cycles": 79526,
+              "load_objects_cycles": 22178
+            },
+            {
+              "startup_cycles": 137186,
+              "relocation_cycles": 82921,
+              "load_objects_cycles": 22128
+            },
+            {
+              "startup_cycles": 132711,
+              "relocation_cycles": 80581,
+              "load_objects_cycles": 21650
+            },
+            {
+              "startup_cycles": 131942,
+              "relocation_cycles": 77545,
+              "load_objects_cycles": 21964
+            },
+            {
+              "startup_cycles": 140587,
+              "relocation_cycles": 81663,
+              "load_objects_cycles": 22128
+            },
+            {
+              "startup_cycles": 130348,
+              "relocation_cycles": 75855,
+              "load_objects_cycles": 22183
+            }
+          ],
+          "candidate": [
+            {
+              "startup_cycles": 145930,
+              "relocation_cycles": 87050,
+              "load_objects_cycles": 25594
+            },
+            {
+              "startup_cycles": 161194,
+              "relocation_cycles": 103615,
+              "load_objects_cycles": 25142
+            },
+            {
+              "startup_cycles": 156460,
+              "relocation_cycles": 100947,
+              "load_objects_cycles": 22874
+            },
+            {
+              "startup_cycles": 148109,
+              "relocation_cycles": 92138,
+              "load_objects_cycles": 23478
+            },
+            {
+              "startup_cycles": 142006,
+              "relocation_cycles": 87900,
+              "load_objects_cycles": 22742
+            },
+            {
+              "startup_cycles": 157154,
+              "relocation_cycles": 94702,
+              "load_objects_cycles": 23797
+            },
+            {
+              "startup_cycles": 147014,
+              "relocation_cycles": 91184,
+              "load_objects_cycles": 23189
+            },
+            {
+              "startup_cycles": 143790,
+              "relocation_cycles": 89993,
+              "load_objects_cycles": 22443
+            },
+            {
+              "startup_cycles": 151447,
+              "relocation_cycles": 95973,
+              "load_objects_cycles": 22924
+            },
+            {
+              "startup_cycles": 145155,
+              "relocation_cycles": 86855,
+              "load_objects_cycles": 27019
+            },
+            {
+              "startup_cycles": 144216,
+              "relocation_cycles": 89206,
+              "load_objects_cycles": 23345
+            },
+            {
+              "startup_cycles": 142659,
+              "relocation_cycles": 84237,
+              "load_objects_cycles": 26343
+            },
+            {
+              "startup_cycles": 144955,
+              "relocation_cycles": 89811,
+              "load_objects_cycles": 22729
+            },
+            {
+              "startup_cycles": 143993,
+              "relocation_cycles": 90981,
+              "load_objects_cycles": 21697
+            },
+            {
+              "startup_cycles": 150311,
+              "relocation_cycles": 94143,
+              "load_objects_cycles": 23129
+            },
+            {
+              "startup_cycles": 144523,
+              "relocation_cycles": 84747,
+              "load_objects_cycles": 28459
+            },
+            {
+              "startup_cycles": 142513,
+              "relocation_cycles": 84929,
+              "load_objects_cycles": 25389
+            },
+            {
+              "startup_cycles": 146252,
+              "relocation_cycles": 83681,
+              "load_objects_cycles": 25084
+            },
+            {
+              "startup_cycles": 143808,
+              "relocation_cycles": 83694,
+              "load_objects_cycles": 22383
+            },
+            {
+              "startup_cycles": 133307,
+              "relocation_cycles": 80425,
+              "load_objects_cycles": 21408
+            },
+            {
+              "startup_cycles": 136562,
+              "relocation_cycles": 82115,
+              "load_objects_cycles": 22022
+            },
+            {
+              "startup_cycles": 139518,
+              "relocation_cycles": 86325,
+              "load_objects_cycles": 22126
+            },
+            {
+              "startup_cycles": 138039,
+              "relocation_cycles": 79645,
+              "load_objects_cycles": 22367
+            },
+            {
+              "startup_cycles": 141577,
+              "relocation_cycles": 88004,
+              "load_objects_cycles": 22666
+            },
+            {
+              "startup_cycles": 134474,
+              "relocation_cycles": 81309,
+              "load_objects_cycles": 21689
+            },
+            {
+              "startup_cycles": 139612,
+              "relocation_cycles": 82061,
+              "load_objects_cycles": 23597
+            },
+            {
+              "startup_cycles": 137787,
+              "relocation_cycles": 84507,
+              "load_objects_cycles": 22666
+            },
+            {
+              "startup_cycles": 141284,
+              "relocation_cycles": 86379,
+              "load_objects_cycles": 23878
+            },
+            {
+              "startup_cycles": 138590,
+              "relocation_cycles": 79892,
+              "load_objects_cycles": 21918
+            },
+            {
+              "startup_cycles": 142012,
+              "relocation_cycles": 87929,
+              "load_objects_cycles": 22952
+            }
+          ],
+          "git": [
+            {
+              "startup_cycles": 92635,
+              "relocation_cycles": 26616,
+              "load_objects_cycles": 34499
+            },
+            {
+              "startup_cycles": 89026,
+              "relocation_cycles": 24232,
+              "load_objects_cycles": 31590
+            },
+            {
+              "startup_cycles": 88449,
+              "relocation_cycles": 25716,
+              "load_objects_cycles": 31413
+            },
+            {
+              "startup_cycles": 93243,
+              "relocation_cycles": 28012,
+              "load_objects_cycles": 32032
+            },
+            {
+              "startup_cycles": 88662,
+              "relocation_cycles": 26767,
+              "load_objects_cycles": 31103
+            },
+            {
+              "startup_cycles": 91252,
+              "relocation_cycles": 28844,
+              "load_objects_cycles": 31158
+            },
+            {
+              "startup_cycles": 96756,
+              "relocation_cycles": 30201,
+              "load_objects_cycles": 33319
+            },
+            {
+              "startup_cycles": 90872,
+              "relocation_cycles": 23686,
+              "load_objects_cycles": 30732
+            },
+            {
+              "startup_cycles": 85833,
+              "relocation_cycles": 24130,
+              "load_objects_cycles": 30719
+            },
+            {
+              "startup_cycles": 93345,
+              "relocation_cycles": 27380,
+              "load_objects_cycles": 32973
+            },
+            {
+              "startup_cycles": 84944,
+              "relocation_cycles": 23324,
+              "load_objects_cycles": 30583
+            },
+            {
+              "startup_cycles": 90870,
+              "relocation_cycles": 28652,
+              "load_objects_cycles": 30979
+            },
+            {
+              "startup_cycles": 89941,
+              "relocation_cycles": 25318,
+              "load_objects_cycles": 31140
+            },
+            {
+              "startup_cycles": 86369,
+              "relocation_cycles": 24856,
+              "load_objects_cycles": 30290
+            },
+            {
+              "startup_cycles": 100217,
+              "relocation_cycles": 26795,
+              "load_objects_cycles": 38329
+            },
+            {
+              "startup_cycles": 92617,
+              "relocation_cycles": 25690,
+              "load_objects_cycles": 33776
+            },
+            {
+              "startup_cycles": 92973,
+              "relocation_cycles": 25256,
+              "load_objects_cycles": 36054
+            },
+            {
+              "startup_cycles": 85789,
+              "relocation_cycles": 23056,
+              "load_objects_cycles": 31577
+            },
+            {
+              "startup_cycles": 88340,
+              "relocation_cycles": 24952,
+              "load_objects_cycles": 30940
+            },
+            {
+              "startup_cycles": 86941,
+              "relocation_cycles": 22341,
+              "load_objects_cycles": 33267
+            },
+            {
+              "startup_cycles": 83379,
+              "relocation_cycles": 21616,
+              "load_objects_cycles": 31374
+            },
+            {
+              "startup_cycles": 85176,
+              "relocation_cycles": 23493,
+              "load_objects_cycles": 30581
+            },
+            {
+              "startup_cycles": 85038,
+              "relocation_cycles": 23259,
+              "load_objects_cycles": 31070
+            },
+            {
+              "startup_cycles": 84130,
+              "relocation_cycles": 22453,
+              "load_objects_cycles": 29640
+            },
+            {
+              "startup_cycles": 95612,
+              "relocation_cycles": 26085,
+              "load_objects_cycles": 32357
+            },
+            {
+              "startup_cycles": 85235,
+              "relocation_cycles": 23836,
+              "load_objects_cycles": 30765
+            },
+            {
+              "startup_cycles": 84071,
+              "relocation_cycles": 20987,
+              "load_objects_cycles": 31639
+            },
+            {
+              "startup_cycles": 86291,
+              "relocation_cycles": 23901,
+              "load_objects_cycles": 30729
+            },
+            {
+              "startup_cycles": 84921,
+              "relocation_cycles": 22479,
+              "load_objects_cycles": 31168
+            },
+            {
+              "startup_cycles": 83961,
+              "relocation_cycles": 22760,
+              "load_objects_cycles": 29923
+            }
+          ]
+        },
+        "time_v_rss_kib": {
+          "stock": [
+            14116,
+            13984,
+            14204,
+            14048,
+            14268,
+            14072,
+            14140,
+            14028,
+            14072,
+            14036
+          ],
+          "candidate": [
+            13348,
+            13340,
+            13460,
+            13328,
+            13264,
+            13260,
+            13340,
+            13356,
+            13380,
+            13260
+          ],
+          "git": [
+            5184,
+            5240,
+            5236,
+            5232,
+            5160,
+            5316,
+            5240,
+            5304,
+            5240,
+            5312
+          ]
+        }
+      },
+      {
+        "command": "resolve",
+        "loader": {
+          "stock": [
+            {
+              "startup_cycles": 147422,
+              "relocation_cycles": 79328,
+              "load_objects_cycles": 22328
+            },
+            {
+              "startup_cycles": 151993,
+              "relocation_cycles": 91774,
+              "load_objects_cycles": 23210
+            },
+            {
+              "startup_cycles": 137904,
+              "relocation_cycles": 84565,
+              "load_objects_cycles": 22305
+            },
+            {
+              "startup_cycles": 141991,
+              "relocation_cycles": 88168,
+              "load_objects_cycles": 22297
+            },
+            {
+              "startup_cycles": 153610,
+              "relocation_cycles": 86023,
+              "load_objects_cycles": 22544
+            },
+            {
+              "startup_cycles": 141601,
+              "relocation_cycles": 82669,
+              "load_objects_cycles": 27258
+            },
+            {
+              "startup_cycles": 150285,
+              "relocation_cycles": 89091,
+              "load_objects_cycles": 22690
+            },
+            {
+              "startup_cycles": 153805,
+              "relocation_cycles": 100435,
+              "load_objects_cycles": 22217
+            },
+            {
+              "startup_cycles": 141806,
+              "relocation_cycles": 88631,
+              "load_objects_cycles": 22393
+            },
+            {
+              "startup_cycles": 158342,
+              "relocation_cycles": 102258,
+              "load_objects_cycles": 23264
+            },
+            {
+              "startup_cycles": 144705,
+              "relocation_cycles": 90584,
+              "load_objects_cycles": 22695
+            },
+            {
+              "startup_cycles": 140873,
+              "relocation_cycles": 86502,
+              "load_objects_cycles": 22859
+            },
+            {
+              "startup_cycles": 164473,
+              "relocation_cycles": 86143,
+              "load_objects_cycles": 24029
+            },
+            {
+              "startup_cycles": 142266,
+              "relocation_cycles": 86608,
+              "load_objects_cycles": 22843
+            },
+            {
+              "startup_cycles": 152794,
+              "relocation_cycles": 84890,
+              "load_objects_cycles": 22451
+            },
+            {
+              "startup_cycles": 142467,
+              "relocation_cycles": 86431,
+              "load_objects_cycles": 22965
+            },
+            {
+              "startup_cycles": 144185,
+              "relocation_cycles": 88743,
+              "load_objects_cycles": 22627
+            },
+            {
+              "startup_cycles": 145555,
+              "relocation_cycles": 88836,
+              "load_objects_cycles": 24013
+            },
+            {
+              "startup_cycles": 137945,
+              "relocation_cycles": 77240,
+              "load_objects_cycles": 28262
+            },
+            {
+              "startup_cycles": 150462,
+              "relocation_cycles": 96915,
+              "load_objects_cycles": 20979
+            },
+            {
+              "startup_cycles": 137399,
+              "relocation_cycles": 86468,
+              "load_objects_cycles": 19455
+            },
+            {
+              "startup_cycles": 129628,
+              "relocation_cycles": 77974,
+              "load_objects_cycles": 20085
+            },
+            {
+              "startup_cycles": 135878,
+              "relocation_cycles": 79198,
+              "load_objects_cycles": 21473
+            },
+            {
+              "startup_cycles": 132173,
+              "relocation_cycles": 80418,
+              "load_objects_cycles": 19481
+            },
+            {
+              "startup_cycles": 127888,
+              "relocation_cycles": 73408,
+              "load_objects_cycles": 22703
+            },
+            {
+              "startup_cycles": 161155,
+              "relocation_cycles": 85748,
+              "load_objects_cycles": 42918
+            },
+            {
+              "startup_cycles": 133198,
+              "relocation_cycles": 81918,
+              "load_objects_cycles": 19284
+            },
+            {
+              "startup_cycles": 140067,
+              "relocation_cycles": 86231,
+              "load_objects_cycles": 20254
+            },
+            {
+              "startup_cycles": 157476,
+              "relocation_cycles": 102601,
+              "load_objects_cycles": 20189
+            },
+            {
+              "startup_cycles": 140483,
+              "relocation_cycles": 87882,
+              "load_objects_cycles": 19905
+            }
+          ],
+          "candidate": [
+            {
+              "startup_cycles": 139989,
+              "relocation_cycles": 85308,
+              "load_objects_cycles": 22627
+            },
+            {
+              "startup_cycles": 135782,
+              "relocation_cycles": 82594,
+              "load_objects_cycles": 22620
+            },
+            {
+              "startup_cycles": 138775,
+              "relocation_cycles": 85165,
+              "load_objects_cycles": 22825
+            },
+            {
+              "startup_cycles": 137007,
+              "relocation_cycles": 83098,
+              "load_objects_cycles": 22906
+            },
+            {
+              "startup_cycles": 136354,
+              "relocation_cycles": 82420,
+              "load_objects_cycles": 22932
+            },
+            {
+              "startup_cycles": 140228,
+              "relocation_cycles": 86104,
+              "load_objects_cycles": 22812
+            },
+            {
+              "startup_cycles": 155134,
+              "relocation_cycles": 99759,
+              "load_objects_cycles": 22591
+            },
+            {
+              "startup_cycles": 145971,
+              "relocation_cycles": 92523,
+              "load_objects_cycles": 22373
+            },
+            {
+              "startup_cycles": 142537,
+              "relocation_cycles": 87913,
+              "load_objects_cycles": 22120
+            },
+            {
+              "startup_cycles": 141187,
+              "relocation_cycles": 86967,
+              "load_objects_cycles": 22365
+            },
+            {
+              "startup_cycles": 138455,
+              "relocation_cycles": 84983,
+              "load_objects_cycles": 22794
+            },
+            {
+              "startup_cycles": 142030,
+              "relocation_cycles": 87620,
+              "load_objects_cycles": 22807
+            },
+            {
+              "startup_cycles": 139661,
+              "relocation_cycles": 85144,
+              "load_objects_cycles": 22851
+            },
+            {
+              "startup_cycles": 139690,
+              "relocation_cycles": 83792,
+              "load_objects_cycles": 25409
+            },
+            {
+              "startup_cycles": 142038,
+              "relocation_cycles": 85768,
+              "load_objects_cycles": 22997
+            },
+            {
+              "startup_cycles": 143145,
+              "relocation_cycles": 86881,
+              "load_objects_cycles": 22664
+            },
+            {
+              "startup_cycles": 134888,
+              "relocation_cycles": 80610,
+              "load_objects_cycles": 22315
+            },
+            {
+              "startup_cycles": 141395,
+              "relocation_cycles": 84338,
+              "load_objects_cycles": 25373
+            },
+            {
+              "startup_cycles": 135969,
+              "relocation_cycles": 80155,
+              "load_objects_cycles": 23917
+            },
+            {
+              "startup_cycles": 139718,
+              "relocation_cycles": 83785,
+              "load_objects_cycles": 23865
+            },
+            {
+              "startup_cycles": 146216,
+              "relocation_cycles": 95820,
+              "load_objects_cycles": 19578
+            },
+            {
+              "startup_cycles": 132194,
+              "relocation_cycles": 81434,
+              "load_objects_cycles": 19942
+            },
+            {
+              "startup_cycles": 134183,
+              "relocation_cycles": 83608,
+              "load_objects_cycles": 19398
+            },
+            {
+              "startup_cycles": 134303,
+              "relocation_cycles": 82776,
+              "load_objects_cycles": 19357
+            },
+            {
+              "startup_cycles": 130777,
+              "relocation_cycles": 78720,
+              "load_objects_cycles": 19796
+            },
+            {
+              "startup_cycles": 135080,
+              "relocation_cycles": 83657,
+              "load_objects_cycles": 19281
+            },
+            {
+              "startup_cycles": 143234,
+              "relocation_cycles": 90474,
+              "load_objects_cycles": 19903
+            },
+            {
+              "startup_cycles": 136240,
+              "relocation_cycles": 83883,
+              "load_objects_cycles": 19871
+            },
+            {
+              "startup_cycles": 135909,
+              "relocation_cycles": 82217,
+              "load_objects_cycles": 19926
+            },
+            {
+              "startup_cycles": 138951,
+              "relocation_cycles": 86829,
+              "load_objects_cycles": 20147
+            }
+          ],
+          "git": [
+            {
+              "startup_cycles": 94387,
+              "relocation_cycles": 31176,
+              "load_objects_cycles": 31392
+            },
+            {
+              "startup_cycles": 82778,
+              "relocation_cycles": 22383,
+              "load_objects_cycles": 29879
+            },
+            {
+              "startup_cycles": 83959,
+              "relocation_cycles": 23462,
+              "load_objects_cycles": 30487
+            },
+            {
+              "startup_cycles": 94203,
+              "relocation_cycles": 31236,
+              "load_objects_cycles": 31813
+            },
+            {
+              "startup_cycles": 89432,
+              "relocation_cycles": 27744,
+              "load_objects_cycles": 30695
+            },
+            {
+              "startup_cycles": 84827,
+              "relocation_cycles": 22960,
+              "load_objects_cycles": 30531
+            },
+            {
+              "startup_cycles": 92866,
+              "relocation_cycles": 28914,
+              "load_objects_cycles": 32393
+            },
+            {
+              "startup_cycles": 82425,
+              "relocation_cycles": 22422,
+              "load_objects_cycles": 29892
+            },
+            {
+              "startup_cycles": 82136,
+              "relocation_cycles": 22677,
+              "load_objects_cycles": 29406
+            },
+            {
+              "startup_cycles": 95396,
+              "relocation_cycles": 27994,
+              "load_objects_cycles": 36015
+            },
+            {
+              "startup_cycles": 85995,
+              "relocation_cycles": 24567,
+              "load_objects_cycles": 31233
+            },
+            {
+              "startup_cycles": 84848,
+              "relocation_cycles": 24034,
+              "load_objects_cycles": 30820
+            },
+            {
+              "startup_cycles": 88618,
+              "relocation_cycles": 24832,
+              "load_objects_cycles": 31337
+            },
+            {
+              "startup_cycles": 86881,
+              "relocation_cycles": 23491,
+              "load_objects_cycles": 31028
+            },
+            {
+              "startup_cycles": 89013,
+              "relocation_cycles": 24091,
+              "load_objects_cycles": 31696
+            },
+            {
+              "startup_cycles": 87711,
+              "relocation_cycles": 24164,
+              "load_objects_cycles": 31618
+            },
+            {
+              "startup_cycles": 84726,
+              "relocation_cycles": 21775,
+              "load_objects_cycles": 31018
+            },
+            {
+              "startup_cycles": 81406,
+              "relocation_cycles": 20053,
+              "load_objects_cycles": 31501
+            },
+            {
+              "startup_cycles": 83876,
+              "relocation_cycles": 21086,
+              "load_objects_cycles": 31379
+            },
+            {
+              "startup_cycles": 88550,
+              "relocation_cycles": 21117,
+              "load_objects_cycles": 36218
+            },
+            {
+              "startup_cycles": 81866,
+              "relocation_cycles": 22534,
+              "load_objects_cycles": 28459
+            },
+            {
+              "startup_cycles": 82981,
+              "relocation_cycles": 24050,
+              "load_objects_cycles": 28028
+            },
+            {
+              "startup_cycles": 84567,
+              "relocation_cycles": 21957,
+              "load_objects_cycles": 27440
+            },
+            {
+              "startup_cycles": 82082,
+              "relocation_cycles": 22373,
+              "load_objects_cycles": 27692
+            },
+            {
+              "startup_cycles": 84045,
+              "relocation_cycles": 23600,
+              "load_objects_cycles": 28230
+            },
+            {
+              "startup_cycles": 84255,
+              "relocation_cycles": 25342,
+              "load_objects_cycles": 27432
+            },
+            {
+              "startup_cycles": 80298,
+              "relocation_cycles": 21496,
+              "load_objects_cycles": 27003
+            },
+            {
+              "startup_cycles": 93436,
+              "relocation_cycles": 31766,
+              "load_objects_cycles": 29135
+            },
+            {
+              "startup_cycles": 89307,
+              "relocation_cycles": 25703,
+              "load_objects_cycles": 31509
+            },
+            {
+              "startup_cycles": 91335,
+              "relocation_cycles": 24757,
+              "load_objects_cycles": 34990
+            }
+          ]
+        },
+        "time_v_rss_kib": {
+          "stock": [
+            12096,
+            12140,
+            11892,
+            12148,
+            11792,
+            12140,
+            11884,
+            12152,
+            12116,
+            12236
+          ],
+          "candidate": [
+            11124,
+            10968,
+            11328,
+            11320,
+            11300,
+            11404,
+            11032,
+            11288,
+            11328,
+            11236
+          ],
+          "git": [
+            4532,
+            4384,
+            4452,
+            4268,
+            4396,
+            4336,
+            4336,
+            4520,
+            4520,
+            4320
+          ]
+        }
+      },
+      {
+        "command": "help",
+        "loader": {
+          "stock": [
+            {
+              "startup_cycles": 141913,
+              "relocation_cycles": 87747,
+              "load_objects_cycles": 20139
+            },
+            {
+              "startup_cycles": 166298,
+              "relocation_cycles": 109332,
+              "load_objects_cycles": 23792
+            },
+            {
+              "startup_cycles": 153127,
+              "relocation_cycles": 94023,
+              "load_objects_cycles": 27066
+            },
+            {
+              "startup_cycles": 142222,
+              "relocation_cycles": 88509,
+              "load_objects_cycles": 22341
+            },
+            {
+              "startup_cycles": 145314,
+              "relocation_cycles": 90955,
+              "load_objects_cycles": 22599
+            },
+            {
+              "startup_cycles": 142807,
+              "relocation_cycles": 88179,
+              "load_objects_cycles": 22219
+            },
+            {
+              "startup_cycles": 138613,
+              "relocation_cycles": 85415,
+              "load_objects_cycles": 22367
+            },
+            {
+              "startup_cycles": 143611,
+              "relocation_cycles": 89944,
+              "load_objects_cycles": 22674
+            },
+            {
+              "startup_cycles": 164023,
+              "relocation_cycles": 100081,
+              "load_objects_cycles": 26377
+            },
+            {
+              "startup_cycles": 154689,
+              "relocation_cycles": 95295,
+              "load_objects_cycles": 25360
+            },
+            {
+              "startup_cycles": 156803,
+              "relocation_cycles": 98607,
+              "load_objects_cycles": 24395
+            },
+            {
+              "startup_cycles": 150251,
+              "relocation_cycles": 93966,
+              "load_objects_cycles": 21730
+            },
+            {
+              "startup_cycles": 151387,
+              "relocation_cycles": 96239,
+              "load_objects_cycles": 24005
+            },
+            {
+              "startup_cycles": 195093,
+              "relocation_cycles": 132826,
+              "load_objects_cycles": 26353
+            },
+            {
+              "startup_cycles": 155287,
+              "relocation_cycles": 99322,
+              "load_objects_cycles": 23605
+            },
+            {
+              "startup_cycles": 170310,
+              "relocation_cycles": 105349,
+              "load_objects_cycles": 26377
+            },
+            {
+              "startup_cycles": 177762,
+              "relocation_cycles": 118638,
+              "load_objects_cycles": 25188
+            },
+            {
+              "startup_cycles": 156491,
+              "relocation_cycles": 99000,
+              "load_objects_cycles": 24369
+            },
+            {
+              "startup_cycles": 152313,
+              "relocation_cycles": 91621,
+              "load_objects_cycles": 25334
+            },
+            {
+              "startup_cycles": 156452,
+              "relocation_cycles": 98789,
+              "load_objects_cycles": 24458
+            },
+            {
+              "startup_cycles": 159728,
+              "relocation_cycles": 104962,
+              "load_objects_cycles": 22596
+            },
+            {
+              "startup_cycles": 145210,
+              "relocation_cycles": 88283,
+              "load_objects_cycles": 25378
+            },
+            {
+              "startup_cycles": 153140,
+              "relocation_cycles": 93407,
+              "load_objects_cycles": 27716
+            },
+            {
+              "startup_cycles": 184054,
+              "relocation_cycles": 125931,
+              "load_objects_cycles": 22653
+            },
+            {
+              "startup_cycles": 199719,
+              "relocation_cycles": 133510,
+              "load_objects_cycles": 26226
+            },
+            {
+              "startup_cycles": 158964,
+              "relocation_cycles": 104221,
+              "load_objects_cycles": 22557
+            },
+            {
+              "startup_cycles": 150425,
+              "relocation_cycles": 93600,
+              "load_objects_cycles": 22474
+            },
+            {
+              "startup_cycles": 153758,
+              "relocation_cycles": 95643,
+              "load_objects_cycles": 24619
+            },
+            {
+              "startup_cycles": 169145,
+              "relocation_cycles": 105484,
+              "load_objects_cycles": 24336
+            },
+            {
+              "startup_cycles": 153233,
+              "relocation_cycles": 94829,
+              "load_objects_cycles": 22692
+            }
+          ],
+          "candidate": [
+            {
+              "startup_cycles": 143239,
+              "relocation_cycles": 88228,
+              "load_objects_cycles": 23142
+            },
+            {
+              "startup_cycles": 144232,
+              "relocation_cycles": 89099,
+              "load_objects_cycles": 23142
+            },
+            {
+              "startup_cycles": 156236,
+              "relocation_cycles": 101883,
+              "load_objects_cycles": 22263
+            },
+            {
+              "startup_cycles": 141003,
+              "relocation_cycles": 86863,
+              "load_objects_cycles": 21639
+            },
+            {
+              "startup_cycles": 148956,
+              "relocation_cycles": 85339,
+              "load_objects_cycles": 32913
+            },
+            {
+              "startup_cycles": 146975,
+              "relocation_cycles": 91546,
+              "load_objects_cycles": 23327
+            },
+            {
+              "startup_cycles": 137680,
+              "relocation_cycles": 83109,
+              "load_objects_cycles": 22950
+            },
+            {
+              "startup_cycles": 148096,
+              "relocation_cycles": 93249,
+              "load_objects_cycles": 22880
+            },
+            {
+              "startup_cycles": 151879,
+              "relocation_cycles": 96395,
+              "load_objects_cycles": 23189
+            },
+            {
+              "startup_cycles": 182002,
+              "relocation_cycles": 120338,
+              "load_objects_cycles": 23605
+            },
+            {
+              "startup_cycles": 152960,
+              "relocation_cycles": 92757,
+              "load_objects_cycles": 23654
+            },
+            {
+              "startup_cycles": 159536,
+              "relocation_cycles": 98623,
+              "load_objects_cycles": 26408
+            },
+            {
+              "startup_cycles": 169613,
+              "relocation_cycles": 103758,
+              "load_objects_cycles": 24434
+            },
+            {
+              "startup_cycles": 195046,
+              "relocation_cycles": 140449,
+              "load_objects_cycles": 22149
+            },
+            {
+              "startup_cycles": 148540,
+              "relocation_cycles": 92453,
+              "load_objects_cycles": 23589
+            },
+            {
+              "startup_cycles": 159380,
+              "relocation_cycles": 89702,
+              "load_objects_cycles": 33789
+            },
+            {
+              "startup_cycles": 153623,
+              "relocation_cycles": 95524,
+              "load_objects_cycles": 24102
+            },
+            {
+              "startup_cycles": 159889,
+              "relocation_cycles": 101332,
+              "load_objects_cycles": 24505
+            },
+            {
+              "startup_cycles": 147981,
+              "relocation_cycles": 87773,
+              "load_objects_cycles": 24944
+            },
+            {
+              "startup_cycles": 146517,
+              "relocation_cycles": 86455,
+              "load_objects_cycles": 24494
+            },
+            {
+              "startup_cycles": 147217,
+              "relocation_cycles": 87141,
+              "load_objects_cycles": 27882
+            },
+            {
+              "startup_cycles": 140766,
+              "relocation_cycles": 84817,
+              "load_objects_cycles": 23709
+            },
+            {
+              "startup_cycles": 137529,
+              "relocation_cycles": 82838,
+              "load_objects_cycles": 23127
+            },
+            {
+              "startup_cycles": 163082,
+              "relocation_cycles": 99710,
+              "load_objects_cycles": 23925
+            },
+            {
+              "startup_cycles": 151892,
+              "relocation_cycles": 90638,
+              "load_objects_cycles": 26005
+            },
+            {
+              "startup_cycles": 156215,
+              "relocation_cycles": 97180,
+              "load_objects_cycles": 25893
+            },
+            {
+              "startup_cycles": 148311,
+              "relocation_cycles": 89026,
+              "load_objects_cycles": 23517
+            },
+            {
+              "startup_cycles": 145984,
+              "relocation_cycles": 90157,
+              "load_objects_cycles": 24005
+            },
+            {
+              "startup_cycles": 141034,
+              "relocation_cycles": 86073,
+              "load_objects_cycles": 23033
+            },
+            {
+              "startup_cycles": 157060,
+              "relocation_cycles": 97658,
+              "load_objects_cycles": 24052
+            }
+          ],
+          "git": [
+            {
+              "startup_cycles": 100001,
+              "relocation_cycles": 29395,
+              "load_objects_cycles": 33667
+            },
+            {
+              "startup_cycles": 86395,
+              "relocation_cycles": 24577,
+              "load_objects_cycles": 30752
+            },
+            {
+              "startup_cycles": 110076,
+              "relocation_cycles": 48178,
+              "load_objects_cycles": 31202
+            },
+            {
+              "startup_cycles": 96668,
+              "relocation_cycles": 33251,
+              "load_objects_cycles": 32463
+            },
+            {
+              "startup_cycles": 87924,
+              "relocation_cycles": 23795,
+              "load_objects_cycles": 30932
+            },
+            {
+              "startup_cycles": 85176,
+              "relocation_cycles": 22591,
+              "load_objects_cycles": 30932
+            },
+            {
+              "startup_cycles": 93215,
+              "relocation_cycles": 27019,
+              "load_objects_cycles": 33376
+            },
+            {
+              "startup_cycles": 88015,
+              "relocation_cycles": 23540,
+              "load_objects_cycles": 30053
+            },
+            {
+              "startup_cycles": 92840,
+              "relocation_cycles": 27118,
+              "load_objects_cycles": 33766
+            },
+            {
+              "startup_cycles": 97315,
+              "relocation_cycles": 29270,
+              "load_objects_cycles": 35009
+            },
+            {
+              "startup_cycles": 95407,
+              "relocation_cycles": 25451,
+              "load_objects_cycles": 34470
+            },
+            {
+              "startup_cycles": 90617,
+              "relocation_cycles": 24094,
+              "load_objects_cycles": 32112
+            },
+            {
+              "startup_cycles": 99632,
+              "relocation_cycles": 32700,
+              "load_objects_cycles": 34489
+            },
+            {
+              "startup_cycles": 89141,
+              "relocation_cycles": 24502,
+              "load_objects_cycles": 33384
+            },
+            {
+              "startup_cycles": 87529,
+              "relocation_cycles": 24528,
+              "load_objects_cycles": 31766
+            },
+            {
+              "startup_cycles": 114127,
+              "relocation_cycles": 30812,
+              "load_objects_cycles": 47390
+            },
+            {
+              "startup_cycles": 105424,
+              "relocation_cycles": 32481,
+              "load_objects_cycles": 34704
+            },
+            {
+              "startup_cycles": 93901,
+              "relocation_cycles": 26683,
+              "load_objects_cycles": 34424
+            },
+            {
+              "startup_cycles": 98997,
+              "relocation_cycles": 30459,
+              "load_objects_cycles": 34626
+            },
+            {
+              "startup_cycles": 96678,
+              "relocation_cycles": 26098,
+              "load_objects_cycles": 32307
+            },
+            {
+              "startup_cycles": 90576,
+              "relocation_cycles": 26548,
+              "load_objects_cycles": 32474
+            },
+            {
+              "startup_cycles": 92396,
+              "relocation_cycles": 26943,
+              "load_objects_cycles": 33186
+            },
+            {
+              "startup_cycles": 111040,
+              "relocation_cycles": 34221,
+              "load_objects_cycles": 34372
+            },
+            {
+              "startup_cycles": 107783,
+              "relocation_cycles": 32780,
+              "load_objects_cycles": 36974
+            },
+            {
+              "startup_cycles": 108209,
+              "relocation_cycles": 39990,
+              "load_objects_cycles": 33883
+            },
+            {
+              "startup_cycles": 95365,
+              "relocation_cycles": 30269,
+              "load_objects_cycles": 32658
+            },
+            {
+              "startup_cycles": 94021,
+              "relocation_cycles": 27895,
+              "load_objects_cycles": 32627
+            },
+            {
+              "startup_cycles": 101930,
+              "relocation_cycles": 30570,
+              "load_objects_cycles": 36771
+            },
+            {
+              "startup_cycles": 92521,
+              "relocation_cycles": 27229,
+              "load_objects_cycles": 33358
+            },
+            {
+              "startup_cycles": 102206,
+              "relocation_cycles": 29754,
+              "load_objects_cycles": 38937
+            }
+          ]
+        },
+        "time_v_rss_kib": {
+          "stock": [
+            8392,
+            8328,
+            8516,
+            8520,
+            8504,
+            8340,
+            8456,
+            8568,
+            8460,
+            8392
+          ],
+          "candidate": [
+            7696,
+            7760,
+            7784,
+            7792,
+            7796,
+            7632,
+            7840,
+            7820,
+            7760,
+            7568
+          ],
+          "git": [
+            3896,
+            3744,
+            3800,
+            4016,
+            3888,
+            3772,
+            3868,
+            3628,
+            3844,
+            3956
+          ]
+        }
+      }
+    ],
+    "dist": [
+      {
+        "command": "branch",
+        "loader": {
+          "stock": [
+            {
+              "startup_cycles": 128359,
+              "relocation_cycles": 65002,
+              "load_objects_cycles": 23017
+            },
+            {
+              "startup_cycles": 116264,
+              "relocation_cycles": 62332,
+              "load_objects_cycles": 21780
+            },
+            {
+              "startup_cycles": 110151,
+              "relocation_cycles": 56266,
+              "load_objects_cycles": 22646
+            },
+            {
+              "startup_cycles": 109049,
+              "relocation_cycles": 54875,
+              "load_objects_cycles": 22708
+            },
+            {
+              "startup_cycles": 118786,
+              "relocation_cycles": 65429,
+              "load_objects_cycles": 21772
+            },
+            {
+              "startup_cycles": 119620,
+              "relocation_cycles": 59974,
+              "load_objects_cycles": 22217
+            },
+            {
+              "startup_cycles": 121134,
+              "relocation_cycles": 62862,
+              "load_objects_cycles": 23322
+            },
+            {
+              "startup_cycles": 121420,
+              "relocation_cycles": 67007,
+              "load_objects_cycles": 23090
+            },
+            {
+              "startup_cycles": 108789,
+              "relocation_cycles": 54839,
+              "load_objects_cycles": 22731
+            },
+            {
+              "startup_cycles": 111529,
+              "relocation_cycles": 57249,
+              "load_objects_cycles": 22997
+            },
+            {
+              "startup_cycles": 114592,
+              "relocation_cycles": 58362,
+              "load_objects_cycles": 24723
+            },
+            {
+              "startup_cycles": 112177,
+              "relocation_cycles": 55338,
+              "load_objects_cycles": 23168
+            },
+            {
+              "startup_cycles": 108347,
+              "relocation_cycles": 52930,
+              "load_objects_cycles": 23769
+            },
+            {
+              "startup_cycles": 114210,
+              "relocation_cycles": 60676,
+              "load_objects_cycles": 20750
+            },
+            {
+              "startup_cycles": 110377,
+              "relocation_cycles": 57772,
+              "load_objects_cycles": 20875
+            },
+            {
+              "startup_cycles": 108916,
+              "relocation_cycles": 57288,
+              "load_objects_cycles": 19983
+            },
+            {
+              "startup_cycles": 104416,
+              "relocation_cycles": 52078,
+              "load_objects_cycles": 19201
+            },
+            {
+              "startup_cycles": 100105,
+              "relocation_cycles": 49272,
+              "load_objects_cycles": 19526
+            },
+            {
+              "startup_cycles": 99585,
+              "relocation_cycles": 48339,
+              "load_objects_cycles": 20732
+            },
+            {
+              "startup_cycles": 118196,
+              "relocation_cycles": 50219,
+              "load_objects_cycles": 37047
+            },
+            {
+              "startup_cycles": 102232,
+              "relocation_cycles": 50146,
+              "load_objects_cycles": 19117
+            },
+            {
+              "startup_cycles": 98930,
+              "relocation_cycles": 48825,
+              "load_objects_cycles": 19276
+            },
+            {
+              "startup_cycles": 108050,
+              "relocation_cycles": 58650,
+              "load_objects_cycles": 18967
+            },
+            {
+              "startup_cycles": 104990,
+              "relocation_cycles": 53799,
+              "load_objects_cycles": 19312
+            },
+            {
+              "startup_cycles": 101985,
+              "relocation_cycles": 51706,
+              "load_objects_cycles": 19593
+            },
+            {
+              "startup_cycles": 135119,
+              "relocation_cycles": 55619,
+              "load_objects_cycles": 46194
+            },
+            {
+              "startup_cycles": 105856,
+              "relocation_cycles": 53469,
+              "load_objects_cycles": 21673
+            },
+            {
+              "startup_cycles": 108014,
+              "relocation_cycles": 52845,
+              "load_objects_cycles": 22185
+            },
+            {
+              "startup_cycles": 105534,
+              "relocation_cycles": 52985,
+              "load_objects_cycles": 21749
+            },
+            {
+              "startup_cycles": 107759,
+              "relocation_cycles": 53076,
+              "load_objects_cycles": 22037
+            }
+          ],
+          "candidate": [
+            {
+              "startup_cycles": 119844,
+              "relocation_cycles": 63996,
+              "load_objects_cycles": 23090
+            },
+            {
+              "startup_cycles": 113253,
+              "relocation_cycles": 58617,
+              "load_objects_cycles": 22516
+            },
+            {
+              "startup_cycles": 110515,
+              "relocation_cycles": 56136,
+              "load_objects_cycles": 22947
+            },
+            {
+              "startup_cycles": 110760,
+              "relocation_cycles": 56513,
+              "load_objects_cycles": 23134
+            },
+            {
+              "startup_cycles": 107944,
+              "relocation_cycles": 53747,
+              "load_objects_cycles": 22872
+            },
+            {
+              "startup_cycles": 117460,
+              "relocation_cycles": 63198,
+              "load_objects_cycles": 22172
+            },
+            {
+              "startup_cycles": 108472,
+              "relocation_cycles": 56089,
+              "load_objects_cycles": 20490
+            },
+            {
+              "startup_cycles": 110778,
+              "relocation_cycles": 56960,
+              "load_objects_cycles": 23023
+            },
+            {
+              "startup_cycles": 127779,
+              "relocation_cycles": 56851,
+              "load_objects_cycles": 39028
+            },
+            {
+              "startup_cycles": 107991,
+              "relocation_cycles": 53926,
+              "load_objects_cycles": 23020
+            },
+            {
+              "startup_cycles": 109200,
+              "relocation_cycles": 53937,
+              "load_objects_cycles": 22991
+            },
+            {
+              "startup_cycles": 108110,
+              "relocation_cycles": 55195,
+              "load_objects_cycles": 19671
+            },
+            {
+              "startup_cycles": 110123,
+              "relocation_cycles": 55250,
+              "load_objects_cycles": 22440
+            },
+            {
+              "startup_cycles": 124415,
+              "relocation_cycles": 51243,
+              "load_objects_cycles": 40081
+            },
+            {
+              "startup_cycles": 106392,
+              "relocation_cycles": 56386,
+              "load_objects_cycles": 19570
+            },
+            {
+              "startup_cycles": 106280,
+              "relocation_cycles": 50502,
+              "load_objects_cycles": 24265
+            },
+            {
+              "startup_cycles": 101673,
+              "relocation_cycles": 50390,
+              "load_objects_cycles": 19687
+            },
+            {
+              "startup_cycles": 103903,
+              "relocation_cycles": 50728,
+              "load_objects_cycles": 19565
+            },
+            {
+              "startup_cycles": 99834,
+              "relocation_cycles": 50174,
+              "load_objects_cycles": 19351
+            },
+            {
+              "startup_cycles": 105240,
+              "relocation_cycles": 52364,
+              "load_objects_cycles": 19882
+            },
+            {
+              "startup_cycles": 104210,
+              "relocation_cycles": 52267,
+              "load_objects_cycles": 20784
+            },
+            {
+              "startup_cycles": 110169,
+              "relocation_cycles": 58123,
+              "load_objects_cycles": 20768
+            },
+            {
+              "startup_cycles": 101732,
+              "relocation_cycles": 50752,
+              "load_objects_cycles": 18977
+            },
+            {
+              "startup_cycles": 103064,
+              "relocation_cycles": 53060,
+              "load_objects_cycles": 19671
+            },
+            {
+              "startup_cycles": 102531,
+              "relocation_cycles": 51477,
+              "load_objects_cycles": 18985
+            },
+            {
+              "startup_cycles": 105869,
+              "relocation_cycles": 55073,
+              "load_objects_cycles": 19905
+            },
+            {
+              "startup_cycles": 106696,
+              "relocation_cycles": 53489,
+              "load_objects_cycles": 22035
+            },
+            {
+              "startup_cycles": 110471,
+              "relocation_cycles": 56349,
+              "load_objects_cycles": 22549
+            },
+            {
+              "startup_cycles": 125346,
+              "relocation_cycles": 52254,
+              "load_objects_cycles": 21990
+            },
+            {
+              "startup_cycles": 108638,
+              "relocation_cycles": 54732,
+              "load_objects_cycles": 23041
+            }
+          ],
+          "git": [
+            {
+              "startup_cycles": 98716,
+              "relocation_cycles": 29595,
+              "load_objects_cycles": 37856
+            },
+            {
+              "startup_cycles": 83756,
+              "relocation_cycles": 23366,
+              "load_objects_cycles": 30425
+            },
+            {
+              "startup_cycles": 86356,
+              "relocation_cycles": 24892,
+              "load_objects_cycles": 30888
+            },
+            {
+              "startup_cycles": 101051,
+              "relocation_cycles": 29785,
+              "load_objects_cycles": 32955
+            },
+            {
+              "startup_cycles": 83166,
+              "relocation_cycles": 22159,
+              "load_objects_cycles": 29411
+            },
+            {
+              "startup_cycles": 90773,
+              "relocation_cycles": 26309,
+              "load_objects_cycles": 31493
+            },
+            {
+              "startup_cycles": 96410,
+              "relocation_cycles": 31218,
+              "load_objects_cycles": 33529
+            },
+            {
+              "startup_cycles": 81985,
+              "relocation_cycles": 22341,
+              "load_objects_cycles": 29965
+            },
+            {
+              "startup_cycles": 84253,
+              "relocation_cycles": 21114,
+              "load_objects_cycles": 31543
+            },
+            {
+              "startup_cycles": 96319,
+              "relocation_cycles": 29543,
+              "load_objects_cycles": 34385
+            },
+            {
+              "startup_cycles": 85196,
+              "relocation_cycles": 22224,
+              "load_objects_cycles": 30685
+            },
+            {
+              "startup_cycles": 86434,
+              "relocation_cycles": 25350,
+              "load_objects_cycles": 30888
+            },
+            {
+              "startup_cycles": 88667,
+              "relocation_cycles": 25854,
+              "load_objects_cycles": 30973
+            },
+            {
+              "startup_cycles": 89645,
+              "relocation_cycles": 23121,
+              "load_objects_cycles": 33659
+            },
+            {
+              "startup_cycles": 81889,
+              "relocation_cycles": 22539,
+              "load_objects_cycles": 28743
+            },
+            {
+              "startup_cycles": 85225,
+              "relocation_cycles": 22768,
+              "load_objects_cycles": 28119
+            },
+            {
+              "startup_cycles": 82778,
+              "relocation_cycles": 20872,
+              "load_objects_cycles": 26951
+            },
+            {
+              "startup_cycles": 77719,
+              "relocation_cycles": 21008,
+              "load_objects_cycles": 26813
+            },
+            {
+              "startup_cycles": 79549,
+              "relocation_cycles": 22118,
+              "load_objects_cycles": 26972
+            },
+            {
+              "startup_cycles": 79523,
+              "relocation_cycles": 21255,
+              "load_objects_cycles": 28386
+            },
+            {
+              "startup_cycles": 78517,
+              "relocation_cycles": 21834,
+              "load_objects_cycles": 26975
+            },
+            {
+              "startup_cycles": 81473,
+              "relocation_cycles": 22770,
+              "load_objects_cycles": 27466
+            },
+            {
+              "startup_cycles": 80948,
+              "relocation_cycles": 22235,
+              "load_objects_cycles": 27003
+            },
+            {
+              "startup_cycles": 86754,
+              "relocation_cycles": 22742,
+              "load_objects_cycles": 31826
+            },
+            {
+              "startup_cycles": 87841,
+              "relocation_cycles": 25448,
+              "load_objects_cycles": 29863
+            },
+            {
+              "startup_cycles": 84575,
+              "relocation_cycles": 25781,
+              "load_objects_cycles": 27367
+            },
+            {
+              "startup_cycles": 85823,
+              "relocation_cycles": 23589,
+              "load_objects_cycles": 31148
+            },
+            {
+              "startup_cycles": 90594,
+              "relocation_cycles": 26273,
+              "load_objects_cycles": 30914
+            },
+            {
+              "startup_cycles": 90155,
+              "relocation_cycles": 24239,
+              "load_objects_cycles": 31818
+            },
+            {
+              "startup_cycles": 84611,
+              "relocation_cycles": 23046,
+              "load_objects_cycles": 29736
+            }
+          ]
+        },
+        "time_v_rss_kib": {
+          "stock": [
+            9164,
+            9068,
+            9016,
+            9152,
+            9012,
+            9152,
+            9204,
+            9136,
+            9016,
+            9072
+          ],
+          "candidate": [
+            9228,
+            9140,
+            9076,
+            9100,
+            9172,
+            8960,
+            9160,
+            9100,
+            9136,
+            9280
+          ],
+          "git": [
+            4460,
+            4660,
+            4456,
+            4716,
+            4656,
+            4684,
+            4464,
+            4572,
+            4656,
+            4656
+          ]
+        }
+      },
+      {
+        "command": "status",
+        "loader": {
+          "stock": [
+            {
+              "startup_cycles": 103662,
+              "relocation_cycles": 48630,
+              "load_objects_cycles": 22048
+            },
+            {
+              "startup_cycles": 111880,
+              "relocation_cycles": 58877,
+              "load_objects_cycles": 22289
+            },
+            {
+              "startup_cycles": 117863,
+              "relocation_cycles": 61471,
+              "load_objects_cycles": 22614
+            },
+            {
+              "startup_cycles": 109405,
+              "relocation_cycles": 52395,
+              "load_objects_cycles": 25825
+            },
+            {
+              "startup_cycles": 109062,
+              "relocation_cycles": 53822,
+              "load_objects_cycles": 23618
+            },
+            {
+              "startup_cycles": 110260,
+              "relocation_cycles": 53318,
+              "load_objects_cycles": 25571
+            },
+            {
+              "startup_cycles": 102115,
+              "relocation_cycles": 48175,
+              "load_objects_cycles": 23285
+            },
+            {
+              "startup_cycles": 106532,
+              "relocation_cycles": 51675,
+              "load_objects_cycles": 22973
+            },
+            {
+              "startup_cycles": 102791,
+              "relocation_cycles": 48851,
+              "load_objects_cycles": 23277
+            },
+            {
+              "startup_cycles": 107104,
+              "relocation_cycles": 48666,
+              "load_objects_cycles": 24606
+            },
+            {
+              "startup_cycles": 113055,
+              "relocation_cycles": 58190,
+              "load_objects_cycles": 23272
+            },
+            {
+              "startup_cycles": 107801,
+              "relocation_cycles": 54314,
+              "load_objects_cycles": 22825
+            },
+            {
+              "startup_cycles": 107970,
+              "relocation_cycles": 52899,
+              "load_objects_cycles": 24629
+            },
+            {
+              "startup_cycles": 102889,
+              "relocation_cycles": 50008,
+              "load_objects_cycles": 22386
+            },
+            {
+              "startup_cycles": 100955,
+              "relocation_cycles": 48024,
+              "load_objects_cycles": 21780
+            },
+            {
+              "startup_cycles": 101041,
+              "relocation_cycles": 47169,
+              "load_objects_cycles": 23670
+            },
+            {
+              "startup_cycles": 102957,
+              "relocation_cycles": 48882,
+              "load_objects_cycles": 23025
+            },
+            {
+              "startup_cycles": 103402,
+              "relocation_cycles": 48828,
+              "load_objects_cycles": 21541
+            },
+            {
+              "startup_cycles": 101023,
+              "relocation_cycles": 47879,
+              "load_objects_cycles": 22157
+            },
+            {
+              "startup_cycles": 100895,
+              "relocation_cycles": 47889,
+              "load_objects_cycles": 22198
+            },
+            {
+              "startup_cycles": 101745,
+              "relocation_cycles": 48175,
+              "load_objects_cycles": 22869
+            },
+            {
+              "startup_cycles": 101745,
+              "relocation_cycles": 47593,
+              "load_objects_cycles": 22635
+            },
+            {
+              "startup_cycles": 104717,
+              "relocation_cycles": 50190,
+              "load_objects_cycles": 22828
+            },
+            {
+              "startup_cycles": 102377,
+              "relocation_cycles": 47946,
+              "load_objects_cycles": 22497
+            },
+            {
+              "startup_cycles": 105534,
+              "relocation_cycles": 48523,
+              "load_objects_cycles": 23319
+            },
+            {
+              "startup_cycles": 116352,
+              "relocation_cycles": 59209,
+              "load_objects_cycles": 25360
+            },
+            {
+              "startup_cycles": 108056,
+              "relocation_cycles": 53952,
+              "load_objects_cycles": 22721
+            },
+            {
+              "startup_cycles": 109244,
+              "relocation_cycles": 54054,
+              "load_objects_cycles": 24104
+            },
+            {
+              "startup_cycles": 107127,
+              "relocation_cycles": 47897,
+              "load_objects_cycles": 26790
+            },
+            {
+              "startup_cycles": 107905,
+              "relocation_cycles": 48318,
+              "load_objects_cycles": 28412
+            }
+          ],
+          "candidate": [
+            {
+              "startup_cycles": 108102,
+              "relocation_cycles": 51779,
+              "load_objects_cycles": 22841
+            },
+            {
+              "startup_cycles": 107510,
+              "relocation_cycles": 51420,
+              "load_objects_cycles": 25100
+            },
+            {
+              "startup_cycles": 111495,
+              "relocation_cycles": 58219,
+              "load_objects_cycles": 22092
+            },
+            {
+              "startup_cycles": 111888,
+              "relocation_cycles": 52018,
+              "load_objects_cycles": 23881
+            },
+            {
+              "startup_cycles": 110598,
+              "relocation_cycles": 55036,
+              "load_objects_cycles": 24221
+            },
+            {
+              "startup_cycles": 103612,
+              "relocation_cycles": 51867,
+              "load_objects_cycles": 21060
+            },
+            {
+              "startup_cycles": 102003,
+              "relocation_cycles": 49280,
+              "load_objects_cycles": 22378
+            },
+            {
+              "startup_cycles": 117236,
+              "relocation_cycles": 59410,
+              "load_objects_cycles": 25110
+            },
+            {
+              "startup_cycles": 105773,
+              "relocation_cycles": 51142,
+              "load_objects_cycles": 24271
+            },
+            {
+              "startup_cycles": 111207,
+              "relocation_cycles": 52397,
+              "load_objects_cycles": 28373
+            },
+            {
+              "startup_cycles": 110988,
+              "relocation_cycles": 55991,
+              "load_objects_cycles": 23345
+            },
+            {
+              "startup_cycles": 104171,
+              "relocation_cycles": 50702,
+              "load_objects_cycles": 22880
+            },
+            {
+              "startup_cycles": 112754,
+              "relocation_cycles": 56765,
+              "load_objects_cycles": 23878
+            },
+            {
+              "startup_cycles": 103706,
+              "relocation_cycles": 50739,
+              "load_objects_cycles": 22271
+            },
+            {
+              "startup_cycles": 109558,
+              "relocation_cycles": 56734,
+              "load_objects_cycles": 21772
+            },
+            {
+              "startup_cycles": 102913,
+              "relocation_cycles": 49961,
+              "load_objects_cycles": 22107
+            },
+            {
+              "startup_cycles": 108017,
+              "relocation_cycles": 55055,
+              "load_objects_cycles": 20030
+            },
+            {
+              "startup_cycles": 107192,
+              "relocation_cycles": 53115,
+              "load_objects_cycles": 22599
+            },
+            {
+              "startup_cycles": 104431,
+              "relocation_cycles": 49857,
+              "load_objects_cycles": 22118
+            },
+            {
+              "startup_cycles": 103199,
+              "relocation_cycles": 50697,
+              "load_objects_cycles": 22081
+            },
+            {
+              "startup_cycles": 133005,
+              "relocation_cycles": 50658,
+              "load_objects_cycles": 24861
+            },
+            {
+              "startup_cycles": 106971,
+              "relocation_cycles": 53742,
+              "load_objects_cycles": 22750
+            },
+            {
+              "startup_cycles": 107515,
+              "relocation_cycles": 53978,
+              "load_objects_cycles": 22794
+            },
+            {
+              "startup_cycles": 105721,
+              "relocation_cycles": 51082,
+              "load_objects_cycles": 22976
+            },
+            {
+              "startup_cycles": 123281,
+              "relocation_cycles": 50265,
+              "load_objects_cycles": 42055
+            },
+            {
+              "startup_cycles": 108638,
+              "relocation_cycles": 53450,
+              "load_objects_cycles": 24130
+            },
+            {
+              "startup_cycles": 104949,
+              "relocation_cycles": 51763,
+              "load_objects_cycles": 22380
+            },
+            {
+              "startup_cycles": 103612,
+              "relocation_cycles": 50206,
+              "load_objects_cycles": 22256
+            },
+            {
+              "startup_cycles": 102268,
+              "relocation_cycles": 49527,
+              "load_objects_cycles": 21860
+            },
+            {
+              "startup_cycles": 104291,
+              "relocation_cycles": 51118,
+              "load_objects_cycles": 22484
+            }
+          ],
+          "git": [
+            {
+              "startup_cycles": 88038,
+              "relocation_cycles": 23836,
+              "load_objects_cycles": 30654
+            },
+            {
+              "startup_cycles": 82503,
+              "relocation_cycles": 22162,
+              "load_objects_cycles": 30066
+            },
+            {
+              "startup_cycles": 88119,
+              "relocation_cycles": 26436,
+              "load_objects_cycles": 31410
+            },
+            {
+              "startup_cycles": 93935,
+              "relocation_cycles": 27632,
+              "load_objects_cycles": 33261
+            },
+            {
+              "startup_cycles": 83428,
+              "relocation_cycles": 21213,
+              "load_objects_cycles": 32052
+            },
+            {
+              "startup_cycles": 85072,
+              "relocation_cycles": 22516,
+              "load_objects_cycles": 31044
+            },
+            {
+              "startup_cycles": 88467,
+              "relocation_cycles": 21387,
+              "load_objects_cycles": 32435
+            },
+            {
+              "startup_cycles": 82420,
+              "relocation_cycles": 21507,
+              "load_objects_cycles": 30778
+            },
+            {
+              "startup_cycles": 82238,
+              "relocation_cycles": 21273,
+              "load_objects_cycles": 30724
+            },
+            {
+              "startup_cycles": 90110,
+              "relocation_cycles": 25776,
+              "load_objects_cycles": 32273
+            },
+            {
+              "startup_cycles": 84760,
+              "relocation_cycles": 21775,
+              "load_objects_cycles": 30139
+            },
+            {
+              "startup_cycles": 82097,
+              "relocation_cycles": 20443,
+              "load_objects_cycles": 30082
+            },
+            {
+              "startup_cycles": 90646,
+              "relocation_cycles": 21868,
+              "load_objects_cycles": 32084
+            },
+            {
+              "startup_cycles": 82121,
+              "relocation_cycles": 20654,
+              "load_objects_cycles": 31072
+            },
+            {
+              "startup_cycles": 86148,
+              "relocation_cycles": 20235,
+              "load_objects_cycles": 29595
+            },
+            {
+              "startup_cycles": 85204,
+              "relocation_cycles": 20667,
+              "load_objects_cycles": 29845
+            },
+            {
+              "startup_cycles": 85607,
+              "relocation_cycles": 25646,
+              "load_objects_cycles": 29231
+            },
+            {
+              "startup_cycles": 85269,
+              "relocation_cycles": 25225,
+              "load_objects_cycles": 29390
+            },
+            {
+              "startup_cycles": 98220,
+              "relocation_cycles": 22393,
+              "load_objects_cycles": 30178
+            },
+            {
+              "startup_cycles": 86489,
+              "relocation_cycles": 21296,
+              "load_objects_cycles": 34730
+            },
+            {
+              "startup_cycles": 86912,
+              "relocation_cycles": 20056,
+              "load_objects_cycles": 35591
+            },
+            {
+              "startup_cycles": 84437,
+              "relocation_cycles": 21322,
+              "load_objects_cycles": 31592
+            },
+            {
+              "startup_cycles": 86938,
+              "relocation_cycles": 20537,
+              "load_objects_cycles": 30251
+            },
+            {
+              "startup_cycles": 84383,
+              "relocation_cycles": 21582,
+              "load_objects_cycles": 30524
+            },
+            {
+              "startup_cycles": 83301,
+              "relocation_cycles": 22100,
+              "load_objects_cycles": 30518
+            },
+            {
+              "startup_cycles": 79710,
+              "relocation_cycles": 20820,
+              "load_objects_cycles": 29055
+            },
+            {
+              "startup_cycles": 82747,
+              "relocation_cycles": 20282,
+              "load_objects_cycles": 31691
+            },
+            {
+              "startup_cycles": 82123,
+              "relocation_cycles": 20607,
+              "load_objects_cycles": 30199
+            },
+            {
+              "startup_cycles": 81369,
+              "relocation_cycles": 21325,
+              "load_objects_cycles": 30336
+            },
+            {
+              "startup_cycles": 81517,
+              "relocation_cycles": 21322,
+              "load_objects_cycles": 29907
+            }
+          ]
+        },
+        "time_v_rss_kib": {
+          "stock": [
+            10376,
+            10440,
+            10528,
+            10444,
+            10384,
+            10508,
+            10388,
+            10312,
+            10528,
+            10392
+          ],
+          "candidate": [
+            10476,
+            10564,
+            10268,
+            10472,
+            10268,
+            10688,
+            10692,
+            10688,
+            10404,
+            10304
+          ],
+          "git": [
+            5300,
+            5300,
+            5248,
+            5184,
+            5188,
+            5184,
+            5248,
+            5248,
+            5304,
+            5380
+          ]
+        }
+      },
+      {
+        "command": "resolve",
+        "loader": {
+          "stock": [
+            {
+              "startup_cycles": 108888,
+              "relocation_cycles": 52785,
+              "load_objects_cycles": 23121
+            },
+            {
+              "startup_cycles": 108430,
+              "relocation_cycles": 53336,
+              "load_objects_cycles": 23904
+            },
+            {
+              "startup_cycles": 102934,
+              "relocation_cycles": 48573,
+              "load_objects_cycles": 23810
+            },
+            {
+              "startup_cycles": 103854,
+              "relocation_cycles": 48388,
+              "load_objects_cycles": 23704
+            },
+            {
+              "startup_cycles": 106085,
+              "relocation_cycles": 50819,
+              "load_objects_cycles": 23644
+            },
+            {
+              "startup_cycles": 103248,
+              "relocation_cycles": 49257,
+              "load_objects_cycles": 23678
+            },
+            {
+              "startup_cycles": 114397,
+              "relocation_cycles": 61191,
+              "load_objects_cycles": 21361
+            },
+            {
+              "startup_cycles": 113521,
+              "relocation_cycles": 59259,
+              "load_objects_cycles": 22614
+            },
+            {
+              "startup_cycles": 111147,
+              "relocation_cycles": 57049,
+              "load_objects_cycles": 22604
+            },
+            {
+              "startup_cycles": 111950,
+              "relocation_cycles": 56989,
+              "load_objects_cycles": 23064
+            },
+            {
+              "startup_cycles": 107556,
+              "relocation_cycles": 52631,
+              "load_objects_cycles": 22105
+            },
+            {
+              "startup_cycles": 107595,
+              "relocation_cycles": 47702,
+              "load_objects_cycles": 23610
+            },
+            {
+              "startup_cycles": 102258,
+              "relocation_cycles": 48009,
+              "load_objects_cycles": 22724
+            },
+            {
+              "startup_cycles": 104187,
+              "relocation_cycles": 50317,
+              "load_objects_cycles": 22185
+            },
+            {
+              "startup_cycles": 100630,
+              "relocation_cycles": 46625,
+              "load_objects_cycles": 23345
+            },
+            {
+              "startup_cycles": 99847,
+              "relocation_cycles": 47325,
+              "load_objects_cycles": 22022
+            },
+            {
+              "startup_cycles": 105918,
+              "relocation_cycles": 54368,
+              "load_objects_cycles": 20592
+            },
+            {
+              "startup_cycles": 102013,
+              "relocation_cycles": 47351,
+              "load_objects_cycles": 23769
+            },
+            {
+              "startup_cycles": 100271,
+              "relocation_cycles": 48531,
+              "load_objects_cycles": 19796
+            },
+            {
+              "startup_cycles": 99013,
+              "relocation_cycles": 48794,
+              "load_objects_cycles": 19182
+            },
+            {
+              "startup_cycles": 105271,
+              "relocation_cycles": 53713,
+              "load_objects_cycles": 19159
+            },
+            {
+              "startup_cycles": 102213,
+              "relocation_cycles": 48552,
+              "load_objects_cycles": 19276
+            },
+            {
+              "startup_cycles": 99582,
+              "relocation_cycles": 49511,
+              "load_objects_cycles": 19331
+            },
+            {
+              "startup_cycles": 98620,
+              "relocation_cycles": 47795,
+              "load_objects_cycles": 19188
+            },
+            {
+              "startup_cycles": 102843,
+              "relocation_cycles": 47148,
+              "load_objects_cycles": 19289
+            },
+            {
+              "startup_cycles": 98264,
+              "relocation_cycles": 48432,
+              "load_objects_cycles": 19039
+            },
+            {
+              "startup_cycles": 98870,
+              "relocation_cycles": 48526,
+              "load_objects_cycles": 19169
+            },
+            {
+              "startup_cycles": 114930,
+              "relocation_cycles": 58598,
+              "load_objects_cycles": 24447
+            },
+            {
+              "startup_cycles": 112140,
+              "relocation_cycles": 56734,
+              "load_objects_cycles": 23400
+            },
+            {
+              "startup_cycles": 111514,
+              "relocation_cycles": 53203,
+              "load_objects_cycles": 25958
+            }
+          ],
+          "candidate": [
+            {
+              "startup_cycles": 107972,
+              "relocation_cycles": 53521,
+              "load_objects_cycles": 23584
+            },
+            {
+              "startup_cycles": 105900,
+              "relocation_cycles": 51108,
+              "load_objects_cycles": 24156
+            },
+            {
+              "startup_cycles": 106428,
+              "relocation_cycles": 52002,
+              "load_objects_cycles": 23431
+            },
+            {
+              "startup_cycles": 108422,
+              "relocation_cycles": 52507,
+              "load_objects_cycles": 24250
+            },
+            {
+              "startup_cycles": 118978,
+              "relocation_cycles": 50863,
+              "load_objects_cycles": 36701
+            },
+            {
+              "startup_cycles": 109421,
+              "relocation_cycles": 54493,
+              "load_objects_cycles": 24096
+            },
+            {
+              "startup_cycles": 105817,
+              "relocation_cycles": 52044,
+              "load_objects_cycles": 22035
+            },
+            {
+              "startup_cycles": 105404,
+              "relocation_cycles": 51844,
+              "load_objects_cycles": 22388
+            },
+            {
+              "startup_cycles": 112652,
+              "relocation_cycles": 59438,
+              "load_objects_cycles": 21860
+            },
+            {
+              "startup_cycles": 106860,
+              "relocation_cycles": 51204,
+              "load_objects_cycles": 23852
+            },
+            {
+              "startup_cycles": 105073,
+              "relocation_cycles": 50447,
+              "load_objects_cycles": 24037
+            },
+            {
+              "startup_cycles": 105526,
+              "relocation_cycles": 50385,
+              "load_objects_cycles": 22804
+            },
+            {
+              "startup_cycles": 103846,
+              "relocation_cycles": 50710,
+              "load_objects_cycles": 22500
+            },
+            {
+              "startup_cycles": 102265,
+              "relocation_cycles": 49969,
+              "load_objects_cycles": 22456
+            },
+            {
+              "startup_cycles": 104696,
+              "relocation_cycles": 50273,
+              "load_objects_cycles": 22367
+            },
+            {
+              "startup_cycles": 108830,
+              "relocation_cycles": 57033,
+              "load_objects_cycles": 20124
+            },
+            {
+              "startup_cycles": 101972,
+              "relocation_cycles": 49974,
+              "load_objects_cycles": 19297
+            },
+            {
+              "startup_cycles": 99923,
+              "relocation_cycles": 50520,
+              "load_objects_cycles": 19281
+            },
+            {
+              "startup_cycles": 101701,
+              "relocation_cycles": 49644,
+              "load_objects_cycles": 19250
+            },
+            {
+              "startup_cycles": 101004,
+              "relocation_cycles": 49667,
+              "load_objects_cycles": 20592
+            },
+            {
+              "startup_cycles": 107491,
+              "relocation_cycles": 56641,
+              "load_objects_cycles": 19419
+            },
+            {
+              "startup_cycles": 106745,
+              "relocation_cycles": 50120,
+              "load_objects_cycles": 19299
+            },
+            {
+              "startup_cycles": 100851,
+              "relocation_cycles": 49800,
+              "load_objects_cycles": 20326
+            },
+            {
+              "startup_cycles": 107260,
+              "relocation_cycles": 56251,
+              "load_objects_cycles": 19190
+            },
+            {
+              "startup_cycles": 108147,
+              "relocation_cycles": 55788,
+              "load_objects_cycles": 20597
+            },
+            {
+              "startup_cycles": 113750,
+              "relocation_cycles": 50705,
+              "load_objects_cycles": 32583
+            },
+            {
+              "startup_cycles": 114262,
+              "relocation_cycles": 56921,
+              "load_objects_cycles": 25667
+            },
+            {
+              "startup_cycles": 111857,
+              "relocation_cycles": 52015,
+              "load_objects_cycles": 28259
+            },
+            {
+              "startup_cycles": 109361,
+              "relocation_cycles": 54147,
+              "load_objects_cycles": 24021
+            },
+            {
+              "startup_cycles": 108318,
+              "relocation_cycles": 53497,
+              "load_objects_cycles": 23361
+            }
+          ],
+          "git": [
+            {
+              "startup_cycles": 89663,
+              "relocation_cycles": 25521,
+              "load_objects_cycles": 32702
+            },
+            {
+              "startup_cycles": 82919,
+              "relocation_cycles": 22237,
+              "load_objects_cycles": 30654
+            },
+            {
+              "startup_cycles": 88849,
+              "relocation_cycles": 22911,
+              "load_objects_cycles": 35222
+            },
+            {
+              "startup_cycles": 87201,
+              "relocation_cycles": 24598,
+              "load_objects_cycles": 31457
+            },
+            {
+              "startup_cycles": 84921,
+              "relocation_cycles": 21481,
+              "load_objects_cycles": 33274
+            },
+            {
+              "startup_cycles": 83012,
+              "relocation_cycles": 22102,
+              "load_objects_cycles": 31480
+            },
+            {
+              "startup_cycles": 83519,
+              "relocation_cycles": 23166,
+              "load_objects_cycles": 30147
+            },
+            {
+              "startup_cycles": 84822,
+              "relocation_cycles": 24005,
+              "load_objects_cycles": 30607
+            },
+            {
+              "startup_cycles": 84648,
+              "relocation_cycles": 23114,
+              "load_objects_cycles": 30981
+            },
+            {
+              "startup_cycles": 88909,
+              "relocation_cycles": 25581,
+              "load_objects_cycles": 32708
+            },
+            {
+              "startup_cycles": 81315,
+              "relocation_cycles": 20506,
+              "load_objects_cycles": 29855
+            },
+            {
+              "startup_cycles": 87310,
+              "relocation_cycles": 20105,
+              "load_objects_cycles": 31322
+            },
+            {
+              "startup_cycles": 81504,
+              "relocation_cycles": 21541,
+              "load_objects_cycles": 29842
+            },
+            {
+              "startup_cycles": 81263,
+              "relocation_cycles": 20365,
+              "load_objects_cycles": 29985
+            },
+            {
+              "startup_cycles": 86504,
+              "relocation_cycles": 19944,
+              "load_objects_cycles": 35898
+            },
+            {
+              "startup_cycles": 80163,
+              "relocation_cycles": 20701,
+              "load_objects_cycles": 27105
+            },
+            {
+              "startup_cycles": 79437,
+              "relocation_cycles": 20436,
+              "load_objects_cycles": 28269
+            },
+            {
+              "startup_cycles": 89289,
+              "relocation_cycles": 30222,
+              "load_objects_cycles": 27144
+            },
+            {
+              "startup_cycles": 80691,
+              "relocation_cycles": 20924,
+              "load_objects_cycles": 28581
+            },
+            {
+              "startup_cycles": 79989,
+              "relocation_cycles": 21691,
+              "load_objects_cycles": 26707
+            },
+            {
+              "startup_cycles": 78582,
+              "relocation_cycles": 20867,
+              "load_objects_cycles": 26889
+            },
+            {
+              "startup_cycles": 81647,
+              "relocation_cycles": 22274,
+              "load_objects_cycles": 28743
+            },
+            {
+              "startup_cycles": 80043,
+              "relocation_cycles": 21041,
+              "load_objects_cycles": 27263
+            },
+            {
+              "startup_cycles": 79952,
+              "relocation_cycles": 22352,
+              "load_objects_cycles": 26629
+            },
+            {
+              "startup_cycles": 86158,
+              "relocation_cycles": 25927,
+              "load_objects_cycles": 27677
+            },
+            {
+              "startup_cycles": 83249,
+              "relocation_cycles": 20943,
+              "load_objects_cycles": 27177
+            },
+            {
+              "startup_cycles": 77568,
+              "relocation_cycles": 21236,
+              "load_objects_cycles": 26270
+            },
+            {
+              "startup_cycles": 89957,
+              "relocation_cycles": 22183,
+              "load_objects_cycles": 30134
+            },
+            {
+              "startup_cycles": 84635,
+              "relocation_cycles": 21099,
+              "load_objects_cycles": 32838
+            },
+            {
+              "startup_cycles": 91860,
+              "relocation_cycles": 29026,
+              "load_objects_cycles": 32315
+            }
+          ]
+        },
+        "time_v_rss_kib": {
+          "stock": [
+            8980,
+            9008,
+            8744,
+            9008,
+            8740,
+            9028,
+            9060,
+            8928,
+            9136,
+            9028
+          ],
+          "candidate": [
+            9068,
+            9184,
+            8872,
+            9068,
+            9044,
+            9272,
+            8836,
+            9196,
+            9040,
+            8836
+          ],
+          "git": [
+            4380,
+            4508,
+            4348,
+            4356,
+            4348,
+            4508,
+            4512,
+            4384,
+            4452,
+            4488
+          ]
+        }
+      },
+      {
+        "command": "help",
+        "loader": {
+          "stock": [
+            {
+              "startup_cycles": 108043,
+              "relocation_cycles": 53190,
+              "load_objects_cycles": 23761
+            },
+            {
+              "startup_cycles": 117335,
+              "relocation_cycles": 62813,
+              "load_objects_cycles": 22201
+            },
+            {
+              "startup_cycles": 129529,
+              "relocation_cycles": 74968,
+              "load_objects_cycles": 22874
+            },
+            {
+              "startup_cycles": 120564,
+              "relocation_cycles": 60873,
+              "load_objects_cycles": 23803
+            },
+            {
+              "startup_cycles": 115645,
+              "relocation_cycles": 62475,
+              "load_objects_cycles": 21569
+            },
+            {
+              "startup_cycles": 112377,
+              "relocation_cycles": 59675,
+              "load_objects_cycles": 21884
+            },
+            {
+              "startup_cycles": 110557,
+              "relocation_cycles": 56625,
+              "load_objects_cycles": 22731
+            },
+            {
+              "startup_cycles": 120907,
+              "relocation_cycles": 65267,
+              "load_objects_cycles": 22950
+            },
+            {
+              "startup_cycles": 111355,
+              "relocation_cycles": 57405,
+              "load_objects_cycles": 22713
+            },
+            {
+              "startup_cycles": 108825,
+              "relocation_cycles": 55112,
+              "load_objects_cycles": 22211
+            },
+            {
+              "startup_cycles": 114496,
+              "relocation_cycles": 59529,
+              "load_objects_cycles": 22344
+            },
+            {
+              "startup_cycles": 115889,
+              "relocation_cycles": 61861,
+              "load_objects_cycles": 21556
+            },
+            {
+              "startup_cycles": 123479,
+              "relocation_cycles": 68528,
+              "load_objects_cycles": 23709
+            },
+            {
+              "startup_cycles": 107380,
+              "relocation_cycles": 52132,
+              "load_objects_cycles": 21782
+            },
+            {
+              "startup_cycles": 107016,
+              "relocation_cycles": 52704,
+              "load_objects_cycles": 22755
+            },
+            {
+              "startup_cycles": 115783,
+              "relocation_cycles": 59633,
+              "load_objects_cycles": 23875
+            },
+            {
+              "startup_cycles": 109168,
+              "relocation_cycles": 57259,
+              "load_objects_cycles": 21099
+            },
+            {
+              "startup_cycles": 109083,
+              "relocation_cycles": 54613,
+              "load_objects_cycles": 23145
+            },
+            {
+              "startup_cycles": 105133,
+              "relocation_cycles": 51550,
+              "load_objects_cycles": 22401
+            },
+            {
+              "startup_cycles": 107062,
+              "relocation_cycles": 53047,
+              "load_objects_cycles": 23197
+            },
+            {
+              "startup_cycles": 105047,
+              "relocation_cycles": 51342,
+              "load_objects_cycles": 22778
+            },
+            {
+              "startup_cycles": 107000,
+              "relocation_cycles": 52569,
+              "load_objects_cycles": 22880
+            },
+            {
+              "startup_cycles": 110812,
+              "relocation_cycles": 55473,
+              "load_objects_cycles": 22477
+            },
+            {
+              "startup_cycles": 106363,
+              "relocation_cycles": 52119,
+              "load_objects_cycles": 22503
+            },
+            {
+              "startup_cycles": 103758,
+              "relocation_cycles": 50372,
+              "load_objects_cycles": 22510
+            },
+            {
+              "startup_cycles": 106631,
+              "relocation_cycles": 50307,
+              "load_objects_cycles": 25209
+            },
+            {
+              "startup_cycles": 109834,
+              "relocation_cycles": 49990,
+              "load_objects_cycles": 27123
+            },
+            {
+              "startup_cycles": 113422,
+              "relocation_cycles": 53739,
+              "load_objects_cycles": 24731
+            },
+            {
+              "startup_cycles": 122132,
+              "relocation_cycles": 67808,
+              "load_objects_cycles": 22417
+            },
+            {
+              "startup_cycles": 122319,
+              "relocation_cycles": 67766,
+              "load_objects_cycles": 22497
+            }
+          ],
+          "candidate": [
+            {
+              "startup_cycles": 112494,
+              "relocation_cycles": 58775,
+              "load_objects_cycles": 23012
+            },
+            {
+              "startup_cycles": 111792,
+              "relocation_cycles": 58000,
+              "load_objects_cycles": 23134
+            },
+            {
+              "startup_cycles": 114966,
+              "relocation_cycles": 57171,
+              "load_objects_cycles": 22633
+            },
+            {
+              "startup_cycles": 113050,
+              "relocation_cycles": 59100,
+              "load_objects_cycles": 20306
+            },
+            {
+              "startup_cycles": 111914,
+              "relocation_cycles": 58393,
+              "load_objects_cycles": 21962
+            },
+            {
+              "startup_cycles": 113604,
+              "relocation_cycles": 56253,
+              "load_objects_cycles": 25417
+            },
+            {
+              "startup_cycles": 105843,
+              "relocation_cycles": 52616,
+              "load_objects_cycles": 22994
+            },
+            {
+              "startup_cycles": 114283,
+              "relocation_cycles": 54636,
+              "load_objects_cycles": 21754
+            },
+            {
+              "startup_cycles": 109192,
+              "relocation_cycles": 55546,
+              "load_objects_cycles": 22960
+            },
+            {
+              "startup_cycles": 109434,
+              "relocation_cycles": 55585,
+              "load_objects_cycles": 22994
+            },
+            {
+              "startup_cycles": 114639,
+              "relocation_cycles": 58372,
+              "load_objects_cycles": 22747
+            },
+            {
+              "startup_cycles": 113934,
+              "relocation_cycles": 57449,
+              "load_objects_cycles": 24746
+            },
+            {
+              "startup_cycles": 109132,
+              "relocation_cycles": 55174,
+              "load_objects_cycles": 22739
+            },
+            {
+              "startup_cycles": 106425,
+              "relocation_cycles": 50658,
+              "load_objects_cycles": 22193
+            },
+            {
+              "startup_cycles": 107299,
+              "relocation_cycles": 52564,
+              "load_objects_cycles": 21941
+            },
+            {
+              "startup_cycles": 107582,
+              "relocation_cycles": 52990,
+              "load_objects_cycles": 21957
+            },
+            {
+              "startup_cycles": 105643,
+              "relocation_cycles": 52065,
+              "load_objects_cycles": 21912
+            },
+            {
+              "startup_cycles": 107590,
+              "relocation_cycles": 51875,
+              "load_objects_cycles": 21655
+            },
+            {
+              "startup_cycles": 105079,
+              "relocation_cycles": 50385,
+              "load_objects_cycles": 22102
+            },
+            {
+              "startup_cycles": 104306,
+              "relocation_cycles": 50463,
+              "load_objects_cycles": 22877
+            },
+            {
+              "startup_cycles": 106826,
+              "relocation_cycles": 52088,
+              "load_objects_cycles": 24029
+            },
+            {
+              "startup_cycles": 105305,
+              "relocation_cycles": 52028,
+              "load_objects_cycles": 22542
+            },
+            {
+              "startup_cycles": 113352,
+              "relocation_cycles": 58016,
+              "load_objects_cycles": 23537
+            },
+            {
+              "startup_cycles": 106693,
+              "relocation_cycles": 52018,
+              "load_objects_cycles": 24034
+            },
+            {
+              "startup_cycles": 104660,
+              "relocation_cycles": 51217,
+              "load_objects_cycles": 22919
+            },
+            {
+              "startup_cycles": 102952,
+              "relocation_cycles": 50624,
+              "load_objects_cycles": 22032
+            },
+            {
+              "startup_cycles": 109878,
+              "relocation_cycles": 51032,
+              "load_objects_cycles": 26819
+            },
+            {
+              "startup_cycles": 129430,
+              "relocation_cycles": 75337,
+              "load_objects_cycles": 23064
+            },
+            {
+              "startup_cycles": 119808,
+              "relocation_cycles": 63754,
+              "load_objects_cycles": 22643
+            },
+            {
+              "startup_cycles": 113183,
+              "relocation_cycles": 55348,
+              "load_objects_cycles": 23337
+            }
+          ],
+          "git": [
+            {
+              "startup_cycles": 95490,
+              "relocation_cycles": 30219,
+              "load_objects_cycles": 32965
+            },
+            {
+              "startup_cycles": 83876,
+              "relocation_cycles": 23353,
+              "load_objects_cycles": 30412
+            },
+            {
+              "startup_cycles": 95531,
+              "relocation_cycles": 31259,
+              "load_objects_cycles": 31857
+            },
+            {
+              "startup_cycles": 94853,
+              "relocation_cycles": 29928,
+              "load_objects_cycles": 32975
+            },
+            {
+              "startup_cycles": 84996,
+              "relocation_cycles": 24525,
+              "load_objects_cycles": 30048
+            },
+            {
+              "startup_cycles": 94850,
+              "relocation_cycles": 33633,
+              "load_objects_cycles": 30069
+            },
+            {
+              "startup_cycles": 98599,
+              "relocation_cycles": 29946,
+              "load_objects_cycles": 36002
+            },
+            {
+              "startup_cycles": 95534,
+              "relocation_cycles": 34652,
+              "load_objects_cycles": 30329
+            },
+            {
+              "startup_cycles": 89585,
+              "relocation_cycles": 26769,
+              "load_objects_cycles": 31101
+            },
+            {
+              "startup_cycles": 93784,
+              "relocation_cycles": 29302,
+              "load_objects_cycles": 33118
+            },
+            {
+              "startup_cycles": 83301,
+              "relocation_cycles": 22612,
+              "load_objects_cycles": 30321
+            },
+            {
+              "startup_cycles": 95027,
+              "relocation_cycles": 31574,
+              "load_objects_cycles": 30916
+            },
+            {
+              "startup_cycles": 87196,
+              "relocation_cycles": 25243,
+              "load_objects_cycles": 30849
+            },
+            {
+              "startup_cycles": 82700,
+              "relocation_cycles": 21398,
+              "load_objects_cycles": 29476
+            },
+            {
+              "startup_cycles": 84162,
+              "relocation_cycles": 22162,
+              "load_objects_cycles": 30503
+            },
+            {
+              "startup_cycles": 89572,
+              "relocation_cycles": 26200,
+              "load_objects_cycles": 31509
+            },
+            {
+              "startup_cycles": 87773,
+              "relocation_cycles": 24648,
+              "load_objects_cycles": 30625
+            },
+            {
+              "startup_cycles": 87890,
+              "relocation_cycles": 24073,
+              "load_objects_cycles": 31629
+            },
+            {
+              "startup_cycles": 85862,
+              "relocation_cycles": 23561,
+              "load_objects_cycles": 31202
+            },
+            {
+              "startup_cycles": 84227,
+              "relocation_cycles": 21361,
+              "load_objects_cycles": 31400
+            },
+            {
+              "startup_cycles": 82724,
+              "relocation_cycles": 21993,
+              "load_objects_cycles": 30355
+            },
+            {
+              "startup_cycles": 86031,
+              "relocation_cycles": 22739,
+              "load_objects_cycles": 31332
+            },
+            {
+              "startup_cycles": 85836,
+              "relocation_cycles": 23012,
+              "load_objects_cycles": 32292
+            },
+            {
+              "startup_cycles": 83319,
+              "relocation_cycles": 22240,
+              "load_objects_cycles": 30602
+            },
+            {
+              "startup_cycles": 89603,
+              "relocation_cycles": 22911,
+              "load_objects_cycles": 31270
+            },
+            {
+              "startup_cycles": 86405,
+              "relocation_cycles": 21827,
+              "load_objects_cycles": 34036
+            },
+            {
+              "startup_cycles": 88745,
+              "relocation_cycles": 21821,
+              "load_objects_cycles": 33436
+            },
+            {
+              "startup_cycles": 91780,
+              "relocation_cycles": 28386,
+              "load_objects_cycles": 31766
+            },
+            {
+              "startup_cycles": 85802,
+              "relocation_cycles": 22547,
+              "load_objects_cycles": 30882
+            },
+            {
+              "startup_cycles": 89398,
+              "relocation_cycles": 26925,
+              "load_objects_cycles": 31109
+            }
+          ]
+        },
+        "time_v_rss_kib": {
+          "stock": [
+            8628,
+            8628,
+            8804,
+            8596,
+            8612,
+            8756,
+            8824,
+            8672,
+            8740,
+            8768
+          ],
+          "candidate": [
+            8412,
+            8520,
+            8472,
+            8412,
+            8516,
+            8336,
+            8588,
+            8456,
+            8660,
+            8336
+          ],
+          "git": [
+            3888,
+            4012,
+            3832,
+            3912,
+            3920,
+            3932,
+            3924,
+            3888,
+            3940,
+            3868
+          ]
+        }
+      }
+    ]
+  }
+}

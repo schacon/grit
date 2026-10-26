@@ -71,6 +71,25 @@ jobs:
         run: |
           cross build --profile dist --target ${{ matrix.target }} -p grit-cli
 
+      - name: Check x86_64 GNU loader compatibility
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          artifact="$PWD/target/${{ matrix.target }}/dist/grit"
+          python3 scripts/check-linux-release.py "$artifact" \
+            --max-glibc 2.34 --relr forbidden --run
+          fixture=$(mktemp -d)
+          git -C "$fixture" init -q -b main
+          git -C "$fixture" -c user.name=Release -c user.email=release@example.com \
+            -c maintenance.auto=false commit --allow-empty -qm init
+          # v0.5.21 works on this glibc 2.34 loader. Keep that contract explicit;
+          # GLIBC_2.39 is weak, not the binary's minimum supported loader.
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$artifact:/usr/local/bin/grit:ro" -v "$fixture:/fixture:ro" \
+            -w /fixture \
+            rockylinux@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 \
+            /bin/sh -ec 'grit --help >/dev/null; grit branch >/dev/null; grit status >/dev/null; grit resolve HEAD >/dev/null'
+
       # Completion scripts depend only on the CLI shape, not the target CPU. Generate
       # them with a host-native binary so cross-compiled artifacts (e.g. aarch64
       # Linux built on x86_64 Ubuntu) can still ship pre-generated scripts.

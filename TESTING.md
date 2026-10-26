@@ -752,3 +752,38 @@ excluded paths. Each timed iteration goes to the base commit and back; fixture
 construction and post-run status/fsck checks stay outside the measurement.
 Use `--smoke` for a 2,400-path fixture. Record both wall time and peak RSS, with
 builds and tests stopped, against the same system Git and a frozen main binary.
+
+### Linux GNU startup and loader contract
+
+The x86_64 GNU v0.5.21 artifact runs on glibc 2.34 (Rocky Linux 9). Its
+`GLIBC_2.39` version requirement is **weak**, so treating the highest version
+string as its minimum would overstate the loader baseline. RELR introduces the
+strong `GLIBC_ABI_DT_RELR` requirement and requires glibc 2.36; it cannot be
+silently enabled for a binary that works on 2.34.
+
+Check the actual artifact, including PIE, interpreter, allowed dependencies,
+GNU_RELRO/BIND_NOW, non-executable stack, symbol versions, RELR ABI marking,
+startup and randomized runtime load addresses:
+
+```bash
+python3 scripts/check-linux-release.py /path/to/stock/grit \
+  --max-glibc 2.34 --relr forbidden --run
+python3 scripts/check-linux-release.py /path/to/relr/grit \
+  --max-glibc 2.36 --relr required --run
+cargo test -p grit-utils --test release_elf
+GRIT_RELEASE_ELF=/path/to/relr/grit cargo test -p grit-utils \
+  --test release_elf candidate_release_elf_contract -- --ignored
+```
+
+The Rust regression tests link small C probes and reject missing RELR, non-PIE,
+lazy binding and a newer strong loader requirement. Run the ignored artifact
+contract against stock first (it must fail), then the candidate (it must pass).
+Static checks do not establish runtime portability: run the binary's `--help`,
+`branch`, `status` and `resolve HEAD` on the oldest supported loader as well.
+Use the system's normal ASLR settings; the runtime guard keeps `upload-pack`
+waiting for input and inspects four actual process mappings.
+
+See [startup comparison methodology](content/docs/benchmarking.md#startup-relocation-comparison)
+for both profiles, 60 warm measured runs per tool, realistic fixtures and RSS
+cross-checks. RELR probes are CLI-only; no workspace profile is changed. Apple,
+Windows, static musl and GNU aarch64 need their own portability validation.

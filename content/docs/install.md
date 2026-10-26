@@ -19,6 +19,14 @@ irm https://grit-scm.com/install.ps1 | iex
 
 The script downloads the latest release from GitHub, installs the `grit` binary (by default into `~/.local/bin` on Unix), and prints the version it installed.
 
+## Linux GNU loader compatibility
+
+The published x86_64 GNU v0.5.21 binary is verified on glibc 2.34 (Rocky Linux 9).
+Its weak glibc 2.39 references do not require that newer loader. RELR relocation
+packing needs glibc 2.36 or newer, so a local RELR build has a different loader
+requirement even when compiled on the same host. The x86_64 GNU release uses standard relocations to retain that compatibility.
+Static musl artifacts and source builds remain alternatives for other systems.
+
 ## Shell completions
 
 Tab completion helps you discover `grit`'s subcommands and flags. Generate a script with [`grit completions`](../completions/) and load it from your shell config, or copy the pre-generated files from a release tarball's `completions/` directory.

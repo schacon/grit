@@ -193,3 +193,65 @@ grit-bench daily validate target/bench/blobless-reset.json
 ```
 
 Its prepare hook creates fresh blobless clients outside each timed iteration. Correctness checks enforce clean worktrees, strict fsck and a bounded pack count.
+
+## Startup relocation comparison
+
+Startup changes need separate `release` and shipping `dist` measurements. Keep
+PIE, ASLR, LTO, codegen units and panic policy unchanged. A CLI-only RELR probe
+changes the final link, without rebuilding dependencies with workspace-wide flags:
+
+```bash
+mkdir -p /tmp/grit-startup/{release,dist}/{stock,relr}
+cargo build --release -p grit-cli --locked
+cp target/release/grit /tmp/grit-startup/release/stock/grit
+cargo rustc --release -p grit-cli --locked --bin grit -- \
+  -C link-arg=-Wl,-z,pack-relative-relocs \
+  -C link-arg=-Wl,-Map=/tmp/grit-startup/release-relr.map
+cp target/release/grit /tmp/grit-startup/release/relr/grit
+cargo build --profile dist -p grit-cli --locked
+cp target/dist/grit /tmp/grit-startup/dist/stock/grit
+cargo rustc --profile dist -p grit-cli --locked --bin grit -- \
+  -C link-arg=-Wl,-z,pack-relative-relocs \
+  -C link-arg=-Wl,-Map=/tmp/grit-startup/dist-relr.map
+cp target/dist/grit /tmp/grit-startup/dist/relr/grit
+cargo build -p grit-utils --bin grit-bench --example startup_compare
+cc -O2 grit-utils/examples/startup_measure.c -o /tmp/grit-startup/measure
+```
+
+Stop builds and tests before timing. The focused example uses the daily runner's
+`measure-direct-run` helper and statistics, with five warmups and **60 measured
+runs per tool** (minimum 30), rotating stock/candidate/system-Git order. The daily
+default policy caps at 20 and is insufficient for this investigation.
+
+```bash
+./target/debug/examples/startup_compare \
+  --stock /tmp/grit-startup/dist/stock/grit \
+  --candidate /tmp/grit-startup/dist/relr/grit \
+  --helper "$PWD/target/debug/grit-bench" \
+  --native-helper /tmp/grit-startup/measure \
+  --fixtures /tmp/grit-startup/fixtures --profile dist \
+  --output /tmp/grit-startup/dist.json
+```
+
+Repeat with the frozen `release` binaries and `--profile release`. Fixtures cover
+one local branch, 20,000 refs, 20,000 tracked paths, and 20,000 commits. Every
+fixture passes system `git fsck --strict`; each candidate command must preserve
+stock stdout/stderr. Branch, status, resolve, help and a 1,000-entry log run on
+all four shapes. Git's branch list is unbounded while grit's default list is
+bounded; the comparison reports the actual argv and does not equate their output
+volume on the many-ref fixture.
+
+Reports retain individual wall-time samples, medians, standard deviations and
+per-child peak RSS. The existing helper measures after spawn, through child
+exit; the small C parent records full fork/exec/wait times, per-child RSS and page faults in the `native` block for startup conclusions.
+Cross-check RSS with `/usr/bin/time -v`, using a fresh small parent per child;
+a long-lived Python parent's inherited RSS can swamp short-command measurements.
+Record minor/major page faults separately, and keep `LD_DEBUG=statistics` loader
+cycles apart from end-to-end wall time. Neither loader cycles nor relocation
+metadata bytes measure heap use.
+
+Inspect `readelf -hW -lW -dW -rW -VW`, `nm -S -n`, and the linker maps. RELR
+compresses relative relocation metadata; it still writes the same pointer slots.
+Dependency tables, including regex Unicode tables, contribute relocations even
+when their code executes lazily. Preserve Unicode matching, filtering, schemas
+and tracing when considering source changes.
