@@ -1330,7 +1330,9 @@ mod tests {
     const ALL_MODIFIED_DIRS: usize = 100;
     const ALL_MODIFIED_FILES_PER_DIR: usize = 50;
 
-    fn wide_repo_two_commits_all_paths_differ(root: &std::path::Path) -> (Repository, ObjectId, ObjectId) {
+    fn wide_repo_two_commits_all_paths_differ(
+        root: &std::path::Path,
+    ) -> (Repository, ObjectId, ObjectId) {
         git(root, &["init", "-q", "-b", "main", "."]);
         git(root, &["config", "gc.auto", "0"]);
         for d in 0..ALL_MODIFIED_DIRS {
@@ -1408,7 +1410,19 @@ mod tests {
         );
         assert!(
             probe_count <= probe_after_first + ALL_MODIFIED_DIRS + 8,
-            "expected about one stat per rewritten file ({total_files}), got {probe_count} (after first reset {probe_after_first})"
+            "tree-diff hard reset should not re-stat every rewritten path ({total_files} files); \
+             got {probe_count} metadata probes after the second reset (baseline after first {probe_after_first})"
+        );
+        let index_path = repo.index_path_for_env().expect("index path");
+        let index = repo.load_index().expect("index");
+        let (max_sec, max_nsec) = crate::index::stage0_mtime_max(&index.entries);
+        let index_meta = std::fs::metadata(&index_path).expect("index meta");
+        let index_mtime = filetime::FileTime::from_last_modification_time(&index_meta);
+        let index_secs = index_mtime.seconds().try_into().unwrap_or(u32::MAX);
+        assert!(
+            index_secs > max_sec || (index_secs == max_sec && index_mtime.nanoseconds() > max_nsec),
+            "hard reset must advance index mtime past newest entry (index {index_secs}.{} vs entry {max_sec}.{max_nsec})",
+            index_mtime.nanoseconds()
         );
         assert_git_sees_clean_repo(root);
     }

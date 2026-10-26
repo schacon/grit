@@ -1520,3 +1520,63 @@ fn stash_commits_are_unsigned_even_with_commit_gpgsign() {
     }
     assert_fsck_strict(dir.path());
 }
+
+/// Bulk checkout during stash apply must not persist the index until post-apply index
+/// reconciliation runs (Bugbot: early index write skipped staged replay).
+#[test]
+fn stash_pop_many_files_without_index_matches_git() {
+    const DIRS: usize = 40;
+    const FILES_PER_DIR: usize = 25;
+
+    let grit_dir = tempfile::tempdir().expect("tempdir");
+    let git_dir = tempfile::tempdir().expect("tempdir");
+    for root in [grit_dir.path(), git_dir.path()] {
+        init_repo(root);
+        for d in 0..DIRS {
+            let dir = root.join(format!("d{d:02}"));
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            for f in 0..FILES_PER_DIR {
+                std::fs::write(dir.join(format!("f{f:02}.txt")), format!("base {d} {f}\n"))
+                    .expect("write");
+            }
+        }
+        git_cmd(root, &["add", "-A"]);
+        git_cmd(root, &["commit", "-qm", "base"]);
+        for d in 0..DIRS {
+            for f in 0..FILES_PER_DIR {
+                let path = root.join(format!("d{d:02}/f{f:02}.txt"));
+                std::fs::write(&path, format!("stashed {d} {f}\n")).expect("edit");
+            }
+        }
+    }
+
+    git_cmd(git_dir.path(), &["stash", "push", "-q", "-m", "bulk"]);
+    open_grit(grit_dir.path())
+        .stash()
+        .push(&stash_options(false, Some("bulk")))
+        .expect("grit push")
+        .expect("changes");
+
+    git_cmd(git_dir.path(), &["stash", "pop", "-q"]);
+    open_grit(grit_dir.path())
+        .stash()
+        .pop(
+            0,
+            &StashApplyOptions {
+                restore_index: false,
+            },
+        )
+        .expect("grit pop");
+
+    assert_eq!(
+        git_cmd(grit_dir.path(), &["status", "--porcelain"]),
+        git_cmd(git_dir.path(), &["status", "--porcelain"]),
+        "pop without --index must match git"
+    );
+    assert_eq!(
+        git_cmd(grit_dir.path(), &["diff-files", "--name-status"]),
+        git_cmd(git_dir.path(), &["diff-files", "--name-status"]),
+        "index vs worktree must match git after bulk stash pop"
+    );
+    assert_fsck_strict(grit_dir.path());
+}

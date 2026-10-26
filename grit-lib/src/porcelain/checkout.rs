@@ -722,6 +722,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
     remove_empty_parent_dirs_batch(work_tree, &deleted_abs_paths);
     progress.finish();
 
+    let mtime_hint = Some(crate::index::stage0_mtime_max(&new_entries));
     let mut new_index = Index::new();
     new_index.entries = new_entries;
     new_index.sort();
@@ -730,10 +731,11 @@ pub fn checkout_hard_to_tree_from_head_tree(
     {
         new_index.set_cache_tree(cache_tree);
     }
-    new_index.skip_racy_smudge_on_write = trees_differ && !written_by_tree_diff.is_empty();
-    let result = repo.write_index_with_post_index_change(&mut new_index, true, false);
-    new_index.skip_racy_smudge_on_write = false;
-    result?;
+    if trees_differ && !written_by_tree_diff.is_empty() {
+        write_checkout_index(repo, &mut new_index, false, mtime_hint)?;
+    } else {
+        repo.write_index(&mut new_index)?;
+    }
     Ok(())
 }
 

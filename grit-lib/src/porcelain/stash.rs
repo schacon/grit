@@ -2531,6 +2531,7 @@ fn apply_stash_commit(
             &crate::progress::NeverCancel,
             crate::porcelain::checkout::CheckoutApplyOptions {
                 parallel_prepare_blobs: true,
+                defer_index_disk_write: true,
                 ..crate::porcelain::checkout::CheckoutApplyOptions::default()
             },
             None,
