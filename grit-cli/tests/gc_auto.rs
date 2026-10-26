@@ -109,14 +109,68 @@ fn json_commit_output_stays_clean_when_maintenance_runs() {
     git(root, &["fsck", "--strict", "--no-dangling"]);
 }
 
+/// Regression for issue #2008: detached auto-gc must not block `grit commit` until repack
+/// finishes (including under Windows job objects when breakaway is required).
+///
+/// A Windows job that denies `CREATE_BREAKAWAY_FROM_JOB` should fall back to foreground gc
+/// (honest message, no false "in the background" line); add a job-object harness on Windows CI
+/// when one is available — this test covers the successful breakaway / non-Windows path only.
 #[test]
 fn commit_detaches_maintenance_by_default() {
     let fixture = seeded_repo(&[("gc.auto", "1")]);
     let root = fixture.path();
 
-    let out = grit_with_repo_maintenance(root, &["commit", "-m", "bulk"]);
+    // Hold gc before repacking. Even on a fast machine, a foreground run cannot finish
+    // until we release the hook; a detached command must return while it is still held.
+    let hook = root.join(".git/hooks/pre-auto-gc");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\n\
+         touch .git/gc-test-started\n\
+         attempts=0\n\
+         while ! test -f .git/gc-test-release; do\n\
+           attempts=$((attempts + 1))\n\
+           test \"$attempts\" -lt 60 || exit 1\n\
+           sleep 1\n\
+         done\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let commit_root = root.to_path_buf();
+    let commit = std::thread::spawn(move || {
+        sender
+            .send(grit_with_repo_maintenance(
+                &commit_root,
+                &["commit", "-m", "bulk"],
+            ))
+            .unwrap();
+    });
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !root.join(".git/gc-test-started").exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let hook_started = root.join(".git/gc-test-started").exists();
+    let returned_before_release = receiver.recv_timeout(Duration::from_secs(10));
+    let packs_before_release = pack_count(root);
+    // Always unblock the hook before asserting, including on a foreground regression.
+    std::fs::write(root.join(".git/gc-test-release"), b"").unwrap();
+    commit.join().unwrap();
+
+    assert!(hook_started, "automatic maintenance must reach the hook");
+    let out = returned_before_release.expect("commit must return while maintenance is held");
     assert!(out.ok(), "{}", out.dump("commit"));
     assert!(out.stderr.contains("in the background"), "{}", out.stderr);
+    assert_eq!(
+        packs_before_release, 0,
+        "commit must return before background maintenance writes a pack"
+    );
 
     let deadline = Instant::now() + Duration::from_secs(60);
     while (pack_count(root) == 0 || root.join(".git/gc.pid").exists()) && Instant::now() < deadline

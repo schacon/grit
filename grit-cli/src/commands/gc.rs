@@ -657,10 +657,14 @@ fn spawn_detached_auto_gc() -> std::io::Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
-        use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS};
-        // No console and a new process group, so Ctrl-C in the user's console does not stop it.
-        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        use windows_sys::Win32::System::Threading::{
+            CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS,
+        };
+        // Job-aware callers may wait for every process in their job after commit exits.
+        // Leave that job so their wait does not include background maintenance.
+        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
     }
+    // A successful spawn confirms child creation before the caller announces it.
     cmd.spawn().map(drop)
 }
 

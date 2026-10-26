@@ -55,7 +55,23 @@ When either fires, `grit gc --auto` runs: pack-refs, reflog expiry, the repack a
 
 Before doing any work, an automatic run takes the `gc.pid` lock that Git uses, so it never overlaps another grit or Git gc, and runs the `pre-auto-gc` hook; a non-zero hook exit skips the run. In human mode the triggering command prints one line on stderr when it starts background maintenance, or after foreground maintenance has run (nothing when the hook declines or another gc holds the lock); `--json` and `--markdown` output are unchanged.
 
+On Windows, the background child requests job breakaway, in addition to a detached console and a separate process group. This lets job-based command runners finish waiting for the triggering command while maintenance continues. If the surrounding job denies breakaway or the child otherwise cannot start, grit falls back to foreground maintenance: human output warns about the failed spawn and reports completed packing without claiming a background run.
+
 A plain `grit gc` always runs and also takes the `gc.pid` lock: it fails with an error when another gc is running.
+
+### Commit benchmark
+
+An 8,000-file first commit across 160 directories, with default `gc.auto=6700`:
+
+| Command | Median commit wall time | Peak RSS |
+| --- | --- | --- |
+| System Git 2.55.0 | 170.56 ms | 9,996 KiB |
+| grit before Windows job breakaway (`a1f4e2168`) | 62.49 ms | 19,904 KiB |
+| grit with Windows job breakaway | 62.17 ms | 19,744 KiB |
+
+Measured on an Ubuntu 24.04 x86-64 VM with four AMD EPYC vCPUs, using `dist` builds and `/usr/bin/time -v`. Five fresh repositories per command were measured in alternating order. Each tool staged its own files before timing; filesystem writes were flushed before the commit, with warm caches. RSS is the highest per-run peak across the five runs and excludes detached maintenance. Each background run finished before the next measurement.
+
+Every commit returned with 8,162 loose objects and no packed objects; background maintenance subsequently completed and `git fsck --strict --no-dangling` passed. Linux already detached on the baseline, so these measurements check the unchanged Unix path, not Windows job-object behavior. Windows jobs that prohibit breakaway still require the foreground fallback described above.
 
 ## Options
 
