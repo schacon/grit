@@ -1595,3 +1595,30 @@ Factory VM: AMD EPYC 9V45, 4 vCPUs, Rust 1.99.0, `release` profile, system Git 2
 The target drops from 3.09× to 1.32× Git time, with 57% less time and 58% less peak RSS. The other filtered counts improve by 27–59%; unchanged command paths differ by at most 1.4% in this run. Heaptrack records 1,247,228 → 266,825 allocations and 38.95 → 5.88 MB peak heap; callgrind records 4.38 → 2.14 billion instructions. `perf record -g` was blocked by the VM kernel setting, so callgrind and `strace -c` supplied CPU/syscall evidence.
 
 `revs/count-path@git-git` could not run: system Git rejects the pinned `7e34d81` revision in the harness’s v2.47.0 fixture. The fixture and scenario definition were left unchanged.
+
+### Commit-graph range counts follow-up
+
+Filtered counts now use commit-graph parent links while marking excluded ancestry, and read object bodies for the included walk or for excluded commits missing from the graph. The reviewed implementation read all 49,500 excluded commit bodies for `HEAD~500..HEAD`; the new object-read regression test covers graph-enabled and disabled walks, merges and partial graph coverage. Shallow and grafted ranges are checked against system Git.
+
+A second factory VM (Intel Xeon Platinum 8370C, 4 vCPUs, Rust 1.99.0, `release`, Git 2.55.0) compares origin/main `f0e7cddd530a`, reviewed branch `ca0542807699` and corrected code `0c235110d293` in the same sitting. The fixture and ten-run interleaved wall/RSS methodology match the earlier measurement; builds and tests were idle. Raw samples, command arguments and all three grit series are in `grit-utils/baselines/filtered-revision-count-range.json`. RSS below is the maximum process peak in KiB, from `/usr/bin/time -v`.
+
+| Scenario | Git ms | Main ms | Reviewed ms | Fixed ms | Main RSS | Reviewed RSS | Fixed RSS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `log/author-n50@deep-history` | 2.59 | 5.05 | 5.25 | 4.77 | 15,968 | 16,100 | 17,036 |
+| `revs/count-author@deep-history` | 151.22 | 533.64 | 207.67 | 204.06 | 60,872 | 24,968 | 25,880 |
+| `revs/count-author-range@deep-history` | 4.24 | 325.87 | 201.85 | 196.57 | 54,132 | 25,240 | 26,068 |
+| `revs/author-n50@deep-history` | 2.54 | 4.85 | 5.05 | 4.62 | 15,788 | 15,904 | 16,608 |
+| `revs/count-grep-range@deep-history` | 4.13 | 326.81 | 201.35 | 195.83 | 53,912 | 25,040 | 25,800 |
+| `revs/count@deep-history` | 112.74 | 6.96 | 6.61 | 6.06 | 15,200 | 15,232 | 16,424 |
+| `log/author-n50@deep-history-cg` | 3.19 | 5.79 | 5.81 | 5.13 | 18,672 | 18,588 | 19,328 |
+| `revs/count-author@deep-history-cg` | 159.65 | 312.30 | 208.71 | 205.47 | 55,072 | 25,168 | 26,004 |
+| `revs/count-author-range@deep-history-cg` | 4.64 | 78.67 | 200.61 | 28.62 | 40,388 | 27,944 | 20,776 |
+| `revs/author-n50@deep-history-cg` | 2.86 | 5.24 | 5.24 | 4.61 | 18,612 | 18,516 | 19,268 |
+| `revs/count-grep-range@deep-history-cg` | 4.62 | 79.80 | 201.89 | 28.68 | 40,364 | 27,896 | 20,584 |
+| `revs/count@deep-history-cg` | 23.45 | 6.77 | 6.89 | 6.75 | 15,444 | 15,428 | 16,372 |
+| `revs/count-since@deep-history` | 2.28 | 3.82 | 3.88 | 3.42 | 13,692 | 13,996 | 14,988 |
+| `revs/left-right-count@deep-history` | 3.74 | 8.62 | 8.71 | 8.07 | 14,132 | 14,464 | 15,408 |
+
+The graph-backed author range count improves by 86% against the reviewed branch and 64% against main. Counts agree with Git, including 500 for the review reproduction. Full-history author counts retain the original optimization; graph loading is skipped when there are no exclusions. `perf record -g` remains unavailable (`perf_event_paranoid=4`); `strace -c` records about 1.4 ms in syscalls before the fix, while the deterministic graph-range test reduces object reads from 34 to 2.
+
+This build records about 0.7–1.3 MiB more peak RSS on several unchanged paths than the reviewed build. A separate five-run `/proc/<pid>/smaps_rollup` sample of full-history author counting shows essentially unchanged peak anonymous memory (6,748 → 6,740 KiB), with the extra residency in file-backed mappings. Those samples are included in the baseline JSON; the RSS increases remain visible in the table rather than being treated as heap growth or omitted. No measured scenario slowed relative to main or the reviewed branch.

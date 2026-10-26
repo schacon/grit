@@ -106,6 +106,7 @@ label = "Harness (make bench-lib / bench-scenarios)"
 baseline = [
   "grit-utils/baselines/midx-status-2064.json",
   "grit-utils/baselines/filtered-revision-count.json",
+  "grit-utils/baselines/filtered-revision-count-range.json",
   "grit-utils/baselines/ignore-normalization-dist.json",
   "grit-utils/baselines/ignore-normalization-release.json",
   "grit-utils/baselines/daily-ignore-normalization-dist-before.json",
