@@ -5604,6 +5604,9 @@ pub grit_lib::error::Error::NotesRefNotCommit
 pub grit_lib::error::Error::NotesRefNotCommit::found: grit_lib::objects::ObjectKind
 pub grit_lib::error::Error::NotesRefNotCommit::notes_ref: alloc::string::String
 pub grit_lib::error::Error::NothingToCommit
+pub grit_lib::error::Error::NothingStagedToCommit
+pub grit_lib::error::Error::NothingStagedToCommit::unstaged: usize
+pub grit_lib::error::Error::NothingStagedToCommit::untracked: usize
 pub grit_lib::error::Error::ObjectHeaderTooLong
 pub grit_lib::error::Error::ObjectHeaderTooLong::oid: alloc::string::String
 pub grit_lib::error::Error::ObjectNotFound(alloc::string::String)
@@ -15526,6 +15529,9 @@ pub grit_lib::prelude::Error::NotesRefNotCommit
 pub grit_lib::prelude::Error::NotesRefNotCommit::found: grit_lib::objects::ObjectKind
 pub grit_lib::prelude::Error::NotesRefNotCommit::notes_ref: alloc::string::String
 pub grit_lib::prelude::Error::NothingToCommit
+pub grit_lib::prelude::Error::NothingStagedToCommit
+pub grit_lib::prelude::Error::NothingStagedToCommit::unstaged: usize
+pub grit_lib::prelude::Error::NothingStagedToCommit::untracked: usize
 pub grit_lib::prelude::Error::ObjectHeaderTooLong
 pub grit_lib::prelude::Error::ObjectHeaderTooLong::oid: alloc::string::String
 pub grit_lib::prelude::Error::ObjectNotFound(alloc::string::String)
