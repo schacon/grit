@@ -46,7 +46,11 @@ fn init_repo() -> tempfile::TempDir {
         .env("GIT_CONFIG_SYSTEM", null_config())
         .output()
         .expect("init");
-    assert!(out.status.success(), "init: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     tmp
 }
 
