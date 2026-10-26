@@ -289,8 +289,33 @@ fn walk_enumeration(
 const SEND_PACK_REACH_WANT: u8 = 1;
 const SEND_PACK_REACH_HAVE: u8 = 2;
 
+#[cfg(test)]
+pub(crate) mod send_pack_walk_test_hooks {
+    use std::cell::Cell;
+
+    thread_local! {
+        static COMMIT_READS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub fn reset_commit_reads() {
+        COMMIT_READS.with(|c| c.set(0));
+    }
+
+    pub fn commit_reads() -> usize {
+        COMMIT_READS.with(|c| c.get())
+    }
+
+    pub(crate) fn record_commit_read() {
+        COMMIT_READS.with(|c| c.set(c.get().saturating_add(1)));
+    }
+}
+
 fn send_pack_reach_uninteresting(reach: u8) -> bool {
     reach & SEND_PACK_REACH_HAVE != 0
+}
+
+fn send_pack_reach_interesting(reach: u8) -> bool {
+    reach & SEND_PACK_REACH_WANT != 0 && !send_pack_reach_uninteresting(reach)
 }
 
 /// Commits marked uninteresting for send-pack (`--revs` with `^have` lines).
@@ -324,16 +349,16 @@ fn send_pack_uninteresting_commits(
             }
         }
 
+        /// Stop once no queued commit is still want-only (the interesting frontier).
+        ///
+        /// Unlike waiting for every uninteresting commit's parents to be marked, this
+        /// matches Git's `still_interesting` cutoff and avoids walking all haves to root.
         fn can_stop_after(&self) -> bool {
             !self.heap.is_empty()
-                && self
-                    .heap
-                    .iter()
-                    .all(|c| self.uninteresting.contains(&c.oid))
-                && self
-                    .heap
-                    .iter()
-                    .all(|c| c.parents.iter().all(|p| self.uninteresting.contains(p)))
+                && self.heap.iter().all(|c| {
+                    let flags = *self.reach.get(&c.oid).unwrap_or(&0);
+                    !send_pack_reach_interesting(flags)
+                })
         }
 
         fn try_enqueue(&mut self, oid: ObjectId, flag: u8) -> Result<()> {
@@ -352,6 +377,8 @@ fn send_pack_uninteresting_commits(
                 return Ok(());
             }
             let parsed = CommitRef::parse(&obj.data)?;
+            #[cfg(test)]
+            send_pack_walk_test_hooks::record_commit_read();
             self.on_heap.insert(oid);
             self.heap.push(QueuedCommit {
                 time: parsed.committer_unix_seconds_for_ordering(),
@@ -1223,6 +1250,50 @@ mod tests {
             commit_parent_lookups() <= 512,
             "many advertised haves must not pre-walk deep history ({} parent lookups)",
             commit_parent_lookups()
+        );
+    }
+
+    #[test]
+    fn send_pack_have_walk_stops_without_scanning_deep_haves() {
+        use super::send_pack_walk_test_hooks::{commit_reads, reset_commit_reads};
+
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+        let blob = |s: &str| repo.odb().write(ObjectKind::Blob, s.as_bytes()).unwrap();
+        let mut parent = write_commit(
+            &repo,
+            write_tree(&repo, &[(0o100644, "f", blob("0"))]),
+            &[],
+            0,
+        );
+        for i in 1..800 {
+            let tree = write_tree(&repo, &[(0o100644, "f", blob(&i.to_string()))]);
+            parent = write_commit(&repo, tree, &[parent], i);
+        }
+        let direct_parent = parent;
+        let new_tree = write_tree(&repo, &[(0o100644, "f", blob("new"))]);
+        let new_tip = write_commit(&repo, new_tree, &[direct_parent], 900);
+        let near_root = write_commit(
+            &repo,
+            write_tree(&repo, &[(0o100644, "f", blob("root"))]),
+            &[],
+            -100,
+        );
+        let empty = HashSet::new();
+        reset_commit_reads();
+        let have_commits = send_pack_uninteresting_commits(
+            repo.odb(),
+            &[new_tip],
+            &[direct_parent, near_root],
+            &empty,
+        )
+        .expect("send-pack have walk");
+        assert!(have_commits.contains(&direct_parent));
+        assert!(have_commits.contains(&near_root));
+        let reads = commit_reads();
+        assert!(
+            reads < 20,
+            "send-pack have walk should not scan deep history, read {reads} commits"
         );
     }
 
