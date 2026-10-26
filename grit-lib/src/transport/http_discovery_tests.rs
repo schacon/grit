@@ -1,5 +1,6 @@
 //! Unit tests for smart-HTTP discovery helpers (included from [`super::http`]).
 use super::*;
+use crate::error::{Error, RemoteUnreadableReason};
 
 #[test]
 fn rebase_redirect_strips_info_refs_and_query() {
@@ -59,6 +60,31 @@ fn rebase_redirect_none_when_no_change_or_unknown() {
     assert_eq!(
         rebased_base_from_redirect(base, Some("https://host/elsewhere")),
         None
+    );
+}
+
+#[test]
+fn html_info_refs_body_is_not_git_server() {
+    let body = b"<html><body>not git</body></html>";
+    let err = discover_upload_pack_from_body(body).expect_err("html must fail");
+    assert!(matches!(
+        err,
+        Error::RemoteUnreadable {
+            url: None,
+            reason: RemoteUnreadableReason::NotGitServer { status: 200, .. },
+        }
+    ));
+    assert_eq!(
+        err.to_string(),
+        "the remote did not answer like a Git server (got 200)"
+    );
+}
+
+#[test]
+fn http_content_type_media_type_strips_parameters() {
+    assert_eq!(
+        http_content_type_media_type("text/html; charset=utf-8"),
+        "text/html"
     );
 }
 
