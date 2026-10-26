@@ -5514,6 +5514,10 @@ pub grit_lib::error::Error::FetchShallowUnsupported
 pub grit_lib::error::Error::FetchUnshallowNotShallow
 pub grit_lib::error::Error::Filter(grit_lib::error::FilterError)
 pub grit_lib::error::Error::ForbiddenBareRepository(alloc::string::String)
+pub grit_lib::error::Error::GitDirPathIo
+pub grit_lib::error::Error::GitDirPathIo::operation: grit_lib::error::GitDirPathOperation
+pub grit_lib::error::Error::GitDirPathIo::path: alloc::string::String
+pub grit_lib::error::Error::GitDirPathIo::source: core::io::error::Error
 pub grit_lib::error::Error::HashCollision
 pub grit_lib::error::Error::HashCollision::oid: grit_lib::objects::ObjectId
 pub grit_lib::error::Error::History(grit_lib::revwalk::history::HistoryError)
@@ -5888,6 +5892,31 @@ impl core::marker::Unpin for grit_lib::error::FilterPhase
 impl core::marker::UnsafeUnpin for grit_lib::error::FilterPhase
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::error::FilterPhase
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::error::FilterPhase
+#[non_exhaustive] pub enum grit_lib::error::GitDirPathOperation
+pub grit_lib::error::GitDirPathOperation::AppendReflog
+pub grit_lib::error::GitDirPathOperation::CreateDir
+pub grit_lib::error::GitDirPathOperation::GcPack
+pub grit_lib::error::GitDirPathOperation::UpdateRef
+pub grit_lib::error::GitDirPathOperation::WriteIndex
+pub grit_lib::error::GitDirPathOperation::WriteObject
+impl core::clone::Clone for grit_lib::error::GitDirPathOperation
+pub fn grit_lib::error::GitDirPathOperation::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::error::GitDirPathOperation
+impl core::cmp::PartialEq for grit_lib::error::GitDirPathOperation
+pub fn grit_lib::error::GitDirPathOperation::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::error::GitDirPathOperation
+pub fn grit_lib::error::GitDirPathOperation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for grit_lib::error::GitDirPathOperation
+pub fn grit_lib::error::GitDirPathOperation::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for grit_lib::error::GitDirPathOperation
+impl core::marker::StructuralPartialEq for grit_lib::error::GitDirPathOperation
+impl core::marker::Freeze for grit_lib::error::GitDirPathOperation
+impl core::marker::Send for grit_lib::error::GitDirPathOperation
+impl core::marker::Sync for grit_lib::error::GitDirPathOperation
+impl core::marker::Unpin for grit_lib::error::GitDirPathOperation
+impl core::marker::UnsafeUnpin for grit_lib::error::GitDirPathOperation
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::error::GitDirPathOperation
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::error::GitDirPathOperation
 #[non_exhaustive] pub enum grit_lib::error::MidxError
 pub grit_lib::error::MidxError::BitmapWriteFailed
 pub grit_lib::error::MidxError::BitmapWriteFailed::detail: alloc::string::String
@@ -15442,6 +15471,10 @@ pub grit_lib::prelude::Error::FetchShallowUnsupported
 pub grit_lib::prelude::Error::FetchUnshallowNotShallow
 pub grit_lib::prelude::Error::Filter(grit_lib::error::FilterError)
 pub grit_lib::prelude::Error::ForbiddenBareRepository(alloc::string::String)
+pub grit_lib::prelude::Error::GitDirPathIo
+pub grit_lib::prelude::Error::GitDirPathIo::operation: grit_lib::error::GitDirPathOperation
+pub grit_lib::prelude::Error::GitDirPathIo::path: alloc::string::String
+pub grit_lib::prelude::Error::GitDirPathIo::source: core::io::error::Error
 pub grit_lib::prelude::Error::HashCollision
 pub grit_lib::prelude::Error::HashCollision::oid: grit_lib::objects::ObjectId
 pub grit_lib::prelude::Error::History(grit_lib::revwalk::history::HistoryError)
@@ -18403,6 +18436,10 @@ pub grit_lib::refs::store::RefStoreError::ExpectedMismatch
 pub grit_lib::refs::store::RefStoreError::ExpectedMismatch::actual: core::option::Option<grit_lib::refs::store::RawRef>
 pub grit_lib::refs::store::RefStoreError::ExpectedMismatch::expected: grit_lib::refs::store::Expected
 pub grit_lib::refs::store::RefStoreError::ExpectedMismatch::name: alloc::string::String
+pub grit_lib::refs::store::RefStoreError::GitDirPathIo
+pub grit_lib::refs::store::RefStoreError::GitDirPathIo::operation: grit_lib::error::GitDirPathOperation
+pub grit_lib::refs::store::RefStoreError::GitDirPathIo::os_error: i32
+pub grit_lib::refs::store::RefStoreError::GitDirPathIo::path: alloc::string::String
 pub grit_lib::refs::store::RefStoreError::InvalidRefName
 pub grit_lib::refs::store::RefStoreError::InvalidRefName::name: alloc::string::String
 pub grit_lib::refs::store::RefStoreError::LockHeld
@@ -20451,6 +20488,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::sideband_lines::
 pub struct grit_lib::remote::sideband_lines::SidebandLines
 impl grit_lib::remote::sideband_lines::SidebandLines
 pub fn grit_lib::remote::sideband_lines::SidebandLines::feed<F>(&mut self, &[u8], F) where F: core::ops::function::FnMut(grit_lib::remote::sideband_lines::RemoteLine)
+pub fn grit_lib::remote::sideband_lines::SidebandLines::finish<F>(&mut self, F) where F: core::ops::function::FnMut(grit_lib::remote::sideband_lines::RemoteLine)
 pub fn grit_lib::remote::sideband_lines::SidebandLines::new() -> Self
 impl core::default::Default for grit_lib::remote::sideband_lines::SidebandLines
 pub fn grit_lib::remote::sideband_lines::SidebandLines::default() -> Self
@@ -20734,8 +20772,8 @@ impl core::marker::UnsafeUnpin for grit_lib::remote::transfer::PushOptions
 impl !core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::transfer::PushOptions
 impl !core::panic::unwind_safe::UnwindSafe for grit_lib::remote::transfer::PushOptions
 pub struct grit_lib::remote::transfer::PushOutcome
-pub grit_lib::remote::transfer::PushOutcome::results: alloc::vec::Vec<grit_lib::remote::push_report::PushRefResult>
 pub grit_lib::remote::transfer::PushOutcome::remote_messages: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::remote::transfer::PushOutcome::results: alloc::vec::Vec<grit_lib::remote::push_report::PushRefResult>
 impl core::clone::Clone for grit_lib::remote::transfer::PushOutcome
 pub fn grit_lib::remote::transfer::PushOutcome::clone(&self) -> Self
 impl core::default::Default for grit_lib::remote::transfer::PushOutcome
