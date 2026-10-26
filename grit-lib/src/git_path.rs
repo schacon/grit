@@ -2,6 +2,7 @@
 //! `relative_path`) plus display and comparison helpers for repository paths.
 
 use std::borrow::Cow;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -508,6 +509,31 @@ pub fn abspath_part_inside_repo(path: &str, work_tree: &Path) -> Option<String> 
         return Some(String::new());
     }
     None
+}
+
+/// Git path variables copied into hook/filter subprocess environments.
+pub(crate) const SUBPROCESS_GIT_PATH_VARS: [&str; 5] = [
+    "GIT_DIR",
+    "GIT_COMMON_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+];
+
+/// Strip Windows `\\?\` prefixes from path-valued `GIT_*` entries in a subprocess env block.
+pub(crate) fn strip_verbatim_prefix_from_subprocess_path_vars(set: &mut [(OsString, OsString)]) {
+    for (key, value) in set.iter_mut() {
+        if !SUBPROCESS_GIT_PATH_VARS.iter().any(|var| key == *var) {
+            continue;
+        }
+        let Some(s) = value.to_str() else {
+            continue;
+        };
+        let stripped = strip_verbatim_path_prefix_str(s);
+        if stripped.len() != s.len() {
+            *value = OsString::from(stripped.into_owned());
+        }
+    }
 }
 
 /// Strip Windows extended-length `\\?\` / `\\?\UNC\` prefixes for comparison and display.

@@ -24,6 +24,7 @@ use crate::attributes::{
     load_gitattributes_stack_uncached, AttrStackCacheEntry, ParsedGitAttributes,
 };
 use crate::blame::PromisorHydrateHook;
+use crate::command_runner::CommandEnvironment;
 use crate::config::{
     config_cache_lookup, config_cache_store, config_file_stamps, ConfigCacheKey, ConfigSet,
     LoadConfigOptions,
@@ -602,6 +603,30 @@ impl RepoCaches {
     #[must_use]
     pub fn filters(&self) -> &FilterProcessState {
         &self.filters
+    }
+
+    /// Cwd and environment for clean/smudge filter subprocesses on this repository handle.
+    pub(crate) fn configure_filter_subprocess(
+        &self,
+        environment: &Environment,
+        git_dir: &Path,
+        work_tree: Option<&Path>,
+    ) {
+        let work_dir = work_tree
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| git_dir.to_path_buf());
+        let mut extra = vec![("GIT_DIR".to_owned(), git_dir.to_string_lossy().into_owned())];
+        if let Some(wt) = work_tree {
+            extra.push((
+                "GIT_WORK_TREE".to_owned(),
+                wt.to_string_lossy().into_owned(),
+            ));
+        }
+        let mut env = CommandEnvironment::from_repository_environment(environment, &extra);
+        if cfg!(windows) {
+            crate::git_path::strip_verbatim_prefix_from_subprocess_path_vars(&mut env.set);
+        }
+        self.filters.configure_subprocess(work_dir, env);
     }
 
     /// Optional promisor-object hydration hook for blame on partial clones.
