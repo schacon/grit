@@ -1001,7 +1001,6 @@ fn copy_objects_for_local_fetch(
         cancel,
     )?;
     if linked_loose > 0 {
-        progress.inc(linked_loose as u64);
         refresh_local_odb_after_link(local_odb);
         still_missing = local_odb.missing_oids(still_missing)?;
     }

@@ -333,6 +333,48 @@ fn resolve_and_cat_follow_replace_refs() {
 }
 
 #[test]
+fn stream_for_display_follows_replace_refs_on_large_blob() {
+    use std::io::Read;
+
+    const SIZE: usize = 1024 * 1024 + 100;
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    let original: Vec<u8> = (0..SIZE).map(|i| (i % 251) as u8).collect();
+    let replacement: Vec<u8> = (0..SIZE).map(|i| i.wrapping_mul(7) as u8).collect();
+    let setup = open_grit_repo(wt);
+    let oid_orig = setup
+        .odb()
+        .write(ObjectKind::Blob, &original)
+        .expect("write original");
+    let oid_repl = setup
+        .odb()
+        .write(ObjectKind::Blob, &replacement)
+        .expect("write replacement");
+    std::fs::create_dir_all(wt.join(".git/refs/replace")).expect("mkdir replace");
+    std::fs::write(
+        wt.join(".git/refs/replace").join(oid_orig.to_hex()),
+        format!("{}\n", oid_repl.to_hex()),
+    )
+    .expect("replace ref");
+    let repo = open_grit_repo(wt);
+
+    let mut streamed = Vec::new();
+    repo.with_object_stream_for_display(&oid_orig, |mut stream| {
+        stream
+            .reader
+            .read_to_end(&mut streamed)
+            .map_err(grit_lib::error::Error::Io)?;
+        Ok(())
+    })
+    .expect("stream")
+    .expect("object");
+    assert_eq!(streamed.len(), replacement.len());
+    assert_eq!(&streamed[..32], &replacement[..32]);
+    assert_eq!(&streamed[SIZE - 32..], &replacement[SIZE - 32..]);
+    assert_ne!(streamed[..32], original[..32]);
+}
+
+#[test]
 fn resolve_and_cat_respect_git_no_replace_objects() {
     let hist = HistoryRepo::init();
     let wt = hist.worktree();

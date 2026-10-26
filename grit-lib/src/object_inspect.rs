@@ -22,9 +22,10 @@ use thiserror::Error;
 
 use crate::diagnostics::Warning;
 use crate::error::{Error, Result};
+use crate::objects::odb::store::ObjectStream;
 use crate::objects::{
-    parse_commit, parse_tag, parse_tree, CommitData, Object, ObjectId, ObjectKind, TagData,
-    TreeEntry,
+    parse_commit, parse_tag, parse_tree, CommitData, Object, ObjectId, ObjectInfo, ObjectKind,
+    TagData, TreeEntry,
 };
 use crate::refs::store::RawRef;
 use crate::refs::{
@@ -357,6 +358,29 @@ impl Repository {
     /// Returns [`Error::ObjectNotFound`] when the object is missing.
     pub fn read_object_raw_for_display(&self, oid: &ObjectId) -> Result<Object> {
         self.read_replaced(oid)
+    }
+
+    /// Object kind and size for display, following replace refs when enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ObjectNotFound`] when the object is missing.
+    pub fn read_object_info_for_display(&self, oid: &ObjectId) -> Result<ObjectInfo> {
+        self.read_info_replaced(oid)
+    }
+
+    /// Stream an object's payload for display, following replace refs when enabled.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`Error::ObjectNotFound`] and stream read failures from `f`.
+    pub fn with_object_stream_for_display<R>(
+        &self,
+        oid: &ObjectId,
+        f: impl FnOnce(ObjectStream<'_>) -> Result<R>,
+    ) -> Result<Option<R>> {
+        let effective = self.object_id_after_replace(oid);
+        self.odb().with_stream(&effective, f)
     }
 
     /// Read and parse the object named by `oid` for display.

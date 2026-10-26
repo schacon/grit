@@ -146,16 +146,15 @@ pub fn run(spec: String, mode: OutputMode) -> Result<CatOutcome> {
     let resolved = repo
         .resolve(&spec)
         .map_err(|e| map_resolve_error(&spec, e))?;
-    let info = repo.odb().read_info(&resolved.oid)?;
+    let info = repo.read_object_info_for_display(&resolved.oid)?;
     let stream_human_blob = mode == OutputMode::Human
         && info.kind == ObjectKind::Blob
         && info.size >= CAT_STREAM_THRESHOLD;
     if stream_human_blob {
-        repo.odb()
-            .with_stream(&resolved.oid, |mut stream| {
-                std::io::copy(&mut stream.reader, &mut std::io::stdout()).map_err(Error::Io)
-            })?
-            .ok_or_else(|| grit_lib::error::Error::ObjectNotFound(resolved.oid.to_hex()))?;
+        repo.with_object_stream_for_display(&resolved.oid, |mut stream| {
+            std::io::copy(&mut stream.reader, &mut std::io::stdout()).map_err(Error::Io)
+        })?
+        .ok_or_else(|| grit_lib::error::Error::ObjectNotFound(resolved.oid.to_hex()))?;
         let placeholder = CatContentJson::Blob(BlobJson {
             encoding: "binary".to_owned(),
             text: None,

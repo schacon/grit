@@ -76,6 +76,23 @@ fn local_clone_links_large_loose_blob_in_bounded_memory() {
         ObjectId::from_hex(&git_stdout(&source, &["rev-parse", "HEAD:big.txt"])).expect("oid");
     let src_loose = loose_object_path(&source.join(".git/objects"), &blob_oid);
 
+    // Warm the clone path so one-time library initialization is not counted against RSS growth.
+    let tiny = dir.path().join("tiny");
+    fs::create_dir_all(&tiny).expect("mkdir tiny");
+    git(&tiny, &["init", "-q", "-b", "main"]);
+    git(&tiny, &["config", "user.email", "t@example.com"]);
+    git(&tiny, &["config", "user.name", "Test"]);
+    fs::write(tiny.join("small.txt"), b"x\n").expect("small");
+    git(&tiny, &["add", "small.txt"]);
+    git(&tiny, &["commit", "-qm", "small"]);
+    clone_repo(
+        CloneOptions::new(tiny.to_string_lossy(), dir.path().join("warm-clone")),
+        &mut NoProgress,
+        &NeverCancel,
+        None,
+    )
+    .expect("warm clone");
+
     let dest = dir.path().join("clone");
     let before = peak_rss_kib();
     clone_repo(
