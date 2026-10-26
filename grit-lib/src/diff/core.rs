@@ -6610,29 +6610,6 @@ fn open_with_size(path: &Path, rel_path: &str) -> Result<(fs::File, u64)> {
 /// Open a regular worktree file and clean-convert it, or hand it out as a stream when it is
 /// at least `stream_from` bytes and its clean conversion is the identity.
 #[allow(clippy::too_many_arguments)]
-fn read_worktree_binary_probe(file: &mut fs::File, size: u64, rel_path: &str) -> Result<Vec<u8>> {
-    use std::io::{Read, Seek, SeekFrom};
-    const PROBE: usize = 8000;
-    let probe_len = usize::try_from(size).unwrap_or(PROBE).min(PROBE);
-    let mut probe = vec![0u8; probe_len];
-    file.read_exact(&mut probe).map_err(|source| {
-        crate::worktree::map_worktree_io(
-            rel_path,
-            crate::worktree::WorktreePathOperation::Read,
-            source,
-        )
-    })?;
-    file.seek(SeekFrom::Start(0)).map_err(|source| {
-        crate::worktree::map_worktree_io(
-            rel_path,
-            crate::worktree::WorktreePathOperation::Read,
-            source,
-        )
-    })?;
-    Ok(probe)
-}
-
-#[allow(clippy::too_many_arguments)]
 fn read_regular_worktree_blob(
     odb: &Odb,
     path: &Path,

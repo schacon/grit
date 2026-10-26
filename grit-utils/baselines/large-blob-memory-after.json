@@ -1,0 +1,348 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-10-26T12:15:20.370694Z",
+  "machine": {
+    "cpu_model": "AMD EPYC 9V45 96-Core Processor",
+    "physical_cores": 4,
+    "logical_cores": 4,
+    "ram_bytes": 16766406656,
+    "os": "linux",
+    "kernel": "6.17.0-1022-azure",
+    "scratch_filesystem": "ext4",
+    "rustc_version": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "cargo_profile": "release"
+  },
+  "tools": {
+    "git": "git version 2.55.0",
+    "grit": "grit 0.5.21",
+    "grit_commit": "82fb50e9485606b57b3639d4057914f10a6d551c",
+    "worktree_changes": "loose clone statistics header reads; shallow clone progress; review corrections"
+  },
+  "methodology": "/usr/bin/time -v, incompressible binary blobs, system git fsck --strict and hash-object verify each clone. Read/restore/clone rows rotate tool order over three runs on identical sources. Status/add rows are single stat-dirty runs. Linux RSS includes mapped pack/loose pages.",
+  "scenarios": [
+    {
+      "id": "large-blob-memory-status-128m",
+      "group": "status",
+      "fixture": "incompressible-128m",
+      "description": "mtime-only dirty tracked blob; single run",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 360.0,
+        "median_ms": 360.0,
+        "stddev_ms": 0,
+        "min_ms": 360.0,
+        "max_ms": 360.0,
+        "runs_ms": [
+          360.0
+        ],
+        "peak_rss_bytes": 139530240
+      },
+      "grit": {
+        "mean_ms": 90.0,
+        "median_ms": 90.0,
+        "stddev_ms": 0,
+        "min_ms": 90.0,
+        "max_ms": 90.0,
+        "runs_ms": [
+          90.0
+        ],
+        "peak_rss_bytes": 15556608
+      },
+      "ratio": 0.25
+    },
+    {
+      "id": "large-blob-memory-add-128m",
+      "group": "add",
+      "fixture": "incompressible-128m",
+      "description": "mtime-only dirty tracked blob; single run",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 390.0,
+        "median_ms": 390.0,
+        "stddev_ms": 0,
+        "min_ms": 390.0,
+        "max_ms": 390.0,
+        "runs_ms": [
+          390.0
+        ],
+        "peak_rss_bytes": 139341824
+      },
+      "grit": {
+        "mean_ms": 90.0,
+        "median_ms": 90.0,
+        "stddev_ms": 0,
+        "min_ms": 90.0,
+        "max_ms": 90.0,
+        "runs_ms": [
+          90.0
+        ],
+        "peak_rss_bytes": 14258176
+      },
+      "ratio": 0.23076923076923078
+    },
+    {
+      "id": "large-blob-memory-status-1024m",
+      "group": "status",
+      "fixture": "incompressible-1024m",
+      "description": "mtime-only dirty tracked blob; single run",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 2560.0,
+        "median_ms": 2560.0,
+        "stddev_ms": 0,
+        "min_ms": 2560.0,
+        "max_ms": 2560.0,
+        "runs_ms": [
+          2560.0
+        ],
+        "peak_rss_bytes": 5550080
+      },
+      "grit": {
+        "mean_ms": 1030.0,
+        "median_ms": 1030.0,
+        "stddev_ms": 0,
+        "min_ms": 1030.0,
+        "max_ms": 1030.0,
+        "runs_ms": [
+          1030.0
+        ],
+        "peak_rss_bytes": 15679488
+      },
+      "ratio": 0.40234375
+    },
+    {
+      "id": "large-blob-memory-add-1024m",
+      "group": "add",
+      "fixture": "incompressible-1024m",
+      "description": "mtime-only dirty tracked blob; single run",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 44900.0,
+        "median_ms": 44900.0,
+        "stddev_ms": 0,
+        "min_ms": 44900.0,
+        "max_ms": 44900.0,
+        "runs_ms": [
+          44900.0
+        ],
+        "peak_rss_bytes": 5263360
+      },
+      "grit": {
+        "mean_ms": 840.0,
+        "median_ms": 840.0,
+        "stddev_ms": 0,
+        "min_ms": 840.0,
+        "max_ms": 840.0,
+        "runs_ms": [
+          840.0
+        ],
+        "peak_rss_bytes": 13922304
+      },
+      "ratio": 0.018708240534521157
+    },
+    {
+      "id": "large-blob-memory-cat-1024m-loose",
+      "group": "cat",
+      "fixture": "incompressible-1024m-loose",
+      "description": "1 GiB loose blob; three rotated paired runs",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 910.0,
+        "median_ms": 410.0,
+        "stddev_ms": 883.402513014311,
+        "min_ms": 390.0,
+        "max_ms": 1930.0,
+        "runs_ms": [
+          1930.0,
+          410.0,
+          390.0
+        ],
+        "peak_rss_bytes": 1078767616
+      },
+      "grit": {
+        "mean_ms": 210.0,
+        "median_ms": 210.0,
+        "stddev_ms": 20.0,
+        "min_ms": 190.0,
+        "max_ms": 230.0,
+        "runs_ms": [
+          190.0,
+          210.0,
+          230.0
+        ],
+        "peak_rss_bytes": 13324288
+      },
+      "ratio": 0.23076923076923078
+    },
+    {
+      "id": "large-blob-memory-restore-1024m-loose",
+      "group": "restore",
+      "fixture": "incompressible-1024m-loose",
+      "description": "1 GiB loose blob; three rotated paired runs",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 760.0,
+        "median_ms": 730.0,
+        "stddev_ms": 51.96152422706632,
+        "min_ms": 730.0,
+        "max_ms": 820.0,
+        "runs_ms": [
+          730.0,
+          820.0,
+          730.0
+        ],
+        "peak_rss_bytes": 1079140352
+      },
+      "grit": {
+        "mean_ms": 953.3333333333334,
+        "median_ms": 940.0,
+        "stddev_ms": 23.09401076758503,
+        "min_ms": 940.0,
+        "max_ms": 980.0,
+        "runs_ms": [
+          940.0,
+          980.0,
+          940.0
+        ],
+        "peak_rss_bytes": 15151104
+      },
+      "ratio": 1.2543859649122808
+    },
+    {
+      "id": "large-blob-memory-clone-1024m-loose",
+      "group": "clone",
+      "fixture": "incompressible-1024m-loose",
+      "description": "1 GiB loose blob; three rotated paired runs",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 740.0,
+        "median_ms": 740.0,
+        "stddev_ms": 30.0,
+        "min_ms": 710.0,
+        "max_ms": 770.0,
+        "runs_ms": [
+          710.0,
+          770.0,
+          740.0
+        ],
+        "peak_rss_bytes": 1079554048
+      },
+      "grit": {
+        "mean_ms": 330.0,
+        "median_ms": 320.0,
+        "stddev_ms": 17.320508075688775,
+        "min_ms": 320.0,
+        "max_ms": 350.0,
+        "runs_ms": [
+          320.0,
+          350.0,
+          320.0
+        ],
+        "peak_rss_bytes": 16195584
+      },
+      "ratio": 0.44594594594594594
+    },
+    {
+      "id": "large-blob-memory-cat-1024m-packed",
+      "group": "cat",
+      "fixture": "incompressible-1024m-packed",
+      "description": "1 GiB packed blob; three rotated paired runs",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 860.0,
+        "median_ms": 370.0,
+        "stddev_ms": 857.3797291748855,
+        "min_ms": 360.0,
+        "max_ms": 1850.0,
+        "runs_ms": [
+          1850.0,
+          360.0,
+          370.0
+        ],
+        "peak_rss_bytes": 1078898688
+      },
+      "grit": {
+        "mean_ms": 246.66666666666666,
+        "median_ms": 230.0,
+        "stddev_ms": 28.867513459481287,
+        "min_ms": 230.0,
+        "max_ms": 280.0,
+        "runs_ms": [
+          230.0,
+          230.0,
+          280.0
+        ],
+        "peak_rss_bytes": 1087176704
+      },
+      "ratio": 0.2868217054263566
+    },
+    {
+      "id": "large-blob-memory-restore-1024m-packed",
+      "group": "restore",
+      "fixture": "incompressible-1024m-packed",
+      "description": "1 GiB packed blob; three rotated paired runs",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 713.3333333333334,
+        "median_ms": 690.0,
+        "stddev_ms": 40.414518843273804,
+        "min_ms": 690.0,
+        "max_ms": 760.0,
+        "runs_ms": [
+          760.0,
+          690.0,
+          690.0
+        ],
+        "peak_rss_bytes": 1079627776
+      },
+      "grit": {
+        "mean_ms": 946.6666666666666,
+        "median_ms": 940.0,
+        "stddev_ms": 11.547005383792515,
+        "min_ms": 940.0,
+        "max_ms": 960.0,
+        "runs_ms": [
+          940.0,
+          940.0,
+          960.0
+        ],
+        "peak_rss_bytes": 1088864256
+      },
+      "ratio": 1.3271028037383177
+    },
+    {
+      "id": "large-blob-memory-clone-1024m-packed",
+      "group": "clone",
+      "fixture": "incompressible-1024m-packed",
+      "description": "1 GiB packed blob; three rotated paired runs",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 710.0,
+        "median_ms": 710.0,
+        "stddev_ms": 20.0,
+        "min_ms": 690.0,
+        "max_ms": 730.0,
+        "runs_ms": [
+          710.0,
+          690.0,
+          730.0
+        ],
+        "peak_rss_bytes": 1079689216
+      },
+      "grit": {
+        "mean_ms": 330.0,
+        "median_ms": 310.0,
+        "stddev_ms": 34.64101615137755,
+        "min_ms": 310.0,
+        "max_ms": 370.0,
+        "runs_ms": [
+          310.0,
+          310.0,
+          370.0
+        ],
+        "peak_rss_bytes": 1090310144
+      },
+      "ratio": 0.4647887323943662
+    }
+  ]
+}

@@ -15,7 +15,7 @@ grit cat <SPEC>
 
 Shows the contents of the object named by a revision spec:
 
-- **Blob** — raw bytes written to stdout (no extra framing). Blobs of 1 MiB or larger are streamed from the object database in human mode so memory stays bounded; `--json` and `--markdown` still load the payload to build structured output.
+- **Blob** — raw bytes written to stdout (no extra framing). Large blobs stream from the object database with bounded memory.
 - **Tree** — one line per entry like `git cat-file -p` (six-digit directory modes such as `040000`, then type, oid, tab, path).
 - **Commit** or **tag** — the canonical object payload (same bytes as `git cat-file -p`).
 
@@ -69,6 +69,10 @@ Pass `--json` for stable, scripting-friendly output:
 | `content.omitted_inline` | boolean | When `true`, the blob is too large to embed; human mode streams bytes to stdout. |
 | `content.entries` | array | Tree lines with `mode`, `type`, `oid`, and `path`. |
 
+Blobs of at least 1 MiB omit both `text` and `data_base64` and set
+`omitted_inline` to `true`. Use human output redirected to a file to retrieve
+their bytes. Commit and tag payloads remain inline regardless of size.
+
 Example (blob):
 
 ```json
@@ -89,7 +93,7 @@ Example (blob):
 
 Schema: [v1](/schemas/cat/v1.json)
 
-Pass `--markdown` for a short summary and a fenced block (or table for trees) of the object contents. Binary blobs are summarized in Markdown; use `--json` for base64 payload.
+Pass `--markdown` for a short summary and a fenced block (or table for trees) of the object contents. Binary blobs are summarized in Markdown; use `--json` for base64 payloads smaller than 1 MiB. Larger blobs include metadata and an omission notice.
 
 
 

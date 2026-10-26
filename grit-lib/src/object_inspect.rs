@@ -408,7 +408,11 @@ impl Repository {
         }
     }
 
-    /// Copy an object's uncompressed payload to `writer` without loading it whole.
+    /// Copy an object's uncompressed payload to `writer`, honoring replacement refs.
+    ///
+    /// Loose objects and objects stored whole in a pack stream in bounded memory.
+    /// Pack deltas are reconstructed in memory before copying, as with
+    /// [`crate::odb::Odb::with_stream`].
     ///
     /// Returns `Ok(None)` when the object is missing. On success, returns the number of
     /// payload bytes written (the size recorded in the object database).

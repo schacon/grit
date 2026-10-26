@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::objects::pack::read_pack_index_no_verify;
-use grit_lib::progress::NeverCancel;
+use grit_lib::progress::{NeverCancel, ProgressPhase, ProgressSink};
 use grit_lib::remote::clone::{clone as clone_repo, CloneOptions};
 use grit_lib::remote::fetch::NoProgress;
 
@@ -42,6 +42,71 @@ fn pack_basenames(git_dir: &Path) -> Vec<String> {
 
 fn index_object_count(idx_path: &Path) -> usize {
     read_pack_index_no_verify(idx_path).expect("read idx").len()
+}
+
+#[derive(Default)]
+struct CopyProgress {
+    phase: Option<ProgressPhase>,
+    count: u64,
+    completed: Vec<u64>,
+}
+
+impl grit_lib::remote::fetch::Progress for CopyProgress {}
+
+impl ProgressSink for CopyProgress {
+    fn start(&mut self, phase: ProgressPhase, _total: Option<u64>) {
+        self.phase = Some(phase);
+        self.count = 0;
+    }
+
+    fn inc(&mut self, units: u64) {
+        self.count += units;
+    }
+
+    fn set(&mut self, count: u64) {
+        self.count = count;
+    }
+
+    fn finish(&mut self) {
+        if self.phase.take() == Some(ProgressPhase::CopyingObjects) {
+            self.completed.push(self.count);
+        }
+    }
+}
+
+#[test]
+fn clone_local_loose_source_links_blobs_and_reports_all_kinds() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let source = tmp.path().join("source");
+    std::fs::create_dir(&source).expect("source");
+    git(&source, &["init", "-q", "-b", "main"]);
+    let payload = vec![0u8; 64 * 1024];
+    std::fs::write(source.join("blob.bin"), &payload).expect("blob");
+    git(&source, &["add", "blob.bin"]);
+    git(&source, &["commit", "-qm", "loose blob"]);
+    assert!(pack_basenames(&source.join(".git")).is_empty());
+
+    for depth in [None, Some(1)] {
+        let dest = tmp.path().join(format!("dest-{depth:?}"));
+        let mut options = CloneOptions::new(source.to_string_lossy(), dest.clone());
+        options.depth = depth;
+        let mut progress = CopyProgress::default();
+        let outcome =
+            clone_repo(options, &mut progress, &NeverCancel, None).expect("clone loose source");
+        assert_eq!(outcome.transfer.objects, 3);
+        assert_eq!(progress.completed.last(), Some(&3));
+        let kinds = outcome.transfer.kinds.expect("object kinds");
+        assert_eq!(kinds.blobs, 1);
+        assert_eq!(kinds.trees, 1);
+        assert_eq!(kinds.commits, 1);
+        assert_eq!(kinds.tags, 0);
+        assert_eq!(
+            std::fs::read(dest.join("blob.bin")).expect("checkout"),
+            payload
+        );
+        assert!(pack_basenames(&dest.join(".git")).is_empty());
+        git(&dest, &["fsck", "--strict"]);
+    }
 }
 
 #[test]

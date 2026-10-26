@@ -324,6 +324,56 @@ Big files are slower than before because the pack level (`pack.compression`, def
 ./target/release/grit-bench --warmup 1 --min-runs 3 --format json --output grit-utils/baselines/add-big-file.json add-big-file --megabytes 256,1024
 ```
 
+## Large-blob reads and restaging (2026-10-26)
+
+Issue #2010 exposed copies of blob payloads in `cat`, unnecessary writes when
+restaging unchanged content, and a local-clone statistics walk that inflated
+blobs just to count them. Cat now uses the library's replacement-aware payload
+stream. Restaging uses the same streaming hash threshold as status and stores
+content only when its object id changes. Local transfers link loose objects,
+and the statistics walk reads blob headers without loading their payloads.
+
+Linux, 4 vCPUs, release builds, system Git 2.55.0, baseline `origin/main`
+`c190a4fff`. The committed `large-blob-memory-before.json` and
+`large-blob-memory-after.json` record `/usr/bin/time -v` wall time and peak RSS
+for incompressible binary files. Cat, restore and clone use three runs with
+rotating tool order on identical sources; the table reports medians. Status and
+add are single runs after moving the file's mtime into the future without
+changing its bytes. Every clone passes system `git fsck --strict` and a blob
+hash comparison.
+
+| Operation | Git seconds | Main seconds | After seconds | Git RSS MiB | Main RSS MiB | After RSS MiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Status, 128 MiB | 0.36 | 0.13 | 0.09 | 133.1 | 13.7 | 14.8 |
+| Add, 128 MiB | 0.39 | 0.35 | 0.09 | 132.9 | 140.4 | 13.6 |
+| Status, 1 GiB | 2.56 | 1.61 | 1.03 | 5.3 | 13.4 | 15.0 |
+| Add, 1 GiB | 44.90 | 31.29 | 0.84 | 5.0 | 12.9 | 13.3 |
+| Cat, loose 1 GiB | 0.41 | 1.12 | 0.21 | 1028.8 | 4449.7 | 12.7 |
+| Restore, loose 1 GiB | 0.73 | 1.02 | 0.94 | 1029.1 | 14.3 | 14.4 |
+| Clone, loose 1 GiB | 0.74 | 0.72 | 0.32 | 1029.5 | 2061.0 | 15.4 |
+| Cat, packed 1 GiB | 0.37 | 1.33 | 0.23 | 1028.9 | 5474.2 | 1036.8 |
+| Restore, packed 1 GiB | 0.69 | 0.99 | 0.94 | 1029.6 | 1038.4 | 1038.4 |
+| Clone, packed 1 GiB | 0.71 | 0.38 | 0.31 | 1029.7 | 1039.7 | 1039.8 |
+
+Linux RSS includes resident pages of memory-mapped object files, which explains
+the roughly 1 GiB floor for packed reads here. Loose-object cat and clone now
+stay near their fixed process overhead. Pack deltas still require reconstruction
+in memory. Restore was already streaming on this Linux baseline; these results
+do not claim validation of the original Windows-specific restore spike.
+
+Reproduce the memory guard after building both helper binaries:
+
+```bash
+cargo build --release -p grit-cli -p grit-utils
+GRIT_LARGE_BLOB_MEMORY=1 cargo test -p grit-lib --test large_blob_memory
+```
+
+To create the loose 1 GiB fixture, set `core.bigFileThreshold=2g` for the
+system `git hash-object -w` command before building its tree and commit. Without
+that override, Git stores the large file in a pack. Compare `git cat-file blob
+<oid>` with `grit cat HEAD:big.bin`, and local `git clone` with `grit clone`;
+redirect cat output to `/dev/null` and use a fresh clone destination each time.
+
 ## Clean-tree status (2026-10-24)
 
 Dogfooding on Windows (issue #1702) found `grit status` re-reading tracked files on clean trees and running 3.5–5× slower than Git on rust-lang/cargo and git.git. Four causes, all in `grit-lib`:

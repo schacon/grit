@@ -467,6 +467,38 @@ fn stream_object_payload_follows_replace_refs() {
 }
 
 #[test]
+fn stream_object_payload_reports_missing_objects_and_writer_errors() {
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _bytes: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("writer failed"))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    commit_file(wt, "f.txt", "payload", "initial");
+    let repo = open_grit_repo(wt);
+    let missing = grit_lib::objects::ObjectId::from_hex("0000000000000000000000000000000000000000")
+        .expect("oid");
+    assert_eq!(
+        repo.stream_object_payload_to(&missing, &mut Vec::new())
+            .expect("missing object"),
+        None
+    );
+    let oid = repo.resolve("HEAD:f.txt").expect("resolve").oid;
+    assert!(matches!(
+        repo.stream_object_payload_to(&oid, &mut FailingWriter),
+        Err(grit_lib::error::Error::Io(_))
+    ));
+}
+
+#[test]
 fn resolve_and_cat_respect_git_no_replace_objects() {
     let hist = HistoryRepo::init();
     let wt = hist.worktree();
