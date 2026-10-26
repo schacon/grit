@@ -12,6 +12,18 @@ fn push_bucket(map: &mut HashMap<u32, FoldBucket>, path: Vec<u8>) {
     map.entry(memihash(&path)).or_default().push(path);
 }
 
+/// Add every leading directory of `path` (`a`, `a/b` for `a/b/c`), deepest first, stopping
+/// at the first one already present since its ancestors were added with it.
+fn insert_leading_dirs<'a>(dirs: &mut hashbrown::HashSet<&'a [u8]>, path: &'a [u8]) {
+    let mut end = path.len();
+    while let Some(slash) = path[..end].iter().rposition(|&b| b == b'/') {
+        if !dirs.insert(&path[..slash]) {
+            return;
+        }
+        end = slash;
+    }
+}
+
 fn bucket_has_path<P: AsRef<[u8]>>(bucket: &[P], path: &[u8]) -> bool {
     bucket
         .iter()
@@ -26,6 +38,8 @@ fn bucket_has_path<P: AsRef<[u8]>>(bucket: &[P], path: &[u8]) -> bool {
 pub struct Stage0TrackedPaths<'a> {
     exact: hashbrown::HashSet<&'a [u8]>,
     folded: Option<HashMap<u32, Vec<&'a [u8]>>>,
+    /// Leading directories of stage-0 entries, bucketed by case-folded hash (`ignorecase` only).
+    folded_dirs: Option<HashMap<u32, Vec<&'a [u8]>>>,
 }
 
 impl<'a> Stage0TrackedPaths<'a> {
@@ -35,22 +49,45 @@ impl<'a> Stage0TrackedPaths<'a> {
     pub fn from_index_for_untracked_scan(index: &'a Index, ignorecase: bool) -> Self {
         if ignorecase {
             let mut folded: HashMap<u32, Vec<&'a [u8]>> = HashMap::new();
+            let mut dirs: hashbrown::HashSet<&'a [u8]> = hashbrown::HashSet::new();
             for e in &index.entries {
                 folded
                     .entry(memihash(&e.path))
                     .or_default()
                     .push(e.path.as_slice());
+                if e.stage() == 0 {
+                    insert_leading_dirs(&mut dirs, &e.path);
+                }
+            }
+            let mut folded_dirs: HashMap<u32, Vec<&'a [u8]>> = HashMap::new();
+            for dir in dirs {
+                folded_dirs.entry(memihash(dir)).or_default().push(dir);
             }
             Self {
                 exact: hashbrown::HashSet::new(),
                 folded: Some(folded),
+                folded_dirs: Some(folded_dirs),
             }
         } else {
             Self {
                 exact: index.entries.iter().map(|e| e.path.as_slice()).collect(),
                 folded: None,
+                folded_dirs: None,
             }
         }
+    }
+
+    /// Whether some stage-0 entry lives under directory `dir` spelled with different ASCII
+    /// case (Git's case-insensitive directory lookup under `core.ignorecase`).
+    ///
+    /// Always `false` for a table built without `ignorecase`; exact-case descendants are
+    /// answered by [`Index::has_stage0_descendant_under`].
+    #[must_use]
+    pub fn has_dir_ignoring_case(&self, dir: &[u8]) -> bool {
+        self.folded_dirs.as_ref().is_some_and(|dirs| {
+            dirs.get(&memihash(dir))
+                .is_some_and(|bucket| bucket_has_path(bucket, dir))
+        })
     }
 
     /// Whether a repository-relative path is already tracked at stage 0 (raw index bytes).
@@ -172,6 +209,26 @@ mod tests {
             path: path.as_bytes().to_vec(),
             base_index_pos: 0,
         }
+    }
+
+    #[test]
+    fn has_dir_ignoring_case_finds_every_leading_directory() {
+        let mut index = Index::new();
+        index.push_entry_unsorted(dummy_entry("Build/Sub/t.o"));
+        index.push_entry_unsorted(dummy_entry("Build/u.o"));
+        index.push_entry_unsorted(dummy_entry("README"));
+        let tracked = Stage0TrackedPaths::from_index_for_untracked_scan(&index, true);
+        for dir in ["build", "BUILD", "Build", "build/sub", "BUILD/SUB"] {
+            assert!(tracked.has_dir_ignoring_case(dir.as_bytes()), "{dir}");
+        }
+        for not_dir in ["readme", "build/t.o", "build/su", "buil", "sub", ""] {
+            assert!(
+                !tracked.has_dir_ignoring_case(not_dir.as_bytes()),
+                "{not_dir}"
+            );
+        }
+        let exact = Stage0TrackedPaths::from_index_for_untracked_scan(&index, false);
+        assert!(!exact.has_dir_ignoring_case(b"build"));
     }
 
     #[test]
