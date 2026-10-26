@@ -1,11 +1,10 @@
 //! `grit cat` — show object contents (blob, tree, commit, or tag).
 
-use std::io::Write;
+use std::io::{self, Write};
 
 use crate::revision_errors::map_resolve_error;
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use grit_lib::error::Error;
 use grit_lib::object_inspect::{format_tree_cat_file_p, tree_entry_mode_cat_file_p};
 use grit_lib::objects::{Object, ObjectKind};
 use schemars::JsonSchema;
@@ -24,6 +23,10 @@ pub struct BlobJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub data_base64: Option<String>,
+    /// When the blob is too large to embed inline in JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub omitted_inline: Option<bool>,
 }
 
 /// One tree line in JSON (same fields as human `ls-tree` output).
@@ -69,24 +72,14 @@ pub struct CatOutcome {
     pub kind: String,
     pub size: u64,
     pub content: CatContentJson,
-    /// Raw bytes written to stdout in human mode (omitted from JSON).
+    /// Raw bytes written to stdout in human mode (omitted from JSON). Empty when streamed.
     #[serde(skip)]
     #[schemars(skip)]
     pub human_raw: Option<Vec<u8>>,
-    /// Large blob payload was already copied to stdout during [`run`].
-    #[serde(skip)]
-    #[schemars(skip)]
-    pub human_blob_streamed: bool,
 }
-
-/// Blobs at or above this size stream straight to stdout in human mode.
-const CAT_STREAM_THRESHOLD: u64 = 1024 * 1024;
 
 impl HumanRender for CatOutcome {
     fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
-        if self.human_blob_streamed {
-            return Ok(());
-        }
         if let Some(bytes) = &self.human_raw {
             w.write_all(bytes)
                 .map_err(|e| anyhow::anyhow!("writing object: {e}"))?;
@@ -105,7 +98,12 @@ impl MarkdownRender for CatOutcome {
         outln!(w);
         match &self.content {
             CatContentJson::Blob(b) => {
-                if let Some(text) = &b.text {
+                if b.omitted_inline == Some(true) {
+                    outln!(
+                        w,
+                        "_large binary blob (streamed in human mode; omitted from JSON)_"
+                    );
+                } else if let Some(text) = &b.text {
                     outln!(w, "```text");
                     outln!(w, "{text}");
                     outln!(w, "```");
@@ -141,59 +139,98 @@ impl MarkdownRender for CatOutcome {
     }
 }
 
-pub fn run(spec: String, mode: OutputMode) -> Result<CatOutcome> {
+/// Maximum blob size whose bytes are embedded in `--json` output.
+const JSON_INLINE_BLOB_MAX: u64 = 1024 * 1024;
+
+pub fn run(spec: String, output: OutputMode) -> Result<CatOutcome> {
     let (repo, sink) = context::discover_with_warnings()?;
     let resolved = repo
         .resolve(&spec)
         .map_err(|e| map_resolve_error(&spec, e))?;
-    let info = repo.read_object_info_for_display(&resolved.oid)?;
-    let stream_human_blob = mode == OutputMode::Human
-        && info.kind == ObjectKind::Blob
-        && info.size >= CAT_STREAM_THRESHOLD;
-    if stream_human_blob {
-        repo.with_object_stream_for_display(&resolved.oid, |mut stream| {
-            std::io::copy(&mut stream.reader, &mut std::io::stdout()).map_err(Error::Io)
-        })?
-        .ok_or_else(|| grit_lib::error::Error::ObjectNotFound(resolved.oid.to_hex()))?;
-        let placeholder = CatContentJson::Blob(BlobJson {
-            encoding: "binary".to_owned(),
+
+    match resolved.kind {
+        ObjectKind::Blob => run_blob(
+            &repo,
+            spec,
+            resolved.oid,
+            resolved.size,
+            output,
+            sink.warnings(),
+        ),
+        kind => {
+            let obj = repo
+                .read_object_raw_for_display(&resolved.oid)
+                .with_context(|| format!("read object {}", resolved.oid.to_hex()))?;
+            let (content, human_raw) = build_content_for_kind(&repo, kind, &obj)?;
+            Ok(CatOutcome {
+                warnings: sink.warnings(),
+                spec,
+                oid: resolved.oid.to_hex(),
+                kind: kind_label(kind).to_owned(),
+                size: resolved.size,
+                content,
+                human_raw: Some(human_raw),
+            })
+        }
+    }
+}
+
+fn run_blob(
+    repo: &grit_lib::repo::Repository,
+    spec: String,
+    oid: grit_lib::objects::ObjectId,
+    size: u64,
+    output: OutputMode,
+    warnings: Vec<crate::diagnostics::WarningRecord>,
+) -> Result<CatOutcome> {
+    let large = size >= JSON_INLINE_BLOB_MAX;
+    let stream_human = matches!(output, OutputMode::Human) && large;
+    if stream_human {
+        repo.stream_object_payload_to(&oid, &mut io::stdout())?
+            .ok_or_else(|| anyhow::anyhow!("object not found: {}", oid.to_hex()))?;
+    }
+
+    let omitted_blob = || {
+        CatContentJson::Blob(BlobJson {
+            encoding: "base64".to_owned(),
             text: None,
             data_base64: None,
-        });
-        return Ok(CatOutcome {
-            warnings: sink.warnings(),
-            spec,
-            oid: resolved.oid.to_hex(),
-            kind: kind_label(info.kind).to_owned(),
-            size: resolved.size,
-            content: placeholder,
-            human_raw: None,
-            human_blob_streamed: true,
-        });
-    }
-    let obj = repo
-        .read_object_raw_for_display(&resolved.oid)
-        .with_context(|| format!("read object {}", resolved.oid.to_hex()))?;
-    let (content, human_raw) = build_content(&repo, &obj)?;
+            omitted_inline: Some(true),
+        })
+    };
+
+    let (content, human_raw) = if large && (stream_human || !matches!(output, OutputMode::Human)) {
+        (omitted_blob(), None)
+    } else {
+        let data = repo
+            .read_object_raw_for_display(&oid)
+            .with_context(|| format!("read object {}", oid.to_hex()))?
+            .data;
+        let json = blob_payload_json(&data, size);
+        let raw = matches!(output, OutputMode::Human).then(|| data);
+        (CatContentJson::Blob(json), raw)
+    };
+
     Ok(CatOutcome {
-        warnings: sink.warnings(),
+        warnings,
         spec,
-        oid: resolved.oid.to_hex(),
-        kind: kind_label(obj.kind).to_owned(),
-        size: resolved.size,
+        oid: oid.to_hex(),
+        kind: "blob".to_owned(),
+        size,
         content,
-        human_raw: Some(human_raw),
-        human_blob_streamed: false,
+        human_raw,
     })
 }
 
-fn build_content(
+fn build_content_for_kind(
     repo: &grit_lib::repo::Repository,
+    kind: ObjectKind,
     obj: &Object,
 ) -> Result<(CatContentJson, Vec<u8>)> {
-    match obj.kind {
+    match kind {
         ObjectKind::Blob => {
-            let json = blob_payload_json(&obj.data);
+            let json =
+                blob_payload_json(&obj.data, u64::try_from(obj.data.len()).unwrap_or(u64::MAX));
             Ok((CatContentJson::Blob(json), obj.data.clone()))
         }
         ObjectKind::Tree => {
@@ -225,26 +262,43 @@ fn build_content(
 }
 
 fn text_object_json(data: &[u8]) -> TextObjectJson {
-    let b = blob_payload_json(data);
-    TextObjectJson {
-        encoding: b.encoding,
-        text: b.text,
-        data_base64: b.data_base64,
+    if data.is_empty() || std::str::from_utf8(data).is_ok() {
+        TextObjectJson {
+            encoding: "utf-8".to_owned(),
+            text: Some(String::from_utf8_lossy(data).into_owned()),
+            data_base64: None,
+        }
+    } else {
+        TextObjectJson {
+            encoding: "base64".to_owned(),
+            text: None,
+            data_base64: Some(STANDARD.encode(data)),
+        }
     }
 }
 
-fn blob_payload_json(data: &[u8]) -> BlobJson {
+fn blob_payload_json(data: &[u8], size: u64) -> BlobJson {
+    if size > JSON_INLINE_BLOB_MAX {
+        return BlobJson {
+            encoding: "base64".to_owned(),
+            text: None,
+            data_base64: None,
+            omitted_inline: Some(true),
+        };
+    }
     if data.is_empty() || std::str::from_utf8(data).is_ok() {
         BlobJson {
             encoding: "utf-8".to_owned(),
             text: Some(String::from_utf8_lossy(data).into_owned()),
             data_base64: None,
+            omitted_inline: None,
         }
     } else {
         BlobJson {
             encoding: "base64".to_owned(),
             text: None,
             data_base64: Some(STANDARD.encode(data)),
+            omitted_inline: None,
         }
     }
 }
