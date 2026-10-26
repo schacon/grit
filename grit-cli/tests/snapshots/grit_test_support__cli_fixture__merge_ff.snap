@@ -6,17 +6,17 @@ expression: payload
 {
   "human": {
     "exit": 0,
-    "stdout": "Fast-forwarded main → 0678d03\n",
+    "stdout": "Fast-forwarded feature → 0678d03 (main)\n",
     "stderr": ""
   },
   "json": {
     "exit": 0,
-    "stdout": "{\"result\":\"fast_forward\",\"branch\":\"main\",\"oid\":\"0678d0320dac162a518bfd0ee738896acdcc0f6b\",\"change_id\":\"xpwskqqvntzxwyvprokvsuqultwlpsql\"}\n",
+    "stdout": "{\"result\":\"fast_forward\",\"branch\":\"main\",\"updated_branch\":\"feature\",\"oid\":\"0678d0320dac162a518bfd0ee738896acdcc0f6b\",\"change_id\":\"xpwskqqvntzxwyvprokvsuqultwlpsql\"}\n",
     "stderr": ""
   },
   "markdown": {
     "exit": 0,
-    "stdout": "## Merge\n\n- Fast-forwarded **`main`** → `0678d03`\n- change id `xpwskqq`\n",
+    "stdout": "## Merge\n\n- Fast-forwarded **`feature`** → `0678d03` (**`main`**)\n- change id `xpwskqq`\n",
     "stderr": ""
   }
 }
