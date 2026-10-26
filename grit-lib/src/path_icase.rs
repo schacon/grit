@@ -239,12 +239,14 @@ pub fn worktree_path_for_index_entry(
     index_rel: &str,
     ignorecase: bool,
 ) -> PathBuf {
-    if ignorecase {
-        if let Some(spelling) = worktree_dentry_spelling(work_tree, index_rel) {
-            return work_tree.join(spelling);
-        }
+    let direct = work_tree.join(index_rel);
+    if !ignorecase || direct.exists() {
+        return direct;
     }
-    work_tree.join(index_rel)
+    if let Some(spelling) = worktree_dentry_spelling(work_tree, index_rel) {
+        return work_tree.join(spelling);
+    }
+    direct
 }
 
 /// Stage-0 blob paths that share a worktree slot under `core.ignorecase` (sorted, unique).
@@ -278,8 +280,8 @@ pub fn index_path_matches_worktree_dentry(work_tree: &Path, index_rel: &str) -> 
 /// Stage-0 checkout collision groups keyed by a stable group id (built once per pass).
 #[derive(Debug, Default)]
 pub(crate) struct IcaseIndexCollisionGroups {
-    path_to_group: HashMap<Vec<u8>, u32>,
-    members_by_group: HashMap<u32, Vec<String>>,
+    path_to_group: HashMap<Vec<u8>, usize>,
+    members_by_group: HashMap<usize, Vec<String>>,
 }
 
 impl IcaseIndexCollisionGroups {
@@ -291,12 +293,11 @@ impl IcaseIndexCollisionGroups {
         let grouped = icase_collision_groups(&paths, true);
         let mut path_to_group = HashMap::new();
         let mut members_by_group = HashMap::new();
-        for group in grouped {
-            let key = memihash(group[0].as_bytes());
-            members_by_group.insert(key, group.clone());
-            for path in group {
-                path_to_group.insert(path.into_bytes(), key);
+        for (key, group) in grouped.into_iter().enumerate() {
+            for path in &group {
+                path_to_group.insert(path.clone().into_bytes(), key);
             }
+            members_by_group.insert(key, group);
         }
         Self {
             path_to_group,
@@ -316,7 +317,7 @@ impl IcaseIndexCollisionGroups {
 #[derive(Debug, Default)]
 pub(crate) struct IcaseCheckoutCollisionMap {
     groups: IcaseIndexCollisionGroups,
-    winner_by_group: HashMap<u32, String>,
+    winner_by_group: HashMap<usize, String>,
 }
 
 impl IcaseCheckoutCollisionMap {
@@ -472,12 +473,6 @@ pub fn icase_worktree_file_stats(
         bytes += group_bytes;
     }
     (files, bytes)
-}
-
-/// Whether another stage-0 path shares this index entry's worktree slot under `core.ignorecase`.
-#[must_use]
-pub fn has_icase_checkout_collision_sibling(index: &Index, index_rel: &str) -> bool {
-    IcaseIndexCollisionGroups::from_index(index, true).has_collision_sibling(index_rel)
 }
 
 fn icase_collision_groups(paths: &[String], ignorecase: bool) -> Vec<Vec<String>> {
@@ -658,10 +653,34 @@ mod tests {
         assert!(!index_path_matches_worktree_dentry(wt, "File.txt"));
     }
 
+    fn worktree_has_distinct_icase_dentries(base: &Path) -> bool {
+        // Only case may differ, so alias lookup detects filesystem case folding.
+        let upper = base.join(".GRIT_ICASE_PROBE");
+        let lower = base.join(".grit_icase_probe");
+        let _ = std::fs::remove_dir_all(&upper);
+        let _ = std::fs::remove_dir_all(&lower);
+        if std::fs::create_dir(&upper).is_err() {
+            return false;
+        }
+        let distinct = !lower.exists();
+        let _ = std::fs::remove_dir_all(&upper);
+        distinct
+    }
+
     #[test]
     fn dentry_spelling_skips_empty_case_duplicate_dir() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let wt = tmp.path();
+        if !worktree_has_distinct_icase_dentries(wt) {
+            std::fs::create_dir_all(wt.join("dir")).expect("dir");
+            std::fs::write(wt.join("dir/A.txt"), b"x").expect("write");
+            assert_eq!(
+                worktree_dentry_spelling(wt, "Dir/a.txt").as_deref(),
+                Some("dir/A.txt")
+            );
+            assert!(!index_path_matches_worktree_dentry(wt, "Dir/a.txt"));
+            return;
+        }
         std::fs::create_dir(wt.join("Dir")).expect("Dir");
         std::fs::create_dir_all(wt.join("dir")).expect("dir");
         std::fs::write(wt.join("dir/A.txt"), b"x").expect("write");
@@ -670,6 +689,27 @@ mod tests {
             Some("dir/A.txt")
         );
         assert!(!index_path_matches_worktree_dentry(wt, "Dir/a.txt"));
+    }
+
+    #[test]
+    fn worktree_path_for_index_entry_uses_direct_path_when_present() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wt = tmp.path();
+        std::fs::write(wt.join("tracked.txt"), b"x").expect("write");
+        let resolved = worktree_path_for_index_entry(wt, "tracked.txt", true);
+        assert_eq!(resolved, wt.join("tracked.txt"));
+    }
+
+    #[test]
+    fn worktree_path_for_index_entry_resolves_missing_direct_spelling() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wt = tmp.path();
+        std::fs::write(wt.join("file.txt"), b"x").expect("write");
+        if wt.join("File.txt").exists() {
+            return;
+        }
+        let resolved = worktree_path_for_index_entry(wt, "File.txt", true);
+        assert_eq!(resolved, wt.join("file.txt"));
     }
 
     #[test]
@@ -762,5 +802,30 @@ mod tests {
             !tracked.contains_bytes(b"f0688b8.txt"),
             "hash collision must not treat distinct paths as tracked"
         );
+    }
+
+    #[test]
+    fn memihash_distinct_collision_groups_keep_separate_auto_stage_winners() {
+        assert_eq!(memihash(b"f02398b.txt"), memihash(b"f0688b8.txt"));
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wt = tmp.path();
+        std::fs::write(wt.join("f02398b.txt"), b"one\n").expect("write");
+        std::fs::write(wt.join("f0688b8.txt"), b"two\n").expect("write");
+        let mut index = Index::new();
+        for path in ["F02398b.txt", "f02398b.txt", "F0688b8.txt", "f0688b8.txt"] {
+            index.push_entry_unsorted(dummy_entry(path));
+        }
+        index.sort();
+        let map = IcaseCheckoutCollisionMap::from_index(wt, &index, true);
+        assert!(
+            !map.is_auto_stage_loser(b"f02398b.txt"),
+            "dentry winner must not be treated as a collision loser"
+        );
+        assert!(
+            !map.is_auto_stage_loser(b"f0688b8.txt"),
+            "second collision group must not inherit the first group's loser logic"
+        );
+        assert!(map.is_auto_stage_loser(b"F02398b.txt"));
+        assert!(map.is_auto_stage_loser(b"F0688b8.txt"));
     }
 }

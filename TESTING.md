@@ -28,6 +28,19 @@ cargo test --workspace
 cargo test -p grit-lib --lib --release
 ```
 
+### Case-insensitive worktree tests
+
+Run the dentry spelling regression on case-insensitive, case-preserving storage
+(for example, default macOS storage or a Linux ciopfs mount). Point `TMPDIR` at
+that volume so the test's temporary worktree uses its filesystem semantics:
+
+```bash
+TMPDIR=/path/to/case-insensitive-volume cargo test -p grit-lib --lib \
+  path_icase::tests::dentry_spelling_skips_empty_case_duplicate_dir -- --exact --nocapture
+```
+
+Also run it on case-sensitive storage to cover the distinct-directory case.
+
 ### Release and benchmark binaries
 
 The workspace root [`Cargo.toml`](Cargo.toml) defines two profiles:
