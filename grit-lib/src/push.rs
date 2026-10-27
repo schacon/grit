@@ -891,7 +891,12 @@ fn decide_push_wire(
     // of the source; otherwise non-fast-forward (allowed only with force).
     let is_ff = if spec.force {
         false
-    } else if crate::merge_base::is_ancestor_odb_walk(local_odb, old, src)? {
+    } else if crate::merge_base::is_ancestor_odb_walk_with_graph(
+        local_odb,
+        local_odb.commit_graph_chain().as_deref(),
+        old,
+        src,
+    )? {
         true
     } else {
         crate::merge_base::is_ancestor(local, old, src).unwrap_or(false)

@@ -1380,6 +1380,18 @@ impl Odb {
         &self.objects_dir
     }
 
+    /// The repository's commit-graph chain, loaded at most once per repository handle.
+    ///
+    /// `None` when this database is not attached to a repository's caches (built
+    /// standalone) or has no readable commit-graph; callers then read commits directly.
+    pub(crate) fn commit_graph_chain(
+        &self,
+    ) -> Option<Arc<crate::commit_graph_file::CommitGraphChain>> {
+        self.shared_config_state
+            .as_ref()?
+            .commit_graph_chain(self.objects_dir())
+    }
+
     fn try_read_extra_sources(&self, oid: &ObjectId) -> Result<Option<Object>> {
         for src in &self.extra_read_sources {
             if let Some(obj) = src.read(oid)? {

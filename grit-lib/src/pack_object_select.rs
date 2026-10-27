@@ -5,6 +5,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::bitmap_walk::{BitmapWalkError, ReachabilityQuery, ReachableSet};
+use crate::commit_graph_file::{CommitGraphChain, UNRANKED_GENERATION};
 use crate::environment::RepositoryOptions;
 use crate::error::Result;
 use crate::objects::{
@@ -343,6 +344,7 @@ fn send_pack_uninteresting_commits(
 ) -> Result<HashSet<ObjectId>> {
     struct SendPackRevWalk<'a> {
         odb: &'a Odb,
+        graph: Option<Arc<CommitGraphChain>>,
         shallow_grafts: &'a HashSet<ObjectId>,
         reach: HashMap<ObjectId, u8>,
         heap: BinaryHeap<QueuedCommit>,
@@ -393,6 +395,9 @@ fn send_pack_uninteresting_commits(
             if !self.reach_unqueued(oid, flag) {
                 return Ok(());
             }
+            if self.queue_from_graph(oid) {
+                return Ok(());
+            }
             match self.odb.read(&oid) {
                 Ok(obj) => self.queue_commit(oid, &obj),
                 Err(_) => Ok(()),
@@ -407,6 +412,12 @@ fn send_pack_uninteresting_commits(
             let mut oid = tip;
             let mut tags_seen: Option<HashSet<ObjectId>> = None;
             loop {
+                if self.graph_lists(&oid) {
+                    if self.reach_unqueued(oid, flag) {
+                        self.queue_from_graph(oid);
+                    }
+                    return Ok(());
+                }
                 let Ok(obj) = self.odb.read(&oid) else {
                     return Ok(());
                 };
@@ -430,6 +441,29 @@ fn send_pack_uninteresting_commits(
             }
         }
 
+        fn graph_lists(&self, oid: &ObjectId) -> bool {
+            self.graph
+                .as_deref()
+                .is_some_and(|g| g.find_commit(oid).is_some())
+        }
+
+        /// Queue `oid` from the commit-graph without reading the object; false when the
+        /// graph does not list it.
+        fn queue_from_graph(&mut self, oid: ObjectId) -> bool {
+            let Some(entry) = self.graph.as_deref().and_then(|g| g.graph_walk_entry(&oid)) else {
+                return false;
+            };
+            self.push_queued(QueuedCommit {
+                generation: entry.generation,
+                time: entry.time,
+                seq: std::cmp::Reverse(self.next_seq),
+                oid,
+                tree: entry.tree,
+                parents: entry.parents,
+            });
+            true
+        }
+
         fn queue_commit(&mut self, oid: ObjectId, obj: &Object) -> Result<()> {
             if obj.kind != ObjectKind::Commit {
                 return Ok(());
@@ -437,24 +471,40 @@ fn send_pack_uninteresting_commits(
             let parsed = CommitRef::parse(&obj.data)?;
             #[cfg(test)]
             send_pack_walk_test_hooks::record_commit_read();
-            self.on_heap.insert(oid);
-            if send_pack_reach_interesting(*self.reach.get(&oid).unwrap_or(&0)) {
-                self.interesting_on_heap += 1;
-            }
-            self.heap.push(QueuedCommit {
+            self.push_queued(QueuedCommit {
+                generation: UNRANKED_GENERATION,
                 time: parsed.committer_unix_seconds_for_ordering(),
                 seq: std::cmp::Reverse(self.next_seq),
                 oid,
                 tree: parsed.tree(),
                 parents: parsed.parents().to_vec(),
             });
-            self.next_seq += 1;
             Ok(())
+        }
+
+        fn push_queued(&mut self, queued: QueuedCommit) {
+            self.on_heap.insert(queued.oid);
+            if send_pack_reach_interesting(*self.reach.get(&queued.oid).unwrap_or(&0)) {
+                self.interesting_on_heap += 1;
+            }
+            self.heap.push(queued);
+            self.next_seq += 1;
         }
     }
 
+    // Commits the graph lists come from it without inflating the object, and are ordered by
+    // generation: commits outside the graph (new local work) are expanded first, so a push whose
+    // commits are dated before the remote's history does not drain that whole history before
+    // reaching them. Shallow repositories keep reading commits, since the graph does not know
+    // their grafted boundaries.
+    let graph = if shallow_grafts.is_empty() {
+        odb.commit_graph_chain()
+    } else {
+        None
+    };
     let mut walk = SendPackRevWalk {
         odb,
+        graph,
         shallow_grafts,
         reach: HashMap::new(),
         heap: BinaryHeap::new(),
@@ -848,6 +898,8 @@ struct EnumerationWalk<'a> {
 /// A commit waiting in [`EnumerationWalk::commits`], ordered newest first and,
 /// among equal dates, in the order it was found.
 struct QueuedCommit {
+    /// Commit-graph generation; [`UNRANKED_GENERATION`] outside the graph, so those sort first.
+    generation: u64,
     time: i64,
     seq: std::cmp::Reverse<u64>,
     oid: ObjectId,
@@ -857,7 +909,7 @@ struct QueuedCommit {
 
 impl PartialEq for QueuedCommit {
     fn eq(&self, other: &Self) -> bool {
-        (self.time, self.seq) == (other.time, other.seq)
+        (self.generation, self.time, self.seq) == (other.generation, other.time, other.seq)
     }
 }
 
@@ -871,7 +923,7 @@ impl PartialOrd for QueuedCommit {
 
 impl Ord for QueuedCommit {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (self.time, self.seq).cmp(&(other.time, other.seq))
+        (self.generation, self.time, self.seq).cmp(&(other.generation, other.time, other.seq))
     }
 }
 
@@ -998,6 +1050,7 @@ impl<'a> EnumerationWalk<'a> {
     fn queue_commit(&mut self, oid: ObjectId, obj: Object) -> Result<()> {
         let parsed = CommitRef::parse(&obj.data)?;
         let queued = QueuedCommit {
+            generation: UNRANKED_GENERATION,
             time: parsed.committer_unix_seconds_for_ordering(),
             seq: std::cmp::Reverse(self.next_seq),
             oid,
@@ -1252,6 +1305,53 @@ mod tests {
             commit_parent_lookups() <= 128,
             "send-pack hide must stay coupled to the want walk ({} parent lookups)",
             commit_parent_lookups()
+        );
+    }
+
+    #[test]
+    fn push_dated_before_graphed_history_stops_at_the_frontier() {
+        use super::send_pack_walk_test_hooks::{commit_reads, reset_commit_reads};
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path(), &InitOptions::default()).unwrap();
+        let tree = write_tree(&repo, &[]);
+        // The remote's history, in the commit-graph, with a tag partway down.
+        let mut tip = write_commit(&repo, tree, &[], 1_300_000_000);
+        let mut tagged = tip;
+        for i in 1..300 {
+            tip = write_commit(&repo, tree, &[tip], 1_300_000_000 + i);
+            if i == 150 {
+                tagged = tip;
+            }
+        }
+        std::fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n")).unwrap();
+        repo.odb().write_commit_graph().unwrap();
+        // New local work outside the graph, dated before all of that history (a skewed
+        // clock, or fixed dates in a script).
+        let mut new_tip = tip;
+        for i in 0..3 {
+            new_tip = write_commit(&repo, tree, &[new_tip], 1_000_000_000 + i);
+        }
+
+        reset_commit_reads();
+        let hidden = send_pack_uninteresting_commits(
+            repo.odb(),
+            &[new_tip],
+            &[tip, tagged],
+            &HashSet::new(),
+        )
+        .unwrap();
+        assert!(hidden.contains(&tip));
+        assert!(hidden.contains(&tagged));
+        assert!(!hidden.contains(&new_tip));
+        assert_eq!(
+            commit_reads(),
+            3,
+            "only the commits outside the graph are read from the object store"
+        );
+        assert!(
+            hidden.len() <= 4,
+            "the walk must stop at the frontier, not drain the remote's history ({} marked)",
+            hidden.len()
         );
     }
 

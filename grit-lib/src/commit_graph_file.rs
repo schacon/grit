@@ -931,6 +931,23 @@ impl BloomWalkStats {
 /// Shared stats handle for [`crate::rev_list::RevListOptions::bloom_stats`].
 pub type BloomWalkStatsHandle = Arc<Mutex<BloomWalkStats>>;
 
+/// Generation reported for a commit the chain does not rank (absent, or no generation data).
+/// It sorts above every real generation, so history walks expand such commits first.
+pub(crate) const UNRANKED_GENERATION: u64 = (1u64 << 63) - 1;
+
+/// A commit as read from the chain by [`CommitGraphChain::graph_walk_entry`].
+#[derive(Debug, Clone)]
+pub(crate) struct GraphWalkEntry {
+    /// Root tree.
+    pub(crate) tree: ObjectId,
+    /// Parents, in commit order.
+    pub(crate) parents: Vec<ObjectId>,
+    /// Committer timestamp.
+    pub(crate) time: i64,
+    /// Corrected commit date, or [`UNRANKED_GENERATION`] when the chain has none.
+    pub(crate) generation: u64,
+}
+
 /// Loaded commit-graph chain (newest layer first, matching `commit-graph-chain` file order).
 #[derive(Debug, Clone)]
 pub struct CommitGraphChain {
@@ -1402,16 +1419,32 @@ impl CommitGraphChain {
         Some((tree, parents))
     }
 
+    /// Everything a date- or generation-ordered history walk needs for `oid`, from a single
+    /// lookup and without decompressing the commit. `None` when `oid` is not in the chain.
+    pub(crate) fn graph_walk_entry(&self, oid: &ObjectId) -> Option<GraphWalkEntry> {
+        let (layer_idx, lex) = self.find_commit(oid)?;
+        let layer = &self.layers[layer_idx];
+        let tree = layer.cdat_root_tree(lex)?;
+        let (parents, time) = self.graph_commit_at(layer_idx, lex)?;
+        Some(GraphWalkEntry {
+            tree,
+            parents,
+            time,
+            generation: layer
+                .corrected_commit_generation(lex)
+                .unwrap_or(UNRANKED_GENERATION),
+        })
+    }
+
     /// Generation number for ordering merge-base walks (`2^63-1` when unknown).
     #[must_use]
     pub fn commit_generation_for_walk(&self, oid: &ObjectId) -> u64 {
-        const UNRANKED: u64 = (1u64 << 63) - 1;
         let Some((layer_idx, lex)) = self.find_commit(oid) else {
-            return UNRANKED;
+            return UNRANKED_GENERATION;
         };
         self.layers[layer_idx]
             .corrected_commit_generation(lex)
-            .unwrap_or(UNRANKED)
+            .unwrap_or(UNRANKED_GENERATION)
     }
 
     /// Parent commit positions in global graph order (CDAT + EXTRA_EDGES), or `None` if `oid`

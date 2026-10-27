@@ -307,6 +307,12 @@ pub(crate) fn is_ancestor_odb_walk_with_graph(
     let mut parents_of: OidHashMap<Vec<ObjectId>> = oid_hash_map();
     let mut times: OidHashMap<i64> = oid_hash_map();
     let mut descendant_only = oid_hash_set();
+    // Expand by generation, then committer date. Commits outside the graph (such as the
+    // ones being pushed) rank above every graph commit, so a descendant dated before the
+    // ancestor's history reaches it without first draining that history. Without a graph
+    // every commit ranks the same and this is the plain date order.
+    let rank =
+        |oid: &ObjectId| graph.map_or(UNRANKED_COMMIT, |g| g.commit_generation_for_walk(oid));
     let mut heap = BinaryHeap::new();
     for (oid, color, (time, parents)) in [
         (ancestor, FROM_ANCESTOR, ancestor_linkage),
@@ -315,12 +321,12 @@ pub(crate) fn is_ancestor_odb_walk_with_graph(
         paint.insert(oid, color);
         parents_of.insert(oid, parents);
         times.insert(oid, time);
-        heap.push((time, oid));
+        heap.push((rank(&oid), time, oid));
     }
     descendant_only.insert(descendant);
 
     while !descendant_only.is_empty() {
-        let Some((_, oid)) = heap.pop() else {
+        let Some((_, _, oid)) = heap.pop() else {
             break;
         };
         descendant_only.remove(&oid);
@@ -359,7 +365,7 @@ pub(crate) fn is_ancestor_odb_walk_with_graph(
             } else {
                 descendant_only.remove(&parent);
             }
-            heap.push((time, parent));
+            heap.push((rank(&parent), time, parent));
         }
     }
     Ok(false)
