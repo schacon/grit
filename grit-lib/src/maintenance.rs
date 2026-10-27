@@ -31,7 +31,7 @@ use crate::diff::bloom::BloomFilterSettings;
 use crate::environment::Environment;
 use crate::error::{ConfigError, Error, Result};
 use crate::fsck as repo_fsck;
-use crate::gc::{prune_loose_unreachable_with, LazyReachable, PruneStats};
+use crate::gc::{prune_loose_unreachable_with, LazyReachable, PruneStats, S_IFDIR, S_IFMT};
 use crate::git_date::approx::approxidate_careful_at;
 use crate::index_pack::{install_pack_bytes, install_pack_path, IngestPackOptions};
 use crate::midx::{
@@ -39,17 +39,19 @@ use crate::midx::{
     write_multi_pack_index_with_options, MidxBitmapWriteOutcome, WriteMultiPackIndexOptions,
     WriteMultiPackIndexResult,
 };
-use crate::objects::{oid_hash_map, ObjectId, OidHashSet};
+use crate::objects::{
+    oid_hash_map, tag_object_line_oid, CommitRef, FileMode, ObjectId, ObjectKind, OidHashSet,
+    TreeRefIter,
+};
 use crate::odb::Odb;
 use crate::odb::UnreachablePackRetention;
 use crate::pack_bitmap::{PackBitmapWriteOptions, PackBitmapWriter};
 use crate::pack_delta::{pack_delta_search_parallel_options, pack_write_parallel_options};
+use crate::pack_name_hash::pack_name_hash_child;
 use crate::pack_object_select::{
     enumerate_pack_objects_naming, NameTrees, PackEnumerateOptions, PackObjectSelection,
 };
-use crate::pack_objects::{
-    build_pack_from_send_list_with_parallel_threads, PackBuildOptions, SerializedDeltaPack,
-};
+use crate::pack_objects::{PackBuildOptions, SerializedDeltaPack};
 use crate::pack_rev::write_pack_rev_sidecar_for_index_path;
 use crate::prune_packed::{prune_packed_objects, PrunePackedOptions};
 use crate::reflog::{
@@ -92,6 +94,8 @@ pub struct RepackOptions {
     pub environment: Environment,
     /// Pack only the reachable loose objects into a new pack, keeping existing packs (Git
     /// `repack -d` without `-a`). Unreachable loose objects stay loose for the prune step.
+    /// The new pack is delta-compressed like a full repack, with bases taken only from the
+    /// loose objects it holds, so it is self-contained.
     ///
     /// When [`Self::write_bitmap`] is true and the repository already has pack files, bitmaps are
     /// written via a multi-pack-index sidecar instead of a per-pack `.bitmap` on the new pack alone.
@@ -868,11 +872,16 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         packs_holding_available_promises(odb, promised)?
     };
     let built_pack = if run_incremental {
-        SerializedDeltaPack {
-            bytes: pack_loose_objects_incremental(odb, &reachable, &pack_opts, opts.threads)?,
-            index_rows: Vec::new(),
-            staging_path: None,
-        }
+        let (loose, name_hashes) = named_reachable_loose_objects(odb, &reachable, &roots)?;
+        write_staged_repack_pack(
+            odb,
+            &pack_dir,
+            &loose,
+            &name_hashes,
+            &pack_opts,
+            opts.threads,
+            cfg.as_ref(),
+        )?
     } else {
         build_repack_pack(
             odb,
@@ -1099,29 +1108,91 @@ fn reachable_loose_objects(odb: &Odb, reachable: &LazyReachable<'_>) -> Result<V
         .collect())
 }
 
-fn pack_loose_objects_incremental(
+/// [`reachable_loose_objects`] in pack order, with the path name hash of each tree and
+/// blob found under a loose commit so versions of one file meet in the delta window.
+///
+/// Only loose objects are read: the walk follows loose commits from `roots` (newest
+/// first) and descends into loose trees, stopping wherever history or a subtree is
+/// already packed. Objects it does not reach keep their place after the walked ones
+/// without a name hash.
+fn named_reachable_loose_objects(
     odb: &Odb,
     reachable: &LazyReachable<'_>,
-    pack_opts: &PackBuildOptions,
-    threads: Option<usize>,
-) -> Result<Vec<u8>> {
+    roots: &[ObjectId],
+) -> Result<(Vec<ObjectId>, HashMap<ObjectId, u32>)> {
     let loose = reachable_loose_objects(odb, reachable)?;
-    if loose.is_empty() {
-        return Ok(Vec::new());
+    let mut pending: OidHashSet = loose.iter().copied().collect();
+    let mut order = Vec::with_capacity(loose.len());
+    let mut names = HashMap::new();
+    let mut commits = Vec::new();
+    let mut root_trees = Vec::new();
+    let mut stack: Vec<ObjectId> = roots
+        .iter()
+        .filter(|oid| pending.contains(*oid))
+        .copied()
+        .collect();
+    let mut seen = OidHashSet::default();
+    while let Some(oid) = stack.pop() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        match odb.read_info(&oid)?.kind {
+            ObjectKind::Commit => {
+                let obj = odb.read(&oid)?;
+                let commit = CommitRef::parse(&obj.data)?;
+                commits.push((
+                    commit.committer_unix_seconds_for_ordering(),
+                    oid,
+                    commit.tree(),
+                ));
+                stack.extend(commit.parents().iter().filter(|p| pending.contains(*p)));
+            }
+            ObjectKind::Tag => {
+                let obj = odb.read(&oid)?;
+                pending.remove(&oid);
+                order.push(oid);
+                stack.extend(tag_object_line_oid(&obj.data).filter(|t| pending.contains(t)));
+            }
+            ObjectKind::Tree => root_trees.push(oid),
+            ObjectKind::Blob => {}
+        }
     }
-    let mut incremental_opts = *pack_opts;
-    incremental_opts.delta = false;
-    incremental_opts.reuse_deltas = false;
-    incremental_opts.use_bitmaps = false;
-    build_pack_from_send_list_with_parallel_threads(
-        odb,
-        &loose,
-        &HashSet::new(),
-        &incremental_opts,
-        &HashMap::new(),
-        None,
-        threads,
-    )
+    commits.sort_by_key(|&(time, _, _)| std::cmp::Reverse(time));
+    for &(_, oid, _) in &commits {
+        pending.remove(&oid);
+        order.push(oid);
+    }
+    let hash_len = odb.hash_algo().len();
+    let mut trees: Vec<(ObjectId, Option<u32>)> = Vec::new();
+    for tree in commits.iter().map(|&(_, _, tree)| tree).chain(root_trees) {
+        trees.push((tree, None));
+        while let Some((tree, name_hash)) = trees.pop() {
+            if !pending.remove(&tree) {
+                continue;
+            }
+            order.push(tree);
+            if let Some(hash) = name_hash {
+                names.insert(tree, hash);
+            }
+            let obj = odb.read(&tree)?;
+            for entry in TreeRefIter::with_oid_len(&obj.data, hash_len) {
+                let entry = entry?;
+                if FileMode::new(entry.mode).is_gitlink() || !pending.contains(&entry.oid) {
+                    continue;
+                }
+                let hash = pack_name_hash_child(name_hash, entry.name);
+                if entry.mode & S_IFMT == S_IFDIR {
+                    trees.push((entry.oid, Some(hash)));
+                } else {
+                    pending.remove(&entry.oid);
+                    order.push(entry.oid);
+                    names.insert(entry.oid, hash);
+                }
+            }
+        }
+    }
+    order.extend(loose.into_iter().filter(|oid| pending.contains(oid)));
+    Ok((order, names))
 }
 
 /// Whether maintenance should skip rebuilding packs when [`RepackOptions::auto_skip`] is set.
@@ -1713,7 +1784,39 @@ fn build_repack_pack(
         opts.use_bitmaps,
         promised,
     )?;
-    if selection.send.is_empty() {
+    write_staged_repack_pack(
+        odb,
+        pack_dir,
+        &selection.send,
+        &selection.name_hashes,
+        opts,
+        threads,
+        cfg,
+    )
+}
+
+/// Stream a local pack holding exactly `objects` to a `tmp_repack_*` file in `pack_dir`,
+/// with the delta search tuned by `opts` (`pack.window`, `pack.depth`) and
+/// `pack.windowMemory` from `cfg`.
+///
+/// Every delta base is one of `objects`, so the pack is self-contained. `name_hashes`
+/// pairs same-path blobs and trees in the search window. An empty `objects` writes
+/// nothing and returns an empty pack.
+///
+/// # Errors
+///
+/// Propagates thread-option, object read, and staging-file I/O failures; the staging
+/// file is removed when writing fails.
+fn write_staged_repack_pack(
+    odb: &Odb,
+    pack_dir: &Path,
+    objects: &[ObjectId],
+    name_hashes: &HashMap<ObjectId, u32>,
+    opts: &PackBuildOptions,
+    threads: Option<usize>,
+    cfg: Option<&ConfigSet>,
+) -> Result<SerializedDeltaPack> {
+    if objects.is_empty() {
         return Ok(SerializedDeltaPack {
             bytes: Vec::new(),
             index_rows: Vec::new(),
@@ -1751,13 +1854,7 @@ fn build_repack_pack(
         fs::create_dir_all(pack_dir),
     )?;
     let staging = pack_dir.join(format!("tmp_repack_{}", std::process::id()));
-    let written = write_repack_pack(
-        odb,
-        &selection.send,
-        &selection.name_hashes,
-        &settings,
-        &staging,
-    );
+    let written = write_repack_pack(odb, objects, name_hashes, &settings, &staging);
     match written {
         Ok(index_rows) => Ok(SerializedDeltaPack {
             bytes: Vec::new(),

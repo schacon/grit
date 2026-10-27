@@ -2129,6 +2129,130 @@ fn gc_auto_packs_loose_objects_past_gc_auto_and_git_reads_the_result() {
     );
 }
 
+/// Deterministic pseudo-random bytes (xorshift64), incompressible like a binary asset.
+fn pseudo_random_bytes(state: &mut u64, len: usize) -> Vec<u8> {
+    (0..len)
+        .map(|_| {
+            *state ^= *state << 13;
+            *state ^= *state >> 7;
+            *state ^= *state << 17;
+            (*state >> 24) as u8
+        })
+        .collect()
+}
+
+#[test]
+fn gc_auto_delta_compresses_loose_versions_of_a_large_blob_issue_2158() {
+    const ASSET_LEN: usize = 256 * 1024;
+    const VERSIONS: usize = 8;
+    let _pack_guard = test_pack_cache_guard();
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-b", "main"]);
+    std::fs::write(dir.path().join("base.txt"), b"base\n").expect("write");
+    git(dir.path(), &["add", "base.txt"]);
+    git(dir.path(), &["commit", "-m", "base"]);
+    git(dir.path(), &["repack", "-a", "-d"]);
+    let git_dir = dir.path().join(".git");
+    let pack_dir = git_dir.join("objects/pack");
+    let base_packs = pack_stems(&git_dir);
+    assert_eq!(base_packs.len(), 1);
+
+    let mut rng = 0x2158_u64;
+    let mut asset = pseudo_random_bytes(&mut rng, ASSET_LEN);
+    for v in 0..VERSIONS {
+        for _ in 0..20 {
+            let at = (rng as usize) % (ASSET_LEN - 100);
+            let patch = pseudo_random_bytes(&mut rng, 100);
+            asset[at..at + 100].copy_from_slice(&patch);
+        }
+        std::fs::write(dir.path().join("asset.bin"), &asset).expect("write asset");
+        git(dir.path(), &["add", "asset.bin"]);
+        git(dir.path(), &["commit", "-m", &format!("asset v{v}")]);
+    }
+    let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
+    let mut commits = 0;
+    while loose_in_fanout(&git_dir, "17") < 2 {
+        many_grit_commits_from(&repo, commits, 1);
+        commits += 1;
+        assert!(commits < 5000, "objects/17 never filled");
+    }
+    git(dir.path(), &["config", "gc.auto", "1"]);
+
+    let repack_copy = TempDir::new().expect("repack copy");
+    duplicate_repo_tree(dir.path(), repack_copy.path());
+
+    let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
+    let outcome = gc_auto(&repo, &GcOptions::full_run(false, now_unix())).expect("gc_auto");
+    let AutoGcOutcome::Ran { reason, stats } = outcome else {
+        panic!("expected maintenance to run, got {outcome:?}");
+    };
+    assert!(matches!(reason, AutoGcReason::TooManyLoose { .. }));
+    assert_eq!(stats.repack.removed_pack_files, 0);
+    clear_pack_cache_after_disk_maintenance();
+
+    let stems = pack_stems(&git_dir);
+    assert_eq!(stems.len(), 2, "the loose objects go into a second pack");
+    assert!(
+        stems.contains(&base_packs[0]),
+        "the existing pack must be kept"
+    );
+    assert_eq!(git_loose_object_count(dir.path()), 0);
+    let new_pack = pack_dir.join(format!(
+        "{}.pack",
+        stems
+            .iter()
+            .find(|s| **s != base_packs[0])
+            .expect("new pack")
+    ));
+    let auto_bytes = std::fs::metadata(&new_pack).expect("new pack").len();
+    assert!(
+        auto_bytes < (3 * ASSET_LEN) as u64,
+        "auto-gc pack is {auto_bytes} bytes for {VERSIONS} versions of a {ASSET_LEN}-byte blob"
+    );
+
+    let repack_repo = Repository::discover(Some(repack_copy.path()), &RepositoryOptions::empty())
+        .expect("open repack copy");
+    let repack_stats = repack_all(&repack_repo, &RepackOptions::default()).expect("repack");
+    clear_pack_cache_after_disk_maintenance();
+    let repack_bytes = repack_stats.pack_bytes.expect("repack pack bytes");
+    assert!(
+        auto_bytes <= repack_bytes.saturating_mul(3) / 2,
+        "auto-gc pack {auto_bytes} bytes vs repack {repack_bytes} bytes"
+    );
+
+    let verify = grit_test_support::git_verify_pack(dir.path(), &new_pack);
+    assert!(verify.ok, "verify-pack: {}", verify.output);
+    let deltas = verify
+        .output
+        .lines()
+        .filter(|line| line.split_whitespace().count() == 7)
+        .count();
+    assert!(
+        deltas >= VERSIONS - 1,
+        "every later asset version should be a delta, got {deltas} deltas"
+    );
+
+    let check_dir = TempDir::new().expect("index-pack out");
+    let index_pack = Command::new("git")
+        .current_dir(dir.path())
+        .arg("index-pack")
+        .arg("--strict")
+        .arg("-o")
+        .arg(check_dir.path().join("check.idx"))
+        .arg(&new_pack)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("index-pack");
+    assert!(
+        index_pack.status.success(),
+        "git index-pack --strict: {}",
+        String::from_utf8_lossy(&index_pack.stderr)
+    );
+    let fsck = git_fsck(dir.path(), true);
+    assert!(fsck.ok, "git fsck --strict: {:?}", fsck.msg_ids);
+}
+
 #[test]
 fn gc_auto_consolidates_packs_past_gc_auto_pack_limit_like_git() {
     let _pack_guard = test_pack_cache_guard();

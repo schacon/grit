@@ -246,8 +246,8 @@ impl<'a> LazyReachable<'a> {
 }
 
 /// File type bits of a tree entry mode, and the value that marks a directory.
-const S_IFMT: u32 = 0o170000;
-const S_IFDIR: u32 = 0o040000;
+pub(crate) const S_IFMT: u32 = 0o170000;
+pub(crate) const S_IFDIR: u32 = 0o040000;
 
 /// Compute the full object closure reachable from `roots` (commits → parents and
 /// tree, trees → entries, tags → target). Mirrors the reachability walk used by
