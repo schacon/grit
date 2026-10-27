@@ -273,3 +273,11 @@ its sample spread. Both reports retain variance and independent RSS; layout
 changes mean metadata compression is not a general memory reduction. The
 shipping JSON also records 30 loader-only observations and ten GNU-time peak
 RSS samples per tiny command/tool.
+
+The final-tip follow-up in `startup-relocations-review-{release,dist}.json`
+records exact `3fcfb24e9` CLI/library source, frozen binary hashes and the actual
+AMD EPYC 7763 host. Tiny dist commands regress 0.88–2.07%; release changes are
+near zero. The native block includes paired-bootstrap 95% intervals from 5,000
+resamples of the 60 round indices (reset RNG seed 4626 per case), taking
+`median(candidate) - median(stock)`. Loader-only and GNU-time cross-checks use
+the runner's isolated environment, recorded in `isolated_env_overrides`.

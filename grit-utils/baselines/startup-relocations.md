@@ -222,3 +222,118 @@ and both ELF/oldest-loader release checks remain available. RELR is a manual
 opt-in with no promised startup gain; no library/CLI code, dependency features,
 profiles, PIE or ASLR policy changes. Reconsider automatic selection only after
 exact release artifacts show a repeatable benefit.
+
+### Fresh same-source measurements on the replacement VM
+
+Both profiles were rebuilt with the exact reviewed `3fcfb24e9` CLI/library
+source. Installer correction `d8b6e83c3` changes no source or dependencies linked
+into grit. This VM reports **4 vCPU AMD EPYC 7763**, 16 GiB RAM, Linux x86_64,
+Rust 1.99.0, glibc 2.39 and system Git 2.55.0; it differs from the reviewer's
+Xeon. Each profile has five warmups and **60 rotated measured runs per tool**
+on all 20 tiny/many-ref/wide/deep cases, with builds/tests stopped. Every
+fixture passes system `git fsck --strict`, and candidate output matches stock.
+No codegen, LTO, panic, dependency feature, PIE or ASLR setting changes.
+
+Full fork/exec/wait medians ± sample standard deviation, milliseconds; peak
+RSS is the maximum per-child C-parent reading across 60 samples, KiB:
+
+| Profile / case | Git ms | Stock ms | RELR ms | Git / stock / RELR peak KiB |
+| --- | ---: | ---: | ---: | ---: |
+| release / tiny branch | 1.407 ± 0.028 | 2.669 ± 0.084 | 2.680 ± 0.169 | 4720 / 11120 / 10296 |
+| release / tiny status | 1.717 ± 0.037 | 3.262 ± 0.041 | 3.256 ± 0.042 | 5404 / 14036 / 13084 |
+| release / tiny resolve | 1.295 ± 0.024 | 2.793 ± 0.044 | 2.800 ± 0.061 | 4552 / 11840 / 11048 |
+| release / tiny help | 1.146 ± 0.023 | 3.532 ± 0.081 | 3.525 ± 0.079 | 3976 / 8252 / 7512 |
+| release / many-refs branch | 51.094 ± 1.107 | 14.188 ± 0.360 | 14.214 ± 0.332 | 19684 / 17132 / 16360 |
+| release / wide status | 15.999 ± 0.899 | 17.400 ± 1.848 | 17.337 ± 0.985 | 9344 / 17508 / 16856 |
+| release / deep log | 7.221 ± 0.071 | 11.242 ± 0.112 | 11.262 ± 0.107 | 9996 / 19600 / 18816 |
+| dist / tiny branch | 1.412 ± 0.044 | 2.138 ± 0.143 | 2.177 ± 0.084 | 4704 / 9964 / 9508 |
+| dist / tiny status | 1.713 ± 0.025 | 2.529 ± 0.033 | 2.581 ± 0.036 | 5352 / 11560 / 11176 |
+| dist / tiny resolve | 1.280 ± 0.031 | 2.188 ± 0.052 | 2.209 ± 0.039 | 4608 / 9836 / 9456 |
+| dist / tiny help | 1.148 ± 0.030 | 3.172 ± 0.143 | 3.201 ± 0.077 | 3952 / 9044 / 8612 |
+| dist / many-refs branch | 51.203 ± 0.911 | 13.386 ± 0.329 | 13.458 ± 0.375 | 19684 / 15436 / 15008 |
+| dist / wide status | 15.891 ± 0.776 | 16.370 ± 0.856 | 16.424 ± 0.274 | 9332 / 14952 / 14576 |
+| dist / deep log | 7.241 ± 0.191 | 10.164 ± 0.096 | 10.204 ± 0.090 | 10056 / 16832 / 16400 |
+
+RELR dist branch/status/resolve/help regress **1.83/2.07/0.97/0.88%**. Paired
+bootstrap 95% intervals (5,000 resamples, reset seed 4626 per case) for the
+median RELR-minus-stock difference are all above zero:
+
+| Tiny dist command | Median delta 95% interval, microseconds |
+| --- | ---: |
+| branch | +29.9 to +52.3 |
+| status | +37.0 to +72.0 |
+| resolve | +11.4 to +38.4 |
+| help | +14.5 to +42.4 |
+
+Release changes are mixed, -0.20% to +0.40%, and all four corresponding
+intervals include zero. Larger dist many-ref branch, wide status and deep log
+medians regress 0.54/0.33/0.39%, within their sample spread. Git branch lists
+all refs while grit limits output to 20. These results confirm the need to keep
+stock as the automatic download, rather than treating smaller metadata as a
+startup win. There is no product binary change in the installer correction.
+
+The dist RELR artifact's observed RSS is lower in this layout. Independent
+`/usr/bin/time -v` cross-checks use the same isolated environment as the runner,
+ten fresh children per command/tool. Median peak KiB:
+
+| Tiny dist command | Git | Stock | RELR |
+| --- | ---: | ---: | ---: |
+| branch | 4516 | 9760 | 9280 |
+| status | 5226 | 11440 | 10930 |
+| resolve | 4384 | 9520 | 9092 |
+| help | 3810 | 8684 | 8432 |
+
+| Profile | Stock / RELR binary bytes | Stock / RELR relocation metadata bytes | Identical pointer slots | Identical fixup pages |
+| --- | ---: | ---: | ---: | ---: |
+| release | 33,982,072 / 33,203,944 | 792,432 / 13,576 | 32,844 | 147 |
+| dist | 24,597,152 / 24,142,600 | 465,528 / 9,880 | 19,224 | 91 |
+
+Text, rodata and data.rel.ro sizes remain identical; layout addresses shift.
+No major faults occurred. Thirty loader-only observations per tiny command/tool
+are separate from wall time. Dist median relocation cycles, stock → RELR:
+branch 52443 → 55527.5, status 52742 → 55560.5, resolve 57661.5 → 55766.5, help 52672 → 55608.5.
+The 300-invocation `perf record -g -F 999` attempt remains denied (exit 255);
+no loader task-clock percentage is claimed. Both profiles pass actual ELF,
+startup and four-distinct-runtime-address checks with ASLR setting `2` unchanged.
+Dist stock passes the pinned glibc 2.34 runtime, and RELR passes pinned 2.36.
+
+Raw measurements, variance, all 60 wall samples per tool/case, RSS/faults,
+bootstrap intervals, binary hashes, ELF layout, GNU-time and loader observations:
+[`startup-relocations-review-release.json`](startup-relocations-review-release.json)
+and [`startup-relocations-review-dist.json`](startup-relocations-review-dist.json).
+These supersede older speed claims for the final-tip source; the older reports
+remain historical records.
+
+### Validation of the correction
+
+- New installer expectations fail against `3fcfb24e9` scripts: **0 passed / 2
+  failed**. Corrected scripts pass **2/2**, preserving the loader/version matrix,
+  musl/aarch64 coverage and unavailable-optional-asset case. Both scripts are
+  byte-for-byte their pre-RELR versions.
+- ELF regression probes: **2 passed**, 1 opt-in test normally ignored. The
+  actual dist RELR artifact also passes that opt-in contract. Python installer
+  tests: **3 passed**. Shell syntax checks pass.
+- `cargo test -p grit-lib --lib`, before and after: **2,640 passed / 0 failed /
+  3 ignored** in each run. No library code or tests change.
+- `cargo test -p grit-lib -p grit-cli` before fails during unchanged test linking
+  after exhausting the 145 GiB disk (LLD bus error); no aggregate pass count.
+  After fails at existing `history_injected_ref_store.rs:45`, `Signature:
+  From<&str>` not implemented. A separate targeted invocation reproduces that
+  exact source error; the same code remains on origin/main and the reviewer
+  independently reproduced it there.
+- Frozen stock and RELR dist each run the existing help descriptions, snapshots,
+  JSON and Markdown tests: **220 passed / 1 failed** per artifact, with the same
+  pre-existing `bad_filter_and_missing_revision_errors_are_clean` failure.
+  Existing debug test executables were run against each frozen dist artifact at
+  their compiled CLI path, then the debug CLI was restored. No test changes.
+- Pack ingestion/repack round trips against system Git: **37 passed / 0 failed
+  / 4 existing ignored**. Prior protocol verification is unchanged by the
+  installer-only revision.
+- `cargo fmt` and `make gate` formatting, workspace Clippy, warnings-denied
+  rustdoc and public-module doctests pass. The gate's workspace test build
+  exhausts disk and fails with ENOSPC / LLD bus error. After each failed broad
+  build, about 40 GiB of disposable test executables were removed, preserving
+  libraries, focused tests and frozen artifacts. No profile/test workaround.
+- The reviewer classified independently reproduced main failures as outside this
+  correction. No integration was attempted; a successful gate is still required
+  before landing under the repository's integration policy.

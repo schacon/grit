@@ -962,6 +962,10 @@ round trips.
 
 ## PIE startup relocation probe
 
+Current policy: installers keep the stock GNU asset. Fresh final-tip source
+measurements below reproduce a RELR dist slowdown; the optional asset remains
+manual-only. Earlier results retain their original revisions and hosts.
+
 Issue [#2028](https://github.com/gitbutlerapp/grit/issues/2028) investigates loader
 work without disabling PIE or ASLR. A CLI-only `-z pack-relative-relocs` probe at
 `f0e7cddd5` keeps both Cargo profiles, dependency features and command behavior
@@ -1027,6 +1031,29 @@ this run, so the wall-time result cannot be attributed solely to relocation
 processing. The [shipping follow-up data](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/startup-relocations-shipping-dist.json)
 retain all 20 scenarios, variance, RSS, faults, loader statistics and runtime
 checks. Builds and tests were stopped throughout measurement.
+
+A replacement-VM check rebuilt the exact reviewed `3fcfb24e9` CLI/library
+source (installer correction `d8b6e83c3` changes no linked code). This host is
+**AMD EPYC 7763**, 4 vCPU, Rust 1.99, glibc 2.39, system Git 2.55. With five
+warmups and 60 rotated runs per tool and builds/tests idle, full-process dist
+medians are:
+
+| Tiny command | Git ms | Stock dist ms | RELR dist ms | RELR change |
+| --- | ---: | ---: | ---: | ---: |
+| branch | 1.412 | 2.138 | 2.177 | +1.83% |
+| status | 1.713 | 2.529 | 2.581 | +2.07% |
+| resolve | 1.280 | 2.188 | 2.209 | +0.97% |
+| help | 1.148 | 3.172 | 3.201 | +0.88% |
+
+All four paired-bootstrap 95% intervals for RELR-minus-stock median time are
+above zero. Release differences are mixed and near zero (-0.20% to +0.40%).
+Dist many-ref branch, wide status and deep log medians regress
+0.54/0.33/0.39%, within their sample spread. Dist RSS is lower in this layout,
+but startup is slower: smaller relocation metadata is insufficient grounds for
+automatic selection. Fresh [dist data](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/startup-relocations-review-dist.json)
+and [release data](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/startup-relocations-review-release.json)
+include all 20 cases per profile, variance, peak RSS, faults, binary hashes,
+ELF/ASLR checks, independent GNU-time samples and separate loader statistics.
 
 The [complete report](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/startup-relocations.md)
 links the methodology, ELF attribution and portability checks. Raw
