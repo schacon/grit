@@ -870,6 +870,45 @@ impl CherryPatchGroup {
     }
 }
 
+/// Fewest commits per worker before [`map_commits_in_parallel`] spawns threads; below this a
+/// per-commit diff is cheaper than a thread start.
+const PARALLEL_COMMIT_MAP_MIN_PER_THREAD: usize = 16;
+
+/// Apply `f` to every commit, splitting large lists across scoped worker threads.
+///
+/// Results keep the order of `commits`. Used for per-commit work that only reads the
+/// object database, such as patch-ids.
+pub(crate) fn map_commits_in_parallel<T, F>(commits: &[ObjectId], f: F) -> Vec<T>
+where
+    T: Send,
+    F: Fn(&ObjectId) -> T + Sync,
+{
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, 8)
+        .min(commits.len() / PARALLEL_COMMIT_MAP_MIN_PER_THREAD);
+    if threads <= 1 {
+        return commits.iter().map(f).collect();
+    }
+    let chunk = commits.len().div_ceil(threads);
+    let f = &f;
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = commits
+            .chunks(chunk)
+            .map(|part| scope.spawn(move || part.iter().map(f).collect::<Vec<T>>()))
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    })
+}
+
 /// Group left and right commits by patch-id, keeping only ids present on both sides.
 ///
 /// Hashes the smaller side first and probes with the other, as Git's cherry detection does,
@@ -888,25 +927,23 @@ fn cherry_patch_groups(
     } else {
         (right_commits, left_commits)
     };
+    let patch_id = |oid: &ObjectId| compute_cherry_patch_id(repo, oid, paths).ok().flatten();
     let mut by_patch: HashMap<ObjectId, usize> = HashMap::new();
     let mut groups: Vec<(ObjectId, Vec<ObjectId>, Vec<ObjectId>)> = Vec::new();
-    for oid in hashed {
-        if let Ok(Some(pid)) = compute_cherry_patch_id(repo, oid, paths) {
-            let idx = *by_patch.entry(pid).or_insert_with(|| {
-                groups.push((pid, Vec::new(), Vec::new()));
-                groups.len() - 1
-            });
-            groups[idx].1.push(*oid);
-        }
+    for (oid, pid) in hashed.iter().zip(map_commits_in_parallel(hashed, patch_id)) {
+        let Some(pid) = pid else { continue };
+        let idx = *by_patch.entry(pid).or_insert_with(|| {
+            groups.push((pid, Vec::new(), Vec::new()));
+            groups.len() - 1
+        });
+        groups[idx].1.push(*oid);
     }
     if by_patch.is_empty() {
         return Vec::new();
     }
-    for oid in probed {
-        if let Ok(Some(pid)) = compute_cherry_patch_id(repo, oid, paths) {
-            if let Some(&idx) = by_patch.get(&pid) {
-                groups[idx].2.push(*oid);
-            }
+    for (oid, pid) in probed.iter().zip(map_commits_in_parallel(probed, patch_id)) {
+        if let Some(&idx) = pid.and_then(|pid| by_patch.get(&pid)) {
+            groups[idx].2.push(*oid);
         }
     }
     groups

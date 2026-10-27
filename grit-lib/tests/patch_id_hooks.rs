@@ -200,6 +200,62 @@ fn patch_ids_for_revs_mixes_single_revisions_and_symmetric_ranges() {
 }
 
 #[test]
+fn patch_ids_and_cherry_mark_match_git_on_ranges_split_across_workers() {
+    let history = crate::support::HistoryRepo::init();
+    let wt = history.worktree();
+    crate::support::commit_file(wt, "base", "base\n", "base");
+    git_in(wt, &["branch", "-M", "main"]);
+    git_in(wt, &["switch", "-q", "-c", "topic"]);
+    for i in 0..40 {
+        crate::support::commit_file(wt, &format!("t{i}"), &format!("{i}\n"), &format!("t{i}"));
+    }
+    git_in(wt, &["branch", "old-topic"]);
+    git_in(wt, &["switch", "-q", "main"]);
+    crate::support::commit_file(wt, "up", "up\n", "upstream");
+    git_in(wt, &["switch", "-q", "topic"]);
+    git_in(wt, &["rebase", "-q", "main"]);
+    let repo = crate::support::open_grit_repo(wt);
+
+    let got = repo
+        .patch_ids_for_revs(&["old-topic...topic"], PatchIdMode::Stable)
+        .expect("range patch-ids");
+    let want: Vec<(ObjectId, ObjectId)> = git_rev_list_oids(wt, "old-topic...topic")
+        .into_iter()
+        .map(|c| (git_stable_patch_id_of(wt, &c), c))
+        .collect();
+    assert_eq!(want.len(), 81);
+    assert_eq!(got, want);
+
+    let opts = grit_lib::revwalk::RevWalkListOptions {
+        cherry_mark: true,
+        ..Default::default()
+    };
+    let result = repo
+        .rev_walk()
+        .rev_list_result(&["old-topic...topic"], &opts)
+        .expect("cherry-mark");
+    assert_eq!(result.cherry_matches.len(), 40);
+    assert!(result
+        .cherry_matches
+        .iter()
+        .all(|m| m.left.len() == 1 && m.right.len() == 1 && m.message_changed == Some(false)));
+    let marked = git_in(
+        wt,
+        &[
+            "rev-list",
+            "--left-right",
+            "--cherry-mark",
+            "old-topic...topic",
+        ],
+    );
+    let equivalent: Vec<&str> = marked.lines().filter_map(|l| l.strip_prefix('=')).collect();
+    assert_eq!(equivalent.len(), 80);
+    for oid in equivalent {
+        assert!(result.cherry_equivalent.contains(&oid.parse().unwrap()));
+    }
+}
+
+#[test]
 fn patch_ids_for_revs_skips_merges_and_rejects_unknown_specs() {
     let history = crate::support::HistoryRepo::init();
     let wt = history.worktree();

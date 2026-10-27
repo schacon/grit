@@ -1251,8 +1251,10 @@ impl Repository {
                     self, spec,
                 )?]
             };
-            for commit in commits {
-                if let Some(patch_id) = self.patch_id(&commit, mode)? {
+            let patch_ids =
+                crate::rev_list::map_commits_in_parallel(&commits, |c| self.patch_id(c, mode));
+            for (patch_id, commit) in patch_ids.into_iter().zip(commits) {
+                if let Some(patch_id) = patch_id? {
                     out.push((patch_id, commit));
                 }
             }

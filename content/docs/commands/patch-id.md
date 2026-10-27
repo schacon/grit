@@ -46,6 +46,17 @@ Measured on 2026-10-26 on Linux x86_64 (4 vCPUs, AMD EPYC 9V74), using a 14 MB f
 
 The fix reduces median wall time by 17%. Median peak RSS differs by 900 KiB (0.9%), with overlapping observed ranges. The fixed result matches system Git's patch-ID for a normal unified diff on this fixture.
 
+Ranges hash their commits on worker threads. Measured on 2026-10-27 on Linux x86_64 (4 vCPUs) with system Git 2.43.0 and a `release` build of grit, in a packed repository with a commit-graph: 5,000 base commits, a 100-commit branch rebased onto 200 new upstream commits (`old...new` has 400 commits). Means of 30 warm runs (hyperfine):
+
+| Command | Wall time | Peak RSS |
+| --- | ---: | ---: |
+| `git rev-list old...new \| git diff-tree --stdin -p \| git patch-id --stable` | 20.3 ms | — |
+| `grit patch-id old...new` | 17.6 ms | 23,576 KiB |
+| `git rev-list --left-right --cherry-mark old...new` | 10.2 ms | 8,392 KiB |
+| `grit revs --cherry-mark old...new` | 22.9 ms | 26,444 KiB |
+
+Git's cherry-mark compares a cheap file-header id before computing a full patch-ID; grit computes the full ID for every commit, which accounts for most of the remaining gap.
+
 ## Options
 
 | Option | Description |
