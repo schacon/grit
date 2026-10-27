@@ -9,6 +9,32 @@ For a map of **grit-lib** modules, **grit** commands, common workflows, and ever
 
 Command-level numbers below come from the committed **grit-bench** JSON baselines listed in `content/docs/site.toml`. Scenario suites use **hyperfine** against the system **`git`** binary and a release **`grit`** build on the same machine; individual studies below document their sampling method. Times are wall-clock milliseconds.
 
+## Bounded revision counts with a commit-graph (2026-10-27)
+
+Unfiltered two-dot counts now reuse the generation-aware hide walk instead of
+building both complete ancestor sets. On git/git at `583e98cd091c` (82,537
+commits at the topic tip; 56 commits in `HEAD~20..HEAD`), graph-backed counts
+are about 20× faster and within 1.6× system Git. The commit-graph remains mapped;
+only the range frontier is visited.
+
+Ubuntu 24.04, four vCPUs, Rust 1.99.0, `dist` profile, system Git 2.55.0.
+Hyperfine 1.19.0 used `-N`, five warmups and 30 runs per command. Benchmark
+processes used a separate physical core from remaining harness tests. RSS is
+the median of five process peaks measured with `/usr/bin/time -v`.
+
+| Graph | Git count (ms / MiB) | Main `1c4fdeca7` (ms / MiB) | Fixed (ms / MiB) |
+| --- | ---: | ---: | ---: |
+| None | 6.76 / 15.75 | 22.60 / 22.56 | 23.34 / 22.48 |
+| Git-written | 2.42 / 10.88 | 72.76 / 15.67 | 3.68 / 14.57 |
+| grit-written | 2.43 / 10.97 | 74.93 / 15.76 | 3.72 / 14.77 |
+
+Range listings and full-`HEAD` counts were also measured in all three setups.
+Their mean times stayed within 3.3% of main, with peak RSS within 0.25 MiB.
+The full measurements and reproduction commands are in
+[`revs-graph-range-1669.md`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/revs-graph-range-1669.md).
+The daily matrix now includes `revs/count-range-commit-graph@git-git`, with
+committed before/after reports on its pinned `v2.47.0` fixture.
+
 ## Sirocco packed-read evaluation (2026-10-26)
 
 The reference candidate [8a0f13f4](https://but.dev/c/01m5x3zw0zc7c88a4wzq0bjfks/b/factory%2Fsirocco-inflate?commit=8a0f13f4eb4cbc38642313001ca1b22de0567b8d) evaluated Sirocco 0.3.1 in the shared packed-object scratch for full-input reads and prefix probes. Complete reads had to finish a checksum-validated zlib member and match its declared output size, including empty objects. Loose-object reads, bounded streaming, checksum-validating scans, and compression retained flate2/zlib-rs.
