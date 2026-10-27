@@ -521,6 +521,10 @@ pub enum WorktreeBranch {
     CreateOrReset(String),
     /// Detached HEAD at the start commit.
     Detach,
+    /// `HEAD` on the unborn branch `refs/heads/<name>`, with an empty working tree and
+    /// index (`git worktree add --orphan`). The start point is ignored and the repository
+    /// need not have any commits. Fails when the branch exists.
+    Orphan(String),
 }
 
 /// Options for [`add_linked_worktree`].
@@ -594,10 +598,16 @@ pub fn add_linked_worktree(
     let admin_plan = plan_admin_dir_for_add(&common, &wt_path, opts.force)?;
     ensure_empty_or_missing(&wt_path)?;
 
-    let (start_spec, start_oid) = resolve_worktree_start_commit(repo, opts)?;
-    let tree_oid = repo.odb().commit_tree(&start_oid)?;
-
-    let plan = plan_worktree_head(repo, opts, &wt_path, &start_spec, start_oid)?;
+    // An orphan worktree has no start commit: HEAD is the unborn branch and nothing
+    // is checked out.
+    let (start_oid, tree_oid, plan) = if let Some(WorktreeBranch::Orphan(name)) = &opts.branch {
+        (None, None, plan_orphan_worktree_head(repo, name)?)
+    } else {
+        let (start_spec, start_oid) = resolve_worktree_start_commit(repo, opts)?;
+        let tree_oid = repo.odb().commit_tree(&start_oid)?;
+        let plan = plan_worktree_head(repo, opts, &wt_path, &start_spec, start_oid)?;
+        (Some(start_oid), Some(tree_oid), plan)
+    };
     if let Some(ref branch_ref) = plan.head_ref {
         branch_checked_out_elsewhere(repo, branch_ref)?;
     }
@@ -628,8 +638,8 @@ pub fn add_linked_worktree(
                 bw.force_reset,
             )?;
         }
-        if let Some(ref branch_short) = plan.track_branch {
-            maybe_track_new_branch(repo, opts, branch_short, &start_spec, start_oid)?;
+        if let (Some(branch_short), Some(bw)) = (&plan.track_branch, &plan.branch_write) {
+            maybe_track_new_branch(repo, opts, branch_short, &bw.start_spec, bw.start_oid)?;
         }
 
         fs::create_dir_all(&admin).map_err(Error::Io)?;
@@ -654,12 +664,11 @@ pub fn add_linked_worktree(
         fs::write(admin.join("commondir"), "../..\n").map_err(Error::Io)?;
         fs::write(admin.join("gitdir"), format!("{wt_git_abs}\n")).map_err(Error::Io)?;
 
-        let head = plan
-            .head_ref
-            .as_ref()
-            .map_or(crate::refs::store::RawRef::Direct(start_oid), |target| {
-                crate::refs::store::RawRef::Symbolic(target.clone())
-            });
+        let head = match (&plan.head_ref, start_oid) {
+            (Some(target), _) => crate::refs::store::RawRef::Symbolic(target.clone()),
+            (None, Some(start_oid)) => crate::refs::store::RawRef::Direct(start_oid),
+            (None, None) => unreachable!("an orphan worktree has a HEAD branch"),
+        };
         if repo.refs_on_disk() {
             crate::refs::store::initialize_head(&admin, head)?;
         } else {
@@ -677,7 +686,7 @@ pub fn add_linked_worktree(
             write_admin_lock_file(&admin, lock.reason.as_deref())?;
         }
 
-        if !opts.no_checkout {
+        if let (false, Some(tree_oid)) = (opts.no_checkout, tree_oid) {
             let linked = repo.open_linked_worktree(&admin, &wt_path)?;
             checkout_between_trees(&linked, None, &tree_oid)?;
         }
@@ -812,6 +821,23 @@ fn resolve_worktree_start_commit(
     Ok((start_spec, start_oid))
 }
 
+/// HEAD for [`WorktreeBranch::Orphan`]: the unborn branch `refs/heads/<name>`.
+fn plan_orphan_worktree_head(repo: &Repository, name: &str) -> Result<WorktreeHeadPlan> {
+    validate_branch_name(name)?;
+    let branch_ref = format!("refs/heads/{name}");
+    if repo.references().read_existing(&branch_ref)?.is_some() {
+        return Err(BranchError::AlreadyExists {
+            name: name.to_owned(),
+        }
+        .into());
+    }
+    Ok(WorktreeHeadPlan {
+        head_ref: Some(branch_ref),
+        branch_write: None,
+        track_branch: None,
+    })
+}
+
 fn plan_worktree_head(
     repo: &Repository,
     opts: &AddLinkedWorktreeOptions,
@@ -820,6 +846,7 @@ fn plan_worktree_head(
     start_oid: crate::objects::ObjectId,
 ) -> Result<WorktreeHeadPlan> {
     match &opts.branch {
+        Some(WorktreeBranch::Orphan(name)) => plan_orphan_worktree_head(repo, name),
         Some(WorktreeBranch::Detach) => Ok(WorktreeHeadPlan {
             head_ref: None,
             branch_write: None,
