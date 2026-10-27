@@ -202,7 +202,13 @@ fn stale_index_stat_fixture_blocks_worktree_remove_until_refresh() {
     let linked_repo =
         Repository::discover(Some(linked.as_path()), &RepositoryOptions::empty()).expect("linked");
     fs::write(linked.join("new.txt"), "new\n").expect("new file");
-    stage(&linked_repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        &linked_repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
     commit_staged_without_index_stat_refresh(&linked_repo, "no refresh");
 
     let entry = index_entry(&linked_repo, "new.txt");
@@ -232,7 +238,13 @@ fn create_commit_refreshes_index_stat_for_worktree_remove() {
     let linked_repo =
         Repository::discover(Some(linked.as_path()), &RepositoryOptions::empty()).expect("linked");
     fs::write(linked.join("new.txt"), "new\n").expect("new file");
-    stage(&linked_repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        &linked_repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
     // Bump mtime after staging so write-tree without stat refresh would persist stale stat.
     let new_path = linked.join("new.txt");
     let bumped = filetime::FileTime::from_unix_time(1_700_000_000, 0);
@@ -241,6 +253,7 @@ fn create_commit_refreshes_index_stat_for_worktree_remove() {
         &linked_repo,
         &commit_request("with refresh"),
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("create_commit");
 

@@ -104,7 +104,13 @@ fn open_disk_repo_with_memory_refs(root: &Path) -> (Repository, Arc<MemoryRefSto
 
 fn commit_file(repo: &Repository, wt: &Path, name: &str, message: &str) -> ObjectId {
     fs::write(wt.join(name), format!("{name}\n")).expect("write");
-    stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("stage");
     commit_with_scope(
         repo,
         &CommitRequest {
@@ -115,6 +121,7 @@ fn commit_file(repo: &Repository, wt: &Path, name: &str, message: &str) -> Objec
         },
         CommitScope::Staged,
         &mut NullProgress,
+        &NeverCancel,
     )
     .expect("commit")
     .oid
@@ -283,6 +290,8 @@ fn clean_start_rebase_on_memory_backends_moves_the_branch_in_the_store() {
             }),
             apply: apply_opts("rebase", Some("rebase")),
         },
+        &mut NullProgress,
+        &NeverCancel,
     )
     .expect("start_rebase");
     let RebaseOutcome::Done { applied, .. } = outcome else {

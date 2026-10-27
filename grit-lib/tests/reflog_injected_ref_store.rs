@@ -54,7 +54,13 @@ fn commit_n(repo: &Repository, work_tree: &Path, n: usize) -> Vec<ObjectId> {
     (0..n)
         .map(|i| {
             fs::write(work_tree.join("a"), format!("{i}\n")).expect("write");
-            stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+            stage(
+                repo,
+                &StageOptions::default(),
+                &mut NullProgress,
+                &grit_lib::progress::NeverCancel,
+            )
+            .expect("stage");
             commit_with_scope(
                 repo,
                 &CommitRequest {
@@ -65,6 +71,7 @@ fn commit_n(repo: &Repository, work_tree: &Path, n: usize) -> Vec<ObjectId> {
                 },
                 CommitScope::Staged,
                 &mut NullProgress,
+                &grit_lib::progress::NeverCancel,
             )
             .expect("commit")
             .oid

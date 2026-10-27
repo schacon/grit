@@ -125,6 +125,7 @@ fn paths_commit_pre_commit_failure_preserves_index() {
         &commit_req("partial"),
         CommitScope::Paths(paths_only()),
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("pre-commit must fail");
     assert!(
@@ -156,6 +157,7 @@ fn paths_commit_commit_msg_failure_preserves_index() {
         &commit_req("partial"),
         CommitScope::Paths(paths_only()),
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("commit-msg must fail");
     assert!(

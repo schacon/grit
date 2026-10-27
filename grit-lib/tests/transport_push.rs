@@ -494,7 +494,7 @@ fn push_new_branch_without_local_copy_of_advanced_remote_main() {
     fn grit_commit(repo: &Repository, filename: &str, message: &str) -> ObjectId {
         let wt = repo.work_tree().expect("worktree");
         std::fs::write(wt.join(filename), format!("{message}\n")).unwrap();
-        stage_for_commit(repo, &mut NullProgress).expect("stage");
+        stage_for_commit(repo, &mut NullProgress, &grit_lib::progress::NeverCancel).expect("stage");
         let ident = "Test <t@example.com> 1 +0000".to_string();
         let out = create_commit(
             repo,
@@ -511,6 +511,7 @@ fn push_new_branch_without_local_copy_of_advanced_remote_main() {
                 ..Default::default()
             },
             &mut NullProgress,
+            &grit_lib::progress::NeverCancel,
         )
         .expect("commit");
         out.oid

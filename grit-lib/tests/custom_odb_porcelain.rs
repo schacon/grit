@@ -136,6 +136,7 @@ fn stage_untracked_path_writes_blob_to_custom_primary() {
             ..Default::default()
         },
         &mut NullProgress,
+        &NeverCancel,
     )
     .expect("stage untracked path");
 
@@ -154,7 +155,13 @@ fn stage_defaults_stage_untracked_paths_into_custom_primary() {
     fs::create_dir(work_tree(&repo).join("dir")).expect("mkdir");
     fs::write(work_tree(&repo).join("dir/two.txt"), "two\n").expect("write");
 
-    let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    let outcome = stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("stage");
 
     assert_eq!(outcome.added.len(), 2, "{outcome:?}");
     assert!(store.contains(&blob_id(b"one\n")).expect("contains"));
@@ -175,7 +182,8 @@ fn stage_many_untracked_paths_uses_parallel_batch_on_custom_primary() {
         .expect("write");
     }
 
-    let outcome = stage_for_commit(&repo, &mut NullProgress).expect("stage_for_commit");
+    let outcome =
+        stage_for_commit(&repo, &mut NullProgress, &NeverCancel).expect("stage_for_commit");
 
     assert_eq!(outcome.added.len(), count);
     for i in 0..count {
@@ -193,15 +201,25 @@ fn commit_worktree_with_untracked_files_on_custom_primary() {
     let objects_before = files_under(repo.odb().objects_dir());
     fs::write(work_tree(&repo).join("a.txt"), "hello\n").expect("write");
 
-    let first =
-        commit_worktree(&repo, &commit_request("first"), &mut NullProgress).expect("commit");
+    let first = commit_worktree(
+        &repo,
+        &commit_request("first"),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("commit");
     assert!(store.contains(&first.oid).expect("commit in store"));
     assert!(store.contains(&blob_id(b"hello\n")).expect("blob in store"));
 
     fs::write(work_tree(&repo).join("a.txt"), "hello again\n").expect("modify");
     fs::write(work_tree(&repo).join("b.txt"), "new file\n").expect("write");
-    let second =
-        commit_worktree(&repo, &commit_request("second"), &mut NullProgress).expect("commit");
+    let second = commit_worktree(
+        &repo,
+        &commit_request("second"),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("commit");
     assert_eq!(second.parent, Some(first.oid));
     assert!(store
         .contains(&blob_id(b"hello again\n"))
@@ -221,7 +239,13 @@ fn fsck_is_clean_on_healthy_custom_primary_repo() {
     let (_dir, repo, _store) = memory_repo();
     fs::write(work_tree(&repo).join("a.txt"), "hello\n").expect("write");
     fs::write(work_tree(&repo).join(".gitmodules"), "").expect("write");
-    commit_worktree(&repo, &commit_request("first"), &mut NullProgress).expect("commit");
+    commit_worktree(
+        &repo,
+        &commit_request("first"),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("commit");
 
     let options = FsckOptions::full_repository(true);
     let report = repo

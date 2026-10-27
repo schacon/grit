@@ -16,6 +16,9 @@ use crate::porcelain::checkout::checkout_hard_to_tree_from_head_tree;
 use crate::porcelain::merge::apply_conflict_merge_worktree;
 use crate::porcelain::reset::{reset_to_commit, ResetMode, ResetOptions};
 use crate::porcelain::worktree_guard::ensure_safe_for_rebase_stop;
+use crate::progress::{
+    poll_cancel, Cancel, NeverCancel, NullProgress, ProgressSink, UncancellableProgress,
+};
 use crate::refs;
 use crate::repo::Repository;
 use crate::state::{resolve_head_for_repository, HeadState};
@@ -170,16 +173,28 @@ impl RebaseSessionError {
 /// returns [`RebaseSessionError::Library`] wrapping
 /// [`Error::DirtyWorktree`](crate::error::Error::DirtyWorktree) or the overwrite error and
 /// leaves the repository untouched, because stopping would discard that work.
+///
+/// Work-tree updates report [`crate::progress::ProgressPhase::CheckingOutFiles`] to `progress`.
+/// `cancel` (or [`ProgressSink::should_cancel`]) is checked after planning and during the apply
+/// and stop checkouts; a cancel returns [`RebaseSessionError::Library`] wrapping
+/// [`Error::Cancelled`](crate::error::Error::Cancelled) (see [`RebaseSessionError::is_cancelled`]).
+/// The last cancel point is before a conflict stop is recorded, so a cancel leaves nothing
+/// changed; once the stop state and `HEAD` are written, its checkout runs to completion and the
+/// rebase stops with its conflicts as without a cancel.
 pub fn start_rebase(
     repo: &Repository,
     opts: &StartRebaseOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<RebaseOutcome, RebaseSessionError> {
     super::ensure_rewrite_apply_ready(repo)?;
     if active_rebase(repo.git_dir()).is_some() {
         return Err(RebaseSessionError::RebaseAlreadyInProgress);
     }
     let (head_ref, orig_head) = branch_head(repo)?;
-    match plan_rebase_resumable(repo, &opts.request, &opts.rebase)? {
+    let plan = plan_rebase_resumable(repo, &opts.request, &opts.rebase)?;
+    poll_cancel(progress, cancel).map_err(map_lib)?;
+    match plan {
         Err(RebasePlan::UpToDate) => Ok(RebaseOutcome::Done {
             head_change: None,
             applied: AppliedRewrite {
@@ -198,13 +213,7 @@ pub fn start_rebase(
         }
         .into()),
         Ok(ResumablePlanOutcome::Complete(plan)) => {
-            let applied = apply_rewrite(
-                repo,
-                &plan,
-                &opts.apply,
-                &mut crate::progress::NullProgress,
-                &crate::progress::NeverCancel,
-            )?;
+            let applied = apply_rewrite(repo, &plan, &opts.apply, progress, cancel)?;
             Ok(RebaseOutcome::Done {
                 head_change: (orig_head != applied.head).then_some((orig_head, applied.head)),
                 applied,
@@ -223,6 +232,8 @@ pub fn start_rebase(
                 &opts.rebase,
                 &opts.apply,
                 *partial,
+                progress,
+                cancel,
             )?;
             if opts.apply.hooks.enabled() {
                 let onto = opts.request.onto.unwrap_or(opts.request.upstream);
@@ -245,9 +256,13 @@ pub fn start_rebase(
 /// Returns [`RebaseSessionError::UnmergedPaths`] when the index still records conflicts,
 /// [`RebaseSessionError::ForeignRebaseInProgress`] when `git` started the rebase, and
 /// [`RebaseSessionError::NoRebaseInProgress`] when no rebase is in progress.
+/// Cancellation follows [`start_rebase`]: a cancel before the replayed commits are applied
+/// keeps the rebase stopped where it was.
 pub fn continue_rebase(
     repo: &Repository,
     opts: &StartRebaseOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<RebaseOutcome, RebaseSessionError> {
     if matches!(active_rebase(repo.git_dir()), Some(ActiveRebase::Exec)) {
         return super::exec::resume_exec_rebase(repo, &opts.apply, false);
@@ -295,7 +310,15 @@ pub fn continue_rebase(
         Some(seed),
         Some(state.scoped_refs.clone()),
     )?;
-    advance_after_plan(repo, &state, &opts.apply, outcome, head_oid)
+    advance_after_plan(
+        repo,
+        &state,
+        &opts.apply,
+        outcome,
+        head_oid,
+        progress,
+        cancel,
+    )
 }
 
 /// Skip the current todo commit and replay the rest.
@@ -307,10 +330,12 @@ pub fn continue_rebase(
 ///
 /// Returns [`RebaseSessionError::ForeignRebaseInProgress`] when `git` started the rebase,
 /// [`RebaseSessionError::NoRebaseInProgress`] when no rebase is in progress, and
-/// planning/apply failures otherwise.
+/// planning/apply failures otherwise. Cancellation follows [`continue_rebase`].
 pub fn skip_rebase(
     repo: &Repository,
     opts: &StartRebaseOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<RebaseOutcome, RebaseSessionError> {
     if matches!(active_rebase(repo.git_dir()), Some(ActiveRebase::Exec)) {
         return super::exec::resume_exec_rebase(repo, &opts.apply, true);
@@ -322,7 +347,7 @@ pub fn skip_rebase(
         .copied()
         .ok_or(RebaseSessionError::NoRebaseInProgress)?;
     let head_oid = resolve_head_oid(repo)?;
-    reset_index_worktree_to_head(repo, head_oid)?;
+    reset_index_worktree_to_head(repo, head_oid, progress, cancel)?;
 
     let replayed_parent = head_oid;
     let mut mapping = state.mapping.clone();
@@ -346,7 +371,15 @@ pub fn skip_rebase(
         Some((mapping, rewritten)),
         Some(state.scoped_refs.clone()),
     )?;
-    advance_after_plan(repo, &state, &opts.apply, outcome, head_oid)
+    advance_after_plan(
+        repo,
+        &state,
+        &opts.apply,
+        outcome,
+        head_oid,
+        progress,
+        cancel,
+    )
 }
 
 /// Cancel the in-progress rebase and restore the branch to `orig-head`.
@@ -745,6 +778,7 @@ fn write_persisted_state(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn install_stopped_rebase(
     repo: &Repository,
     head_ref: &str,
@@ -753,7 +787,10 @@ fn install_stopped_rebase(
     rebase_opts: &RebaseOntoOptions,
     apply: &ApplyOptions,
     partial: super::plan::PartialRewritePlan,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<RebaseStop, RebaseSessionError> {
+    poll_cancel(progress, cancel).map_err(map_lib)?;
     let effective_onto = request.onto.unwrap_or(request.upstream);
     let fork = super::rebase::rebase_fork(repo, request.upstream, request.branch_tip)?;
     let persisted = state_from_partial(
@@ -795,9 +832,19 @@ fn install_stopped_rebase(
         &conflict.replayed_parent,
     )
     .map_err(map_lib)?;
-    reset_index_worktree_to_head(repo, conflict.replayed_parent)?;
+    // With the stop state and HEAD published, a half-installed stop would let continue commit
+    // without the conflict stages, so the checkouts below run to completion.
+    let mut progress = UncancellableProgress::new(progress);
+    reset_index_worktree_to_head(repo, conflict.replayed_parent, &mut progress, &NeverCancel)?;
     let ours_tree = commit_tree(repo, conflict.replayed_parent)?;
-    apply_conflict_merge_worktree(repo, &ours_tree, &conflict.merge).map_err(map_lib)?;
+    apply_conflict_merge_worktree(
+        repo,
+        &ours_tree,
+        &conflict.merge,
+        &mut progress,
+        &NeverCancel,
+    )
+    .map_err(map_lib)?;
 
     let message = load_commit(repo, conflict.commit)?.message;
     fs::write(repo.git_dir().join("MERGE_MSG"), &message).map_err(map_lib)?;
@@ -810,13 +857,17 @@ fn install_stopped_rebase(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn advance_after_plan(
     repo: &Repository,
     prev: &LoadedState,
     apply: &ApplyOptions,
     outcome: ResumablePlanOutcome,
     head_before: ObjectId,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<RebaseOutcome, RebaseSessionError> {
+    poll_cancel(progress, cancel).map_err(map_lib)?;
     match outcome {
         ResumablePlanOutcome::Complete(mut plan) => {
             if let Some(new_tip) = plan.mapped_tip(prev.orig_head) {
@@ -832,17 +883,12 @@ fn advance_after_plan(
                 hooks: PostOperationHooks::Skip,
                 ..apply.clone()
             };
-            let mut applied = apply_rewrite(
-                repo,
-                &plan,
-                &apply_without_hooks,
-                &mut crate::progress::NullProgress,
-                &crate::progress::NeverCancel,
-            )?;
+            let mut applied = apply_rewrite(repo, &plan, &apply_without_hooks, progress, cancel)?;
             refs::write_symbolic_ref_on_store(repo.refs(), repo.git_dir(), "HEAD", &prev.head_ref)
                 .map_err(map_lib)?;
             let branch_tip = repo.resolve_ref_oid(&prev.head_ref).map_err(map_lib)?;
-            reset_index_worktree_to_head(repo, branch_tip)?;
+            // The refs already moved: finish the rebase even if a cancel arrives now.
+            reset_index_worktree_to_head(repo, branch_tip, &mut NullProgress, &NeverCancel)?;
             applied.head = branch_tip;
             clear_rebase_state(repo.git_dir())?;
             if apply.hooks.enabled()
@@ -870,6 +916,8 @@ fn advance_after_plan(
                 &prev.rebase,
                 apply,
                 *partial,
+                progress,
+                cancel,
             )?;
             Ok(RebaseOutcome::Stopped(stop))
         }
@@ -1000,18 +1048,14 @@ fn load_commit(
 fn reset_index_worktree_to_head(
     repo: &Repository,
     head_oid: ObjectId,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<(), RebaseSessionError> {
     let head_tree = commit_tree(repo, head_oid)?;
     // Paths tracked before the move but absent from `head_oid` must go too; leaving them as
     // untracked files makes `git rebase --skip/--abort` refuse to overwrite them later.
-    checkout_hard_to_tree_from_head_tree(
-        repo,
-        &head_tree,
-        &head_tree,
-        &mut crate::progress::NullProgress,
-        &crate::progress::NeverCancel,
-    )
-    .map_err(map_lib)?;
+    checkout_hard_to_tree_from_head_tree(repo, &head_tree, &head_tree, progress, cancel)
+        .map_err(map_lib)?;
     Ok(())
 }
 

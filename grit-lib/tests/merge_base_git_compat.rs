@@ -216,8 +216,16 @@ fn merge_base_default_skewed_dates_without_commit_graph_matches_git() {
         .trim()
         .to_owned();
 
-    let outcome =
-        integrate_branch(&repo, "refs/heads/main", h, g, "G").expect("integrate_branch merge");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        h,
+        g,
+        "G",
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("integrate_branch merge");
     let IntegrateBranchOutcome::Merged { oid: merge_oid, .. } = outcome else {
         panic!("expected clean merge, got {outcome:?}");
     };

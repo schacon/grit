@@ -170,8 +170,13 @@ fn failing_required_clean_filter_fails_stage_and_leaves_index_alone() {
     let repo = filtered_repo(root, "exit 3");
     fs::write(root.join("y.up"), "abc\n").expect("write");
 
-    let err = stage(&repo, &StageOptions::default(), &mut NullProgress)
-        .expect_err("stage must fail when a required clean filter fails");
+    let err = stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect_err("stage must fail when a required clean filter fails");
     assert!(
         matches!(
             &err,
@@ -200,7 +205,13 @@ fn working_filter_round_trips_with_git_and_status_is_clean() {
     git(root, &["commit", "-qm", "base"]);
     fs::write(root.join("y.up"), "def\n").expect("write");
 
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("stage");
     assert_eq!(git(root, &["cat-file", "-p", ":y.up"]), "DEF\n");
     git(root, &["fsck", "--strict"]);
     assert!(

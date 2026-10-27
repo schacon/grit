@@ -42,7 +42,7 @@ use crate::porcelain::hunk_select::{
 };
 use crate::porcelain::index_from_tree::index_from_tree_with_seeded_worktree_stats;
 use crate::porcelain::pathspec_match::KnownPathspecChecker;
-use crate::progress::ProgressSink;
+use crate::progress::{poll_cancel, Cancel, ProgressSink};
 use crate::refs::{
     update_branch_for_commit_on_store, update_detached_head_for_commit_on_store,
     BranchCommitRefUpdate,
@@ -324,6 +324,10 @@ pub fn pending_commit_message(repo: &Repository) -> Result<Option<String>> {
 
 /// Record a commit using `scope` to decide how the index is prepared.
 ///
+/// Staging reports [`crate::progress::ProgressPhase::StagingFiles`] to `progress`; `cancel` (or
+/// [`ProgressSink::should_cancel`]) stops the commit with [`Error::Cancelled`] up to the point
+/// the commit object is written, leaving `HEAD` and the branch where they were.
+///
 /// # Errors
 ///
 /// Same as [`create_commit`] and [`commit_worktree`], plus [`Error::PartialCommitDuringMerge`]
@@ -333,20 +337,21 @@ pub fn commit_with_scope(
     req: &CommitRequest,
     scope: CommitScope,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<CommitOutcome> {
     guard_incomplete_rewrite_apply(repo)?;
     match scope {
-        CommitScope::AutoStage => commit_worktree(repo, req, progress),
+        CommitScope::AutoStage => commit_worktree(repo, req, progress, cancel),
         CommitScope::Staged => {
             let mut req = req.clone();
             // Index stats were refreshed when paths were staged; skip full-tree refresh (#1622).
             req.assume_worktree_synced = true;
             req.index_only = true;
-            create_commit(repo, &req, progress)
+            create_commit(repo, &req, progress, cancel)
         }
-        CommitScope::Paths(paths) => commit_paths_scope(repo, req, &paths, progress),
+        CommitScope::Paths(paths) => commit_paths_scope(repo, req, &paths, progress, cancel),
         CommitScope::Patch { input, pathspecs } => {
-            commit_with_patch(repo, req, input, &pathspecs, progress).map_err(|e| match e {
+            commit_with_patch(repo, req, input, &pathspecs, progress, cancel).map_err(|e| match e {
                 CommitPatchError::Commit(err) => err,
                 other => Error::Message(other.to_string()),
             })
@@ -369,9 +374,10 @@ pub fn commit_with_patch(
     input: CommitPatchInput,
     pathspecs: &[String],
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> std::result::Result<CommitOutcome, CommitPatchError> {
     guard_incomplete_rewrite_apply(repo).map_err(CommitPatchError::Commit)?;
-    commit_patch_scope(repo, req, input, pathspecs, progress)
+    commit_patch_scope(repo, req, input, pathspecs, progress, cancel)
 }
 
 fn commit_patch_scope(
@@ -380,6 +386,7 @@ fn commit_patch_scope(
     input: CommitPatchInput,
     pathspecs: &[String],
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> std::result::Result<CommitOutcome, CommitPatchError> {
     if !read_merge_heads(repo.git_dir())?.is_empty() {
         return Err(Error::PartialCommitDuringMerge.into());
@@ -436,7 +443,7 @@ fn commit_patch_scope(
     let mut req = req.clone();
     req.assume_worktree_synced = true;
     let persist = index_lock.map(|lock| LockedIndex { index: None, lock });
-    create_commit_with_index(repo, head, &mut index, &req, progress, persist)
+    create_commit_with_index(repo, head, &mut index, &req, progress, cancel, persist)
         .map_err(CommitPatchError::Commit)
 }
 
@@ -453,10 +460,11 @@ pub fn plan_commit(
     req: &CommitRequest,
     scope: CommitScope,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<CommitPlan> {
     let mut req = req.clone();
     req.dry_run = true;
-    let outcome = commit_with_scope(repo, &req, scope, progress)?;
+    let outcome = commit_with_scope(repo, &req, scope, progress, cancel)?;
     Ok(CommitPlan {
         files: outcome.files,
         parents: outcome.parents,
@@ -511,6 +519,7 @@ fn commit_paths_scope(
     req: &CommitRequest,
     paths: &ResolvedPathspecs,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<CommitOutcome> {
     if paths.specs.is_empty() {
         return Err(Error::Message("you must specify path(s)".into()));
@@ -561,10 +570,10 @@ fn commit_paths_scope(
     };
     seed_commit_index_stage0_from_index(repo, &mut commit_index, &real_index, paths)?;
 
-    let staged_commit = stage_on_index(repo, &mut commit_index, &stage_opts, progress)?;
+    let staged_commit = stage_on_index(repo, &mut commit_index, &stage_opts, progress, cancel)?;
     let real_index = match index_lock {
         Some(lock) => {
-            stage_on_index(repo, &mut real_index, &stage_opts, progress)?;
+            stage_on_index(repo, &mut real_index, &stage_opts, progress, cancel)?;
             Some(LockedIndex {
                 index: Some(real_index),
                 lock,
@@ -579,7 +588,15 @@ fn commit_paths_scope(
     req.staged_change_count = Some(staged_commit.total().max(1));
     req.index_only = true;
 
-    create_commit_with_index(repo, head, &mut commit_index, &req, progress, real_index)
+    create_commit_with_index(
+        repo,
+        head,
+        &mut commit_index,
+        &req,
+        progress,
+        cancel,
+        real_index,
+    )
 }
 
 /// The repository index to persist after a commit, with the lock taken before the commit started.
@@ -775,10 +792,15 @@ impl CommitOutcome {
 ///
 /// - `repo` — open repository with a work tree and branch `HEAD`.
 /// - `req` — message, author/committer identities, and empty-commit policy.
-/// - `progress` — optional progress sink (single `commit` phase).
+/// - `progress` — progress sink; staging callers see [`crate::progress::ProgressPhase::StagingFiles`].
+/// - `cancel` — checked before anything is written and again before the commit object is
+///   written; after that the branch update always completes.
 ///
 /// # Errors
 ///
+/// - [`Error::Cancelled`] when `cancel` or [`ProgressSink::should_cancel`] fired before the
+///   commit object was written; `HEAD` and the branch are unchanged. A cancel after the
+///   pre-commit hook ran can leave the staged index on disk.
 /// - [`Error::AmendUnborn`] when [`CommitRequest::amend`] is set but the branch has no commits yet.
 /// - [`Error::NothingToCommit`] when the new tree is empty (unborn branch) or matches the parent tree and [`CommitRequest::allow_empty`] is false (not applied when amending).
 /// - [`Error::IndexUnmerged`] when the index has conflict stages.
@@ -788,11 +810,12 @@ pub fn create_commit(
     repo: &Repository,
     req: &CommitRequest,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<CommitOutcome> {
     guard_incomplete_rewrite_apply(repo)?;
     let head = resolve_head_for_repository(repo)?;
     let mut index = repo.load_index()?;
-    create_commit_with_index(repo, head, &mut index, req, progress, None)
+    create_commit_with_index(repo, head, &mut index, req, progress, cancel, None)
 }
 
 /// Stage every worktree change and record a commit using a single in-memory index (issue #1064).
@@ -807,6 +830,9 @@ pub fn create_commit(
 /// [`CommitRequest::dry_run`] never writes the index, refs, or stored objects. Symlinks are
 /// compared and previewed as link-target bytes, including directory and dangling links.
 ///
+/// Staging reports [`crate::progress::ProgressPhase::StagingFiles`] and polls `cancel`; a cancel
+/// during staging returns [`Error::Cancelled`] with the on-disk index, `HEAD` and refs unchanged.
+///
 /// # Errors
 ///
 /// Same as [`create_commit`], plus staging failures from [`crate::porcelain::add::stage_for_commit`].
@@ -814,12 +840,18 @@ pub fn commit_worktree(
     repo: &Repository,
     req: &CommitRequest,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<CommitOutcome> {
     guard_incomplete_rewrite_apply(repo)?;
     let head = resolve_head_for_repository(repo)?;
     let mut index = repo.load_index()?;
-    let staged =
-        crate::porcelain::add::stage_for_commit_on_index(repo, &mut index, progress, req.dry_run)?;
+    let staged = crate::porcelain::add::stage_for_commit_on_index(
+        repo,
+        &mut index,
+        progress,
+        cancel,
+        req.dry_run,
+    )?;
     if index.has_unmerged_entries() {
         return Err(Error::IndexUnmerged);
     }
@@ -828,7 +860,7 @@ pub fn commit_worktree(
     if req.skip_pre_commit_tree_match {
         req.staged_change_count = Some(staged.total());
     }
-    let result = create_commit_with_index(repo, head, &mut index, &req, progress, None);
+    let result = create_commit_with_index(repo, head, &mut index, &req, progress, cancel, None);
     if matches!(result, Err(Error::NothingToCommit)) && !req.dry_run && staged.total() > 0 {
         repo.write_index(&mut index)?;
     }
@@ -1131,12 +1163,13 @@ pub(crate) fn create_commit_with_loaded_index(
     index: &mut Index,
     req: &CommitRequest,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<CommitOutcome> {
     if index.has_unmerged_entries() {
         return Err(Error::IndexUnmerged);
     }
     let head = resolve_head_for_repository(repo)?;
-    create_commit_with_index(repo, head, index, req, progress, None)
+    create_commit_with_index(repo, head, index, req, progress, cancel, None)
 }
 
 /// Record a commit of `index` on top of `head`.
@@ -1144,14 +1177,21 @@ pub(crate) fn create_commit_with_loaded_index(
 /// `head` must be read before the content `index` was built from: the branch update then
 /// compares against that same tip, so a commit landed by another process in between makes this
 /// one fail instead of silently reverting it.
+///
+/// Cancellation is checked before anything is written and again after the pre-commit and
+/// commit-msg hooks, before the commit object; once the object is written the ref update always
+/// follows.
+#[allow(clippy::too_many_arguments)]
 fn create_commit_with_index(
     repo: &Repository,
     head: HeadState,
     index: &mut Index,
     req: &CommitRequest,
-    _progress: &mut dyn ProgressSink,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
     persist_index: Option<LockedIndex>,
 ) -> Result<CommitOutcome> {
+    poll_cancel(progress, cancel)?;
     let (refname, short_name, mut parent) = match head {
         HeadState::Branch {
             refname,
@@ -1399,6 +1439,7 @@ fn create_commit_with_index(
     let bytes = prepare_commit_bytes(repo, config.as_ref(), &commit_data, req.sign_override)?;
     fsck_commit_idents(&bytes, repo.odb().hash_algo())
         .map_err(|detail| Error::CorruptObject(format!("commit would fail fsck: {detail}")))?;
+    poll_cancel(progress, cancel)?;
     let oid = repo.odb().write(ObjectKind::Commit, &bytes)?;
 
     let previous_tip = replaced_tip.or(parent);
@@ -1801,7 +1842,13 @@ mod tests {
         ] {
             symlink(target, root.join(path)).unwrap();
         }
-        commit_worktree(&repo, &commit_req("initial"), &mut NullProgress).unwrap();
+        commit_worktree(
+            &repo,
+            &commit_req("initial"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut index = repo.load_index().unwrap();
         for entry in &mut index.entries {
             entry.mtime_sec = 0;
@@ -1818,7 +1865,13 @@ mod tests {
             )
             .unwrap()
             .with_thread_policy(ThreadPolicy::with_threads_override(Some(threads)));
-            let err = commit_worktree(&repo, &dry_run_req("clean"), &mut NullProgress).unwrap_err();
+            let err = commit_worktree(
+                &repo,
+                &dry_run_req("clean"),
+                &mut NullProgress,
+                &crate::progress::NeverCancel,
+            )
+            .unwrap_err();
             assert!(matches!(err, Error::NothingToCommit), "{err:?}");
             assert_eq!(repo_snapshot(&repo), before);
             assert_eq!(
@@ -1842,8 +1895,13 @@ mod tests {
             )
             .unwrap()
             .with_thread_policy(ThreadPolicy::with_threads_override(Some(threads)));
-            let preview =
-                commit_worktree(&repo, &dry_run_req("retarget"), &mut NullProgress).unwrap();
+            let preview = commit_worktree(
+                &repo,
+                &dry_run_req("retarget"),
+                &mut NullProgress,
+                &crate::progress::NeverCancel,
+            )
+            .unwrap();
             assert_eq!(preview.changes, 3);
             if let Some(expected) = &preview_files {
                 assert_eq!(&preview.files, expected);
@@ -1855,7 +1913,13 @@ mod tests {
                 before_tip
             );
         }
-        let committed = commit_worktree(&repo, &commit_req("retarget"), &mut NullProgress).unwrap();
+        let committed = commit_worktree(
+            &repo,
+            &commit_req("retarget"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(Some(committed.files), preview_files);
     }
 
@@ -1865,9 +1929,21 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("README"), b"hello\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
-        let outcome = create_commit(&repo, &commit_req("initial"), &mut NullProgress).unwrap();
+        let outcome = create_commit(
+            &repo,
+            &commit_req("initial"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert!(outcome.parent.is_none());
         assert_eq!(outcome.branch.as_deref(), Some("main"));
         assert!(!outcome.is_detached());
@@ -1882,7 +1958,13 @@ mod tests {
     fn create_commit_rejects_empty_initial_index() {
         let tmp = TempDir::new().unwrap();
         let repo = init_repo(tmp.path());
-        let err = create_commit(&repo, &commit_req("empty"), &mut NullProgress).unwrap_err();
+        let err = create_commit(
+            &repo,
+            &commit_req("empty"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap_err();
         assert!(matches!(err, Error::NothingToCommit));
         assert!(resolve_ref(&repo.git_dir(), "refs/heads/main").is_err());
     }
@@ -1893,12 +1975,36 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("first"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         fs::write(root.join("a.txt"), b"2\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        let outcome = create_commit(&repo, &commit_req("second"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        let outcome = create_commit(
+            &repo,
+            &commit_req("second"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(outcome.changes, 1);
         assert!(outcome.parent.is_some());
     }
@@ -1909,10 +2015,28 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("first"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
-        let err = create_commit(&repo, &commit_req("noop"), &mut NullProgress).unwrap_err();
+        let err = create_commit(
+            &repo,
+            &commit_req("noop"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap_err();
         assert!(matches!(err, Error::NothingToCommit));
     }
 
@@ -1922,18 +2046,36 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        commit_worktree(&repo, &commit_req("first"), &mut NullProgress).unwrap();
+        commit_worktree(
+            &repo,
+            &commit_req("first"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         let mut index = repo.load_index().unwrap();
         stage_file_in_index(&repo, &mut index, "n.txt", b"staged\n");
         write_index(&repo, &mut index);
         fs::remove_file(root.join("n.txt")).unwrap();
 
-        let err = commit_worktree(&repo, &dry_run_req("noop"), &mut NullProgress).unwrap_err();
+        let err = commit_worktree(
+            &repo,
+            &dry_run_req("noop"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap_err();
         assert!(matches!(err, Error::NothingToCommit));
         assert!(repo.load_index().unwrap().get(b"n.txt", 0).is_some());
 
-        let err = commit_worktree(&repo, &commit_req("noop"), &mut NullProgress).unwrap_err();
+        let err = commit_worktree(
+            &repo,
+            &commit_req("noop"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap_err();
         assert!(matches!(err, Error::NothingToCommit));
         let index = repo.load_index().unwrap();
         assert!(index.get(b"n.txt", 0).is_none());
@@ -1946,13 +2088,37 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        let first = create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        let first = create_commit(
+            &repo,
+            &commit_req("first"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         fs::write(repo.git_dir().join("HEAD"), first.oid.to_hex()).unwrap();
 
         fs::write(root.join("b.txt"), b"2\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        let second = create_commit(&repo, &commit_req("second"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        let second = create_commit(
+            &repo,
+            &commit_req("second"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(second.branch, None);
         assert!(second.is_detached());
         assert_eq!(second.parent, Some(first.oid));
@@ -1968,8 +2134,20 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        let outcome = create_commit(&repo, &commit_req("subject line"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        let outcome = create_commit(
+            &repo,
+            &commit_req("subject line"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         let branch_log = read_reflog(&repo.git_dir(), "refs/heads/main").unwrap();
         assert_eq!(branch_log.len(), 1);
@@ -1987,10 +2165,22 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         set_test_inject_index_write_fail(true);
-        let err = create_commit(&repo, &commit_req("fail"), &mut NullProgress).unwrap_err();
+        let err = create_commit(
+            &repo,
+            &commit_req("fail"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap_err();
         set_test_inject_index_write_fail(false);
         assert!(!matches!(err, Error::NothingToCommit));
 
@@ -2006,10 +2196,22 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         set_test_inject_reflog_fail(Some("HEAD"));
-        let err = create_commit(&repo, &commit_req("fail"), &mut NullProgress).unwrap_err();
+        let err = create_commit(
+            &repo,
+            &commit_req("fail"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap_err();
         set_test_inject_reflog_fail(None);
         assert!(!matches!(err, Error::NothingToCommit));
 
@@ -2033,7 +2235,13 @@ mod tests {
         stage_file_in_index(&repo, &mut index, "dir/two.txt", b"2\n");
         write_index(&repo, &mut index);
 
-        let outcome = create_commit(&repo, &commit_req("tree"), &mut NullProgress).unwrap();
+        let outcome = create_commit(
+            &repo,
+            &commit_req("tree"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         let index = repo.load_index().unwrap();
         verify_cache_tree(&index).expect("cache-tree valid");
@@ -2052,16 +2260,46 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("first"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         fs::write(root.join("a.txt"), b"2\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("second"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("second"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         let mut req = commit_req("");
         req.amend = true;
         let tip = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();
-        let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        let outcome = create_commit(
+            &repo,
+            &req,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(
             outcome.oid, tip,
             "same tree and message with fixed committer yields the same object id"
@@ -2079,8 +2317,20 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"a\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("oneline subject"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("oneline subject"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let baseline = {
             let oid = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();
             parse_commit(&repo.odb().read(&oid).unwrap().data)
@@ -2090,10 +2340,22 @@ mod tests {
 
         for extra in 1..=2 {
             fs::write(root.join("a.txt"), format!("a\n{extra}\n")).unwrap();
-            stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+            stage(
+                &repo,
+                &StageOptions::default(),
+                &mut NullProgress,
+                &crate::progress::NeverCancel,
+            )
+            .unwrap();
             let mut req = commit_req("");
             req.amend = true;
-            create_commit(&repo, &req, &mut NullProgress).unwrap();
+            create_commit(
+                &repo,
+                &req,
+                &mut NullProgress,
+                &crate::progress::NeverCancel,
+            )
+            .unwrap();
             let oid = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();
             let message = parse_commit(&repo.odb().read(&oid).unwrap().data)
                 .unwrap()
@@ -2107,10 +2369,22 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let repo = init_repo(tmp.path());
         fs::write(tmp.path().join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut req = commit_req("nope");
         req.amend = true;
-        let err = create_commit(&repo, &req, &mut NullProgress).unwrap_err();
+        let err = create_commit(
+            &repo,
+            &req,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap_err();
         assert!(matches!(err, Error::AmendUnborn));
     }
 
@@ -2120,13 +2394,31 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("first"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         let mut req = commit_req("empty");
         req.allow_empty = true;
         let parent = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();
-        let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        let outcome = create_commit(
+            &repo,
+            &req,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(outcome.changes, 0);
         assert_eq!(outcome.parent, Some(parent));
         assert_ne!(outcome.oid, parent);
@@ -2139,8 +2431,20 @@ mod tests {
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
         fs::write(root.join("b.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("first"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         fs::write(root.join("a.txt"), b"2\n").unwrap();
         fs::write(root.join("b.txt"), b"2\n").unwrap();
@@ -2153,6 +2457,7 @@ mod tests {
             &commit_req("only a"),
             CommitScope::Staged,
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(outcome.changes, 1);
@@ -2169,8 +2474,20 @@ mod tests {
         let repo = init_repo(root);
         let mut bytes = vec![b'x'; 2 * 1024 * 1024];
         fs::write(root.join("large"), &bytes).unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("initial"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("initial"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         bytes.push(b'y');
         fs::write(root.join("large"), &bytes).unwrap();
         let passes = repo.odb().hot_path_metrics().staging_passes();
@@ -2183,6 +2500,7 @@ mod tests {
                 scoped: true,
             }),
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(result.changes, 1);
@@ -2201,8 +2519,20 @@ mod tests {
         let repo = init_repo(root);
         fs::write(root.join("file"), b"1\n").unwrap();
         fs::write(root.join("baz"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("initial"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("initial"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         fs::write(root.join("file"), b"2\n").unwrap();
         fs::write(root.join("baz"), b"2\n").unwrap();
@@ -2213,6 +2543,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
 
@@ -2226,6 +2557,7 @@ mod tests {
             &commit_req("file only"),
             CommitScope::Paths(paths),
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
 
@@ -2240,8 +2572,20 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("tracked.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("first"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         fs::write(root.join("new.txt"), b"new\n").unwrap();
         fs::remove_file(root.join("tracked.txt")).unwrap();
@@ -2256,6 +2600,7 @@ mod tests {
             &commit_req("add and remove"),
             CommitScope::Paths(paths),
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
 
@@ -2325,6 +2670,7 @@ mod tests {
                 scoped: true,
             }),
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
 
@@ -2350,8 +2696,20 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("first"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         let paths = ResolvedPathspecs {
             specs: vec!["missing.txt".into()],
@@ -2363,6 +2721,7 @@ mod tests {
             &commit_req("nope"),
             CommitScope::Paths(paths),
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap_err();
         assert!(matches!(err, Error::PathspecNoMatch { .. }));
@@ -2374,8 +2733,20 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("first"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let tip = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();
         fs::write(repo.git_dir().join("MERGE_HEAD"), format!("{tip}\n")).unwrap();
 
@@ -2389,6 +2760,7 @@ mod tests {
             &commit_req("partial"),
             CommitScope::Paths(paths),
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap_err();
         assert!(matches!(err, Error::PartialCommitDuringMerge));
@@ -2447,7 +2819,14 @@ mod tests {
         let before = repo_snapshot(repo);
         let tip_before = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();
 
-        let err = commit_with_scope(repo, &commit_req("x"), scope, &mut NullProgress).unwrap_err();
+        let err = commit_with_scope(
+            repo,
+            &commit_req("x"),
+            scope,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap_err();
         match &err {
             Error::LockHeld {
                 path: reported,
@@ -2504,6 +2883,7 @@ mod tests {
             &commit_req("x"),
             CommitScope::Paths(f1_paths()),
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert!(!repo.git_dir().join("index.lock").exists());
@@ -2535,6 +2915,7 @@ mod tests {
             &commit_req("x"),
             CommitScope::Staged,
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap_err();
         assert!(
@@ -2578,7 +2959,14 @@ mod tests {
         };
         assert_commit_refused_by_foreign_lock(root, &repo, scope.clone(), true);
 
-        let outcome = commit_with_scope(&repo, &commit_req("x"), scope, &mut NullProgress).unwrap();
+        let outcome = commit_with_scope(
+            &repo,
+            &commit_req("x"),
+            scope,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert!(!repo.git_dir().join("index.lock").exists());
         assert_eq!(
             system_git(root, &["rev-parse", "HEAD"]).trim(),
@@ -2629,6 +3017,7 @@ mod tests {
                 scoped: true,
             }),
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
 
@@ -2677,6 +3066,7 @@ mod tests {
                 &commit_req("g"),
                 CommitScope::AutoStage,
                 &mut NullProgress,
+                &crate::progress::NeverCancel,
             )
             .unwrap();
 
@@ -2818,14 +3208,32 @@ mod tests {
         )
         .unwrap();
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         let mut req = commit_req("blocked");
         req.hooks = HookPolicy::Run;
-        assert!(create_commit(&repo, &req, &mut NullProgress).is_err());
+        assert!(create_commit(
+            &repo,
+            &req,
+            &mut NullProgress,
+            &crate::progress::NeverCancel
+        )
+        .is_err());
 
         req.hooks = HookPolicy::SkipVerify;
-        let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        let outcome = create_commit(
+            &repo,
+            &req,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert!(outcome.hooks_run.is_empty());
     }
 
@@ -2842,8 +3250,20 @@ mod tests {
         )
         .unwrap();
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        let outcome = create_commit(&repo, &commit_req("after post"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        let outcome = create_commit(
+            &repo,
+            &commit_req("after post"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(
             resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap(),
             outcome.oid
@@ -2864,8 +3284,20 @@ mod tests {
         )
         .unwrap();
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        let outcome = create_commit(&repo, &commit_req("hooks"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        let outcome = create_commit(
+            &repo,
+            &commit_req("hooks"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(
             outcome.hooks_run,
             vec![
@@ -2882,10 +3314,22 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut req = commit_req("dated");
         req.author_date = Some("946684800 +0000".to_owned());
-        let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        let outcome = create_commit(
+            &repo,
+            &req,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(outcome.author.date, "946684800 +0000");
     }
 
@@ -2895,13 +3339,25 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut req = commit_req("trailers");
         req.trailers = vec![
             ("Acked-by".to_owned(), "Alice".to_owned()),
             ("Acked-by".to_owned(), "Alice".to_owned()),
         ];
-        let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        let outcome = create_commit(
+            &repo,
+            &req,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let msg = parse_commit(&repo.odb().read(&outcome.oid).unwrap().data)
             .unwrap()
             .message;
@@ -2914,7 +3370,13 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut req = commit_req("signoff");
         req.committer = Some(
             "Committer Name <committer@example.com> 2 +0000"
@@ -2922,7 +3384,13 @@ mod tests {
                 .expect("signature"),
         );
         req.signoff = true;
-        let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        let outcome = create_commit(
+            &repo,
+            &req,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let msg = parse_commit(&repo.odb().read(&outcome.oid).unwrap().data)
             .unwrap()
             .message;
@@ -2935,7 +3403,13 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut req = commit_req("subject\n");
         req.committer = Some(
             "Committer Name <committer@example.com> 2 +0000"
@@ -2944,7 +3418,13 @@ mod tests {
         );
         req.signoff = true;
         req.trailers = vec![("Acked-by".to_owned(), "Alice".to_owned())];
-        let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        let outcome = create_commit(
+            &repo,
+            &req,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let msg = parse_commit(&repo.odb().read(&outcome.oid).unwrap().data)
             .unwrap()
             .message;
@@ -2959,7 +3439,13 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut source = commit_req("source subject\n");
         source.author = Some(
             "Source Author <author@example.com> 978307200 +0000"
@@ -2967,25 +3453,55 @@ mod tests {
                 .expect("signature"),
         );
         source.committer = Some(ident().parse().expect("signature"));
-        let source_out = create_commit(&repo, &source, &mut NullProgress).unwrap();
+        let source_out = create_commit(
+            &repo,
+            &source,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         fs::write(root.join("a.txt"), b"2\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut tip = commit_req("tip subject\n");
         tip.author = Some(
             "Tip Author <tip@example.com> 1792591163 +0000"
                 .parse()
                 .expect("signature"),
         );
-        create_commit(&repo, &tip, &mut NullProgress).unwrap();
+        create_commit(
+            &repo,
+            &tip,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         fs::write(root.join("a.txt"), b"3\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut amend = commit_req("");
         amend.amend = true;
         amend.author = None;
         amend.reuse_message_from = Some(source_out.oid);
-        let outcome = create_commit(&repo, &amend, &mut NullProgress).unwrap();
+        let outcome = create_commit(
+            &repo,
+            &amend,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let author = author_info_from_commit(&repo, outcome.oid);
         assert_eq!(author.name, "Source Author");
         assert_eq!(author.email, "author@example.com");
@@ -3002,21 +3518,51 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut source = commit_req("source subject\n");
         source.author = Some(
             "Source Author <author@example.com> 978307200 +0000"
                 .parse()
                 .expect("signature"),
         );
-        let source_out = create_commit(&repo, &source, &mut NullProgress).unwrap();
+        let source_out = create_commit(
+            &repo,
+            &source,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         fs::write(root.join("a.txt"), b"2\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("tip"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("tip"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         fs::write(root.join("a.txt"), b"3\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut amend = commit_req("");
         amend.amend = true;
         amend.author = None;
@@ -3027,7 +3573,13 @@ mod tests {
                 .expect("signature"),
         );
         amend.reuse_message_from = Some(source_out.oid);
-        let outcome = create_commit(&repo, &amend, &mut NullProgress).unwrap();
+        let outcome = create_commit(
+            &repo,
+            &amend,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let author = author_info_from_commit(&repo, outcome.oid);
         assert_eq!(author.name, "Reset Author");
         assert_eq!(author.email, "reset@example.com");
@@ -3039,7 +3591,13 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut first = commit_req("source");
         first.author = Some(
             "Source Author <source@example.com> 99 +0000"
@@ -3047,14 +3605,32 @@ mod tests {
                 .expect("signature"),
         );
         first.committer = Some(ident().parse().expect("signature"));
-        let first_out = create_commit(&repo, &first, &mut NullProgress).unwrap();
+        let first_out = create_commit(
+            &repo,
+            &first,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         fs::write(root.join("a.txt"), b"2\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut req = commit_req("");
         req.author = None;
         req.reuse_message_from = Some(first_out.oid);
-        let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        let outcome = create_commit(
+            &repo,
+            &req,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let author = author_info_from_commit(&repo, outcome.oid);
         assert_eq!(author.name, "Source Author");
         assert_eq!(author.email, "source@example.com");
@@ -3067,14 +3643,38 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut first = commit_req("source");
         first.author = Some("Old <old@example.com> 1 +0000".parse().expect("signature"));
-        create_commit(&repo, &first, &mut NullProgress).unwrap();
+        create_commit(
+            &repo,
+            &first,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         fs::write(root.join("a.txt"), b"2\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("second"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("second"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         let mut amend = commit_req("");
         amend.amend = true;
@@ -3085,7 +3685,13 @@ mod tests {
                 .parse()
                 .expect("signature"),
         );
-        let outcome = create_commit(&repo, &amend, &mut NullProgress).unwrap();
+        let outcome = create_commit(
+            &repo,
+            &amend,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let author = author_info_from_commit(&repo, outcome.oid);
         assert_eq!(author.name, "New Committer");
         assert_eq!(author.email, "new@example.com");
@@ -3123,8 +3729,20 @@ mod tests {
         )
         .unwrap();
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        let source = create_commit(&repo, &commit_req("source"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        let source = create_commit(
+            &repo,
+            &commit_req("source"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let source_data = parse_commit(&repo.odb().read(&source.oid).unwrap().data).unwrap();
         let source_id = change_id(&source_data).expect("source change id");
 
@@ -3137,11 +3755,23 @@ mod tests {
         )
         .unwrap();
         fs::write(root.join("a.txt"), b"2\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut req = commit_req("");
         req.author = None;
         req.reuse_message_from = Some(source.oid);
-        let copy = create_commit(&repo, &req, &mut NullProgress).unwrap();
+        let copy = create_commit(
+            &repo,
+            &req,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let copy_data = parse_commit(&repo.odb().read(&copy.oid).unwrap().data).unwrap();
         let copy_id = change_id(&copy_data).expect("copy change id");
         assert_ne!(copy_id, source_id);
@@ -3153,12 +3783,36 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        let first = create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        let first = create_commit(
+            &repo,
+            &commit_req("first"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         fs::write(root.join("b.txt"), b"2\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        let second = create_commit(&repo, &commit_req("second"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        let second = create_commit(
+            &repo,
+            &commit_req("second"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         fs::write(
             repo.git_dir().join("MERGE_HEAD"),
@@ -3166,8 +3820,20 @@ mod tests {
         )
         .unwrap();
         fs::write(root.join("a.txt"), b"merged\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        let merge = create_commit(&repo, &commit_req("merge"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        let merge = create_commit(
+            &repo,
+            &commit_req("merge"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(merge.parents.len(), 2);
         assert_eq!(merge.parents[0], second.oid);
         assert_eq!(merge.parents[1], first.oid);
@@ -3200,8 +3866,20 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("tracked.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("first"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         fs::write(root.join("new.txt"), b"new\n").unwrap();
         let paths = ResolvedPathspecs {
             specs: vec!["new.txt".into()],
@@ -3214,6 +3892,7 @@ mod tests {
             &dry_run_req("add new"),
             CommitScope::Paths(paths),
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(plan.files.len(), 1);
@@ -3227,10 +3906,28 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("first"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         fs::write(root.join("a.txt"), b"2\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let mut req = dry_run_req("amend");
         req.amend = true;
         req.author = Some(
@@ -3238,8 +3935,14 @@ mod tests {
                 .parse()
                 .expect("signature"),
         );
-        let outcome =
-            commit_with_scope(&repo, &req, CommitScope::Staged, &mut NullProgress).unwrap();
+        let outcome = commit_with_scope(
+            &repo,
+            &req,
+            CommitScope::Staged,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(outcome.author.email, "o@example.com");
         assert_eq!(outcome.author.name, "Override");
     }
@@ -3290,8 +3993,20 @@ mod tests {
         let repo = init_repo(root);
         let (base, edited) = two_hunk_file();
         fs::write(root.join("f.txt"), base).unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("init"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("init"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         fs::write(root.join("f.txt"), edited).unwrap();
 
         let (files, peers) =
@@ -3311,6 +4026,7 @@ mod tests {
             }),
             &[],
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
 
@@ -3342,8 +4058,20 @@ mod tests {
         let repo = init_repo(root);
         let (base, edited) = two_hunk_file();
         fs::write(root.join("f.txt"), base).unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("init"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("init"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         fs::write(root.join("f.txt"), edited).unwrap();
 
         let (files, peers) =
@@ -3363,6 +4091,7 @@ mod tests {
             }),
             &[],
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
 
@@ -3455,8 +4184,20 @@ mod tests {
         let repo = init_repo(root);
         let (base, edited) = two_hunk_file();
         fs::write(root.join("f.txt"), base.clone()).unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("init"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("init"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         fs::write(root.join("f.txt"), edited.clone()).unwrap();
 
         let (files, peers) =
@@ -3486,6 +4227,7 @@ mod tests {
             CommitPatchInput::Patches(patch),
             &[],
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         let grit_tip = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();
@@ -3530,8 +4272,20 @@ mod tests {
         let repo = init_repo(root);
         let (base, edited) = two_hunk_file();
         fs::write(root.join("f.txt"), base).unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("init"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("init"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         fs::write(root.join("f.txt"), edited).unwrap();
 
         let before_loose = loose_object_count(&repo);
@@ -3565,6 +4319,7 @@ mod tests {
             CommitPatchInput::Patches(patch),
             &[],
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
 
@@ -3585,8 +4340,20 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("f.txt"), b"one\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
-        create_commit(&repo, &commit_req("init"), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("init"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let before_tip = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();
         let before_index_oid = repo.load_index().unwrap().entries[0].oid;
 
@@ -3600,6 +4367,7 @@ mod tests {
             }),
             &[],
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap_err();
         assert!(matches!(err, CommitPatchError::Select(_)));

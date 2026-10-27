@@ -137,7 +137,11 @@ fn stash_staged_only_matches_git_trees() {
 
     let repo = open_grit(&grit_root);
     repo.stash()
-        .push(&stash_opts(StashMode::StagedOnly, false))
+        .push(
+            &stash_opts(StashMode::StagedOnly, false),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("push")
         .expect("had staged changes");
     git_cmd(&git_root, &["stash", "push", "--staged"]);
@@ -172,7 +176,11 @@ fn stash_keep_index_leaves_index_and_worktree_like_git() {
 
     let repo = open_grit(&grit_root);
     repo.stash()
-        .push(&stash_opts(StashMode::KeepIndex, false))
+        .push(
+            &stash_opts(StashMode::KeepIndex, false),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("push")
         .expect("had changes");
     git_cmd(&git_root, &["stash", "push", "--keep-index"]);
@@ -205,7 +213,11 @@ fn stash_keep_index_pop_matches_git() {
 
     let repo = open_grit(&grit_root);
     repo.stash()
-        .push(&stash_opts(StashMode::KeepIndex, false))
+        .push(
+            &stash_opts(StashMode::KeepIndex, false),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("push")
         .expect("had changes");
     git_cmd(&git_root, &["stash", "push", "--keep-index"]);
@@ -268,7 +280,14 @@ fn stash_staged_with_pathspec_matches_git() {
     let repo = open_grit(&grit_root);
     let mut opts = stash_opts(StashMode::StagedOnly, false);
     opts.pathspecs = vec!["a".to_owned()];
-    repo.stash().push(&opts).expect("push").expect("changes");
+    repo.stash()
+        .push(
+            &opts,
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
+        .expect("push")
+        .expect("changes");
     git_cmd(&git_root, &["stash", "push", "--staged", "--", "a"]);
 
     assert_eq!(
@@ -298,7 +317,11 @@ fn stash_staged_deletion_restores_head_like_git() {
 
     let repo = open_grit(&grit_root);
     repo.stash()
-        .push(&stash_opts(StashMode::StagedOnly, false))
+        .push(
+            &stash_opts(StashMode::StagedOnly, false),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("push")
         .expect("changes");
     git_cmd(&git_root, &["stash", "push", "--staged"]);
@@ -328,7 +351,11 @@ fn stash_staged_rejects_untracked_combo() {
     let repo = open_grit(dir.path());
     let err = repo
         .stash()
-        .push(&stash_opts(StashMode::StagedOnly, true))
+        .push(
+            &stash_opts(StashMode::StagedOnly, true),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect_err("staged + untracked");
     assert!(
         err.to_string().contains("include-untracked"),

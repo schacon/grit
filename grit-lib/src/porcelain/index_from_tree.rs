@@ -585,7 +585,13 @@ mod tests {
             fs::write(abs, rel.as_bytes()).expect("write");
         }
         let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("repo");
-        stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .expect("stage");
         let ident = "T <t@example.com> 1 +0000".to_owned();
         create_commit(
             &repo,
@@ -596,6 +602,7 @@ mod tests {
                 ..Default::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .expect("commit");
         let head = resolve_head_for_repository(&repo).expect("head");
@@ -637,7 +644,13 @@ mod tests {
             fs::create_dir_all(abs.parent().expect("parent")).expect("mkdir");
             fs::write(abs, contents).expect("write");
         }
-        stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+        stage(
+            repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .expect("stage");
         let ident = "T <t@example.com> 1 +0000".to_owned();
         create_commit(
             repo,
@@ -648,6 +661,7 @@ mod tests {
                 ..Default::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .expect("commit");
         let head = resolve_head_for_repository(repo).expect("head");

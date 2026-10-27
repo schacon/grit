@@ -479,6 +479,7 @@ fn notes_on_reftable_repository_use_the_ref_store() {
             ..Default::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("commit")
     .oid;

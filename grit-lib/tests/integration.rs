@@ -1570,6 +1570,11 @@ mod serve_upload_pack_inprocess;
 #[cfg(feature = "full-tests")]
 #[path = "serve_upload_pack_v2_fetch.rs"]
 mod serve_upload_pack_v2_fetch;
+#[path = "session_cancel.rs"]
+mod session_cancel;
+#[cfg(feature = "full-tests")]
+#[path = "session_cancel_git_compat.rs"]
+mod session_cancel_git_compat;
 #[cfg(feature = "full-tests")]
 #[path = "sha1dc_ingestion.rs"]
 mod sha1dc_ingestion;

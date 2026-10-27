@@ -85,6 +85,7 @@ fn nul_mode_literal_spaces_and_quotes_match_git_add() {
             ..Default::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("stage");
 

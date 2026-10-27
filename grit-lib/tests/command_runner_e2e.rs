@@ -91,7 +91,13 @@ fn create_commit_aborts_on_pre_commit_hook_failure() {
     .expect("open");
 
     fs::write(tmp.path().join("f.txt"), b"data\n").expect("write");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
 
     let ident = "T <t@t> 1 +0000".to_string();
     let err = create_commit(
@@ -109,6 +115,7 @@ fn create_commit_aborts_on_pre_commit_hook_failure() {
             ..Default::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("commit should fail");
     assert!(matches!(
@@ -132,7 +139,13 @@ fn commit_msg_hook_receives_editmsg_path_argument() {
     perms.set_mode(0o755);
     fs::set_permissions(&hook, perms).expect("chmod");
     fs::write(tmp.path().join("a.txt"), b"x\n").expect("write");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
 
     let ident = "T <t@t> 1 +0000".to_string();
     create_commit(
@@ -150,6 +163,7 @@ fn commit_msg_hook_receives_editmsg_path_argument() {
             ..Default::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("commit");
 

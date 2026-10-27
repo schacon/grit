@@ -44,8 +44,16 @@ fn add_dot_stages_resolved_and_unrelated_while_naming_marked_conflicts() {
 
     let main_oid = ObjectId::from_hex(git(root, &["rev-parse", "HEAD"]).trim()).expect("main");
     let topic_oid = ObjectId::from_hex(git(root, &["rev-parse", "topic"]).trim()).expect("topic");
-    let outcome =
-        integrate_branch(&repo, "refs/heads/main", main_oid, topic_oid, "topic").expect("merge");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main_oid,
+        topic_oid,
+        "topic",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
     assert!(matches!(outcome, IntegrateBranchOutcome::Conflicts { .. }));
 
     fs::write(root.join("a.txt"), "1\n2\n3\nok\n").expect("resolve a");
@@ -58,6 +66,7 @@ fn add_dot_stages_resolved_and_unrelated_while_naming_marked_conflicts() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .unwrap_err();
     let Error::UnmergedConflictMarkers { paths } = err else {
@@ -79,7 +88,16 @@ fn add_single_marked_unmerged_path_names_that_path() {
 
     let main_oid = ObjectId::from_hex(git(root, &["rev-parse", "HEAD"]).trim()).expect("main");
     let topic_oid = ObjectId::from_hex(git(root, &["rev-parse", "topic"]).trim()).expect("topic");
-    integrate_branch(&repo, "refs/heads/main", main_oid, topic_oid, "topic").expect("merge");
+    integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main_oid,
+        topic_oid,
+        "topic",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
 
     let err = stage(
         &repo,
@@ -88,6 +106,7 @@ fn add_single_marked_unmerged_path_names_that_path() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .unwrap_err();
     let Error::UnmergedConflictMarkers { paths } = err else {

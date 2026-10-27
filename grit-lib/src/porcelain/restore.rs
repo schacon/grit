@@ -26,6 +26,7 @@ use crate::porcelain::checkout::{
     LeadingDirCache,
 };
 use crate::porcelain::stash::{flat_tree_lookup, flatten_tree_full, FlatTreeEntry};
+use crate::progress::{poll_cancel, Cancel, ProgressPhase, ProgressSink};
 use crate::repo::Repository;
 use crate::state::{resolve_head_for_repository, HeadState};
 use crate::worktree_rules::WorktreeRules;
@@ -95,9 +96,18 @@ pub struct RestoreOutcome {
 /// [`Error::RestoreConflictMissingOurs`], [`Error::RestoreConflictMissingTheirs`],
 /// or [`Error::RestoreConflictNotUnmerged`] when the index shape does not allow
 /// the requested checkout. [`Error::LockHeld`] means another process holds `index.lock`;
-/// the lock is taken before the index is read, so nothing was changed. Other failures are
-/// I/O or object-store errors.
-pub fn restore_paths(repo: &Repository, opts: &RestoreOptions) -> Result<RestoreOutcome> {
+/// the lock is taken before the index is read, so nothing was changed. [`Error::Cancelled`]
+/// means `cancel` (or [`ProgressSink::should_cancel`]) fired while restoring the work tree:
+/// files already written stay, but the index is not written. Other failures are I/O or
+/// object-store errors.
+///
+/// Work-tree writes report [`crate::progress::ProgressPhase::CheckingOutFiles`] to `progress`.
+pub fn restore_paths(
+    repo: &Repository,
+    opts: &RestoreOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
+) -> Result<RestoreOutcome> {
     let work_tree = repo.work_tree().ok_or(Error::RequiresWorkTree)?;
 
     if opts.pathspecs.is_empty() {
@@ -110,7 +120,7 @@ pub fn restore_paths(repo: &Repository, opts: &RestoreOptions) -> Result<Restore
     }
 
     let (mut lock, index) = repo.lock_and_load_index()?;
-    restore_paths_with_lock(repo, opts, &mut lock, index)
+    restore_paths_with_lock(repo, opts, &mut lock, index, progress, cancel)
 }
 
 /// [`restore_paths`] without conflict options, for a caller that already holds `index.lock`
@@ -120,6 +130,8 @@ pub(crate) fn restore_paths_with_lock(
     opts: &RestoreOptions,
     lock: &mut IndexLock,
     mut index: Index,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<RestoreOutcome> {
     let work_tree = repo.work_tree().ok_or(Error::RequiresWorkTree)?;
     let pathspec_ctx = repo.pathspec_match_context();
@@ -209,6 +221,8 @@ pub(crate) fn restore_paths_with_lock(
             index_out: &mut index,
             outcome: &mut outcome,
             index_dirty: &mut index_dirty,
+            progress,
+            cancel,
         })?;
     }
 
@@ -643,6 +657,8 @@ struct WorktreeRestoreContext<'a> {
     index_out: &'a mut Index,
     outcome: &'a mut RestoreOutcome,
     index_dirty: &'a mut bool,
+    progress: &'a mut dyn ProgressSink,
+    cancel: &'a dyn Cancel,
 }
 
 fn apply_worktree_restore(ctx: WorktreeRestoreContext<'_>) -> Result<()> {
@@ -657,6 +673,8 @@ fn apply_worktree_restore(ctx: WorktreeRestoreContext<'_>) -> Result<()> {
         index_out,
         outcome,
         index_dirty,
+        progress,
+        cancel,
     } = ctx;
     let config = repo.config()?;
     let protect = crate::path_validate::ProtectOptions::from_config(&config);
@@ -688,7 +706,10 @@ fn apply_worktree_restore(ctx: WorktreeRestoreContext<'_>) -> Result<()> {
         if !to_write.is_empty() {
             outcome.restored.reserve(to_write.len());
         }
+        progress.start(ProgressPhase::CheckingOutFiles, Some(to_write.len() as u64));
         for pos in to_write {
+            poll_cancel(progress, cancel)?;
+            progress.inc(1);
             let path = crate::repo_relpath::storage_string(&index_out.entries[pos].path);
             let oid = index_out.entries[pos].oid;
             let mode = index_out.entries[pos].mode;
@@ -705,7 +726,9 @@ fn apply_worktree_restore(ctx: WorktreeRestoreContext<'_>) -> Result<()> {
                 index_dirty,
             )?;
         }
+        progress.finish();
         for path in matched {
+            poll_cancel(progress, cancel)?;
             if index_out.get(path.as_bytes(), 0).is_some() {
                 continue;
             }
@@ -728,7 +751,10 @@ fn apply_worktree_restore(ctx: WorktreeRestoreContext<'_>) -> Result<()> {
     }
 
     let rules = WorktreeRules::from_repository(repo, index_out)?;
+    progress.start(ProgressPhase::CheckingOutFiles, Some(matched.len() as u64));
     for path in matched {
+        poll_cancel(progress, cancel)?;
+        progress.inc(1);
         let src = tree_source
             .and_then(|entries| flat_tree_lookup(entries, path))
             .cloned();
@@ -767,6 +793,7 @@ fn apply_worktree_restore(ctx: WorktreeRestoreContext<'_>) -> Result<()> {
             }
         }
     }
+    progress.finish();
 
     Ok(())
 }
@@ -1034,6 +1061,8 @@ mod tests {
                 stage: None,
                 remerge: None,
             },
+            &mut NullProgress,
+            &NeverCancel,
         )
         .expect("restore");
 
@@ -1107,7 +1136,7 @@ mod tests {
     #[test]
     fn restore_from_index_refuses_unmerged_path() {
         let (dir, repo) = conflicted_repo();
-        let err = restore_paths(&repo, &opts("f")).unwrap_err();
+        let err = restore_paths(&repo, &opts("f"), &mut NullProgress, &NeverCancel).unwrap_err();
         assert!(
             matches!(&err, Error::RestorePathUnmerged { paths } if paths == &["f"]),
             "{err:?}"
@@ -1122,7 +1151,7 @@ mod tests {
     #[test]
     fn restore_dot_with_unmerged_path_writes_nothing() {
         let (dir, repo) = conflicted_repo();
-        let err = restore_paths(&repo, &opts(".")).unwrap_err();
+        let err = restore_paths(&repo, &opts("."), &mut NullProgress, &NeverCancel).unwrap_err();
         assert!(matches!(err, Error::RestorePathUnmerged { .. }), "{err:?}");
         assert_eq!(std::fs::read(dir.path().join("g")).expect("g"), b"edited\n");
     }
@@ -1130,7 +1159,8 @@ mod tests {
     #[test]
     fn restore_merged_path_beside_unmerged_one_succeeds() {
         let (dir, repo) = conflicted_repo();
-        let outcome = restore_paths(&repo, &opts("g")).expect("restore g");
+        let outcome =
+            restore_paths(&repo, &opts("g"), &mut NullProgress, &NeverCancel).expect("restore g");
         assert_eq!(outcome.restored, vec!["g".to_string()]);
         assert_eq!(std::fs::read(dir.path().join("g")).expect("g"), b"g\n");
     }
@@ -1148,6 +1178,8 @@ mod tests {
                     stage: Some(side),
                     ..opts("f")
                 },
+                &mut NullProgress,
+                &NeverCancel,
             )
             .expect("restore side");
             assert_eq!(std::fs::read(dir.path().join("f")).expect("f"), want);
@@ -1158,6 +1190,8 @@ mod tests {
                 remerge: Some(ConflictStyle::Merge),
                 ..opts("f")
             },
+            &mut NullProgress,
+            &NeverCancel,
         )
         .expect("restore --merge");
         let merged = std::fs::read_to_string(dir.path().join("f")).expect("f");

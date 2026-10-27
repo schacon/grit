@@ -126,7 +126,16 @@ fn init_grit_conflict_merge(root: &Path) -> Repository {
     git(root, &["commit", "-qam", "main"]);
     let main = ObjectId::from_hex(&git_out(root, &["rev-parse", "HEAD"])).expect("main oid");
 
-    let outcome = integrate_branch(&repo, "refs/heads/main", main, side, "side").expect("merge");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main,
+        side,
+        "side",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
     assert!(matches!(outcome, IntegrateBranchOutcome::Conflicts { .. }));
     repo
 }
@@ -182,6 +191,7 @@ fn commit_auto_stage_rejects_custom_conflict_marker_size() {
         &commit_req("marker-commit"),
         CommitScope::AutoStage,
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .unwrap_err();
     assert!(
@@ -220,6 +230,7 @@ fn commit_with_auto_stage_rejects_unresolved_conflict_markers() {
         &commit_req("oops"),
         CommitScope::AutoStage,
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .unwrap_err();
     assert!(
@@ -262,7 +273,13 @@ fn create_commit_rejects_unmerged_index_like_git() {
         "git should refuse unmerged commit: {git_stderr}"
     );
 
-    let err = create_commit(&repo, &commit_req("oops"), &mut NullProgress).unwrap_err();
+    let err = create_commit(
+        &repo,
+        &commit_req("oops"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .unwrap_err();
     assert!(
         matches!(err, Error::IndexUnmerged),
         "grit should refuse unmerged commit: {err}"
@@ -286,7 +303,8 @@ fn stage_for_commit_then_create_commit_concludes_resolved_merge_without_prior_ad
     let repo = init_conflict_merge(root);
 
     std::fs::write(root.join("f"), b"resolved\n").unwrap();
-    stage_for_commit(&repo, &mut NullProgress).expect("stage resolved merge");
+    stage_for_commit(&repo, &mut NullProgress, &grit_lib::progress::NeverCancel)
+        .expect("stage resolved merge");
     assert!(
         !repo
             .index_handle()
@@ -303,6 +321,7 @@ fn stage_for_commit_then_create_commit_concludes_resolved_merge_without_prior_ad
         &repo,
         &commit_req("merge side without add"),
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("merge commit");
 
@@ -330,8 +349,13 @@ fn create_commit_concludes_resolved_merge_with_two_parents() {
     let side_tip = ObjectId::from_hex(&git_out(root, &["rev-parse", "side"])).expect("side oid");
     let main_before = ObjectId::from_hex(&git_out(root, &["rev-parse", "HEAD"])).expect("main oid");
 
-    let outcome =
-        create_commit(&repo, &commit_req("merge side"), &mut NullProgress).expect("merge commit");
+    let outcome = create_commit(
+        &repo,
+        &commit_req("merge side"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge commit");
 
     assert_eq!(outcome.parent, Some(main_before));
 
@@ -384,8 +408,13 @@ fn create_commit_concludes_merge_when_resolved_as_ours() {
     let main_before = ObjectId::from_hex(&git_out(root, &["rev-parse", "HEAD"])).expect("main oid");
     let main_tree_before = git_out(root, &["rev-parse", "HEAD^{tree}"]);
 
-    create_commit(&repo, &commit_req("resolve as ours"), &mut NullProgress)
-        .expect("merge commit with unchanged tree vs first parent");
+    create_commit(
+        &repo,
+        &commit_req("resolve as ours"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge commit with unchanged tree vs first parent");
 
     let parents_line = git_out(root, &["rev-list", "--parents", "-1", "HEAD"]);
     let parts: Vec<&str> = parents_line.split_whitespace().collect();
@@ -454,6 +483,7 @@ fn create_commit_applies_merge_autostash_like_git() {
         &repo,
         &commit_req("merge with autostash"),
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("merge commit");
 
@@ -514,8 +544,13 @@ fn create_commit_clears_merge_rerere_state_like_git() {
     git(root, &["add", "f"]);
 
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    create_commit(&repo, &commit_req("merge with rerere"), &mut NullProgress)
-        .expect("merge commit");
+    create_commit(
+        &repo,
+        &commit_req("merge with rerere"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge commit");
 
     let merge_rr_len = fs::metadata(root.join(".git/MERGE_RR"))
         .map(|m| m.len())

@@ -66,7 +66,13 @@ fn reset_staging_area(repo: &Repository) {
 }
 
 fn stage_all(repo: &Repository) -> Vec<u8> {
-    stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
     fs::read(repo.index_handle().path()).expect("read index")
 }
 

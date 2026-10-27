@@ -71,7 +71,13 @@ fn grit_commit_on_detached_head_matches_git() {
     std::fs::write(root.path().join("d.txt"), b"d\n").unwrap();
 
     let repo = open_grit(root.path());
-    let outcome = commit_worktree(&repo, &commit_req("detached"), &mut NullProgress).unwrap();
+    let outcome = commit_worktree(
+        &repo,
+        &commit_req("detached"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .unwrap();
     assert_eq!(outcome.branch, None);
 
     let grit_head = outcome.oid.to_hex();

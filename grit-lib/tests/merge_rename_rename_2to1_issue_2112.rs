@@ -314,6 +314,8 @@ fn integrate_branch_stops_with_both_versions_in_the_index() {
         fx.topic,
         "topic",
         &MergeOptions::default(),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("merge");
     let IntegrateBranchOutcome::Conflicts { paths, details } = outcome else {

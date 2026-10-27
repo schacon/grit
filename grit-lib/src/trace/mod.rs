@@ -82,8 +82,13 @@ mod tests {
                 staged_change_count: None,
                 ..Default::default()
             };
-            let _ =
-                crate::porcelain::commit::create_commit(&repo, &req, &mut NullProgress).unwrap();
+            let _ = crate::porcelain::commit::create_commit(
+                &repo,
+                &req,
+                &mut NullProgress,
+                &NeverCancel,
+            )
+            .unwrap();
 
             let opened =
                 Repository::discover(Some(dir.path()), &RepositoryOptions::default()).unwrap();

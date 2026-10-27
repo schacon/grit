@@ -264,6 +264,7 @@ fn create_commit_one_change_writes_only_changed_path_trees() {
             ..Default::default()
         },
         &mut NullProgress,
+        &crate::progress::NeverCancel,
     )
     .unwrap();
 
@@ -299,6 +300,7 @@ fn create_commit_one_change_writes_only_changed_path_trees() {
             ..Default::default()
         },
         &mut NullProgress,
+        &crate::progress::NeverCancel,
     )
     .unwrap();
     metrics.set_freshen_counting(false);
@@ -373,7 +375,13 @@ fn stage_one_modified_file_hashes_one_blob() {
     let metrics = repo.odb().hot_path_metrics();
     metrics.reset_blob_content_reads();
     metrics.set_blob_counting(true);
-    let staged = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+    let staged = stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &crate::progress::NeverCancel,
+    )
+    .unwrap();
     metrics.set_blob_counting(false);
     assert_eq!(staged.modified.len(), 1, "expected exactly one staged path");
     assert_eq!(
@@ -432,6 +440,7 @@ fn pack_signature_not_restatted_per_object() {
             ..Default::default()
         },
         &mut NullProgress,
+        &crate::progress::NeverCancel,
     )
     .unwrap();
 
@@ -506,6 +515,7 @@ fn pack_signature_not_restatted_per_object() {
             ..Default::default()
         },
         &mut NullProgress,
+        &crate::progress::NeverCancel,
     )
     .unwrap();
     metrics.set_stamp_counting(false);

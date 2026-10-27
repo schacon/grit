@@ -49,8 +49,14 @@ fn write_entry_under_lock(dir: &Path, path: &str, lock: &mut grit_lib::index::In
     let repo = open_grit_repo(dir);
     let handle = repo.index_handle();
     let mut index = handle.load().expect("load index under lock");
-    stage_on_index(&repo, &mut index, &stage_paths(&[path]), &mut NullProgress)
-        .expect("stage in memory");
+    stage_on_index(
+        &repo,
+        &mut index,
+        &stage_paths(&[path]),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage in memory");
     handle
         .commit_update(lock, &mut index, false)
         .expect("commit held lock");
@@ -69,7 +75,13 @@ fn run_parallel_stage(dir: &Path, writers: usize) -> Vec<(String, Result<(), Err
                 let path = format!("n{i}.txt");
                 let repo = open_grit_repo(&dir);
                 start.wait();
-                let res = stage(&repo, &stage_paths(&[&path]), &mut NullProgress).map(|_| ());
+                let res = stage(
+                    &repo,
+                    &stage_paths(&[&path]),
+                    &mut NullProgress,
+                    &grit_lib::progress::NeverCancel,
+                )
+                .map(|_| ());
                 (path, res)
             })
         })
@@ -141,7 +153,13 @@ fn stage_reads_index_after_waiting_for_lock() {
     let racer_dir = dir.to_path_buf();
     let racer = thread::spawn(move || {
         let repo = open_grit_repo(&racer_dir);
-        stage(&repo, &stage_paths(&["b.txt"]), &mut NullProgress).map(|o| o.added)
+        stage(
+            &repo,
+            &stage_paths(&["b.txt"]),
+            &mut NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
+        .map(|o| o.added)
     });
     thread::sleep(HOLD_LOCK_FOR);
     write_entry_under_lock(dir, "a.txt", &mut lock);
@@ -240,8 +258,13 @@ fn stage_fails_without_writing_when_lock_stays_held() {
 
     let repo = open_grit_repo(dir);
     let lock = repo.index_handle().begin_update().expect("hold index.lock");
-    let err = stage(&repo, &stage_paths(&["a.txt"]), &mut NullProgress)
-        .expect_err("stage must not proceed while index.lock is held");
+    let err = stage(
+        &repo,
+        &stage_paths(&["a.txt"]),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect_err("stage must not proceed while index.lock is held");
     assert!(is_lock_contention(&err), "unexpected error {err}");
     drop(lock);
 

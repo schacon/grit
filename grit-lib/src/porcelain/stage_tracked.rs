@@ -23,6 +23,7 @@ use crate::objects::{ObjectId, ObjectKind};
 use crate::odb::{WriteOptions, BULK_TRACKED_RESTAGE_LOOSE_WRITE};
 pub use crate::porcelain::bulk_index::IndexStagingThresholds;
 use crate::precompose_config::effective_core_precomposeunicode_with_config;
+use crate::progress::ProgressScope;
 use crate::repo::Repository;
 use crate::unicode_normalization::resolve_worktree_path_for_staging;
 use crate::worktree::{io_with_path, map_worktree_io, WorktreePathOperation};
@@ -180,15 +181,19 @@ pub fn stage_tracked_modifications_in_index_with_thresholds(
     thresholds: IndexStagingThresholds,
 ) -> Result<StageTrackedSummary> {
     let mut rules = WorktreeRules::from_repository(repo, index)?;
+    let mut progress = crate::progress::NullProgress;
+    let mut scope = ProgressScope::new(&mut progress, &crate::progress::NeverCancel);
     stage_tracked_modifications_in_index_with_rules(
-        repo, work_tree, index_path, index, &mut rules, thresholds, None,
+        repo, work_tree, index_path, index, &mut rules, thresholds, None, &mut scope,
     )
 }
 
 /// Like [`stage_tracked_modifications_in_index`], reusing an already-built [`WorktreeRules`].
 ///
 /// When `restrict_to_paths` is set, only those stage-0 index paths are stat-scanned (explicit
-/// `grit add` pathspecs on large trees).
+/// `grit add` pathspecs on large trees). Each staged or removed path advances `scope`'s sink,
+/// and a cancel stops the scan with [`Error::Cancelled`], leaving `index` partly updated.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn stage_tracked_modifications_in_index_with_rules(
     repo: &Repository,
     work_tree: &Path,
@@ -197,6 +202,7 @@ pub(crate) fn stage_tracked_modifications_in_index_with_rules(
     rules: &mut WorktreeRules,
     thresholds: IndexStagingThresholds,
     restrict_to_paths: Option<&BTreeSet<String>>,
+    scope: &mut ProgressScope<'_>,
 ) -> Result<StageTrackedSummary> {
     let entry_count_at_start = index.entries.len();
     let bulk_untr_defer = entry_count_at_start >= thresholds.large_index_restage;
@@ -214,6 +220,7 @@ pub(crate) fn stage_tracked_modifications_in_index_with_rules(
         parallel_restage,
         rules,
         restrict_to_paths,
+        scope,
     );
     if bulk_untr_defer {
         index.defer_untracked_cache_invalidation = false;
@@ -269,6 +276,7 @@ fn stage_tracked_modifications_in_index_body(
     parallel_restage: bool,
     rules: &mut WorktreeRules,
     restrict_to_paths: Option<&BTreeSet<String>>,
+    scope: &mut ProgressScope<'_>,
 ) -> Result<StageTrackedSummary> {
     let index_mtime = index_file_mtime(index_path);
     let precompose_unicode = effective_core_precomposeunicode_with_config(
@@ -456,7 +464,9 @@ fn stage_tracked_modifications_in_index_body(
             mode_policy,
         },
     )?;
+    scope.poll()?;
     visit_blob_lookup_batches(stage_batches, |entry_index, lookup| {
+        scope.poll()?;
         let raw_path = index.entries[entry_index].path.clone();
         let rel_path = crate::repo_relpath::storage_string(&raw_path);
         let rel_path = rel_path.as_str();
@@ -509,6 +519,7 @@ fn stage_tracked_modifications_in_index_body(
                 let defer = parallel_restage.then_some(&mut deferred_restage);
                 if refresh_present_tracked_path(ctx, stat, defer, entry_index)? {
                     summary.modified.push(raw_path);
+                    scope.sink().inc(1);
                 }
             }
         }
@@ -517,6 +528,7 @@ fn stage_tracked_modifications_in_index_body(
     for raw_path in pending_removals {
         if index.remove(&raw_path) {
             summary.removed.push(raw_path);
+            scope.sink().inc(1);
         }
     }
 
@@ -535,6 +547,7 @@ fn stage_tracked_modifications_in_index_body(
             parallelism,
             restage_ctx,
             &deferred_restage,
+            scope,
         )?);
     }
 
@@ -902,6 +915,7 @@ fn refresh_present_tracked_path(
     Ok(true)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn restage_deferred_jobs(
     repo: &Repository,
     index: &mut Index,
@@ -910,10 +924,12 @@ fn restage_deferred_jobs(
     parallelism: Parallelism,
     ctx: DeferredRestageContext<'_>,
     jobs: &[DeferredRestageJob],
+    scope: &mut ProgressScope<'_>,
 ) -> Result<Vec<Vec<u8>>> {
     let mut modified = Vec::new();
     let mut loose_dirs_ready = false;
     for chunk in restage_chunks(jobs) {
+        scope.poll()?;
         let replacements = restage_deferred_chunk(
             repo,
             index,
@@ -924,7 +940,9 @@ fn restage_deferred_jobs(
             chunk,
             &mut loose_dirs_ready,
             &mut modified,
+            scope.watch(),
         )?;
+        scope.sink().inc(chunk.len() as u64);
         for entry in &replacements {
             index.mark_content_verified(&entry.path, entry.oid);
         }
@@ -971,6 +989,7 @@ fn restage_deferred_chunk(
     jobs: &[DeferredRestageJob],
     loose_dirs_ready: &mut bool,
     modified: &mut Vec<Vec<u8>>,
+    cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<Vec<IndexEntry>> {
     let mut replacements = Vec::with_capacity(jobs.len());
     let &DeferredRestageContext {
@@ -1010,6 +1029,7 @@ fn restage_deferred_chunk(
         rules.conversion(),
         parallelism,
         Some(rules.filter_process()),
+        cancel,
     )?;
 
     let mut needs_loose_write = false;
@@ -1876,7 +1896,13 @@ mod tests {
 
         use crate::porcelain::add::{stage, StageOptions};
         use crate::progress::NullProgress;
-        let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let outcome = stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(
             outcome.modified.len(),
             1,

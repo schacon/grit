@@ -35,6 +35,7 @@ use crate::porcelain::checkout::{
     remove_empty_parent_dirs, smudge_bytes_for_worktree_path, write_smudged_blob_to_worktree,
     write_to_worktree_cached, LeadingDirCache,
 };
+use crate::progress::{poll_cancel, Cancel, ProgressPhase, ProgressSink};
 use crate::repo::Repository;
 use crate::state::{resolve_head_for_repository, HeadState};
 use crate::worktree_rules::WorktreeRules;
@@ -1368,15 +1369,20 @@ pub struct WorktreeReverseApplyOptions {
 /// Reverse-apply unstaged [`FilePatch`] rows onto the worktree (undo selected local edits).
 ///
 /// Used after partial `stash push` so only the stashed hunks disappear from disk while the
-/// index and other unstaged edits stay put.
+/// index and other unstaged edits stay put. Reports
+/// [`crate::progress::ProgressPhase::CheckingOutFiles`], one unit per patch, and polls `cancel`
+/// before each file; files already rewritten stay rewritten.
 ///
 /// # Errors
 ///
-/// [`ApplyError`] when a patch cannot be reversed on the worktree.
+/// [`ApplyError`] when a patch cannot be reversed on the worktree, and
+/// [`ApplyError::Cancelled`] when `cancel` or [`ProgressSink::should_cancel`] fired.
 pub fn reverse_apply_patches_to_worktree(
     repo: &Repository,
     patches: &[FilePatch],
     opts: &WorktreeReverseApplyOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> std::result::Result<(), ApplyError> {
     let work_tree = repo.work_tree().ok_or_else(|| ApplyError::Failed {
         path: String::new(),
@@ -1394,7 +1400,10 @@ pub fn reverse_apply_patches_to_worktree(
         path: String::new(),
         message: e.to_string(),
     })?;
+    progress.start(ProgressPhase::CheckingOutFiles, Some(patches.len() as u64));
     for patch in patches {
+        poll_cancel(progress, cancel).map_err(|_| ApplyError::Cancelled)?;
+        progress.inc(1);
         if patch.involves_gitlink() {
             let path = patch.effective_path().unwrap_or("<unknown>").to_string();
             return Err(ApplyError::Failed {
@@ -1487,6 +1496,7 @@ pub fn reverse_apply_patches_to_worktree(
             },
         )?;
     }
+    progress.finish();
     Ok(())
 }
 
@@ -1925,7 +1935,13 @@ mod tests {
         git(root, &["add", "f.txt"]);
         git(root, &["commit", "-qm", "init"]);
         std::fs::write(root.join("f.txt"), b"two\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let staged_files =
             collect_files_for_target(&repo, &DiffTarget::IndexVsHead, &[], DiffOptions::default())
                 .unwrap();
@@ -1966,6 +1982,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         let (files, peers) =

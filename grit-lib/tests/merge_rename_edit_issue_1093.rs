@@ -113,8 +113,16 @@ fn integrate_branch_rename_on_theirs_edit_on_ours_clean_index() {
     let main_oid: ObjectId = git(root, &["rev-parse", "main"]).trim().parse().unwrap();
     let ren_oid: ObjectId = git(root, &["rev-parse", "ren"]).trim().parse().unwrap();
 
-    let outcome =
-        integrate_branch(&repo, "refs/heads/main", main_oid, ren_oid, "ren").expect("merge");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main_oid,
+        ren_oid,
+        "ren",
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
     let IntegrateBranchOutcome::Merged { oid, .. } = outcome else {
         panic!("expected clean merge");
     };

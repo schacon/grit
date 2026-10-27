@@ -93,8 +93,16 @@ fn grit_merge_leaves_conflict_markers_and_clean_side_files() {
         .expect("merge-tree tree oid")
         .trim();
 
-    let outcome = integrate_branch(&repo, "refs/heads/main", main_oid, feature_oid, "feature-x")
-        .expect("integrate");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main_oid,
+        feature_oid,
+        "feature-x",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("integrate");
     assert!(
         matches!(outcome, IntegrateBranchOutcome::Conflicts { .. }),
         "expected conflicts, got {outcome:?}"
@@ -180,8 +188,16 @@ fn resolve_and_commit_matches_git_merge() {
     let feature_oid =
         ObjectId::from_hex(&git_out(root, &["rev-parse", "feature-x"])).expect("feature");
 
-    integrate_branch(&repo, "refs/heads/main", main_oid, feature_oid, "feature-x")
-        .expect("integrate");
+    integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main_oid,
+        feature_oid,
+        "feature-x",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("integrate");
 
     let mut resolved = fs::read_to_string(root.join("a.txt")).expect("a.txt");
     resolved = resolved
@@ -197,8 +213,13 @@ fn resolve_and_commit_matches_git_merge() {
     fs::write(root.join("a.txt"), format!("{resolved}\n")).expect("write resolved");
 
     git(root, &["add", "a.txt"]);
-    let outcome = create_commit(&repo, &commit_req("Merge feature-x"), &mut NullProgress)
-        .expect("merge commit");
+    let outcome = create_commit(
+        &repo,
+        &commit_req("Merge feature-x"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge commit");
 
     let side_tip = ObjectId::from_hex(&git_out(root, &["rev-parse", "feature-x"])).expect("side");
     let commit_obj = repo.odb().read(&outcome.oid).expect("commit");
@@ -240,8 +261,16 @@ fn grit_merge_keeps_identical_non_conflict_files() {
     let main_oid = ObjectId::from_hex(&git_out(root, &["rev-parse", "HEAD"])).expect("main");
     let side_oid = ObjectId::from_hex(&git_out(root, &["rev-parse", "side"])).expect("side");
 
-    let outcome =
-        integrate_branch(&repo, "refs/heads/main", main_oid, side_oid, "side").expect("integrate");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main_oid,
+        side_oid,
+        "side",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("integrate");
     assert!(
         matches!(outcome, IntegrateBranchOutcome::Conflicts { .. }),
         "expected conflicts, got {outcome:?}"
@@ -293,12 +322,26 @@ fn issue_1090_resolve_commit_keeps_non_conflict_files() {
     let main_oid = ObjectId::from_hex(&git_out(root, &["rev-parse", "HEAD"])).expect("main");
     let side_oid = ObjectId::from_hex(&git_out(root, &["rev-parse", "side"])).expect("side");
 
-    integrate_branch(&repo, "refs/heads/main", main_oid, side_oid, "side").expect("integrate");
+    integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main_oid,
+        side_oid,
+        "side",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("integrate");
 
     fs::write(root.join("a.txt"), "resolved\n").expect("resolve a.txt");
     git(root, &["add", "a.txt"]);
-    let outcome =
-        create_commit(&repo, &commit_req("resolved"), &mut NullProgress).expect("merge commit");
+    let outcome = create_commit(
+        &repo,
+        &commit_req("resolved"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge commit");
 
     let tree_paths = git_out(
         root,
@@ -375,8 +418,16 @@ fn merge_abort_restores_pre_merge_state() {
     let feature_oid =
         ObjectId::from_hex(&git_out(root, &["rev-parse", "feature-x"])).expect("feature");
 
-    integrate_branch(&repo, "refs/heads/main", main_oid, feature_oid, "feature-x")
-        .expect("integrate");
+    integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main_oid,
+        feature_oid,
+        "feature-x",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("integrate");
 
     abort_branch_merge(&repo).expect("abort");
 

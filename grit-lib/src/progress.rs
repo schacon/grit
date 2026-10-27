@@ -45,6 +45,8 @@ pub enum ProgressPhase {
     CopyingObjects,
     /// Updating the work tree to match a tree (checkout, reset --hard, clone).
     CheckingOutFiles,
+    /// Hashing work-tree files into the index (add, auto-staging commit, stash push).
+    StagingFiles,
     /// Downloading or uploading a bundle that can resume where it stopped
     /// (clone's `bundle-uri` bundle, a large push). Counted in bytes, including
     /// any bytes an earlier run already moved; the detailed events go to
@@ -61,7 +63,7 @@ impl ProgressPhase {
             | Self::IndexingObjects
             | Self::ResolvingDeltas
             | Self::CopyingObjects => ProgressUnit::Objects,
-            Self::CheckingOutFiles => ProgressUnit::Files,
+            Self::CheckingOutFiles | Self::StagingFiles => ProgressUnit::Files,
             Self::TransferringBundle => ProgressUnit::Bytes,
         }
     }
@@ -317,6 +319,69 @@ impl ProgressSink for WatchProgress<'_> {
     }
 }
 
+/// The progress sink, cancel signal and shared watch flag one operation threads through its
+/// helpers, so worker threads and the calling thread stop on the same signal.
+pub(crate) struct ProgressScope<'a> {
+    sink: WatchProgress<'a>,
+    cancel: &'a dyn Cancel,
+    watch: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl<'a> ProgressScope<'a> {
+    pub(crate) fn new(sink: &'a mut dyn ProgressSink, cancel: &'a dyn Cancel) -> Self {
+        let watch = cancel_watch_arc(cancel);
+        Self {
+            sink: WatchProgress::new(sink, std::sync::Arc::clone(&watch)),
+            cancel,
+            watch,
+        }
+    }
+
+    /// Returns [`crate::error::Error::Cancelled`] once either signal fired.
+    pub(crate) fn poll(&mut self) -> crate::error::Result<()> {
+        poll_cancel_watch(&mut self.sink, self.cancel, &self.watch)
+    }
+
+    /// Flag for worker threads; set once [`Self::poll`] observed a cancel.
+    pub(crate) fn watch(&self) -> &std::sync::atomic::AtomicBool {
+        &self.watch
+    }
+
+    pub(crate) fn sink(&mut self) -> &mut dyn ProgressSink {
+        &mut self.sink
+    }
+}
+
+/// [`ProgressSink`] adapter that forwards every update but never asks to stop, for steps that
+/// must run to completion once an operation has published its state.
+pub(crate) struct UncancellableProgress<'a> {
+    inner: &'a mut dyn ProgressSink,
+}
+
+impl<'a> UncancellableProgress<'a> {
+    pub(crate) fn new(inner: &'a mut dyn ProgressSink) -> Self {
+        Self { inner }
+    }
+}
+
+impl ProgressSink for UncancellableProgress<'_> {
+    fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
+        self.inner.start(phase, total);
+    }
+    fn start_with_unit(&mut self, phase: ProgressPhase, unit: ProgressUnit, total: Option<u64>) {
+        self.inner.start_with_unit(phase, unit, total);
+    }
+    fn inc(&mut self, units: u64) {
+        self.inner.inc(units);
+    }
+    fn set(&mut self, current: u64) {
+        self.inner.set(current);
+    }
+    fn finish(&mut self) {
+        self.inner.finish();
+    }
+}
+
 /// Returns [`crate::error::Error::Cancelled`] when `cancel` or `progress` request stop.
 #[inline]
 pub fn poll_cancel(
@@ -512,6 +577,10 @@ mod tests {
         );
         assert_eq!(
             ProgressPhase::CheckingOutFiles.default_unit(),
+            ProgressUnit::Files
+        );
+        assert_eq!(
+            ProgressPhase::StagingFiles.default_unit(),
             ProgressUnit::Files
         );
     }

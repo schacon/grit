@@ -905,7 +905,7 @@ mod tests {
             staged_change_count: None,
             ..Default::default()
         };
-        create_commit(repo, &req, &mut NullProgress)
+        create_commit(repo, &req, &mut NullProgress, &crate::progress::NeverCancel)
             .expect("commit")
             .oid
     }

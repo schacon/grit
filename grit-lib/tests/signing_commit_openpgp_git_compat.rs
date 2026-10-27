@@ -118,7 +118,13 @@ fn create_commit_openpgp_uses_committer_default_without_signingkey() {
 
     std::fs::write(root.join("a"), b"a\n").expect("write");
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
 
     let ident = "T <t@example.com> 1700000000 +0000".to_owned();
     let gnupg_path = gnupg_home.to_string_lossy().into_owned();
@@ -138,6 +144,7 @@ fn create_commit_openpgp_uses_committer_default_without_signingkey() {
             ..Default::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("create_commit");
 

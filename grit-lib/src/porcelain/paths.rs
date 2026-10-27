@@ -1701,7 +1701,13 @@ mod index_lock_transaction_tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         set_test_inject_index_write_fail(true);
         let err = remove_paths(
@@ -1725,7 +1731,13 @@ mod index_lock_transaction_tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("a.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         set_test_inject_index_write_fail(true);
         let err = move_path(&repo, "a.txt", "b.txt", false).expect_err("injected write failure");

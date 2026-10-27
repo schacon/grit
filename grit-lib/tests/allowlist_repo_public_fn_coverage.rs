@@ -87,7 +87,7 @@ fn init_repo(dir: &Path) -> Repository {
 
 fn seed_main_commit(repo: &Repository, dir: &Path) -> ObjectId {
     std::fs::write(dir.join("tracked.txt"), b"payload\n").expect("write");
-    stage_for_commit(repo, &mut NullProgress).expect("stage");
+    stage_for_commit(repo, &mut NullProgress, &grit_lib::progress::NeverCancel).expect("stage");
     let ident = "User <u@example.com> 1700000000 +0000".to_owned();
     create_commit(
         repo,
@@ -104,6 +104,7 @@ fn seed_main_commit(repo: &Repository, dir: &Path) -> ObjectId {
             ..Default::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("commit");
     grit_lib::refs::resolve_ref(repo.git_dir(), "refs/heads/main").expect("main oid")
@@ -387,16 +388,25 @@ fn porcelain_stash_tag_status_and_worktree() {
     );
 
     let identity = "User <u@example.com> 1700000000 +0000".to_owned();
-    let _ = repo.stash().push(&StashPushOptions {
-        message: Some("wip".into()),
-        include_untracked: false,
-        identity: identity.parse().expect("signature"),
-        selection: None,
-        pathspecs: Vec::new(),
-        dry_run: false,
-        mode: grit_lib::porcelain::stash::StashMode::default(),
-    });
-    let _ = repo.stash().pop(0, &StashApplyOptions::default());
+    let _ = repo.stash().push(
+        &StashPushOptions {
+            message: Some("wip".into()),
+            include_untracked: false,
+            identity: identity.parse().expect("signature"),
+            selection: None,
+            pathspecs: Vec::new(),
+            dry_run: false,
+            mode: grit_lib::porcelain::stash::StashMode::default(),
+        },
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    );
+    let _ = repo.stash().pop(
+        0,
+        &StashApplyOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    );
     let _ = rerere_forget_path(&repo, "tracked.txt");
 }
 

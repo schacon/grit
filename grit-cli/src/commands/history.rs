@@ -1235,9 +1235,19 @@ pub fn run_rebase(opts: &RebaseRunOptions<'_>) -> Result<RebaseRunOutcome> {
             apply: resume_apply,
         };
         let outcome = if opts.continue_rebase {
-            continue_rebase(&rewrite.repo, &resume_opts)
+            continue_rebase(
+                &rewrite.repo,
+                &resume_opts,
+                &mut grit_lib::progress::NullProgress,
+                &grit_lib::progress::NeverCancel,
+            )
         } else {
-            skip_rebase(&rewrite.repo, &resume_opts)
+            skip_rebase(
+                &rewrite.repo,
+                &resume_opts,
+                &mut grit_lib::progress::NullProgress,
+                &grit_lib::progress::NeverCancel,
+            )
         };
         let rendered = match outcome {
             Ok(outcome) => map_rebase_outcome(outcome)?,
@@ -1365,7 +1375,13 @@ pub fn run_rebase(opts: &RebaseRunOptions<'_>) -> Result<RebaseRunOutcome> {
         };
     }
 
-    let outcome = start_rebase(&rewrite.repo, &start_opts).map_err(map_rebase_session_error)?;
+    let outcome = start_rebase(
+        &rewrite.repo,
+        &start_opts,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .map_err(map_rebase_session_error)?;
     Ok(RebaseRunOutcome::Rebase(map_rebase_outcome(outcome)?))
 }
 

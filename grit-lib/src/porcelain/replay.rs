@@ -22,6 +22,7 @@ use crate::porcelain::commit::{stamp_change_id_on_new_commit, write_commit_objec
 use crate::porcelain::revert::merge_commit_message_for_revert;
 use crate::porcelain::tree_merge_checkout::apply_clean_tree_merge_to_worktree;
 use crate::porcelain::worktree_guard::ensure_worktree_clean_for_pick;
+use crate::progress::{poll_cancel, Cancel, ProgressSink};
 use crate::refs::{
     should_autocreate_reflog_with_config, update_branch_for_commit_on_store, BranchCommitRefLock,
     BranchCommitRefUpdate,
@@ -91,7 +92,17 @@ pub enum ReplayOutcome {
 /// - [`Error::MergeCommit`] when the source commit has more than one parent (pick or revert).
 /// - [`Error::ReplaySourceAtHead`] when picking a commit that is already `HEAD`.
 /// - I/O, ODB, merge, checkout, or ref update failures.
-pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOutcome> {
+/// - [`Error::Cancelled`] when `cancel` (or [`ProgressSink::should_cancel`]) fires before the
+///   branch moved; a checkout already under way is rolled back to `HEAD` first.
+///
+/// The work-tree update reports [`crate::progress::ProgressPhase::CheckingOutFiles`] to
+/// `progress`.
+pub fn replay_commit(
+    repo: &Repository,
+    req: &ReplayRequest,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
+) -> Result<ReplayOutcome> {
     ensure_worktree_clean_for_pick(repo)?;
 
     let (refname, head_oid) = match resolve_head_for_repository(repo)? {
@@ -174,6 +185,7 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
     };
     let policy = ChangeIdPolicy::from_config(config.as_ref());
     stamp_change_id_on_new_commit(repo, &policy, &mut commit_data)?;
+    poll_cancel(progress, cancel)?;
     let new_oid = write_commit_object(repo, &commit_data, None)?;
 
     let subject = commit_data.message.lines().next().unwrap_or("").trim_end();
@@ -196,7 +208,20 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
         let mut branch_ref_lock = BranchCommitRefLock::acquire(git_dir, &refname, Some(head_oid))?;
         branch_ref_lock.write_reflogs(git_dir, &ref_update, &head_oid, config.as_ref())?;
 
-        apply_clean_tree_merge_to_worktree(repo, &head_tree, &merged)?;
+        if let Err(err) =
+            apply_clean_tree_merge_to_worktree(repo, &head_tree, &merged, progress, cancel)
+        {
+            undo_prepared_branch_commit_reflogs(git_dir, &refname, config.as_ref());
+            if matches!(err, Error::Cancelled) {
+                restore_worktree_after_failed_ref_commit(
+                    repo,
+                    &head_tree,
+                    &new_tree,
+                    index_snapshot.as_deref(),
+                )?;
+            }
+            return Err(err);
+        }
 
         if let Err(err) = branch_ref_lock.finish_ref_commit(git_dir, &ref_update) {
             undo_prepared_branch_commit_reflogs(git_dir, &refname, config.as_ref());
@@ -212,7 +237,19 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
         let current = repo.references().resolve_if_exists(&refname).ok().flatten();
         crate::refs::verify_branch_commit_cas(Some(head_oid), current, &refname)?;
 
-        apply_clean_tree_merge_to_worktree(repo, &head_tree, &merged)?;
+        if let Err(err) =
+            apply_clean_tree_merge_to_worktree(repo, &head_tree, &merged, progress, cancel)
+        {
+            if matches!(err, Error::Cancelled) {
+                restore_worktree_after_failed_ref_commit(
+                    repo,
+                    &head_tree,
+                    &new_tree,
+                    index_snapshot.as_deref(),
+                )?;
+            }
+            return Err(err);
+        }
 
         // Branch and reflog updates commit as one transaction here, so a failure leaves no
         // reflog lines to undo.

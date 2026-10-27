@@ -429,6 +429,7 @@ fn stage_and_auto_stage_commit_write_through_custom_primary() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &NeverCancel,
     )
     .expect("stage into custom primary");
     assert_eq!(outcome.added.len(), 2, "{outcome:?}");
@@ -447,8 +448,14 @@ fn stage_and_auto_stage_commit_write_through_custom_primary() {
         committer: Some("T <t@example.com> 1 +0000".parse().expect("signature")),
         ..Default::default()
     };
-    let first = commit_with_scope(&repo, &req, CommitScope::Staged, &mut NullProgress)
-        .expect("commit staged");
+    let first = commit_with_scope(
+        &repo,
+        &req,
+        CommitScope::Staged,
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("commit staged");
 
     // Force the parallel tracked-restage batch path for one modification.
     fs::write(dir.path().join("sub/deep.txt"), "deeper\n").expect("write");
@@ -463,6 +470,7 @@ fn stage_and_auto_stage_commit_write_through_custom_primary() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &NeverCancel,
     )
     .expect("parallel restage into custom primary");
     let deeper =
@@ -476,8 +484,14 @@ fn stage_and_auto_stage_commit_write_through_custom_primary() {
         message: "second".into(),
         ..req
     };
-    let second = commit_with_scope(&repo, &req, CommitScope::AutoStage, &mut NullProgress)
-        .expect("auto-stage commit into custom primary");
+    let second = commit_with_scope(
+        &repo,
+        &req,
+        CommitScope::AutoStage,
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("auto-stage commit into custom primary");
     assert_ne!(first.oid, second.oid);
     let changed =
         grit_lib::objects::hash::hash_object(HashAlgo::Sha1, ObjectKind::Blob, b"changed\n")

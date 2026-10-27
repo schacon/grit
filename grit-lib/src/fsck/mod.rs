@@ -1951,7 +1951,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
         std::fs::write(repo.work_tree().unwrap().join("f"), b"x").unwrap();
-        stage_for_commit(&repo, &mut NullProgress).expect("stage");
+        stage_for_commit(&repo, &mut NullProgress, &NeverCancel).expect("stage");
         let ident = "T <t@example.com> 1 +0000".to_string();
         create_commit(
             &repo,
@@ -1968,6 +1968,7 @@ mod tests {
                 ..Default::default()
             },
             &mut NullProgress,
+            &NeverCancel,
         )
         .expect("commit");
         let config = repo.config().expect("config");

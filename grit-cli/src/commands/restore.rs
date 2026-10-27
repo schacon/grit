@@ -191,7 +191,13 @@ pub fn run(
         remerge,
     };
 
-    let outcome = restore_paths(&repo, &opts).map_err(map_restore_error)?;
+    let outcome = restore_paths(
+        &repo,
+        &opts,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .map_err(map_restore_error)?;
     Ok(outcome.into())
 }
 

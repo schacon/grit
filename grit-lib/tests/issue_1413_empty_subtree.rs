@@ -110,6 +110,8 @@ fn replay_revert_emptied_subdirectory_fsck_clean() {
                 .expect("committer"),
             message_override: None,
         },
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("revert c2");
     assert!(matches!(outcome, ReplayOutcome::Committed { .. }));
@@ -140,6 +142,8 @@ fn replay_pick_dir_delete_fsck_clean() {
                 .expect("committer"),
             message_override: None,
         },
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("pick delete");
     assert!(matches!(outcome, ReplayOutcome::Committed { .. }));

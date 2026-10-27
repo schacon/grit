@@ -354,6 +354,8 @@ fn fast_forward_merge_keeps_new_out_of_cone_paths_skip_worktree() {
         rev(&pair.grit_dir, "HEAD"),
         rev(&pair.grit_dir, "side"),
         "side",
+        &mut grit_lib::progress::NullProgress,
+        &NeverCancel,
     )
     .expect("grit merge");
     assert!(matches!(
@@ -376,6 +378,8 @@ fn three_way_merge_keeps_new_out_of_cone_paths_skip_worktree() {
         rev(&pair.grit_dir, "HEAD"),
         rev(&pair.grit_dir, "side"),
         "side",
+        &mut grit_lib::progress::NullProgress,
+        &NeverCancel,
     )
     .expect("grit merge");
     assert!(matches!(outcome, IntegrateBranchOutcome::Merged { .. }));
@@ -406,6 +410,8 @@ fn conflicted_out_of_cone_path_is_materialized_like_git() {
         rev(&pair.grit_dir, "HEAD"),
         rev(&pair.grit_dir, "theirs"),
         "theirs",
+        &mut grit_lib::progress::NullProgress,
+        &NeverCancel,
     )
     .expect("grit merge");
     let IntegrateBranchOutcome::Conflicts { paths, .. } = outcome else {
@@ -437,6 +443,8 @@ fn restore_from_source_matches_git() {
             stage: None,
             remerge: None,
         },
+        &mut grit_lib::progress::NullProgress,
+        &NeverCancel,
     )
     .expect("grit restore");
 
@@ -615,6 +623,8 @@ fn merges_do_not_refuse_untracked_file_at_skipped_path() {
             rev(&pair.grit_dir, "HEAD"),
             rev(&pair.grit_dir, "side"),
             "side",
+            &mut grit_lib::progress::NullProgress,
+            &NeverCancel,
         )
         .expect("grit merge");
         assert_untracked_file_kept(pair, "mine\n");

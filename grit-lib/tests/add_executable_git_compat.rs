@@ -67,6 +67,7 @@ fn add_executable_stages_100755_when_filemode_false() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("stage");
     assert_eq!(
@@ -81,7 +82,13 @@ fn add_executable_stages_100755_when_filemode_false() {
         "index mode should be 100755, got: {staged}"
     );
 
-    create_commit(&repo, &commit_req("script"), &mut NullProgress).expect("commit");
+    create_commit(
+        &repo,
+        &commit_req("script"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
     let tree_mode = git_out(root, &["ls-tree", "HEAD", "tool.sh"]);
     assert!(
         tree_mode.starts_with("100755 blob"),
@@ -108,9 +115,16 @@ fn add_executable_mode_only_on_tracked_file() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("stage");
-    create_commit(&repo, &commit_req("base"), &mut NullProgress).expect("commit");
+    create_commit(
+        &repo,
+        &commit_req("base"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
 
     let before = git_out(root, &["ls-files", "-s", "tool.sh"]);
     assert!(before.starts_with("100644 "), "baseline 644: {before}");
@@ -125,6 +139,7 @@ fn add_executable_mode_only_on_tracked_file() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("chmod stage");
     assert_eq!(
@@ -139,7 +154,13 @@ fn add_executable_mode_only_on_tracked_file() {
         "expected 755 after hint: {after}"
     );
 
-    create_commit(&repo, &commit_req("executable"), &mut NullProgress).expect("commit");
+    create_commit(
+        &repo,
+        &commit_req("executable"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
     let tree_line = git_out(root, &["ls-tree", "HEAD", "tool.sh"]);
     assert!(
         tree_line.starts_with("100755 blob"),
@@ -179,8 +200,20 @@ fn filemode_false_stages_regular_to_symlink_typechange() {
     fs::write(root.join("path"), "regular\n").expect("write");
 
     let repo = Repository::discover(Some(root), &Default::default()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    create_commit(&repo, &commit_req("base"), &mut NullProgress).expect("commit");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    create_commit(
+        &repo,
+        &commit_req("base"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
 
     fs::remove_file(root.join("path")).expect("remove");
     symlink(root.join("target.txt"), root.join("path")).expect("symlink");
@@ -192,6 +225,7 @@ fn filemode_false_stages_regular_to_symlink_typechange() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("stage symlink");
 
@@ -271,6 +305,7 @@ fn filemode_false_stages_typechange_when_symlink_oid_matches_file() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("stage typechange");
 
@@ -301,6 +336,7 @@ fn add_does_not_clobber_existing_executable_in_index() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("stage");
     let staged = git_out(root, &["ls-files", "-s", "tool.sh"]);
@@ -317,6 +353,7 @@ fn add_does_not_clobber_existing_executable_in_index() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("restage");
     let restaged = git_out(root, &["ls-files", "-s", "tool.sh"]);

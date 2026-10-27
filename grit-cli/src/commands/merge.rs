@@ -23,7 +23,7 @@ use grit_lib::porcelain::merge::{
     resolve_merge_source, ContinueOptions, FastForwardPolicy, IntegrateBranchOutcome,
     MergeCommitMode, MergeDryRunPlan, MergeOptions, MergePrediction, MergePredictionOptions,
 };
-use grit_lib::progress::NullProgress;
+use grit_lib::progress::{NeverCancel, ProgressSink};
 use grit_lib::repo::Repository;
 use grit_lib::state::{read_merge_msg, resolve_head, HeadState};
 use schemars::JsonSchema;
@@ -493,6 +493,7 @@ pub fn run(
     check: bool,
     dry_run: bool,
     options: MergeRunOptions,
+    progress: &mut dyn ProgressSink,
 ) -> Result<MergeOutcome> {
     let repo = context::discover()?;
 
@@ -506,7 +507,7 @@ pub fn run(
             bail!("cannot merge a branch while finishing a merge with --continue");
         }
         let continue_message = read_message_input(&options.message)?;
-        return run_continue(&repo, continue_message.as_deref());
+        return run_continue(&repo, continue_message.as_deref(), progress);
     }
 
     let branch = branch.context("branch name required unless using --abort or --continue")?;
@@ -548,6 +549,7 @@ pub fn run(
         branch,
         &head_short,
         &merge_options,
+        progress,
     )
 }
 
@@ -596,7 +598,11 @@ fn merge_continue_label(git_dir: &std::path::Path) -> String {
         .unwrap_or_else(|| "merge".to_owned())
 }
 
-fn run_continue(repo: &Repository, message: Option<&str>) -> Result<MergeOutcome> {
+fn run_continue(
+    repo: &Repository,
+    message: Option<&str>,
+    progress: &mut dyn ProgressSink,
+) -> Result<MergeOutcome> {
     let label = merge_continue_label(repo.git_dir());
     let now = context::wall_clock_now(repo.environment());
     let options = ContinueOptions {
@@ -604,8 +610,7 @@ fn run_continue(repo: &Repository, message: Option<&str>) -> Result<MergeOutcome
         author: Some(context::signature(repo, IdentRole::Author, now)?),
         committer: Some(context::signature(repo, IdentRole::Committer, now)?),
     };
-    let mut progress = NullProgress;
-    match continue_merge(repo, &options, &mut progress) {
+    match continue_merge(repo, &options, progress, &NeverCancel) {
         Ok(outcome) => Ok(MergeOutcome::merged(&label, outcome.oid, outcome.change_id)),
         Err(err) => Err(anyhow::Error::new(err)),
     }
@@ -670,6 +675,7 @@ fn stored_change_id(repo: &Repository, oid: ObjectId) -> Result<Option<ChangeId>
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn integrate_with_options(
     repo: &Repository,
     into_ref: &str,
@@ -678,8 +684,18 @@ fn integrate_with_options(
     label: &str,
     head_short: &str,
     options: &MergeOptions,
+    progress: &mut dyn ProgressSink,
 ) -> Result<MergeOutcome> {
-    match integrate_branch_with(repo, into_ref, into_oid, other_oid, label, options) {
+    match integrate_branch_with(
+        repo,
+        into_ref,
+        into_oid,
+        other_oid,
+        label,
+        options,
+        progress,
+        &NeverCancel,
+    ) {
         Ok(outcome) => Ok(map_integrate_outcome(outcome, label, head_short)),
         Err(Error::NotFastForward) => Ok(MergeOutcome::refused_not_ff(label)),
         Err(err) => Err(err.into()),

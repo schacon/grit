@@ -57,7 +57,7 @@ fn many_commits(repo: &Repository, n: usize) {
     let ident = "Test <t@example.com> 1 +0000".to_string();
     for i in 0..n {
         std::fs::write(wt.join(format!("f{i}.txt")), format!("body-{i}\n")).expect("write");
-        stage_for_commit(repo, &mut NullProgress).expect("stage");
+        stage_for_commit(repo, &mut NullProgress, &grit_lib::progress::NeverCancel).expect("stage");
         create_commit(
             repo,
             &CommitRequest {
@@ -73,6 +73,7 @@ fn many_commits(repo: &Repository, n: usize) {
                 ..Default::default()
             },
             &mut NullProgress,
+            &grit_lib::progress::NeverCancel,
         )
         .expect("commit");
     }
@@ -127,7 +128,7 @@ fn repack_keeps_reflog_index_and_worktree_head_objects() {
 
     let wt = repo.work_tree().expect("wt");
     std::fs::write(wt.join("staged-only.txt"), b"staged\n").expect("write");
-    stage_for_commit(&repo, &mut NullProgress).expect("stage");
+    stage_for_commit(&repo, &mut NullProgress, &grit_lib::progress::NeverCancel).expect("stage");
     let index = Index::load(&repo.git_dir().join("index")).expect("index");
     let staged_oid = index
         .entries()

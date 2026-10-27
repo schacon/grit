@@ -66,14 +66,26 @@ mod tests {
         let repo2 = init_repo(&stage_root);
         fs::write(stage_root.join("README2"), b"hello2\n").unwrap();
         cascade_load_counters::measure(|| {
-            stage(&repo2, &StageOptions::default(), &mut NullProgress).unwrap();
+            stage(
+                &repo2,
+                &StageOptions::default(),
+                &mut NullProgress,
+                &NeverCancel,
+            )
+            .unwrap();
         });
         assert_at_most_config_loads("stage", 1);
 
         let commit_root = root.join("commit-repo");
         let repo3 = init_repo(&commit_root);
         fs::write(commit_root.join("c.txt"), b"x\n").unwrap();
-        stage(&repo3, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo3,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
         let req = CommitRequest {
             message: "c".into(),
             author: Some(ident().parse().expect("signature")),
@@ -87,7 +99,7 @@ mod tests {
             ..Default::default()
         };
         cascade_load_counters::measure(|| {
-            create_commit(&repo3, &req, &mut NullProgress).unwrap();
+            create_commit(&repo3, &req, &mut NullProgress, &NeverCancel).unwrap();
         });
         // Index write, ref update, and object-format / MIDX config probes may each revalidate
         // the repository config cache once when using a shared repository snapshot.
@@ -99,7 +111,13 @@ mod tests {
             crate::objects::parse_commit(&obj.data).unwrap().tree
         };
         fs::write(commit_root.join("other.txt"), b"y\n").unwrap();
-        stage(&repo3, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo3,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
         let mut index = repo3.load_index().unwrap();
         let tree2 = crate::write_tree::write_tree_update_index(
             repo3.odb(),
@@ -392,7 +410,13 @@ mod tests {
             let cfg = repo.config().unwrap();
 
             fs::write(root.join("f.txt"), format!("v-{label}\n").as_bytes()).unwrap();
-            stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+            stage(
+                &repo,
+                &StageOptions::default(),
+                &mut NullProgress,
+                &NeverCancel,
+            )
+            .unwrap();
             let mut index = repo.load_index().unwrap();
             let path = repo.index_path();
             index
@@ -451,7 +475,13 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let repo = init_repo(&root);
         fs::write(root.join("tracked.txt"), b"x\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
 
         let prev_global = crate::environment::Environment::empty().var("GIT_CONFIG_GLOBAL");
         let prev_system = crate::environment::Environment::empty().var("GIT_CONFIG_SYSTEM");

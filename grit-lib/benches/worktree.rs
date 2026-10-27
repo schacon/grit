@@ -137,7 +137,7 @@ fn bench_add_stage_all_100k(c: &mut Criterion) {
     group.throughput(Throughput::Elements(100_000));
     group.bench_function("stat_clean", |b| {
         let _ = wt;
-        b.iter(|| black_box(stage(repo, &opts, &mut progress).expect("stage all")));
+        b.iter(|| black_box(stage(repo, &opts, &mut progress, &NeverCancel).expect("stage all")));
     });
     group.finish();
 }

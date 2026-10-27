@@ -38,6 +38,7 @@ impl TerminalProgress {
             ProgressPhase::CopyingObjects => "Copying objects",
             ProgressPhase::CheckingOutFiles => "Checking out files",
             ProgressPhase::TransferringBundle => "Transferring bundle",
+            ProgressPhase::StagingFiles => "Staging files",
             _ => "Working",
         }
     }

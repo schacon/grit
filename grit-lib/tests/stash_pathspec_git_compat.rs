@@ -97,7 +97,11 @@ fn stash_push_paths_saves_only_matching_and_keeps_others() {
     let repo = open_grit(grit_dir.path());
     let pushed = repo
         .stash()
-        .push(&stash_opts(false, vec!["a.txt".into()]))
+        .push(
+            &stash_opts(false, vec!["a.txt".into()]),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("push")
         .expect("some");
     assert_eq!(worktree_status(grit_dir.path()).trim(), "M  b.txt");
@@ -123,7 +127,11 @@ fn stash_push_paths_with_untracked() {
 
     let repo = open_grit(dir.path());
     repo.stash()
-        .push(&stash_opts(true, vec!["u.txt".into()]))
+        .push(
+            &stash_opts(true, vec!["u.txt".into()]),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("push")
         .expect("some");
 
@@ -147,7 +155,11 @@ fn stash_push_paths_newly_staged_file_removed_from_index_and_worktree() {
 
     let repo = open_grit(dir.path());
     repo.stash()
-        .push(&stash_opts(false, vec!["added".into()]))
+        .push(
+            &stash_opts(false, vec!["added".into()]),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("push")
         .expect("some");
 
@@ -174,7 +186,11 @@ fn stash_push_untracked_pathspec_no_match_is_typed_error() {
     let repo = open_grit(dir.path());
     let err = repo
         .stash()
-        .push(&stash_opts(true, vec!["missing".into()]))
+        .push(
+            &stash_opts(true, vec!["missing".into()]),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect_err("no match with -u");
     assert!(matches!(err, Error::PathspecNoMatch { .. }));
 }
@@ -190,7 +206,11 @@ fn stash_push_paths_no_match_is_typed_error() {
     let repo = open_grit(dir.path());
     let err = repo
         .stash()
-        .push(&stash_opts(false, vec!["missing.txt".into()]))
+        .push(
+            &stash_opts(false, vec!["missing.txt".into()]),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect_err("no match");
     assert!(matches!(err, Error::PathspecNoMatch { .. }));
 }
@@ -202,7 +222,11 @@ fn grit_path_stash_matches_git_path_stash() {
 
     let grit_push = repo
         .stash()
-        .push(&stash_opts(false, vec!["a.txt".into()]))
+        .push(
+            &stash_opts(false, vec!["a.txt".into()]),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("grit push")
         .expect("oid");
 
@@ -261,7 +285,11 @@ fn stash_apply_index_restores_staged_state() {
     git_cmd(base.path(), &["add", "s.txt"]);
     let repo = open_grit(base.path());
     repo.stash()
-        .push(&stash_opts(false, Vec::new()))
+        .push(
+            &stash_opts(false, Vec::new()),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("push")
         .expect("some");
 
@@ -286,6 +314,8 @@ fn stash_apply_index_restores_staged_state() {
             &StashApplyOptions {
                 restore_index: true,
             },
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
         )
         .expect("apply");
     git_cmd(git_dir.path(), &["stash", "apply", "--index", "stash@{0}"]);
@@ -326,6 +356,8 @@ fn stash_pop_index_conflict_keeps_entry() {
             &StashApplyOptions {
                 restore_index: true,
             },
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
         )
         .expect_err("index conflict");
     assert!(
@@ -356,7 +388,11 @@ fn git_stash_apply_index_on_grit_stash() {
 
     let repo = open_grit(dir.path());
     repo.stash()
-        .push(&stash_opts(false, Vec::new()))
+        .push(
+            &stash_opts(false, Vec::new()),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("push")
         .expect("some");
     git_cmd(dir.path(), &["reset", "--hard", "HEAD"]);
@@ -401,6 +437,8 @@ fn grit_apply_index_on_git_stash() {
             &StashApplyOptions {
                 restore_index: true,
             },
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
         )
         .expect("apply");
     git_cmd(git_dir.path(), &["stash", "apply", "--index", "stash@{0}"]);

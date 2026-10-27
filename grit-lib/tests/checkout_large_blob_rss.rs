@@ -126,6 +126,8 @@ fn materialize_without_loading(packed: bool) {
             stage: None,
             remerge: None,
         },
+        &mut NullProgress,
+        &NeverCancel,
     )
     .expect("restore");
     assert_growth(before, &format!("{label} restore"));

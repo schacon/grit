@@ -62,8 +62,9 @@ fn create_commit_change_count_includes_pre_staged_paths() {
     fs::write(root.join("untracked.txt"), "new\n").expect("untracked");
 
     let repo = open_repo(root);
-    stage_for_commit(&repo, &mut NullProgress).expect("stage for commit");
-    let outcome = create_commit(&repo, &commit_req("third"), &mut NullProgress).expect("commit");
+    stage_for_commit(&repo, &mut NullProgress, &NeverCancel).expect("stage for commit");
+    let outcome = create_commit(&repo, &commit_req("third"), &mut NullProgress, &NeverCancel)
+        .expect("commit");
     assert_eq!(
         outcome.changes, 3,
         "reported changes must include pre-staged, modified, and untracked paths"
@@ -96,7 +97,7 @@ fn stage_for_commit_stages_untracked_at_auto_cache_entry_threshold() {
     fs::write(root.join("brand-new.txt"), "fresh\n").expect("untracked");
 
     let repo = open_repo(root);
-    let outcome = stage_for_commit(&repo, &mut NullProgress).expect("stage");
+    let outcome = stage_for_commit(&repo, &mut NullProgress, &NeverCancel).expect("stage");
     assert_eq!(outcome.modified.len(), 1, "one tracked edit");
     assert_eq!(
         outcome.added.len(),
@@ -120,11 +121,12 @@ fn allow_empty_still_stages_dirty_tracked_files() {
     fs::write(root.join("a.txt"), "dirty\n").expect("edit");
 
     let repo = open_repo(root);
-    stage_for_commit(&repo, &mut NullProgress).expect("stage like commit");
+    stage_for_commit(&repo, &mut NullProgress, &NeverCancel).expect("stage like commit");
     let mut req = commit_req("marker");
     req.allow_empty = true;
     req.skip_pre_commit_tree_match = true;
-    let outcome = create_commit(&repo, &req, &mut NullProgress).expect("allow-empty after stage");
+    let outcome = create_commit(&repo, &req, &mut NullProgress, &NeverCancel)
+        .expect("allow-empty after stage");
     assert_eq!(
         outcome.changes, 1,
         "staged edit must appear in the commit tree"
@@ -160,8 +162,8 @@ fn commit_worktree_allow_empty_stages_dirty_tracked() {
     let repo = open_repo(root);
     let mut req = commit_worktree_req("marker");
     req.allow_empty = true;
-    let outcome =
-        commit_worktree(&repo, &req, &mut NullProgress).expect("commit_worktree allow-empty");
+    let outcome = commit_worktree(&repo, &req, &mut NullProgress, &NeverCancel)
+        .expect("commit_worktree allow-empty");
     assert_eq!(
         outcome.changes, 1,
         "dirty tracked file must be staged and committed"
@@ -190,8 +192,8 @@ fn commit_worktree_allow_empty_stages_new_untracked() {
     let repo = open_repo(root);
     let mut req = commit_worktree_req("with-untracked");
     req.allow_empty = true;
-    let outcome =
-        commit_worktree(&repo, &req, &mut NullProgress).expect("commit_worktree allow-empty");
+    let outcome = commit_worktree(&repo, &req, &mut NullProgress, &NeverCancel)
+        .expect("commit_worktree allow-empty");
     assert_eq!(outcome.changes, 1, "untracked file must be staged");
 
     let porcelain = git(root, &["status", "--porcelain"]);
@@ -218,7 +220,7 @@ fn stage_for_commit_stages_untracked_below_auto_cache_threshold() {
     fs::write(root.join("new.txt"), "n\n").expect("new");
 
     let repo = open_repo(root);
-    let outcome = stage_for_commit(&repo, &mut NullProgress).expect("stage");
+    let outcome = stage_for_commit(&repo, &mut NullProgress, &NeverCancel).expect("stage");
     assert_eq!(outcome.added.len(), 1);
     assert_eq!(outcome.modified.len(), 1);
 
@@ -231,7 +233,13 @@ fn stage_for_commit_stages_untracked_below_auto_cache_threshold() {
     git(&repo2_root, &["commit", "-qm", "one"]);
     fs::write(repo2_root.join("b.txt"), "b\n").expect("new");
     let repo2 = open_repo(&repo2_root);
-    let out2 = stage(&repo2, &StageOptions::default(), &mut NullProgress).expect("stage");
+    let out2 = stage(
+        &repo2,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("stage");
     assert_eq!(out2.added.len(), 1);
 }
 
@@ -282,7 +290,13 @@ fn commit_worktree_stages_unrelated_untracked_cold_untr_cache() {
     apply_unrelated_tracked_and_untracked(root);
 
     let repo = open_repo(root);
-    commit_worktree(&repo, &commit_worktree_req("both"), &mut NullProgress).expect("commit");
+    commit_worktree(
+        &repo,
+        &commit_worktree_req("both"),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("commit");
 
     let porcelain = git(root, &["status", "--porcelain"]);
     assert!(
@@ -312,7 +326,13 @@ fn commit_worktree_stages_unrelated_untracked_warm_untr_cache() {
     .expect("warm UNTR via status");
     apply_unrelated_tracked_and_untracked(root);
 
-    commit_worktree(&repo, &commit_worktree_req("both"), &mut NullProgress).expect("commit");
+    commit_worktree(
+        &repo,
+        &commit_worktree_req("both"),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("commit");
 
     let porcelain = git(root, &["status", "--porcelain"]);
     assert!(

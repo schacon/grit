@@ -65,7 +65,13 @@ fn bulk_deferred_untr_replay_after_mass_removal() {
     }
 
     let grit = open_grit(&repo_dir);
-    stage(&grit, &stage_opts_with_small_bulk(), &mut NullProgress).expect("grit add");
+    stage(
+        &grit,
+        &stage_opts_with_small_bulk(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("grit add");
 
     let grit_index = fs::read(repo_dir.join(".git/index")).expect("grit index");
     assert!(

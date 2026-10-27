@@ -70,7 +70,7 @@ impl<'repo> References<'repo> {
     ///     skip_pre_commit_tree_match: false,
     ///     ..Default::default()
     /// };
-    /// let _ = create_commit(&repo, &req, &mut NullProgress)?;
+    /// let _ = create_commit(&repo, &req, &mut NullProgress, &grit_lib::progress::NeverCancel)?;
     /// let main = RefName::try_from("refs/heads/main").expect("valid ref");
     /// let head = repo.references().resolve(&main)?;
     /// assert!(!head.to_hex().is_empty());
@@ -187,7 +187,7 @@ impl<'repo> References<'repo> {
     ///     skip_pre_commit_tree_match: false,
     ///     ..Default::default()
     /// };
-    /// let commit = create_commit(&repo, &req, &mut NullProgress)?.oid;
+    /// let commit = create_commit(&repo, &req, &mut NullProgress, &grit_lib::progress::NeverCancel)?.oid;
     /// let name = RefName::try_from("refs/heads/handle-demo").expect("valid ref");
     /// repo.references().update(&name, &commit)?;
     /// assert_eq!(repo.references().resolve(&name)?, commit);

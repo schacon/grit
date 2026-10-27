@@ -63,7 +63,13 @@ fn init_repo_with(dir: &Path, format: RefStorageFormat) -> Repository {
 }
 
 fn commit_all(repo: &Repository, message: &str) -> ObjectId {
-    stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
     commit_with_scope(
         repo,
         &CommitRequest {
@@ -74,6 +80,7 @@ fn commit_all(repo: &Repository, message: &str) -> ObjectId {
         },
         CommitScope::Staged,
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("commit")
     .oid
@@ -158,8 +165,16 @@ fn battery(repo: &Repository, wt: &Path) -> BatteryResult {
     fs::write(wt.join("c.txt"), "main\n").expect("write");
     let main_tip = commit_all(repo, "on main");
 
-    let merged = match integrate_branch(repo, "refs/heads/main", main_tip, topic_tip, "topic")
-        .expect("integrate")
+    let merged = match integrate_branch(
+        repo,
+        "refs/heads/main",
+        main_tip,
+        topic_tip,
+        "topic",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("integrate")
     {
         IntegrateBranchOutcome::Merged { oid, .. } => oid,
         other => panic!("expected a merge commit, got {other:?}"),
@@ -217,15 +232,19 @@ fn battery(repo: &Repository, wt: &Path) -> BatteryResult {
     fs::write(wt.join("a.txt"), "dirty\n").expect("write");
     let stash = repo
         .stash()
-        .push(&StashPushOptions {
-            message: None,
-            include_untracked: false,
-            identity: IDENT_TS.parse().expect("signature"),
-            selection: None,
-            pathspecs: Vec::new(),
-            dry_run: false,
-            mode: Default::default(),
-        })
+        .push(
+            &StashPushOptions {
+                message: None,
+                include_untracked: false,
+                identity: IDENT_TS.parse().expect("signature"),
+                selection: None,
+                pathspecs: Vec::new(),
+                dry_run: false,
+                mode: Default::default(),
+            },
+            &mut NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("stash push")
         .expect("stash created")
         .oid;
@@ -234,7 +253,12 @@ fn battery(repo: &Repository, wt: &Path) -> BatteryResult {
     assert!(
         !repo
             .stash()
-            .pop(0, &StashApplyOptions::default())
+            .pop(
+                0,
+                &StashApplyOptions::default(),
+                &mut NullProgress,
+                &grit_lib::progress::NeverCancel
+            )
             .expect("stash pop")
             .has_conflicts(),
         "pop must apply without conflicts"
@@ -265,7 +289,13 @@ fn battery(repo: &Repository, wt: &Path) -> BatteryResult {
     let detached = commit_all(repo, "detached");
     assert_eq!(repo.rev_walk().resolve("HEAD").expect("HEAD"), detached);
     fs::remove_file(wt.join("d.txt")).expect("rm");
-    stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage rm");
+    stage(
+        repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage rm");
     reset_to_commit(
         repo,
         &ResetOptions::new(

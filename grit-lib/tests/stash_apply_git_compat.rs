@@ -57,7 +57,12 @@ fn apply_stash_without_index_matches_git_when_head_unchanged() {
     let stash_oid = ObjectId::from_hex(&stash_oid_hex).expect("stash oid");
     grit_repo
         .stash()
-        .apply_commit(&stash_oid, &StashApplyOptions::default())
+        .apply_commit(
+            &stash_oid,
+            &StashApplyOptions::default(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("apply");
 
     let git_dir = tempfile::tempdir().expect("git copy");
@@ -114,6 +119,8 @@ fn apply_stash_with_index_matches_git_staged_porcelain() {
             &StashApplyOptions {
                 restore_index: true,
             },
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
         )
         .expect("apply");
 
@@ -192,7 +199,12 @@ fn wide_sparse_apply_preserves_index_and_untouched_changes_like_git() {
             .expect("open");
             let outcome = repo
                 .stash()
-                .apply_commit(&stash, &StashApplyOptions { restore_index })
+                .apply_commit(
+                    &stash,
+                    &StashApplyOptions { restore_index },
+                    &mut grit_lib::progress::NullProgress,
+                    &grit_lib::progress::NeverCancel,
+                )
                 .expect("apply");
             assert!(!outcome.has_conflicts());
             let mut args = vec!["stash", "apply"];
@@ -305,7 +317,12 @@ mod raw_stash_paths {
                 "public preflight must reject {path:?}"
             );
             assert!(matches!(
-                repo.stash().pop(0, &StashApplyOptions::default()),
+                repo.stash().pop(
+                    0,
+                    &StashApplyOptions::default(),
+                    &mut grit_lib::progress::NullProgress,
+                    &grit_lib::progress::NeverCancel
+                ),
                 Err(grit_lib::error::Error::StashWouldOverwriteLocalChanges { .. })
             ));
             let mut cmd = std::process::Command::new("git");
@@ -359,9 +376,19 @@ mod raw_stash_paths {
             let repo = open(root.path());
             let options = StashApplyOptions { restore_index };
             let outcome = if pop {
-                repo.stash().pop(0, &options)
+                repo.stash().pop(
+                    0,
+                    &options,
+                    &mut grit_lib::progress::NullProgress,
+                    &grit_lib::progress::NeverCancel,
+                )
             } else {
-                repo.stash().apply(0, &options)
+                repo.stash().apply(
+                    0,
+                    &options,
+                    &mut grit_lib::progress::NullProgress,
+                    &grit_lib::progress::NeverCancel,
+                )
             }
             .unwrap();
             assert_eq!(outcome.has_conflicts(), conflict, "{path:?}");
@@ -433,7 +460,12 @@ mod raw_stash_paths {
             copy_repo(root.path(), expected.path());
             let outcome = open(root.path())
                 .stash()
-                .pop(0, &StashApplyOptions::default())
+                .pop(
+                    0,
+                    &StashApplyOptions::default(),
+                    &mut grit_lib::progress::NullProgress,
+                    &grit_lib::progress::NeverCancel,
+                )
                 .unwrap();
             assert!(!outcome.has_conflicts());
             git_cmd(expected.path(), &["stash", "pop"]);
@@ -463,6 +495,8 @@ mod raw_stash_paths {
                     &StashApplyOptions {
                         restore_index: true,
                     },
+                    &mut grit_lib::progress::NullProgress,
+                    &grit_lib::progress::NeverCancel,
                 )
                 .unwrap();
             assert!(!outcome.has_conflicts());

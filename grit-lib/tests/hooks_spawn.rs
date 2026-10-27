@@ -335,7 +335,13 @@ fn hooks_dir_has_no_verbatim_prefix() {
 
 fn commit_one_file(repo: &Repository, dir: &Path) -> grit_lib::error::Result<CommitOutcome> {
     std::fs::write(dir.join("f.txt"), b"data\n").expect("write");
-    stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
     let ident = "T <t@t> 1 +0000".to_string();
     create_commit(
         repo,
@@ -346,6 +352,7 @@ fn commit_one_file(repo: &Repository, dir: &Path) -> grit_lib::error::Result<Com
             ..Default::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
 }
 
@@ -577,7 +584,13 @@ fn commit_staged(
     message: &str,
 ) -> grit_lib::error::Result<CommitOutcome> {
     std::fs::write(dir.join("b.txt"), b"b\nc\n").expect("modify b");
-    stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
     let ident = "T <t@t> 1 +0000".to_string();
     create_commit(
         repo,
@@ -588,6 +601,7 @@ fn commit_staged(
             ..Default::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
 }
 

@@ -883,6 +883,7 @@ fn ignorecase_stage_all_skips_ignored_and_git_agrees() {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &grit_lib::progress::NeverCancel,
         )
         .expect("stage all");
         let tracked = git_lines(&home, &root, &["ls-files"]);
@@ -908,6 +909,7 @@ fn ignorecase_auto_stage_commit_skips_ignored_and_fscks() {
                 ..CommitRequest::default()
             },
             &mut NullProgress,
+            &grit_lib::progress::NeverCancel,
         )
         .expect("commit");
         let committed = git_lines(&home, &root, &["ls-tree", "-r", "--name-only", "HEAD"]);
@@ -1011,6 +1013,7 @@ fn ignorecase_case_renamed_tracked_paths_are_not_ignored_like_git() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &NeverCancel,
     )
     .expect("stage foo.log");
     assert!(hermetic_git(&home, &root, &["add", "--dry-run", "foo.log"])
@@ -1026,6 +1029,7 @@ fn ignorecase_case_renamed_tracked_paths_are_not_ignored_like_git() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &NeverCancel,
     )
     .expect_err("build/t is under an ignored directory");
     match err {

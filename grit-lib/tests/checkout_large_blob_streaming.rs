@@ -239,6 +239,8 @@ fn restore_from_index(repo: &Repository, paths: &[&str]) {
             stage: None,
             remerge: None,
         },
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("restore");
 }
@@ -338,6 +340,8 @@ fn corrupt_large_blob_never_leaves_a_partial_file() {
             stage: None,
             remerge: None,
         },
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     );
     assert!(err.is_err(), "restore of a truncated blob must fail");
     assert!(
@@ -405,6 +409,8 @@ fn large_text_blob_under_autocrlf_is_converted_not_copied() {
             stage: None,
             remerge: None,
         },
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("restore");
 

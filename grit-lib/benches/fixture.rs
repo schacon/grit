@@ -224,6 +224,7 @@ fn grit_commit_file(
             ..StageOptions::default()
         },
         &mut progress,
+        &grit_lib::progress::NeverCancel,
     )?;
     grit_record_commit(repo, parent, message)
 }

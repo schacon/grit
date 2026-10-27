@@ -1,5 +1,6 @@
 //! `grit stash` — save and restore shelved work.
 
+use grit_lib::progress::{NeverCancel, ProgressSink};
 use std::io::IsTerminal;
 use std::io::Write;
 
@@ -381,6 +382,8 @@ pub struct StashPushRunArgs<'a> {
     pub limit: Option<usize>,
     /// Trailing pathspec arguments.
     pub pathspec_args: &'a TrailingPathspecArgs,
+    /// Sink for staging and reset progress.
+    pub progress: &'a mut dyn ProgressSink,
 }
 
 pub fn run_push(args: StashPushRunArgs<'_>) -> Result<StashPushOutcome> {
@@ -394,6 +397,7 @@ pub fn run_push(args: StashPushRunArgs<'_>) -> Result<StashPushOutcome> {
         dry_run,
         limit,
         pathspec_args,
+        progress,
     } = args;
     let repo = context::discover()?;
     let now = context::wall_clock_now(repo.environment());
@@ -466,7 +470,10 @@ pub fn run_push(args: StashPushRunArgs<'_>) -> Result<StashPushOutcome> {
             None => StashPushOutcome::Nothing { stashed: false },
         });
     }
-    let pushed = repo.stash().push(&options).map_err(map_stash_error)?;
+    let pushed = repo
+        .stash()
+        .push(&options, progress, &NeverCancel)
+        .map_err(map_stash_error)?;
     Ok(match pushed {
         Some(result) => StashPushOutcome::Saved {
             oid: result.oid.to_hex(),
@@ -687,14 +694,23 @@ pub fn run_clear(force: bool, dry_run: bool) -> Result<StashClearOutcome> {
     })
 }
 
-pub fn run_apply(index: Option<String>, restore_index: bool) -> Result<StashApplyOutcome> {
+pub fn run_apply(
+    index: Option<String>,
+    restore_index: bool,
+    progress: &mut dyn ProgressSink,
+) -> Result<StashApplyOutcome> {
     let repo = context::discover()?;
     repo.work_tree()
         .context("grit stash apply needs a working tree")?;
     let n = parse_stash_index(index.as_deref())?;
     let applied = repo
         .stash()
-        .apply(n, &StashApplyOptions { restore_index })
+        .apply(
+            n,
+            &StashApplyOptions { restore_index },
+            progress,
+            &NeverCancel,
+        )
         .map_err(map_stash_error)?;
     Ok(StashApplyOutcome {
         index: n,
@@ -704,14 +720,23 @@ pub fn run_apply(index: Option<String>, restore_index: bool) -> Result<StashAppl
     })
 }
 
-pub fn run_pop(index: Option<String>, restore_index: bool) -> Result<StashPopOutcome> {
+pub fn run_pop(
+    index: Option<String>,
+    restore_index: bool,
+    progress: &mut dyn ProgressSink,
+) -> Result<StashPopOutcome> {
     let repo = context::discover()?;
     repo.work_tree()
         .context("grit stash pop needs a working tree")?;
     let n = parse_stash_index(index.as_deref())?;
     let popped = repo
         .stash()
-        .pop(n, &StashApplyOptions { restore_index })
+        .pop(
+            n,
+            &StashApplyOptions { restore_index },
+            progress,
+            &NeverCancel,
+        )
         .map_err(map_stash_error)?;
     let conflicts = popped.has_conflicts();
     Ok(StashPopOutcome {

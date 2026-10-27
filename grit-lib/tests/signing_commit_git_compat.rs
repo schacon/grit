@@ -77,7 +77,13 @@ fn create_commit_ssh_signs_when_gpgsign_true() {
 
     std::fs::write(root.join("a"), b"a\n").expect("write");
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
 
     let ident = "T <t@example.com> 1700000000 +0000".to_owned();
     create_commit(
@@ -95,6 +101,7 @@ fn create_commit_ssh_signs_when_gpgsign_true() {
             ..Default::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("create_commit");
 
@@ -166,7 +173,13 @@ fn amend_unsigned_drops_signed_tip_signature() {
 
     std::fs::write(root.join("a"), b"a\n").expect("write");
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
 
     let ident = "T <t@example.com> 1700000000 +0000".to_owned();
     create_commit(
@@ -184,6 +197,7 @@ fn amend_unsigned_drops_signed_tip_signature() {
             ..Default::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("signed create");
 
@@ -205,6 +219,7 @@ fn amend_unsigned_drops_signed_tip_signature() {
             ..Default::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("unsigned amend");
 
@@ -262,7 +277,13 @@ fn amend_resigns_with_single_fresh_signature() {
 
     std::fs::write(root.join("a"), b"a\n").expect("write");
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
 
     let ident = "T <t@example.com> 1700000000 +0000".to_owned();
     create_commit(
@@ -280,11 +301,18 @@ fn amend_resigns_with_single_fresh_signature() {
             ..Default::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("signed create");
 
     std::fs::write(root.join("a"), b"b\n").expect("write");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
     create_commit(
         &repo,
         &CommitRequest {
@@ -300,6 +328,7 @@ fn amend_resigns_with_single_fresh_signature() {
             ..Default::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("signed amend");
 

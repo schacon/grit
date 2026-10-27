@@ -61,7 +61,7 @@ Construct options with one of the associated constructors, then chain the builde
 
 Non-fatal conditions are `Warning` values delivered to a `DiagnosticSink`. The default is `NullDiagnostics`. Tests and embedders often use `CollectingDiagnostics` to assert warnings without parsing stderr.
 
-Long-running work (status, staging, checkout and switch, fetch, pack indexing) takes a [`ProgressSink`](rustdoc:grit_lib::progress::ProgressSink). Pass [`NullProgress`](rustdoc:grit_lib::progress::NullProgress) when you don't want progress updates. Progress is separate from diagnostics: progress reports throughput; diagnostics report Git-style warnings.
+Long-running work (status, staging and commit, stash, merge, rebase, checkout and switch, fetch, pack indexing) takes a [`ProgressSink`](rustdoc:grit_lib::progress::ProgressSink) and a [`Cancel`](rustdoc:grit_lib::progress::Cancel). Pass [`NullProgress`](rustdoc:grit_lib::progress::NullProgress) and [`NeverCancel`](rustdoc:grit_lib::progress::NeverCancel) when you don't want progress updates or interruption; see [Progress and cancellation](parallelism.md#progress-and-cancellation) for where a cancel lands. Progress is separate from diagnostics: progress reports throughput; diagnostics report Git-style warnings.
 
 ## CommandRunner
 

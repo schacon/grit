@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 
 use crate::crlf::{ConversionConfig, FileAttrs};
 use crate::diff::{mode_from_metadata, worktree_blob_content, WorktreeBlobContent};
@@ -13,6 +14,7 @@ use crate::hash::{
 use crate::index::IndexEntry;
 use crate::objects::{HashAlgo, ObjectId, ObjectKind};
 use crate::odb::{self, Odb, WriteOptions};
+use crate::progress::poll_watch;
 use crate::worktree::{io_with_path, map_worktree_io, WorktreePathOperation};
 
 /// One worktree path to read and normalize in parallel.
@@ -236,6 +238,8 @@ fn with_path_context(index_relpath: &str, err: Error) -> Error {
 /// On a custom primary the blobs are hashed but not compressed (see [`PreparedBlobPayload`]).
 /// Big unconverted files are only hashed, as a stream; their payload rereads the file.
 ///
+/// Workers stop with [`Error::Cancelled`] once `cancel` is set.
+///
 /// # Errors
 ///
 /// Propagates I/O, conversion, hashing, or compression failures from any worker.
@@ -245,6 +249,7 @@ pub(crate) fn prepare_worktree_blobs_parallel(
     conv: &ConversionConfig,
     parallelism: Parallelism,
     filter_process: Option<&FilterProcessState>,
+    cancel: &AtomicBool,
 ) -> Result<Vec<PreparedWorktreeBlob>> {
     if items.is_empty() {
         return Ok(Vec::new());
@@ -253,6 +258,7 @@ pub(crate) fn prepare_worktree_blobs_parallel(
     let total_bytes = items.len().saturating_mul(4096);
     let threads = parallelism.threads();
     try_par_hash_with(items, threads, total_bytes, |item| {
+        poll_watch(cancel)?;
         ctx.prepare(odb, item, conv, filter_process)
     })
     .map_err(|e: ParallelHashError<Error>| match e {
@@ -268,7 +274,8 @@ pub(crate) fn prepare_worktree_blobs_parallel(
 ///
 /// # Errors
 ///
-/// Propagates I/O, conversion, hashing, compression, or object-write failures from any worker.
+/// Propagates I/O, conversion, hashing, compression, or object-write failures from any worker,
+/// and [`Error::Cancelled`] once `cancel` is set.
 pub(crate) fn prepare_and_store_worktree_blobs_parallel(
     odb: &Odb,
     items: &[WorktreeBlobReadInput],
@@ -276,6 +283,7 @@ pub(crate) fn prepare_and_store_worktree_blobs_parallel(
     parallelism: Parallelism,
     filter_process: Option<&FilterProcessState>,
     write_opts: WriteOptions,
+    cancel: &AtomicBool,
 ) -> Result<Vec<WorktreeBlob>> {
     if items.is_empty() {
         return Ok(Vec::new());
@@ -283,6 +291,7 @@ pub(crate) fn prepare_and_store_worktree_blobs_parallel(
     let ctx = PrepareBlobContext::new(odb)?;
     let threads = parallelism.threads();
     let map_item = |item: &WorktreeBlobReadInput| {
+        poll_watch(cancel)?;
         ctx.prepare_and_store(odb, item, conv, filter_process, write_opts)
     };
     if items.len() >= crate::hash::PAR_HASH_MIN_ITEMS {
@@ -334,6 +343,7 @@ mod tests {
             &conv,
             Parallelism::resolve(Some(1)),
             None,
+            &AtomicBool::new(false),
         )
         .expect("prepare shattered blob");
         assert_eq!(prepared.len(), 1);

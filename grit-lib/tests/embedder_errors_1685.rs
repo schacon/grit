@@ -61,7 +61,7 @@ fn repo_with_one_commit() -> (tempfile::TempDir, Repository, ObjectId) {
         committer: Some("A <a@b> 0 +0000".parse().expect("signature")),
         ..Default::default()
     };
-    let outcome = create_commit(&repo, &req, &mut NullProgress).expect("commit");
+    let outcome = create_commit(&repo, &req, &mut NullProgress, &NeverCancel).expect("commit");
     (base, repo, outcome.oid)
 }
 
@@ -122,7 +122,7 @@ fn deep_parent_navigation_is_revision_out_of_range() {
         committer: Some("A <a@b> 0 +0000".parse().expect("signature")),
         ..Default::default()
     };
-    create_commit(&repo, &req, &mut NullProgress).expect("commit");
+    create_commit(&repo, &req, &mut NullProgress, &NeverCancel).expect("commit");
 
     let err = repo.rev_walk().resolve("main~99").unwrap_err();
     assert!(
@@ -150,13 +150,13 @@ fn empty_commit_message_is_typed() {
         committer: Some("A <a@b> 0 +0000".parse().expect("signature")),
         ..Default::default()
     };
-    create_commit(&repo, &req, &mut NullProgress).expect("commit");
+    create_commit(&repo, &req, &mut NullProgress, &NeverCancel).expect("commit");
 
     let empty = CommitRequest {
         message: String::new(),
         allow_empty: true,
         ..req
     };
-    let err = create_commit(&repo, &empty, &mut NullProgress).unwrap_err();
+    let err = create_commit(&repo, &empty, &mut NullProgress, &NeverCancel).unwrap_err();
     assert!(matches!(err, Error::EmptyCommitMessage), "got {err:?}");
 }

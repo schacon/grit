@@ -69,6 +69,7 @@ fn assert_nothing_to_commit(root: &Path, req: &CommitRequest) {
         req,
         CommitScope::AutoStage,
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("nothing to commit");
     assert!(matches!(err, Error::NothingToCommit), "got {err:?}");

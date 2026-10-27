@@ -7,6 +7,7 @@
 //!
 //! Single-commit callers should keep using [`crate::porcelain::replay::replay_commit`].
 
+use crate::progress::{NeverCancel, NullProgress};
 use std::fs;
 use std::num::NonZeroU32;
 use std::path::Path;
@@ -1030,7 +1031,7 @@ fn apply_one_step(
     )?;
 
     if crate::operation::tree_merge_has_conflicts(&merged) {
-        apply_conflict_merge_worktree(repo, &ours_tree, &merged)?;
+        apply_conflict_merge_worktree(repo, &ours_tree, &merged, &mut NullProgress, &NeverCancel)?;
         return Ok(StepResult::Conflicts {
             conflicts: crate::operation::conflicts_from_tree_merge(&merged),
         });
@@ -1106,11 +1107,17 @@ fn apply_clean_merge_worktree(
     if worktree_snapshot.is_none() {
         *worktree_snapshot = Some(load_worktree_snapshot(repo)?);
     }
+    let (mut progress, cancel) = (NullProgress, NeverCancel);
     match worktree_snapshot.as_mut() {
-        Some(snapshot) => {
-            apply_clean_tree_merge_to_worktree_with_snapshot(repo, from_tree, merged, snapshot)
-        }
-        None => apply_clean_tree_merge_to_worktree(repo, from_tree, merged),
+        Some(snapshot) => apply_clean_tree_merge_to_worktree_with_snapshot(
+            repo,
+            from_tree,
+            merged,
+            snapshot,
+            &mut progress,
+            &cancel,
+        ),
+        None => apply_clean_tree_merge_to_worktree(repo, from_tree, merged, &mut progress, &cancel),
     }
 }
 

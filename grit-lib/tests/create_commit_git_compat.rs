@@ -87,8 +87,20 @@ fn grit_first_commit_subdirs_index_sorted_for_git() {
     std::fs::write(root.join("z.txt"), b"3\n").unwrap();
 
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    create_commit(&repo, &commit_req("base"), &mut NullProgress).expect("commit");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    create_commit(
+        &repo,
+        &commit_req("base"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
 
     let staged = git_out(root, &["ls-files", "--stage"]);
     let paths: Vec<&str> = staged
@@ -114,9 +126,20 @@ fn grit_create_commit_initial_validated_by_git() {
 
     std::fs::write(root.join("README.md"), b"# hi\n").unwrap();
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    let outcome =
-        create_commit(&repo, &commit_req("initial grit"), &mut NullProgress).expect("commit");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    let outcome = create_commit(
+        &repo,
+        &commit_req("initial grit"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
 
     fsck(root);
     let show = git_out(root, &["show", "-s", "--format=%H %s", "HEAD"]);
@@ -147,9 +170,20 @@ fn grit_create_commit_second_validated_by_git() {
 
     std::fs::write(root.join("a.txt"), b"2\n").unwrap();
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    let outcome =
-        create_commit(&repo, &commit_req("second grit"), &mut NullProgress).expect("commit");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    let outcome = create_commit(
+        &repo,
+        &commit_req("second grit"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
 
     fsck(root);
     assert_eq!(git_out(root, &["rev-parse", "HEAD"]), outcome.oid.to_hex());
@@ -169,9 +203,20 @@ fn git_commits_readable_by_grit_create_commit_chain() {
 
     std::fs::write(root.join("f.txt"), b"v2\n").unwrap();
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    let outcome =
-        create_commit(&repo, &commit_req("from grit"), &mut NullProgress).expect("commit");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    let outcome = create_commit(
+        &repo,
+        &commit_req("from grit"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
 
     fsck(root);
     let git_head = ObjectId::from_hex(&git_out(root, &["rev-parse", "HEAD"])).expect("oid");
@@ -207,14 +252,38 @@ fn amend_rewrites_tip() {
 
     std::fs::write(root.join("a.txt"), b"2\n").unwrap();
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    create_commit(&repo, &commit_req("second"), &mut NullProgress).expect("commit");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    create_commit(
+        &repo,
+        &commit_req("second"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
     let old_second = git_out(root, &["rev-parse", "HEAD"]);
     let author_before = author_signature(root);
 
     std::fs::write(root.join("a.txt"), b"3\n").unwrap();
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    create_commit(&repo, &amend_req("second amended"), &mut NullProgress).expect("amend");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    create_commit(
+        &repo,
+        &amend_req("second amended"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("amend");
 
     fsck(root);
     assert_eq!(git_out(root, &["rev-parse", "HEAD^"]), first);
@@ -231,11 +300,29 @@ fn amend_keeps_author_and_message() {
     git(root, &["config", "core.logAllRefUpdates", "true"]);
     std::fs::write(root.join("a.txt"), b"1\n").unwrap();
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    create_commit(&repo, &commit_req("keep me"), &mut NullProgress).expect("commit");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    create_commit(
+        &repo,
+        &commit_req("keep me"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
     let before_author = author_signature(root);
 
-    create_commit(&repo, &amend_req(""), &mut NullProgress).expect("amend");
+    create_commit(
+        &repo,
+        &amend_req(""),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("amend");
 
     fsck(root);
     assert_eq!(author_signature(root), before_author);
@@ -272,8 +359,20 @@ fn amend_preserves_message_bytes() {
     git(root, &["config", "core.logAllRefUpdates", "true"]);
     std::fs::write(root.join("a.txt"), b"a\n").unwrap();
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    create_commit(&repo, &commit_req("oneline subject"), &mut NullProgress).expect("commit");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    create_commit(
+        &repo,
+        &commit_req("oneline subject"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
     let baseline = commit_message_bytes(root);
     assert_eq!(baseline, b"oneline subject\n");
 
@@ -284,8 +383,20 @@ fn amend_preserves_message_bytes() {
             .unwrap()
             .write_all(format!("{extra}\n").as_bytes())
             .unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-        create_commit(&repo, &amend_req(""), &mut NullProgress).expect("amend");
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
+        .expect("stage");
+        create_commit(
+            &repo,
+            &amend_req(""),
+            &mut NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
+        .expect("amend");
         fsck(root);
         assert_eq!(
             commit_message_bytes(root),
@@ -303,11 +414,29 @@ fn amend_with_new_message() {
     git(root, &["config", "core.logAllRefUpdates", "true"]);
     std::fs::write(root.join("a.txt"), b"1\n").unwrap();
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    create_commit(&repo, &commit_req("old subject"), &mut NullProgress).expect("commit");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    create_commit(
+        &repo,
+        &commit_req("old subject"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
     let author_before = author_signature(root);
 
-    create_commit(&repo, &amend_req("new subject"), &mut NullProgress).expect("amend");
+    create_commit(
+        &repo,
+        &amend_req("new subject"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("amend");
 
     fsck(root);
     assert_eq!(git_out(root, &["log", "-1", "--format=%s"]), "new subject");
@@ -323,13 +452,37 @@ fn amend_root_commit() {
     git(root, &["config", "core.logAllRefUpdates", "true"]);
     std::fs::write(root.join("a.txt"), b"1\n").unwrap();
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    create_commit(&repo, &commit_req("root"), &mut NullProgress).expect("commit");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    create_commit(
+        &repo,
+        &commit_req("root"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
     let before_author = author_signature(root);
 
     std::fs::write(root.join("b.txt"), b"2\n").unwrap();
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    create_commit(&repo, &amend_req("root plus b"), &mut NullProgress).expect("amend");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    create_commit(
+        &repo,
+        &amend_req("root plus b"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("amend");
 
     fsck(root);
     assert_eq!(author_signature(root), before_author);
@@ -354,13 +507,30 @@ fn grit_allow_empty_commit_round_trips_with_git() {
 
     std::fs::write(root.join("a.txt"), b"1\n").unwrap();
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    let first =
-        create_commit(&repo, &commit_req("first"), &mut NullProgress).expect("first commit");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    let first = create_commit(
+        &repo,
+        &commit_req("first"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("first commit");
 
     let mut empty_req = commit_req("empty marker");
     empty_req.allow_empty = true;
-    let empty = create_commit(&repo, &empty_req, &mut NullProgress).expect("allow-empty commit");
+    let empty = create_commit(
+        &repo,
+        &empty_req,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("allow-empty commit");
 
     fsck(root);
     assert_eq!(empty.changes, 0);
@@ -390,7 +560,19 @@ fn amend_unborn_errors() {
     git(root, &["config", "core.logAllRefUpdates", "true"]);
     std::fs::write(root.join("a.txt"), b"1\n").unwrap();
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    let err = create_commit(&repo, &amend_req("nope"), &mut NullProgress).unwrap_err();
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    let err = create_commit(
+        &repo,
+        &amend_req("nope"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .unwrap_err();
     assert!(matches!(err, grit_lib::error::Error::AmendUnborn));
 }

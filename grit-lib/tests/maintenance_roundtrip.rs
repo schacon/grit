@@ -548,7 +548,7 @@ fn commit_graph_write_injected_ref_store_head_when_disk_unborn() {
     let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
     let wt = repo.work_tree().expect("worktree");
     fs::write(wt.join("a.txt"), b"a\n").unwrap();
-    stage_for_commit(&repo, &mut NullProgress).expect("stage");
+    stage_for_commit(&repo, &mut NullProgress, &NeverCancel).expect("stage");
     let ident = "T <t@example.com> 1 +0000".to_string();
     create_commit(
         &repo,
@@ -565,6 +565,7 @@ fn commit_graph_write_injected_ref_store_head_when_disk_unborn() {
             ..Default::default()
         },
         &mut NullProgress,
+        &NeverCancel,
     )
     .expect("commit");
 

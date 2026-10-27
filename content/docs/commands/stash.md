@@ -35,6 +35,8 @@ Stash indices follow Git: `0` is the newest entry. You can pass an integer or `s
 
 When a stash was created with `-u` / `--include-untracked`, `apply` and `pop` refuse to write stashed untracked files onto a path that already exists on disk (visible untracked, ignored, or tracked content you added after stashing). The command exits non-zero, the stash entry is kept, and your existing file bytes are unchanged.
 
+On an interactive terminal (human output, not `--json` or `--markdown`), push shows a live **Staging** line while it hashes local changes and a **Checkout** line while it resets them, and apply and pop show a **Checkout** line; nothing is drawn when stderr is not a TTY.
+
 ## Options
 
 | Option | Description |

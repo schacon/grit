@@ -123,7 +123,12 @@ fn bench_sparse_stash_pop(c: &mut Criterion) {
                 black_box(
                     fx.repo
                         .stash()
-                        .pop(0, &grit_lib::stash::StashApplyOptions::default())
+                        .pop(
+                            0,
+                            &grit_lib::stash::StashApplyOptions::default(),
+                            &mut grit_lib::progress::NullProgress,
+                            &grit_lib::progress::NeverCancel,
+                        )
                         .expect("pop"),
                 )
             },

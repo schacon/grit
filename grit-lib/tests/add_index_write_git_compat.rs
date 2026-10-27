@@ -304,7 +304,13 @@ fn cache_tree_after_add_matches_git_write_tree() {
 
     let grit = open_grit(&repo_dir);
     let opts = StageOptions::default();
-    stage(&grit, &opts, &mut NullProgress).expect("grit add");
+    stage(
+        &grit,
+        &opts,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("grit add");
 
     let mut write_tree_cmd = Command::new("git");
     write_tree_cmd.current_dir(&repo_dir).args(["write-tree"]);
@@ -340,7 +346,13 @@ fn add_untracked_path_keeps_index_entries_canonical() {
 
     let grit = open_grit(&repo_dir);
     let opts = StageOptions::default();
-    stage(&grit, &opts, &mut NullProgress).expect("grit add");
+    stage(
+        &grit,
+        &opts,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("grit add");
 
     assert_git_fsck_strict_oracle(&repo_dir);
     let index = grit.index_handle().load().expect("load index");

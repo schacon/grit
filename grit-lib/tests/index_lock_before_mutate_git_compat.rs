@@ -169,12 +169,20 @@ fn stash_push_with_held_index_lock_keeps_edits() {
     fs::write(root.join("b.txt"), "newfile\n").expect("write");
 
     assert_refused_by_foreign_lock(root, || {
-        repo.stash().push(&stash_opts(StashMode::All, false, &[]))
+        repo.stash().push(
+            &stash_opts(StashMode::All, false, &[]),
+            &mut NullProgress,
+            &NeverCancel,
+        )
     });
 
     let pushed = repo
         .stash()
-        .push(&stash_opts(StashMode::All, false, &[]))
+        .push(
+            &stash_opts(StashMode::All, false, &[]),
+            &mut NullProgress,
+            &NeverCancel,
+        )
         .expect("push")
         .expect("something to stash");
     assert!(!root.join(".git/index.lock").exists());
@@ -194,11 +202,19 @@ fn stash_push_untracked_with_held_index_lock_keeps_untracked_files() {
     fs::write(root.join("dir/d.txt"), "untracked\n").expect("write");
 
     assert_refused_by_foreign_lock(root, || {
-        repo.stash().push(&stash_opts(StashMode::All, true, &[]))
+        repo.stash().push(
+            &stash_opts(StashMode::All, true, &[]),
+            &mut NullProgress,
+            &NeverCancel,
+        )
     });
 
     repo.stash()
-        .push(&stash_opts(StashMode::All, true, &[]))
+        .push(
+            &stash_opts(StashMode::All, true, &[]),
+            &mut NullProgress,
+            &NeverCancel,
+        )
         .expect("push")
         .expect("something to stash");
     assert!(!root.join("dir").exists());
@@ -224,11 +240,19 @@ fn stash_push_modes_with_held_index_lock_change_nothing() {
         fs::write(root.join("a.txt"), "precious\n").expect("write");
 
         assert_refused_by_foreign_lock(root, || {
-            repo.stash().push(&stash_opts(mode, false, pathspecs))
+            repo.stash().push(
+                &stash_opts(mode, false, pathspecs),
+                &mut NullProgress,
+                &NeverCancel,
+            )
         });
 
         repo.stash()
-            .push(&stash_opts(mode, false, pathspecs))
+            .push(
+                &stash_opts(mode, false, pathspecs),
+                &mut NullProgress,
+                &NeverCancel,
+            )
             .expect("push")
             .expect("something to stash");
         assert!(!root.join(".git/index.lock").exists());
@@ -245,11 +269,21 @@ fn stash_apply_with_held_index_lock_changes_nothing() {
     git(root, &["stash", "-q"]);
 
     assert_refused_by_foreign_lock(root, || {
-        repo.stash().apply(0, &StashApplyOptions::default())
+        repo.stash().apply(
+            0,
+            &StashApplyOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
     });
 
     repo.stash()
-        .apply(0, &StashApplyOptions::default())
+        .apply(
+            0,
+            &StashApplyOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
         .expect("apply");
     assert_eq!(read(root, "a.txt"), "precious\n");
     assert_eq!(git(root, &["status", "--porcelain"]), " M a.txt\n");
@@ -383,9 +417,11 @@ fn restore_with_held_index_lock_changes_nothing() {
             remerge: None,
         };
 
-        assert_refused_by_foreign_lock(root, || restore_paths(&repo, &opts));
+        assert_refused_by_foreign_lock(root, || {
+            restore_paths(&repo, &opts, &mut NullProgress, &NeverCancel)
+        });
 
-        restore_paths(&repo, &opts).expect("restore");
+        restore_paths(&repo, &opts, &mut NullProgress, &NeverCancel).expect("restore");
         assert_eq!(read(root, "a.txt"), "base\n");
         assert_eq!(git(root, &["status", "--porcelain"]), "");
     }

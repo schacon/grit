@@ -485,7 +485,13 @@ fn pull_rebase_conflict_stops_like_git_and_continues() {
             hooks: grit_lib::PostOperationHooks::Skip,
         },
     };
-    let done = continue_rebase(&open(&grit_dir), &resume).expect("continue");
+    let done = continue_rebase(
+        &open(&grit_dir),
+        &resume,
+        &mut grit_lib::progress::NullProgress,
+        &NeverCancel,
+    )
+    .expect("continue");
     assert!(matches!(done, RebaseOutcome::Done { .. }), "{done:?}");
     let out = git_unchecked(&git_dir, &["rebase", "--continue"]);
     assert!(

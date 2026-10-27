@@ -1071,14 +1071,10 @@ pub(crate) fn checkout_tree_transition_allow_local_with_preserved(
 pub(crate) fn checkout_prepared_tree_transition_for_merge(
     repo: &Repository,
     prepared: PreparedSwitch,
+    progress: &mut dyn crate::progress::ProgressSink,
+    cancel: &dyn crate::progress::Cancel,
 ) -> Result<()> {
-    checkout_prepared_tree_transition(
-        repo,
-        prepared,
-        None,
-        &mut crate::progress::NullProgress,
-        &crate::progress::NeverCancel,
-    )
+    checkout_prepared_tree_transition(repo, prepared, None, progress, cancel)
 }
 
 /// Apply a prepared transition, writing the index through `index_lock` or, when `None`,

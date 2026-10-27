@@ -30,6 +30,7 @@ use crate::porcelain::stash::{
 };
 use crate::porcelain::switch::checkout_tree_transition_allow_local_reset;
 use crate::porcelain::worktree_guard::prepare_tree_checkout;
+use crate::progress::{Cancel, ProgressSink};
 use crate::remote::fetch::Progress;
 use crate::remote::transfer::{resolve_fetch_prune, FetchOptions, TagMode, TransferStats};
 use crate::remote::{HttpClientFactory, RemoteError};
@@ -560,6 +561,8 @@ where
                 },
                 integration,
                 stop_on_conflict,
+                progress,
+                cancel,
             ),
         }
     })();
@@ -784,6 +787,7 @@ struct Upstream<'a> {
     copies: &'a [ObjectId],
 }
 
+#[allow(clippy::too_many_arguments)]
 fn integrate_fetched_upstream(
     repo: &Repository,
     refname: &str,
@@ -791,6 +795,8 @@ fn integrate_fetched_upstream(
     upstream: Upstream<'_>,
     integration: PullIntegration,
     stop_on_conflict: bool,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> std::result::Result<PullOutcome, PullError> {
     let Upstream {
         oid: upstream_oid,
@@ -801,7 +807,15 @@ fn integrate_fetched_upstream(
     let diverged = diverged(repo, head_oid, upstream_oid)?;
 
     if diverged && landed == Some(head_oid) {
-        return move_landed_branch(repo, refname, head_oid, upstream_oid, label);
+        return move_landed_branch(
+            repo,
+            refname,
+            head_oid,
+            upstream_oid,
+            label,
+            progress,
+            cancel,
+        );
     }
 
     if diverged {
@@ -822,6 +836,8 @@ fn integrate_fetched_upstream(
                     head_oid,
                     upstream,
                     stop_on_conflict,
+                    progress,
+                    cancel,
                 );
             }
             PullMode::Merge => {}
@@ -837,17 +853,22 @@ fn integrate_fetched_upstream(
         IntegrateBranchOptions {
             allow_fast_forward: integration.allow_fast_forward,
         },
+        progress,
+        cancel,
     )
     .map_err(PullError::Repository)?;
     Ok(map_integrate_outcome(integrate, label))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rebase_fetched_upstream(
     repo: &Repository,
     refname: &str,
     head_oid: ObjectId,
     upstream: Upstream<'_>,
     stop_on_conflict: bool,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> std::result::Result<PullOutcome, PullError> {
     let Upstream {
         oid: upstream_oid,
@@ -900,7 +921,7 @@ fn rebase_fetched_upstream(
             hooks: crate::hooks::PostOperationHooks::Run,
         },
     };
-    match start_rebase(repo, &start).map_err(map_rebase_session_error)? {
+    match start_rebase(repo, &start, progress, cancel).map_err(map_rebase_session_error)? {
         RebaseOutcome::Stopped(stop) if stop_on_conflict => Ok(PullOutcome {
             conflicts: Some(stop.conflicts),
             stopped_commit: Some(stop.commit),
@@ -933,6 +954,8 @@ fn rebase_fetched_upstream(
                 IntegrateBranchOptions {
                     allow_fast_forward: true,
                 },
+                progress,
+                cancel,
             )
             .map_err(PullError::Repository)?;
             Ok(map_integrate_outcome(integrate, label))
@@ -960,12 +983,15 @@ fn pull_rebase_options(repo: &Repository) -> std::result::Result<RebaseOntoOptio
 /// ([`FetchedUpstream::landed`]), to `upstream_oid`, as `git reset --keep` does: the index
 /// and worktree go from the one tree to the other, keeping uncommitted and untracked changes
 /// that the move doesn't touch, and nothing moves when it would overwrite some.
+#[allow(clippy::too_many_arguments)]
 fn move_landed_branch(
     repo: &Repository,
     refname: &str,
     head_oid: ObjectId,
     upstream_oid: ObjectId,
     label: &str,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> std::result::Result<PullOutcome, PullError> {
     ensure_branch_tip(repo, refname, Some(head_oid))?;
     if repo.load_index()?.has_unmerged_entries() {
@@ -973,21 +999,16 @@ fn move_landed_branch(
     }
     let from = repo.odb().commit_tree(&head_oid)?;
     let to = repo.odb().commit_tree(&upstream_oid)?;
-    checkout_tree_transition_allow_local_reset(
-        repo,
-        Some(&from),
-        &to,
-        &mut crate::progress::NullProgress,
-        &crate::progress::NeverCancel,
-    )
-    .map_err(|e| match e {
-        Error::WouldOverwrite {
-            reason: OverwriteReason::LocalChanges,
-            paths,
-            ..
-        } => local_changes_would_be_overwritten(paths),
-        other => other,
-    })?;
+    checkout_tree_transition_allow_local_reset(repo, Some(&from), &to, progress, cancel).map_err(
+        |e| match e {
+            Error::WouldOverwrite {
+                reason: OverwriteReason::LocalChanges,
+                paths,
+                ..
+            } => local_changes_would_be_overwritten(paths),
+            other => other,
+        },
+    )?;
     update_checked_out_branch(
         repo,
         refname,

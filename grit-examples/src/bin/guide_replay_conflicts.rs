@@ -130,7 +130,12 @@ fn demo_conflict_sequence(root: &Path) -> Result<(), grit_lib::error::Error> {
     }
 
     fs::write(root.join("f"), "merged\n").map_err(grit_lib::error::Error::Io)?;
-    stage(&repo, &StageOptions::default(), &mut NullProgress)?;
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )?;
 
     match continue_replay_sequence(&repo, &replay_identity())? {
         SequenceOutcome::Completed { created, dropped } => {

@@ -75,7 +75,16 @@ fn merge_diverged_branches_leaves_no_dangling_empty_tree() {
         .expect("main oid");
 
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open grit");
-    let outcome = integrate_branch(&repo, "refs/heads/main", main, side, "side").expect("merge");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main,
+        side,
+        "side",
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
     assert!(matches!(outcome, IntegrateBranchOutcome::Merged { .. }));
 
     assert!(
@@ -135,7 +144,16 @@ fn sha256_merge_directory_add_without_materializing_empty_tree() {
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open grit");
     assert_eq!(repo.odb().hash_algo(), HashAlgo::Sha256);
 
-    let outcome = integrate_branch(&repo, "refs/heads/main", main, side, "side").expect("merge");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main,
+        side,
+        "side",
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
     assert!(matches!(outcome, IntegrateBranchOutcome::Merged { .. }));
 
     assert!(

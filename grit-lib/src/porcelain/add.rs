@@ -44,7 +44,7 @@ use crate::porcelain::status::{
     collect_untracked_and_ignored_inner, expand_untracked_for_staging_with_rules, IgnoredMode,
     UntrackedCacheMissAction, UntrackedScan,
 };
-use crate::progress::ProgressSink;
+use crate::progress::{Cancel, ProgressPhase, ProgressScope, ProgressSink};
 use crate::repo::Repository;
 use crate::repo_relpath::{as_utf8_for_matching, storage_bytes};
 use crate::unicode_normalization::resolve_worktree_path_for_staging;
@@ -159,12 +159,13 @@ fn sort_outcome_paths_lexicographic(outcome: &mut StageOutcome) {
 pub fn stage_for_commit(
     repo: &Repository,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<StageOutcome> {
     let opts = StageOptions {
         mode: StageMode::All,
         ..StageOptions::default()
     };
-    stage_with_tracked_scan(repo, &opts, progress)
+    stage_with_tracked_scan(repo, &opts, progress, cancel)
 }
 
 /// Like [`stage_for_commit`], but updates only an in-memory index (no `.git/index` write).
@@ -177,10 +178,11 @@ pub fn stage_for_commit(
 pub fn stage_for_commit_in_memory(
     repo: &Repository,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
     dry_run: bool,
 ) -> Result<StageOutcome> {
     let mut index = repo.load_index()?;
-    stage_for_commit_on_index(repo, &mut index, progress, dry_run)
+    stage_for_commit_on_index(repo, &mut index, progress, cancel, dry_run)
 }
 
 /// Like [`stage_for_commit`], but updates a caller-owned index and does not write it to disk.
@@ -190,6 +192,7 @@ pub(crate) fn stage_for_commit_on_index(
     repo: &Repository,
     index: &mut Index,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
     dry_run: bool,
 ) -> Result<StageOutcome> {
     let opts = StageOptions {
@@ -198,7 +201,8 @@ pub(crate) fn stage_for_commit_on_index(
         ..StageOptions::default()
     };
     // Tracked-scan staging writes blobs; use the diff-only path when previewing.
-    stage_inner_on_index(repo, &opts, progress, !dry_run, index, false, None, None)
+    let mut scope = ProgressScope::new(progress, cancel);
+    stage_inner_on_index(repo, &opts, &mut scope, !dry_run, index, false, None, None)
 }
 
 /// Stage paths into a caller-owned index without writing it to disk.
@@ -209,8 +213,9 @@ pub fn stage_on_index(
     index: &mut Index,
     opts: &StageOptions,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<StageOutcome> {
-    stage_on_index_with_pathspec_ignore_exempt(repo, index, opts, progress, None)
+    stage_on_index_with_pathspec_ignore_exempt(repo, index, opts, progress, cancel, None)
 }
 
 /// Like [`stage_on_index`], but paths already staged at stage 0 in `ignore_exempt_index` skip
@@ -220,12 +225,14 @@ pub(crate) fn stage_on_index_with_pathspec_ignore_exempt(
     index: &mut Index,
     opts: &StageOptions,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
     ignore_exempt_index: Option<&Index>,
 ) -> Result<StageOutcome> {
+    let mut scope = ProgressScope::new(progress, cancel);
     stage_inner_on_index(
         repo,
         opts,
-        progress,
+        &mut scope,
         false,
         index,
         false,
@@ -256,8 +263,13 @@ pub(crate) fn validate_commit_staging_pathspecs(
 /// means the staged paths are in the index even when other processes stage at the same
 /// time. A dry run reads the index without locking.
 ///
+/// Reports [`ProgressPhase::StagingFiles`] to `progress` (no total: the changed set is found
+/// while scanning) and stops when `cancel` or [`ProgressSink::should_cancel`] fires.
+///
 /// # Errors
 ///
+/// Returns [`Error::Cancelled`] when cancelled; the index on disk is left unchanged and
+/// `index.lock` is released (blobs already hashed may remain as unreachable loose objects).
 /// Returns [`Error::LockHeld`] when another process
 /// still holds `index.lock` after the `core.filesRefLockTimeout` wait (nothing is staged;
 /// the caller may retry), [`Error::Message`] when an explicit pathspec matches nothing,
@@ -267,11 +279,12 @@ pub fn stage(
     repo: &Repository,
     opts: &StageOptions,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<StageOutcome> {
     if uses_tracked_scan_fast_path(opts) {
-        return stage_with_tracked_scan(repo, opts, progress);
+        return stage_with_tracked_scan(repo, opts, progress, cancel);
     }
-    stage_via_worktree_diff(repo, opts, progress)
+    stage_via_worktree_diff(repo, opts, progress, cancel)
 }
 
 fn uses_tracked_scan_fast_path(opts: &StageOptions) -> bool {
@@ -333,16 +346,18 @@ fn stage_via_worktree_diff(
     repo: &Repository,
     opts: &StageOptions,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<StageOutcome> {
-    stage_inner(repo, opts, progress, false)
+    stage_inner(repo, opts, progress, cancel, false)
 }
 
 fn stage_with_tracked_scan(
     repo: &Repository,
     opts: &StageOptions,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<StageOutcome> {
-    stage_inner(repo, opts, progress, true)
+    stage_inner(repo, opts, progress, cancel, true)
 }
 
 /// List every untracked file unless the index UNTR cache stores collapsed (normal-mode)
@@ -358,14 +373,16 @@ fn stage_inner(
     repo: &Repository,
     opts: &StageOptions,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
     tracked_scan: bool,
 ) -> Result<StageOutcome> {
+    let mut scope = ProgressScope::new(progress, cancel);
     if opts.dry_run {
         let mut index = repo.load_index()?;
         return stage_inner_on_index(
             repo,
             opts,
-            progress,
+            &mut scope,
             tracked_scan,
             &mut index,
             true,
@@ -377,7 +394,7 @@ fn stage_inner(
     stage_inner_on_index(
         repo,
         opts,
-        progress,
+        &mut scope,
         tracked_scan,
         &mut index,
         true,
@@ -390,11 +407,15 @@ fn stage_inner(
 ///
 /// `on_disk` selects the on-disk `add` semantics (a dry run only lists paths). The index is
 /// persisted only through `lock`, which the caller must have taken before loading `index`.
+///
+/// Reports [`ProgressPhase::StagingFiles`] through `scope` and polls it between steps. A cancel
+/// returns [`Error::Cancelled`] before the index is written, so the on-disk index is unchanged;
+/// blobs already stored stay in the object database as unreachable loose objects.
 #[allow(clippy::too_many_arguments)]
 fn stage_inner_on_index(
     repo: &Repository,
     opts: &StageOptions,
-    _progress: &mut dyn ProgressSink,
+    scope: &mut ProgressScope<'_>,
     tracked_scan: bool,
     index: &mut Index,
     on_disk: bool,
@@ -406,6 +427,8 @@ fn stage_inner_on_index(
     let dry_run = opts.dry_run;
     let dry_run_list_only = dry_run && on_disk;
     let work_tree = repo.work_tree().ok_or(Error::RequiresWorkTree)?;
+    scope.poll()?;
+    scope.sink().start(ProgressPhase::StagingFiles, None);
 
     let index_path = repo.index_path();
     let index_mtime = index_file_mtime(&index_path);
@@ -456,6 +479,7 @@ fn stage_inner_on_index(
             &mut rules_guard,
             staging_thresholds,
             restrict_to_paths.as_deref(),
+            scope,
         )?;
         tracked_scan_summary = Some(summary);
         (Vec::new(), std::collections::BTreeMap::new())
@@ -489,6 +513,7 @@ fn stage_inner_on_index(
             (unstaged, staging_stats)
         }
     };
+    scope.poll()?;
 
     let rules = lock_rules(&rules_arc)?;
     let mut untracked = if opts.mode == StageMode::All {
@@ -537,6 +562,7 @@ fn stage_inner_on_index(
         untracked.sort_unstable();
         untracked.dedup();
     }
+    scope.poll()?;
 
     if !opts.pathspecs.is_empty() {
         validate_pathspecs(
@@ -566,6 +592,9 @@ fn stage_inner_on_index(
         let mut outcome = stage_intent_to_add_paths(
             repo, work_tree, &untracked, &unstaged, &matches, index, &rules, dry_run,
         )?;
+        scope.sink().inc(outcome.total() as u64);
+        scope.sink().finish();
+        scope.poll()?;
         if dry_run {
             sort_outcome_paths_lexicographic(&mut outcome);
         } else if outcome.total() > 0 {
@@ -602,6 +631,8 @@ fn stage_inner_on_index(
     } else {
         let worktree_updates = collect_tracked_stage_plans(&unstaged, &matches);
         for (path, plan) in worktree_updates {
+            scope.poll()?;
+            scope.sink().inc(1);
             if has_unmerged
                 && unmerged_only_paths.contains(path.as_bytes())
                 && opts.mode != StageMode::Update
@@ -669,6 +700,7 @@ fn stage_inner_on_index(
             dry_run,
             dry_run_list_only,
             &mut outcome,
+            scope,
         )?;
     }
 
@@ -690,6 +722,9 @@ fn stage_inner_on_index(
             dry_run,
         )?);
     }
+
+    scope.sink().finish();
+    scope.poll()?;
 
     if dry_run {
         sort_outcome_paths_lexicographic(&mut outcome);
@@ -1048,6 +1083,9 @@ fn collapse_embedded_git_repo_untracked_paths(
     out
 }
 
+/// Untracked files hashed per parallel wave, so progress and cancel are seen between waves.
+const UNTRACKED_STAGE_CHUNK: usize = 4096;
+
 #[allow(clippy::too_many_arguments)]
 fn stage_untracked_paths_parallel(
     repo: &Repository,
@@ -1063,6 +1101,7 @@ fn stage_untracked_paths_parallel(
     dry_run: bool,
     dry_run_list_only: bool,
     outcome: &mut StageOutcome,
+    scope: &mut ProgressScope<'_>,
 ) -> Result<()> {
     let precompose_unicode = rules
         .config()
@@ -1105,27 +1144,35 @@ fn stage_untracked_paths_parallel(
     if !dry_run && !batch_inputs.is_empty() {
         repo.odb().ensure_all_loose_prefix_dirs()?;
     }
-    let prepared = if dry_run {
-        crate::worktree_batch::prepare_worktree_blobs_parallel(
-            repo.odb(),
-            &batch_inputs,
-            rules.conversion(),
-            parallelism,
-            Some(rules.filter_process()),
-        )?
-        .into_iter()
-        .map(|prepared| prepared.blob)
-        .collect()
-    } else {
-        prepare_and_store_worktree_blobs_parallel(
-            repo.odb(),
-            &batch_inputs,
-            rules.conversion(),
-            parallelism,
-            Some(rules.filter_process()),
-            BULK_NEW_LOOSE_WRITE,
-        )?
-    };
+    let mut prepared = Vec::with_capacity(batch_inputs.len());
+    for chunk in batch_inputs.chunks(UNTRACKED_STAGE_CHUNK) {
+        scope.poll()?;
+        if dry_run {
+            prepared.extend(
+                crate::worktree_batch::prepare_worktree_blobs_parallel(
+                    repo.odb(),
+                    chunk,
+                    rules.conversion(),
+                    parallelism,
+                    Some(rules.filter_process()),
+                    scope.watch(),
+                )?
+                .into_iter()
+                .map(|prepared| prepared.blob),
+            );
+        } else {
+            prepared.extend(prepare_and_store_worktree_blobs_parallel(
+                repo.odb(),
+                chunk,
+                rules.conversion(),
+                parallelism,
+                Some(rules.filter_process()),
+                BULK_NEW_LOOSE_WRITE,
+                scope.watch(),
+            )?);
+        }
+        scope.sink().inc(chunk.len() as u64);
+    }
 
     let skip_per_path_cache_invalidate =
         index.cache_tree.is_none() && index.untracked_cache.is_none();
@@ -1173,6 +1220,8 @@ fn stage_untracked_paths_parallel(
     }
 
     for path in deferred {
+        scope.poll()?;
+        scope.sink().inc(1);
         if dry_run_list_only {
             outcome.added.push(path);
             continue;
@@ -1893,7 +1942,13 @@ mod tests {
             pathspecs,
             ..StageOptions::default()
         };
-        let outcome = stage(&fresh, &opts, &mut NullProgress).unwrap();
+        let outcome = stage(
+            &fresh,
+            &opts,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         changed.push("caf\u{e9}/menu.txt".to_owned());
         changed.sort();
@@ -1919,7 +1974,13 @@ mod tests {
         fs::write(root.join("d/x.txt"), b"2\n").unwrap();
         fs::write(root.join("z.txt"), b"3\n").unwrap();
 
-        let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let outcome = stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(outcome.added.len(), 3);
 
         let index = repo.load_index().unwrap();
@@ -1956,6 +2017,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(outcome.added.len(), expected_count);
@@ -1985,7 +2047,13 @@ mod tests {
         fs::remove_file(root.join("remove.txt")).unwrap();
         fs::write(root.join("fresh.txt"), b"added\n").unwrap();
 
-        let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let outcome = stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(outcome.added.len(), 1);
         assert_eq!(outcome.modified.len(), 1);
         assert_eq!(outcome.removed.len(), 1);
@@ -2006,7 +2074,13 @@ mod tests {
         write_index(&repo, &mut index);
         fs::write(root.join("new.txt"), b"fresh\n").unwrap();
 
-        let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let outcome = stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(outcome.added.len(), 1);
         let index = repo.load_index().unwrap();
         assert!(index.get(b"new.txt", 0).is_some());
@@ -2022,7 +2096,8 @@ mod tests {
         write_index(&repo, &mut index);
         fs::write(root.join("new.txt"), b"fresh\n").unwrap();
 
-        let outcome = stage_for_commit(&repo, &mut NullProgress).unwrap();
+        let outcome =
+            stage_for_commit(&repo, &mut NullProgress, &crate::progress::NeverCancel).unwrap();
         assert_eq!(outcome.added.len(), 1);
         let index = repo.load_index().unwrap();
         assert!(index.get(b"new.txt", 0).is_some());
@@ -2047,6 +2122,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(outcome.modified.len(), 1);
@@ -2080,6 +2156,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(outcome.added, vec!["new.txt".to_owned()]);
@@ -2127,6 +2204,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(outcome.modified.len(), 4);
@@ -2143,6 +2221,7 @@ mod tests {
                     ..StageOptions::default()
                 },
                 &mut NullProgress,
+                &crate::progress::NeverCancel,
             )
             .unwrap_err();
             assert!(
@@ -2168,6 +2247,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap_err();
         assert!(matches!(err, Error::PathspecIgnored { .. }));
@@ -2190,6 +2270,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap_err();
         match err {
@@ -2208,7 +2289,13 @@ mod tests {
         fs::write(root.join("ignored/x.txt"), b"nope\n").unwrap();
         fs::write(root.join("tracked-new.txt"), b"yes\n").unwrap();
 
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let index = repo.load_index().unwrap();
         assert!(index.get(b"tracked-new.txt", 0).is_some());
         assert!(index.get(b"ignored/x.txt", 0).is_none());
@@ -2228,7 +2315,13 @@ mod tests {
         let nfd = "cafe\u{301}.txt";
         fs::write(root.join(nfd), b"content\n").unwrap();
 
-        let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let outcome = stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         assert_eq!(outcome.added.len(), 1);
         let index = repo.load_index().unwrap();
@@ -2249,7 +2342,13 @@ mod tests {
         fs::write(root.join("dirty.txt"), b"new\n").unwrap();
 
         repo.odb().enable_mem_overlay();
-        let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        let outcome = stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(outcome.modified.len(), 1);
         assert_eq!(outcome.total(), 1);
 
@@ -2277,7 +2376,13 @@ mod tests {
 
         fs::write(root.join("beta/two.txt"), b"22\n").unwrap();
 
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
 
         let index = repo.load_index().unwrap();
         assert_eq!(cache_tree_node_valid(&index, ""), Some(false));
@@ -2366,6 +2471,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap_err();
         assert!(
@@ -2401,6 +2507,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         );
         assert!(
             !matches!(
@@ -2433,6 +2540,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap_err();
         assert!(
@@ -2459,6 +2567,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap_err();
         assert!(
@@ -2487,6 +2596,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap_err();
         assert!(
@@ -2523,6 +2633,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap_err();
         assert!(
@@ -2575,6 +2686,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap_err();
         let Error::UnmergedConflictMarkers { paths } = err else {
@@ -2620,6 +2732,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(outcome.modified.len(), 1);
@@ -2659,6 +2772,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(outcome.total(), 1);
@@ -2733,7 +2847,13 @@ mod tests {
         let repo =
             Repository::discover(Some(linked.as_path()), &RepositoryOptions::empty()).unwrap();
         std::fs::write(linked.join("grit.txt"), b"grit\r\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let index = repo.load_index().unwrap();
         let oid = index.get(b"grit.txt", 0).unwrap().oid;
         assert_eq!(
@@ -2756,7 +2876,13 @@ mod tests {
         repo.reload_config().unwrap();
         fs::write(root.join("f.txt"), b"changed\r\n").unwrap();
 
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         let index = repo.load_index().unwrap();
         let oid = index.get(b"f.txt", 0).unwrap().oid;
         assert_eq!(repo.odb().read(&oid).unwrap().data, b"changed\n");
@@ -2825,6 +2951,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
 
@@ -2853,6 +2980,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap()
     }
@@ -2910,6 +3038,7 @@ mod tests {
                     ..StageOptions::default()
                 },
                 &mut NullProgress,
+                &crate::progress::NeverCancel,
             )
             .unwrap();
             assert_eq!(outcome.added.len(), DIRS as usize, "{specs:?}");
@@ -2978,6 +3107,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(outcome.total(), 1);
@@ -3006,6 +3136,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(outcome.modified.len(), 1);
@@ -3040,7 +3171,13 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("tracked.txt"), b"v1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         fs::write(root.join("tracked.txt"), b"v2\n").unwrap();
         fs::write(root.join("new.txt"), b"n\n").unwrap();
         let index_before = repo.load_index().unwrap();
@@ -3054,6 +3191,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert!(!outcome.added.is_empty() || !outcome.modified.is_empty());
@@ -3075,6 +3213,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(count_loose_objects(root), objects_before);
@@ -3105,6 +3244,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(outcome.total(), 1, "pathless -u must stage resolved file");
@@ -3136,7 +3276,13 @@ mod tests {
         grit_test_support::git(root, &["config", "user.email", "t@example.com"]);
         grit_test_support::git(root, &["config", "user.name", "Test"]);
         fs::write(root.join("f"), b"base\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         grit_test_support::git(root, &["commit", "-qm", "seed"]);
 
         let base = repo.odb().write(ObjectKind::Blob, b"base\n").unwrap();
@@ -3158,6 +3304,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(outcome.removed, vec!["f".to_owned()]);
@@ -3242,6 +3389,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(bulk.added.len(), 2);
@@ -3256,6 +3404,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(serial.added, vec!["c.txt".to_owned()]);
@@ -3296,7 +3445,13 @@ mod tests {
         grit_test_support::git(root, &["config", "user.name", "Test"]);
         fs::write(root.join("keep.txt"), b"k\n").unwrap();
         fs::write(root.join("gone.txt"), b"g\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         grit_test_support::git(root, &["commit", "-qm", "seed"]);
         fs::remove_file(root.join("gone.txt")).unwrap();
         fs::write(root.join("keep.txt"), b"k2\n").unwrap();
@@ -3308,6 +3463,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert!(outcome.removed.iter().any(|p| p == "gone.txt"));
@@ -3358,7 +3514,13 @@ mod tests {
         fs::create_dir_all(root.join("sub")).unwrap();
         fs::write(root.join("sub/a.txt"), b"1\n").unwrap();
         fs::write(root.join("top.txt"), b"t\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         grit_test_support::git(root, &["commit", "-qm", "seed"]);
         fs::write(root.join("sub/a.txt"), b"2\n").unwrap();
         fs::write(root.join("top.txt"), b"T\n").unwrap();
@@ -3371,6 +3533,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(outcome.modified, vec!["sub/a.txt".to_owned()]);
@@ -3383,7 +3546,13 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("f.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         fs::write(root.join("f.txt"), b"2\n").unwrap();
         let outcome = stage(
             &repo,
@@ -3392,6 +3561,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(outcome.modified.len(), 1);
@@ -3404,7 +3574,13 @@ mod tests {
         let root = tmp.path();
         let repo = init_repo(root);
         fs::write(root.join("f.txt"), b"1\n").unwrap();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         fs::write(root.join("f.txt"), b"2\n").unwrap();
         fs::write(root.join("n.txt"), b"n\n").unwrap();
         let outcome = stage(
@@ -3414,6 +3590,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert!(outcome.modified.contains(&"f.txt".to_owned()));
@@ -3439,6 +3616,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         assert_eq!(outcome.added, vec!["a.log".to_owned()]);
@@ -3478,6 +3656,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
 
@@ -3526,6 +3705,7 @@ mod tests {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .unwrap();
         let grit_porcelain = Command::new("git")
@@ -3684,14 +3864,28 @@ mod tests {
             fs::write(root.join(path), b"v1\n").unwrap();
         }
         assert_eq!(
-            stage(&repo, &bulk, &mut NullProgress).unwrap().added.len(),
+            stage(
+                &repo,
+                &bulk,
+                &mut NullProgress,
+                &crate::progress::NeverCancel
+            )
+            .unwrap()
+            .added
+            .len(),
             paths.len()
         );
 
         for (i, path) in paths.iter().enumerate() {
             fs::write(root.join(path), format!("version two of {i}\n")).unwrap();
         }
-        let restaged = stage(&repo, &bulk, &mut NullProgress).unwrap();
+        let restaged = stage(
+            &repo,
+            &bulk,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
         assert_eq!(restaged.modified.len(), paths.len());
 
         let index = repo.load_index().unwrap();

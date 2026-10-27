@@ -219,6 +219,8 @@ fn integrate_branch_stops_with_git_index_stages() {
         fx.topic,
         "topic",
         &MergeOptions::default(),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("merge");
     let IntegrateBranchOutcome::Conflicts { paths, details } = outcome else {
@@ -278,6 +280,8 @@ fn pick_of_the_other_rename_conflicts() {
             committer: COMMITTER.parse().expect("COMMITTER"),
             message_override: None,
         },
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("pick");
     let ReplayOutcome::Conflicts { paths } = outcome else {
@@ -380,6 +384,8 @@ fn assert_clean_merge_matches_git(root: &Path) {
         topic,
         "topic",
         &MergeOptions::default(),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("merge");
     let IntegrateBranchOutcome::Merged { oid, .. } = outcome else {

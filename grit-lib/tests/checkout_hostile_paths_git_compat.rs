@@ -502,6 +502,8 @@ fn hostile_paths_rejected_on_clone_switch_reset_restore() {
                 stage: None,
                 remerge: None,
             },
+            &mut grit_lib::progress::NullProgress,
+            &NeverCancel,
         )
         .unwrap_err();
         assert_invalid_path_component(restore_err);
