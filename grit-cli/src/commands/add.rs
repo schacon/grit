@@ -14,7 +14,7 @@ use grit_lib::porcelain::hunk_select::{
     StageHunksOutcome,
 };
 use grit_lib::porcelain::index_mode::StageExecutableHint;
-use grit_lib::progress::NullProgress;
+use grit_lib::progress::{NeverCancel, ProgressSink};
 use grit_lib::repo::Repository;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -257,6 +257,7 @@ pub fn run_patch_file(patch_file: &str, dry_run: bool) -> Result<AddOutcome> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     args: &PathspecArgs,
     update: bool,
@@ -265,6 +266,7 @@ pub fn run(
     force: bool,
     executable: bool,
     non_executable: bool,
+    progress: &mut dyn ProgressSink,
 ) -> Result<AddOutcome> {
     if executable && non_executable {
         bail!("--executable and --non-executable cannot be used together");
@@ -299,10 +301,12 @@ pub fn run(
         } else {
             StageExecutableHint::None
         },
+        progress,
     )?;
     Ok(AddOutcome::from_stage(outcome, dry_run, no_paths))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn stage_with_hint(
     repo: &Repository,
     resolved: grit_lib::worktree::pathspec::ResolvedPathspecs,
@@ -311,6 +315,7 @@ fn stage_with_hint(
     intent_to_add: bool,
     force_ignored: bool,
     executable_hint: StageExecutableHint,
+    progress: &mut dyn ProgressSink,
 ) -> Result<StageOutcome> {
     let (pathspecs, pathspec_sources) = resolved.into_pathspec_lists();
     let opts = StageOptions {
@@ -324,7 +329,7 @@ fn stage_with_hint(
         force_ignored,
         ..StageOptions::default()
     };
-    stage_paths(repo, &opts, &mut NullProgress).map_err(map_add_error)
+    stage_paths(repo, &opts, progress, &NeverCancel).map_err(map_add_error)
 }
 
 fn map_apply_error(err: grit_lib::error::ApplyError) -> anyhow::Error {

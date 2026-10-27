@@ -82,7 +82,13 @@ fn create_commit_signature_passes_git_fsck_strict() {
         committer: Some(doc),
         ..Default::default()
     };
-    create_commit(&repo, &req, &mut NullProgress).expect("create_commit");
+    create_commit(
+        &repo,
+        &req,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("create_commit");
 
     git_stdout(root, &["fsck", "--strict"]);
     assert_eq!(
@@ -130,7 +136,13 @@ fn create_commit_defaults_to_repository_identity() {
         message: "first\n".into(),
         ..Default::default()
     };
-    create_commit(&repo, &req, &mut NullProgress).expect("create_commit");
+    create_commit(
+        &repo,
+        &req,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("create_commit");
 
     git_stdout(root, &["fsck", "--strict"]);
     assert_eq!(
@@ -163,7 +175,13 @@ fn repository_identity_reports_missing_configuration() {
         allow_empty: true,
         ..Default::default()
     };
-    let err = create_commit(&repo, &req, &mut NullProgress).expect_err("no identity");
+    let err = create_commit(
+        &repo,
+        &req,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect_err("no identity");
     assert!(matches!(err, Error::Identity(_)), "unexpected error: {err}");
 }
 
@@ -186,7 +204,13 @@ fn create_commit_rejects_unwritable_signatures() {
         allow_empty: true,
         ..Default::default()
     };
-    let err = create_commit(&repo, &bad, &mut NullProgress).expect_err("invalid identity");
+    let err = create_commit(
+        &repo,
+        &bad,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect_err("invalid identity");
     assert!(
         matches!(
             err,

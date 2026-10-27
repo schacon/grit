@@ -1346,12 +1346,23 @@ fn remove_index_paths_outside_tree_diff(
 /// Returns [`Error::LockHeld`] without touching the work tree or index when another process
 /// holds `index.lock`, and propagates object, checkout I/O and index write failures.
 pub fn checkout_tree_changes(repo: &Repository, changes: &[DiffEntry]) -> Result<()> {
+    checkout_tree_changes_reporting(repo, changes, &mut NullProgress, &NeverCancel)
+}
+
+/// Like [`checkout_tree_changes`], reporting [`ProgressPhase::CheckingOutFiles`] and stopping
+/// with [`Error::Cancelled`] when `cancel` fires.
+pub(crate) fn checkout_tree_changes_reporting(
+    repo: &Repository,
+    changes: &[DiffEntry],
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
+) -> Result<()> {
     let mut lock = repo.lock_index()?;
     checkout_tree_changes_with_progress(
         repo,
         changes,
-        &mut NullProgress,
-        &NeverCancel,
+        progress,
+        cancel,
         None,
         CheckoutApplyOptions::default(),
         None,

@@ -104,7 +104,12 @@ fn apply_entry_reports_conflicts_git_also_sees() {
     let repo = open_grit(dir.path());
     let outcome = repo
         .stash()
-        .apply(0, &StashApplyOptions::default())
+        .apply(
+            0,
+            &StashApplyOptions::default(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("apply");
     assert!(outcome.has_conflicts());
     assert_eq!(conflicted_paths(&outcome), ["a.txt", "dir/b.txt"]);
@@ -152,7 +157,12 @@ fn pop_entry_with_conflicts_keeps_entry() {
 
     let outcome = repo
         .stash()
-        .pop(0, &StashApplyOptions::default())
+        .pop(
+            0,
+            &StashApplyOptions::default(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("pop");
     assert_eq!(conflicted_paths(&outcome), ["a.txt", "dir/b.txt"]);
     assert_eq!(repo.stash().list().expect("list").len(), 1);
@@ -174,7 +184,12 @@ fn clean_apply_and_pop_report_no_conflicts() {
 
     let applied = repo
         .stash()
-        .apply(1, &StashApplyOptions::default())
+        .apply(
+            1,
+            &StashApplyOptions::default(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("apply older");
     assert_eq!(applied, StashApplyOutcome::default());
     assert!(!applied.has_conflicts());
@@ -187,7 +202,12 @@ fn clean_apply_and_pop_report_no_conflicts() {
     git(dir.path(), &["checkout", "-q", "--", "f.txt"]);
     let popped = repo
         .stash()
-        .pop(0, &StashApplyOptions::default())
+        .pop(
+            0,
+            &StashApplyOptions::default(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("pop newer");
     assert!(!popped.has_conflicts());
     assert_eq!(
@@ -210,12 +230,22 @@ fn entry_out_of_range_is_stash_not_found() {
 
     let err = repo
         .stash()
-        .apply(0, &StashApplyOptions::default())
+        .apply(
+            0,
+            &StashApplyOptions::default(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .unwrap_err();
     assert!(matches!(err, Error::StashNotFound { n: 0 }), "{err:?}");
     let err = repo
         .stash()
-        .pop(3, &StashApplyOptions::default())
+        .pop(
+            3,
+            &StashApplyOptions::default(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .unwrap_err();
     assert!(matches!(err, Error::StashNotFound { n: 3 }), "{err:?}");
 }

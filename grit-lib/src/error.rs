@@ -603,6 +603,11 @@ pub enum ApplyError {
         /// Path from the patch.
         path: String,
     },
+
+    /// The caller's [`crate::progress::Cancel`] or
+    /// [`crate::progress::ProgressSink::should_cancel`] stopped the apply between files.
+    #[error("operation cancelled")]
+    Cancelled,
 }
 
 /// Path lookup failures while formatting a diff.

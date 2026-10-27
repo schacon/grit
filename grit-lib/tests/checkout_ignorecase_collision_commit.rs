@@ -110,7 +110,14 @@ fn populated_checkout_reports_collisions_and_auto_stage_skips_losers() {
         allow_empty: false,
         ..Default::default()
     };
-    commit_with_scope(&repo, &req, CommitScope::AutoStage, &mut NullProgress).expect("commit");
+    commit_with_scope(
+        &repo,
+        &req,
+        CommitScope::AutoStage,
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("commit");
 
     let post = repo.index_handle().load().expect("index after");
     assert_eq!(
@@ -170,7 +177,14 @@ fn auto_stage_unrelated_and_commit(repo: &Repository, dest: &Path) {
         allow_empty: false,
         ..Default::default()
     };
-    commit_with_scope(repo, &req, CommitScope::AutoStage, &mut NullProgress).expect("commit");
+    commit_with_scope(
+        repo,
+        &req,
+        CommitScope::AutoStage,
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("commit");
 }
 
 #[test]

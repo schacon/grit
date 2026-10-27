@@ -134,7 +134,13 @@ fn stage_with_held_index_lock_returns_lock_held_and_git_sees_no_change() {
             pathspecs: vec!["n".into()],
             ..Default::default()
         };
-        let err = stage(&repo, &options, &mut NullProgress).expect_err("index.lock is held");
+        let err = stage(
+            &repo,
+            &options,
+            &mut NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
+        .expect_err("index.lock is held");
         let (path, holder) = expect_lock_held(err);
         assert_eq!(
             path.canonicalize().expect("lock path"),
@@ -159,7 +165,13 @@ fn stage_with_held_index_lock_returns_lock_held_and_git_sees_no_change() {
 
         fs::remove_file(&lock_path).expect("release lock for git");
         assert_eq!(git(wt, &["status", "--porcelain"]), "?? n\n");
-        stage(&repo, &options, &mut NullProgress).expect("retry after lock release");
+        stage(
+            &repo,
+            &options,
+            &mut NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
+        .expect("retry after lock release");
         assert_eq!(git(wt, &["show", ":n"]), "n\n");
         git(wt, &["fsck", "--strict"]);
 

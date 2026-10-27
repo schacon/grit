@@ -98,7 +98,16 @@ fn conflicted_merge_repo() -> (tempfile::TempDir, Repository, ObjectId) {
     let main = ObjectId::from_hex(git(root.path(), &["rev-parse", "HEAD"]).trim()).expect("main");
 
     let repo = open_repo(root.path());
-    let outcome = integrate_branch(&repo, "refs/heads/main", main, other, "o").expect("merge");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main,
+        other,
+        "o",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
     assert!(matches!(outcome, IntegrateBranchOutcome::Conflicts { .. }));
     assert!(repo.git_dir().join("MERGE_HEAD").exists());
     (root, repo, main)
@@ -165,7 +174,13 @@ fn hard_reset_to_head_after_conflicted_merge_clears_state() {
     reset_head(&repo, main, ResetMode::Hard);
     assert_no_operation_state(&repo);
 
-    let err = create_commit(&repo, &commit_req("oops"), &mut NullProgress).unwrap_err();
+    let err = create_commit(
+        &repo,
+        &commit_req("oops"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .unwrap_err();
     assert!(
         matches!(err, Error::NothingToCommit),
         "commit after reset must not create a merge: {err}"
@@ -192,7 +207,13 @@ fn hard_reset_to_head_after_conflicted_pick_clears_state() {
     reset_head(&repo, main, ResetMode::Hard);
     assert_no_operation_state(&repo);
 
-    let err = create_commit(&repo, &commit_req("oops"), &mut NullProgress).unwrap_err();
+    let err = create_commit(
+        &repo,
+        &commit_req("oops"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .unwrap_err();
     assert!(matches!(err, Error::NothingToCommit), "{err}");
 }
 
@@ -214,8 +235,16 @@ fn grit_reset_matches_git_porcelain_after_conflicted_merge() {
     let main =
         ObjectId::from_hex(git(grit_dir.path(), &["rev-parse", "main"]).trim()).expect("main");
     let other = ObjectId::from_hex(git(grit_dir.path(), &["rev-parse", "o"]).trim()).expect("o");
-    let outcome =
-        integrate_branch(&grit_repo, "refs/heads/main", main, other, "o").expect("grit merge");
+    let outcome = integrate_branch(
+        &grit_repo,
+        "refs/heads/main",
+        main,
+        other,
+        "o",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("grit merge");
     assert!(matches!(outcome, IntegrateBranchOutcome::Conflicts { .. }));
 
     let merge_out = Command::new("git")

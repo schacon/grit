@@ -44,8 +44,16 @@ fn modify_delete_conflict_materializes_incoming_version_and_resolves_with_add_or
     let main_oid = ObjectId::from_hex(&git(root, &["rev-parse", "HEAD"]).trim()).expect("main");
     let feat_oid = ObjectId::from_hex(&git(root, &["rev-parse", "feat"]).trim()).expect("feat");
 
-    let outcome =
-        integrate_branch(&repo, "refs/heads/main", main_oid, feat_oid, "feat").expect("merge");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main_oid,
+        feat_oid,
+        "feat",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
     let IntegrateBranchOutcome::Conflicts { paths, details } = outcome else {
         panic!("expected conflicts");
     };
@@ -74,6 +82,7 @@ fn modify_delete_conflict_materializes_incoming_version_and_resolves_with_add_or
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("add keep");
     assert_eq!(add_keep.modified.len(), 1);
@@ -88,8 +97,16 @@ fn modify_delete_conflict_resolves_by_accepting_deletion() {
     let root = repo.work_tree().expect("worktree");
     let main_oid = ObjectId::from_hex(&git(root, &["rev-parse", "HEAD"]).trim()).expect("main");
     let feat_oid = ObjectId::from_hex(&git(root, &["rev-parse", "feat"]).trim()).expect("feat");
-    let outcome =
-        integrate_branch(&repo, "refs/heads/main", main_oid, feat_oid, "feat").expect("merge");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main_oid,
+        feat_oid,
+        "feat",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
     assert!(matches!(outcome, IntegrateBranchOutcome::Conflicts { .. }));
 
     let rm_out = remove_paths(
@@ -113,7 +130,16 @@ fn modify_delete_merge_does_not_mark_unrelated_files_modified() {
     let root = repo.work_tree().expect("worktree");
     let main_oid = ObjectId::from_hex(&git(root, &["rev-parse", "HEAD"]).trim()).expect("main");
     let feat_oid = ObjectId::from_hex(&git(root, &["rev-parse", "feat"]).trim()).expect("feat");
-    integrate_branch(&repo, "refs/heads/main", main_oid, feat_oid, "feat").expect("merge");
+    integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main_oid,
+        feat_oid,
+        "feat",
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("merge");
 
     use grit_lib::porcelain::status::{status, StatusOptions};
     use grit_lib::progress::NeverCancel;

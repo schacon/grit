@@ -53,7 +53,13 @@ fn open_with_forced_parallel_pool(root: &Path, threads: usize) -> Repository {
 
 fn commit_tree(repo: &Repository, message: &str) -> ObjectId {
     use grit_lib::porcelain::add::{stage, StageOptions};
-    stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
     let mut index = repo.index_handle().load().expect("index");
     let tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())
         .expect("tree");

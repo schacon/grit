@@ -72,6 +72,7 @@ fn stage_and_commit(repo: &Repository) {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("stage sub");
     let ident = "T <t@example.com> 1700000000 +0000".to_owned();
@@ -85,6 +86,7 @@ fn stage_and_commit(repo: &Repository) {
         },
         CommitScope::Staged,
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("the gitlink-to-file typechange must be committable");
 }

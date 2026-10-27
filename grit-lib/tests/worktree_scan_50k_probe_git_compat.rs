@@ -88,7 +88,13 @@ fn noop_add_metadata_probe_budget_dense_leaf_50k() {
     let repo = open_repo(root);
 
     let _probe = reset_worktree_metadata_probe(root);
-    let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).expect("add");
+    let outcome = stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("add");
     assert_eq!(outcome.total(), 0);
     let meta = worktree_metadata_probe_count();
     assert!(

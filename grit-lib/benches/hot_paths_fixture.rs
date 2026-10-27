@@ -493,14 +493,23 @@ pub fn bench_push_stash(fx: &HotPathsFixture) {
         dry_run: false,
         mode: StashMode::default(),
     };
-    let _ = fx.repo.stash().push(&options).expect("push_stash");
+    let _ = fx
+        .repo
+        .stash()
+        .push(&options, &mut NullProgress, &NeverCancel)
+        .expect("push_stash");
 }
 
 pub fn bench_apply_stash(fx: &HotPathsFixture, stash_oid: &ObjectId) {
     let _ = fx
         .repo
         .stash()
-        .apply_commit(stash_oid, &StashApplyOptions::default())
+        .apply_commit(
+            stash_oid,
+            &StashApplyOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
         .expect("apply_stash");
 }
 

@@ -12,6 +12,7 @@ use crate::porcelain::stash::{
     StashApplyOutcome, StashBranchOutcome, StashDiffOptions, StashEntry, StashPreview,
     StashPushOptions, StashPushResult,
 };
+use crate::progress::{Cancel, ProgressSink};
 use crate::repo::Repository;
 
 /// Stash list/push/apply/pop/drop for one open repository.
@@ -61,11 +62,18 @@ impl<'repo> RepositoryStash<'repo> {
     /// Returns `None` when there is nothing to stash. Untracked paths included in the stash
     /// are removed from the worktree.
     ///
+    /// Hashing local changes reports [`crate::progress::ProgressPhase::StagingFiles`] and the
+    /// reset reports [`crate::progress::ProgressPhase::CheckingOutFiles`] to `progress`.
+    ///
     /// # Errors
     ///
     /// - [`crate::error::Error::StashOptionConflict`] when [`StashPushOptions::dry_run`] is set
     ///   (use [`Self::preview`]).
     /// - [`crate::error::Error::StashNoInitialCommit`] before the first commit.
+    /// - [`crate::error::Error::Cancelled`] when `cancel` or
+    ///   [`ProgressSink::should_cancel`] fires. Before `refs/stash` moves, the repository is
+    ///   unchanged; once the entry is stored it stays, even when the reset that follows is
+    ///   cancelled (the same rule as a failed reset).
     /// - Stash build, ref, and checkout failures.
     ///
     /// # Examples
@@ -86,12 +94,21 @@ impl<'repo> RepositoryStash<'repo> {
     ///     dry_run: false,
     ///     mode: StashMode::default(),
     /// };
-    /// let _ = repo.stash().push(&opts)?;
+    /// let _ = repo.stash().push(
+    ///     &opts,
+    ///     &mut grit_lib::progress::NullProgress,
+    ///     &grit_lib::progress::NeverCancel,
+    /// )?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn push(&self, options: &StashPushOptions) -> Result<Option<StashPushResult>> {
-        push_stash(self.repo, options)
+    pub fn push(
+        &self,
+        options: &StashPushOptions,
+        progress: &mut dyn ProgressSink,
+        cancel: &dyn Cancel,
+    ) -> Result<Option<StashPushResult>> {
+        push_stash(self.repo, options, progress, cancel)
     }
 
     /// Report which paths [`Self::push`] would save, without writing objects, refs, or files.
@@ -123,27 +140,42 @@ impl<'repo> RepositoryStash<'repo> {
     /// The conflicted paths and their kinds; [`StashApplyOutcome::has_conflicts`] is false on a
     /// clean apply.
     ///
+    /// Progress and cancellation work as in [`Self::apply_commit`].
+    ///
     /// # Errors
     ///
     /// [`crate::error::Error::StashNotFound`] when `index` is out of range, plus the
     /// [`Self::apply_commit`] errors.
-    pub fn apply(&self, index: usize, options: &StashApplyOptions) -> Result<StashApplyOutcome> {
-        apply_stash_entry(self.repo, index, options)
+    pub fn apply(
+        &self,
+        index: usize,
+        options: &StashApplyOptions,
+        progress: &mut dyn ProgressSink,
+        cancel: &dyn Cancel,
+    ) -> Result<StashApplyOutcome> {
+        apply_stash_entry(self.repo, index, options, progress, cancel)
     }
 
     /// Apply any stash-shaped commit (for example one from [`Self::create`]) without touching
     /// `refs/stash`.
     ///
+    /// Bulk work-tree writes report [`crate::progress::ProgressPhase::CheckingOutFiles`] to
+    /// `progress`; `cancel` is checked before and while the work tree is written.
+    ///
     /// # Errors
     ///
     /// [`crate::error::Error::CorruptStash`] for a malformed stash commit, plus local-change,
-    /// untracked-overwrite, and index write failures.
+    /// untracked-overwrite, and index write failures. [`crate::error::Error::Cancelled`] when
+    /// cancelled: the index is not written, `refs/stash` is untouched, and the bulk checkout is
+    /// rolled back; files content-merged onto a moved `HEAD` before the cancel stay written.
     pub fn apply_commit(
         &self,
         stash: &ObjectId,
         options: &StashApplyOptions,
+        progress: &mut dyn ProgressSink,
+        cancel: &dyn Cancel,
     ) -> Result<StashApplyOutcome> {
-        apply_stash_oid(self.repo, stash, options)
+        apply_stash_oid(self.repo, stash, options, progress, cancel)
     }
 
     /// Apply `stash@{index}` and drop it when it applied without conflicts.
@@ -153,11 +185,19 @@ impl<'repo> RepositoryStash<'repo> {
     /// The conflicted paths and their kinds. When [`StashApplyOutcome::has_conflicts`] is true
     /// the entry is kept.
     ///
+    /// A cancelled apply keeps the entry; see [`Self::apply_commit`].
+    ///
     /// # Errors
     ///
     /// Same as [`Self::apply`] and [`Self::drop`].
-    pub fn pop(&self, index: usize, options: &StashApplyOptions) -> Result<StashApplyOutcome> {
-        pop_stash_entry(self.repo, index, options)
+    pub fn pop(
+        &self,
+        index: usize,
+        options: &StashApplyOptions,
+        progress: &mut dyn ProgressSink,
+        cancel: &dyn Cancel,
+    ) -> Result<StashApplyOutcome> {
+        pop_stash_entry(self.repo, index, options, progress, cancel)
     }
 
     /// Remove `stash@{index}`, moving `refs/stash` to the next entry (or deleting it).

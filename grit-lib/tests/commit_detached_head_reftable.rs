@@ -43,7 +43,13 @@ fn grit_commit_on_detached_reftable_head_advances_head() {
         &grit_lib::config::environment::RepositoryOptions::empty().with_work_tree(wt),
     )
     .expect("open");
-    commit_worktree(&repo, &commit_req("one"), &mut NullProgress).expect("first commit");
+    commit_worktree(
+        &repo,
+        &commit_req("one"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("first commit");
     let main_tip = grit_lib::refs::resolve_ref(repo.git_dir(), "refs/heads/main").unwrap();
 
     let tip = match resolve_head(repo.git_dir()).expect("head before detach") {
@@ -66,8 +72,13 @@ fn grit_commit_on_detached_reftable_head_advances_head() {
     .expect("detach");
 
     std::fs::write(wt.join("b.txt"), b"b\n").unwrap();
-    let outcome = commit_worktree(&repo, &commit_req("detached"), &mut NullProgress)
-        .expect("detached commit");
+    let outcome = commit_worktree(
+        &repo,
+        &commit_req("detached"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("detached commit");
     assert_eq!(outcome.branch, None);
     assert_ne!(outcome.oid, main_tip);
 
@@ -96,7 +107,13 @@ fn grit_amend_on_detached_reftable_head() {
         &grit_lib::config::environment::RepositoryOptions::empty().with_work_tree(wt),
     )
     .expect("open");
-    commit_worktree(&repo, &commit_req("one"), &mut NullProgress).expect("first");
+    commit_worktree(
+        &repo,
+        &commit_req("one"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("first");
     let tip = match resolve_head(repo.git_dir()).expect("head before detach") {
         HeadState::Branch { oid: Some(oid), .. } => oid,
         other => panic!("expected branch tip, got {other:?}"),
@@ -118,7 +135,13 @@ fn grit_amend_on_detached_reftable_head() {
 
     let mut amend = commit_req("amended");
     amend.amend = true;
-    let outcome = commit_worktree(&repo, &amend, &mut NullProgress).expect("amend detached");
+    let outcome = commit_worktree(
+        &repo,
+        &amend,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("amend detached");
     assert_eq!(outcome.branch, None);
     match resolve_head(repo.git_dir()).expect("head") {
         HeadState::Detached { oid } => assert_eq!(oid, outcome.oid),

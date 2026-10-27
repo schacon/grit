@@ -68,7 +68,13 @@ mod tests {
         );
 
         file_load_counters::reset();
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
         assert!(
             file_load_counters::max_reads_per_file() <= 1,
             "stage: each attributes/ignore file read at most once (max={})",
@@ -148,7 +154,13 @@ mod tests {
         fs::write(wt.join("d/.gitattributes"), "*.txt text eol=crlf\n").unwrap();
         fs::write(wt.join("d/f.txt"), b"line one\nline two\n").unwrap();
 
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
         let mut index = repo.load_index().unwrap();
         let tree_oid = write_tree_from_index(&repo.odb(), &index, "").expect("tree");
 
@@ -215,7 +227,13 @@ mod tests {
         fs::write(repo.git_dir().join("info/attributes"), "d/*.txt -text\n").unwrap();
         fs::write(root.join("d/f.txt"), b"a\r\nb\r\n").unwrap();
 
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
         let index = repo.load_index().unwrap();
         let oid = index.get(b"d/f.txt", 0).unwrap().oid;
         assert_eq!(
@@ -274,7 +292,13 @@ mod tests {
             .unwrap();
         }
 
-        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .unwrap();
 
         let grit_index = repo.load_index().unwrap();
         let grit_by_path: std::collections::BTreeMap<String, String> = grit_index

@@ -74,7 +74,16 @@ fn content_merge_child() {
         output.result_tree
     } else {
         assert!(matches!(
-            integrate_branch(&repo, "refs/heads/main", into, other, "feat").expect("merge"),
+            integrate_branch(
+                &repo,
+                "refs/heads/main",
+                into,
+                other,
+                "feat",
+                &mut grit_lib::progress::NullProgress,
+                &grit_lib::progress::NeverCancel
+            )
+            .expect("merge"),
             IntegrateBranchOutcome::Merged { .. }
         ));
         oid(root, "HEAD^{tree}")

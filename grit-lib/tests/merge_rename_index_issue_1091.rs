@@ -117,8 +117,16 @@ fn incoming_directory_rename_does_not_duplicate_merged_index() {
     let main_oid = ObjectId::from_hex(git(root, &["rev-parse", "main"]).trim()).expect("main");
     let side_oid = ObjectId::from_hex(git(root, &["rev-parse", "HEAD"]).trim()).expect("side");
 
-    let outcome =
-        integrate_branch(&repo, "refs/heads/side", side_oid, main_oid, "main").expect("merge");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/side",
+        side_oid,
+        main_oid,
+        "main",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
     assert!(
         matches!(outcome, IntegrateBranchOutcome::Merged { .. }),
         "expected clean merge, got {outcome:?}"
@@ -134,7 +142,13 @@ fn incoming_directory_rename_does_not_duplicate_merged_index() {
     fs::write(root.join("side.txt"), &side_body).expect("write side.txt");
     git(root, &["add", "side.txt"]);
 
-    create_commit(&repo, &commit_req("next"), &mut NullProgress).expect("follow-up commit");
+    create_commit(
+        &repo,
+        &commit_req("next"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("follow-up commit");
     assert_git_fsck_no_duplicate_entries(root);
     let ls_tree = git(root, &["ls-tree", "-r", "HEAD"]);
     let mut paths = Vec::new();
@@ -179,8 +193,16 @@ fn incoming_single_file_rename_does_not_duplicate_merged_index() {
     let main_oid = ObjectId::from_hex(git(root, &["rev-parse", "main"]).trim()).expect("main");
     let side_oid = ObjectId::from_hex(git(root, &["rev-parse", "HEAD"]).trim()).expect("side");
 
-    let outcome =
-        integrate_branch(&repo, "refs/heads/side", side_oid, main_oid, "main").expect("merge");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/side",
+        side_oid,
+        main_oid,
+        "main",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
     assert!(
         matches!(outcome, IntegrateBranchOutcome::Merged { .. }),
         "expected clean merge, got {outcome:?}"
@@ -218,8 +240,16 @@ fn incoming_rename_destination_conflicts_with_independent_ours_add() {
     let main_oid = ObjectId::from_hex(git(root, &["rev-parse", "main"]).trim()).expect("main");
     let side_oid = ObjectId::from_hex(git(root, &["rev-parse", "HEAD"]).trim()).expect("side");
 
-    let outcome =
-        integrate_branch(&repo, "refs/heads/side", side_oid, main_oid, "main").expect("merge");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/side",
+        side_oid,
+        main_oid,
+        "main",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
     let IntegrateBranchOutcome::Conflicts { paths, .. } = outcome else {
         panic!("expected rename/add conflict, got {outcome:?}");
     };

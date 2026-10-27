@@ -24,7 +24,12 @@ fn stage_paths(repo: &Repository, pathspecs: &[&str]) -> grit_lib::error::Result
         mode: StageMode::All,
         ..StageOptions::default()
     };
-    stage(repo, &opts, &mut NullProgress)?;
+    stage(
+        repo,
+        &opts,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )?;
     Ok(())
 }
 

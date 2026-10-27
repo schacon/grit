@@ -286,6 +286,8 @@ fn merge(
         fx.oid(other),
         other,
         options,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("merge")
 }
@@ -406,8 +408,13 @@ fn amend_runs_post_rewrite_amend_after_post_commit() {
     let old = fx.commit("f", "2\n", "c2");
     let repo = fx.repo();
 
-    let outcome =
-        create_commit(&repo, &commit_request("amended", true), &mut NullProgress).expect("amend");
+    let outcome = create_commit(
+        &repo,
+        &commit_request("amended", true),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("amend");
     assert_eq!(
         outcome.hooks_run,
         vec![HookName::PostCommit, HookName::PostRewrite]
@@ -421,8 +428,13 @@ fn amend_runs_post_rewrite_amend_after_post_commit() {
         ]
     );
 
-    let outcome =
-        create_commit(&repo, &commit_request("next", false), &mut NullProgress).expect("commit");
+    let outcome = create_commit(
+        &repo,
+        &commit_request("next", false),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
     assert_eq!(outcome.hooks_run, vec![HookName::PostCommit]);
     assert_eq!(fx.take_log(), vec!["post-commit "]);
 }
@@ -437,7 +449,13 @@ fn amend_without_post_rewrite_runs_only_post_commit() {
         post_rewrite: PostOperationHooks::Skip,
         ..commit_request("amended", true)
     };
-    let outcome = create_commit(&repo, &request, &mut NullProgress).expect("amend");
+    let outcome = create_commit(
+        &repo,
+        &request,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("amend");
     assert_eq!(outcome.hooks_run, vec![HookName::PostCommit]);
     assert_eq!(fx.take_log(), vec!["post-commit "]);
 }
@@ -485,7 +503,13 @@ fn rebase_runs_post_checkout_then_post_rewrite_with_pairs_in_order() {
     fx.git(&["switch", "-q", "topic"]);
     let repo = fx.repo();
 
-    let outcome = start_rebase(&repo, &rebase_onto(main, t2)).expect("rebase");
+    let outcome = start_rebase(
+        &repo,
+        &rebase_onto(main, t2),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("rebase");
     let RebaseOutcome::Done { applied, .. } = outcome else {
         panic!("expected a clean rebase, got {outcome:?}");
     };
@@ -513,7 +537,13 @@ fn fast_forward_rebase_runs_post_checkout_but_no_post_rewrite() {
     fx.git(&["switch", "-q", "side"]);
     let repo = fx.repo();
 
-    let outcome = start_rebase(&repo, &rebase_onto(c2, c1)).expect("rebase");
+    let outcome = start_rebase(
+        &repo,
+        &rebase_onto(c2, c1),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("rebase");
     let RebaseOutcome::Done { applied, .. } = outcome else {
         panic!("expected a fast-forward, got {outcome:?}");
     };
@@ -535,13 +565,25 @@ fn conflicted_rebase_runs_post_checkout_on_stop_and_post_rewrite_on_continue() {
     let repo = fx.repo();
     let opts = rebase_onto(main, t2);
 
-    let outcome = start_rebase(&repo, &opts).expect("start");
+    let outcome = start_rebase(
+        &repo,
+        &opts,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("start");
     assert!(matches!(outcome, RebaseOutcome::Stopped(_)), "{outcome:?}");
     assert_eq!(fx.take_log(), vec![checkout_line(t2, main)]);
 
     std::fs::write(fx.wt().join("f"), "resolved\n").expect("resolve");
     fx.git(&["add", "f"]);
-    let outcome = continue_rebase(&repo, &opts).expect("continue");
+    let outcome = continue_rebase(
+        &repo,
+        &opts,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("continue");
     let RebaseOutcome::Done { applied, .. } = outcome else {
         panic!("expected the rebase to finish, got {outcome:?}");
     };

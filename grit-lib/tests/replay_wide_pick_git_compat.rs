@@ -83,6 +83,8 @@ fn pick(repo: &Repository, commit: &str) -> ReplayOutcome {
             committer: IDENT.parse().expect("IDENT"),
             message_override: None,
         },
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("pick")
 }

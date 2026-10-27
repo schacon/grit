@@ -12,7 +12,7 @@ use grit_lib::porcelain::commit::{
     CommitPatchError, CommitPatchInput, CommitRequest, CommitScope, HookPolicy,
 };
 use grit_lib::porcelain::hunk_select::{parse_hunk_id_list, HunkSelectError};
-use grit_lib::progress::NullProgress;
+use grit_lib::progress::{NeverCancel, NullProgress, ProgressSink};
 use grit_lib::revwalk::rev_parse::resolve_revision_as_commit;
 use grit_lib::state::{resolve_head, HeadState};
 use schemars::JsonSchema;
@@ -222,6 +222,7 @@ pub fn run_hunks(
         CommitPatchInput::Hunks(selection),
         &pathspecs,
         &mut NullProgress,
+        &NeverCancel,
     )
     .map_err(map_patch_error)?;
     finish_commit_outcome(
@@ -282,6 +283,7 @@ pub fn run_patch_file(
         CommitPatchInput::Patches(patches),
         &[],
         &mut NullProgress,
+        &NeverCancel,
     )
     .map_err(map_patch_error)?;
     finish_commit_outcome(
@@ -314,6 +316,7 @@ pub fn run(
     all: bool,
     staged: bool,
     paths: TrailingPathspecArgs,
+    progress: &mut dyn ProgressSink,
 ) -> Result<CommitOutcome> {
     let repo = context::discover()?;
 
@@ -343,7 +346,7 @@ pub fn run(
         allow_empty,
     )?;
     let outcome =
-        commit_with_scope(&repo, &req, scope, &mut NullProgress).map_err(map_commit_error)?;
+        commit_with_scope(&repo, &req, scope, progress, &NeverCancel).map_err(map_commit_error)?;
     finish_commit_outcome(
         &repo,
         req,

@@ -86,6 +86,8 @@ impl Stage {
             ProgressPhase::CheckingOutFiles => Some(Self::Checkout),
             // Shown by its own display; the estimate covers the fetch after it.
             ProgressPhase::TransferringBundle => None,
+            // Not part of a clone.
+            ProgressPhase::StagingFiles => None,
         }
     }
 }

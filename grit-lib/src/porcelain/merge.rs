@@ -70,7 +70,7 @@ use crate::porcelain::tree_merge_checkout::{
     finalize_clean_tree_merge_index, write_index_after_merge_checkout,
 };
 use crate::porcelain::worktree_guard::prepare_tree_checkout;
-use crate::progress::ProgressSink;
+use crate::progress::{poll_cancel, Cancel, ProgressSink};
 use crate::refs;
 use crate::refs::store::{Expected, RawRef, RefUpdate, RefUpdateFlags};
 use crate::repo::Repository;
@@ -813,17 +813,26 @@ pub enum IntegrateBranchOutcome {
 /// conflicts, records `MERGE_HEAD` / `ORIG_HEAD` / `MERGE_MSG`, writes conflict
 /// markers and a partially merged index, and leaves the branch ref unchanged.
 ///
+/// The work-tree update reports [`crate::progress::ProgressPhase::CheckingOutFiles`] to
+/// `progress`. `cancel` (or [`ProgressSink::should_cancel`]) is checked before the work tree is
+/// touched and throughout the checkout; once the checkout completed, the index, merge state and
+/// branch update always follow, so a cancel never leaves the branch behind a finished checkout.
+///
 /// # Errors
 ///
 /// Propagates merge, checkout, ref, and I/O failures. Returns [`Error::Message`] when
 /// the histories are unrelated, the worktree is not clean, or `into_ref` no longer points
 /// at `into_oid` (checked before the worktree is touched, and again when the ref moves).
+/// Returns [`Error::Cancelled`] when cancelled; the branch, `HEAD`, the index and the merge
+/// state are unchanged, and a cancel during the checkout rolls the work tree back.
 pub fn integrate_branch(
     repo: &Repository,
     into_ref: &str,
     into_oid: ObjectId,
     other_oid: ObjectId,
     label: &str,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<IntegrateBranchOutcome> {
     integrate_branch_with(
         repo,
@@ -832,6 +841,8 @@ pub fn integrate_branch(
         other_oid,
         label,
         &MergeOptions::default(),
+        progress,
+        cancel,
     )
 }
 
@@ -846,6 +857,7 @@ pub fn integrate_branch(
 ///
 /// Same as [`integrate_branch`], plus [`Error::NotFastForward`] when
 /// [`FastForwardPolicy::Only`] cannot fast-forward.
+#[allow(clippy::too_many_arguments)]
 pub fn integrate_branch_with(
     repo: &Repository,
     into_ref: &str,
@@ -853,9 +865,12 @@ pub fn integrate_branch_with(
     other_oid: ObjectId,
     label: &str,
     options: &MergeOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<IntegrateBranchOutcome> {
-    let outcome =
-        integrate_branch_without_hooks(repo, into_ref, into_oid, other_oid, label, options)?;
+    let outcome = integrate_branch_without_hooks(
+        repo, into_ref, into_oid, other_oid, label, options, progress, cancel,
+    )?;
     if options.hooks.enabled() {
         match outcome {
             IntegrateBranchOutcome::FastForward { .. } | IntegrateBranchOutcome::Merged { .. } => {
@@ -872,6 +887,7 @@ pub fn integrate_branch_with(
     Ok(outcome)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn integrate_branch_without_hooks(
     repo: &Repository,
     into_ref: &str,
@@ -879,11 +895,14 @@ fn integrate_branch_without_hooks(
     other_oid: ObjectId,
     label: &str,
     options: &MergeOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<IntegrateBranchOutcome> {
     if into_oid == other_oid || is_ancestor(repo, other_oid, into_oid)? {
         return Ok(IntegrateBranchOutcome::UpToDate);
     }
     ensure_branch_tip(repo, into_ref, Some(into_oid))?;
+    poll_cancel(progress, cancel)?;
 
     let into_tree = repo.odb().commit_tree(&into_oid)?;
     let other_tree = repo.odb().commit_tree(&other_oid)?;
@@ -895,7 +914,7 @@ fn integrate_branch_without_hooks(
 
     if should_take_fast_forward(options, ff_possible) {
         if matches!(options.commit, MergeCommitMode::Squash) {
-            merge_checkout_tree_transition(repo, Some(&into_tree), &other_tree)?;
+            merge_checkout_tree_transition(repo, Some(&into_tree), &other_tree, progress, cancel)?;
             let mut snapshot = crate::porcelain::worktree_guard::load_worktree_snapshot(repo)?;
             let ff_index =
                 compose_fast_forward_index(repo, other_tree, into_tree, &snapshot.index)?;
@@ -905,7 +924,7 @@ fn integrate_branch_without_hooks(
             return Ok(IntegrateBranchOutcome::Squashed);
         }
 
-        merge_checkout_tree_transition(repo, Some(&into_tree), &other_tree)?;
+        merge_checkout_tree_transition(repo, Some(&into_tree), &other_tree, progress, cancel)?;
         move_branch(
             repo,
             into_ref,
@@ -954,13 +973,14 @@ fn integrate_branch_without_hooks(
         None,
         presentation,
     )?;
+    poll_cancel(progress, cancel)?;
 
     if tree_merge_has_conflicts(&merged) {
         let details = conflicts_from_tree_merge(&merged);
         let paths: Vec<String> = details.iter().map(|c| c.path.clone()).collect();
         let materialized = materialized_merge_result_tree(repo.odb(), &merged)?;
         ensure_merge_tree_transition_allowed(repo, Some(&into_tree), &materialized)?;
-        apply_conflict_merge_worktree(repo, &into_tree, &merged)?;
+        apply_conflict_merge_worktree(repo, &into_tree, &merged, progress, cancel)?;
         let merge_msg = merge_message_text(label, options.message.as_deref());
         if matches!(options.commit, MergeCommitMode::Squash) {
             write_squash_msg_file(repo, into_oid, other_oid)?;
@@ -983,7 +1003,13 @@ fn integrate_branch_without_hooks(
         None
     };
 
-    merge_checkout_tree_transition(repo, Some(&into_tree), &merged.result_tree)?;
+    merge_checkout_tree_transition(
+        repo,
+        Some(&into_tree),
+        &merged.result_tree,
+        progress,
+        cancel,
+    )?;
     let mut lock = repo.lock_index()?;
     let mut snapshot = crate::porcelain::worktree_guard::load_worktree_snapshot(repo)?;
     finalize_clean_tree_merge_index(repo, &mut snapshot.index, &merged)?;
@@ -1040,6 +1066,7 @@ fn integrate_branch_without_hooks(
 /// # Errors
 ///
 /// Same as [`integrate_branch_with`].
+#[allow(clippy::too_many_arguments)]
 pub fn integrate_branch_with_options(
     repo: &Repository,
     into_ref: &str,
@@ -1047,8 +1074,19 @@ pub fn integrate_branch_with_options(
     other_oid: ObjectId,
     label: &str,
     options: IntegrateBranchOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<IntegrateBranchOutcome> {
-    integrate_branch_with(repo, into_ref, into_oid, other_oid, label, &options.into())
+    integrate_branch_with(
+        repo,
+        into_ref,
+        into_oid,
+        other_oid,
+        label,
+        &options.into(),
+        progress,
+        cancel,
+    )
 }
 
 struct MergeCommitPreflight {
@@ -1246,17 +1284,19 @@ pub enum ContinueMergeError {
 ///
 /// Builds a merge commit from the current index tree with parents `HEAD` and each
 /// `MERGE_HEAD`, clears merge state (including autostash and rerere), and updates
-/// the checked-out branch.
+/// the checked-out branch. Auto-staging reports [`crate::progress::ProgressPhase::StagingFiles`]
+/// and polls `cancel`, with the same cancel points as [`crate::porcelain::commit::create_commit`].
 ///
 /// # Errors
 ///
 /// Returns [`ContinueMergeError::NoMergeInProgress`] when no merge is active,
 /// [`ContinueMergeError::UnmergedPaths`] when conflict stages remain, or propagates
-/// commit and I/O failures as [`ContinueMergeError::Repository`].
+/// commit and I/O failures (including [`Error::Cancelled`]) as [`ContinueMergeError::Repository`].
 pub fn continue_merge(
     repo: &Repository,
     options: &ContinueOptions,
     progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> std::result::Result<ContinueOutcome, ContinueMergeError> {
     let merge_heads = read_merge_heads(repo.git_dir())?;
     if merge_heads.is_empty() {
@@ -1268,7 +1308,7 @@ pub fn continue_merge(
 
     let mut index = repo.load_index().map_err(ContinueMergeError::Repository)?;
     if auto_stage {
-        stage_for_commit_on_index(repo, &mut index, progress, false)
+        stage_for_commit_on_index(repo, &mut index, progress, cancel, false)
             .map_err(ContinueMergeError::Repository)?;
     }
     if index.has_unmerged_entries() {
@@ -1290,7 +1330,7 @@ pub fn continue_merge(
         allow_empty: false,
         ..Default::default()
     };
-    let outcome = create_commit_with_loaded_index(repo, &mut index, &req, progress)
+    let outcome = create_commit_with_loaded_index(repo, &mut index, &req, progress, cancel)
         .map_err(ContinueMergeError::Repository)?;
     Ok(ContinueOutcome {
         oid: outcome.oid,
@@ -1449,11 +1489,13 @@ fn merge_checkout_tree_transition(
     repo: &Repository,
     from_tree: Option<&ObjectId>,
     to_tree: &ObjectId,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     prepare_tree_checkout(repo, from_tree, to_tree)?;
     let prepared = prepare_tree_transition_allow_local(repo, from_tree, to_tree, &HashSet::new())
         .map_err(map_tree_transition_prepare_error_for_merge)?;
-    checkout_prepared_tree_transition_for_merge(repo, prepared)
+    checkout_prepared_tree_transition_for_merge(repo, prepared, progress, cancel)
 }
 
 fn empty_tree_oid(repo: &Repository) -> Result<ObjectId> {
@@ -1471,10 +1513,17 @@ fn conflict_path_set(merged: &TreeMergeOutput) -> BTreeSet<Vec<u8>> {
     set
 }
 
+/// Write the conflicted merge result to the index and work tree.
+///
+/// Checks `cancel` before the index is written. A cancel during the checkout returns
+/// [`Error::Cancelled`] after the checkout rolled the work tree back and the previous index
+/// was put back, so no conflict stages are left without merge state.
 pub(crate) fn apply_conflict_merge_worktree(
     repo: &Repository,
     head_tree: &ObjectId,
     merged: &TreeMergeOutput,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     let work_tree = repo
         .work_tree()
@@ -1490,6 +1539,9 @@ pub(crate) fn apply_conflict_merge_worktree(
     if index.has_unmerged_entries() {
         index.clear_cache_tree();
     }
+    poll_cancel(progress, cancel)?;
+    let index_path = repo.index_path();
+    let previous_index = fs::read(&index_path).ok();
     repo.write_index(&mut index)?;
 
     let stage0_tree = write_tree_from_index(repo.odb(), &index, "")?;
@@ -1505,7 +1557,15 @@ pub(crate) fn apply_conflict_merge_worktree(
             !conflict_paths.contains(path.as_bytes()) && !preserve_worktree_paths.contains(path)
         })
         .collect();
-    checkout::checkout_tree_changes(repo, &filtered)?;
+    if let Err(err) = checkout::checkout_tree_changes_reporting(repo, &filtered, progress, cancel) {
+        if matches!(err, Error::Cancelled) {
+            match &previous_index {
+                Some(bytes) => fs::write(&index_path, bytes)?,
+                None => fs::remove_file(&index_path)?,
+            }
+        }
+        return Err(err);
+    }
 
     let rules = WorktreeRules::from_repository(repo, &index)?;
     for (path, oid) in &merged.conflict_content {
@@ -1833,9 +1893,27 @@ mod integrate_tests {
             .parse()
             .expect("tip");
         grit_test_support::git(tmp.path(), &["checkout", "main"]);
-        let up = integrate_branch(&repo, "refs/heads/main", head, head, "topic").expect("up");
+        let up = integrate_branch(
+            &repo,
+            "refs/heads/main",
+            head,
+            head,
+            "topic",
+            &mut crate::progress::NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .expect("up");
         assert_eq!(up, IntegrateBranchOutcome::UpToDate);
-        let ff = integrate_branch(&repo, "refs/heads/main", head, tip, "topic").expect("ff");
+        let ff = integrate_branch(
+            &repo,
+            "refs/heads/main",
+            head,
+            tip,
+            "topic",
+            &mut crate::progress::NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .expect("ff");
         assert!(matches!(ff, IntegrateBranchOutcome::FastForward { .. }));
     }
 
@@ -1925,8 +2003,16 @@ mod integrate_tests {
             .trim()
             .parse()
             .expect("main");
-        let outcome =
-            integrate_branch(&repo, "refs/heads/main", main, topic, "topic").expect("merge");
+        let outcome = integrate_branch(
+            &repo,
+            "refs/heads/main",
+            main,
+            topic,
+            "topic",
+            &mut crate::progress::NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .expect("merge");
         let IntegrateBranchOutcome::Merged { oid, .. } = outcome else {
             panic!("expected clean merge, got {outcome:?}");
         };
@@ -1967,8 +2053,16 @@ mod integrate_tests {
             .trim()
             .parse()
             .expect("main");
-        let outcome =
-            integrate_branch(&repo, "refs/heads/main", main, topic, "topic").expect("merge");
+        let outcome = integrate_branch(
+            &repo,
+            "refs/heads/main",
+            main,
+            topic,
+            "topic",
+            &mut crate::progress::NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .expect("merge");
         let IntegrateBranchOutcome::Conflicts { paths, .. } = outcome else {
             panic!("expected conflicts, got {outcome:?}");
         };

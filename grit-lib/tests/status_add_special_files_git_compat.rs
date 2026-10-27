@@ -123,6 +123,7 @@ mod unix {
                 ..StageOptions::default()
             },
             &mut NullProgress,
+            &NeverCancel,
         )
         .expect("stage must not hang or fail on fifo");
         assert_eq!(
@@ -161,6 +162,7 @@ mod unix {
             &commit_req("second"),
             CommitScope::AutoStage,
             &mut NullProgress,
+            &NeverCancel,
         )
         .expect("auto-stage commit with socket present");
         git(root, &["fsck"]);

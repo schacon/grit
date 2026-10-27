@@ -15,6 +15,7 @@ use crate::porcelain::worktree_guard::{
     collect_untracked_for_tree_changes, ensure_no_untracked_overwrite, load_worktree_snapshot,
     WorktreeSnapshot,
 };
+use crate::progress::{Cancel, ProgressSink};
 use crate::repo::Repository;
 
 fn tree_changes_for_clean_merge_with_snapshot(
@@ -51,14 +52,24 @@ fn tree_changes_for_clean_merge_with_snapshot(
 ///
 /// # Errors
 ///
-/// Propagates diff, checkout, and index write failures.
+/// Propagates diff, checkout, and index write failures, and [`Error::Cancelled`] when `cancel`
+/// fires during the checkout (the index on disk is then unchanged).
 pub(crate) fn apply_clean_tree_merge_to_worktree(
     repo: &Repository,
     from_tree: &ObjectId,
     merged: &TreeMergeOutput,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     let mut snapshot = load_worktree_snapshot(repo)?;
-    apply_clean_tree_merge_to_worktree_with_snapshot(repo, from_tree, merged, &mut snapshot)
+    apply_clean_tree_merge_to_worktree_with_snapshot(
+        repo,
+        from_tree,
+        merged,
+        &mut snapshot,
+        progress,
+        cancel,
+    )
 }
 
 /// Like [`apply_clean_tree_merge_to_worktree`], but reuses a loaded worktree snapshot across steps.
@@ -67,6 +78,8 @@ pub(crate) fn apply_clean_tree_merge_to_worktree_with_snapshot(
     from_tree: &ObjectId,
     merged: &TreeMergeOutput,
     snapshot: &mut WorktreeSnapshot,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     let work_tree = repo.work_tree().ok_or(Error::RequiresWorkTree)?;
     let tree_changes =
@@ -80,8 +93,8 @@ pub(crate) fn apply_clean_tree_merge_to_worktree_with_snapshot(
         repo,
         &tree_changes,
         &mut snapshot.index,
-        &mut crate::progress::NullProgress,
-        &crate::progress::NeverCancel,
+        progress,
+        cancel,
         CheckoutApplyOptions {
             parallel_prepare_blobs: true,
             checkout_result_tree: Some(merged.result_tree),

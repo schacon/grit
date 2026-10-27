@@ -155,7 +155,7 @@ fn issue_1227_new_file_in_git_warmed_check_only_collapsed_dir() {
         "normal untracked mode must match git for check_only collapsed UNTR"
     );
 
-    stage_for_commit(&repo, &mut NullProgress).expect("stage for commit");
+    stage_for_commit(&repo, &mut NullProgress, &NeverCancel).expect("stage for commit");
     let staged: BTreeSet<String> = repo
         .index_handle()
         .load()
@@ -236,7 +236,8 @@ fn issue_1227_new_file_in_git_warmed_cached_dir() {
         "normal untracked mode must see new file under git-warmed UNTR dir"
     );
 
-    let outcome = stage_for_commit(&repo, &mut NullProgress).expect("stage for commit");
+    let outcome =
+        stage_for_commit(&repo, &mut NullProgress, &NeverCancel).expect("stage for commit");
     assert!(
         outcome.added.len() >= 1,
         "commit staging must include new untracked file, got {outcome:?}"

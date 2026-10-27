@@ -201,7 +201,12 @@ fn grit_stash_apply_at_3k_matches_git_without_index() {
     let stash_oid = ObjectId::from_hex(&stash_oid_hex).expect("stash oid");
     grit_repo
         .stash()
-        .apply_commit(&stash_oid, &Default::default())
+        .apply_commit(
+            &stash_oid,
+            &Default::default(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("stash apply");
 
     let git_dir = tempfile::tempdir().expect("git copy");

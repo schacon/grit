@@ -48,7 +48,13 @@ fn stage_with(root: &Path, mode: StageMode, dry_run: bool) -> StageOutcome {
         dry_run,
         ..StageOptions::default()
     };
-    stage(&open(root), &opts, &mut NullProgress).expect("stage")
+    stage(
+        &open(root),
+        &opts,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage")
 }
 
 fn index_paths(root: &Path) -> Vec<String> {

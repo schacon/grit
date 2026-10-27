@@ -125,7 +125,9 @@ fn rebase_stop_and_status_report_the_same_conflict() {
             hooks: grit_lib::PostOperationHooks::Run,
         },
     };
-    let RebaseOutcome::Stopped(stop) = start_rebase(&repo, &opts).expect("rebase") else {
+    let RebaseOutcome::Stopped(stop) =
+        start_rebase(&repo, &opts, &mut NullProgress, &NeverCancel).expect("rebase")
+    else {
         panic!("expected the rebase to stop on f");
     };
     assert_one_model(&fx.root, &stop.conflicts);
@@ -135,9 +137,16 @@ fn rebase_stop_and_status_report_the_same_conflict() {
 fn merge_conflicts_and_status_report_the_same_conflict() {
     let fx = modify_delete_repo("main");
     let repo = open(&fx.root);
-    let IntegrateBranchOutcome::Conflicts { details, .. } =
-        integrate_branch(&repo, "refs/heads/main", fx.main, fx.feat, "feat").expect("merge")
-    else {
+    let IntegrateBranchOutcome::Conflicts { details, .. } = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        fx.main,
+        fx.feat,
+        "feat",
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("merge") else {
         panic!("expected merge conflicts");
     };
     assert_one_model(&fx.root, &details);

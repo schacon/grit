@@ -103,7 +103,16 @@ fn init_grit_two_file_conflict_merge(root: &Path) -> Repository {
     git(root, &["commit", "-qam", "main"]);
     let main: ObjectId = git_out(root, &["rev-parse", "HEAD"]).parse().expect("main");
 
-    let outcome = integrate_branch(&repo, "refs/heads/main", main, topic, "topic").expect("merge");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main,
+        topic,
+        "topic",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
     assert!(matches!(outcome, IntegrateBranchOutcome::Conflicts { .. }));
     repo
 }
@@ -130,7 +139,16 @@ fn init_grit_conflict_merge(root: &Path) -> Repository {
     git(root, &["commit", "-qam", "main"]);
     let main: ObjectId = git_out(root, &["rev-parse", "HEAD"]).parse().expect("main");
 
-    let outcome = integrate_branch(&repo, "refs/heads/main", main, side, "side").expect("merge");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main,
+        side,
+        "side",
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
     assert!(matches!(outcome, IntegrateBranchOutcome::Conflicts { .. }));
     repo
 }
@@ -144,8 +162,13 @@ fn grit_conflict_then_grit_continue_fsck_clean() {
     std::fs::write(root.join("f"), b"resolved\n").unwrap();
     git(root, &["add", "f"]);
 
-    let outcome =
-        continue_merge(&repo, &continue_options(None), &mut NullProgress).expect("continue");
+    let outcome = continue_merge(
+        &repo,
+        &continue_options(None),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("continue");
     assert!(!repo.git_dir().join("MERGE_HEAD").exists());
 
     let fsck = Command::new("git")
@@ -179,7 +202,13 @@ fn git_merge_conflict_then_grit_continue() {
     let side_tip = ObjectId::from_hex(&git_out(root, &["rev-parse", "side"])).expect("side");
     let main_before = ObjectId::from_hex(&git_out(root, &["rev-parse", "HEAD"])).expect("main");
 
-    continue_merge(&repo, &continue_options(None), &mut NullProgress).expect("continue");
+    continue_merge(
+        &repo,
+        &continue_options(None),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("continue");
 
     let parents_line = git_out(root, &["rev-list", "--parents", "-1", "HEAD"]);
     let parts: Vec<&str> = parents_line.split_whitespace().collect();
@@ -227,7 +256,13 @@ fn continue_after_edit_without_add_auto_stages_resolved_paths() {
     let topic_tip = ObjectId::from_hex(&git_out(root, &["rev-parse", "topic"])).expect("topic");
     let main_before = ObjectId::from_hex(&git_out(root, &["rev-parse", "HEAD"])).expect("main");
 
-    continue_merge(&repo, &continue_options(None), &mut NullProgress).expect("continue");
+    continue_merge(
+        &repo,
+        &continue_options(None),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("continue");
 
     assert!(!repo.git_dir().join("MERGE_HEAD").exists());
     let parents_line = git_out(root, &["rev-list", "--parents", "-1", "HEAD"]);
@@ -243,7 +278,13 @@ fn continue_refuses_unmerged_paths() {
     let root = tmp.path();
     let repo = init_conflict_merge(root);
 
-    let err = continue_merge(&repo, &continue_options(None), &mut NullProgress).unwrap_err();
+    let err = continue_merge(
+        &repo,
+        &continue_options(None),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .unwrap_err();
     assert!(matches!(
         err,
         ContinueMergeError::UnmergedPaths { ref paths } if paths == &["f"]
@@ -263,7 +304,13 @@ fn continue_without_merge_errors() {
     git(root, &["commit", "-qm", "one"]);
 
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("repo");
-    let err = continue_merge(&repo, &continue_options(None), &mut NullProgress).unwrap_err();
+    let err = continue_merge(
+        &repo,
+        &continue_options(None),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .unwrap_err();
     assert!(matches!(err, ContinueMergeError::NoMergeInProgress));
 }
 
@@ -276,8 +323,13 @@ fn continue_stamps_change_id() {
     std::fs::write(root.join("f"), b"resolved\n").unwrap();
     git(root, &["add", "f"]);
 
-    let outcome =
-        continue_merge(&repo, &continue_options(None), &mut NullProgress).expect("continue");
+    let outcome = continue_merge(
+        &repo,
+        &continue_options(None),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("continue");
     let obj = repo.odb().read(&outcome.oid).expect("commit");
     let parsed = parse_commit(&obj.data).expect("parse");
     let stored = change_id(&parsed).expect("change-id header");

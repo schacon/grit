@@ -104,6 +104,7 @@ fn create_commit_bytes_match_git_with_explicit_environment_identity() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("stage");
     let config = repo.config().expect("config");
@@ -133,6 +134,7 @@ fn create_commit_bytes_match_git_with_explicit_environment_identity() {
             ..Default::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("create_commit");
     let grit_oid = outcome.oid;

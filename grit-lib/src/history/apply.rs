@@ -1197,8 +1197,11 @@ fn apply_head_tree_to_worktree(
         progress,
         cancel,
     )
-    .map_err(|e| HistoryError::WorktreeApply {
-        message: e.to_string(),
+    .map_err(|e| match e {
+        crate::error::Error::Cancelled => HistoryError::from(e),
+        other => HistoryError::WorktreeApply {
+            message: other.to_string(),
+        },
     })
 }
 
@@ -1345,6 +1348,9 @@ fn apply_failure_after_ref_update(
     ref_rollback: Option<HistoryError>,
     worktree_restore: Option<HistoryError>,
 ) -> HistoryError {
+    if checkout.is_cancelled() && ref_rollback.is_none() && worktree_restore.is_none() {
+        return checkout;
+    }
     let checkout_message = match checkout {
         HistoryError::WorktreeApply { message } => message,
         other => other.to_string(),

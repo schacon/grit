@@ -335,6 +335,7 @@ fn large_index_stat_refresh_parallel_matches_serial() {
         &repo,
         &grit_lib::porcelain::add::StageOptions::default(),
         &mut NullProgress,
+        &NeverCancel,
     )
     .expect("stage");
     let req = grit_lib::porcelain::commit::CommitRequest {
@@ -349,7 +350,8 @@ fn large_index_stat_refresh_parallel_matches_serial() {
         staged_change_count: None,
         ..Default::default()
     };
-    grit_lib::porcelain::commit::create_commit(&repo, &req, &mut NullProgress).expect("commit");
+    grit_lib::porcelain::commit::create_commit(&repo, &req, &mut NullProgress, &NeverCancel)
+        .expect("commit");
     for rel in ["mix/00030.txt", "mix/00040.txt", "mix/00050.txt"] {
         filetime::set_file_mtime(root.join(rel), filetime::FileTime::now()).expect("touch");
     }

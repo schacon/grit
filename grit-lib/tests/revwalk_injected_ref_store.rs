@@ -68,7 +68,13 @@ fn files_repo(work_tree: &Path) -> Repository {
 }
 
 fn commit_all(repo: &Repository, message: &str) -> ObjectId {
-    stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
     commit_with_scope(
         repo,
         &CommitRequest {
@@ -79,6 +85,7 @@ fn commit_all(repo: &Repository, message: &str) -> ObjectId {
         },
         CommitScope::Staged,
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("commit")
     .oid

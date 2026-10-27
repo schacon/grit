@@ -171,6 +171,7 @@ fn autostage_commit(root: &Path, message: &str) -> grit_lib::porcelain::commit::
         &commit_req(message),
         CommitScope::AutoStage,
         &mut NullProgress,
+        &NeverCancel,
     )
     .expect("grit commit")
 }
@@ -365,6 +366,7 @@ fn add_all_keeps_link_mode_and_matches_git_add() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &NeverCancel,
     )
     .expect("stage");
 

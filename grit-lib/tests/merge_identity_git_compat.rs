@@ -61,8 +61,16 @@ fn clean_merge_missing_identity_leaves_repo_unchanged() {
     let options = RepositoryOptions::with_environment(env);
     let repo = Repository::discover(Some(root), &options).expect("discover");
 
-    let err = integrate_branch(&repo, "refs/heads/main", main_oid, feature_oid, "feature")
-        .expect_err("merge without identity");
+    let err = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main_oid,
+        feature_oid,
+        "feature",
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect_err("merge without identity");
     assert!(
         err.to_string().contains("no configured email")
             || err.to_string().contains("auto-detection"),

@@ -122,7 +122,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
         std::fs::write(repo.work_tree().unwrap().join("a"), b"x").unwrap();
-        stage_for_commit(&repo, &mut NullProgress).expect("stage");
+        stage_for_commit(&repo, &mut NullProgress, &crate::progress::NeverCancel).expect("stage");
         let ident = "T <t@example.com> 1 +0000".to_string();
         create_commit(
             &repo,
@@ -139,10 +139,11 @@ mod tests {
                 ..Default::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .expect("commit");
         std::fs::write(repo.work_tree().unwrap().join("staged-only"), b"y").unwrap();
-        stage_for_commit(&repo, &mut NullProgress).expect("stage2");
+        stage_for_commit(&repo, &mut NullProgress, &crate::progress::NeverCancel).expect("stage2");
         let index = repo.load_index().expect("index");
         let staged = index
             .entries()

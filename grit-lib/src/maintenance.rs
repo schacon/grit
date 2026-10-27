@@ -2018,7 +2018,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
         std::fs::write(repo.work_tree().unwrap().join("a"), b"x").unwrap();
-        stage_for_commit(&repo, &mut NullProgress).expect("stage");
+        stage_for_commit(&repo, &mut NullProgress, &NeverCancel).expect("stage");
         let ident = "Test <t@example.com> 1 +0000".to_string();
         create_commit(
             &repo,
@@ -2035,6 +2035,7 @@ mod tests {
                 ..Default::default()
             },
             &mut NullProgress,
+            &NeverCancel,
         )
         .expect("commit");
         git_cmd(dir.path(), &["repack", "-a", "-d"]);
@@ -2284,7 +2285,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
         std::fs::write(repo.work_tree().unwrap().join("a"), b"x").unwrap();
-        stage_for_commit(&repo, &mut NullProgress).expect("stage");
+        stage_for_commit(&repo, &mut NullProgress, &NeverCancel).expect("stage");
         let ident = "Test <t@example.com> 1 +0000".to_string();
         create_commit(
             &repo,
@@ -2301,6 +2302,7 @@ mod tests {
                 ..Default::default()
             },
             &mut NullProgress,
+            &NeverCancel,
         )
         .expect("commit");
         assert_fsck_clean(&repo);
@@ -2312,7 +2314,7 @@ mod tests {
         let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
         let wt = repo.work_tree().unwrap();
         std::fs::write(wt.join("base"), b"v1").unwrap();
-        stage_for_commit(&repo, &mut NullProgress).expect("stage");
+        stage_for_commit(&repo, &mut NullProgress, &NeverCancel).expect("stage");
         let ident = "Test <t@example.com> 1 +0000".to_string();
         create_commit(
             &repo,
@@ -2329,6 +2331,7 @@ mod tests {
                 ..Default::default()
             },
             &mut NullProgress,
+            &NeverCancel,
         )
         .expect("commit");
         repack_all(
@@ -2343,7 +2346,7 @@ mod tests {
         assert_eq!(count_pack_files(&pack_dir), 1);
 
         std::fs::write(wt.join("child"), b"v2").unwrap();
-        stage_for_commit(&repo, &mut NullProgress).expect("stage child");
+        stage_for_commit(&repo, &mut NullProgress, &NeverCancel).expect("stage child");
         create_commit(
             &repo,
             &CommitRequest {
@@ -2359,6 +2362,7 @@ mod tests {
                 ..Default::default()
             },
             &mut NullProgress,
+            &NeverCancel,
         )
         .expect("child commit");
         assert!(count_loose_objects(repo.odb()).expect("loose") >= 2);
@@ -2409,7 +2413,7 @@ mod tests {
         let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
         let wt = repo.work_tree().unwrap();
         std::fs::write(wt.join("base"), b"v1").unwrap();
-        stage_for_commit(&repo, &mut NullProgress).expect("stage");
+        stage_for_commit(&repo, &mut NullProgress, &NeverCancel).expect("stage");
         let ident = "Test <t@example.com> 1 +0000".to_string();
         create_commit(
             &repo,
@@ -2426,6 +2430,7 @@ mod tests {
                 ..Default::default()
             },
             &mut NullProgress,
+            &NeverCancel,
         )
         .expect("commit");
         repack_all(
@@ -2455,6 +2460,7 @@ mod tests {
                     ..Default::default()
                 },
                 &mut NullProgress,
+                &NeverCancel,
             )
             .expect("empty");
         }
@@ -2481,7 +2487,7 @@ mod tests {
         let wt = repo.work_tree().unwrap();
         for i in 0..5 {
             std::fs::write(wt.join(format!("f{i}.txt")), format!("{i}\n")).unwrap();
-            stage_for_commit(&repo, &mut NullProgress).expect("stage");
+            stage_for_commit(&repo, &mut NullProgress, &NeverCancel).expect("stage");
             let ident = "Test <t@example.com> 1 +0000".to_string();
             create_commit(
                 &repo,
@@ -2498,6 +2504,7 @@ mod tests {
                     ..Default::default()
                 },
                 &mut NullProgress,
+                &NeverCancel,
             )
             .expect("commit");
         }

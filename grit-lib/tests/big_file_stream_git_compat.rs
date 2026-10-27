@@ -84,7 +84,13 @@ fn add_streams_big_file_into_a_pack_that_git_reads() {
     fs::write(root.join("big.txt"), &big).unwrap();
     fs::write(root.join("small.txt"), b"small\n").unwrap();
 
-    stage(&open(root), &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        &open(root),
+        &StageOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("stage");
 
     let big_oid = index_oid(root, "big.txt");
     assert_eq!(
@@ -114,7 +120,13 @@ fn commit_auto_stage_streams_big_files_and_restages_changes() {
     fs::write(root.join("b.txt"), text(500_000, 2)).unwrap();
 
     let repo = open(root);
-    commit_worktree(&repo, &commit_req("add big"), &mut NullProgress).expect("commit");
+    commit_worktree(
+        &repo,
+        &commit_req("add big"),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("commit");
     assert_eq!(
         pack_files(root).len(),
         1,
@@ -130,7 +142,13 @@ fn commit_auto_stage_streams_big_files_and_restages_changes() {
     let changed = text(700_000, 3);
     fs::write(root.join("a.txt"), &changed).unwrap();
     let repo = open(root);
-    commit_worktree(&repo, &commit_req("change big"), &mut NullProgress).expect("commit");
+    commit_worktree(
+        &repo,
+        &commit_req("change big"),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("commit");
     assert_eq!(pack_files(root).len(), 2);
     assert_eq!(
         git(root, &["cat-file", "-p", "HEAD:a.txt"]).as_bytes(),
@@ -151,7 +169,13 @@ fn big_file_with_a_clean_conversion_is_converted_like_git() {
         .collect();
     fs::write(root.join("crlf.txt"), &crlf).unwrap();
 
-    stage(&open(root), &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        &open(root),
+        &StageOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("stage");
 
     let oid = index_oid(root, "crlf.txt");
     assert_eq!(
@@ -211,7 +235,7 @@ fn dry_run_hashes_big_file_without_storing_it() {
         dry_run: true,
         ..StageOptions::default()
     };
-    let outcome = stage(&open(root), &opts, &mut NullProgress).expect("dry run");
+    let outcome = stage(&open(root), &opts, &mut NullProgress, &NeverCancel).expect("dry run");
     assert_eq!(outcome.added, vec!["big.txt".to_owned()]);
     assert!(pack_files(root).is_empty());
     assert_eq!(

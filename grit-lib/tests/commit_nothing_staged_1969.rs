@@ -75,6 +75,7 @@ fn staged_scope_reports_nothing_staged_when_worktree_dirty() {
         &commit_req("x"),
         CommitScope::Staged,
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("commit");
     match err {
@@ -102,6 +103,7 @@ fn default_scope_with_autostage_off_is_staged_and_reports_nothing_staged() {
         &commit_req("x"),
         default_commit_scope(&repo).expect("scope"),
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("commit");
     assert!(
@@ -133,6 +135,7 @@ fn paths_scope_with_other_paths_staged_reports_nothing_to_commit_not_false_unsta
         &commit_req("nope"),
         CommitScope::Paths(paths),
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("path a.txt has nothing to commit");
     assert!(
@@ -156,6 +159,7 @@ fn clean_tree_still_reports_nothing_to_commit() {
         &commit_req("x"),
         CommitScope::Staged,
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("commit");
     assert!(matches!(err, Error::NothingToCommit), "got {err:?}");
@@ -196,6 +200,7 @@ fn staged_scope_counts_submodule_untracked_as_unstaged() {
         &commit_req("x"),
         CommitScope::Staged,
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("commit");
     match err {

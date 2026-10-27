@@ -111,6 +111,8 @@ fn replay_pick(repo: &Repository, commit: ObjectId) -> grit_lib::error::Result<R
             committer: IDENT.parse().expect("IDENT"),
             message_override: None,
         },
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
 }
 
@@ -123,6 +125,8 @@ fn replay_revert(repo: &Repository, commit: ObjectId) -> grit_lib::error::Result
             committer: IDENT.parse().expect("IDENT"),
             message_override: None,
         },
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
 }
 

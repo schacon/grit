@@ -106,8 +106,20 @@ fn remove_linked_worktree_with_system_inherited_autocrlf_and_crlf_worktree_file(
 
     std::fs::write(linked.join("new.txt"), b"new\r\n").expect("CRLF new file");
     let linked_repo = open_grit_inherited_autocrlf(&linked, &system_cfg);
-    stage(&linked_repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    create_commit(&linked_repo, &commit_request("two"), &mut NullProgress).expect("commit");
+    stage(
+        &linked_repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    create_commit(
+        &linked_repo,
+        &commit_request("two"),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
 
     let porcelain = git_with_system_config(&linked, &system_cfg, &["status", "--porcelain"]);
     assert!(

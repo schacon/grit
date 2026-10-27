@@ -56,15 +56,19 @@ fn handle_stash_roundtrip_with_git() {
     std::fs::write(dir.path().join("f"), "dirty\n").unwrap();
     let repo = open_grit(dir.path());
     repo.stash()
-        .push(&StashPushOptions {
-            message: Some("handle stash".into()),
-            include_untracked: false,
-            identity: IDENT.parse().expect("signature"),
-            selection: None,
-            pathspecs: Vec::new(),
-            dry_run: false,
-            mode: StashMode::default(),
-        })
+        .push(
+            &StashPushOptions {
+                message: Some("handle stash".into()),
+                include_untracked: false,
+                identity: IDENT.parse().expect("signature"),
+                selection: None,
+                pathspecs: Vec::new(),
+                dry_run: false,
+                mode: StashMode::default(),
+            },
+            &mut grit_lib::progress::NullProgress,
+            &NeverCancel,
+        )
         .expect("push")
         .expect("changes");
 
@@ -98,6 +102,8 @@ fn git_stash_applies_via_handle() {
             &StashApplyOptions {
                 restore_index: true,
             },
+            &mut grit_lib::progress::NullProgress,
+            &NeverCancel,
         )
         .expect("apply");
     assert!(!conflicts.has_conflicts());

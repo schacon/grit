@@ -160,7 +160,13 @@ fn restore_ours_matches_git_checkout_ours_bytes() {
 
     let (dir, repo) = init_repo();
     merge_conflict_repo(&dir);
-    restore_paths(&repo, &conflict_opts(Some(ConflictSide::Ours), None)).expect("restore ours");
+    restore_paths(
+        &repo,
+        &conflict_opts(Some(ConflictSide::Ours), None),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("restore ours");
     assert_eq!(worktree_bytes(&dir), want);
 }
 
@@ -173,7 +179,13 @@ fn restore_theirs_matches_git() {
 
     let (dir, repo) = init_repo();
     merge_conflict_repo(&dir);
-    restore_paths(&repo, &conflict_opts(Some(ConflictSide::Theirs), None)).expect("restore theirs");
+    restore_paths(
+        &repo,
+        &conflict_opts(Some(ConflictSide::Theirs), None),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("restore theirs");
     assert_eq!(worktree_bytes(&dir), want);
 }
 
@@ -182,7 +194,13 @@ fn restore_ours_leaves_index_unmerged() {
     let (dir, repo) = init_repo();
     merge_conflict_repo(&dir);
     let before = ls_files_unmerged(&dir);
-    restore_paths(&repo, &conflict_opts(Some(ConflictSide::Ours), None)).expect("restore");
+    restore_paths(
+        &repo,
+        &conflict_opts(Some(ConflictSide::Ours), None),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("restore");
     assert_eq!(ls_files_unmerged(&dir), before);
 }
 
@@ -198,6 +216,8 @@ fn restore_merge_add_add_byte_equal_git() {
     restore_paths(
         &repo,
         &conflict_opts_path("f.txt", None, Some(ConflictStyle::Merge)),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("restore merge add/add");
     assert_eq!(worktree_bytes(&dir), want);
@@ -215,6 +235,8 @@ fn restore_merge_binary_byte_equal_git() {
     restore_paths(
         &repo,
         &conflict_opts_path("f.bin", None, Some(ConflictStyle::Merge)),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("restore merge binary");
     assert_eq!(worktree_bytes_path(&dir, "f.bin"), want);
@@ -229,7 +251,13 @@ fn restore_merge_recreates_markers_byte_equal_git_checkout_m() {
 
     let (dir, repo) = init_repo();
     merge_conflict_repo(&dir);
-    restore_paths(&repo, &conflict_opts(None, Some(ConflictStyle::Merge))).expect("restore merge");
+    restore_paths(
+        &repo,
+        &conflict_opts(None, Some(ConflictStyle::Merge)),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("restore merge");
     assert_eq!(worktree_bytes(&dir), want);
 }
 
@@ -242,7 +270,13 @@ fn restore_conflict_diff3_byte_equal_git() {
 
     let (dir, repo) = init_repo();
     merge_conflict_repo(&dir);
-    restore_paths(&repo, &conflict_opts(None, Some(ConflictStyle::Diff3))).expect("restore diff3");
+    restore_paths(
+        &repo,
+        &conflict_opts(None, Some(ConflictStyle::Diff3)),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("restore diff3");
     assert_eq!(worktree_bytes(&dir), want);
 }
 
@@ -255,7 +289,13 @@ fn restore_ours_missing_stage_errors() {
         .entries_mut()
         .retain(|e| !(e.path == b"f.txt" && e.stage() == 2));
     repo.index_handle().write(&mut index).expect("write index");
-    let err = restore_paths(&repo, &conflict_opts(Some(ConflictSide::Ours), None)).unwrap_err();
+    let err = restore_paths(
+        &repo,
+        &conflict_opts(Some(ConflictSide::Ours), None),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .unwrap_err();
     assert!(matches!(
         err,
         grit_lib::error::Error::RestoreConflictMissingOurs { .. }
@@ -277,6 +317,8 @@ fn restore_ours_with_staged_rejected() {
             stage: Some(ConflictSide::Ours),
             remerge: None,
         },
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .unwrap_err();
     assert!(matches!(
@@ -298,8 +340,13 @@ fn restore_merge_uses_resolve_undo() {
     merge_conflict_repo(&dir);
     fs::write(dir.path().join("f.txt"), "line1\nresolved\nline3\n").unwrap();
     git_cmd(dir.path(), &["add", "f.txt"]);
-    restore_paths(&repo, &conflict_opts(None, Some(ConflictStyle::Merge)))
-        .expect("restore merge after resolve");
+    restore_paths(
+        &repo,
+        &conflict_opts(None, Some(ConflictStyle::Merge)),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("restore merge after resolve");
     assert_eq!(worktree_bytes(&dir), want);
     assert!(!git_cmd(dir.path(), &["ls-files", "-u"]).trim().is_empty());
 }
@@ -331,7 +378,13 @@ fn restore_unmerged_path_from_index_refused_like_git() {
     merge_conflict_repo(&dir);
     let markers = worktree_bytes(&dir);
     let unmerged = ls_files_unmerged(&dir);
-    let err = restore_paths(&repo, &plain_restore_opts("f.txt")).unwrap_err();
+    let err = restore_paths(
+        &repo,
+        &plain_restore_opts("f.txt"),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .unwrap_err();
     assert!(
         matches!(
             &err,
@@ -359,7 +412,13 @@ fn restore_dot_with_unmerged_path_restores_nothing_like_git() {
 
     let (dir, repo) = init_repo();
     setup(&dir);
-    let err = restore_paths(&repo, &plain_restore_opts(".")).unwrap_err();
+    let err = restore_paths(
+        &repo,
+        &plain_restore_opts("."),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .unwrap_err();
     assert!(
         matches!(
             &err,
@@ -382,7 +441,13 @@ fn restore_excluding_unmerged_path_still_restores_others() {
         pathspec_sources: vec![".".into(), ":!f.txt".into()],
         ..plain_restore_opts(".")
     };
-    restore_paths(&repo, &opts).expect("restore other paths");
+    restore_paths(
+        &repo,
+        &opts,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("restore other paths");
     assert_eq!(worktree_bytes_path(&dir, "other.txt"), b"other\n");
 }
 
@@ -403,7 +468,13 @@ fn restore_staged_unmerged_path_resets_index_like_git() {
 
     let (dir, repo) = init_repo();
     merge_conflict_repo(&dir);
-    restore_paths(&repo, &staged_opts).expect("restore --staged");
+    restore_paths(
+        &repo,
+        &staged_opts,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("restore --staged");
     assert_eq!(
         git_cmd(dir.path(), &["ls-files", "-s", "f.txt"]),
         want_index
@@ -421,6 +492,12 @@ fn restore_unmerged_path_from_tree_source_is_allowed() {
         source: RestoreSource::Tree(tree),
         ..plain_restore_opts("f.txt")
     };
-    restore_paths(&repo, &opts).expect("restore from tree");
+    restore_paths(
+        &repo,
+        &opts,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("restore from tree");
     assert_eq!(worktree_bytes(&dir), b"line1\nmaster\nline3\n");
 }

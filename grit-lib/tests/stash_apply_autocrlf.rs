@@ -143,7 +143,11 @@ fn apply_stash_succeeds_on_clean_tree_with_autocrlf() {
     std::fs::write(dir.path().join("a.txt"), b"one\ntwo\nthree\nfour\n").expect("modify");
     let repo = open_grit(dir.path());
     repo.stash()
-        .push(&stash_options())
+        .push(
+            &stash_options(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("push")
         .expect("had changes");
 
@@ -166,7 +170,12 @@ fn apply_stash_succeeds_on_clean_tree_with_autocrlf() {
     let grit_repo = open_grit(grit_dir.path());
     grit_repo
         .stash()
-        .apply_commit(&stash_oid, &StashApplyOptions::default())
+        .apply_commit(
+            &stash_oid,
+            &StashApplyOptions::default(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("apply must not treat CRLF smudge as local changes");
 
     let git_dir = tempfile::tempdir().expect("git copy");
@@ -206,14 +215,23 @@ fn pop_stash_succeeds_on_clean_tree_with_autocrlf() {
     std::fs::write(dir.path().join("a.txt"), b"one\ntwo\nthree\nfour\n").expect("modify");
     let repo = open_grit(dir.path());
     repo.stash()
-        .push(&stash_options())
+        .push(
+            &stash_options(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("push")
         .expect("had changes");
 
     ensure_crlf_worktree_lf_index(dir.path());
 
     repo.stash()
-        .pop(0, &StashApplyOptions::default())
+        .pop(
+            0,
+            &StashApplyOptions::default(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("pop");
 
     let list = git_cmd(dir.path(), &["stash", "list"]);
@@ -242,7 +260,11 @@ fn apply_stash_succeeds_with_system_inherited_autocrlf_only() {
     std::fs::write(dir.path().join("a.txt"), b"one\ntwo\nthree\nfour\n").expect("modify");
     let repo = open_grit_inherited_autocrlf(dir.path(), &system_cfg);
     repo.stash()
-        .push(&stash_options())
+        .push(
+            &stash_options(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("push")
         .expect("had changes");
 
@@ -250,7 +272,12 @@ fn apply_stash_succeeds_with_system_inherited_autocrlf_only() {
 
     let stash_oid = grit_lib::refs::resolve_ref(repo.git_dir(), "refs/stash").expect("stash ref");
     repo.stash()
-        .apply_commit(&stash_oid, &StashApplyOptions::default())
+        .apply_commit(
+            &stash_oid,
+            &StashApplyOptions::default(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("apply must honor inherited system autocrlf when comparing worktree to index");
 
     let porcelain = git_with_system_config(dir.path(), &system_cfg, &["status", "--porcelain"]);
@@ -274,14 +301,23 @@ fn pop_stash_succeeds_with_system_inherited_autocrlf_only() {
     std::fs::write(dir.path().join("a.txt"), b"one\ntwo\nthree\nfour\n").expect("modify");
     let repo = open_grit_inherited_autocrlf(dir.path(), &system_cfg);
     repo.stash()
-        .push(&stash_options())
+        .push(
+            &stash_options(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("push")
         .expect("had changes");
 
     ensure_crlf_worktree_lf_index_with_system(dir.path(), &system_cfg);
 
     repo.stash()
-        .pop(0, &StashApplyOptions::default())
+        .pop(
+            0,
+            &StashApplyOptions::default(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("pop must honor inherited system autocrlf when comparing worktree to index");
 
     let list = git_with_system_config(dir.path(), &system_cfg, &["stash", "list"]);
@@ -304,14 +340,23 @@ fn pop_stash_writes_crlf_worktree_bytes_for_tracked_and_untracked() {
 
     let repo = open_grit(dir.path());
     repo.stash()
-        .push(&stash_options_untracked())
+        .push(
+            &stash_options_untracked(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("push")
         .expect("had changes");
 
     ensure_stash_reset_f_txt_crlf_clean(dir.path());
 
     repo.stash()
-        .pop(0, &StashApplyOptions::default())
+        .pop(
+            0,
+            &StashApplyOptions::default(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("pop");
 
     assert_worktree_bytes(&dir.path().join("f.txt"), b"a\r\nb\r\nc\r\n");
@@ -336,7 +381,11 @@ fn apply_stash_writes_crlf_worktree_bytes_matching_git_stash_apply() {
 
     let repo = open_grit(dir.path());
     repo.stash()
-        .push(&stash_options_untracked())
+        .push(
+            &stash_options_untracked(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("push")
         .expect("had changes");
 
@@ -359,7 +408,12 @@ fn apply_stash_writes_crlf_worktree_bytes_matching_git_stash_apply() {
     let grit_repo = open_grit(grit_dir.path());
     grit_repo
         .stash()
-        .apply_commit(&stash_oid, &StashApplyOptions::default())
+        .apply_commit(
+            &stash_oid,
+            &StashApplyOptions::default(),
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
         .expect("apply");
 
     let git_dir = tempfile::tempdir().expect("git copy");

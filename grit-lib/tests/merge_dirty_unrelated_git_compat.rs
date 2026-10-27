@@ -64,8 +64,16 @@ fn merge_fast_forward_preserves_dirty_unrelated_path() {
     std::fs::write(tmp.path().join("b.txt"), "b dirty\n").expect("dirty b again");
 
     let repo = grit_repo(&tmp);
-    let outcome =
-        integrate_branch(&repo, "refs/heads/main", main_oid, side_oid, "side").expect("merge");
+    let outcome = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main_oid,
+        side_oid,
+        "side",
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
     assert!(matches!(
         outcome,
         IntegrateBranchOutcome::FastForward { oid, .. } if oid == side_oid
@@ -109,8 +117,16 @@ fn merge_refuses_dirty_overlapping_path() {
     std::fs::write(tmp.path().join("a.txt"), "a dirty\n").expect("dirty a");
 
     let repo = grit_repo(&tmp);
-    let err = integrate_branch(&repo, "refs/heads/main", main_oid, side_oid, "side")
-        .expect_err("merge must refuse overlapping dirty path");
+    let err = integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main_oid,
+        side_oid,
+        "side",
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect_err("merge must refuse overlapping dirty path");
     match err {
         Error::Message(msg) => {
             assert!(
@@ -159,7 +175,16 @@ fn merge_fast_forward_allows_worktree_deleted_unrelated_tracked_file() {
     std::fs::remove_file(tmp.path().join("b.txt")).expect("delete b from worktree");
 
     let repo = grit_repo(&tmp);
-    integrate_branch(&repo, "refs/heads/main", main_oid, side_oid, "side").expect("merge");
+    integrate_branch(
+        &repo,
+        "refs/heads/main",
+        main_oid,
+        side_oid,
+        "side",
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
     assert!(
         !tmp.path().join("b.txt").exists(),
         "deleted unrelated file stays absent after ff merge"

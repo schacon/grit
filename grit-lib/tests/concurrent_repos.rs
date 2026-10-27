@@ -198,7 +198,13 @@ fn run_repo_loop(fx: RepoFixture, ack: mpsc::Sender<()>) {
             &NeverCancel,
         )
         .expect("status");
-        stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .expect("stage");
         let ident = format!("{} <{}@example.com> 1 +0000", fx.author, fx.author);
         create_commit(
             &repo,
@@ -215,6 +221,7 @@ fn run_repo_loop(fx: RepoFixture, ack: mpsc::Sender<()>) {
                 ..Default::default()
             },
             &mut NullProgress,
+            &NeverCancel,
         )
         .expect("commit");
     }
@@ -407,7 +414,13 @@ fn run_fetch_merge_notes_no_crosstalk_once(iter: usize) {
             &NeverCancel,
         )
         .expect("status");
-        stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .expect("stage");
         let ident = Signature::new(name, email, repo.identity_now()).expect("signature");
         create_commit(
             &repo,
@@ -424,6 +437,7 @@ fn run_fetch_merge_notes_no_crosstalk_once(iter: usize) {
                 ..Default::default()
             },
             &mut NullProgress,
+            &NeverCancel,
         )
         .expect("seed commit");
         RepoFixture {

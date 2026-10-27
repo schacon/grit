@@ -461,6 +461,7 @@ pub(crate) fn phase_palette(phase: ProgressPhase) -> [u8; 5] {
         ProgressPhase::CopyingObjects => [23, 30, 37, 44, 87],
         ProgressPhase::CheckingOutFiles => [22, 28, 34, 40, 82],
         ProgressPhase::TransferringBundle => [96, 133, 170, 177, 219],
+        ProgressPhase::StagingFiles => [58, 64, 70, 106, 148],
         _ => [240, 244, 248, 252, 255],
     }
 }
@@ -474,6 +475,7 @@ pub(crate) fn phase_label(phase: ProgressPhase) -> &'static str {
         ProgressPhase::CopyingObjects => "Copying",
         ProgressPhase::CheckingOutFiles => "Checkout",
         ProgressPhase::TransferringBundle => "Bundle",
+        ProgressPhase::StagingFiles => "Staging",
         _ => "Working",
     }
 }

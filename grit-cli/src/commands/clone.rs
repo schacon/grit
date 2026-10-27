@@ -317,6 +317,7 @@ fn phase_json_name(phase: ProgressPhase) -> &'static str {
         ProgressPhase::CopyingObjects => "copying",
         ProgressPhase::CheckingOutFiles => "checkout",
         ProgressPhase::TransferringBundle => "bundle",
+        ProgressPhase::StagingFiles => "staging",
         _ => "other",
     }
 }

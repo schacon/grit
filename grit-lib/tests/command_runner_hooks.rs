@@ -71,7 +71,13 @@ fn commit_second(repo: &Repository) -> grit_lib::error::Result<grit_lib::objects
         committer: Some(id.parse().expect("signature")),
         ..Default::default()
     };
-    commit_worktree(repo, &req, &mut NullProgress).map(|o| o.oid)
+    commit_worktree(
+        repo,
+        &req,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .map(|o| o.oid)
 }
 
 fn expect_hook_failure(result: grit_lib::error::Result<grit_lib::objects::ObjectId>) -> HookError {

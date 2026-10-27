@@ -225,7 +225,7 @@ mod unix {
             mode: StageMode::All,
             ..StageOptions::default()
         };
-        stage(repo, &opts, &mut NullProgress).map(|_| ())
+        stage(repo, &opts, &mut NullProgress, &NeverCancel).map(|_| ())
     }
 
     #[test]

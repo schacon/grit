@@ -3068,6 +3068,7 @@ fn dispatch(
                         force,
                         executable,
                         non_executable,
+                        &mut progress::TerminalProgress::new(opts.mode),
                     )?,
                     opts,
                     ctx,
@@ -3330,6 +3331,7 @@ fn dispatch(
                         all,
                         staged,
                         paths,
+                        &mut quiet.progress(opts.mode),
                     )?,
                     &quiet,
                     opts,
@@ -3611,6 +3613,7 @@ fn dispatch(
                     strategy,
                     message,
                 },
+                &mut progress::TerminalProgress::new(opts.mode),
             )?;
             emit_success(&outcome, opts, ctx)?;
             Ok(ExitStatus::from_merge_outcome(&outcome))
@@ -3793,6 +3796,7 @@ fn dispatch(
                     dry_run,
                     limit: stash_limit,
                     pathspec_args: &pathspecs,
+                    progress: &mut progress::TerminalProgress::new(opts.mode),
                 });
                 match outcome {
                     Ok(o) => emit_success(&o, opts, ctx),
@@ -3840,6 +3844,7 @@ fn dispatch(
                     dry_run: dry_run || push_dry_run,
                     limit: stash_limit,
                     pathspec_args: &merged_pathspecs,
+                    progress: &mut progress::TerminalProgress::new(opts.mode),
                 });
                 match outcome {
                     Ok(o) => emit_success(&o, opts, ctx),
@@ -3879,7 +3884,11 @@ fn dispatch(
                 index,
                 restore_index,
             }) => {
-                let outcome = commands::stash::run_apply(index, restore_index)?;
+                let outcome = commands::stash::run_apply(
+                    index,
+                    restore_index,
+                    &mut progress::TerminalProgress::new(opts.mode),
+                )?;
                 emit_success(&outcome, opts, ctx)?;
                 Ok(ExitStatus::from_stash_conflicts(outcome.conflicts))
             }
@@ -3887,7 +3896,11 @@ fn dispatch(
                 index,
                 restore_index,
             }) => {
-                let outcome = commands::stash::run_pop(index, restore_index)?;
+                let outcome = commands::stash::run_pop(
+                    index,
+                    restore_index,
+                    &mut progress::TerminalProgress::new(opts.mode),
+                )?;
                 emit_success(&outcome, opts, ctx)?;
                 Ok(ExitStatus::from_stash_conflicts(outcome.conflicts))
             }

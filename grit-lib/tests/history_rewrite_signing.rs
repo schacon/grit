@@ -107,7 +107,13 @@ fn signed_tip_via_grit(root: &Path, gpgsign: bool) -> ObjectId {
     );
     std::fs::write(root.join("signed.txt"), b"signed\n").expect("write");
     let repo = open_grit(root);
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
     let ident = "T <t@example.com> 1700000001 +0000".to_owned();
     create_commit(
         &repo,
@@ -124,6 +130,7 @@ fn signed_tip_via_grit(root: &Path, gpgsign: bool) -> ObjectId {
             ..Default::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("create_commit")
     .oid

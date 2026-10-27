@@ -74,7 +74,13 @@ fn open_on(
 
 fn commit_change(repo: &Repository, file: &Path, message: &str) -> ObjectId {
     fs::write(file, message).expect("write");
-    stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("stage");
     commit_with_scope(
         repo,
         &CommitRequest {
@@ -85,6 +91,7 @@ fn commit_change(repo: &Repository, file: &Path, message: &str) -> ObjectId {
         },
         CommitScope::Staged,
         &mut NullProgress,
+        &NeverCancel,
     )
     .expect("commit")
     .oid

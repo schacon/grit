@@ -64,7 +64,9 @@ use crate::porcelain::status::{
 };
 use crate::porcelain::switch::{switch_repository, SwitchMode, SwitchOptions};
 use crate::porcelain::worktree_guard::untracked_would_be_overwritten_by_tree_changes;
-use crate::progress::{NeverCancel, NullProgress};
+use crate::progress::{
+    poll_cancel, Cancel, NeverCancel, NullProgress, ProgressPhase, ProgressScope, ProgressSink,
+};
 use crate::reflog::{delete_reflog_entries_rechain_on_store, read_reflog_on_store};
 use crate::refs::{append_reflog_on_store, delete_ref_on_store, update_direct_ref_on_store};
 use crate::repo::Repository;
@@ -654,6 +656,7 @@ fn apply_worktree_diff_to_index(
     work_tree: &Path,
     index: &mut Index,
     precomputed: Option<Vec<DiffEntry>>,
+    scope: &mut ProgressScope<'_>,
 ) -> Result<()> {
     let index_mtime = index_file_mtime(&repo.index_path());
     let worktree_rules = crate::worktree_rules::WorktreeRules::from_repository(repo, index)?;
@@ -679,7 +682,12 @@ fn apply_worktree_diff_to_index(
         Some(repo.git_dir()),
         Some(&worktree_rules.config_arc()),
     );
+    scope
+        .sink()
+        .start(ProgressPhase::StagingFiles, Some(unstaged.len() as u64));
     for entry in unstaged {
+        scope.poll()?;
+        scope.sink().inc(1);
         let path = entry.path();
         if entry.status == DiffStatus::Deleted {
             index.remove(path.as_bytes());
@@ -695,6 +703,7 @@ fn apply_worktree_diff_to_index(
             precompose,
         )?;
     }
+    scope.sink().finish();
     Ok(())
 }
 
@@ -942,6 +951,8 @@ fn apply_staged_worktree_only_reset(
     work_tree: &Path,
     head_tree: &ObjectId,
     staged_paths: &[String],
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     if staged_paths.is_empty() {
         return Ok(());
@@ -949,7 +960,13 @@ fn apply_staged_worktree_only_reset(
     let head_entries = flatten_tree_full_for_repo(repo, head_tree, "")?;
     let index = repo.load_index()?;
     let worktree_rules = WorktreeRules::from_repository(repo, &index)?;
+    progress.start(
+        ProgressPhase::CheckingOutFiles,
+        Some(staged_paths.len() as u64),
+    );
     for path in staged_paths {
+        poll_cancel(progress, cancel)?;
+        progress.inc(1);
         if let Some(entry) = flat_tree_lookup(&head_entries, path) {
             materialize_flat_entry_in_worktree(repo, work_tree, &worktree_rules, entry)?;
         } else {
@@ -966,15 +983,20 @@ fn apply_staged_worktree_only_reset(
             }
         }
     }
+    progress.finish();
     Ok(())
 }
 
+/// Reset `staged_paths` to `head_tree` in the work tree and index. A cancel stops between
+/// files and leaves the index unwritten.
 fn apply_staged_only_reset(
     repo: &Repository,
     work_tree: &Path,
     head_tree: &ObjectId,
     staged_paths: &[String],
     lock: &mut IndexLock,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     if staged_paths.is_empty() {
         return Ok(());
@@ -982,7 +1004,13 @@ fn apply_staged_only_reset(
     let head_entries = flatten_tree_full_for_repo(repo, head_tree, "")?;
     let mut index = repo.load_index()?;
     let worktree_rules = WorktreeRules::from_repository(repo, &index)?;
+    progress.start(
+        ProgressPhase::CheckingOutFiles,
+        Some(staged_paths.len() as u64),
+    );
     for path in staged_paths {
+        poll_cancel(progress, cancel)?;
+        progress.inc(1);
         if let Some(entry) = flat_tree_lookup(&head_entries, path) {
             materialize_flat_entry_in_worktree(repo, work_tree, &worktree_rules, entry)?;
             refresh_index_stat_from_worktree(&mut index, work_tree, path, entry.oid, entry.mode)?;
@@ -1001,6 +1029,7 @@ fn apply_staged_only_reset(
             }
         }
     }
+    progress.finish();
     repo.write_index_with_lock(lock, &mut index, false)
 }
 
@@ -1209,6 +1238,7 @@ fn apply_worktree_diff_to_index_for_pathspecs(
     work_tree: &Path,
     index: &mut Index,
     pathspecs: &[String],
+    scope: &mut ProgressScope<'_>,
 ) -> Result<()> {
     let matcher = pathspec_matcher(repo, pathspecs);
     let index_mtime = index_file_mtime(&repo.index_path());
@@ -1231,7 +1261,12 @@ fn apply_worktree_diff_to_index_for_pathspecs(
         Some(repo.git_dir()),
         Some(&worktree_rules.config_arc()),
     );
+    scope
+        .sink()
+        .start(ProgressPhase::StagingFiles, Some(unstaged.len() as u64));
     for entry in unstaged {
+        scope.poll()?;
+        scope.sink().inc(1);
         let path = entry.path();
         if !matcher.matches(path) {
             continue;
@@ -1250,6 +1285,7 @@ fn apply_worktree_diff_to_index_for_pathspecs(
             precompose,
         )?;
     }
+    scope.sink().finish();
     Ok(())
 }
 
@@ -1283,6 +1319,8 @@ fn reset_stash_push_pathspecs_to_head(
     head_tree: &ObjectId,
     pathspecs: &[String],
     lock: &mut IndexLock,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     if pathspecs.is_empty() {
         return Ok(());
@@ -1296,7 +1334,7 @@ fn reset_stash_push_pathspecs_to_head(
         stage: None,
         remerge: None,
     };
-    restore_paths_with_lock(repo, &opts, lock, repo.load_index()?)?;
+    restore_paths_with_lock(repo, &opts, lock, repo.load_index()?, progress, cancel)?;
     Ok(())
 }
 
@@ -1349,6 +1387,7 @@ fn build_stash_commit(
     repo: &Repository,
     work_tree: &Path,
     options: &StashPushOptions,
+    scope: &mut ProgressScope<'_>,
 ) -> Result<Option<BuiltStash>> {
     options.validate()?;
     let head = resolve_head_for_repository(repo)?;
@@ -1453,9 +1492,10 @@ fn build_stash_commit(
                 work_tree,
                 &mut w_index,
                 &options.pathspecs,
+                scope,
             )?;
         } else {
-            apply_worktree_diff_to_index(repo, work_tree, &mut w_index, reusable_unstaged)?;
+            apply_worktree_diff_to_index(repo, work_tree, &mut w_index, reusable_unstaged, scope)?;
         }
         write_stash_tree_from_index(repo, &mut w_index)?
     };
@@ -1517,7 +1557,9 @@ pub(crate) fn create_stash(
     options: &StashPushOptions,
 ) -> Result<Option<ObjectId>> {
     let work_tree = repo.work_tree().ok_or(Error::StashBareRepository)?;
-    Ok(build_stash_commit(repo, work_tree, options)?.map(|b| b.w_commit))
+    let mut progress = NullProgress;
+    let mut scope = ProgressScope::new(&mut progress, &NeverCancel);
+    Ok(build_stash_commit(repo, work_tree, options, &mut scope)?.map(|b| b.w_commit))
 }
 
 /// Point `refs/stash` at `oid` and append a reflog entry with `message`.
@@ -1569,14 +1611,21 @@ pub struct StashPushResult {
 /// Once `refs/stash` is updated, the entry stays there even if the reset fails, so the saved
 /// changes remain reachable.
 ///
+/// Hashing work-tree changes reports [`ProgressPhase::StagingFiles`] and the reset reports
+/// [`ProgressPhase::CheckingOutFiles`]. A cancel before `refs/stash` is updated leaves the
+/// repository as it was (stash objects already written stay unreachable); a cancel during
+/// the reset keeps the stored entry, like a failed reset.
+///
 /// # Errors
 ///
 /// [`Error::LockHeld`] when another process holds `index.lock`, with the repository
-/// unchanged; otherwise the same as [`create_stash`] and [`store_stash`], plus checkout
-/// failures.
+/// unchanged; [`Error::Cancelled`] when `cancel` or [`ProgressSink::should_cancel`] fired;
+/// otherwise the same as [`create_stash`] and [`store_stash`], plus checkout failures.
 pub(crate) fn push_stash(
     repo: &Repository,
     options: &StashPushOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<Option<StashPushResult>> {
     if options.dry_run {
         return Err(Error::StashOptionConflict(
@@ -1585,16 +1634,19 @@ pub(crate) fn push_stash(
     }
     let work_tree = repo.work_tree().ok_or(Error::StashBareRepository)?;
     let mut lock = repo.lock_index()?;
-    let Some(built) = build_stash_commit(repo, work_tree, options)? else {
+    let mut scope = ProgressScope::new(progress, cancel);
+    scope.poll()?;
+    let Some(built) = build_stash_commit(repo, work_tree, options, &mut scope)? else {
         return Ok(None);
     };
+    scope.poll()?;
     store_stash(
         repo,
         built.w_commit,
         &built.message,
         &options.identity.header_line(),
     )?;
-    reset_after_stash_push(repo, work_tree, &built, &mut lock)?;
+    reset_after_stash_push(repo, work_tree, &built, &mut lock, scope.sink(), cancel)?;
     Ok(Some(StashPushResult {
         oid: built.w_commit,
         message: built.message,
@@ -1608,6 +1660,8 @@ fn reset_after_stash_push(
     work_tree: &Path,
     built: &BuiltStash,
     lock: &mut IndexLock,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<()> {
     if !built.untracked_paths.is_empty() {
         remove_stashed_untracked(repo, work_tree, &built.untracked_paths)?;
@@ -1617,6 +1671,8 @@ fn reset_after_stash_push(
             repo,
             patches,
             &WorktreeReverseApplyOptions { dry_run: false },
+            progress,
+            cancel,
         )
         .map_err(stash_worktree_step_error);
     }
@@ -1625,7 +1681,7 @@ fn reset_after_stash_push(
     let head_tree = repo.odb().commit_tree(&head_oid)?;
     if !built.push_pathspecs.is_empty() {
         let reset_specs = pathspecs_for_push_reset(repo, &head_tree, &built.push_pathspecs)?;
-        reset_stash_push_pathspecs_to_head(repo, &head_tree, &reset_specs, lock)?;
+        reset_stash_push_pathspecs_to_head(repo, &head_tree, &reset_specs, lock, progress, cancel)?;
         if built.mode == StashMode::StagedOnly {
             let index = repo.load_index()?;
             let all_staged = staged_change_paths(repo, &index, &head_tree)?;
@@ -1635,22 +1691,35 @@ fn reset_after_stash_push(
                 .into_iter()
                 .filter(|path| !stashed_set.contains(path.as_str()))
                 .collect();
-            apply_staged_worktree_only_reset(repo, work_tree, &head_tree, &worktree_only)?;
+            apply_staged_worktree_only_reset(
+                repo,
+                work_tree,
+                &head_tree,
+                &worktree_only,
+                progress,
+                cancel,
+            )?;
         }
         return Ok(());
     }
     match built.mode {
-        StashMode::StagedOnly => {
-            apply_staged_only_reset(repo, work_tree, &head_tree, &built.staged_only_paths, lock)
-        }
+        StashMode::StagedOnly => apply_staged_only_reset(
+            repo,
+            work_tree,
+            &head_tree,
+            &built.staged_only_paths,
+            lock,
+            progress,
+            cancel,
+        ),
         StashMode::KeepIndex => checkout_between_trees_locked(
             repo,
             &built.w_tree,
             &built.i_tree,
             None,
             CheckoutIndexWrite::Commit(lock),
-            &mut NullProgress,
-            &NeverCancel,
+            progress,
+            cancel,
         ),
         StashMode::All => {
             let mut checked_out = repo.load_index()?;
@@ -1660,8 +1729,8 @@ fn reset_after_stash_push(
                 &head_tree,
                 Some(&mut checked_out),
                 CheckoutIndexWrite::Defer(lock),
-                &mut NullProgress,
-                &NeverCancel,
+                progress,
+                cancel,
             )?;
             // The checkout left fresh stat data for every path it rewrote; reuse it so the
             // refresh only hashes files whose stat does not match.
@@ -1675,6 +1744,7 @@ fn reset_after_stash_push(
 
 fn stash_worktree_step_error(err: ApplyError) -> Error {
     match err {
+        ApplyError::Cancelled => Error::Cancelled,
         ApplyError::Failed { path, message } if !path.is_empty() => Error::Message(format!(
             "could not update '{path}' while finishing stash: {message}"
         )),
@@ -1870,6 +1940,8 @@ pub(crate) fn stash_branch(repo: &Repository, name: &str, n: usize) -> Result<St
         &StashApplyOptions {
             restore_index: true,
         },
+        &mut NullProgress,
+        &NeverCancel,
     )?;
     if !applied.has_conflicts() {
         drop_stash(repo, n)?;
@@ -2222,9 +2294,18 @@ pub(crate) fn apply_stash_oid(
     repo: &Repository,
     stash_oid: &ObjectId,
     options: &StashApplyOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<StashApplyOutcome> {
     let work_tree = repo.work_tree().ok_or(Error::StashBareRepository)?;
-    apply_stash_commit(repo, work_tree, stash_oid, options.restore_index)
+    apply_stash_commit(
+        repo,
+        work_tree,
+        stash_oid,
+        options.restore_index,
+        progress,
+        cancel,
+    )
 }
 
 /// Result of [`RepositoryStash::apply`](crate::repo_handles::RepositoryStash::apply),
@@ -2261,9 +2342,11 @@ pub(crate) fn apply_stash_entry(
     repo: &Repository,
     n: usize,
     options: &StashApplyOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<StashApplyOutcome> {
     let oid = stash_oid_at(repo, n)?;
-    apply_stash_oid(repo, &oid, options)
+    apply_stash_oid(repo, &oid, options, progress, cancel)
 }
 
 /// Apply `stash@{{n}}` and drop it when it applied without conflicts.
@@ -2275,8 +2358,10 @@ pub(crate) fn pop_stash_entry(
     repo: &Repository,
     n: usize,
     options: &StashApplyOptions,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<StashApplyOutcome> {
-    let outcome = apply_stash_entry(repo, n, options)?;
+    let outcome = apply_stash_entry(repo, n, options, progress, cancel)?;
     if !outcome.has_conflicts() {
         drop_stash(repo, n)?;
     }
@@ -2288,6 +2373,8 @@ fn apply_stash_commit(
     work_tree: &Path,
     stash_oid: &ObjectId,
     restore_index: bool,
+    progress: &mut dyn ProgressSink,
+    cancel: &dyn Cancel,
 ) -> Result<StashApplyOutcome> {
     let stash_commit = repo.odb().read_commit(stash_oid)?;
 
@@ -2386,6 +2473,7 @@ fn apply_stash_commit(
 
     let mut has_conflicts = false;
     let worktree_rules = WorktreeRules::from_repository(repo, &new_index)?;
+    poll_cancel(progress, cancel)?;
 
     // First pass: process deletions (None entries) before additions to avoid
     // type conflicts (e.g., trying to write a file where a directory exists).
@@ -2393,6 +2481,7 @@ fn apply_stash_commit(
         if change.is_some() {
             continue;
         }
+        poll_cancel(progress, cancel)?;
         let file_path = crate::index::worktree_path_from_index_rel(work_tree, path);
         if file_path.is_dir() {
             let git_meta = file_path.join(".git");
@@ -2417,6 +2506,7 @@ fn apply_stash_commit(
         let Some(entry) = change else {
             continue;
         };
+        poll_cancel(progress, cancel)?;
         let file_path = crate::index::worktree_path_from_index_rel(work_tree, path);
         if let Some(parent) = file_path.parent() {
             // Entries of one tree never use another entry's path as a directory, so a
@@ -2625,8 +2715,8 @@ fn apply_stash_commit(
             repo,
             &checkout_changes,
             &mut new_index,
-            &mut crate::progress::NullProgress,
-            &crate::progress::NeverCancel,
+            progress,
+            cancel,
             crate::porcelain::checkout::CheckoutApplyOptions {
                 parallel_prepare_blobs: true,
                 ..crate::porcelain::checkout::CheckoutApplyOptions::default()
@@ -2922,6 +3012,8 @@ pub(crate) fn push_operation_autostash(
             dry_run: false,
             mode: StashMode::default(),
         },
+        &mut NullProgress,
+        &NeverCancel,
     )?
     .map(|r| r.oid))
 }
@@ -2936,8 +3028,14 @@ pub(crate) fn push_operation_autostash(
 ///
 /// Propagates stash apply failures.
 pub(crate) fn apply_operation_autostash(repo: &Repository, stash_oid: &ObjectId) -> Result<bool> {
-    let conflicts =
-        apply_stash_oid(repo, stash_oid, &StashApplyOptions::default())?.has_conflicts();
+    let conflicts = apply_stash_oid(
+        repo,
+        stash_oid,
+        &StashApplyOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )?
+    .has_conflicts();
     if !conflicts {
         let _ = drop_stash_commit(repo, stash_oid)?;
     }
@@ -2950,8 +3048,14 @@ pub(crate) fn apply_operation_autostash(repo: &Repository, stash_oid: &ObjectId)
 ///
 /// Propagates stash apply failures.
 pub(crate) fn restore_operation_autostash(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
-    let conflicts =
-        apply_stash_oid(repo, stash_oid, &StashApplyOptions::default())?.has_conflicts();
+    let conflicts = apply_stash_oid(
+        repo,
+        stash_oid,
+        &StashApplyOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )?
+    .has_conflicts();
     if !conflicts {
         let _ = drop_stash_commit(repo, stash_oid)?;
     }
@@ -3001,8 +3105,14 @@ pub(crate) fn apply_merge_autostash(repo: &Repository) -> Result<bool> {
         return Ok(false);
     }
     let stash_oid = ObjectId::from_hex(trimmed)?;
-    let conflicts =
-        apply_stash_oid(repo, &stash_oid, &StashApplyOptions::default())?.has_conflicts();
+    let conflicts = apply_stash_oid(
+        repo,
+        &stash_oid,
+        &StashApplyOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )?
+    .has_conflicts();
     let _ = fs::remove_file(&path);
     if !conflicts {
         let _ = drop_stash_commit(repo, &stash_oid)?;
@@ -3133,7 +3243,9 @@ mod coverage_tests {
             dry_run: false,
             mode: StashMode::default(),
         };
-        push_stash(&repo, &opts).expect("push").expect("oid");
+        push_stash(&repo, &opts, &mut NullProgress, &NeverCancel)
+            .expect("push")
+            .expect("oid");
 
         let index = repo.load_index().unwrap();
         assert!(index.get(b"f", 0).expect("f").size > 0);
@@ -3165,7 +3277,9 @@ mod coverage_tests {
             dry_run: false,
             mode: StashMode::default(),
         };
-        assert!(push_stash(&repo, &opts).expect("push").is_none());
+        assert!(push_stash(&repo, &opts, &mut NullProgress, &NeverCancel)
+            .expect("push")
+            .is_none());
     }
 
     #[test]
@@ -3307,11 +3421,19 @@ mod coverage_tests {
             dry_run: false,
             mode: StashMode::default(),
         };
-        push_stash(&repo, &opts).expect("push").expect("oid");
+        push_stash(&repo, &opts, &mut NullProgress, &NeverCancel)
+            .expect("push")
+            .expect("oid");
         fs::write(tmp.path().join("u.txt"), b"precious\n").unwrap();
         let oid = list_stashes(&repo).expect("list")[0].oid;
-        let err = super::apply_stash_oid(&repo, &oid, &StashApplyOptions::default())
-            .expect_err("collision");
+        let err = super::apply_stash_oid(
+            &repo,
+            &oid,
+            &StashApplyOptions::default(),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .expect_err("collision");
         assert!(matches!(
             err,
             Error::StashCouldNotRestoreUntracked { ref path } if path == "u.txt"
@@ -3455,6 +3577,8 @@ mod hunk_push_tests {
                 dry_run: false,
                 mode: StashMode::default(),
             },
+            &mut NullProgress,
+            &NeverCancel,
         )
         .expect("push")
         .expect("oid")
@@ -3488,6 +3612,8 @@ mod hunk_push_tests {
                 dry_run: false,
                 mode: StashMode::default(),
             },
+            &mut NullProgress,
+            &NeverCancel,
         )
         .expect("push")
         .expect("oid");
@@ -3521,6 +3647,8 @@ mod hunk_push_tests {
                 dry_run: false,
                 mode: StashMode::default(),
             },
+            &mut NullProgress,
+            &NeverCancel,
         )
         .expect("push")
         .expect("oid");
@@ -3552,6 +3680,8 @@ mod hunk_push_tests {
                 dry_run: false,
                 mode: StashMode::default(),
             },
+            &mut NullProgress,
+            &NeverCancel,
         )
         .expect("push")
         .expect("oid");

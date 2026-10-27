@@ -13,6 +13,7 @@ fn main() -> grit_lib::error::Result<()> {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )?;
     println!(
         "staged {} paths ({} new, {} modified, {} removed)",

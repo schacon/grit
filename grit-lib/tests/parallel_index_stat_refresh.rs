@@ -71,6 +71,7 @@ fn seed_repo(root: &Path, preload_index: bool) -> Repository {
         &repo,
         &grit_lib::porcelain::add::StageOptions::default(),
         &mut NullProgress,
+        &NeverCancel,
     )
     .expect("stage");
     let req = grit_lib::porcelain::commit::CommitRequest {
@@ -85,7 +86,8 @@ fn seed_repo(root: &Path, preload_index: bool) -> Repository {
         staged_change_count: None,
         ..Default::default()
     };
-    grit_lib::porcelain::commit::create_commit(&repo, &req, &mut NullProgress).expect("commit");
+    grit_lib::porcelain::commit::create_commit(&repo, &req, &mut NullProgress, &NeverCancel)
+        .expect("commit");
 
     // Content matches HEAD; mtimes differ so stat refresh runs (including racy re-verify).
     let now = filetime::FileTime::now();

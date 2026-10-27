@@ -810,9 +810,14 @@ mod tests {
             staged_change_count: None,
             ..Default::default()
         };
-        let oid = create_commit(&repo, &req, &mut NullProgress)
-            .expect("commit")
-            .oid;
+        let oid = create_commit(
+            &repo,
+            &req,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .expect("commit")
+        .oid;
         (tmp, repo, oid)
     }
 

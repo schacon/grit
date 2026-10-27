@@ -24,7 +24,13 @@ fn multi_source_missing_later_source_rolls_back_earlier_forced_move() {
     fs::write(root.join("src/f0001"), b"SOURCE-1\n").expect("source 1");
     fs::write(root.join("dest/f0000"), b"OLDDEST-0\n").expect("old 0");
     fs::write(root.join("dest/f0001"), b"OLDDEST-1\n").expect("old 1");
-    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
 
     fs::remove_file(root.join("src/f0001")).expect("drop later source");
 

@@ -104,6 +104,7 @@ fn auto_stage_commit_uses_request_message_when_editmsg_is_clobbered() {
         &commit_req("mine"),
         CommitScope::AutoStage,
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("commit");
 
@@ -126,6 +127,7 @@ fn paths_commit_uses_request_message_when_editmsg_is_clobbered() {
         &commit_req("msg-for-a"),
         paths("a.txt"),
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("commit");
 
@@ -155,6 +157,7 @@ fn commit_msg_hook_edit_is_recorded() {
         &commit_req("original"),
         paths("a.txt"),
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("commit");
 
@@ -179,6 +182,7 @@ fn commit_msg_hook_emptying_message_aborts_without_moving_branch() {
         &commit_req("will be emptied"),
         CommitScope::AutoStage,
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("emptied message must abort");
 
@@ -213,6 +217,7 @@ fn commits_keep_their_message_while_editmsg_is_rewritten_concurrently() {
             &commit_req(&message),
             paths("a.txt"),
             &mut NullProgress,
+            &grit_lib::progress::NeverCancel,
         ) {
             Ok(_) if head_subject(root) == message => {}
             Ok(_) => failures.push(format!("{message}: recorded {:?}", head_subject(root))),

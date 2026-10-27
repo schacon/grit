@@ -99,18 +99,37 @@ fn init_repo(root: &Path) -> Repository {
 
 fn seed_commit(repo: &Repository, root: &Path, message: &str) {
     fs::write(root.join("a"), format!("{message}\n")).expect("write");
-    stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    create_commit(repo, &commit_request(message), &mut NullProgress).expect("commit");
+    stage(
+        repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
+    create_commit(
+        repo,
+        &commit_request(message),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
 }
 
 fn commit_should_fail_with_git_dir_io(repo: &Repository, root: &Path) -> Error {
     fs::write(root.join("a"), "change\n").expect("write");
-    stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
     commit_with_scope(
         repo,
         &commit_request("next"),
         CommitScope::Staged,
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("commit should fail")
 }
@@ -124,7 +143,13 @@ fn read_only_objects_on_commit_names_git_path() {
     let objects = repo.git_dir().join("objects");
     chmod_tree_readonly(&objects);
     fs::write(dir.path().join("a"), "change\n").expect("write");
-    let err = stage(&repo, &StageOptions::default(), &mut NullProgress).expect_err("stage");
+    let err = stage(
+        &repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect_err("stage");
     assert_git_dir_io(&err);
     restore_tree_write(&objects);
 }
@@ -265,7 +290,13 @@ fn linked_worktree_commit_readonly_admin_names_git_path() {
     let linked_repo = Repository::discover(Some(linked_wt.as_path()), &RepositoryOptions::empty())
         .expect("discover linked");
     fs::write(linked_wt.join("a"), "linked change\n").expect("write");
-    stage(&linked_repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        &linked_repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
 
     let admin = list_worktrees(&repo)
         .expect("list")
@@ -280,6 +311,7 @@ fn linked_worktree_commit_readonly_admin_names_git_path() {
         &commit_request("linked"),
         CommitScope::Staged,
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect_err("commit should fail");
     let path = assert_git_dir_path_io(&err);

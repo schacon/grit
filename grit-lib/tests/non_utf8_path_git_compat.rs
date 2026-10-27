@@ -284,6 +284,8 @@ fn non_utf8_tracked_status_diff_add_clone_and_restore() {
             stage: None,
             remerge: None,
         },
+        &mut NullProgress,
+        &NeverCancel,
     )
     .expect("restore worktree from index");
     assert_eq!(
@@ -312,6 +314,7 @@ fn non_utf8_tracked_status_diff_add_clone_and_restore() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &NeverCancel,
     )
     .expect("stage all");
     let porcelain = git_porcelain(&r1b);
@@ -346,6 +349,7 @@ fn non_utf8_tracked_status_diff_add_clone_and_restore() {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &NeverCancel,
     )
     .expect("stage file whose name looks like hex encoding");
     assert!(

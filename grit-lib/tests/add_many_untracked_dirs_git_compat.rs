@@ -64,6 +64,7 @@ fn grit_stage(root: &Path, pathspecs: &[&str]) {
             ..StageOptions::default()
         },
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("grit stage");
 }

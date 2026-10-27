@@ -43,7 +43,13 @@ fn init_autocrlf_repo(root: &std::path::Path) -> Repository {
 }
 
 fn commit_all(repo: &Repository, message: &str) -> grit_lib::objects::ObjectId {
-    stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    stage(
+        repo,
+        &StageOptions::default(),
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stage");
     let mut index = repo.index_handle().load().expect("index");
     let tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())
         .expect("tree");

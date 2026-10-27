@@ -142,6 +142,7 @@ fn init_sha256_then_commit_git_fsck_clean() {
         &repo,
         &grit_lib::porcelain::add::StageOptions::default(),
         &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
     )
     .expect("stage");
     let req = grit_lib::porcelain::commit::CommitRequest {
@@ -156,7 +157,13 @@ fn init_sha256_then_commit_git_fsck_clean() {
         staged_change_count: None,
         ..Default::default()
     };
-    grit_lib::porcelain::commit::create_commit(&repo, &req, &mut NullProgress).expect("commit");
+    grit_lib::porcelain::commit::create_commit(
+        &repo,
+        &req,
+        &mut NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("commit");
     git_fsck_ok(repo.git_dir());
 }
 

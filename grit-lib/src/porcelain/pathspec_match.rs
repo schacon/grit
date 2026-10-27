@@ -268,7 +268,13 @@ mod tests {
         }
         let repo =
             Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("discover");
-        stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .expect("stage");
         let ident = "T <t@example.com> 1 +0000".to_owned();
         create_commit(
             &repo,
@@ -279,6 +285,7 @@ mod tests {
                 ..Default::default()
             },
             &mut NullProgress,
+            &crate::progress::NeverCancel,
         )
         .expect("commit");
         repo
