@@ -1530,5 +1530,67 @@
       "git_exit": 0
     },
     "notes": "Timings use the normal descriptor limit so the reviewed binary can complete. The separate Rust subprocess regression sets RLIMIT_NOFILE=256 and cross-checks all three lines against system Git. All builds/tests were idle during final measurements."
+  },
+  "integration_validation": {
+    "date": "2026-10-27",
+    "machine": "grit-issue-fix-4748-r6",
+    "target_commit": "8da87c46754e53845000c1d7950f99ea666f41dc",
+    "code_commit": "11c4222355c2d0aefc2756079e0bfda2ffb65ca6",
+    "checks": {
+      "cargo fmt --all --check": "passed",
+      "cargo clippy --workspace -- -D warnings": "passed",
+      "make public-api-check": "passed",
+      "RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps --all-features": "passed on the first rebase at 0d44b8908",
+      "cargo test --workspace": "baseline history_injected_ref_store compile failure",
+      "cargo test -p grit-lib -p grit-cli": "same history_injected_ref_store compile failure on branch and baseline"
+    },
+    "paired_unit_runs": {
+      "base_commit": "0d44b890840fb5a1593042d7b32140da96887128",
+      "main": {
+        "passed": 2668,
+        "failed": 2,
+        "ignored": 3
+      },
+      "branch": {
+        "passed": 2673,
+        "failed": 2,
+        "ignored": 3
+      },
+      "notes": "The five added unit tests pass. Existing reset tests intermittently fail system Git fsck with inaccessible temporary packs or missing loose objects."
+    },
+    "subsequent_unit_run": {
+      "base_commit": "1306f22ef34923ae05271509b8ee11ea7ae6dd97",
+      "passed": 2675,
+      "failed": 3,
+      "ignored": 3,
+      "notes": "All three failing hard-reset tests were reproduced with the untouched 0d44b8908 main test binary: keeps_recorded_stat_rows (full suite and missing-object variant on isolated attempt 3), removes_staged_only_paths (temporary-pack variant on isolated attempt 4 and missing-object variant on attempt 4), and delete_heavy (temporary-pack variant on isolated attempt 1). No reset code or tests were changed."
+    },
+    "focused_tests": {
+      "blame_compute_api": 5,
+      "blame_git_compat": 38,
+      "blame_line_range_git_compat": 9,
+      "blame_range_memory": 2,
+      "failed": 0,
+      "ignored": 0,
+      "notes": "Refreshed after the final rebase. Original-path assertions remain intact; issue #2078 is separate."
+    },
+    "linux_regressions": {
+      "padding_8192": {
+        "grit_peak_kib": 55184,
+        "git_peak_kib": 44092
+      },
+      "padding_65536": {
+        "grit_peak_kib": 54832,
+        "git_peak_kib": 55692
+      },
+      "descriptor_limit": 256,
+      "historical_packs": 300,
+      "descriptor_regression": "passed with Git attribution, original line/path and content checks"
+    },
+    "baseline_only_compile_failures": [
+      "history_injected_ref_store.rs:45: Signature does not implement From<&str> (E0277); reproduced with both cargo test --workspace and cargo test -p grit-lib -p grit-cli on untouched main.",
+      "serve_upload_pack_inprocess.rs: 14 E0063/E0308 errors from missing ServeOptions.server_options and immutable upload_pack options; reproduced directly on untouched main."
+    ],
+    "benchmark_notes": "Original reproduction, interleaved timing/RSS samples and descriptor follow-up above were preserved from the earlier runs; this handoff reran validation rather than repeating the already approved implementation and real-repository measurements."
   }
 }
