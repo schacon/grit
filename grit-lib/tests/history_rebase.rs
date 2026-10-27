@@ -759,6 +759,60 @@ fn plan_rebase_conflict_reports_paths_changes_nothing() {
 }
 
 #[test]
+fn plan_rebase_over_merged_unrelated_root_matches_git_rebase() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    git(wt, &["config", "grit.changeIds", "false"]);
+    commit_file(wt, "f", "base\n", "base");
+    let fork = git_rev_parse(wt, "HEAD");
+    git(wt, &["checkout", "-q", "-b", "feat"]);
+    commit_file(wt, "f", "base\nfeat\n", "feat");
+    let tip = git_rev_parse(wt, "HEAD");
+    git(wt, &["branch", "feat-git"]);
+    git(wt, &["checkout", "-q", "main"]);
+    commit_file(wt, "up", "up\n", "up");
+    git(wt, &["checkout", "-q", "--orphan", "other"]);
+    git(wt, &["rm", "-rfq", "."]);
+    commit_file(wt, "g", "imported\n", "imported root");
+    git(wt, &["checkout", "-q", "main"]);
+    git(
+        wt,
+        &[
+            "merge",
+            "-q",
+            "--allow-unrelated-histories",
+            "--no-ff",
+            "other",
+            "-m",
+            "merge imported",
+        ],
+    );
+    let main = git_rev_parse(wt, "main");
+    git(wt, &["checkout", "-q", "feat"]);
+
+    let grit = open_grit(wt);
+    let opts = rebase_opts(RefScope::Head, EmptyPolicy::Drop, true);
+    let plan = match plan_rebase(&grit, &rebase_request(main, None, tip), &opts).expect("plan") {
+        RebasePlan::Plan(plan) => plan,
+        other => panic!("expected plan, got {other:?}"),
+    };
+    assert_eq!(plan.commits.len(), 1, "only feat is replayed");
+    assert_eq!(plan.commits[0].old, tip);
+    apply_plan(&grit, &plan);
+
+    git(wt, &["rebase", "-q", "main", "feat-git"]);
+    let grit_tip = resolve_ref(grit.git_dir(), "refs/heads/feat").expect("feat");
+    let git_tip = git_rev_parse(wt, "feat-git");
+    let grit_commit = parse_commit(&grit.odb().read(&grit_tip).expect("read").data).expect("parse");
+    let git_commit = parse_commit(&grit.odb().read(&git_tip).expect("read").data).expect("parse");
+    assert_eq!(grit_commit.parents, vec![main]);
+    assert_eq!(grit_commit.parents, git_commit.parents);
+    assert_eq!(grit_commit.tree, git_commit.tree);
+    assert_eq!(grit_commit.message, git_commit.message);
+    assert_git_fsck_strict(wt);
+}
+
+#[test]
 fn history_rebase_matches_git_rebase() {
     let grit_repo = HistoryRepo::init();
     let git_repo = HistoryRepo::init();

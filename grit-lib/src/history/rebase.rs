@@ -576,27 +576,19 @@ fn paths_changed_by_commit(
 ) -> Result<HashSet<String>, HistoryError> {
     let obj = repo.odb().read(&commit)?;
     let parsed = parse_commit(&obj.data)?;
-    let mut paths = HashSet::new();
-    if parsed.parents.is_empty() {
-        let empty = crate::diff::zero_oid();
-        let changes = diff_trees(repo.odb(), Some(&empty), Some(&parsed.tree), "")?;
-        for entry in changes {
-            paths.insert(entry.path().to_string());
-        }
-        return Ok(paths);
+    let mut parent_trees = parsed
+        .parents
+        .iter()
+        .map(|parent| Ok(Some(parse_commit(&repo.odb().read(parent)?.data)?.tree)))
+        .collect::<Result<Vec<_>, HistoryError>>()?;
+    if parent_trees.is_empty() {
+        // A root commit adds its whole tree; `None` diffs against the empty tree.
+        parent_trees.push(None);
     }
-    for parent in &parsed.parents {
-        let parent_obj = repo.odb().read(parent)?;
-        let parent_parsed = parse_commit(&parent_obj.data)?;
-        let changes = diff_trees(
-            repo.odb(),
-            Some(&parent_parsed.tree),
-            Some(&parsed.tree),
-            "",
-        )?;
-        for entry in changes {
-            paths.insert(entry.path().to_string());
-        }
+    let mut paths = HashSet::new();
+    for parent_tree in parent_trees {
+        let changes = diff_trees(repo.odb(), parent_tree.as_ref(), Some(&parsed.tree), "")?;
+        paths.extend(changes.iter().map(|entry| entry.path().to_string()));
     }
     Ok(paths)
 }
@@ -763,6 +755,59 @@ mod tests {
         let range = vec![replay];
         let map = applied_by_patch(&repo, root, onto_tip, &range).expect("map");
         assert_eq!(map.get(&replay), Some(&onto_tip));
+    }
+
+    #[test]
+    fn patch_lookup_diffs_merged_unrelated_root_against_empty_tree() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = Repository::init(
+            dir.path(),
+            &crate::repo::InitOptions::new()
+                .with_initial_branch("main".to_owned())
+                .with_ref_storage(crate::RefStorageFormat::Files),
+        )
+        .expect("init");
+        let id = ident(1);
+        let fork_tree = blob_tree(&repo, "f", b"base\n").expect("fork tree");
+        let fork = write_commit(&repo, fork_tree, &[], "base", &id).expect("fork");
+        let imported_tree = blob_tree(&repo, "g", b"imported\n").expect("imported tree");
+        let imported =
+            write_commit(&repo, imported_tree, &[], "imported root", &id).expect("imported");
+        let merge_tree =
+            files_tree(&repo, &[("f", b"base\n"), ("g", b"imported\n")]).expect("merge tree");
+        let onto = write_commit(&repo, merge_tree, &[fork, imported], "merge", &id).expect("merge");
+        let feat_tree = blob_tree(&repo, "f", b"base\nfeat\n").expect("feat tree");
+        let tip = write_commit(&repo, feat_tree, &[fork], "feat", &id).expect("tip");
+
+        assert_eq!(
+            paths_changed_by_commit(&repo, imported).expect("root paths"),
+            HashSet::from(["g".to_owned()])
+        );
+        let range = commits_in_rebase_range(&repo, fork, &[tip]).expect("range");
+        assert_eq!(range, vec![tip]);
+        let map = applied_by_patch(&repo, fork, onto, &range).expect("applied");
+        assert!(map.is_empty(), "feat has no equivalent on the onto side");
+        std::fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n")).expect("main");
+        match plan_rebase(
+            &repo,
+            &RebaseRequest {
+                upstream: onto,
+                onto: None,
+                branch_tip: tip,
+            },
+            &RebaseOntoOptions::new(RewriteOptions {
+                scope: RefScope::Head,
+                empty: crate::revwalk::history::EmptyPolicy::Drop,
+                committer: id.parse().expect("signature"),
+                preserve_committer: false,
+                sign: false,
+            }),
+        )
+        .expect("plan_rebase")
+        {
+            RebasePlan::Plan(plan) => assert_eq!(plan.commits.len(), 1),
+            other => panic!("expected a one-commit plan, got {other:?}"),
+        }
     }
 
     #[test]
