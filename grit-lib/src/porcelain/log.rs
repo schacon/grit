@@ -21,6 +21,7 @@ use std::collections::{HashMap, HashSet};
 use crate::change_id::{resolved_change_id, ChangeId};
 use crate::config::{parse_bool, ConfigSet};
 use crate::error::Result;
+use crate::ident::Signature;
 use crate::objects::{parse_commit, CommitData, ObjectId, ObjectKind, OidHashMap, OidHashSet};
 use crate::odb::Odb;
 use crate::refs::{PackedPeel, PackedRefPeels};
@@ -83,10 +84,11 @@ pub struct LoadedCommit {
     pub oid: ObjectId,
     /// Parent commit ids (empty for root commits).
     pub parents: Vec<ObjectId>,
-    /// Raw author identity line.
-    pub author: String,
-    /// Raw committer identity line.
-    pub committer: String,
+    /// Author identity, parsed with [`Signature::from_header_lossy`] so a malformed
+    /// date reads as the Unix epoch rather than failing the load.
+    pub author: Signature,
+    /// Committer identity, parsed like [`Self::author`].
+    pub committer: Signature,
     /// Full commit message body (headers excluded).
     pub message: String,
     /// Ref decorations pointing at this commit.
@@ -295,8 +297,8 @@ pub fn load_commits_with_decorations_reusing(
         out.push(LoadedCommit {
             oid: *oid,
             parents: data.parents,
-            author: data.author,
-            committer: data.committer,
+            author: Signature::from_header_lossy(&data.author),
+            committer: Signature::from_header_lossy(&data.committer),
             message: data.message,
             refs,
             change_id: resolved.id,

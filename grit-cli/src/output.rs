@@ -259,6 +259,17 @@ impl Person {
             date: crate::dates::rfc3339_from_identity_when(&parsed.when_suffix),
         }
     }
+
+    /// From a library [`grit_lib::ident::Signature`].
+    pub fn from_signature(sig: &grit_lib::ident::Signature) -> Self {
+        Self {
+            name: sig.name.clone(),
+            email: sig.email.clone(),
+            date: sig
+                .format_rfc3339()
+                .unwrap_or_else(|| sig.time.unix_timestamp().to_string()),
+        }
+    }
 }
 
 /// Ref decoration attached to a commit in JSON output.

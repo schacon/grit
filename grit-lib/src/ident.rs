@@ -175,6 +175,66 @@ impl Signature {
     pub fn format_rfc3339(&self) -> Option<String> {
         self.time.format(&Rfc3339).ok()
     }
+
+    /// Parse an identity line as stored in a commit or tag, accepting what `git log` accepts.
+    ///
+    /// Unlike [`str::parse`], this never fails: a missing `<email>` leaves
+    /// [`Self::email`] empty with the whole text as the name, and a missing,
+    /// non-numeric or overflowing date becomes the Unix epoch in UTC, the same
+    /// sentinel Git shows for such commits.
+    ///
+    /// # Parameters
+    ///
+    /// - `line`: the text after `author ` / `committer ` / `tagger ` in an object header.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use grit_lib::ident::Signature;
+    ///
+    /// let sig = Signature::from_header_lossy("Ada <ada@example.com> 1700000000 +0100");
+    /// assert_eq!(sig.email, "ada@example.com");
+    /// assert_eq!(sig.time.unix_timestamp(), 1_700_000_000);
+    ///
+    /// let bogus = Signature::from_header_lossy("Ada <ada@example.com> totally_bogus");
+    /// assert_eq!(bogus.time.unix_timestamp(), 0);
+    /// ```
+    #[must_use]
+    pub fn from_header_lossy(line: &str) -> Self {
+        if let Some(sig) = parse_signature(line) {
+            return sig;
+        }
+        let (name, email) = parse_identity_name_email(line)
+            .unwrap_or_else(|| (line.trim().to_owned(), String::new()));
+        Self {
+            name,
+            email,
+            time: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+}
+
+/// Serializes as `{"name", "email", "date"}` with `date` in RFC 3339 (original offset kept).
+///
+/// A time RFC 3339 cannot represent (a year past 9999) falls back to Git's
+/// `<unix-seconds> <±HHMM>` text.
+#[cfg(feature = "serde-models")]
+impl serde::Serialize for Signature {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        let date = self
+            .format_rfc3339()
+            .unwrap_or_else(|| format_git_timestamp(self.time));
+        let mut out = serializer.serialize_struct("Signature", 3)?;
+        out.serialize_field("name", &self.name)?;
+        out.serialize_field("email", &self.email)?;
+        out.serialize_field("date", &date)?;
+        out.end()
+    }
 }
 
 /// Which part of a [`Signature`] a [`SignatureError`] refers to.

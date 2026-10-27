@@ -104,13 +104,12 @@ impl CommitJsonLoader {
         let mut json = Vec::with_capacity(loaded.len());
         let mut summaries = Vec::with_capacity(loaded.len());
         for row in &loaded {
-            let (author, timestamp) = context::author_and_time(&row.author);
             summaries.push(CommitSummary {
                 oid: row.oid,
                 subject: subject_line(&row.message),
-                author,
-                author_ident: row.author.clone(),
-                timestamp,
+                author: context::author_display_name(&row.author.name, &row.author.email),
+                author_ident: row.author.header_line(),
+                timestamp: row.author.time.unix_timestamp(),
                 change_id: row.change_id.as_str().to_owned(),
                 change_id_stored: row.change_id_stored,
             });
@@ -148,12 +147,11 @@ pub fn fetch_limit_plus_one(limit: Option<usize>) -> Option<usize> {
 impl CommitJson {
     /// Full commit JSON from a library [`LoadedCommit`].
     pub fn from_loaded(commit: &LoadedCommit, now: i64) -> Self {
-        let (_, author_ts) = crate::context::author_and_time(&commit.author);
         Self {
             oid: commit.oid.to_hex(),
             parents: commit.parents.iter().map(ObjectId::to_hex).collect(),
-            author: crate::output::Person::from_identity_line(&commit.author),
-            committer: crate::output::Person::from_identity_line(&commit.committer),
+            author: crate::output::Person::from_signature(&commit.author),
+            committer: crate::output::Person::from_signature(&commit.committer),
             subject: subject_line(&commit.message),
             message: commit.message.trim_end().to_owned(),
             refs: commit
@@ -164,7 +162,10 @@ impl CommitJson {
                     kind: r.kind.into(),
                 })
                 .collect(),
-            relative_date: Some(crate::context::relative_date_from(author_ts, now)),
+            relative_date: Some(crate::context::relative_date_from(
+                commit.author.time.unix_timestamp(),
+                now,
+            )),
             change_id: commit.change_id.as_str().to_owned(),
             change_id_stored: commit.change_id_stored,
         }
