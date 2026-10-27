@@ -369,3 +369,31 @@ fn packed_deep_history_range_matches_git_across_pack_layouts() {
         "origin paths differ from Git: {path_mismatches:?}"
     );
 }
+
+#[test]
+fn ranged_blame_visits_history_across_many_packs() {
+    let dir = tempfile::tempdir().expect("repo");
+    let root = dir.path();
+    grit_test_support::blame::many_pack_history(root, 70).expect("packed history");
+    for graph in [false, true] {
+        if graph {
+            git_run(root, &["multi-pack-index", "write"]);
+            git_run(root, &["commit-graph", "write", "--reachable"]);
+        }
+        let repo = open_repo(root);
+        assert_range_matches_git(&repo, root, "target.txt", head_oid(root), "1,3");
+        let result = blame_file(
+            &repo,
+            "target.txt",
+            &BlameOptions {
+                line_range: Some(1..=3),
+                ..Default::default()
+            },
+        )
+        .expect("blame");
+        for (line, content) in result.lines.iter().zip(["first", "second", "third"]) {
+            assert_eq!(line.original_path, "target.txt");
+            assert_eq!(line.content.trim_end_matches('\n'), content);
+        }
+    }
+}

@@ -82,18 +82,35 @@ pub fn read_local_pack_indexes(objects_dir: &Path) -> Result<Vec<PackIndex>> {
 pub(crate) mod pack_cache {
     use super::{read_pack_index_no_verify, Error, ObjectKind, PackIndex, Result};
     use crate::pack_map::{fingerprint_from_file, PackData, PackFingerprint};
-    use std::collections::{HashMap, HashSet};
+    use std::collections::{HashMap, HashSet, VecDeque};
     use std::fs;
     use std::hash::{Hash, Hasher};
     use std::io;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, Weak};
     use std::time::SystemTime;
 
     const DELTA_LRU_SHARD_COUNT: usize = 32;
+    // A bounded operation must release descriptors and compressed windows together.
+    // Active readers can keep their own Arc alive across a catalog eviction.
+    const BOUNDED_PACK_READERS: usize = 32;
 
     type ThreadLocalDirListing = Option<(PathBuf, SystemTime, Vec<Arc<PackIndex>>)>;
+
+    enum CachedPackBytes {
+        Retained(Arc<PackData>),
+        Positioned(Weak<PackData>),
+    }
+
+    impl CachedPackBytes {
+        fn get(&self) -> Option<Arc<PackData>> {
+            match self {
+                Self::Retained(bytes) => Some(Arc::clone(bytes)),
+                Self::Positioned(bytes) => bytes.upgrade(),
+            }
+        }
+    }
 
     // hygiene: per-thread pack read hot cache (indexes, bytes, dir listing); cleared on invalidate
     thread_local! {
@@ -101,7 +118,7 @@ pub(crate) mod pack_cache {
             const { std::cell::RefCell::new(None) };
         static PACK_HIT_INDEX: std::cell::RefCell<Option<(PathBuf, Arc<PackIndex>)>> =
             const { std::cell::RefCell::new(None) };
-        static PACK_BYTES: std::cell::RefCell<HashMap<PathBuf, Arc<PackData>>> =
+        static PACK_BYTES: std::cell::RefCell<HashMap<PathBuf, CachedPackBytes>> =
             std::cell::RefCell::new(HashMap::new());
         static PACK_INDEXES: std::cell::RefCell<HashMap<PathBuf, Arc<PackIndex>>> =
             std::cell::RefCell::new(HashMap::new());
@@ -394,16 +411,22 @@ pub(crate) mod pack_cache {
         if !crate::pack_store::PackStore::has_context() {
             return None;
         }
-        PACK_BYTES.with(|cell| cell.borrow().get(pack_path).map(Arc::clone))
+        PACK_BYTES.with(|cell| cell.borrow().get(pack_path).and_then(CachedPackBytes::get))
     }
 
     fn remember_pack_bytes(pack_path: &Path, bytes: &Arc<PackData>) {
+        // The operation-local catalog owns positioned readers. A second strong cache
+        // would keep their descriptors alive after eviction from that catalog.
         if !crate::pack_store::PackStore::has_context() {
             return;
         }
+        let cached = if bytes.uses_positioned_reads() {
+            CachedPackBytes::Positioned(Arc::downgrade(bytes))
+        } else {
+            CachedPackBytes::Retained(Arc::clone(bytes))
+        };
         PACK_BYTES.with(|cell| {
-            cell.borrow_mut()
-                .insert(pack_path.to_path_buf(), Arc::clone(bytes));
+            cell.borrow_mut().insert(pack_path.to_path_buf(), cached);
         });
         forget_single_reader_memo();
     }
@@ -841,6 +864,7 @@ pub(crate) mod pack_cache {
         by_dir: HashMap<PathBuf, CachedDir>,
         by_idx: HashMap<PathBuf, CachedIdx>,
         by_pack: HashMap<PathBuf, CachedPack>,
+        bounded_pack_order: VecDeque<PathBuf>,
         /// Small id assigned when a pack file is first registered in this process.
         pack_ids: HashMap<PathBuf, u32>,
         next_pack_id: u32,
@@ -849,6 +873,20 @@ pub(crate) mod pack_cache {
         /// Per `objects/pack` directory rescan count (parallel-safe; tests only).
         #[cfg(test)]
         test_dir_rescan_counts: HashMap<PathBuf, u64>,
+    }
+
+    impl CatalogState {
+        fn retain_bounded_pack(&mut self, pack_path: &Path) {
+            if let Some(pos) = self.bounded_pack_order.iter().position(|p| p == pack_path) {
+                self.bounded_pack_order.remove(pos);
+            }
+            while self.bounded_pack_order.len() >= BOUNDED_PACK_READERS {
+                if let Some(path) = self.bounded_pack_order.pop_front() {
+                    self.by_pack.remove(&path);
+                }
+            }
+            self.bounded_pack_order.push_back(pack_path.to_path_buf());
+        }
     }
 
     pub(crate) fn with_current<R>(f: impl FnOnce(&mut CatalogState) -> R) -> R {
@@ -1232,6 +1270,9 @@ pub(crate) mod pack_cache {
             drop_delta_entries_locked(g, pack_path, store.delta_bases());
             g.by_idx.remove(&pack_path.with_extension("idx"));
             g.validated_pack_counts.remove(pack_path);
+            if store.bounded_reads() {
+                g.retain_bounded_pack(pack_path);
+            }
             g.by_pack.insert(
                 pack_path.to_path_buf(),
                 CachedPack {
@@ -1254,9 +1295,16 @@ pub(crate) mod pack_cache {
             return Ok(hit);
         }
         let store = crate::pack_store::PackStore::active_for_reads();
-        if let Some(hit) =
+        let hit = if store.bounded_reads() {
+            store.with_catalog(|g| {
+                let bytes = Arc::clone(&g.by_pack.get(pack_path)?.bytes);
+                g.retain_bounded_pack(pack_path);
+                Some(bytes)
+            })
+        } else {
             store.with_catalog_read(|g| g.by_pack.get(pack_path).map(|c| Arc::clone(&c.bytes)))
-        {
+        };
+        if let Some(hit) = hit {
             remember_pack_bytes(pack_path, &hit);
             return Ok(hit);
         }
@@ -1430,6 +1478,7 @@ pub(crate) mod pack_cache {
         g.by_dir.clear();
         g.by_idx.clear();
         g.by_pack.clear();
+        g.bounded_pack_order.clear();
         g.pack_ids.clear();
     }
 
@@ -1548,6 +1597,45 @@ pub(crate) mod pack_cache {
             if let Some(c) = g.by_pack.get_mut(pack_path) {
                 c.mtime = touched_at;
             }
+        });
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn bounded_pack_cache_releases_inactive_readers() {
+        let dir = tempfile::tempdir().expect("dir");
+        let store = Arc::new(crate::pack_store::PackStore::for_bounded_reads(
+            dir.path().to_path_buf(),
+        ));
+        crate::pack_store::PackStore::with_context(Arc::clone(&store), || {
+            let mut previous = Vec::new();
+            let hot_path = dir.path().join("0.pack");
+            let mut hot = None;
+            for i in 0..70 {
+                let path = dir.path().join(format!("{i}.pack"));
+                let mut bytes = vec![i as u8; 32768];
+                bytes[..12].copy_from_slice(b"PACK\x00\x00\x00\x02\x00\x00\x00\x00");
+                fs::write(&path, bytes).expect("write");
+                let pack = get_pack_bytes(&path).expect("pack");
+                assert!(pack.uses_positioned_reads());
+                previous.push(Arc::downgrade(&pack));
+                hot.get_or_insert_with(|| Arc::clone(&pack));
+                assert!(Arc::ptr_eq(
+                    &get_pack_bytes(&hot_path).expect("hot pack"),
+                    hot.as_ref().expect("hot")
+                ));
+            }
+            warm_thread_local_from_store(&store);
+            assert!(store.with_catalog_read(|g| g.by_pack.len()) <= 32);
+            assert!(previous[1..32].iter().all(|pack| pack.upgrade().is_none()));
+            assert!(previous[69].upgrade().is_some());
+            let reloaded = get_pack_bytes(&dir.path().join("1.pack")).expect("reopen");
+            assert_eq!(
+                reloaded
+                    .read_range(100, 200, &mut Vec::new())
+                    .expect("read"),
+                &[1; 100]
+            );
         });
     }
 }

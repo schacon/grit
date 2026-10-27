@@ -80,3 +80,95 @@ fn ranged_blame_pack_residency_is_bounded() {
         "pack growth raised RSS: {peaks:?}"
     );
 }
+
+#[test]
+fn ranged_blame_bounds_open_pack_files() {
+    let root = tempfile::tempdir().expect("repo");
+    grit_test_support::blame::many_pack_history(root.path(), 300).expect("history");
+    let packs: Vec<_> = fs::read_dir(root.path().join(".git/objects/pack"))
+        .expect("packs")
+        .map(|entry| entry.expect("entry").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "pack"))
+        .collect();
+    assert_eq!(packs.len(), 300);
+    assert!(packs
+        .iter()
+        .all(|path| fs::metadata(path).expect("pack").len() > 8192));
+
+    let limited = |program: &str, args: &[&str]| {
+        let mut cmd = Command::new("sh");
+        configure_git_env(&mut cmd);
+        let output = cmd
+            .current_dir(root.path())
+            .args(["-c", "ulimit -n 256 && exec \"$@\"", "blame-test", program])
+            .args(args)
+            .output()
+            .expect("limited blame");
+        assert!(
+            output.status.success(),
+            "{program}: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    };
+    let git = limited(
+        "git",
+        &[
+            "blame",
+            "--line-porcelain",
+            "-L",
+            "1,3",
+            "HEAD",
+            "--",
+            "target.txt",
+        ],
+    );
+    let expected: Vec<_> = std::str::from_utf8(&git)
+        .expect("git output")
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            (fields.len() >= 3
+                && fields[0].len() == 40
+                && fields[0].bytes().all(|b| b.is_ascii_hexdigit()))
+            .then(|| {
+                (
+                    fields[0],
+                    fields[1].parse::<u64>().expect("original line"),
+                    fields[2].parse::<u64>().expect("final line"),
+                )
+            })
+        })
+        .collect();
+    assert_eq!(expected.len(), 3);
+    let grit = env!("CARGO_BIN_EXE_grit");
+    let full: serde_json::Value = serde_json::from_slice(&limited(
+        grit,
+        &["blame", "--rev", "HEAD", "--json", "target.txt"],
+    ))
+    .expect("full blame");
+    let ranged: serde_json::Value = serde_json::from_slice(&limited(
+        grit,
+        &[
+            "blame",
+            "--rev",
+            "HEAD",
+            "-L",
+            "1,3",
+            "--json",
+            "target.txt",
+        ],
+    ))
+    .expect("ranged blame");
+    let lines = ranged["lines"].as_array().expect("lines");
+    assert_eq!(lines.len(), 3);
+    for (i, (line, (commit, original, final_line))) in lines.iter().zip(expected).enumerate() {
+        assert_eq!(line["commit"], commit);
+        assert_eq!(line["original_line"], original);
+        assert_eq!(line["final_line"], final_line);
+        assert_eq!(line["original_path"], "target.txt");
+        assert_eq!(line["content"], ["first", "second", "third"][i]);
+        assert_eq!(line, &full["lines"][i]);
+    }
+}

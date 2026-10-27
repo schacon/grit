@@ -3971,7 +3971,8 @@ pub struct BlameOptions {
     /// Commit to blame at. When `None`, uses the current `HEAD` commit.
     pub start: Option<ObjectId>,
     /// When set, only include lines whose 1-based final line number lies in this range.
-    /// Packed history uses positioned entry reads and private, bounded delta-base caches;
+    /// Packed history uses positioned entry reads, bounded retained pack readers,
+    /// and private, bounded delta-base caches;
     /// repository caches and their configured limits are left unchanged. Complete blobs
     /// and tree delta chains still need to be reconstructed to attribute these lines.
     pub line_range: Option<RangeInclusive<usize>>,

@@ -98,7 +98,8 @@ enum Storage {
 /// descriptor and `fstat`s that handle before mapping so length and inode stay paired.
 pub struct PackData {
     storage: Storage,
-    /// A retained descriptor for operation-scoped random reads, paired with the mapping.
+    /// A descriptor paired with the mapping. Bounded catalogs limit retained readers;
+    /// active readers keep this exact file alive even after eviction or path replacement.
     random_file: Option<Box<PositionedPack>>,
 }
 

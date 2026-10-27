@@ -2621,7 +2621,7 @@ This build records about 0.7–1.3 MiB more peak RSS on several unchanged paths 
 
 Issue #2079 measures `grit blame --rev 7e34d8174d -L 1,3 --json git-gui/git-gui.sh` on an unmodified clone of `git/git` (one 326 MB pack). The Git control is the system binary running `git blame --line-porcelain -L 1,3 7e34d8174d -- git-gui/git-gui.sh`.
 
-Ranged blame now reads individual pack entries through positioned IO, including commit prefixes and delta bases, and keeps a private 16 MiB delta-base cache per object directory. Eight reusable 16 KiB compressed windows per pack coalesce nearby reads; larger entries bypass those windows. This covers ordinary ODB fallbacks, alternate stores and multiple packs as well as the session reader. Full-file blame and other ODB users retain their existing read/cache policy. Visited metadata, indexes and reconstructed objects still consume memory; the change bounds retained pack pages and delta bases rather than imposing a fixed total RSS limit.
+Ranged blame now reads individual pack entries through positioned IO, including commit prefixes and delta bases, and keeps a private 16 MiB delta-base cache per object directory. Eight reusable 16 KiB compressed windows per reader coalesce nearby reads; larger entries bypass those windows. Each operation-local catalog retains at most 32 readers per object directory, evicting inactive readers and their descriptor/windows together. Thread-local caches use weak references for positioned readers, so fast lookups do not retain open files after eviction. Active reads retain their original file identity until completion. This covers ordinary ODB fallbacks, alternate stores and multiple packs as well as the session reader. Full-file blame and other ODB users retain their existing read/cache policy. Visited metadata, indexes and reconstructed objects still consume memory; the change bounds retained pack pages and delta bases rather than imposing a fixed total RSS limit.
 
 The deterministic Linux regression uses 1,800 commits, 1,000 changing root-tree entries, a rename and a merge. It varies unrelated blob payloads from 8 KiB to 64 KiB per commit without changing the three requested lines. Before the fix, peak RSS increased from 81,488 to 128,816 KiB; positioned reads kept it near 57–58 MiB. `grit-bench history` includes the larger fixture as `history-blame-packed-range`. Tests create all objects locally with system Git and also check blame compatibility with and without a commit graph, single/multiple packs, and alternates.
 
@@ -2636,6 +2636,23 @@ Measured on a 4-core AMD EPYC 9V74 Linux VM using release builds, with one warmu
 | Read blob | 3.93 / 14,136 | 3.71 / 14,148 | 2.76 / 5,604 |
 
 The ranged request uses **1.63× Git's RSS**, down **59.1%** from main, and is **3.4% faster** than main. Full-file blame and the object-read controls show no timing regression. The object-read controls have RSS differences below 0.2 MiB; raw samples retain these differences.
+
+### Pack descriptor bound follow-up
+
+The catalog now retains at most 32 pack readers per object directory, with weak thread-local references. Eviction closes inactive readers and releases their compressed windows; active readers continue using the same open file. A deterministic Rust regression puts historical commits, trees and changed target blobs in 300 Git-indexed packs (each over 8 KiB), then runs ranged blame with a 256-descriptor limit. The reviewed patch (`49047ae5`) fails with descriptor exhaustion; main, the fix and system Git succeed. Full-file blame remains a control, and the three attributed commits, original lines/paths and content match system Git.
+
+Measured again on 2026-10-27, on an AMD EPYC 9V45 / 4-vCPU Ubuntu 24.04.5 VM, Rust 1.99.0 release builds and stock Git 2.55.0. Main is frozen at `e98de8a1`. One warmup precedes seven interleaved runs with rotating tool order, with builds and tests idle. Wall time wraps fresh subprocesses with a monotonic timer and RSS uses `/usr/bin/time -v`. Cells show median ms / median peak KiB. The 300-pack timing control uses the normal descriptor limit so the reviewed binary can complete. Raw samples are in the baseline's `descriptor_followup` field.
+
+| Operation | Main | Reviewed patch | Fixed | System Git |
+| --- | ---: | ---: | ---: | ---: |
+| Three-line blame | 356.74 / 349,448 | 336.04 / 132,732 | 337.44 / 134,676 | 138.23 / 85,212 |
+| Full-file blame | 805.06 / 404,524 | 808.72 / 406,124 | 802.26 / 405,580 | 174.61 / 89,288 |
+| Read commit | 2.87 / 12,756 | 2.91 / 12,772 | 2.66 / 12,836 | 1.89 / 5,284 |
+| Read root tree | 7.76 / 28,288 | 7.61 / 28,176 | 7.33 / 28,188 | 2.14 / 5,452 |
+| Read blob | 3.36 / 13,164 | 3.36 / 13,524 | 3.08 / 13,568 | 2.41 / 5,476 |
+| Three-line blame, 300 packs | 28.44 / 20,152 | 35.89 / 24,276 | 33.63 / 16,728 | 11.39 / 11,652 |
+
+The exact git/git range peaks at **1.58× Git RSS**, **61.5% below main**, and runs **5.4% faster than main**. Its time is within 0.5% of the reviewed patch; full-file blame and representative ODB reads remain flat or improve. On 300 packs, reader eviction reduces RSS from 24,276 to 16,728 KiB and improves time by 6.3% against the reviewed patch.
 
 ## Parallel worktree symlinks (2026-10-27)
 

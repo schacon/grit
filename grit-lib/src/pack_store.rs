@@ -96,7 +96,9 @@ impl PackStore {
         }
     }
 
-    /// Private cache for a random-access history operation. Never changes a shared store.
+    /// Private cache for a random-access history operation. The pack catalog retains
+    /// at most 32 readers (descriptor and compressed windows together); active reads
+    /// retain their own handles until completion. Never changes a shared store.
     pub(crate) fn for_bounded_reads(objects_dir: PathBuf) -> Self {
         let mut store = Self::new(objects_dir);
         store.bounded_reads = true;
