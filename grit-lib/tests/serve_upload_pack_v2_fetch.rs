@@ -93,6 +93,19 @@ fn fetch_request(args: &[&str]) -> Vec<u8> {
     body
 }
 
+/// A stateless v2 `command=fetch` negotiation round: `args` without `done`.
+fn negotiation_request(args: &[&str]) -> Vec<u8> {
+    let mut body = Vec::new();
+    pkt(&mut body, "command=fetch");
+    pkt(&mut body, "object-format=sha1");
+    body.extend(b"0001");
+    for arg in args {
+        pkt(&mut body, arg);
+    }
+    body.extend(b"0000");
+    body
+}
+
 /// Decode a v2 response into readable tokens up to and including `packfile`.
 ///
 /// Side-band channel 1 framing (from `sideband-all`) is stripped, so the same
@@ -574,6 +587,208 @@ fn grit_bin_for_subprocess() -> Option<std::path::PathBuf> {
     let candidate =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/debug/grit");
     candidate.is_file().then_some(candidate)
+}
+
+/// Add `refs/heads/side`, a commit forked from `main~3`, to the fixture.
+fn add_side_branch(bare: &Path) -> String {
+    let base = git(bare, &["rev-parse", "main~3"]);
+    let tree = git(bare, &["rev-parse", "main~3^{tree}"]);
+    let side = git(bare, &["commit-tree", &tree, "-p", &base, "-m", "side"]);
+    git(bare, &["update-ref", "refs/heads/side", &side]);
+    side
+}
+
+/// Both servers answer the same negotiation round with the same sections.
+fn assert_round_matches_git(bare: &Path, args: &[&str]) -> Vec<String> {
+    let body = negotiation_request(args);
+    let grit = response_sections(&serve_grit(bare, &body));
+    let git = response_sections(&serve_git(bare, &body));
+    assert_eq!(grit, git, "{args:?}: response sections differ from git");
+    grit
+}
+
+fn acks(oids: &[&str]) -> Vec<String> {
+    std::iter::once("acknowledgments".to_owned())
+        .chain(oids.iter().map(|oid| format!("ACK {oid}")))
+        .collect()
+}
+
+#[test]
+fn v2_round_is_ready_when_haves_cover_the_want() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bare = fixture(tmp.path());
+    let tip = git(&bare, &["rev-parse", "main"]);
+    let have = git(&bare, &["rev-parse", "main~2"]);
+    let sections = assert_round_matches_git(
+        &bare,
+        &[
+            "no-progress",
+            &format!("want {tip}"),
+            &format!("have {have}"),
+        ],
+    );
+    let mut expected = acks(&[&have]);
+    expected.extend(["ready", "<delim>", "packfile"].map(str::to_owned));
+    assert_eq!(sections, expected);
+}
+
+#[test]
+fn v2_round_is_ready_for_tag_and_tree_wants() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bare = fixture(tmp.path());
+    let tagged = git(&bare, &["rev-parse", "main~3"]);
+    let annotated = git(&bare, &["rev-parse", "refs/tags/av3"]);
+    let tree = git(&bare, &["rev-parse", "refs/tags/treetag"]);
+    for want in [&annotated, &tree] {
+        let sections = assert_round_matches_git(
+            &bare,
+            &[
+                "no-progress",
+                &format!("want {want}"),
+                &format!("have {tagged}"),
+            ],
+        );
+        assert!(sections.iter().any(|l| l == "ready"), "want {want}");
+    }
+}
+
+#[test]
+fn v2_round_is_not_ready_when_a_want_is_not_covered() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bare = fixture(tmp.path());
+    let side = add_side_branch(&bare);
+    let tip = git(&bare, &["rev-parse", "main"]);
+    let older = git(&bare, &["rev-parse", "main~3"]);
+    let near_tip = git(&bare, &["rev-parse", "main~1"]);
+    let missing = "1111111111111111111111111111111111111111";
+    let mut not_ready = acks(&[&tip]);
+    not_ready.push("<flush>".to_owned());
+
+    // The have is a descendant of the want, not an ancestor.
+    let sections =
+        assert_round_matches_git(&bare, &[&format!("want {older}"), &format!("have {tip}")]);
+    assert_eq!(sections, not_ready);
+
+    // The have is on a different line of history.
+    let sections =
+        assert_round_matches_git(&bare, &[&format!("want {side}"), &format!("have {tip}")]);
+    assert_eq!(sections, not_ready);
+
+    // Two tips, and the have covers only `main`.
+    let sections = assert_round_matches_git(
+        &bare,
+        &[
+            &format!("want {tip}"),
+            &format!("want {side}"),
+            &format!("have {near_tip}"),
+        ],
+    );
+    let mut expected = acks(&[&near_tip]);
+    expected.push("<flush>".to_owned());
+    assert_eq!(sections, expected);
+
+    // Nothing in common yet.
+    let sections =
+        assert_round_matches_git(&bare, &[&format!("want {tip}"), &format!("have {missing}")]);
+    assert_eq!(sections, ["acknowledgments", "NAK", "<flush>"]);
+}
+
+#[test]
+fn v2_round_with_wait_for_done_is_never_ready() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bare = fixture(tmp.path());
+    let tip = git(&bare, &["rev-parse", "main"]);
+    let have = git(&bare, &["rev-parse", "main~2"]);
+    let sections = assert_round_matches_git(
+        &bare,
+        &[
+            "wait-for-done",
+            &format!("want {tip}"),
+            &format!("have {have}"),
+        ],
+    );
+    let mut expected = acks(&[&have]);
+    expected.push("<flush>".to_owned());
+    assert_eq!(sections, expected);
+}
+
+#[test]
+fn v2_ready_with_sideband_all_is_followed_by_a_raw_delimiter() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bare = fixture(tmp.path());
+    git(&bare, &["config", "uploadpack.allowSidebandAll", "true"]);
+    let tip = git(&bare, &["rev-parse", "main"]);
+    let have = git(&bare, &["rev-parse", "main~2"]);
+    let args = [
+        "sideband-all",
+        "no-progress",
+        &format!("want {tip}"),
+        &format!("have {have}"),
+    ];
+    let sections = assert_round_matches_git(&bare, &args);
+    assert!(sections.ends_with(&["ready", "<delim>", "packfile"].map(str::to_owned)));
+    let raw = serve_grit(&bare, &negotiation_request(&args));
+    let ready = b"000b\x01ready\n0001";
+    assert!(
+        raw.windows(ready.len()).any(|w| w == ready),
+        "ready on band 1, then a bare delimiter"
+    );
+}
+
+#[test]
+fn git_fetch_from_grit_upload_pack_stops_after_one_round_when_ready() {
+    let Some(grit_bin) = grit_bin_for_subprocess() else {
+        eprintln!("skip git_fetch_from_grit_upload_pack_stops_after_one_round_when_ready");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let bare = fixture(tmp.path());
+    let behind = git(&bare, &["rev-parse", "main~2"]);
+    let client = tmp.path().join("client.git");
+    git(
+        tmp.path(),
+        &["init", "-q", "--bare", client.to_str().unwrap()],
+    );
+    git(
+        &client,
+        &[
+            "fetch",
+            "-q",
+            "--no-tags",
+            bare.to_str().unwrap(),
+            &format!("{behind}:refs/heads/main"),
+        ],
+    );
+    let trace = tmp.path().join("trace");
+    let out = Command::new("git")
+        .current_dir(&client)
+        .args([
+            "fetch",
+            "--no-tags",
+            &format!("--upload-pack={} upload-pack", grit_bin.display()),
+            bare.to_str().unwrap(),
+            "main:refs/remotes/origin/main",
+        ])
+        .env("GIT_TRACE_PACKET", &trace)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git fetch");
+    assert!(
+        out.status.success(),
+        "git fetch failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let trace = std::fs::read_to_string(&trace).unwrap();
+    let rounds = trace.matches("fetch> command=fetch").count();
+    assert_eq!(rounds, 1, "one negotiation round, trace:\n{trace}");
+    assert!(trace.contains("fetch< ready"), "trace:\n{trace}");
+    assert!(!trace.contains("fetch> done"), "trace:\n{trace}");
+    assert_eq!(
+        git(&client, &["rev-parse", "refs/remotes/origin/main"]),
+        git(&bare, &["rev-parse", "main"])
+    );
+    git(&client, &["fsck", "--no-progress"]);
 }
 
 #[test]
