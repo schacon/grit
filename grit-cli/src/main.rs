@@ -1755,9 +1755,9 @@ enum Command {
         /// under `refs/tags/` to the remote.
         #[arg(short = 't', long = "tags")]
         tags: bool,
-        /// Delete a remote branch or tag (may be repeated).
-        #[arg(long = "delete", value_name = "REF")]
-        delete: Vec<String>,
+        /// Delete the named remote branches or tags instead of pushing.
+        #[arg(long = "delete", conflicts_with = "tags")]
+        delete: bool,
         /// Remote to push to (defaults to the current branch's remote or `origin`).
         #[arg(long, hide = true)]
         remote: Option<String>,
@@ -4041,7 +4041,7 @@ fn dispatch(
             positionals.extend(refspecs);
             let outcome = commands::push::run(
                 tags,
-                &delete,
+                delete,
                 remote,
                 &positionals,
                 dry_run,

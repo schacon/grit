@@ -20816,6 +20816,9 @@ impl core::marker::UnsafeUnpin for grit_lib::remote::push_plan::LeaseExpectation
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::push_plan::LeaseExpectation
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::push_plan::LeaseExpectation
 pub enum grit_lib::remote::push_plan::PushPlanError
+pub grit_lib::remote::push_plan::PushPlanError::DeleteNotPlainName
+pub grit_lib::remote::push_plan::PushPlanError::DeleteNotPlainName::spec: alloc::string::String
+pub grit_lib::remote::push_plan::PushPlanError::DeleteWithoutRefs
 pub grit_lib::remote::push_plan::PushPlanError::DetachedHeadNoRefspec
 pub grit_lib::remote::push_plan::PushPlanError::DstRefspecAmbiguous
 pub grit_lib::remote::push_plan::PushPlanError::DstRefspecAmbiguous::spec: alloc::string::String
@@ -20913,6 +20916,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::push_plan::Pu
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::push_plan::PushPlanContext
 pub struct grit_lib::remote::push_plan::PushRequest
 pub grit_lib::remote::push_plan::PushRequest::delete: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::remote::push_plan::PushRequest::delete_refs: bool
 pub grit_lib::remote::push_plan::PushRequest::follow_tags: bool
 pub grit_lib::remote::push_plan::PushRequest::force: grit_lib::remote::push_plan::ForceMode
 pub grit_lib::remote::push_plan::PushRequest::refspecs: alloc::vec::Vec<alloc::string::String>

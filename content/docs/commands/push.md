@@ -10,7 +10,7 @@ order: 4
 ```text
 grit push [<remote>] [<refspec>...]
 grit push --tags
-grit push --delete <ref>
+grit push [<remote>] --delete <ref>...
 grit push --dry-run
 grit push --force-with-lease[=<rev>]
 grit push --force
@@ -36,7 +36,7 @@ Explicit refspecs follow Git push rules: any revision on the left (`HEAD`, tags,
 
 With `--tags`, pushes every local tag under `refs/tags/`.
 
-With `--delete`, deletes remote branches or tags (short names map like Git).
+With `--delete`, every positional after the remote names a remote branch or tag to delete (short names map like Git), and nothing is pushed. All of them are deleted in one push, with one result per ref. They must be plain ref names: a `src:dst` refspec next to `--delete` is an error and nothing is sent, as is `--delete` with no ref. To publish one ref and delete another, run two pushes or use a `:dst` refspec without `--delete` (`grit push origin HEAD:release :old`). `--delete` cannot be combined with `--tags`.
 
 `--force-with-lease` updates a remote ref only when it still matches the local remote-tracking ref mapped from the push destination (or when the ref is absent if there is no tracking ref). Use `--force-with-lease=<rev>` when pushing exactly one ref to compare against a specific commit. `--force` overwrites the remote ref unconditionally. The two flags cannot be combined.
 
@@ -72,7 +72,7 @@ For GitHub over HTTPS, if a push fails because you aren't signed in, `grit` offe
 | `<remote>` | Remote name (optional; defaults from branch / config). |
 | `<refspec>...` | Push refspecs (`feature`, `HEAD:refs/heads/x`, `+main:main`, `:gone`, …). |
 | `-t`, `--tags` | Push all local tags instead of the current branch. |
-| `--delete` | Delete a remote ref (repeatable). |
+| `--delete` | Delete the remote refs named by the positionals instead of pushing (plain names only). |
 | `--dry-run` | Contact the remote but do not update refs or send objects. |
 | `-f`, `--force` | Overwrite remote refs when the update is not a fast-forward. |
 | `--force-with-lease` | Push only if the remote ref matches the local remote-tracking ref (or is absent when there is no tracking ref). |
@@ -108,6 +108,19 @@ $ grit push --tags
 
 $ grit push --delete v0.1
   pushed --delete → origin refs/tags/v0.1
+
+$ grit push origin --delete old-topic stale-fix
+  pushed --delete → origin refs/heads/old-topic
+  pushed --delete → origin refs/heads/stale-fix
+```
+
+A refspec next to `--delete` is refused before anything is sent:
+
+```console
+$ grit push origin HEAD:refs/heads/release --delete old-topic
+error: cannot delete 'HEAD:refs/heads/release': --delete takes ref names, not src:dst refspecs
+$ echo $?
+1
 ```
 
 When someone else pushed first:
@@ -169,7 +182,7 @@ Pass `--json` for stable, scripting-friendly output:
 | ----- | ---- | ------- |
 | `remote` | string | Remote that was pushed to. |
 | `kind` | string | `branch`, `tags`, `delete`, or `refspecs`. |
-| `branch` | string or null | Short branch name when `kind` is `branch`, or the deleted ref’s short name when `kind` is `delete`. Omitted for tag and other explicit refspec pushes (`kind`: `refspecs`). |
+| `branch` | string or null | Short branch name when `kind` is `branch`, or the deleted branch’s short name when `kind` is `delete` and exactly one branch is deleted. Omitted for tag and other explicit refspec pushes (`kind`: `refspecs`). |
 | `dry_run` | boolean | `true` when `--dry-run` was used (no refs or objects written). |
 | `results` | array | Per-ref outcomes; each object has `ref`, `status` (`ok`, `up_to_date`, or `rejected`), optional `reason` (`stale` for a failed lease, `remote_ref_missing` when `--delete` targets a ref absent on the remote), `old_oid`, `new_oid`, `src`, and `forced`. |
 | `rejected` | boolean | `true` if any ref was rejected (exit status is also `1`). |
