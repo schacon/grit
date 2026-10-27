@@ -843,7 +843,10 @@ pub fn create_commit(
 ///
 /// # Errors
 ///
-/// Same as [`create_commit`], plus staging failures from [`crate::porcelain::add::stage_for_commit`].
+/// Same as [`create_commit`], plus staging failures from [`crate::porcelain::add::stage_for_commit`],
+/// including [`Error::UnmergedConflictMarkers`] when a path's conflict stages were dropped
+/// (after a merge, pick, revert, rebase or stash pop) while its worktree file still has
+/// a conflict-marker block that its `HEAD` version does not. Neither the index nor `HEAD` moves in that case.
 pub fn commit_worktree(
     repo: &Repository,
     req: &CommitRequest,

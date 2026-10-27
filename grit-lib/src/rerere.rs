@@ -390,6 +390,59 @@ pub(crate) fn worktree_bytes_have_unresolved_conflict_markers(
             .any(|line| is_cmarker(line, b'<', marker_size)),
     }
 }
+
+/// Whether every conflict-marker block in `worktree` (from a `<<<<<<<` line through its
+/// matching `>>>>>>>` line, nested blocks included) also appears, at least as many times,
+/// in `committed`.
+///
+/// Used to tell marker text that is already part of the committed file (for example an
+/// example in documentation) from markers that a merge or `stash pop` just wrote. Returns
+/// `false` when either side is not UTF-8 or has an unterminated block.
+pub(crate) fn conflict_blocks_already_committed(
+    worktree: &[u8],
+    committed: &[u8],
+    marker_size: usize,
+) -> bool {
+    let marker_size = if marker_size == 0 { 7 } else { marker_size };
+    let (Some(mut new), Some(mut old)) = (
+        conflict_marker_blocks(worktree, marker_size),
+        conflict_marker_blocks(committed, marker_size),
+    ) else {
+        return false;
+    };
+    new.sort_unstable();
+    old.sort_unstable();
+    let mut old = old.into_iter().peekable();
+    new.into_iter().all(|block| {
+        while old.next_if(|o| *o < block).is_some() {}
+        old.next_if(|o| *o == block).is_some()
+    })
+}
+
+fn conflict_marker_blocks(data: &[u8], marker_size: usize) -> Option<Vec<&str>> {
+    let text = std::str::from_utf8(data).ok()?;
+    let mut blocks = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut offset = 0usize;
+    for line in text.split_inclusive('\n') {
+        let bare = line.trim_end_matches(['\n', '\r']);
+        if is_cmarker(bare, b'<', marker_size) {
+            if depth == 0 {
+                start = offset;
+            }
+            depth += 1;
+        } else if depth > 0 && is_cmarker(bare, b'>', marker_size) {
+            depth -= 1;
+            if depth == 0 {
+                blocks.push(&text[start..offset + line.len()]);
+            }
+        }
+        offset += line.len();
+    }
+    (depth == 0).then_some(blocks)
+}
+
 /// Compute the rerere conflict identifier for `content` using `algo`.
 ///
 /// Returns `None` when the text does not contain parseable conflict markers.
@@ -1380,4 +1433,70 @@ pub fn rerere_forget_path(repo: &Repository, path: &str) -> Result<Vec<RerereEve
     merge_rr.insert(path.to_string(), MergeRrEntry { id: Some(id) });
     write_merge_rr(repo.git_dir(), &merge_rr)?;
     Ok(events)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::conflict_blocks_already_committed;
+
+    const EXAMPLE: &str = "<<<<<<< ours\na\n=======\nb\n>>>>>>> theirs\n";
+
+    #[test]
+    fn unchanged_example_block_counts_as_committed() {
+        let doc = format!("intro\n{EXAMPLE}value=x\n");
+        let edited = format!("intro edited\n{EXAMPLE}value=y\n");
+        assert!(conflict_blocks_already_committed(
+            edited.as_bytes(),
+            doc.as_bytes(),
+            7
+        ));
+    }
+
+    #[test]
+    fn new_block_beside_committed_example_is_not_committed() {
+        let doc = format!("{EXAMPLE}value=base\n");
+        let popped = format!(
+            "{EXAMPLE}<<<<<<< Updated upstream\nvalue=main\n=======\nvalue=stashed\n>>>>>>> Stashed changes\n"
+        );
+        assert!(!conflict_blocks_already_committed(
+            popped.as_bytes(),
+            doc.as_bytes(),
+            7
+        ));
+    }
+
+    #[test]
+    fn duplicated_example_block_needs_two_committed_copies() {
+        let twice = format!("{EXAMPLE}{EXAMPLE}");
+        assert!(!conflict_blocks_already_committed(
+            twice.as_bytes(),
+            EXAMPLE.as_bytes(),
+            7
+        ));
+        assert!(conflict_blocks_already_committed(
+            twice.as_bytes(),
+            twice.as_bytes(),
+            7
+        ));
+    }
+
+    #[test]
+    fn edited_or_unterminated_blocks_are_not_committed() {
+        let edited = EXAMPLE.replace("a\n", "c\n");
+        assert!(!conflict_blocks_already_committed(
+            edited.as_bytes(),
+            EXAMPLE.as_bytes(),
+            7
+        ));
+        assert!(!conflict_blocks_already_committed(
+            b"<<<<<<< ours\na\n",
+            EXAMPLE.as_bytes(),
+            7
+        ));
+        assert!(!conflict_blocks_already_committed(
+            &[0xff, b'\n'],
+            EXAMPLE.as_bytes(),
+            7
+        ));
+    }
 }

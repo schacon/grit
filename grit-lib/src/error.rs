@@ -1069,7 +1069,11 @@ pub enum Error {
         holder: crate::maintenance::GcLockHolder,
     },
 
-    /// Explicit [`crate::porcelain::add::stage`] refused paths that still contain conflict markers.
+    /// Staging ([`crate::porcelain::add::stage`] with explicit paths, or the auto-stage pass of
+    /// [`crate::porcelain::commit::commit_worktree`]) refused paths that still contain conflict
+    /// markers: either they are unmerged, or their conflict stages were dropped (the index keeps
+    /// a resolve-undo record) and at least one marker block is not in the `HEAD` version. A dropped-stage
+    /// path stops the whole staging pass before the index is written.
     #[error("unmerged paths still have conflict markers")]
     UnmergedConflictMarkers {
         /// Repository-relative paths that were not staged because markers remain.

@@ -726,6 +726,17 @@ fn stage_inner_on_index(
     scope.sink().finish();
     scope.poll()?;
 
+    let mut collapsed_rejects =
+        collapsed_conflicts_with_markers(repo, work_tree, &matches, index, &rules)?;
+    if !collapsed_rejects.is_empty() {
+        collapsed_rejects.extend(conflict_marker_rejects);
+        collapsed_rejects.sort_unstable();
+        collapsed_rejects.dedup();
+        return Err(Error::UnmergedConflictMarkers {
+            paths: collapsed_rejects,
+        });
+    }
+
     if dry_run {
         sort_outcome_paths_lexicographic(&mut outcome);
     } else if outcome.total() > 0 {
@@ -836,6 +847,78 @@ fn stage_unmerged_paths_matching_pathspecs(
         modified.push(rel.to_owned());
     }
     Ok((modified, removed, rejects))
+}
+
+/// Matched paths whose conflict stages were collapsed to stage 0 (they have a resolve-undo
+/// record) but whose worktree file still contains conflict markers.
+///
+/// Dropping the stages without editing the file (for example `git restore --staged` after
+/// a merge, pick or `stash pop`) must not let the markers be staged as the resolution. No
+/// operation sentinel is required, because `stash pop` leaves none. Resolve-undo records
+/// outlive the commit that resolved them, so a path is not refused when every conflict block
+/// in its worktree copy is already in its `HEAD` blob (marker text committed on purpose); a
+/// newly written block next to such text is still refused. Costs nothing unless the index
+/// carries resolve-undo records.
+fn collapsed_conflicts_with_markers(
+    repo: &Repository,
+    work_tree: &Path,
+    matches: &impl Fn(&str) -> bool,
+    index: &Index,
+    rules: &WorktreeRules,
+) -> Result<Vec<String>> {
+    let Some(undo) = index.resolve_undo.as_ref().filter(|u| !u.is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let mut head_tree: Option<Option<ObjectId>> = None;
+    let mut rejects = Vec::new();
+    for raw_path in undo.keys() {
+        let Ok(rel) = std::str::from_utf8(raw_path) else {
+            continue;
+        };
+        if !matches(rel) {
+            continue;
+        }
+        let Some(entry) = index.get(raw_path, 0) else {
+            continue;
+        };
+        let abs = work_tree.join(rel);
+        let meta = match fs::symlink_metadata(&abs) {
+            Ok(m) => m,
+            Err(e) if worktree_path_is_missing(&e) => continue,
+            Err(e) => return Err(Error::Io(e)),
+        };
+        if !crate::rerere::worktree_metadata_needs_conflict_marker_inspection(&meta, entry.mode) {
+            continue;
+        }
+        let marker_size = rules
+            .file_attrs(rel, false)
+            .effective_conflict_marker_size();
+        let wt_bytes = fs::read(&abs).map_err(Error::Io)?;
+        if !crate::rerere::worktree_bytes_have_unresolved_conflict_markers(&wt_bytes, marker_size) {
+            continue;
+        }
+        let tree = match head_tree {
+            Some(tree) => tree,
+            None => *head_tree.insert(head_tree_oid(repo)?),
+        };
+        let markers_already_committed = tree
+            .and_then(|tree| crate::merge_diff::read_blob_at_path(repo.odb(), &tree, rel))
+            .is_some_and(|blob| {
+                crate::rerere::conflict_blocks_already_committed(&wt_bytes, &blob, marker_size)
+            });
+        if !markers_already_committed {
+            rejects.push(rel.to_owned());
+        }
+    }
+    Ok(rejects)
+}
+
+fn head_tree_oid(repo: &Repository) -> Result<Option<ObjectId>> {
+    match crate::state::resolve_head_for_repository(repo)? {
+        crate::state::HeadState::Branch { oid: Some(oid), .. }
+        | crate::state::HeadState::Detached { oid } => Ok(Some(repo.odb().commit_tree(&oid)?)),
+        _ => Ok(None),
+    }
 }
 
 fn worktree_path_is_missing(err: &std::io::Error) -> bool {

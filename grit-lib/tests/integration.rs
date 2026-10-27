@@ -1432,6 +1432,9 @@ mod restore_git_compat;
 #[path = "restore_hunks_git_compat.rs"]
 mod restore_hunks_git_compat;
 #[cfg(feature = "full-tests")]
+#[path = "restore_staged_conflict_issue_2155.rs"]
+mod restore_staged_conflict_issue_2155;
+#[cfg(feature = "full-tests")]
 #[path = "rev_list_bitmaps.rs"]
 mod rev_list_bitmaps;
 #[cfg(feature = "full-tests")]
