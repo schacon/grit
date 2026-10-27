@@ -558,40 +558,6 @@ impl FixtureCache {
         Ok(cached)
     }
 
-    /// Cache a fixture by extracting a tar archive with the system `tar`.
-    ///
-    /// `name` is the cache entry name and `archive` is the tar file to extract.
-    /// The returned path points to the cached fixture. Existing cache entries
-    /// are reused. Returns an I/O error when `tar` cannot run or exits non-zero.
-    pub fn cache_tar(&self, name: &str, archive: impl AsRef<Path>) -> io::Result<PathBuf> {
-        let cached = self.root.join(name);
-        if cached.exists() {
-            return Ok(cached);
-        }
-
-        let staging = self.root.join(format!("{name}.tmp-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&staging);
-        fs::create_dir_all(&staging)?;
-
-        let out = Command::new("tar")
-            .arg("-xf")
-            .arg(archive.as_ref())
-            .arg("-C")
-            .arg(&staging)
-            .output()?;
-
-        if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            return Err(io::Error::other(format!(
-                "extract {}: {stderr}",
-                archive.as_ref().display()
-            )));
-        }
-
-        fs::rename(&staging, &cached)?;
-        Ok(cached)
-    }
-
     /// Materialize a fresh tempdir copy of a cached fixture.
     ///
     /// `name` is the cache entry name. The returned tempdir owns an independent
