@@ -515,7 +515,9 @@ fn serve_v2(
             &format!("object-format={}", repo.odb().hash_algo().name()),
         )?;
         if policy.advertise_object_info {
-            write_line(output, "object-info")?;
+            // Name the attributes `object-info` answers, as Git 2.56+ does;
+            // clients match the capability by key, so older ones still see it.
+            write_line(output, "object-info=size type")?;
         }
         write_flush(output)?;
         if opts.advertise_refs {

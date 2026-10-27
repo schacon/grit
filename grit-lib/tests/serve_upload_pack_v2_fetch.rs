@@ -413,11 +413,7 @@ fn v2_advertisement_includes_server_option_object_info_and_wait_for_done() {
         .into_iter()
         .filter(|l| !matches!(l.as_str(), "<flush>" | "<delim>" | "version 2"))
         .collect();
-    for required in [
-        "server-option",
-        "object-info",
-        "fetch=shallow wait-for-done",
-    ] {
+    for required in ["server-option", "fetch=shallow wait-for-done"] {
         assert!(
             grit_caps.iter().any(|l| l == required),
             "grit missing {required:?}; caps={grit_caps:?}"
@@ -426,6 +422,31 @@ fn v2_advertisement_includes_server_option_object_info_and_wait_for_done() {
             git_caps.iter().any(|l| l == required),
             "git missing {required:?}; caps={git_caps:?}"
         );
+    }
+    assert!(
+        grit_caps.iter().any(|l| l == "object-info=size type"),
+        "grit must advertise the object-info attributes it answers; caps={grit_caps:?}"
+    );
+    // Git before 2.56 advertises a bare `object-info`; newer Git lists the
+    // attributes it answers. Every attribute Git lists must be one grit lists.
+    let git_object_info = git_caps
+        .iter()
+        .find_map(|l| object_info_attributes(l))
+        .unwrap_or_else(|| panic!("git missing object-info; caps={git_caps:?}"));
+    for attr in git_object_info {
+        assert!(
+            ["size", "type"].contains(&attr),
+            "git object-info attribute {attr:?} not advertised by grit; caps={git_caps:?}"
+        );
+    }
+}
+
+/// Attributes of an `object-info` capability line (empty for a bare
+/// `object-info`), or `None` when `line` is another capability.
+fn object_info_attributes(line: &str) -> Option<Vec<&str>> {
+    match line.strip_prefix("object-info")? {
+        "" => Some(Vec::new()),
+        rest => rest.strip_prefix('=').map(|v| v.split(' ').collect()),
     }
 }
 
@@ -448,9 +469,14 @@ fn object_info_is_not_advertised_without_transfer_advertise_object_info() {
     assert!(git_out.status.success());
     let git_caps = response_sections(&git_out.stdout);
     let grit_caps = v2_capability_lines(&bare);
-    assert!(!git_caps.iter().any(|l| l == "object-info"), "{git_caps:?}");
     assert!(
-        !grit_caps.iter().any(|l| l == "object-info"),
+        !git_caps.iter().any(|l| object_info_attributes(l).is_some()),
+        "{git_caps:?}"
+    );
+    assert!(
+        !grit_caps
+            .iter()
+            .any(|l| object_info_attributes(l).is_some()),
         "{grit_caps:?}"
     );
 
