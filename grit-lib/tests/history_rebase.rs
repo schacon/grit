@@ -16,8 +16,8 @@ use grit_lib::revwalk::history::{
 };
 use support::assert_git_fsck_strict;
 use support::{
-    build_commit_dag, commit_file, git, git_rev_parse_verify, git_version_at_least, open_grit_repo,
-    HistoryRepo,
+    build_commit_dag, commit_file, git, git_merge_base_is_ancestor, git_rev_parse_verify,
+    git_version_at_least, open_grit_repo, HistoryRepo,
 };
 
 fn open_grit(wt: &std::path::Path) -> Repository {
@@ -1095,4 +1095,243 @@ fn rebase_onto_flatten_linearizes_topic_merge_like_git() {
     assert_eq!(git_rev_parse(wt, "main"), tip, "same line as `git rebase`");
     assert_eq!(git_rev_parse(wt, "main~3"), onto);
     assert_git_fsck_strict(wt);
+}
+
+/// Copy of the repository at `wt`, for running the same rebase with system `git`.
+fn git_oracle_copy(wt: &std::path::Path) -> tempfile::TempDir {
+    let copy = tempfile::tempdir().expect("git copy");
+    let status = std::process::Command::new("cp")
+        .args([
+            "-a",
+            &format!("{}/.", wt.display()),
+            &copy.path().to_string_lossy(),
+        ])
+        .status()
+        .expect("cp");
+    assert!(status.success(), "copy repository for git");
+    copy
+}
+
+/// `<tree> <subject>` of every commit in `upstream..branch`, oldest first.
+fn replayed_shape(wt: &std::path::Path, upstream: &str, branch: &str) -> Vec<String> {
+    git(
+        wt,
+        &[
+            "log",
+            "--reverse",
+            "--format=%T %s",
+            &format!("{upstream}..{branch}"),
+        ],
+    )
+    .lines()
+    .map(str::to_owned)
+    .collect()
+}
+
+fn subjects(shape: &[String]) -> Vec<&str> {
+    shape
+        .iter()
+        .map(|line| line.split_once(' ').map_or("", |(_, subject)| subject))
+        .collect()
+}
+
+fn tracked_paths(wt: &std::path::Path, rev: &str) -> Vec<String> {
+    git(wt, &["ls-tree", "-r", "--name-only", rev])
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// `grit rebase main` on the checked-out `feat`, with every descendant branch updated.
+fn rebase_feat_onto_main(wt: &std::path::Path) -> grit_lib::revwalk::history::RewritePlan {
+    let grit = open_grit(wt);
+    let request = rebase_request(git_rev_parse(wt, "main"), None, git_rev_parse(wt, "feat"));
+    let opts = rebase_opts(RefScope::Branches, EmptyPolicy::Drop, true);
+    let plan = match plan_rebase(&grit, &request, &opts).expect("plan_rebase") {
+        RebasePlan::Plan(plan) => plan,
+        other => panic!("expected a plan, got {other:?}"),
+    };
+    apply_plan(&grit, &plan);
+    plan
+}
+
+/// Rebase `feat` onto `main` with grit and with `git rebase main` on a copy, and check both
+/// replay the same commits (trees and subjects) directly on top of `main`.
+fn assert_skipping_rebase_matches_git(wt: &std::path::Path, expected: &[&str]) {
+    let git_wt = git_oracle_copy(wt);
+    let main = git_rev_parse(wt, "main");
+    rebase_feat_onto_main(wt);
+    git(git_wt.path(), &["rebase", "main"]);
+
+    let grit_shape = replayed_shape(wt, "main", "feat");
+    assert_eq!(subjects(&grit_shape), expected);
+    assert_eq!(grit_shape, replayed_shape(git_wt.path(), "main", "feat"));
+    assert_eq!(
+        git_rev_parse(wt, &format!("feat~{}", expected.len())),
+        main,
+        "replayed commits sit directly on main"
+    );
+    assert_eq!(
+        tracked_paths(wt, "feat"),
+        tracked_paths(git_wt.path(), "feat")
+    );
+    assert_git_fsck_strict(wt);
+    assert_git_fsck_strict(git_wt.path());
+}
+
+#[test]
+fn rebase_skipping_duplicate_tip_keeps_earlier_commits_like_git() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "base", "0\n", "base");
+    git(wt, &["switch", "-qc", "feat"]);
+    commit_file(wt, "x", "x\n", "x1");
+    git(wt, &["switch", "-q", "main"]);
+    let m1 = commit_file(wt, "m1", "m1\n", "m1");
+    commit_file(wt, "m2", "m2\n", "m2");
+    git(wt, &["switch", "-q", "feat"]);
+    git(wt, &["cherry-pick", &m1.to_hex()]);
+
+    assert_skipping_rebase_matches_git(wt, &["x1"]);
+    assert_eq!(tracked_paths(wt, "feat"), ["base", "m1", "m2", "x"]);
+}
+
+#[test]
+fn rebase_skipping_duplicate_mid_stack_keeps_both_sides_like_git() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "base", "0\n", "base");
+    git(wt, &["switch", "-qc", "feat"]);
+    commit_file(wt, "x", "x\n", "x1");
+    git(wt, &["switch", "-q", "main"]);
+    let m1 = commit_file(wt, "m1", "m1\n", "m1");
+    commit_file(wt, "m2", "m2\n", "m2");
+    commit_file(wt, "m3", "m3\n", "m3");
+    git(wt, &["switch", "-q", "feat"]);
+    git(wt, &["cherry-pick", &m1.to_hex()]);
+    commit_file(wt, "y", "y\n", "y1");
+
+    assert_skipping_rebase_matches_git(wt, &["x1", "y1"]);
+    assert_eq!(
+        tracked_paths(wt, "feat"),
+        ["base", "m1", "m2", "m3", "x", "y"]
+    );
+}
+
+#[test]
+fn rebase_skipping_first_commit_whose_match_is_not_onto_lands_on_onto_like_git() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "base", "0\n", "base");
+    git(wt, &["switch", "-qc", "feat"]);
+    git(wt, &["switch", "-q", "main"]);
+    let m1 = commit_file(wt, "m1", "m1\n", "m1");
+    commit_file(wt, "m2", "m2\n", "m2");
+    commit_file(wt, "m3", "m3\n", "m3");
+    git(wt, &["switch", "-q", "feat"]);
+    git(wt, &["cherry-pick", &m1.to_hex()]);
+    commit_file(wt, "y", "y\n", "y1");
+
+    assert_skipping_rebase_matches_git(wt, &["y1"]);
+}
+
+#[test]
+fn rebase_skipping_duplicate_keeps_stacked_refs_on_the_rewritten_prefix() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "base", "0\n", "base");
+    git(wt, &["switch", "-qc", "feat"]);
+    let x1 = commit_file(wt, "x", "x\n", "x1");
+    git(wt, &["branch", "below"]);
+    git(wt, &["switch", "-q", "main"]);
+    let m1 = commit_file(wt, "m1", "m1\n", "m1");
+    commit_file(wt, "m2", "m2\n", "m2");
+    git(wt, &["switch", "-q", "feat"]);
+    git(wt, &["cherry-pick", &m1.to_hex()]);
+    let skipped = git_rev_parse(wt, "HEAD");
+    git(wt, &["branch", "at-skip"]);
+    commit_file(wt, "y", "y\n", "y1");
+    let main = git_rev_parse(wt, "main");
+
+    let plan = rebase_feat_onto_main(wt);
+
+    let row = plan
+        .commits
+        .iter()
+        .find(|row| row.old == skipped)
+        .expect("row for the skipped commit");
+    assert!(row.reused);
+    assert_eq!(row.new, Some(m1), "the row names the upstream equivalent");
+
+    let new_x1 = git_rev_parse(wt, "feat~1");
+    assert_ne!(new_x1, x1);
+    assert_eq!(git_rev_parse(wt, "feat~2"), main);
+    assert_eq!(subjects(&replayed_shape(wt, "main", "feat")), ["x1", "y1"]);
+    assert_eq!(
+        git_rev_parse(wt, "below"),
+        new_x1,
+        "a ref before the skip follows its rewritten commit"
+    );
+    assert_eq!(
+        git_rev_parse(wt, "at-skip"),
+        new_x1,
+        "a ref at the skipped commit moves to the replay chain so far"
+    );
+    assert_git_fsck_strict(wt);
+}
+
+#[test]
+fn rebase_skipping_duplicate_after_merge_keeps_stacked_refs_and_tree_like_git() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "base", "0\n", "base");
+    git(wt, &["switch", "-qc", "feat-a"]);
+    commit_file(wt, "a1", "a1\n", "a1");
+    commit_file(wt, "a2", "a2\n", "a2");
+    git(wt, &["switch", "-qc", "side"]);
+    commit_file(wt, "s", "s\n", "s1");
+    git(wt, &["switch", "-qc", "feat", "feat-a"]);
+    git(wt, &["merge", "-q", "--no-ff", "-m", "merge side", "side"]);
+    git(wt, &["switch", "-q", "main"]);
+    let m1 = commit_file(wt, "m1", "m1\n", "m1");
+    commit_file(wt, "m2", "m2\n", "m2");
+    git(wt, &["switch", "-q", "feat"]);
+    git(wt, &["cherry-pick", &m1.to_hex()]);
+    commit_file(wt, "b", "b\n", "b1");
+    let main = git_rev_parse(wt, "main");
+    let git_wt = git_oracle_copy(wt);
+
+    rebase_feat_onto_main(wt);
+    git(git_wt.path(), &["rebase", "--rebase-merges", "main"]);
+
+    assert_eq!(
+        git_rev_parse(wt, "feat^{tree}"),
+        git_rev_parse(git_wt.path(), "feat^{tree}")
+    );
+    assert_eq!(
+        tracked_paths(wt, "feat"),
+        ["a1", "a2", "b", "base", "m1", "m2", "s"]
+    );
+    let mut grit_subjects = replayed_shape(wt, "main", "feat");
+    let mut git_subjects = replayed_shape(git_wt.path(), "main", "feat");
+    grit_subjects.sort();
+    git_subjects.sort();
+    assert_eq!(grit_subjects, git_subjects);
+    for stacked in ["feat-a", "side"] {
+        assert!(
+            git_merge_base_is_ancestor(wt, "main", stacked),
+            "{stacked} is rebased onto main"
+        );
+        assert!(
+            git_merge_base_is_ancestor(wt, stacked, "feat"),
+            "{stacked} stays part of feat"
+        );
+        assert_eq!(
+            git(wt, &["log", "-1", "--format=%s", stacked]).trim(),
+            if stacked == "feat-a" { "a2" } else { "s1" }
+        );
+    }
+    assert_ne!(git_rev_parse(wt, "feat-a"), main);
+    assert_git_fsck_strict(wt);
+    assert_git_fsck_strict(git_wt.path());
 }

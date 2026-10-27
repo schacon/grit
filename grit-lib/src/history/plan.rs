@@ -266,9 +266,8 @@ pub(crate) fn plan_rewrite_with_order_resumable_seeded(
 ///
 /// `linearize_onto` makes the replay one line starting at that commit, the way `git rebase`
 /// without `--rebase-merges` replays a branch: a [`CommitEdit::Drop`] or [`CommitEdit::Reuse`]
-/// entry maps to the tip of the line built so far instead of its own parent or the reused
-/// commit, so dropped merges and patches already upstream never pull the branch back off the
-/// line. The caller chains the replayed commits with [`CommitEdit::Reparent`] edits.
+/// entry maps to the tip of the line built so far instead of its own parent, so dropped merges
+/// and patches already upstream never pull the branch back off the line. The caller chains the replayed commits with [`CommitEdit::Reparent`] edits.
 pub(crate) fn plan_rewrite_with_order(
     repo: &Repository,
     edits: &HistoryEdits,
@@ -412,10 +411,12 @@ fn plan_rewrite_with_order_impl(
             return Err(HistoryError::InsertBeforeOnMerge { commit: old_oid });
         }
 
-        if let Some(CommitEdit::Reuse(existing)) = edit {
-            // A linear replay drops a patch that is already upstream: descendants and refs
-            // continue from the linear tip, while the row still names the upstream commit.
-            mapping.insert(old_oid, linear_tip.unwrap_or(*existing));
+        if let Some(CommitEdit::Reuse { existing, parent }) = edit {
+            // Descendants and refs continue from the replay chain, while the row still names
+            // the upstream commit.
+            let continuation =
+                linear_tip.unwrap_or_else(|| mapping.get(parent).copied().unwrap_or(*parent));
+            mapping.insert(old_oid, continuation);
             rewritten.push(RewrittenCommit {
                 old: old_oid,
                 new: Some(*existing),
@@ -621,7 +622,7 @@ fn plan_rewrite_with_order_impl(
                     };
                     Ok((oid, Some(oid)))
                 }
-                Some(CommitEdit::Drop) | Some(CommitEdit::Reuse(_)) => {
+                Some(CommitEdit::Drop) | Some(CommitEdit::Reuse { .. }) => {
                     unreachable!("handled above")
                 }
             }
@@ -1219,7 +1220,7 @@ fn replay_stop_parent(
                 vec![mapped_first_parent(mapping, old, old_oid)?]
             }
         }
-        Some(CommitEdit::Drop) | Some(CommitEdit::Reuse(_)) => {
+        Some(CommitEdit::Drop) | Some(CommitEdit::Reuse { .. }) => {
             unreachable!("handled above")
         }
         Some(CommitEdit::InsertBefore(_)) | Some(CommitEdit::SplitBefore { .. }) | None => {

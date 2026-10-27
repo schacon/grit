@@ -783,6 +783,51 @@ fn multi_step_conflict_continue_keeps_done_commits_in_history() {
 }
 
 #[test]
+fn continue_after_stop_chains_past_a_commit_already_upstream() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "f.txt", "base\n", "base");
+    let upstream = git_oid(wt, "HEAD");
+    git(wt, &["switch", "-c", "topic"]);
+    git(wt, &["switch", "main"]);
+    commit_file(wt, "m1.txt", "m1\n", "m1");
+    let m1 = git_oid(wt, "HEAD");
+    commit_file(wt, "f.txt", "main\n", "main conflict");
+    let onto = git_oid(wt, "HEAD");
+    git(wt, &["switch", "topic"]);
+    commit_file(wt, "f.txt", "topic\n", "topic conflict");
+    let conflicting = git_oid(wt, "HEAD");
+    git(wt, &["cherry-pick", &m1.to_hex()]);
+    commit_file(wt, "y.txt", "y\n", "y1");
+    let tip = git_oid(wt, "HEAD");
+
+    let mut opts = start_opts(upstream, Some(onto), tip);
+    opts.rebase.skip_applied = true;
+    let grit = open_grit(wt);
+    let stop = match start_rebase(&grit, &opts).expect("start") {
+        RebaseOutcome::Stopped(stop) => stop,
+        other => panic!("expected a stop on the conflicting commit, got {other:?}"),
+    };
+    assert_eq!(stop.commit, conflicting);
+
+    std::fs::write(wt.join("f.txt"), "resolved\n").expect("resolve");
+    git(wt, &["add", "f.txt"]);
+    let grit = open_grit(wt);
+    match continue_rebase(&grit, &opts).expect("continue") {
+        RebaseOutcome::Done { .. } => {}
+        other => panic!("expected done, got {other:?}"),
+    }
+    assert_eq!(
+        git(wt, &["log", "--reverse", "--format=%s", "main..topic"]),
+        "topic conflict\ny1\n",
+        "the skipped commit is dropped and y1 follows the resolved commit"
+    );
+    assert_eq!(git_oid(wt, "topic~2"), onto);
+    assert_eq!(git(wt, &["show", "topic:f.txt"]), "resolved\n");
+    assert_git_fsck_strict(wt);
+}
+
+#[test]
 fn refscope_head_leaves_other_branch_refs_on_continue() {
     let repo = HistoryRepo::init();
     let wt = repo.worktree();

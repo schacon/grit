@@ -25583,7 +25583,9 @@ pub grit_lib::revwalk::history::CommitEdit::Drop
 pub grit_lib::revwalk::history::CommitEdit::InsertBefore(grit_lib::revwalk::history::NewCommit)
 pub grit_lib::revwalk::history::CommitEdit::Reparent
 pub grit_lib::revwalk::history::CommitEdit::Reparent::parent: grit_lib::objects::ObjectId
-pub grit_lib::revwalk::history::CommitEdit::Reuse(grit_lib::objects::ObjectId)
+pub grit_lib::revwalk::history::CommitEdit::Reuse
+pub grit_lib::revwalk::history::CommitEdit::Reuse::existing: grit_lib::objects::ObjectId
+pub grit_lib::revwalk::history::CommitEdit::Reuse::parent: grit_lib::objects::ObjectId
 pub grit_lib::revwalk::history::CommitEdit::Rewrite
 pub grit_lib::revwalk::history::CommitEdit::Rewrite::author: core::option::Option<alloc::string::String>
 pub grit_lib::revwalk::history::CommitEdit::Rewrite::message: core::option::Option<alloc::string::String>

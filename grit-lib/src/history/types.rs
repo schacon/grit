@@ -48,8 +48,19 @@ pub enum CommitEdit {
         /// Replacement first parent for the replay.
         parent: ObjectId,
     },
-    /// Map to an existing commit without writing a new object (patch already applied upstream).
-    Reuse(ObjectId),
+    /// Skip the commit because `existing` already carries its patch (applied upstream).
+    ///
+    /// No object is written and the report row names `existing`, but descendants and refs
+    /// continue from `parent` (mapped through the rewrite, like [`CommitEdit::Reparent`]'s
+    /// parent), so a skipped commit never pulls the rest of the replay back onto an older
+    /// upstream commit.
+    Reuse {
+        /// Upstream commit with the same patch, reported as the commit's replacement.
+        existing: ObjectId,
+        /// Commit that descendants of the skipped commit and refs at it continue from:
+        /// its own first parent, or the replay's new base when it is a root of the range.
+        parent: ObjectId,
+    },
 }
 
 /// Pathspec strings passed to history helpers (same syntax as `git` pathspecs on the CLI).

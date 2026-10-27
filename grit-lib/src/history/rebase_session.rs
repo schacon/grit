@@ -527,6 +527,9 @@ enum PersistedEdit {
     Reuse {
         commit: String,
         existing: String,
+        /// Absent in sessions saved before skipped commits carried their continuation parent.
+        #[serde(default)]
+        parent: Option<String>,
     },
     Drop {
         commit: String,
@@ -560,9 +563,10 @@ fn edits_to_persist(edits: &HistoryEdits) -> Vec<PersistedEdit> {
                 commit: oid_hex(commit),
                 parent: oid_hex(parent),
             },
-            CommitEdit::Reuse(existing) => PersistedEdit::Reuse {
+            CommitEdit::Reuse { existing, parent } => PersistedEdit::Reuse {
                 commit: oid_hex(commit),
                 existing: oid_hex(existing),
+                parent: Some(oid_hex(parent)),
             },
             CommitEdit::Drop => PersistedEdit::Drop {
                 commit: oid_hex(commit),
@@ -597,8 +601,20 @@ fn edits_from_persist(rows: &[PersistedEdit]) -> Result<HistoryEdits, RebaseSess
                     },
                 );
             }
-            PersistedEdit::Reuse { commit, existing } => {
-                edits.insert(parse_oid(commit)?, CommitEdit::Reuse(parse_oid(existing)?));
+            PersistedEdit::Reuse {
+                commit,
+                existing,
+                parent,
+            } => {
+                let existing = parse_oid(existing)?;
+                let parent = parent.as_deref().map(parse_oid).transpose()?;
+                edits.insert(
+                    parse_oid(commit)?,
+                    CommitEdit::Reuse {
+                        existing,
+                        parent: parent.unwrap_or(existing),
+                    },
+                );
             }
             PersistedEdit::Drop { commit } => {
                 edits.insert(parse_oid(commit)?, CommitEdit::Drop);
@@ -1111,7 +1127,47 @@ fn map_json(err: serde_json::Error) -> RebaseSessionError {
 
 #[cfg(test)]
 mod tests {
-    use super::author_script;
+    use super::{author_script, edits_from_persist, edits_to_persist, PersistedEdit};
+    use crate::history::types::{CommitEdit, HistoryEdits};
+    use crate::objects::ObjectId;
+
+    fn oid(byte: u8) -> ObjectId {
+        ObjectId::from_bytes(&[byte; 20]).unwrap_or_else(|_| ObjectId::zero())
+    }
+
+    #[test]
+    fn reuse_edit_round_trips_its_continuation_parent() {
+        let mut edits = HistoryEdits::new();
+        edits.insert(
+            oid(1),
+            CommitEdit::Reuse {
+                existing: oid(2),
+                parent: oid(3),
+            },
+        );
+        let rows = edits_to_persist(&edits);
+        let json = serde_json::to_string(&rows).unwrap_or_default();
+        let parsed: Vec<PersistedEdit> = serde_json::from_str(&json).unwrap_or_default();
+        assert_eq!(edits_from_persist(&parsed).ok(), Some(edits));
+    }
+
+    #[test]
+    fn reuse_edit_saved_without_parent_continues_from_the_reused_commit() {
+        let json = format!(
+            r#"[{{"Reuse":{{"commit":"{}","existing":"{}"}}}}]"#,
+            oid(1).to_hex(),
+            oid(2).to_hex()
+        );
+        let parsed: Vec<PersistedEdit> = serde_json::from_str(&json).unwrap_or_default();
+        let edits = edits_from_persist(&parsed).ok();
+        assert_eq!(
+            edits.and_then(|edits| edits.get(&oid(1)).cloned()),
+            Some(CommitEdit::Reuse {
+                existing: oid(2),
+                parent: oid(2),
+            })
+        );
+    }
 
     #[test]
     fn author_script_quotes_values_and_prefixes_date() {

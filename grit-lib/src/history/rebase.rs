@@ -374,7 +374,13 @@ fn linear_rebase_edits(
     let mut previous = onto;
     for &commit in range {
         if let Some(&existing) = skip_map.get(&commit) {
-            edits.insert(commit, CommitEdit::Reuse(existing));
+            edits.insert(
+                commit,
+                CommitEdit::Reuse {
+                    existing,
+                    parent: previous,
+                },
+            );
             continue;
         }
         if drop.contains(&commit) || commit_parents(repo, commit)?.len() > 1 {
@@ -389,6 +395,9 @@ fn linear_rebase_edits(
 
 /// Edits that replay `range` onto `onto` keeping its shape: local roots move onto `onto` (or
 /// onto the replayed mainline of the merge that brings them in) and merges are replayed.
+///
+/// A commit whose patch is already in `fork..onto` is skipped: what follows it continues from
+/// where the commit itself would have been replayed onto, never from the upstream equivalent.
 fn merge_preserving_rebase_edits(
     repo: &Repository,
     fork: ObjectId,
@@ -399,28 +408,22 @@ fn merge_preserving_rebase_edits(
     let range_set: HashSet<ObjectId> = range.iter().copied().collect();
     let mut edits = HistoryEdits::new();
     for &commit in range {
-        if let Some(&existing) = skip_map.get(&commit) {
-            edits.insert(commit, CommitEdit::Reuse(existing));
-            continue;
-        }
         let parents = commit_parents(repo, commit)?;
         let is_local_root = parents
             .iter()
             .all(|parent| *parent == fork || !range_set.contains(parent));
-        if is_local_root {
-            let reparent_onto = if let Some(mainline) =
-                mainline_anchor_for_parallel_root(repo, commit, &range_set)?
-            {
-                mainline
-            } else {
-                onto
-            };
-            edits.insert(
-                commit,
-                CommitEdit::Reparent {
-                    parent: reparent_onto,
-                },
-            );
+        let reparent_onto = if is_local_root {
+            Some(mainline_anchor_for_parallel_root(repo, commit, &range_set)?.unwrap_or(onto))
+        } else {
+            None
+        };
+        if let Some(&existing) = skip_map.get(&commit) {
+            let parent = reparent_onto.or(parents.first().copied()).unwrap_or(onto);
+            edits.insert(commit, CommitEdit::Reuse { existing, parent });
+            continue;
+        }
+        if let Some(parent) = reparent_onto {
+            edits.insert(commit, CommitEdit::Reparent { parent });
         }
     }
     Ok(edits)
