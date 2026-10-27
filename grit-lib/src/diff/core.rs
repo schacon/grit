@@ -7509,87 +7509,6 @@ fn read_added_entry_bytes(
     fs::read(root.join(path)).ok()
 }
 
-fn modified_as_copy_from_sources(
-    odb: &Odb,
-    work_root: Option<&Path>,
-    e: &DiffEntry,
-    threshold: u32,
-    sources: &[(String, ObjectId, bool)],
-    source_contents: &[Option<Vec<u8>>],
-    source_tree_entries: &[(String, FileMode, ObjectId)],
-) -> Result<Option<DiffEntry>> {
-    fn regular_file_mode(mode: FileMode) -> bool {
-        mode == FileMode::REGULAR || mode == FileMode::EXECUTABLE
-    }
-
-    if e.status != DiffStatus::Modified || !regular_file_mode(e.new_mode) {
-        return Ok(None);
-    }
-    let Some(new_data) = read_added_entry_bytes(odb, e, work_root) else {
-        return Ok(None);
-    };
-    let new_oid_eff = if e.new_oid != zero_oid() {
-        e.new_oid
-    } else {
-        odb.hash(ObjectKind::Blob, &new_data)?
-    };
-
-    let mut best: Option<(usize, u32)> = None;
-    for (si, (src_path, src_oid, is_deleted)) in sources.iter().enumerate() {
-        if *is_deleted {
-            continue;
-        }
-        if e.new_path.as_deref() == Some(src_path.as_str()) {
-            continue;
-        }
-        let src_mode = source_tree_entries
-            .iter()
-            .find(|(p, _, _)| p == src_path)
-            .map_or(FileMode::REGULAR, |(_, m, _)| *m);
-        if !regular_file_mode(src_mode) {
-            continue;
-        }
-
-        let score = if *src_oid == new_oid_eff {
-            100
-        } else {
-            match (&source_contents[si], Some(new_data.as_slice())) {
-                (Some(old_data), Some(nd)) => compute_similarity(old_data, nd),
-                _ => 0,
-            }
-        };
-        if score >= threshold {
-            let replace = match best {
-                None => true,
-                Some((_, s)) => score > s,
-            };
-            if replace {
-                best = Some((si, score));
-            }
-        }
-    }
-
-    let Some((si, score)) = best else {
-        return Ok(None);
-    };
-    let (src_path, src_oid, _) = &sources[si];
-    let src_mode = source_tree_entries
-        .iter()
-        .find(|(p, _, _)| p == src_path)
-        .map_or(e.old_mode, |(_, m, _)| *m);
-
-    Ok(Some(DiffEntry {
-        status: DiffStatus::Copied,
-        old_path: Some(src_path.clone()),
-        new_path: e.new_path.clone(),
-        old_mode: src_mode,
-        new_mode: e.new_mode,
-        old_oid: *src_oid,
-        new_oid: e.new_oid,
-        score: Some(score),
-    }))
-}
-
 /// Detect renames by pairing Deleted and Added entries with similar content.
 ///
 /// `threshold` is the minimum similarity percentage (0–100) for a pair to
@@ -8323,23 +8242,10 @@ pub fn detect_copies_with_policy(
         }
     }
 
-    let mut final_result = Vec::with_capacity(result.len());
-    for e in result {
-        if let Some(c) = modified_as_copy_from_sources(
-            odb,
-            work_root,
-            &e,
-            threshold,
-            &sources,
-            &source_contents,
-            &source_modes,
-        )? {
-            final_result.push(c);
-        } else {
-            final_result.push(e);
-        }
-    }
-
+    // Like `git diff -C`, only created paths become copies: a modification is a copy
+    // destination only after `-B` splits it into a deletion and an addition, which
+    // `postprocess_diff_entries` does before calling this.
+    let mut final_result = result;
     sort_entries_by_path(&mut final_result);
     Ok(final_result)
 }
@@ -14314,6 +14220,25 @@ mod line_coverage_tests {
                 .iter()
                 .all(|p| *p == (FileMode::REGULAR, FileMode::REGULAR)),
             "{pairs:?}"
+        );
+    }
+
+    #[test]
+    fn detect_copies_keeps_modifications_as_modifications() {
+        // `git diff -C` reports `b` as modified even though its new content equals the
+        // old content of the also-modified `a`: only created paths become copies.
+        let temp = TempDir::new().expect("tempdir");
+        let odb = Odb::new(temp.path());
+        let one = odb.write(ObjectKind::Blob, b"1\n").expect("blob");
+        let two = odb.write(ObjectKind::Blob, b"2\n").expect("blob");
+        let old_tree = write_tree(&odb, &[("a", one), ("b", two)]);
+        let new_tree = write_tree(&odb, &[("a", two), ("b", one)]);
+        let entries = diff_trees(&odb, Some(&old_tree), Some(&new_tree), "").expect("diff");
+        let result = detect_copies(&odb, None, entries, 50, false, &[]).expect("copies");
+        let statuses: Vec<_> = result.iter().map(|e| (e.path(), e.status)).collect();
+        assert_eq!(
+            statuses,
+            [("a", DiffStatus::Modified), ("b", DiffStatus::Modified)]
         );
     }
 
