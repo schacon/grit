@@ -59,7 +59,13 @@ pub struct PushRequest {
     pub refspecs: Vec<String>,
     /// Push all local tags (`--tags`).
     pub tags: bool,
-    /// Remote refs to delete (`--delete`).
+    /// Delete the remote refs named in [`Self::refspecs`] instead of pushing them (`--delete`).
+    ///
+    /// Every refspec must then be a plain ref name (no `:`); see
+    /// [`PushPlanError::DeleteNotPlainName`].
+    pub delete_refs: bool,
+    /// Additional remote refs to delete, planned together with [`Self::refspecs`] as when
+    /// [`Self::delete_refs`] is set.
     pub delete: Vec<String>,
     /// Force or force-with-lease mode from CLI flags.
     pub force: ForceMode,
@@ -169,6 +175,15 @@ pub enum PushPlanError {
     /// `--force-with-lease=<rev>` with more than one ref update.
     #[error("--force-with-lease=<rev> requires pushing exactly one ref")]
     LeaseValueRequiresSingleRef,
+    /// A delete push was given a refspec (`src:dst`) instead of a plain remote ref name.
+    #[error("cannot delete '{spec}': --delete takes ref names, not src:dst refspecs")]
+    DeleteNotPlainName {
+        /// The offending refspec.
+        spec: String,
+    },
+    /// A delete push named no ref to delete.
+    #[error("--delete needs at least one ref to delete")]
+    DeleteWithoutRefs,
     /// Other planning failure.
     #[error("{0}")]
     Message(String),
@@ -202,13 +217,22 @@ pub fn parse_force_mode(
 ///
 /// When `ctx.remote_ref_names` is empty, delete/ref DWIM still uses local refs
 /// and falls back to Git's default `refs/heads/<name>` for deletes.
+///
+/// A delete push ([`PushRequest::delete_refs`] or a non-empty [`PushRequest::delete`]) plans one
+/// deletion per name in `delete` and `refspecs`, and nothing else.
+///
+/// # Errors
+///
+/// Besides remote and refspec resolution failures: [`PushPlanError::DeleteNotPlainName`] when a
+/// delete push is given a `src:dst` refspec, and [`PushPlanError::DeleteWithoutRefs`] when it
+/// names no ref. Both are reported before the remote is contacted.
 pub fn resolve_push(
     repo: &Repository,
     config: &ConfigSet,
     request: &PushRequest,
     ctx: &PushPlanContext,
 ) -> PlanResult<ResolvedPush> {
-    if !request.delete.is_empty() {
+    if request.delete_refs || !request.delete.is_empty() {
         return resolve_delete_push(repo, config, request, ctx);
     }
     if request.tags {
@@ -385,16 +409,24 @@ fn resolve_delete_push(
     request: &PushRequest,
     ctx: &PushPlanContext,
 ) -> PlanResult<ResolvedPush> {
+    let names: Vec<&String> = request.delete.iter().chain(&request.refspecs).collect();
+    if let Some(spec) = names.iter().find(|name| name.contains(':')) {
+        return Err(PushPlanError::DeleteNotPlainName {
+            spec: (*spec).clone(),
+        });
+    }
+    if names.is_empty() {
+        return Err(PushPlanError::DeleteWithoutRefs);
+    }
     let remote = configured_remote_for_push(repo, config, request.remote.as_deref())?;
     validate_remote(config, &remote)?;
-    let specs = request
-        .delete
-        .iter()
+    let specs = names
+        .into_iter()
         .map(|name| {
             let dst = resolve_push_delete_ref(repo.git_dir(), &ctx.remote_ref_names, name);
-            Ok(push_spec(None, None, dst, false, true))
+            push_spec(None, None, dst, false, true)
         })
-        .collect::<PlanResult<Vec<_>>>()?;
+        .collect::<Vec<_>>();
     let branch_label = delete_branch_label(&specs);
     let mut resolved = ResolvedPush {
         remote,
@@ -1670,5 +1702,110 @@ mod tests {
         assert_eq!(resolved.branch_label.as_deref(), Some("v1"));
         assert_eq!(resolved.kind, PushPlanKind::Refspecs);
         assert_eq!(resolved.specs[0].dst, "refs/tags/v1");
+    }
+
+    fn delete_request(refspecs: &[&str]) -> PushRequest {
+        PushRequest {
+            remote: Some("origin".to_owned()),
+            refspecs: strings(refspecs),
+            delete_refs: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn delete_push_plans_every_plain_name() {
+        let (_tmp, repo) = init_repo();
+        let config = config_from("[remote \"origin\"]\n\turl = /tmp/o.git\n");
+        let ctx = PushPlanContext {
+            remote_ref_names: HashSet::from(["refs/tags/v1".to_owned()]),
+            ..Default::default()
+        };
+        let resolved = resolve_push(
+            &repo,
+            &config,
+            &delete_request(&["a", "refs/heads/b", "v1", "+c", "HEAD"]),
+            &ctx,
+        )
+        .expect("resolve delete push");
+        assert_eq!(resolved.kind, PushPlanKind::Delete);
+        assert_eq!(resolved.branch_label, None);
+        let dsts: Vec<_> = resolved.specs.iter().map(|s| s.dst.as_str()).collect();
+        assert_eq!(
+            dsts,
+            [
+                "refs/heads/a",
+                "refs/heads/b",
+                "refs/tags/v1",
+                "refs/heads/+c",
+                "refs/heads/HEAD"
+            ]
+        );
+        assert!(resolved
+            .specs
+            .iter()
+            .all(|s| s.delete && !s.force && s.src.is_none()));
+    }
+
+    #[test]
+    fn delete_push_unions_delete_list_with_refspecs() {
+        let (_tmp, repo) = init_repo();
+        let config = config_from("[remote \"origin\"]\n\turl = /tmp/o.git\n");
+        let request = PushRequest {
+            delete: strings(&["a"]),
+            ..delete_request(&["b"])
+        };
+        let resolved = resolve_push(&repo, &config, &request, &PushPlanContext::default())
+            .expect("resolve delete push");
+        let dsts: Vec<_> = resolved.specs.iter().map(|s| s.dst.as_str()).collect();
+        assert_eq!(dsts, ["refs/heads/a", "refs/heads/b"]);
+        assert_eq!(
+            resolve_push(
+                &repo,
+                &config,
+                &PushRequest {
+                    delete_refs: false,
+                    ..request
+                },
+                &PushPlanContext::default(),
+            )
+            .map(|r| r.specs.len()),
+            Ok(2)
+        );
+    }
+
+    #[test]
+    fn delete_push_rejects_colon_refspec() {
+        let (_tmp, repo) = init_repo();
+        let config = config_from("[remote \"origin\"]\n\turl = /tmp/o.git\n");
+        for spec in ["HEAD:refs/heads/release", ":b", "a:"] {
+            let err = resolve_push(
+                &repo,
+                &config,
+                &delete_request(&["ok", spec]),
+                &PushPlanContext::default(),
+            )
+            .expect_err("colon refspec with --delete");
+            assert_eq!(
+                err,
+                PushPlanError::DeleteNotPlainName {
+                    spec: spec.to_owned()
+                }
+            );
+            assert!(err.to_string().contains(spec), "{err}");
+        }
+    }
+
+    #[test]
+    fn delete_push_without_refs_is_an_error() {
+        let (_tmp, repo) = init_repo();
+        let err = resolve_push(
+            &repo,
+            &ConfigSet::new(),
+            &delete_request(&[]),
+            &PushPlanContext::default(),
+        )
+        .expect_err("empty delete");
+        assert_eq!(err, PushPlanError::DeleteWithoutRefs);
     }
 }
