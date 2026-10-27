@@ -1,18 +1,17 @@
 //! Reflog listing, deletion, and expiry for one [`Repository`](crate::repo::Repository).
 
 use std::ops::ControlFlow;
-use std::path::Path;
 
 use crate::error::{Error, Result};
 use crate::reflog::{
-    delete_reflog_entries, delete_reflog_entries_rechain, expire_reflog_git, list_reflog_refs,
-    load_gc_reflog_expire_config, parse_reflog_expire_spec, parse_reflog_line_for_store,
-    reflog_exists, reflog_identity_timestamp, reflog_path, MessageMatcher, ReflogEntry,
+    delete_reflog_entries_on_store, delete_reflog_entries_rechain_on_store, expire_reflog_git,
+    load_gc_reflog_expire_config, parse_reflog_expire_spec, read_reflog_on_store,
+    reflog_identity_timestamp, reflog_refs_on_store, MessageMatcher, ReflogEntry,
     ReflogExpireParams, ReflogExpireResult,
 };
-use crate::refs::resolve_ref_dwim;
-use crate::refs::store::RefName;
+use crate::refs::store::{RefName, RefStore};
 use crate::repo::Repository;
+use crate::worktree_ref::resolve_ref_dwim;
 
 /// Options for [`RepositoryReflogs::expire`].
 #[derive(Debug, Clone)]
@@ -83,6 +82,11 @@ pub struct ReflogPage {
 }
 
 /// Reflog read/write helpers scoped to an open repository.
+///
+/// Every operation reads and rewrites reflogs through the repository's ref store
+/// ([`Repository::refs`]), so a repository opened with an injected
+/// [`RefStore`](crate::refs::store::RefStore) lists, deletes and expires the reflog that
+/// store holds, exactly like the files and reftable backends.
 #[derive(Debug, Copy, Clone)]
 pub struct RepositoryReflogs<'repo> {
     repo: &'repo Repository,
@@ -99,28 +103,20 @@ impl<'repo> RepositoryReflogs<'repo> {
         self.repo
     }
 
-    /// List refs that currently have a reflog file or reftable log.
+    /// List refs that currently have a reflog in the repository's ref store, sorted by name.
     ///
     /// # Errors
     ///
     /// Propagates ref-store and I/O errors while scanning logs.
     pub fn refs(&self) -> Result<Vec<RefName>> {
-        let git_dir = self.repo.git_dir();
-        let mut out = Vec::new();
-        for name in list_reflog_refs(git_dir)? {
-            if name == "HEAD" {
-                out.push(
-                    RefName::try_from("HEAD")
-                        .map_err(|e| Error::Message(format!("invalid HEAD ref name: {e}")))?,
-                );
-                continue;
-            }
-            if let Ok(parsed) = RefName::try_from(name.as_str()) {
-                out.push(parsed);
-            }
-        }
-        out.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-        Ok(out)
+        Ok(reflog_refs_on_store(self.store())?
+            .iter()
+            .filter_map(|name| RefName::try_from(name.as_str()).ok())
+            .collect())
+    }
+
+    fn store(&self) -> &'repo dyn RefStore {
+        self.repo.refs()
     }
 
     /// Reflog entries for `ref_name`, newest first with indices starting at `0`.
@@ -151,39 +147,33 @@ impl<'repo> RepositoryReflogs<'repo> {
                 truncated: false,
             });
         }
-        let git_dir = self.repo.git_dir();
         let mut state = QueryScanState {
             query,
             entries: Vec::new(),
-            stopped_at_limit: false,
-            more_older_lines_remain: false,
+            limit_reached: false,
+            truncated: false,
         };
-        let storage_format = crate::refs::store::open_ref_store(git_dir)?.format();
-        if storage_format == crate::refs::store::RefStorageFormat::Files {
-            scan_loose_reflog_newest_first(git_dir, &canonical, &mut state)?;
-        } else {
-            scan_store_reflog_newest_first(self.repo, &canonical, &mut state)?;
-        }
-        let truncated = state.truncated();
+        let mut index = 0usize;
+        self.store()
+            .for_each_reflog_entry(&canonical, true, &mut |entry| {
+                let flow = state.visit(index, entry);
+                index += 1;
+                flow
+            })?;
         Ok(ReflogPage {
             entries: state.entries,
-            truncated,
+            truncated: state.truncated,
         })
     }
 
     fn resolve_reflog_canonical(&self, user_ref: &str) -> Result<String> {
-        let git_dir = self.repo.git_dir();
+        let store = self.store();
         for candidate in dwim_reflog_candidates(user_ref) {
-            if crate::reflog::reflog_has_entries_for_dwim(git_dir, &candidate)? {
+            if reflog_has_entries(store, &candidate)? {
                 return Ok(candidate);
             }
         }
-        if !reflog_ref_known(git_dir, user_ref)? {
-            return Err(Error::ReflogUnknownRef {
-                refname: user_ref.to_owned(),
-            });
-        }
-        canonical_reflog_ref(git_dir, user_ref)
+        canonical_reflog_ref(store, user_ref)
     }
 
     /// Delete reflog entries by newest-first `indices`.
@@ -208,13 +198,11 @@ impl<'repo> RepositoryReflogs<'repo> {
                 });
             }
         }
-        let git_dir = self.repo.git_dir();
         if rewrite {
-            delete_reflog_entries_rechain(git_dir, &canonical, indices)?;
+            delete_reflog_entries_rechain_on_store(self.store(), &canonical, indices)
         } else {
-            delete_reflog_entries(git_dir, &canonical, indices)?;
+            delete_reflog_entries_on_store(self.store(), &canonical, indices)
         }
-        Ok(())
     }
 
     /// Expire reflog entries using Git-compatible `gc.reflogExpire*` rules.
@@ -240,14 +228,12 @@ impl<'repo> RepositoryReflogs<'repo> {
             dry_run: options.dry_run,
             verbose: false,
         };
-        let git_dir = self.repo.git_dir();
-        let refnames = expire_target_refs(git_dir, options.all)?;
+        let refnames = expire_target_refs(self.store(), options.all)?;
         let mut total = 0usize;
         let mut refs = Vec::with_capacity(refnames.len());
         for refname in refnames {
             let ReflogExpireResult { pruned, .. } = expire_reflog_git(
                 self.repo,
-                git_dir,
                 &refname,
                 &params,
                 explicit_total,
@@ -271,65 +257,43 @@ impl<'repo> RepositoryReflogs<'repo> {
     }
 
     fn load_reflog(&self, user_ref: &str) -> Result<(String, Vec<ReflogEntry>)> {
-        let git_dir = self.repo.git_dir();
+        let store = self.store();
         for candidate in dwim_reflog_candidates(user_ref) {
-            let entries = read_reflog_via_store(self.repo, &candidate)?;
+            let entries = read_reflog_on_store(store, &candidate)?;
             if !entries.is_empty() {
                 return Ok((candidate, entries));
             }
         }
-        if !reflog_ref_known(git_dir, user_ref)? {
-            return Err(Error::ReflogUnknownRef {
-                refname: user_ref.to_owned(),
-            });
-        }
-        let canonical = canonical_reflog_ref(git_dir, user_ref)?;
-        Ok((canonical, Vec::new()))
+        Ok((canonical_reflog_ref(store, user_ref)?, Vec::new()))
     }
-}
-
-fn read_reflog_via_store(repo: &Repository, refname: &str) -> Result<Vec<ReflogEntry>> {
-    let mut entries = Vec::new();
-    repo.refs()
-        .for_each_reflog_entry(refname, false, &mut |entry| {
-            entries.push(entry.clone());
-            ControlFlow::Continue(())
-        })?;
-    Ok(entries)
 }
 
 struct QueryScanState<'a> {
     query: &'a ReflogQuery,
     entries: Vec<IndexedReflogEntry>,
-    stopped_at_limit: bool,
-    more_older_lines_remain: bool,
+    limit_reached: bool,
+    truncated: bool,
 }
 
 impl QueryScanState<'_> {
-    fn truncated(&self) -> bool {
-        self.stopped_at_limit && self.more_older_lines_remain
-    }
-
+    /// Collect `entry` when it matches; once `limit` matches are in, the next entry only
+    /// marks the page truncated.
     fn visit(&mut self, index: usize, entry: &ReflogEntry) -> ControlFlow<()> {
+        if self.limit_reached {
+            self.truncated = true;
+            return ControlFlow::Break(());
+        }
         if !entry_matches_query(entry, self.query) {
             return ControlFlow::Continue(());
-        }
-        if self.query.limit == Some(0) {
-            self.stopped_at_limit = true;
-            return ControlFlow::Break(());
         }
         self.entries.push(IndexedReflogEntry {
             index,
             entry: entry.clone(),
         });
-        if self
+        self.limit_reached = self
             .query
             .limit
-            .is_some_and(|limit| limit > 0 && self.entries.len() >= limit)
-        {
-            self.stopped_at_limit = true;
-            return ControlFlow::Break(());
-        }
+            .is_some_and(|limit| self.entries.len() >= limit);
         ControlFlow::Continue(())
     }
 }
@@ -354,47 +318,14 @@ fn entry_matches_query(entry: &ReflogEntry, query: &ReflogQuery) -> bool {
     true
 }
 
-fn scan_loose_reflog_newest_first(
-    git_dir: &Path,
-    refname: &str,
-    state: &mut QueryScanState<'_>,
-) -> Result<()> {
-    let path = reflog_path(git_dir, refname);
-    let Some(mut reader) = crate::reflog::ReverseReflogLineReader::open(&path)? else {
-        return Ok(());
-    };
-    let mut index_from_newest = 0usize;
-    while let Some(line_bytes) = reader.next_nonempty_line()? {
-        let line = std::str::from_utf8(&line_bytes).unwrap_or("");
-        let Some(entry) = parse_reflog_line_for_store(line) else {
-            continue;
-        };
-        let index = index_from_newest;
-        index_from_newest += 1;
-        if state.visit(index, &entry).is_break() {
-            state.more_older_lines_remain = reader.has_older_bytes();
-            break;
-        }
-    }
-    Ok(())
-}
-
-fn scan_store_reflog_newest_first(
-    repo: &Repository,
-    refname: &str,
-    state: &mut QueryScanState<'_>,
-) -> Result<()> {
-    let mut index = 0usize;
-    repo.refs()
-        .for_each_reflog_entry(refname, true, &mut |entry| {
-            let flow = state.visit(index, entry);
-            index += 1;
-            if flow.is_break() {
-                state.more_older_lines_remain = true;
-            }
-            flow
-        })?;
-    Ok(())
+/// Whether `refname`'s reflog in `store` has at least one entry (reads only the newest one).
+fn reflog_has_entries(store: &dyn RefStore, refname: &str) -> Result<bool> {
+    let mut found = false;
+    store.for_each_reflog_entry(refname, true, &mut |_| {
+        found = true;
+        ControlFlow::Break(())
+    })?;
+    Ok(found)
 }
 
 fn dwim_reflog_candidates(user_ref: &str) -> Vec<String> {
@@ -406,51 +337,46 @@ fn dwim_reflog_candidates(user_ref: &str) -> Vec<String> {
     out
 }
 
-fn canonical_reflog_ref(git_dir: &Path, user_ref: &str) -> Result<String> {
+/// The ref whose (possibly empty) reflog `user_ref` names: the first DWIM candidate with a
+/// reflog, else the full name of a ref that exists without one.
+fn canonical_reflog_ref(store: &dyn RefStore, user_ref: &str) -> Result<String> {
     for candidate in dwim_reflog_candidates(user_ref) {
-        if reflog_exists(git_dir, &candidate) {
+        if store.reflog_exists(&candidate)? {
             return Ok(candidate);
         }
     }
-    if reflog_ref_known(git_dir, user_ref)? {
-        if user_ref.starts_with("refs/") || user_ref == "HEAD" {
-            return Ok(user_ref.to_owned());
-        }
-        return Ok(format!("refs/heads/{user_ref}"));
+    if !ref_exists_dwim(store, user_ref)? {
+        return Err(Error::ReflogUnknownRef {
+            refname: user_ref.to_owned(),
+        });
     }
-    Err(Error::ReflogUnknownRef {
-        refname: user_ref.to_owned(),
-    })
+    if user_ref.starts_with("refs/") || user_ref == "HEAD" {
+        return Ok(user_ref.to_owned());
+    }
+    Ok(format!("refs/heads/{user_ref}"))
 }
 
-fn reflog_ref_known(git_dir: &Path, user_ref: &str) -> Result<bool> {
+/// Whether `user_ref` names a ref in `store` under Git's DWIM rules (`HEAD` counts while it
+/// is stored, even unborn).
+fn ref_exists_dwim(store: &dyn RefStore, user_ref: &str) -> Result<bool> {
     if user_ref == "HEAD" {
-        return Ok(true);
+        return Ok(store.read_raw("HEAD")?.is_some());
     }
-    for candidate in dwim_reflog_candidates(user_ref) {
-        if reflog_exists(git_dir, &candidate) {
-            return Ok(true);
-        }
-        let (_, oid) = resolve_ref_dwim(git_dir, &candidate);
-        if oid.is_some() {
-            return Ok(true);
-        }
-    }
-    let (_, oid) = resolve_ref_dwim(git_dir, user_ref);
+    let (_, oid) = resolve_ref_dwim(|candidate| store.resolve(candidate).ok(), user_ref);
     Ok(oid.is_some())
 }
 
-fn expire_target_refs(git_dir: &Path, all: bool) -> Result<Vec<String>> {
+/// Refs [`RepositoryReflogs::expire`] processes, sorted: every ref with a reflog, or with
+/// `all`, every resolvable ref under `refs/` plus `HEAD` when it has a reflog.
+fn expire_target_refs(store: &dyn RefStore, all: bool) -> Result<Vec<String>> {
     if !all {
-        let mut names = list_reflog_refs(git_dir)?;
-        names.sort();
-        return Ok(names);
+        return reflog_refs_on_store(store);
     }
-    let mut names: Vec<String> = crate::refs::list_refs(git_dir, "refs/")?
+    let mut names: Vec<String> = crate::refs::collect_resolved_refs(store, "refs/")?
         .into_iter()
         .map(|(name, _)| name)
         .collect();
-    if reflog_exists(git_dir, "HEAD") {
+    if store.reflog_exists("HEAD")? {
         names.push("HEAD".to_owned());
     }
     names.sort();

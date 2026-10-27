@@ -319,7 +319,10 @@ fn store_write_value(
     )
 }
 
-fn collect_resolved_refs(store: &dyn RefStore, prefix: &str) -> Result<Vec<(String, ObjectId)>> {
+pub(crate) fn collect_resolved_refs(
+    store: &dyn RefStore,
+    prefix: &str,
+) -> Result<Vec<(String, ObjectId)>> {
     collect_resolved_ref_entries(store, |f| store.for_each_ref(prefix, f))
 }
 

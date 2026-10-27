@@ -102,7 +102,6 @@ fn reflog_expire_reports_actions_dry_run_and_real() {
     };
     let dry = expire_reflog_git(
         &repo,
-        &git_dir,
         refname,
         &params,
         Some(cutoff),
@@ -133,7 +132,6 @@ fn reflog_expire_reports_actions_dry_run_and_real() {
     };
     let real = expire_reflog_git(
         &repo,
-        &git_dir,
         refname,
         &real_params,
         Some(cutoff),

@@ -1221,6 +1221,8 @@ mod ref_name_validation_git_compat;
 mod reflog_expire_dry_run;
 #[path = "reflog_handle_coverage.rs"]
 mod reflog_handle_coverage;
+#[path = "reflog_injected_ref_store.rs"]
+mod reflog_injected_ref_store;
 #[cfg(feature = "full-tests")]
 #[path = "reflog_query_git_compat.rs"]
 mod reflog_query_git_compat;
@@ -1230,6 +1232,9 @@ mod reflog_roundtrip;
 #[cfg(feature = "full-tests")]
 #[path = "reflog_signature_git_compat.rs"]
 mod reflog_signature_git_compat;
+#[cfg(feature = "full-tests")]
+#[path = "reflog_store_edits_git_compat.rs"]
+mod reflog_store_edits_git_compat;
 #[cfg(feature = "full-tests")]
 #[path = "reflog_transaction_identity.rs"]
 mod reflog_transaction_identity;

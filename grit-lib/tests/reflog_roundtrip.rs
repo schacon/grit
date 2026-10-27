@@ -148,7 +148,6 @@ fn grit_expire_git(
     let gc = load_gc_reflog_expire_config(&cfg, NOW);
     expire_reflog_git(
         &repo,
-        &git_dir,
         refname,
         &params,
         explicit_total,
@@ -417,7 +416,6 @@ fn gc_per_ref_pattern_non_match_wildmatch_matches_git() {
         let gc = load_gc_reflog_expire_config(&cfg, now);
         let grit_result = expire_reflog_git(
             &grit_repo,
-            &grit_git_dir,
             refname,
             &ReflogExpireParams {
                 stale_fix: false,
@@ -497,7 +495,6 @@ fn gc_per_ref_overlapping_pattern_precedence_matches_git() {
         let gc = load_gc_reflog_expire_config(&cfg, now);
         expire_reflog_git(
             &grit_repo,
-            &grit_git_dir,
             refname,
             &ReflogExpireParams {
                 stale_fix: false,

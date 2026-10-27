@@ -53,7 +53,7 @@ use crate::pack_objects::{
 use crate::pack_rev::write_pack_rev_sidecar_for_index_path;
 use crate::prune_packed::{prune_packed_objects, PrunePackedOptions};
 use crate::reflog::{
-    expire_reflog_git_with_promises, list_reflog_refs, load_gc_reflog_expire_config,
+    expire_reflog_git_with_promises, load_gc_reflog_expire_config, reflog_refs_on_store,
     ReflogExpireParams,
 };
 use crate::repack_pack::{write_repack_pack, RepackPackSettings};
@@ -1662,7 +1662,6 @@ fn gc_now_unix(now_unix: i64) -> i64 {
 fn expire_reflogs_for_gc(repo: &Repository, dry_run: bool, now: i64) -> Result<usize> {
     let cfg = repo.config()?;
     let gc_cfg = load_gc_reflog_expire_config(&cfg, now);
-    let git_dir = repo.git_dir();
     let params = ReflogExpireParams {
         stale_fix: false,
         dry_run,
@@ -1670,10 +1669,9 @@ fn expire_reflogs_for_gc(repo: &Repository, dry_run: bool, now: i64) -> Result<u
     };
     let mut total = 0usize;
     let promises = std::cell::OnceCell::new();
-    for refname in list_reflog_refs(git_dir)? {
+    for refname in reflog_refs_on_store(repo.refs())? {
         let result = expire_reflog_git_with_promises(
             repo,
-            git_dir,
             &refname,
             &params,
             None,

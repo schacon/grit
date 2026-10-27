@@ -18462,9 +18462,8 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::reflog::ReflogSele
 pub fn grit_lib::refs::reflog::all_reflog_oids(&std::path::Path) -> grit_lib::error::Result<std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>>
 pub fn grit_lib::refs::reflog::all_reflog_oids_ordered(&std::path::Path) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
 pub fn grit_lib::refs::reflog::delete_reflog_entries(&std::path::Path, &str, &[usize]) -> grit_lib::error::Result<()>
-pub fn grit_lib::refs::reflog::delete_reflog_entries_rechain(&std::path::Path, &str, &[usize]) -> grit_lib::error::Result<()>
 pub fn grit_lib::refs::reflog::expire_reflog(&std::path::Path, &str, core::option::Option<i64>) -> grit_lib::error::Result<usize>
-pub fn grit_lib::refs::reflog::expire_reflog_git(&grit_lib::repo::Repository, &std::path::Path, &str, &grit_lib::refs::reflog::ReflogExpireParams, core::option::Option<i64>, core::option::Option<i64>, &[grit_lib::refs::reflog::GcReflogPattern], core::option::Option<i64>, core::option::Option<i64>, i64) -> grit_lib::error::Result<grit_lib::refs::reflog::ReflogExpireResult>
+pub fn grit_lib::refs::reflog::expire_reflog_git(&grit_lib::repo::Repository, &str, &grit_lib::refs::reflog::ReflogExpireParams, core::option::Option<i64>, core::option::Option<i64>, &[grit_lib::refs::reflog::GcReflogPattern], core::option::Option<i64>, core::option::Option<i64>, i64) -> grit_lib::error::Result<grit_lib::refs::reflog::ReflogExpireResult>
 pub fn grit_lib::refs::reflog::expire_reflog_unreachable(&grit_lib::repo::Repository, &std::path::Path, &str, core::option::Option<i64>) -> grit_lib::error::Result<usize>
 pub fn grit_lib::refs::reflog::list_reflog_refs(&std::path::Path) -> grit_lib::error::Result<alloc::vec::Vec<alloc::string::String>>
 pub fn grit_lib::refs::reflog::load_gc_reflog_expire_config(&grit_lib::config::ConfigSet, i64) -> grit_lib::refs::reflog::GcReflogExpireConfig

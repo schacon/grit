@@ -240,44 +240,6 @@ pub(crate) fn reflog_entry_count(git_dir: &Path, refname: &str) -> Result<usize>
 
 const REFLOG_REVERSE_READ_CHUNK: usize = 64 * 1024;
 
-/// True when a loose reflog file exists and contains at least one non-empty line.
-///
-/// Probes only the leading portion of the file (never reads the whole log).
-pub(crate) fn loose_reflog_has_nonempty_line(git_dir: &Path, refname: &str) -> Result<bool> {
-    let path = reflog_path(git_dir, refname);
-    let mut file = match File::open(&path) {
-        Ok(f) => f,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(Error::Io(e)),
-    };
-    let len = file.metadata().map_err(Error::Io)?.len();
-    if len == 0 {
-        return Ok(false);
-    }
-    let probe = len.min(4096) as usize;
-    let mut buf = vec![0u8; probe];
-    file.read_exact(&mut buf).map_err(Error::Io)?;
-    Ok(buf
-        .split(|&b| b == b'\n')
-        .any(|line| !line.is_empty() && line != b"\r"))
-}
-
-/// Whether `refname` has reflog data for DWIM canonicalization (bounded on loose files).
-pub(crate) fn reflog_has_entries_for_dwim(git_dir: &Path, refname: &str) -> Result<bool> {
-    if crate::refs::store::open_ref_store(git_dir)?.format()
-        != crate::refs::store::RefStorageFormat::Files
-    {
-        let store = crate::refs::store::ReftableRefStore::open(git_dir.to_path_buf())?;
-        let mut found = false;
-        store.for_each_reflog_entry(refname, false, &mut |_| {
-            found = true;
-            ControlFlow::Break(())
-        })?;
-        return Ok(found);
-    }
-    loose_reflog_has_nonempty_line(git_dir, refname)
-}
-
 /// Reads a loose reflog file from the end in fixed-size chunks (newest line first).
 pub(crate) struct ReverseReflogLineReader {
     file: File,
@@ -290,15 +252,24 @@ impl ReverseReflogLineReader {
     ///
     /// # Errors
     ///
-    /// Propagates I/O errors other than a missing path (which yields `Ok(None)`).
+    /// Propagates I/O errors other than a missing log (a missing path, or a directory in
+    /// the way, yields `Ok(None)`).
     pub fn open(path: &Path) -> Result<Option<Self>> {
         let file = match File::open(path) {
             Ok(f) => f,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                ) =>
+            {
+                return Ok(None)
+            }
             Err(e) => return Err(Error::Io(e)),
         };
-        let len = file.metadata().map_err(Error::Io)?.len();
-        if len == 0 {
+        let meta = file.metadata().map_err(Error::Io)?;
+        let len = meta.len();
+        if !meta.is_file() || len == 0 {
             return Ok(None);
         }
         Ok(Some(Self {
@@ -306,12 +277,6 @@ impl ReverseReflogLineReader {
             loaded_from: len,
             buffer: Vec::new(),
         }))
-    }
-
-    /// `true` when older log bytes may remain (used for `truncated` after an early stop).
-    #[must_use]
-    pub fn has_older_bytes(&self) -> bool {
-        self.loaded_from > 0 || !self.buffer.is_empty()
     }
 
     /// Returns the next non-empty line's raw bytes, newest first.
@@ -509,83 +474,59 @@ fn walk_reflog_files(dir: &Path, out: &mut HashSet<ObjectId>) -> Result<()> {
 
 /// Delete specific reflog entries by index (0-based, newest-first order).
 ///
-/// Rewrites the reflog file, omitting entries at the given indices.
+/// Rewrites the reflog through the ref store for `git_dir`, omitting entries at the given
+/// indices.
 pub fn delete_reflog_entries(git_dir: &Path, refname: &str, indices: &[usize]) -> Result<()> {
-    let mut entries = read_reflog(git_dir, refname)?;
-    if entries.is_empty() {
-        return Ok(());
-    }
-
-    // Indices are in newest-first order (like show), so reverse the entries
-    // to map indices correctly.
-    entries.reverse();
-
-    let indices_set: std::collections::HashSet<usize> = indices.iter().copied().collect();
-
-    let remaining: Vec<&ReflogEntry> = entries
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| !indices_set.contains(i))
-        .map(|(_, e)| e)
-        .collect();
-
-    // Write back in file order (oldest first), so reverse again
-    let mut lines = Vec::new();
-    for entry in remaining.iter().rev() {
-        lines.push(format_reflog_entry(entry));
-    }
-
-    if crate::refs::store::open_ref_store(git_dir)?.format()
-        != crate::refs::store::RefStorageFormat::Files
-    {
-        let kept: Vec<ReflogEntry> = remaining
-            .iter()
-            .rev()
-            .map(|entry| (*entry).clone())
-            .collect();
-        return crate::reftable::reftable_replace_reflog(git_dir, refname, &kept);
-    }
-
-    let path = reflog_path(git_dir, refname);
-    fs::write(&path, lines.join(""))?;
-    Ok(())
+    let store = crate::refs::store::open_ref_store(git_dir)?;
+    delete_reflog_entries_on_store(store.as_ref(), refname, indices)
 }
 
-/// Like [`delete_reflog_entries`], but reconnects surviving `old_oid` values after
-/// a gap (Git stash drop / `EXPIRE_REFLOGS_REWRITE`).
-///
-/// Opens the ref store for `git_dir` and rewrites the reflog through it.
-pub fn delete_reflog_entries_rechain(
-    git_dir: &Path,
+/// Oldest-first entries of `refname` in `store` without those at the newest-first `indices`,
+/// plus whether the oldest entry was among the removed ones. `None` when the log is empty.
+fn reflog_without_indices(
+    store: &dyn crate::refs::store::RefStore,
+    refname: &str,
+    indices: &[usize],
+) -> Result<Option<(Vec<ReflogEntry>, bool)>> {
+    let entries = read_reflog_on_store(store, refname)?;
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    let len = entries.len();
+    let indices_set: HashSet<usize> = indices.iter().copied().collect();
+    let removed_oldest = indices_set.contains(&(len - 1));
+    let kept = entries
+        .into_iter()
+        .enumerate()
+        .filter(|(oldest_first, _)| !indices_set.contains(&(len - 1 - oldest_first)))
+        .map(|(_, e)| e)
+        .collect();
+    Ok(Some((kept, removed_oldest)))
+}
+
+/// [`delete_reflog_entries`] through an already-selected ref store (for example
+/// [`crate::repo::Repository::refs`], which may be an injected store).
+pub(crate) fn delete_reflog_entries_on_store(
+    store: &dyn crate::refs::store::RefStore,
     refname: &str,
     indices: &[usize],
 ) -> Result<()> {
-    let store = crate::refs::store::open_ref_store(git_dir)?;
-    delete_reflog_entries_rechain_on_store(store.as_ref(), refname, indices)
+    let Some((kept, _)) = reflog_without_indices(store, refname, indices)? else {
+        return Ok(());
+    };
+    store.replace_reflog(refname, kept)
 }
 
-/// [`delete_reflog_entries_rechain`] through an already-selected ref store (for example
-/// [`crate::repo::Repository::refs`], which may be an injected store).
+/// Like [`delete_reflog_entries_on_store`], but reconnects surviving `old_oid` values after
+/// a gap (Git stash drop / `EXPIRE_REFLOGS_REWRITE`).
 pub(crate) fn delete_reflog_entries_rechain_on_store(
     store: &dyn crate::refs::store::RefStore,
     refname: &str,
     indices: &[usize],
 ) -> Result<()> {
-    let mut entries = read_reflog_on_store(store, refname)?;
-    if entries.is_empty() {
+    let Some((mut kept, removed_oldest)) = reflog_without_indices(store, refname, indices)? else {
         return Ok(());
-    }
-    let oldest_newest_first_idx = entries.len().saturating_sub(1);
-    entries.reverse();
-    let indices_set: std::collections::HashSet<usize> = indices.iter().copied().collect();
-    let removed_oldest = indices_set.contains(&oldest_newest_first_idx);
-    let mut kept: Vec<ReflogEntry> = entries
-        .into_iter()
-        .enumerate()
-        .filter(|(i, _)| !indices_set.contains(i))
-        .map(|(_, e)| e)
-        .collect();
-    kept.reverse();
+    };
     if removed_oldest {
         if let Some(first) = kept.first_mut() {
             first.old_oid = ObjectId::zero();
@@ -758,6 +699,24 @@ pub fn mirror_branch_reflog_to_head(git_dir: &Path, branch_refname: &str) -> Res
     }
     fs::write(&dst, content).map_err(Error::Io)?;
     Ok(())
+}
+
+/// Names of every ref with a reflog in `store`, sorted.
+///
+/// # Errors
+///
+/// Propagates backend read failures.
+pub(crate) fn reflog_refs_on_store(
+    store: &dyn crate::refs::store::RefStore,
+) -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    store.for_each_reflog_ref(&mut |name| {
+        names.push(name.to_owned());
+        ControlFlow::Continue(())
+    })?;
+    names.sort();
+    names.dedup();
+    Ok(names)
 }
 
 /// List all refs that have reflogs.
@@ -1105,21 +1064,19 @@ fn is_head_ref(refname: &str) -> bool {
 
 fn tip_commits_for_reflog(
     repo: &Repository,
-    git_dir: &Path,
     refname: &str,
     promised: &HashSet<ObjectId>,
 ) -> Vec<ObjectId> {
+    let store = repo.refs();
     let mut tips = Vec::new();
     if is_head_ref(refname) {
-        if let Ok(oid) = refs::resolve_ref(git_dir, "HEAD") {
+        if let Ok(oid) = store.resolve("HEAD") {
             tips.push(oid);
         }
-        if let Ok(refs) = refs::list_refs(git_dir, "refs/") {
-            for (_, oid) in refs {
-                tips.push(oid);
-            }
+        if let Ok(refs) = refs::collect_resolved_refs(store, "refs/") {
+            tips.extend(refs.into_iter().map(|(_, oid)| oid));
         }
-    } else if let Ok(oid) = refs::resolve_ref(git_dir, refname) {
+    } else if let Ok(oid) = store.resolve(refname) {
         tips.push(oid);
     }
     tips.sort();
@@ -1218,10 +1175,18 @@ fn should_drop_reflog_entry(
 
 /// Reflog expiry for one ref. Completeness and reachability checks never fetch
 /// missing objects; known promises form a completeness boundary in partial clones.
+///
+/// The reflog is read from and rewritten through [`Repository::refs`], and ref tips for the
+/// reachability check are resolved there too, so an injected ref store is expired like the
+/// built-in backends. A dry run writes nothing. On the files backend a fully pruned log is
+/// kept as an empty file and gets `core.sharedRepository` permissions, as Git does.
+///
+/// # Errors
+///
+/// Propagates ref-store read and write failures and promisor-boundary lookup failures.
 #[expect(clippy::too_many_arguments)]
 pub fn expire_reflog_git(
     repo: &Repository,
-    git_dir: &Path,
     refname: &str,
     params: &ReflogExpireParams,
     explicit_total: Option<i64>,
@@ -1233,7 +1198,6 @@ pub fn expire_reflog_git(
 ) -> Result<ReflogExpireResult> {
     expire_reflog_git_with_promises(
         repo,
-        git_dir,
         refname,
         params,
         explicit_total,
@@ -1250,7 +1214,6 @@ pub fn expire_reflog_git(
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn expire_reflog_git_with_promises(
     repo: &Repository,
-    git_dir: &Path,
     refname: &str,
     params: &ReflogExpireParams,
     explicit_total: Option<i64>,
@@ -1261,8 +1224,7 @@ pub(crate) fn expire_reflog_git_with_promises(
     now: i64,
     promise_cache: &std::cell::OnceCell<HashSet<ObjectId>>,
 ) -> Result<ReflogExpireResult> {
-    let is_reftable = crate::refs::store::open_ref_store(git_dir)?.format()
-        != crate::refs::store::RefStorageFormat::Files;
+    let store = repo.refs();
     let base_total = gc_global_total.unwrap_or_else(|| default_expire_total(now));
     let base_unreachable = gc_global_unreachable.unwrap_or_else(|| default_expire_unreachable(now));
     let (expire_total, expire_unreachable) = resolve_expire_for_ref(
@@ -1274,7 +1236,7 @@ pub(crate) fn expire_reflog_git_with_promises(
         base_unreachable,
     );
 
-    let entries = read_reflog(git_dir, refname)?;
+    let entries = read_reflog_on_store(store, refname)?;
     if entries.is_empty() {
         return Ok(ReflogExpireResult {
             pruned: 0,
@@ -1325,7 +1287,7 @@ pub(crate) fn expire_reflog_git_with_promises(
     } else if expire_unreachable == 0 || is_head_ref(refname) {
         UnreachableKind::Head
     } else {
-        match refs::resolve_ref(git_dir, refname) {
+        match store.resolve(refname) {
             Ok(t) if commit_chain_complete(repo, t, 0, promised) => UnreachableKind::Normal,
             _ => UnreachableKind::Always,
         }
@@ -1334,12 +1296,11 @@ pub(crate) fn expire_reflog_git_with_promises(
     let need_reachable =
         may_drop_unreachable && !matches!(unreachable_kind, UnreachableKind::Always);
     let reachable = if need_reachable {
-        let tips = tip_commits_for_reflog(repo, git_dir, refname, promised);
+        let tips = tip_commits_for_reflog(repo, refname, promised);
         reachable_commit_set(repo, &tips)
     } else {
         HashSet::new()
     };
-    let mut kept = Vec::new();
     let mut kept_entries = Vec::new();
     let mut pruned = 0usize;
     let mut actions = Vec::with_capacity(entries.len());
@@ -1364,7 +1325,6 @@ pub(crate) fn expire_reflog_git_with_promises(
             }
         } else {
             kept_entries.push(entry.clone());
-            kept.push(format_reflog_entry(entry));
             ReflogExpireActionKind::Keep
         };
         actions.push(ReflogExpireAction {
@@ -1375,17 +1335,10 @@ pub(crate) fn expire_reflog_git_with_promises(
     }
 
     if !params.dry_run && pruned > 0 {
-        if is_reftable {
-            crate::reftable::reftable_replace_reflog(git_dir, refname, &kept_entries)?;
-        } else {
-            // Git rewrites the reflog in place via the lockfile machinery and keeps the file even
-            // when all entries are pruned (it does not unlink it — only an explicit reflog/ref
-            // delete removes the file). Writing an empty file mirrors that and preserves the
-            // file's existence. Git then runs `adjust_shared_perm` on the rewritten log, so honor
-            // `core.sharedRepository` here too (t0600 "reflog expire honors core.sharedRepository").
-            let path = reflog_path(git_dir, refname);
-            fs::write(&path, kept.join(""))?;
-            adjust_reflog_shared_perm(git_dir, &path);
+        store.replace_reflog(refname, kept_entries)?;
+        // Git applies `core.sharedRepository` to the rewritten log file.
+        if let Some(files) = store.as_files() {
+            adjust_reflog_shared_perm(repo.git_dir(), &files.reflog_path(refname));
         }
     }
     Ok(ReflogExpireResult { pruned, actions })
@@ -1505,7 +1458,6 @@ mod reverse_scan_tests {
         let second = reader.next_nonempty_line().expect("read").expect("line");
         assert!(second.ends_with(b"line1"));
         assert!(reader.next_nonempty_line().expect("read").is_none());
-        assert!(!reader.has_older_bytes());
     }
 
     #[test]
@@ -1721,7 +1673,6 @@ mod default_expire_tests {
         let gc = load_gc_reflog_expire_config(&cfg, now);
         let dry = expire_reflog_git(
             &repo,
-            git_dir,
             refname,
             &ReflogExpireParams {
                 stale_fix: false,
@@ -1741,7 +1692,6 @@ mod default_expire_tests {
 
         let real = expire_reflog_git(
             &repo,
-            git_dir,
             refname,
             &ReflogExpireParams {
                 stale_fix: false,
@@ -1901,7 +1851,6 @@ mod default_expire_tests {
         let gc = load_gc_reflog_expire_config(&cfg, now);
         let result = expire_reflog_git(
             &repo,
-            git_dir,
             refname,
             &ReflogExpireParams {
                 stale_fix: false,
