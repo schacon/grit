@@ -4204,43 +4204,36 @@ fn unreadable_worktree_blob_is_modified(err: &Error, materialize_dirty_blobs: bo
         )
 }
 
-/// Git `compare_stat_data`: a size mismatch means modified without reading blob contents.
+/// Whether status may report `ie` modified because the worktree size (already munged to the
+/// index's 32-bit form) differs from the cached one, without reading the file (Git
+/// `compare_stat_data`).
+///
+/// Only sound when clean conversion is the identity: a line-ending rule, filter, encoding or
+/// `ident` can turn a file of another size into exactly the indexed blob. The
+/// `conversion_is_identity` check runs only once the sizes differ, so clean entries never
+/// resolve attributes here.
+fn status_size_change_proves_modified(
+    ie: &IndexEntry,
+    worktree_size: u32,
+    for_status: bool,
+    conversion_is_identity: impl FnOnce() -> bool,
+) -> bool {
+    for_status && !ie.stat_cache_unset() && worktree_size != ie.size && conversion_is_identity()
+}
+
+/// Report `ie` modified when [`status_size_change_proves_modified`] holds; returns whether it
+/// did. The worktree side keeps the index oid because the file was not hashed.
 #[must_use]
 fn try_push_status_modified_on_size_mismatch(
     ie: &IndexEntry,
     path_str_ref: &str,
-    meta: &fs::Metadata,
+    worktree_size: u32,
     worktree_mode: u32,
     for_status: bool,
+    conversion_is_identity: impl FnOnce() -> bool,
     result: &mut Vec<DiffEntry>,
 ) -> bool {
-    if ie.stat_cache_unset() {
-        return false;
-    }
-    if !for_status || crate::index::munge_index_size(meta.len()) == ie.size {
-        return false;
-    }
-    result.push(worktree_content_change_entry(
-        ie,
-        path_str_ref,
-        worktree_mode,
-        ie.oid,
-    ));
-    true
-}
-
-fn try_push_status_modified_on_size_mismatch_stat(
-    ie: &IndexEntry,
-    path_str_ref: &str,
-    stat: &crate::worktree_scan::BlobDiskStat,
-    worktree_mode: u32,
-    for_status: bool,
-    result: &mut Vec<DiffEntry>,
-) -> bool {
-    if ie.stat_cache_unset() {
-        return false;
-    }
-    if !for_status || stat.worktree_size() == ie.size {
+    if !status_size_change_proves_modified(ie, worktree_size, for_status, conversion_is_identity) {
         return false;
     }
     result.push(worktree_content_change_entry(
@@ -4318,18 +4311,19 @@ fn push_index_blob_worktree_diff(
         return Ok(());
     }
 
+    let file_attrs = file_attrs_for(path_str_ref);
     if try_push_status_modified_on_size_mismatch(
         ie,
         path_str_ref,
-        &meta,
+        crate::index::munge_index_size(meta.len()),
         worktree_mode,
         for_status,
+        || crate::crlf::git_conversion_is_identity(conv, &file_attrs),
         result,
     ) {
         return Ok(());
     }
 
-    let file_attrs = file_attrs_for(path_str_ref);
     let store = (materialize_dirty_blobs && !hash_blobs_without_write)
         .then_some(crate::odb::BULK_NEW_LOOSE_WRITE);
     let stream_from = if store.is_some() {
@@ -4901,6 +4895,12 @@ fn diff_index_to_worktree_inner(
                         index_mtime,
                         stat_policy,
                         options.for_status,
+                        || {
+                            crlf::git_conversion_is_identity(
+                                &conv,
+                                &file_attrs_for(&crate::repo_relpath::storage_string(&ie.path)),
+                            )
+                        },
                     )
             },
             &WorktreeHashContext {
@@ -4953,6 +4953,7 @@ fn diff_index_to_worktree_inner(
                         index_mtime,
                         stat_policy,
                         options.for_status,
+                        || crlf::git_conversion_is_identity(&conv, &file_attrs_for(path_str_ref)),
                     )
                 {
                     let refresh = refresh_index_blob_stat_from_scan(
@@ -5004,12 +5005,13 @@ fn diff_index_to_worktree_inner(
                             worktree_mode,
                             ie.oid,
                         ));
-                    } else if try_push_status_modified_on_size_mismatch_stat(
+                    } else if try_push_status_modified_on_size_mismatch(
                         ie,
                         path_str_ref,
-                        &stat,
+                        stat.worktree_size(),
                         worktree_mode,
                         options.for_status,
+                        || crlf::git_conversion_is_identity(&conv, &file_attrs_for(path_str_ref)),
                         &mut result,
                     ) {
                     } else if !refresh_content_verified[entry_index] {
@@ -6022,13 +6024,16 @@ fn refresh_needs_content_check(
 /// Whether a worktree diff with `refresh_index_stat_in_pass` refreshes `ie` from `stat`.
 ///
 /// Status leaves out entries whose stat data already decides the answer: clean and not racy,
-/// or a changed size (reported as modified without reading the file).
+/// or a changed size that [`status_size_change_proves_modified`] accepts (reported as modified
+/// without reading the file). A size change under a non-identity clean conversion is refreshed:
+/// when the cleaned content still matches, the entry adopts the new stat, so later scans trust it.
 pub(crate) fn worktree_diff_refreshes_entry(
     ie: &IndexEntry,
     stat: &crate::worktree_scan::BlobDiskStat,
     index_mtime: Option<(u32, u32)>,
     stat_policy: crate::index::StatMatchPolicy,
     for_status: bool,
+    conversion_is_identity: impl FnOnce() -> bool,
 ) -> bool {
     if !for_status {
         return true;
@@ -6036,7 +6041,12 @@ pub(crate) fn worktree_diff_refreshes_entry(
     if stat_matches_blob_stat(ie, stat, stat_policy) {
         return entry_is_racy_with_policy(ie, index_mtime, stat_policy);
     }
-    stat.worktree_size() == ie.size || ie.stat_cache_unset()
+    !status_size_change_proves_modified(
+        ie,
+        stat.worktree_size(),
+        for_status,
+        conversion_is_identity,
+    )
 }
 
 /// Pool options for the stat refresh's content checks.
@@ -6941,7 +6951,7 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                     refresh_index_stat_in_pass: false,
                     // Tree↔worktree raw lines use a null worktree OID when content differs; the
                     // status fast path (`for_status`) may report size-only drift with both sides
-                    // set to the index blob (see `try_push_status_modified_on_size_mismatch`).
+                    // set to the index blob (see `status_size_change_proves_modified`).
                     for_status: false,
                     config: config.cloned().map(std::sync::Arc::new),
                     ..DiffIndexToWorktreeOptions::default()
@@ -12942,6 +12952,9 @@ mod smudge_racily_clean_tests {
             .entries
             .push(staged_entry_for_file(&odb, wt, rel, original, (100, 0)));
         fs::write(wt.join(rel), b"longer content\n").expect("rewrite");
+        let metrics = odb.hot_path_metrics();
+        metrics.reset_blob_content_reads();
+        metrics.set_blob_counting(true);
         let (entries, _) = super::diff_index_to_worktree_with_options(
             &odb,
             &mut index,
@@ -12953,9 +12966,60 @@ mod smudge_racily_clean_tests {
             },
         )
         .expect("diff");
+        metrics.set_blob_counting(false);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].status, super::DiffStatus::Modified);
         assert_eq!(entries[0].path(), rel);
+        assert_eq!(
+            metrics.blob_content_reads(),
+            0,
+            "identity conversion: a size change alone proves the file modified"
+        );
+    }
+
+    #[test]
+    fn status_diff_hashes_size_change_when_eol_conversion_restores_blob() {
+        for refresh_index_stat_in_pass in [false, true] {
+            let td = tempfile::tempdir().expect("tempdir");
+            let wt = td.path();
+            let (git_dir, odb) = minimal_repo(wt, "[core]\n");
+            fs::write(wt.join(".gitattributes"), "*.txt text eol=crlf\n").expect("attrs");
+            let rel = "n.txt";
+            let blob = odb
+                .write(ObjectKind::Blob, b"one\ntwo\n")
+                .expect("write blob");
+            let mut index = Index::new();
+            index.entries.push(staged_entry_with_oid(
+                wt,
+                rel,
+                b"one\r\ntwo\r\n",
+                blob,
+                (100, 0),
+            ));
+            fs::write(wt.join(rel), b"one\ntwo\n").expect("rewrite as LF");
+            let (entries, index_changed) = super::diff_index_to_worktree_with_options(
+                &odb,
+                &mut index,
+                wt,
+                super::DiffIndexToWorktreeOptions {
+                    index_mtime: Some((200, 0)),
+                    repository_git_dir: Some(git_dir),
+                    refresh_index_stat_in_pass,
+                    for_status: true,
+                    ..Default::default()
+                },
+            )
+            .expect("diff");
+            assert!(
+                entries.is_empty(),
+                "refresh={refresh_index_stat_in_pass}: LF worktree cleans to the indexed blob: \
+                 {entries:?}"
+            );
+            if refresh_index_stat_in_pass {
+                assert!(index_changed, "verified entry adopts the new stat");
+                assert_eq!(index.entries[0].size, 8);
+            }
+        }
     }
 
     #[test]
