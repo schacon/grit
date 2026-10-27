@@ -246,8 +246,8 @@ export function docsOverviewCard(): ImageResponse {
 
 const HOME_LOG: [string, string][] = [
   ["feedface", "Docs your agent can read."],
-  ["deadbeef", "Simpler on purpose."],
   ["ca11ab1e", "Link it. Don't shell out."],
+  ["deadbeef", "Simpler on purpose."],
   ["c0deba5e", "Every repo you already have."],
 ];
 

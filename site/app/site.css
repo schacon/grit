@@ -54,6 +54,16 @@
   .body p { margin: 0; font-size: 19px; line-height: 1.55; color: var(--soft); text-wrap: pretty; }
   .body h2 + p { margin-top: 20px; }
   .body .code { margin: 0; border: 0; border-radius: 14px; padding: 24px 26px; }
+  .cli-demo { min-width: 0; background: var(--ink); border-radius: 14px; overflow: hidden; }
+  .cli-demo-tabs { display: flex; gap: 4px; padding: 14px 18px 0; }
+  .cli-demo-tabs button { padding: 6px 10px; border: 0; border-bottom: 2px solid transparent; background: none; font: 13px var(--mono); color: var(--ink-muted); cursor: pointer; transition: color .15s, border-color .15s; }
+  .cli-demo-tabs button:hover, .cli-demo-tabs button:focus-visible { color: var(--bg); }
+  .cli-demo-tabs button[aria-selected="true"] { color: var(--bg); border-bottom-color: var(--accent); }
+  .cli-demo-panels { display: grid; }
+  .cli-demo-panels > div { grid-area: 1 / 1; min-width: 0; opacity: 0; visibility: hidden; transition: opacity .35s, visibility .35s; }
+  .cli-demo-panels > .active { opacity: 1; visibility: visible; }
+  .cli-demo .code { border-radius: 0; padding: 16px 26px 24px; font-size: 13px; }
+  @media (prefers-reduced-motion: reduce) { .cli-demo-panels > div { transition: none; } }
 
   .entry { padding: 36px 0 40px; }
   .entry h2 { font-size: clamp(28px, 3.4vw, 40px); line-height: 1.05; }
