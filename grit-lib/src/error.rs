@@ -1871,6 +1871,189 @@ pub enum Error {
 }
 
 impl Error {
+    /// Stable snake_case name of this error's variant (for example `"not_a_repository"`),
+    /// for scripts and serialized output that must branch on the failure kind.
+    ///
+    /// The name is the variant name in snake_case; it changes only when the variant is
+    /// renamed. Match on the error value itself in Rust code.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use grit_lib::error::Error;
+    ///
+    /// assert_eq!(Error::NothingToCommit.kind_name(), "nothing_to_commit");
+    /// assert_eq!(Error::Cancelled.kind_name(), "cancelled");
+    /// ```
+    #[must_use]
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            Self::NotARepository(..) => "not_a_repository",
+            Self::ForbiddenBareRepository(..) => "forbidden_bare_repository",
+            Self::DubiousOwnership(..) => "dubious_ownership",
+            Self::UnsupportedRepositoryFormatVersion(..) => "unsupported_repository_format_version",
+            Self::UnsupportedRepositoryExtension(..) => "unsupported_repository_extension",
+            Self::InvalidRefStorageFormat { .. } => "invalid_ref_storage_format",
+            Self::InitObjectFormatChange => "init_object_format_change",
+            Self::InitBareWithSeparateGitDir => "init_bare_with_separate_git_dir",
+            Self::InvalidObjectId(..) => "invalid_object_id",
+            Self::HashCollision { .. } => "hash_collision",
+            Self::ObjectNotFound(..) => "object_not_found",
+            Self::RevisionNotFound(..) => "revision_not_found",
+            Self::PromisedObjectMissing(..) => "promised_object_missing",
+            Self::CorruptObject(..) => "corrupt_object",
+            Self::PackIndexChecksumMismatch { .. } => "pack_index_checksum_mismatch",
+            Self::UnresolvedDeltas { .. } => "unresolved_deltas",
+            Self::InvalidObject { .. } => "invalid_object",
+            Self::InvalidTreeEntry(..) => "invalid_tree_entry",
+            Self::InvalidSignature(..) => "invalid_signature",
+            Self::UnexpectedObjectKind { .. } => "unexpected_object_kind",
+            Self::CommitGraphParentMissing { .. } => "commit_graph_parent_missing",
+            Self::DeltaChainTooDeep { .. } => "delta_chain_too_deep",
+            Self::UnknownObjectType(..) => "unknown_object_type",
+            Self::ObjectHeaderTooLong { .. } => "object_header_too_long",
+            Self::Io(..) => "io",
+            Self::LockHeld { .. } => "lock_held",
+            Self::Zlib(..) => "zlib",
+            Self::LooseHashMismatch { .. } => "loose_hash_mismatch",
+            Self::LooseObjectWrite { .. } => "loose_object_write",
+            Self::WorktreePathIo { .. } => "worktree_path_io",
+            Self::GitDirPathIo { .. } => "git_dir_path_io",
+            Self::ObjectStreamTruncated { .. } => "object_stream_truncated",
+            Self::WorktreeFileChanged { .. } => "worktree_file_changed",
+            Self::IndexError(..) => "index_error",
+            Self::IndexUnmerged => "index_unmerged",
+            Self::MaintenanceRunning { .. } => "maintenance_running",
+            Self::UnmergedConflictMarkers { .. } => "unmerged_conflict_markers",
+            Self::IndexPathPrefixConflict { .. } => "index_path_prefix_conflict",
+            Self::IndexFsmonitorExtensionTruncated => "index_fsmonitor_extension_truncated",
+            Self::IndexFsmonitorExtensionBadVersion(..) => "index_fsmonitor_extension_bad_version",
+            Self::IndexFsmonitorExtensionEwahInvalid => "index_fsmonitor_extension_ewah_invalid",
+            Self::CacheTreeCorrupt => "cache_tree_corrupt",
+            Self::InvalidRef(..) => "invalid_ref",
+            Self::PackedRefsUnexpectedLine { .. } => "packed_refs_unexpected_line",
+            Self::PathError(..) => "path_error",
+            Self::PathspecFromFile(..) => "pathspec_from_file",
+            Self::InvalidPath(..) => "invalid_path",
+            Self::InvalidPathComponent { .. } => "invalid_path_component",
+            Self::Config(..) => "config",
+            Self::Branch(..) => "branch",
+            Self::RefLock(..) => "ref_lock",
+            Self::RefStore(..) => "ref_store",
+            Self::Reftable(..) => "reftable",
+            Self::Filter(..) => "filter",
+            Self::Apply(..) => "apply",
+            Self::DiffPath(..) => "diff_path",
+            Self::PathOutsideRepo(..) => "path_outside_repo",
+            Self::Signing(..) => "signing",
+            Self::Auth { .. } => "auth",
+            Self::PushAtomicUnsupported => "push_atomic_unsupported",
+            Self::PushOptionsUnsupported => "push_options_unsupported",
+            Self::FetchUnshallowNotShallow => "fetch_unshallow_not_shallow",
+            Self::FetchShallowUnsupported => "fetch_shallow_unsupported",
+            Self::FetchDeepenRelativeUnsupported => "fetch_deepen_relative_unsupported",
+            Self::BundleMissingPrerequisites => "bundle_missing_prerequisites",
+            Self::ReceivedPackTempMissing { .. } => "received_pack_temp_missing",
+            Self::InvalidAttrPathspec { .. } => "invalid_attr_pathspec",
+            Self::PathspecNoMatch { .. } => "pathspec_no_match",
+            Self::RestoreConflictWithStaged => "restore_conflict_with_staged",
+            Self::RestoreConflictWithSource => "restore_conflict_with_source",
+            Self::RestoreConflictMissingTheirs { .. } => "restore_conflict_missing_theirs",
+            Self::RestoreConflictMissingOurs { .. } => "restore_conflict_missing_ours",
+            Self::RestoreConflictNotUnmerged { .. } => "restore_conflict_not_unmerged",
+            Self::RestorePathUnmerged { .. } => "restore_path_unmerged",
+            Self::PathspecBeyondSymlink { .. } => "pathspec_beyond_symlink",
+            Self::PartialCommitDuringMerge => "partial_commit_during_merge",
+            Self::PathspecIgnored { .. } => "pathspec_ignored",
+            Self::RemoveBlocked { .. } => "remove_blocked",
+            Self::NotRemovingRecursively(..) => "not_removing_recursively",
+            Self::RequiresWorkTree => "requires_work_tree",
+            Self::EmptyCommitMessage => "empty_commit_message",
+            Self::RemovePathsRequired => "remove_paths_required",
+            Self::MoveSourceNotTracked { .. } => "move_source_not_tracked",
+            Self::MoveDestinationExists { .. } => "move_destination_exists",
+            Self::MoveIntoSubdirectory { .. } => "move_into_subdirectory",
+            Self::MoveIntoSelf { .. } => "move_into_self",
+            Self::MoveNothingToMove { .. } => "move_nothing_to_move",
+            Self::MoveDuplicateDestination { .. } => "move_duplicate_destination",
+            Self::MoveBadSource { .. } => "move_bad_source",
+            Self::MoveMissingIndexEntry { .. } => "move_missing_index_entry",
+            Self::RemoteUnreadable { .. } => "remote_unreadable",
+            Self::Resumable(..) => "resumable",
+            Self::FetchRefspec(..) => "fetch_refspec",
+            Self::FetchNonFastForward { .. } => "fetch_non_fast_forward",
+            Self::FetchIntoCheckedOutBranch { .. } => "fetch_into_checked_out_branch",
+            Self::WouldOverwrite { .. } => "would_overwrite",
+            Self::DirtyWorktree { .. } => "dirty_worktree",
+            Self::InvalidIdentity(..) => "invalid_identity",
+            Self::Cancelled => "cancelled",
+            Self::Identity(..) => "identity",
+            Self::Message(..) => "message",
+            Self::NotFastForward => "not_fast_forward",
+            Self::NothingToCommit => "nothing_to_commit",
+            Self::NothingStagedToCommit { .. } => "nothing_staged_to_commit",
+            Self::DetachedHead => "detached_head",
+            Self::UnbornHead => "unborn_head",
+            Self::InvalidHead => "invalid_head",
+            Self::MergeCommit { .. } => "merge_commit",
+            Self::ReplaySourceAtHead => "replay_source_at_head",
+            Self::SequencerUnknownCommand { .. } => "sequencer_unknown_command",
+            Self::ReplayAbortHeadMoved => "replay_abort_head_moved",
+            Self::ReplayContinueUnmerged => "replay_continue_unmerged",
+            Self::NoReplayInProgress => "no_replay_in_progress",
+            Self::OperationInProgress(..) => "operation_in_progress",
+            Self::BranchCheckedOutInWorktree { .. } => "branch_checked_out_in_worktree",
+            Self::BranchNotFound { .. } => "branch_not_found",
+            Self::BranchListNamesDateSort => "branch_list_names_date_sort",
+            Self::CannotDeleteCurrentBranch { .. } => "cannot_delete_current_branch",
+            Self::BranchNotMerged { .. } => "branch_not_merged",
+            Self::TagNotFound { .. } => "tag_not_found",
+            Self::Tag(..) => "tag",
+            Self::Worktree(..) => "worktree",
+            Self::CorruptStash(..) => "corrupt_stash",
+            Self::StashNotFound { .. } => "stash_not_found",
+            Self::ReflogUnknownRef { .. } => "reflog_unknown_ref",
+            Self::ReflogInvalidSelector { .. } => "reflog_invalid_selector",
+            Self::ReflogInvalidIndex { .. } => "reflog_invalid_index",
+            Self::ReflogIndexOutOfRange { .. } => "reflog_index_out_of_range",
+            Self::StashNoInitialCommit => "stash_no_initial_commit",
+            Self::StashBareRepository => "stash_bare_repository",
+            Self::StashIndexConflict => "stash_index_conflict",
+            Self::StashOptionConflict(..) => "stash_option_conflict",
+            Self::HunkSelection(..) => "hunk_selection",
+            Self::StashMissingHead => "stash_missing_head",
+            Self::StashWouldOverwriteLocalChanges { .. } => "stash_would_overwrite_local_changes",
+            Self::StashIndexWrite(..) => "stash_index_write",
+            Self::StashSymlinkNotUtf8 => "stash_symlink_not_utf8",
+            Self::StashCouldNotRestoreUntracked { .. } => "stash_could_not_restore_untracked",
+            Self::AmendUnborn => "amend_unborn",
+            Self::NoteAlreadyExists { .. } => "note_already_exists",
+            Self::InvalidNotesRef(..) => "invalid_notes_ref",
+            Self::NotesRefNotCommit { .. } => "notes_ref_not_commit",
+            Self::NotesObjectKind { .. } => "notes_object_kind",
+            Self::NotesMergeBothEmpty { .. } => "notes_merge_both_empty",
+            Self::NotesMergeInProgress { .. } => "notes_merge_in_progress",
+            Self::Midx(..) => "midx",
+            Self::RevParse(..) => "rev_parse",
+            Self::RevList(..) => "rev_list",
+            Self::Hook(..) => "hook",
+            Self::History(..) => "history",
+            Self::UnsupportedObjectStore { .. } => "unsupported_object_store",
+            Self::OdbObjectsDirMismatch { .. } => "odb_objects_dir_mismatch",
+            Self::TreeSha256InvalidHex => "tree_sha256_invalid_hex",
+            Self::TreeSha256InvalidRevision { .. } => "tree_sha256_invalid_revision",
+            Self::TreeSha256MissingSubmodules(..) => "tree_sha256_missing_submodules",
+            Self::TreeSha256RequiresSigning => "tree_sha256_requires_signing",
+            Self::TagVerifyNotTag { .. } => "tag_verify_not_tag",
+            Self::TagVerifyMissingObjectHeader => "tag_verify_missing_object_header",
+            Self::TagVerifyDuplicateTreeSha256Header => "tag_verify_duplicate_tree_sha256_header",
+            Self::TreeSha256Claim(..) => "tree_sha256_claim",
+            Self::BlameIgnoreRevUnknown { .. } => "blame_ignore_rev_unknown",
+            Self::BlameIgnoreRevsFileOpen { .. } => "blame_ignore_revs_file_open",
+            Self::BlameIgnoreRevsFileInvalidRev { .. } => "blame_ignore_revs_file_invalid_rev",
+        }
+    }
+
     /// Build [`Error::DirtyWorktree`], sorting and deduplicating `paths`.
     #[must_use]
     pub fn dirty_worktree(operation: WorktreeOperation, mut paths: Vec<String>) -> Self {
@@ -2002,3 +2185,19 @@ impl From<crate::lockfile::LockError> for Error {
 
 /// Convenience alias for `Result<T, Error>`.
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Serializes as `{"kind": <Error::kind_name>, "message": <Display text>}`.
+#[cfg(feature = "serde-models")]
+impl serde::Serialize for Error {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        let mut out = serializer.serialize_struct("Error", 2)?;
+        out.serialize_field("kind", self.kind_name())?;
+        out.serialize_field("message", &self.to_string())?;
+        out.end()
+    }
+}
