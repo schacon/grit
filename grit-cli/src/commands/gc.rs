@@ -663,9 +663,37 @@ fn spawn_detached_auto_gc() -> std::io::Result<()> {
         // Job-aware callers may wait for every process in their job after commit exits.
         // Leave that job so their wait does not include background maintenance.
         cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
+        stop_std_handle_inheritance();
     }
     // A successful spawn confirms child creation before the caller announces it.
     cmd.spawn().map(drop)
+}
+
+/// Keep this process's stdin, stdout and stderr out of the detached child.
+///
+/// `CreateProcessW` (as called by `std::process::Command`) passes every inheritable handle to
+/// the child even when its stdio is redirected to `NUL`. A caller that reads grit's output
+/// until EOF (PowerShell, `cmd /c`, any captured spawn) would then wait for the whole repack.
+/// Later children are unaffected: `Stdio::inherit` hands each one a fresh
+/// inheritable duplicate of the std handle.
+#[cfg(windows)]
+fn stop_std_handle_inheritance() {
+    use windows_sys::Win32::Foundation::{
+        SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+    for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        // SAFETY: `GetStdHandle` only reads this process's std handle table, and
+        // `SetHandleInformation` only clears the inherit flag on a handle this process owns.
+        unsafe {
+            let handle = GetStdHandle(id);
+            if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
+                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
+    }
 }
 
 pub fn run_repack(

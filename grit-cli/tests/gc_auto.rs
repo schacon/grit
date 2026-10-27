@@ -112,6 +112,10 @@ fn json_commit_output_stays_clean_when_maintenance_runs() {
 /// Regression for issue #2008: detached auto-gc must not block `grit commit` until repack
 /// finishes (including under Windows job objects when breakaway is required).
 ///
+/// The harness collects stdout and stderr until EOF, so this also fails if the detached child
+/// keeps the command's output pipes open (issue #2166: on Windows the child inherits every
+/// inheritable handle, including the caller's pipes, unless grit clears their inherit flag).
+///
 /// A Windows job that denies `CREATE_BREAKAWAY_FROM_JOB` should fall back to foreground gc
 /// (honest message, no false "in the background" line); add a job-object harness on Windows CI
 /// when one is available — this test covers the successful breakaway / non-Windows path only.
