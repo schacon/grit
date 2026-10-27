@@ -500,7 +500,7 @@ pub fn bench_apply_stash(fx: &HotPathsFixture, stash_oid: &ObjectId) {
     let _ = fx
         .repo
         .stash()
-        .apply_commit(&stash_oid, &StashApplyOptions::default())
+        .apply_commit(stash_oid, &StashApplyOptions::default())
         .expect("apply_stash");
 }
 
