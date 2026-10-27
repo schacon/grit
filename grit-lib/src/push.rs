@@ -6,7 +6,7 @@
 //! reading the receive-pack advertisement (remote refs + `.have` lines +
 //! capabilities), deciding each ref update against the advertised remote refs
 //! (reusing the same fast-forward / force / force-with-lease rules as
-//! `push_local`), building the minimal pack with [`crate::pack_objects::build_pack_for_push`]
+//! `push_local`), streaming the minimal pack with [`crate::pack_objects::write_pack_for_push`]
 //! (using the advertised remote tips + `.have`s as the negotiation `haves`),
 //! streaming it, and parsing the `report-status` / `report-status-v2` reply into
 //! per-ref [`crate::push_report::PushRefResult`]s.
@@ -25,7 +25,7 @@
 //! hash-width aware.
 
 use std::collections::{HashMap, HashSet};
-use std::io::{Cursor, ErrorKind, Read};
+use std::io::{Cursor, ErrorKind, Read, Write};
 use std::path::Path;
 
 use crate::branch_tracking;
@@ -33,6 +33,7 @@ use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::fetch::Progress;
 use crate::objects::{HashAlgo, ObjectId};
+use crate::pack_objects::PackStats;
 use crate::pkt_line::{self, Packet};
 use crate::progress::{poll_cancel, Cancel, ProgressPhase, ProgressUnit, ReceivedObjects};
 use crate::push_report::{PushRefResult, PushRefStatus};
@@ -161,9 +162,9 @@ const PUSH_CAPS_BASE: &str = "report-status report-status-v2 quiet";
 /// 3. Write the ref-update commands for the accepted, value-changing updates
 ///    (`<old> <new> <ref>\0<caps>\n` first, `<old> <new> <ref>\n` rest), then a
 ///    flush.
-/// 4. Build the minimal pack with [`crate::pack_objects::build_pack_for_push`] (wants = new tips, haves =
-///    advertised remote tips + `.have`s) and stream it; for deletion-only pushes
-///    stream the empty pack.
+/// 4. Stream the minimal pack with [`crate::pack_objects::write_pack_for_push`]
+///    (wants = new tips, haves = advertised remote tips + `.have`s) straight into
+///    the connection; deletion-only pushes send no pack.
 /// 5. Read + parse `report-status` / `report-status-v2` (demultiplexing the
 ///    side-band if negotiated) and fold the per-ref `ok`/`ng` lines back into the
 ///    decided results.
@@ -307,35 +308,36 @@ pub(crate) fn push_remote_with(
         }
         _ => None,
     };
-    let mut prebuilt_pack = None;
+    let pack = PushPack::for_plan(&plan, local, &adv)?;
+    let mut spooled_pack = None;
     if let Some((target, endpoint)) = &bundle_route {
         let session =
             crate::push_bundle::Session::locate(local_git_dir, target.repo_url, &commands);
-        let ready = if session.has_bundle() {
-            true
-        } else {
-            let pack = build_push_pack(&plan, local, &adv)?;
-            let threshold = opts
-                .resumable_threshold
-                .unwrap_or(crate::push_bundle::DEFAULT_THRESHOLD);
-            match pack {
-                Some(pack) if pack.len() as u64 > threshold => {
-                    let tips: Vec<(ObjectId, String)> = plan
-                        .to_send
-                        .iter()
-                        .filter_map(|&i| {
-                            let d = &plan.decisions[i];
-                            Some((d.new_tip?, d.result.remote_ref.clone()))
-                        })
-                        .collect();
-                    let mut haves: Vec<ObjectId> = adv.remote_refs.values().copied().collect();
-                    haves.extend_from_slice(&adv.advertised_haves);
-                    session.write_bundle(local.odb(), &haves, &tips, &pack)?;
-                    true
-                }
-                pack => {
-                    prebuilt_pack = Some(pack);
-                    false
+        let ready = match &pack {
+            _ if session.has_bundle() => true,
+            None => false,
+            Some(pack) => {
+                let threshold = opts
+                    .resumable_threshold
+                    .unwrap_or(crate::push_bundle::DEFAULT_THRESHOLD);
+                let tips: Vec<(ObjectId, String)> = plan
+                    .to_send
+                    .iter()
+                    .filter_map(|&i| {
+                        let d = &plan.decisions[i];
+                        Some((d.new_tip?, d.result.remote_ref.clone()))
+                    })
+                    .collect();
+                let mut haves: Vec<ObjectId> = adv.remote_refs.values().copied().collect();
+                haves.extend_from_slice(&adv.advertised_haves);
+                match session.write_bundle(local.odb(), &haves, &tips, threshold, |w| {
+                    pack.write_to(local, w).map(drop)
+                })? {
+                    crate::push_bundle::Spooled::Bundle => true,
+                    crate::push_bundle::Spooled::Small(small) => {
+                        spooled_pack = Some(small);
+                        false
+                    }
                 }
             }
         };
@@ -370,20 +372,28 @@ pub(crate) fn push_remote_with(
     conn.writer().write_all(&commands)?;
     conn.writer().flush()?;
 
-    let pack = match prebuilt_pack {
-        Some(pack) => pack,
-        None => build_push_pack(&plan, local, &adv)?,
-    };
-    if let Some(pack) = pack {
+    if let Some(pack) = &pack {
         poll_cancel(&mut sideband, cancel)?;
         net_trace!(
             opts.network_trace,
             opts.diagnostics.as_ref(),
-            "push_remote: sending pack ({} bytes)…",
-            pack.len()
+            "push_remote: sending pack…"
         );
-        conn.writer().write_all(&pack)?;
+        // The pack streams straight into the connection; a push of a whole
+        // repository never holds the packfile in memory.
+        let mut out = std::io::BufWriter::with_capacity(PACK_SEND_BUFFER, conn.writer());
+        let sent = match spooled_pack.take() {
+            Some(spooled) => spooled.copy_to(&mut out)?,
+            None => pack.write_to(local, &mut out)?.pack_bytes,
+        };
+        out.flush()?;
+        drop(out);
         conn.writer().flush()?;
+        net_trace!(
+            opts.network_trace,
+            opts.diagnostics.as_ref(),
+            "push_remote: sent pack ({sent} bytes)"
+        );
     } else {
         net_trace!(
             opts.network_trace,
@@ -690,52 +700,72 @@ fn build_command_block(
     Ok(commands)
 }
 
-/// Build the packfile bytes for a push: a thin, delta-compressed pack of the new
-/// tips minus everything the remote already advertised (its ref tips + `.have`s).
-///
-/// Returns `None` when there is nothing to pack — i.e. a deletion-only push.
-/// Matching `git send-pack` (`send-pack.c`: the pack is written only when
-/// `need_pack_data && cmds_sent`, and `need_pack_data` is set solely for
-/// non-delete updates), no packfile — not even an empty one — is streamed for a
-/// pure deletion. `git-receive-pack` does not read a pack after a delete-only
-/// command block, so sending one leaves unread bytes on the wire and trips a
-/// `ConnectionReset` on the streaming (daemon/ssh) transports. Shared by both
-/// push paths so the wire bytes are identical regardless of transport.
-fn build_push_pack(
-    plan: &PushPlan,
-    local: &Repository,
-    adv: &AdvertisedState,
-) -> Result<Option<Vec<u8>>> {
-    let local_odb = local.odb();
-    let wants: Vec<ObjectId> = plan
-        .to_send
-        .iter()
-        .filter_map(|&i| plan.decisions[i].new_tip)
-        .collect();
+/// Buffer between the pack writer and the connection, so a duplex transport
+/// sees large writes rather than one per pack entry header.
+const PACK_SEND_BUFFER: usize = 64 * 1024;
 
-    if wants.is_empty() {
-        return Ok(None);
+/// The pack a push sends: a thin, delta-compressed pack of the new tips minus
+/// everything the remote already advertised (its ref tips + `.have`s). Shared by
+/// both push paths so the wire bytes are identical regardless of transport.
+struct PushPack {
+    wants: Vec<ObjectId>,
+    haves: Vec<ObjectId>,
+    opts: PackBuildOptions,
+}
+
+impl PushPack {
+    /// The pack for `plan`, or `None` when there is nothing to pack — i.e. a
+    /// deletion-only push.
+    ///
+    /// Matching `git send-pack` (the pack is written only for non-delete
+    /// updates), no packfile — not even an empty one — is streamed for a pure
+    /// deletion. `git-receive-pack` does not read a pack after a delete-only
+    /// command block, so sending one leaves unread bytes on the wire and trips a
+    /// `ConnectionReset` on the streaming (daemon/ssh) transports.
+    fn for_plan(
+        plan: &PushPlan,
+        local: &Repository,
+        adv: &AdvertisedState,
+    ) -> Result<Option<Self>> {
+        let wants: Vec<ObjectId> = plan
+            .to_send
+            .iter()
+            .filter_map(|&i| plan.decisions[i].new_tip)
+            .collect();
+        if wants.is_empty() {
+            return Ok(None);
+        }
+        let haves = local.odb().present_oids(
+            adv.remote_refs
+                .values()
+                .chain(&adv.advertised_haves)
+                .copied(),
+        )?;
+        let local_cfg = crate::config::ConfigSet::load(
+            &crate::environment::Environment::empty(),
+            Some(local.git_dir()),
+            true,
+        )
+        .ok();
+        let mut opts = if haves.is_empty() {
+            PackBuildOptions::for_local_copy(local_cfg.as_ref())
+        } else {
+            PackBuildOptions::for_local_push(local_cfg.as_ref())
+        };
+        opts.use_ofs_delta = adv.server_ofs_delta;
+        Ok(Some(Self { wants, haves, opts }))
     }
 
-    let haves = local_odb.present_oids(
-        adv.remote_refs
-            .values()
-            .chain(&adv.advertised_haves)
-            .copied(),
-    )?;
-    let local_cfg = crate::config::ConfigSet::load(
-        &crate::environment::Environment::empty(),
-        Some(local.git_dir()),
-        true,
-    )
-    .ok();
-    let mut pack_opts = if haves.is_empty() {
-        PackBuildOptions::for_local_copy(local_cfg.as_ref())
-    } else {
-        PackBuildOptions::for_local_push(local_cfg.as_ref())
-    };
-    pack_opts.use_ofs_delta = adv.server_ofs_delta;
-    crate::pack_objects::build_pack_for_push(local_odb, &wants, &haves, &pack_opts).map(Some)
+    /// Stream the pack to `w`.
+    fn write_to(&self, local: &Repository, w: &mut dyn Write) -> Result<PackStats> {
+        crate::pack_objects::write_pack_for_push(
+            local.odb(),
+            &self.wants,
+            &self.haves,
+            &self.opts,
+            w,
+        )
+    }
 }
 
 /// A client-side push decision for one ref, plus what to send over the wire.
@@ -1340,6 +1370,20 @@ mod tests {
         out
     }
 
+    fn push_pack_bytes(
+        plan: &PushPlan,
+        repo: &Repository,
+        adv: &AdvertisedState,
+    ) -> Result<Option<Vec<u8>>> {
+        PushPack::for_plan(plan, repo, adv)?
+            .map(|pack| {
+                let mut bytes = Vec::new();
+                pack.write_to(repo, &mut bytes)?;
+                Ok(bytes)
+            })
+            .transpose()
+    }
+
     fn flaky_push_repo(
         dir: &Path,
     ) -> (
@@ -1376,10 +1420,10 @@ mod tests {
         let mut adv = adv_state(false, true, false);
         adv.remote_refs
             .insert("refs/heads/main".to_owned(), remote_tip);
-        assert!(build_push_pack(&plan, &repo, &adv).unwrap().is_some());
+        assert!(push_pack_bytes(&plan, &repo, &adv).unwrap().is_some());
 
         flaky.fail_contains(true);
-        let err = build_push_pack(&plan, &repo, &adv).unwrap_err();
+        let err = push_pack_bytes(&plan, &repo, &adv).unwrap_err();
         assert!(crate::odb::store::flaky::is_injected(&err), "{err:?}");
     }
 
@@ -1847,7 +1891,7 @@ mod tests {
             to_send: vec![0],
         };
         let adv = adv_state(false, true, false);
-        let pack = build_push_pack(&plan, &repo, &adv)
+        let pack = push_pack_bytes(&plan, &repo, &adv)
             .unwrap()
             .expect("pack bytes");
         let deltas = pack_delta_count(&pack, odb.hash_algo().len());

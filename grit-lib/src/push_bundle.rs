@@ -16,7 +16,7 @@
 //!
 //! [TUS]: https://tus.io/protocols/resumable-upload
 
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -88,15 +88,20 @@ impl Session {
         self.bundle_path().is_file()
     }
 
-    /// Write the bundle: `tips` (new value and destination ref) on top of
-    /// `pack`, which may be thin against `haves`.
+    /// Write the bundle: `tips` (new value and destination ref) on top of the
+    /// pack `write_pack` streams, which may be thin against `haves`.
+    ///
+    /// The pack goes straight to disk. When it turns out no larger than
+    /// `threshold` bytes it is not worth a resumable upload: no bundle is kept,
+    /// and the pack comes back as [`Spooled::Small`] to send the usual way.
     pub(crate) fn write_bundle(
         &self,
         odb: &Odb,
         haves: &[ObjectId],
         tips: &[(ObjectId, String)],
-        pack: &[u8],
-    ) -> Result<()> {
+        threshold: u64,
+        write_pack: impl FnOnce(&mut dyn Write) -> Result<()>,
+    ) -> Result<Spooled> {
         std::fs::create_dir_all(&self.dir)?;
         let mut prerequisites: Vec<(ObjectId, Option<String>)> = Vec::new();
         for have in haves {
@@ -106,17 +111,26 @@ impl Session {
                 }
             }
         }
-        let tmp = self.dir.join("push.bundle.tmp");
-        let mut out = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
-        crate::bundle::write_bundle_header(&mut out, odb.hash_algo(), &prerequisites, tips)
+        let mut header = Vec::new();
+        crate::bundle::write_bundle_header(&mut header, odb.hash_algo(), &prerequisites, tips)
             .map_err(|e| Error::Message(format!("bundle: {e}")))?;
-        out.write_all(pack)?;
-        out.into_inner()
-            .map_err(|e| Error::Io(e.into_error()))?
-            .sync_all()?;
-        std::fs::rename(&tmp, self.bundle_path())?;
+        let mut spool = SpooledPack::create(self.dir.join("push.bundle.tmp"))?;
+        let mut out = std::io::BufWriter::new(&spool.file);
+        out.write_all(&header)?;
+        write_pack(&mut out)?;
+        out.flush()?;
+        drop(out);
+        let header_len = header.len() as u64;
+        let pack_len = spool.file.metadata()?.len().saturating_sub(header_len);
+        if pack_len <= threshold {
+            spool.file.seek(SeekFrom::Start(header_len))?;
+            return Ok(Spooled::Small(spool));
+        }
+        spool.file.sync_all()?;
+        std::fs::rename(&spool.path, self.bundle_path())?;
+        spool.path.clear();
         let _ = std::fs::remove_file(self.upload_path());
-        Ok(())
+        Ok(Spooled::Bundle)
     }
 
     fn saved_upload(&self) -> Option<TusUpload> {
@@ -141,6 +155,55 @@ impl Session {
     /// Forget the session (after the server applied it).
     pub(crate) fn remove(&self) {
         let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// What [`Session::write_bundle`] left behind.
+pub(crate) enum Spooled {
+    /// The bundle is on disk, ready to upload.
+    Bundle,
+    /// The pack was below the threshold; send it over the connection instead.
+    Small(SpooledPack),
+}
+
+/// A pack written to a scratch file, removed when dropped.
+pub(crate) struct SpooledPack {
+    file: std::fs::File,
+    /// Empty once the file was kept under another name.
+    path: PathBuf,
+}
+
+impl SpooledPack {
+    fn create(path: PathBuf) -> Result<Self> {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)?;
+        Ok(Self { file, path })
+    }
+
+    /// Copy the rest of the pack to `w`.
+    ///
+    /// # Returns
+    ///
+    /// The number of bytes copied.
+    pub(crate) fn copy_to(mut self, w: &mut dyn Write) -> Result<u64> {
+        Ok(std::io::copy(&mut self.file, w)?)
+    }
+}
+
+impl Drop for SpooledPack {
+    fn drop(&mut self) {
+        if self.path.as_os_str().is_empty() {
+            return;
+        }
+        let _ = std::fs::remove_file(&self.path);
+        // Only succeeds when the session holds nothing else.
+        if let Some(session_dir) = self.path.parent() {
+            let _ = std::fs::remove_dir(session_dir);
+        }
     }
 }
 
@@ -377,6 +440,111 @@ mod tests {
             Some(&b"commands"[..])
         );
         assert!(!session.dir.exists(), "the session is removed once applied");
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .unwrap_or_else(|e| panic!("git {args:?}: {e}"));
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
+    #[test]
+    fn a_large_pack_streams_into_a_bundle_git_can_clone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bare = grit_test_support::git_packed_history(tmp.path(), 40);
+        let tip = ObjectId::from_hex(&git(&bare, &["rev-parse", "main"])).unwrap();
+        let odb = Odb::new(&bare.join("objects"));
+        let session = Session::locate(&bare, "http://h/r", b"cmds");
+        let opts = crate::pack_objects::PackBuildOptions::for_local_copy(None);
+        let mut streamed = 0u64;
+        let spooled = session
+            .write_bundle(&odb, &[], &[(tip, "refs/heads/main".to_owned())], 0, |w| {
+                streamed = crate::pack_objects::write_pack_for_push(&odb, &[tip], &[], &opts, w)?
+                    .pack_bytes;
+                Ok(())
+            })
+            .unwrap();
+        assert!(matches!(spooled, Spooled::Bundle));
+        assert!(session.has_bundle());
+        assert!(!session.dir.join("push.bundle.tmp").exists());
+        let bundle_len = std::fs::metadata(session.bundle_path()).unwrap().len();
+        assert!(streamed > 0 && bundle_len > streamed);
+
+        let bundle = session.bundle_path();
+        let bundle = bundle.to_str().unwrap();
+        git(&bare, &["bundle", "verify", bundle]);
+        git(tmp.path(), &["clone", "-q", "--bare", bundle, "copy.git"]);
+        let copy = tmp.path().join("copy.git");
+        git(&copy, &["fsck", "--strict", "--no-dangling"]);
+        assert_eq!(git(&copy, &["rev-parse", "main"]), tip.to_hex());
+    }
+
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
+    #[test]
+    fn a_pack_under_the_threshold_comes_back_and_leaves_nothing_behind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bare = grit_test_support::git_packed_history(tmp.path(), 3);
+        let tip = ObjectId::from_hex(&git(&bare, &["rev-parse", "main"])).unwrap();
+        let odb = Odb::new(&bare.join("objects"));
+        let session = Session::locate(&bare, "http://h/r", b"cmds");
+        let spooled = session
+            .write_bundle(
+                &odb,
+                &[],
+                &[(tip, "refs/heads/main".to_owned())],
+                1024,
+                |w| Ok(w.write_all(b"PACK and the rest")?),
+            )
+            .unwrap();
+        let Spooled::Small(small) = spooled else {
+            panic!("a 17-byte pack is under a 1 KiB threshold");
+        };
+        assert!(!session.has_bundle());
+        let mut sent = Vec::new();
+        assert_eq!(small.copy_to(&mut sent).unwrap(), 17);
+        assert_eq!(sent, b"PACK and the rest");
+        assert!(
+            !session.dir.exists(),
+            "the spooled pack and its session are removed"
+        );
+    }
+
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
+    #[test]
+    fn a_failed_pack_write_leaves_no_bundle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bare = grit_test_support::git_packed_history(tmp.path(), 3);
+        let tip = ObjectId::from_hex(&git(&bare, &["rev-parse", "main"])).unwrap();
+        let odb = Odb::new(&bare.join("objects"));
+        let session = Session::locate(&bare, "http://h/r", b"cmds");
+        let result =
+            session.write_bundle(&odb, &[], &[(tip, "refs/heads/main".to_owned())], 0, |w| {
+                w.write_all(b"PACK")?;
+                Err(Error::Message("object went missing".to_owned()))
+            });
+        assert!(result.is_err());
+        assert!(!session.has_bundle());
+        assert!(!session.dir.exists());
     }
 
     #[test]
