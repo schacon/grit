@@ -392,6 +392,30 @@ pub fn commit_file(worktree: &Path, path: &str, content: &str, msg: &str) -> Obj
         .expect("HEAD oid")
 }
 
+/// A feature branch rebased and force-pushed after review (issue #2163).
+///
+/// `main` gets `base`; `feat` adds `c1`–`c3` (saved as `old-feat`); `main` then gets `m`,
+/// `feat` is rebased onto it and `c3` is amended with a new message only.
+pub fn rewritten_branch_fixture(worktree: &Path) {
+    commit_file(worktree, "f", "0\n", "base");
+    git(worktree, &["branch", "-M", "main"]);
+    git(worktree, &["switch", "-q", "-c", "feat"]);
+    for i in 1..=3 {
+        commit_file(
+            worktree,
+            &format!("f{i}"),
+            &format!("{i}\n"),
+            &format!("c{i}"),
+        );
+    }
+    git(worktree, &["branch", "old-feat"]);
+    git(worktree, &["switch", "-q", "main"]);
+    commit_file(worktree, "m", "m\n", "m");
+    git(worktree, &["switch", "-q", "feat"]);
+    git(worktree, &["rebase", "-q", "main"]);
+    git(worktree, &["commit", "-q", "--amend", "-m", "c3 reworded"]);
+}
+
 /// Build a commit DAG from `edges` (`(child_label, parent_label)`); optional `tags` map labels to ref names.
 ///
 /// Root commits have no incoming edge as a child whose parent is missing; labels only referenced as
