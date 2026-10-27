@@ -497,7 +497,7 @@ impl Odb {
                 return Ok(Arc::clone(entries));
             }
         }
-        let obj = self.read(oid)?;
+        let obj = self.read_impl(oid, false)?;
         if obj.kind != ObjectKind::Tree {
             return Err(Error::CorruptObject(format!(
                 "expected tree, got {}",
@@ -525,8 +525,15 @@ impl Odb {
         }
     }
 
-    fn finish_session_loose_read(&self, oid: &ObjectId, obj: Object) -> Result<Object> {
-        self.remember_session_loose_read(oid, &obj);
+    fn finish_session_loose_read(
+        &self,
+        oid: &ObjectId,
+        obj: Object,
+        remember: bool,
+    ) -> Result<Object> {
+        if remember {
+            self.remember_session_loose_read(oid, &obj);
+        }
         Ok(obj)
     }
 
@@ -1936,6 +1943,12 @@ impl Odb {
     /// - [`Error::Zlib`] — decompression failed.
     /// - [`Error::CorruptObject`] — header is malformed.
     pub fn read(&self, oid: &ObjectId) -> Result<Object> {
+        self.read_impl(oid, true)
+    }
+
+    /// `remember` keeps a copy in the session loose-read cache; callers that cache a
+    /// parsed form themselves skip it.
+    fn read_impl(&self, oid: &ObjectId, remember: bool) -> Result<Object> {
         if self.is_empty_tree(oid) {
             return Ok(Object {
                 kind: ObjectKind::Tree,
@@ -1970,7 +1983,7 @@ impl Odb {
         } else {
             self.with_pack_store_for(&self.objects_dir, read_primary)
         } {
-            Ok(Some(obj)) => return self.finish_session_loose_read(oid, obj),
+            Ok(Some(obj)) => return self.finish_session_loose_read(oid, obj, remember),
             Ok(None) => {}
             Err(err)
                 if files_primary
@@ -1983,12 +1996,12 @@ impl Odb {
         }
 
         if let Some(obj) = self.try_read_extra_sources(oid)? {
-            return self.finish_session_loose_read(oid, obj);
+            return self.finish_session_loose_read(oid, obj, remember);
         }
 
         if self.alternates_enabled {
             match self.sources()?.read(oid) {
-                Ok(Some(obj)) => return self.finish_session_loose_read(oid, obj),
+                Ok(Some(obj)) => return self.finish_session_loose_read(oid, obj, remember),
                 Ok(None) => {}
                 Err(err) => return Err(err),
             }
@@ -2044,7 +2057,7 @@ impl Odb {
             return Ok(Some(obj));
         }
         if let Some(obj) = self.try_read_packed_in_batch_context(oid)? {
-            return Ok(Some(self.finish_session_loose_read(oid, obj)?));
+            return Ok(Some(self.finish_session_loose_read(oid, obj, true)?));
         }
 
         let use_midx = self.multi_pack_index_reads_enabled();
@@ -2063,7 +2076,7 @@ impl Odb {
         } else {
             self.with_pack_store_for(&self.objects_dir, read_primary)
         } {
-            Ok(Some(obj)) => return Ok(Some(self.finish_session_loose_read(oid, obj)?)),
+            Ok(Some(obj)) => return Ok(Some(self.finish_session_loose_read(oid, obj, true)?)),
             Ok(None) => {}
             Err(err)
                 if files_primary
@@ -2076,12 +2089,12 @@ impl Odb {
         }
 
         if let Some(obj) = self.try_read_extra_sources(oid)? {
-            return Ok(Some(self.finish_session_loose_read(oid, obj)?));
+            return Ok(Some(self.finish_session_loose_read(oid, obj, true)?));
         }
 
         if self.alternates_enabled {
             match self.sources()?.read(oid) {
-                Ok(Some(obj)) => return Ok(Some(self.finish_session_loose_read(oid, obj)?)),
+                Ok(Some(obj)) => return Ok(Some(self.finish_session_loose_read(oid, obj, true)?)),
                 Ok(None) => {}
                 Err(err) => return Err(err),
             }
@@ -3616,6 +3629,37 @@ mod tests {
         let odb = Odb::new(&objects);
         assert_bounded_reads(&odb, &small, &big);
         odb.with_pack_read_context(|| assert_bounded_reads(&odb, &small, &big));
+    }
+
+    #[test]
+    fn parsed_tree_reads_keep_no_raw_copy_in_the_session_cache() {
+        let (_dir, objects, small, _big) = bounded_read_fixture();
+        let odb = Odb::new(&objects);
+        let entries = [crate::objects::TreeEntry {
+            mode: 0o100644,
+            name: b"small".to_vec(),
+            oid: small,
+        }];
+        let tree = odb
+            .write(ObjectKind::Tree, &crate::objects::serialize_tree(&entries))
+            .unwrap();
+        for packed in [false, true] {
+            if packed {
+                pack_objects(&objects, &[tree]);
+            }
+            let odb = Odb::new(&objects);
+            assert_eq!(*odb.cached_tree_entries(&tree).unwrap(), entries);
+            assert!(odb.session_cached_loose_read(&tree).is_none());
+            assert!(Arc::ptr_eq(
+                &odb.cached_tree_entries(&tree).unwrap(),
+                &odb.cached_tree_entries(&tree).unwrap()
+            ));
+            assert_eq!(odb.read(&tree).unwrap().kind, ObjectKind::Tree);
+            assert!(
+                odb.session_cached_loose_read(&tree).is_some(),
+                "plain reads still use the session cache (packed: {packed})"
+            );
+        }
     }
 
     #[test]
