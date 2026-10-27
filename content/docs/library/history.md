@@ -28,6 +28,12 @@ To assign staged hunks automatically, [`absorb`](rustdoc:grit_lib::revwalk::hist
 
 [`AppliedRewrite`](rustdoc:grit_lib::revwalk::history::AppliedRewrite) returns the ref updates that were committed and the commit OID `HEAD` resolves to afterward.
 
+## Undo
+
+When [`ApplyOptions::record_operation`](rustdoc:grit_lib::revwalk::history::ApplyOptions::record_operation) is set, the apply records its ref plan in `.git/grit/history-last`, and [`undo_last_rewrite`](rustdoc:grit_lib::revwalk::history::undo_last_rewrite) inverts it while every recorded ref is still at its post-rewrite tip. Undo writes the inverse as the new record, so calling it again redoes the rewrite.
+
+[`apply_fixup_rewrite`](rustdoc:grit_lib::revwalk::history::apply_fixup_rewrite), [`apply_fixup_hunk_selection`](rustdoc:grit_lib::revwalk::history::apply_fixup_hunk_selection), and [`apply_absorb_rewrite`](rustdoc:grit_lib::revwalk::history::apply_absorb_rewrite) consume edits from the index (or selected unstaged hunks). A recorded apply also saves, in `.git/grit/history-last-work`, each consumed path's index entry and work tree file from before the command, plus a fingerprint of the same paths after it. Undo checks that those paths still match the fingerprint (otherwise [`LocalChangesWouldBeOverwritten`](rustdoc:grit_lib::revwalk::history::HistoryError::LocalChangesWouldBeOverwritten)), runs the inverse checkout, then puts the saved entries and files back. [`UndoOutcome::restored_paths`](rustdoc:grit_lib::revwalk::history::UndoOutcome::restored_paths) lists them. A record written without saved state still moves refs, and [`UndoOutcome::unrestored_edits`](rustdoc:grit_lib::revwalk::history::UndoOutcome::unrestored_edits) names the commit that holds the consumed edits.
+
 ## Inspecting a plan
 
 [`RewritePlan::ref_update_lines`](rustdoc:grit_lib::revwalk::history::RewritePlan::ref_update_lines) returns `update <ref> <new> <old>` lines suitable for `git update-ref --stdin`, so callers can preview ref motion without applying.

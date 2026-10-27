@@ -180,7 +180,7 @@ Failures with a known next step carry a `hint` in `--json` (and a `hint:` line o
 
 Ordinary pushes must fast-forward the remote. If the remote has commits you don't, grit rejects the push (exit **1**, `"rejected": true`); run `grit pull`, then push again. After `grit history` edits (reword, drop, fixup, squash, split, rebase) or `grit rebase`, fetch and use `--force-with-lease` instead of `--force` so you don't overwrite someone else's work. `--force` overwrites unconditionally when you really need it. A failing `pre-push` hook stops the push before anything is sent (exit **1**, `"error": "hook pre-push failed …"`); `--no-verify` skips it.
 
-After a successful history rewrite (drop, move, reword, fixup, squash, absorb, or rebase apply), grit stores the ref plan in `.git/grit/history-last`. `grit history undo` restores those refs when tips are unchanged; run it again to redo. Use `--dry-run` to preview ref movements. Undo refuses when a ref moved or local changes would be overwritten.
+After a successful history rewrite (drop, move, reword, fixup, squash, absorb, or rebase apply), grit stores the ref plan in `.git/grit/history-last`. `grit history undo` restores those refs when tips are unchanged; run it again to redo. Undoing a fixup or absorb also puts the consumed staged / selected edits back in the index and work tree (`restored_paths` in `--json`); a record without saved state reports the commit holding them as `unrestored_edits`. Use `--dry-run` to preview ref movements. Undo refuses when a ref moved, when a restored path was edited after the command, or when local changes would be overwritten.
 
 URLs can be `https://`, `ssh://`, `user@host:path`, `git://`, `file://` or a local path.
 

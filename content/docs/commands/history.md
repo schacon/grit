@@ -71,6 +71,26 @@ Replay commits on the current branch onto `<upstream>` (or `--onto`), matching [
 
 Restore branch tips (and the worktree when `HEAD`'s tree changed) from the last successful history rewrite that moved refs. Grit records each apply in `.git/grit/history-last` (ignored by `git fsck --strict`); `undo` inverts that plan when every recorded ref is still at its post-rewrite tip. A second `undo` redoes the rewrite. Recorded applies always write reflog entries for moved refs (even when `core.logAllRefUpdates=false`) so the pre-rewrite tips stay reachable until undo or reflog expiry.
 
+`fixup` and `absorb` consume staged (or `--hunks` / `--lines` selected) edits. Undoing one puts those edits back: each consumed path gets the index entry and work tree file it had before the command, so a staged fixup comes back staged, unstaged edits on the same path come back unstaged, and a `--hunks` fixup leaves the selected hunks unstaged again. A staged submodule pointer comes back staged too; the submodule's own checkout is never touched. The saved state lives next to the record in `.git/grit/history-last-work` (also ignored by `git fsck`), and the next recorded rewrite replaces it. A second `undo` returns to the post-fixup state. Undo refuses to run when one of those paths changed after the command, because putting the edit back would overwrite the newer change.
+
+```console
+$ git add a.txt
+$ grit history fixup HEAD~2
+Fixed up 3 commit(s)
+  commit 6904103 → 32a5464 (c1)
+  commit 8b9fec5 → 384d455 (c2)
+  commit 16a0857 → 46f21c2 (c3)
+  refs/heads/main 16a0857 → 46f21c2
+$ grit history undo
+Undid last history rewrite
+  refs/heads/main 46f21c2 → 16a0857
+  restored a.txt (index and work tree)
+$ git status --short
+M  a.txt
+```
+
+A record written by an older grit has no saved state. Undoing a `fixup` or `absorb` from such a record still moves the refs, and prints the commit that still holds the folded edits (`unrestored_edits` in `--json`), so you can recover them from it.
+
 There is nothing to undo when no record exists, when a listed ref moved, or when local changes would be overwritten by the checkout.
 
 ### `squash`
@@ -256,6 +276,13 @@ For `absorb`, the object also includes:
 | ----- | ---- | ------- |
 | `assignments` | array | `{path,hunk_range,commit,subject}` for hunks assigned to historical commits. |
 | `unassigned` | array | `{path,hunk_range,reason}` for hunks left staged (`reason` is a stable code). |
+
+For `undo`, the object also includes:
+
+| Field | Type | Meaning |
+| ----- | ---- | ------- |
+| `restored_paths` | array | Paths whose index entry and work tree file were put back (or would be, with `--dry-run`) because the undone `fixup` or `absorb` had consumed their edits. Omitted when empty. |
+| `unrestored_edits` | string | Full hex OID of the commit that still holds edits an undone `fixup` or `absorb` folded in, when the record had no saved state to restore. Omitted otherwise. |
 
 For `rebase`, use the [`grit rebase`](rebase.md) JSON table (`result`, `commit`, `conflicts`, `next_steps`, `alternatives`, plus `rewritten` / `refs` / `head` when `result` is `completed`).
 
