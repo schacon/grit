@@ -757,6 +757,9 @@ mod index_git_load_sweep;
 #[path = "index_large_load_git_compat.rs"]
 mod index_large_load_git_compat;
 #[cfg(feature = "full-tests")]
+#[path = "index_lock_before_mutate_git_compat.rs"]
+mod index_lock_before_mutate_git_compat;
+#[cfg(feature = "full-tests")]
 #[path = "index_lock_pid_liveness.rs"]
 mod index_lock_pid_liveness;
 #[cfg(feature = "full-tests")]
