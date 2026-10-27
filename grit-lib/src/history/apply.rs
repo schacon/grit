@@ -50,7 +50,7 @@ fn complete_applied_rewrite(
     opts: &ApplyOptions,
     head: ObjectId,
     needs_worktree: bool,
-    index_snapshot: Option<&[u8]>,
+    index_snapshot: Option<&IndexSnapshot>,
     worktree_snapshot: Option<&HashMap<String, WorktreePathSnapshot>>,
 ) -> Result<AppliedRewrite, HistoryError> {
     if let Err(record_err) = maybe_record_history_last(repo, opts, plan) {
@@ -747,6 +747,7 @@ fn apply_fixup_worktree_after_refs(
         from_tree,
         to_tree,
         &force_preserve,
+        None,
         &mut crate::progress::NullProgress,
         &crate::progress::NeverCancel,
     )
@@ -943,7 +944,7 @@ pub fn apply_rewrite(
         opts,
         rewrite_journal::RewriteApplyKind::Standard,
         |repo, old_tree, new_tree| {
-            apply_head_tree_to_worktree(repo, old_tree, new_tree, progress, cancel)
+            apply_head_tree_to_worktree(repo, old_tree, new_tree, None, progress, cancel)
         },
     )
 }
@@ -984,8 +985,8 @@ where
         })?;
 
     if needs_worktree {
-        let index_bytes = index_snapshot
-            .as_deref()
+        let index_before = index_snapshot
+            .as_ref()
             .ok_or_else(|| HistoryError::WorktreeApply {
                 message: "missing index snapshot for rewrite apply journal".into(),
             })?;
@@ -1000,7 +1001,7 @@ where
             plan,
             opts,
             apply_kind,
-            index_bytes,
+            index_before,
             worktree_snap,
         )?;
     }
@@ -1027,7 +1028,7 @@ where
             let ref_rollback = rollback_ref_updates(repo, &plan.ref_updates, opts).err();
             let worktree_restore = restore_worktree_after_failed_apply(
                 repo,
-                index_snapshot.as_deref(),
+                index_snapshot.as_ref(),
                 worktree_snapshot.as_ref(),
             )
             .err();
@@ -1048,7 +1049,7 @@ where
         opts,
         new_head_commit,
         needs_worktree,
-        index_snapshot.as_deref(),
+        index_snapshot.as_ref(),
         worktree_snapshot.as_ref(),
     );
     if applied.is_ok() {
@@ -1093,27 +1094,50 @@ fn verify_live_head_matches_plan(
     Ok(())
 }
 
-fn capture_index_snapshot(repo: &Repository) -> Result<Vec<u8>, HistoryError> {
+/// The on-disk index before an apply, kept for rollback and crash recovery.
+///
+/// The file's mtime is part of the snapshot: entries stamped in the same second as the index are
+/// only known to need a content check because of it, so a restore must put it back.
+pub(crate) struct IndexSnapshot {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) mtime: Option<std::time::SystemTime>,
+}
+
+impl IndexSnapshot {
+    /// Write the snapshot over the index at `path`, restoring its mtime.
+    fn restore_to(&self, path: &Path) -> std::io::Result<()> {
+        fs::write(path, &self.bytes)?;
+        if let Some(mtime) = self.mtime {
+            fs::File::options()
+                .write(true)
+                .open(path)?
+                .set_modified(mtime)?;
+        }
+        Ok(())
+    }
+}
+
+fn capture_index_snapshot(repo: &Repository) -> Result<IndexSnapshot, HistoryError> {
+    let io_err = |e: std::io::Error| HistoryError::WorktreeApply {
+        message: e.to_string(),
+    };
     let path = repo.index_path();
     if path.is_file() {
-        return fs::read(path).map_err(|e| HistoryError::WorktreeApply {
-            message: e.to_string(),
-        });
+        let mtime = fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let bytes = fs::read(path).map_err(io_err)?;
+        return Ok(IndexSnapshot { bytes, mtime });
     }
     let mut index = repo.load_index().map_err(|e| HistoryError::WorktreeApply {
         message: e.to_string(),
     })?;
-    let tmp = tempfile::NamedTempFile::new().map_err(|e| HistoryError::WorktreeApply {
-        message: e.to_string(),
-    })?;
+    let tmp = tempfile::NamedTempFile::new().map_err(io_err)?;
     index
         .write_to_path(tmp.path(), false)
         .map_err(|e| HistoryError::WorktreeApply {
             message: e.to_string(),
         })?;
-    fs::read(tmp.path()).map_err(|e| HistoryError::WorktreeApply {
-        message: e.to_string(),
-    })
+    let bytes = fs::read(tmp.path()).map_err(io_err)?;
+    Ok(IndexSnapshot { bytes, mtime: None })
 }
 
 fn head_tree_transition(plan: &RewritePlan) -> (Option<ObjectId>, Option<ObjectId>) {
@@ -1160,6 +1184,7 @@ fn apply_head_tree_to_worktree(
     repo: &Repository,
     from_tree: Option<&ObjectId>,
     to_tree: &ObjectId,
+    index_lock: Option<&mut crate::index::IndexLock>,
     progress: &mut dyn crate::progress::ProgressSink,
     cancel: &dyn crate::progress::Cancel,
 ) -> Result<(), HistoryError> {
@@ -1168,6 +1193,7 @@ fn apply_head_tree_to_worktree(
         from_tree,
         to_tree,
         &std::collections::HashSet::new(),
+        index_lock,
         progress,
         cancel,
     )
@@ -1459,13 +1485,15 @@ fn read_worktree_path_snapshot(
 
 fn restore_worktree_after_failed_apply(
     repo: &Repository,
-    index_snapshot: Option<&[u8]>,
+    index_snapshot: Option<&IndexSnapshot>,
     worktree_snapshot: Option<&HashMap<String, WorktreePathSnapshot>>,
 ) -> Result<(), HistoryError> {
-    if let Some(bytes) = index_snapshot {
-        fs::write(repo.index_path(), bytes).map_err(|e| HistoryError::WorktreeApply {
-            message: e.to_string(),
-        })?;
+    if let Some(snapshot) = index_snapshot {
+        snapshot
+            .restore_to(&repo.index_path())
+            .map_err(|e| HistoryError::WorktreeApply {
+                message: e.to_string(),
+            })?;
     }
     let Some(work_tree) = repo.work_tree() else {
         return Ok(());

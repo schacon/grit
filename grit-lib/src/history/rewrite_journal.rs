@@ -10,13 +10,14 @@ use std::fs;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
-use crate::lockfile::{LockFile, LockWait};
+use crate::index::IndexLock;
+use crate::lockfile::{pid_path_for_lock, LockFile, LockHolder, LockWait};
 use crate::objects::ObjectId;
 use crate::repo::Repository;
 
 use super::{
     apply_head_tree_to_worktree, restore_worktree_after_failed_apply, rollback_ref_updates,
-    WorktreePathKind, WorktreePathSnapshot,
+    IndexSnapshot, WorktreePathKind, WorktreePathSnapshot,
 };
 use crate::history::error::HistoryError;
 use crate::history::types::{ApplyOptions, HeadEffect, PlannedRefUpdate, RewritePlan};
@@ -83,7 +84,7 @@ pub fn write_rewrite_apply_journal(
     plan: &RewritePlan,
     opts: &ApplyOptions,
     apply_kind: RewriteApplyKind,
-    index_before: &[u8],
+    index_before: &IndexSnapshot,
     worktree_before: &HashMap<String, WorktreePathSnapshot>,
 ) -> Result<(), HistoryError> {
     let dir = journal_dir(repo.git_dir());
@@ -94,7 +95,9 @@ pub fn write_rewrite_apply_journal(
     }
     fs::create_dir_all(&worktree_dir).map_err(journal_write_err)?;
 
-    fs::write(dir.join(INDEX_BEFORE), index_before).map_err(journal_write_err)?;
+    index_before
+        .restore_to(&dir.join(INDEX_BEFORE))
+        .map_err(journal_write_err)?;
     for (path, snap) in worktree_before {
         write_worktree_snapshot_file(&worktree_dir, path, snap)?;
     }
@@ -122,26 +125,23 @@ pub fn clear_rewrite_apply_journal(repo: &Repository) -> Result<(), HistoryError
     Ok(())
 }
 
-/// Finish or roll back an interrupted rewrite apply recorded in the journal.
-///
-/// When every planned ref already points at its new OID, completes the pending worktree checkout.
-/// When every ref still matches the pre-apply OID, clears the journal. Otherwise rolls refs back
-/// and restores captured index/worktree snapshots.
-///
-/// # Errors
-///
 /// Abort an incomplete rewrite apply by rolling refs back and restoring snapshots.
 ///
+/// Runs under `index.lock`, like [`recover_interrupted_rewrite_apply`].
+///
 /// # Errors
 ///
-/// Returns [`HistoryError::UndoRecordRead`] when the journal is invalid and apply failures when
-/// rollback cannot complete.
+/// Returns [`HistoryError::RewriteApplyIncomplete`] when no journal is pending,
+/// [`HistoryError::Library`] wrapping [`Error::LockHeld`](crate::error::Error::LockHeld) when
+/// another process holds `index.lock`, [`HistoryError::UndoRecordRead`] when the journal is
+/// invalid, and apply failures when rollback cannot complete.
 pub fn abort_interrupted_rewrite_apply(
     repo: &Repository,
 ) -> Result<RewriteApplyRecovery, HistoryError> {
     if !rewrite_apply_journal_active(repo.git_dir()) {
         return Err(HistoryError::RewriteApplyIncomplete);
     }
+    let _index_lock = lock_index_for_recovery(repo)?;
     let record = read_rewrite_apply_journal(repo)?;
     rollback_from_journal(repo, &record)
 }
@@ -150,7 +150,8 @@ pub fn abort_interrupted_rewrite_apply(
 ///
 /// # Errors
 ///
-/// Returns [`HistoryError::RewriteApplyIncomplete`] when recovery could not clear the journal.
+/// Returns [`HistoryError::RewriteApplyIncomplete`] when recovery could not clear the journal,
+/// and the errors of [`recover_interrupted_rewrite_apply`].
 pub fn ensure_rewrite_apply_ready(repo: &Repository) -> Result<(), HistoryError> {
     if !rewrite_apply_journal_active(repo.git_dir()) {
         return Ok(());
@@ -164,47 +165,138 @@ pub fn ensure_rewrite_apply_ready(repo: &Repository) -> Result<(), HistoryError>
 
 /// Finish or roll back an interrupted rewrite apply recorded in the journal.
 ///
+/// Recovery holds `index.lock` throughout. A lock left by a process that is no longer running
+/// (per its `core.lockfilePid` sidecar) is removed first; any other existing lock means the
+/// apply may still be in flight, so nothing is touched.
+///
+/// When every planned ref already points at its new OID and the journal comes from
+/// [`super::apply_rewrite`], the captured pre-apply index and worktree paths are restored and the
+/// checkout is run again, so a half-written checkout is not mistaken for local edits. If that
+/// checkout still fails, refs are rolled back instead. When every ref still matches the pre-apply
+/// OID, the journal is cleared. Otherwise refs are rolled back and the snapshots restored.
+///
+/// A journal directory without its `meta` file is left over from a kill while the snapshots were
+/// being written, before any ref moved; it is removed once `index.lock` can be taken.
+///
+/// # Returns
+///
+/// `None` when no journal was pending (or it recorded no ref movement), otherwise what recovery
+/// did.
+///
 /// # Errors
 ///
-/// Returns [`HistoryError::UndoRecordRead`] when the journal is present but invalid, and apply
-/// failures when rollback or checkout cannot complete.
+/// Returns [`HistoryError::Library`] wrapping [`Error::LockHeld`](crate::error::Error::LockHeld)
+/// when another process holds `index.lock`, [`HistoryError::UndoRecordRead`] when the journal is
+/// present but invalid, and apply failures when rollback cannot complete.
 pub fn recover_interrupted_rewrite_apply(
     repo: &Repository,
 ) -> Result<Option<RewriteApplyRecovery>, HistoryError> {
     if !rewrite_apply_journal_active(repo.git_dir()) {
+        remove_journal_without_meta(repo)?;
         return Ok(None);
     }
+    let mut index_lock = lock_index_for_recovery(repo)?;
     let record = read_rewrite_apply_journal(repo)?;
-    let refs_at_new = refs_match_plan(repo, &record.ref_updates, true)?;
-    let refs_at_old = refs_match_plan(repo, &record.ref_updates, false)?;
 
-    if refs_at_new {
-        if record.apply_kind != RewriteApplyKind::Standard {
-            return rollback_from_journal(repo, &record).map(Some);
-        }
-        let (Some(old_tree), Some(new_tree)) = (record.head_old_tree, record.head_new_tree) else {
-            return rollback_from_journal(repo, &record).map(Some);
-        };
-        if let Err(checkout_err) = apply_head_tree_to_worktree(
-            repo,
-            Some(&old_tree),
-            &new_tree,
-            &mut crate::progress::NullProgress,
-            &crate::progress::NeverCancel,
+    if refs_match_plan(repo, &record.ref_updates, true)? {
+        if let (RewriteApplyKind::Standard, Some(old_tree), Some(new_tree)) = (
+            record.apply_kind,
+            record.head_old_tree,
+            record.head_new_tree,
         ) {
-            let _ = rollback_from_journal(repo, &record);
-            return Err(checkout_err);
+            return finish_checkout_from_journal(
+                repo,
+                &record,
+                &old_tree,
+                &new_tree,
+                &mut index_lock,
+            )
+            .map(Some);
         }
-        clear_rewrite_apply_journal(repo)?;
-        return Ok(Some(RewriteApplyRecovery::FinishedCheckout));
+        return rollback_from_journal(repo, &record).map(Some);
     }
 
-    if refs_at_old {
+    if refs_match_plan(repo, &record.ref_updates, false)? {
         clear_rewrite_apply_journal(repo)?;
         return Ok(None);
     }
 
     rollback_from_journal(repo, &record).map(Some)
+}
+
+/// Put the transition paths back to their pre-apply state, which already passed the
+/// local-changes check, then check out the new tree again.
+fn finish_checkout_from_journal(
+    repo: &Repository,
+    record: &RewriteApplyJournal,
+    old_tree: &ObjectId,
+    new_tree: &ObjectId,
+    index_lock: &mut IndexLock,
+) -> Result<RewriteApplyRecovery, HistoryError> {
+    let checkout = restore_worktree_after_failed_apply(
+        repo,
+        record.index_before.as_ref(),
+        record.worktree_before.as_ref(),
+    )
+    .and_then(|()| {
+        apply_head_tree_to_worktree(
+            repo,
+            Some(old_tree),
+            new_tree,
+            Some(index_lock),
+            &mut crate::progress::NullProgress,
+            &crate::progress::NeverCancel,
+        )
+    });
+    match checkout {
+        Ok(()) => {
+            clear_rewrite_apply_journal(repo)?;
+            Ok(RewriteApplyRecovery::FinishedCheckout)
+        }
+        Err(checkout_err) => rollback_from_journal(repo, record).map_err(|_| checkout_err),
+    }
+}
+
+/// Take `index.lock` for recovery, removing it first when its recorded holder has exited.
+fn lock_index_for_recovery(repo: &Repository) -> Result<IndexLock, HistoryError> {
+    match repo.begin_index_update() {
+        Err(crate::error::Error::LockHeld {
+            path,
+            holder: Some(LockHolder { running: false, .. }),
+        }) => {
+            remove_stale_lock(&path)?;
+            repo.begin_index_update().map_err(Into::into)
+        }
+        other => other.map_err(Into::into),
+    }
+}
+
+fn remove_stale_lock(lock_path: &Path) -> Result<(), HistoryError> {
+    for path in [lock_path.to_path_buf(), pid_path_for_lock(lock_path)] {
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(crate::error::Error::Io(e).into()),
+        }
+    }
+    Ok(())
+}
+
+fn remove_journal_without_meta(repo: &Repository) -> Result<(), HistoryError> {
+    if !journal_dir(repo.git_dir()).is_dir() {
+        return Ok(());
+    }
+    let _index_lock = match lock_index_for_recovery(repo) {
+        Ok(lock) => lock,
+        Err(HistoryError::Library(err)) if matches!(*err, crate::error::Error::LockHeld { .. }) => {
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    };
+    if rewrite_apply_journal_active(repo.git_dir()) {
+        return Ok(());
+    }
+    clear_rewrite_apply_journal(repo)
 }
 
 fn rollback_from_journal(
@@ -214,7 +306,7 @@ fn rollback_from_journal(
     rollback_ref_updates(repo, &record.ref_updates, &record.apply_options)?;
     restore_worktree_after_failed_apply(
         repo,
-        record.index_before.as_deref(),
+        record.index_before.as_ref(),
         record.worktree_before.as_ref(),
     )?;
     clear_rewrite_apply_journal(repo)?;
@@ -246,7 +338,7 @@ struct RewriteApplyJournal {
     head_old_tree: Option<ObjectId>,
     head_new_tree: Option<ObjectId>,
     ref_updates: Vec<PlannedRefUpdate>,
-    index_before: Option<Vec<u8>>,
+    index_before: Option<IndexSnapshot>,
     worktree_before: Option<HashMap<String, WorktreePathSnapshot>>,
 }
 
@@ -254,7 +346,11 @@ fn read_rewrite_apply_journal(repo: &Repository) -> Result<RewriteApplyJournal, 
     let dir = journal_dir(repo.git_dir());
     let meta = fs::read_to_string(dir.join(META)).map_err(journal_read_err)?;
     let mut parsed = parse_meta(&meta)?;
-    parsed.index_before = Some(fs::read(dir.join(INDEX_BEFORE)).map_err(journal_read_err)?);
+    let index_path = dir.join(INDEX_BEFORE);
+    parsed.index_before = Some(IndexSnapshot {
+        bytes: fs::read(&index_path).map_err(journal_read_err)?,
+        mtime: fs::metadata(&index_path).and_then(|m| m.modified()).ok(),
+    });
     parsed.worktree_before = Some(read_worktree_snapshot_dir(&dir.join(WORKTREE_DIR))?);
     Ok(parsed)
 }
@@ -667,7 +763,10 @@ mod tests {
             &plan,
             &opts,
             RewriteApplyKind::Standard,
-            b"INDEX",
+            &IndexSnapshot {
+                bytes: b"INDEX".to_vec(),
+                mtime: None,
+            },
             &snaps,
         )
         .expect("write");
@@ -709,7 +808,10 @@ mod tests {
             &plan,
             &opts,
             RewriteApplyKind::Standard,
-            b"INDEX",
+            &IndexSnapshot {
+                bytes: b"INDEX".to_vec(),
+                mtime: None,
+            },
             &snaps,
         )
         .expect("write");
@@ -762,7 +864,10 @@ mod tests {
             &plan,
             &opts,
             RewriteApplyKind::Standard,
-            b"INDEX",
+            &IndexSnapshot {
+                bytes: b"INDEX".to_vec(),
+                mtime: None,
+            },
             &snaps,
         )
         .expect("write");
@@ -809,7 +914,10 @@ mod tests {
             &plan,
             &opts,
             RewriteApplyKind::Standard,
-            b"INDEX",
+            &IndexSnapshot {
+                bytes: b"INDEX".to_vec(),
+                mtime: None,
+            },
             &snaps,
         )
         .expect("write");

@@ -359,6 +359,33 @@ pub struct StatusModel {
     pub index_sparse_on_disk: bool,
     /// Sparse-directory prefixes present in the on-disk index, if any.
     pub sparse_directory_prefixes: Vec<Vec<u8>>,
+    /// What [`status`] did about a rewrite apply (rebase, history edit) that was killed after
+    /// moving refs, or `None` when none was pending.
+    pub interrupted_rewrite: Option<InterruptedRewrite>,
+}
+
+/// How [`status`] dealt with an interrupted rewrite apply, from
+/// [`crate::history::recover_interrupted_rewrite_apply`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde-models", serde(rename_all = "snake_case"))]
+pub enum InterruptedRewrite {
+    /// Refs had already moved; the work-tree checkout was completed and the rewrite stands.
+    FinishedCheckout,
+    /// The rewrite was undone: refs, index and work-tree paths are back to their pre-apply state.
+    RolledBack,
+    /// Another process holds `index.lock`, so recovery was left for later. Refs may already point
+    /// at the rewritten commits while the work tree still shows the old ones.
+    Pending,
+}
+
+impl From<crate::history::RewriteApplyRecovery> for InterruptedRewrite {
+    fn from(recovery: crate::history::RewriteApplyRecovery) -> Self {
+        match recovery {
+            crate::history::RewriteApplyRecovery::FinishedCheckout => Self::FinishedCheckout,
+            crate::history::RewriteApplyRecovery::RolledBack => Self::RolledBack,
+        }
+    }
 }
 
 /// Unmerged paths that share one [`ConflictKind`], from [`StatusModel::conflict_groups`].
@@ -2223,8 +2250,15 @@ pub fn status(
     cancel: &dyn crate::progress::Cancel,
 ) -> Result<StatusModel> {
     crate::trace::trace_span!("grit.status.scan");
-    let _ = crate::history::recover_interrupted_rewrite_apply(repo)
-        .map_err(crate::error::Error::History)?;
+    let interrupted_rewrite = match crate::history::recover_interrupted_rewrite_apply(repo) {
+        Ok(recovery) => recovery.map(InterruptedRewrite::from),
+        Err(crate::history::HistoryError::Library(err))
+            if matches!(*err, crate::error::Error::LockHeld { .. }) =>
+        {
+            Some(InterruptedRewrite::Pending)
+        }
+        Err(err) => return Err(crate::error::Error::History(err)),
+    };
     let watch = crate::progress::cancel_watch_arc(cancel);
     let mut progress = crate::progress::WatchProgress::new(progress, std::sync::Arc::clone(&watch));
     crate::progress::poll_cancel_watch(&mut progress, cancel, &watch)?;
@@ -2424,6 +2458,7 @@ pub fn status(
         stash_count,
         index_sparse_on_disk,
         sparse_directory_prefixes,
+        interrupted_rewrite,
     })
 }
 
@@ -2921,6 +2956,7 @@ mod guidance_tests {
             stash_count: 0,
             index_sparse_on_disk: false,
             sparse_directory_prefixes: Vec::new(),
+            interrupted_rewrite: None,
         }
     }
 

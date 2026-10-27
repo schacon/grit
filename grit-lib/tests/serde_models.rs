@@ -113,6 +113,9 @@ fn porcelain_dtos_serialize_to_stable_json_shapes() {
         stash_count: 0,
         index_sparse_on_disk: false,
         sparse_directory_prefixes: vec![],
+        interrupted_rewrite: Some(
+            grit_lib::porcelain::status::InterruptedRewrite::FinishedCheckout,
+        ),
     };
     let status_json = serde_json::to_value(&status).expect("StatusModel");
     assert_eq!(status_json["state"]["merge_in_progress"], true);

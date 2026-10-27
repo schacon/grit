@@ -15334,6 +15334,28 @@ impl core::marker::Unpin for grit_lib::porcelain::status::IgnoredMode
 impl core::marker::UnsafeUnpin for grit_lib::porcelain::status::IgnoredMode
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::status::IgnoredMode
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::status::IgnoredMode
+pub enum grit_lib::porcelain::status::InterruptedRewrite
+pub grit_lib::porcelain::status::InterruptedRewrite::FinishedCheckout
+pub grit_lib::porcelain::status::InterruptedRewrite::Pending
+pub grit_lib::porcelain::status::InterruptedRewrite::RolledBack
+impl core::clone::Clone for grit_lib::porcelain::status::InterruptedRewrite
+pub fn grit_lib::porcelain::status::InterruptedRewrite::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::porcelain::status::InterruptedRewrite
+impl core::cmp::PartialEq for grit_lib::porcelain::status::InterruptedRewrite
+pub fn grit_lib::porcelain::status::InterruptedRewrite::eq(&self, &Self) -> bool
+impl core::convert::From<grit_lib::revwalk::history::RewriteApplyRecovery> for grit_lib::porcelain::status::InterruptedRewrite
+pub fn grit_lib::porcelain::status::InterruptedRewrite::from(grit_lib::revwalk::history::RewriteApplyRecovery) -> Self
+impl core::fmt::Debug for grit_lib::porcelain::status::InterruptedRewrite
+pub fn grit_lib::porcelain::status::InterruptedRewrite::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::porcelain::status::InterruptedRewrite
+impl core::marker::StructuralPartialEq for grit_lib::porcelain::status::InterruptedRewrite
+impl core::marker::Freeze for grit_lib::porcelain::status::InterruptedRewrite
+impl core::marker::Send for grit_lib::porcelain::status::InterruptedRewrite
+impl core::marker::Sync for grit_lib::porcelain::status::InterruptedRewrite
+impl core::marker::Unpin for grit_lib::porcelain::status::InterruptedRewrite
+impl core::marker::UnsafeUnpin for grit_lib::porcelain::status::InterruptedRewrite
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::status::InterruptedRewrite
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::status::InterruptedRewrite
 pub enum grit_lib::porcelain::status::StatusAction
 pub grit_lib::porcelain::status::StatusAction::Commit
 pub grit_lib::porcelain::status::StatusAction::DiscardWorktreeChanges
@@ -15511,6 +15533,7 @@ pub grit_lib::porcelain::status::StatusModel::head_tree: core::option::Option<gr
 pub grit_lib::porcelain::status::StatusModel::ignored: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::porcelain::status::StatusModel::index: grit_lib::index::Index
 pub grit_lib::porcelain::status::StatusModel::index_sparse_on_disk: bool
+pub grit_lib::porcelain::status::StatusModel::interrupted_rewrite: core::option::Option<grit_lib::porcelain::status::InterruptedRewrite>
 pub grit_lib::porcelain::status::StatusModel::operation: core::option::Option<grit_lib::state::Operation>
 pub grit_lib::porcelain::status::StatusModel::sparse_directory_prefixes: alloc::vec::Vec<alloc::vec::Vec<u8>>
 pub grit_lib::porcelain::status::StatusModel::staged: alloc::vec::Vec<grit_lib::diff::DiffEntry>
@@ -25943,6 +25966,8 @@ pub fn grit_lib::revwalk::history::RewriteApplyRecovery::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::revwalk::history::RewriteApplyRecovery
 impl core::cmp::PartialEq for grit_lib::revwalk::history::RewriteApplyRecovery
 pub fn grit_lib::revwalk::history::RewriteApplyRecovery::eq(&self, &Self) -> bool
+impl core::convert::From<grit_lib::revwalk::history::RewriteApplyRecovery> for grit_lib::porcelain::status::InterruptedRewrite
+pub fn grit_lib::porcelain::status::InterruptedRewrite::from(grit_lib::revwalk::history::RewriteApplyRecovery) -> Self
 impl core::fmt::Debug for grit_lib::revwalk::history::RewriteApplyRecovery
 pub fn grit_lib::revwalk::history::RewriteApplyRecovery::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for grit_lib::revwalk::history::RewriteApplyRecovery

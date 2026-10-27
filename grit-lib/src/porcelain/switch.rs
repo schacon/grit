@@ -1028,6 +1028,7 @@ pub(crate) fn checkout_tree_transition_allow_local(
         from_tree,
         to_tree,
         &HashSet::new(),
+        None,
         &mut crate::progress::NullProgress,
         &crate::progress::NeverCancel,
     )
@@ -1048,18 +1049,22 @@ pub(crate) fn checkout_tree_transition_allow_local_reset(
 }
 
 /// Like [`checkout_tree_transition_allow_local`], but always keeps worktree bytes on `force_preserve_worktree`.
+///
+/// The index is written through `index_lock` when the caller already holds it, otherwise
+/// through a lock taken before the first work-tree change.
 pub(crate) fn checkout_tree_transition_allow_local_with_preserved(
     repo: &Repository,
     from_tree: Option<&ObjectId>,
     to_tree: &ObjectId,
     force_preserve_worktree: &HashSet<String>,
+    index_lock: Option<&mut IndexLock>,
     progress: &mut dyn crate::progress::ProgressSink,
     cancel: &dyn crate::progress::Cancel,
 ) -> Result<()> {
     let prepared =
         prepare_tree_transition_allow_local(repo, from_tree, to_tree, force_preserve_worktree)
             .map_err(tree_transition_prepare_to_error)?;
-    checkout_prepared_tree_transition(repo, prepared, None, progress, cancel)
+    checkout_prepared_tree_transition(repo, prepared, index_lock, progress, cancel)
 }
 
 /// Run the checkout half of a prepared allow-local transition (for merge integration).
