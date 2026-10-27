@@ -456,6 +456,7 @@ fn delta_candidates(
             whole_in_pack,
             in_pack,
             dependent_depth: dependent[num] as usize,
+            base_only: false,
         });
     }
     Ok(out)

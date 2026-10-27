@@ -25,8 +25,9 @@ pub struct PackObjectSelection {
     /// Objects reachable from `wants` but not from `haves`, in valid pack order.
     pub send: Vec<ObjectId>,
     /// Peer-held commits whose trees seed thin-pack delta bases, not the full peer
-    /// object closure: the negotiation `haves`, or with [`HaveBoundary::TipsOnly`] the
-    /// edge commits where the want walk reached the peer's history.
+    /// object closure: the edge commits where the object walk reached the peer's
+    /// history, or the negotiation `haves` when bitmaps (or a path filter) selected
+    /// the objects instead.
     pub have_closure: HashSet<ObjectId>,
     /// Peer-held objects when pack reachability bitmaps are available (thin-pack bases).
     pub peer_held: Option<Arc<ReachableSet>>,
@@ -112,9 +113,10 @@ pub(crate) enum NameTrees {
 }
 
 impl NameTrees {
-    /// [`Self::Yes`] when a pack built with `opts` runs a new delta search.
+    /// [`Self::Yes`] when a pack built with `opts` runs a new delta search, or is thin
+    /// (receiver-held bases are matched to sent trees by path).
     pub(crate) fn for_delta_search(opts: &crate::pack_objects::PackBuildOptions) -> Self {
-        if opts.delta && opts.window > 0 && opts.max_depth > 0 {
+        if opts.delta && (opts.thin || (opts.window > 0 && opts.max_depth > 0)) {
             Self::Yes
         } else {
             Self::No
@@ -278,11 +280,11 @@ fn walk_enumeration(
             (send, name_hashes, Some(edges))
         }
     };
-    // Send-pack seeds thin bases only from the edge commits where the walk met the
-    // peer's history, as Git's `--thin` does, not from every advertised tip.
-    let have_closure = match (opts.have_boundary, edges) {
-        (HaveBoundary::TipsOnly, Some(edges)) => edges,
-        _ => haves.iter().copied().collect(),
+    // Thin bases come only from the edge commits where the walk met the peer's
+    // history, as Git's `--thin` does, not from every advertised tip.
+    let have_closure = match edges {
+        Some(edges) => edges,
+        None => haves.iter().copied().collect(),
     };
     Ok(PackObjectSelection {
         send,
@@ -1683,7 +1685,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(closure.send, selection.send);
-        assert_eq!(closure.have_closure.len(), haves.len());
+        assert_eq!(
+            closure.have_closure,
+            HashSet::from([main]),
+            "the full have pre-walk seeds thin bases from the same edge commit"
+        );
     }
 
     #[test]

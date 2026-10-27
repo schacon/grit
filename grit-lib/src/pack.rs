@@ -4734,7 +4734,7 @@ fn parse_in_pack_delta_reuse_zlib(
     idx: &PackIndex,
     pack_bytes: &[u8],
     entry_offset: u64,
-    in_pack: &HashSet<ObjectId>,
+    reusable_base: &dyn Fn(&ObjectId) -> bool,
 ) -> Result<Option<(ObjectId, u64, usize, usize)>> {
     let start = entry_offset as usize;
     let hb = idx.hash_bytes();
@@ -4764,7 +4764,7 @@ fn parse_in_pack_delta_reuse_zlib(
         }
         _ => return Ok(None),
     };
-    if !in_pack.contains(&base) {
+    if !reusable_base(&base) {
         return Ok(None);
     }
     let zlib_start = p;
@@ -4803,7 +4803,7 @@ fn reuse_delta_matches_pack_resolution(
 fn on_disk_delta_chain_in_send_map(
     oid: ObjectId,
     immediate_base: &HashMap<ObjectId, ObjectId>,
-    in_pack: &HashSet<ObjectId>,
+    reusable_base: &dyn Fn(&ObjectId) -> bool,
     memo: &mut HashMap<ObjectId, bool>,
 ) -> bool {
     if let Some(&ok) = memo.get(&oid) {
@@ -4816,7 +4816,7 @@ fn on_disk_delta_chain_in_send_map(
             memo.insert(oid, true);
             return true;
         }
-        if !in_pack.contains(&cur) {
+        if !reusable_base(&cur) {
             memo.insert(oid, false);
             return false;
         }
@@ -4903,24 +4903,24 @@ pub(crate) fn locate_packed_objects(
     Ok(slots)
 }
 
+/// An on-disk delta that can be copied as it is: base, uncompressed delta size, the pack
+/// it is stored in, and the zlib stream's byte range in that pack.
+pub(crate) type OnDiskReuseZlibEntry = (ObjectId, u64, Arc<PackData>, usize, usize);
+
 /// Scan local packs once and collect on-disk delta reuse candidates for objects in `send`.
 ///
-/// Copies zlib delta bytes from the source pack (CRC-checked when the index provides CRC32).
-/// Callers already hold resolved object payloads in `resolved` for the send set.
+/// A stored delta is kept when `reusable_base` accepts its base and every object further
+/// down its stored chain. Zlib delta bytes are copied from the source pack (CRC-checked
+/// when the index provides CRC32).
 ///
 /// # Errors
 ///
 /// Returns [`Error::CorruptObject`] when a pack stream is malformed.
-pub(crate) type OnDiskReuseZlibEntry = (ObjectId, u64, Arc<PackData>, usize, usize);
-
-/// `collect_packed_delta_reuse_for_send` function.
-pub fn collect_packed_delta_reuse_for_send(
+pub(crate) fn collect_packed_delta_reuse_for_send(
     objects_dir: &Path,
     send: &HashSet<ObjectId>,
-    in_pack: &HashSet<ObjectId>,
-    resolved: &HashMap<ObjectId, Object>,
+    reusable_base: &dyn Fn(&ObjectId) -> bool,
 ) -> Result<HashMap<ObjectId, OnDiskReuseZlibEntry>> {
-    let _ = resolved;
     let mut indexes = read_local_pack_indexes_cached(objects_dir)?;
     sort_pack_indexes_oldest_first(&mut indexes);
 
@@ -4945,7 +4945,7 @@ pub fn collect_packed_delta_reuse_for_send(
                 continue;
             }
             let Some((base, size, zlib_start, zlib_end)) =
-                parse_in_pack_delta_reuse_zlib(idx, pack_bytes, offset, in_pack)?
+                parse_in_pack_delta_reuse_zlib(idx, pack_bytes, offset, reusable_base)?
             else {
                 continue;
             };
@@ -4967,7 +4967,7 @@ pub fn collect_packed_delta_reuse_for_send(
 
     let mut chain_ok: HashMap<ObjectId, bool> = HashMap::new();
     for &oid in on_disk.keys() {
-        on_disk_delta_chain_in_send_map(oid, &immediate_base, in_pack, &mut chain_ok);
+        on_disk_delta_chain_in_send_map(oid, &immediate_base, reusable_base, &mut chain_ok);
     }
 
     let mut results = HashMap::new();

@@ -5,7 +5,6 @@
 
 use crate::environment::RepositoryOptions;
 
-use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::path::Path;
@@ -15,16 +14,12 @@ use flate2::Compression;
 
 use crate::bitmap_walk::ReachableSet;
 use crate::delta_encode::{encode_prefix_extension_delta, DeltaIndex};
-use crate::delta_islands::DeltaIslands;
 use crate::error::{Error, Result};
 use crate::objects::{
     empty_object_id_hash_set, oid_hash_map, oid_hash_set, oid_hash_set_from, parse_commit,
-    parse_tag, HashAlgo, Object, ObjectId, ObjectInfo, ObjectKind, OidHashMap, OidHashSet,
-    TreeRefIter,
+    parse_tag, HashAlgo, ObjectId, ObjectInfo, ObjectKind, OidHashMap, OidHashSet, TreeRefIter,
 };
 use crate::odb::Odb;
-use crate::pack_bitmap::BitmapIndex;
-use crate::pack_name_hash::pack_name_hash;
 use crate::pack_object_select::{HaveBoundary, NameTrees};
 use crate::parallel::{try_par_map_force, ParallelHashError};
 use crate::repo::Repository;
@@ -1314,13 +1309,17 @@ pub(crate) fn objects_dir_has_local_packs(objects_dir: &Path) -> bool {
 ///   recomputed, still subject to island rules. Such objects and their bases are
 ///   neither targets nor bases of the search.
 ///
-/// When `opts.thin`, a blob may also delta against a base reachable from the
-/// peer's negotiation `haves` even though that base is not emitted; such a base
-/// is referenced via REF_DELTA.
+/// When `opts.thin`, trees and blobs may also delta against objects the receiver
+/// holds, which are referenced via `REF_DELTA` and not emitted: the objects at the
+/// same paths in the trees of the edge commits (Git's preferred bases, see
+/// [`crate::pack_thin_bases::find_thin_bases`]), and for on-disk delta reuse any base
+/// in `peer_held`. Edge commits are the parents of sent commits that `peer_commits`
+/// (the selection's [`crate::pack_object_select::PackObjectSelection::have_closure`])
+/// or `peer_held` contains.
 pub(crate) fn plan_deltas(
     odb: &Odb,
     send: &[ObjectId],
-    have_tips: &HashSet<ObjectId>,
+    peer_commits: &HashSet<ObjectId>,
     peer_held: Option<&ReachableSet>,
     opts: &PackBuildOptions,
     name_hashes: &HashMap<ObjectId, u32>,
@@ -1329,10 +1328,8 @@ pub(crate) fn plan_deltas(
     let has_local_packs = objects_dir_has_local_packs(odb.objects_dir());
     let reuse_on_disk = opts.reuse_deltas && odb.hash_algo() == HashAlgo::Sha1 && has_local_packs;
     let search = opts.window > 0 && opts.max_depth > 0;
-    let thin = opts.thin && search;
     let infos = read_object_infos(odb, send, search_threads)?;
-    let mut peer_blobs = LazyPeerTreeBlobs::default();
-    let in_pack: HashSet<ObjectId> = if reuse_on_disk || thin || opts.respect_islands {
+    let in_pack: HashSet<ObjectId> = if reuse_on_disk || opts.thin || opts.respect_islands {
         send.iter().copied().collect()
     } else {
         HashSet::new()
@@ -1342,6 +1339,22 @@ pub(crate) fn plan_deltas(
     // is attached to the odb. An inactive island set (no `pack.island` config, or
     // no matched ref) imposes no restriction, so the common case is unaffected.
     let islands = load_islands_for_pack(odb, &in_pack, opts);
+
+    // A thin pack may delta against what the receiver holds at the paths it changes.
+    let peer_has = |oid: &ObjectId| peer_held.is_some_and(|held| held.contains(oid));
+    let thin_bases = if opts.thin && (reuse_on_disk || search) {
+        crate::pack_thin_bases::find_thin_bases(
+            odb,
+            send,
+            &infos,
+            &|oid| in_pack.contains(oid),
+            &|oid| peer_commits.contains(oid) || peer_has(oid),
+            name_hashes,
+            opts.window.max(1),
+        )?
+    } else {
+        crate::pack_thin_bases::ThinBases::default()
+    };
 
     // target oid -> base oid (the object `target` deltas against).
     let mut delta_to_base: OidHashMap<ObjectId> = oid_hash_map();
@@ -1353,22 +1366,24 @@ pub(crate) fn plan_deltas(
 
     // On-disk delta reuse runs even with `--window=0` (no new deltas), matching Git pack-objects.
     if reuse_on_disk {
-        // A thin pack keeps an on-disk delta whose base the peer already holds; it is
+        // A thin pack keeps an on-disk delta whose base the receiver already holds; it is
         // written as `REF_DELTA` and completed by the receiver.
-        let mut reusable_bases = in_pack.clone();
-        if opts.thin && !have_tips.is_empty() {
-            reusable_bases.extend(peer_blobs.get(odb, have_tips)?.oids());
-        }
-        let reusable_bases = Cow::Owned(reusable_bases);
-        let empty_resolved: HashMap<ObjectId, Object> = HashMap::new();
+        let reusable_base = |oid: &ObjectId| {
+            in_pack.contains(oid) || (opts.thin && (thin_bases.oids.contains(oid) || peer_has(oid)))
+        };
         let candidates = crate::pack::collect_packed_delta_reuse_for_send(
             odb.objects_dir(),
             &in_pack,
-            &reusable_bases,
-            &empty_resolved,
+            &reusable_base,
         )?;
         for (t, (base, size, pack_bytes, zlib_start, zlib_end)) in candidates {
-            if base != t && reusable_bases.contains(&base) && islands.in_same_island(&t, &base) {
+            // A stored delta against some other object the receiver holds is kept only
+            // when the search has no base at the object's own path to do better with.
+            let far_peer_base = !in_pack.contains(&base) && !thin_bases.oids.contains(&base);
+            if far_peer_base && search && thin_bases.targets.contains(&t) {
+                continue;
+            }
+            if base != t && islands.in_same_island(&t, &base) {
                 delta_to_base.insert(t, base);
                 reused_zlib.insert(t, (size, pack_bytes, zlib_start, zlib_end));
             }
@@ -1382,14 +1397,27 @@ pub(crate) fn plan_deltas(
         }
     }
 
-    // Objects referenced as the base of a reused on-disk delta must be stored as
-    // whole objects (or reuse their own on-disk delta), not as a freshly computed
-    // window delta — otherwise REF bases no longer match `by_oid` during indexing.
-    let reuse_delta_bases: OidHashSet = delta_to_base
-        .iter()
-        .filter(|(t, _)| reused_zlib.contains_key(t))
-        .map(|(_, b)| *b)
-        .collect();
+    // An object that is the base of a reused on-disk delta keeps its content as it is:
+    // it may only become a delta against something the receiver holds (which cannot
+    // close a cycle), and only with room left for the chains that depend on it. With
+    // no such bases it stays whole (or keeps its own on-disk delta).
+    let reuse_dependents: OidHashMap<usize> = {
+        let mut longest: OidHashMap<usize> = oid_hash_map();
+        for target in reused_zlib.keys() {
+            let mut cur = *target;
+            let mut depth = 0usize;
+            while let Some(base) = delta_to_base.get(&cur) {
+                depth += 1;
+                cur = *base;
+                if depth > delta_to_base.len() {
+                    break;
+                }
+            }
+            let entry = longest.entry(cur).or_insert(0);
+            *entry = (*entry).max(depth);
+        }
+        longest
+    };
 
     let mut searched: OidHashMap<(usize, Vec<u8>)> = oid_hash_map();
     if search {
@@ -1397,7 +1425,12 @@ pub(crate) fn plan_deltas(
             odb,
             send,
             &infos,
-            |oid| delta_to_base.contains_key(oid) || reuse_delta_bases.contains(oid),
+            &thin_bases,
+            |oid| {
+                delta_to_base.contains_key(oid)
+                    || (thin_bases.oids.is_empty() && reuse_dependents.contains_key(oid))
+            },
+            &reuse_dependents,
             name_hashes,
             &islands,
             opts,
@@ -1409,55 +1442,7 @@ pub(crate) fn plan_deltas(
             searched.insert(target, delta);
         }
     }
-
-    if thin {
-        let hash_len = odb.hash_algo().len();
-        let thin_targets: Vec<ObjectId> = send
-            .iter()
-            .zip(&infos)
-            .filter(|(t, info)| {
-                info.kind == ObjectKind::Blob
-                    && (info.size as usize)
-                        .saturating_div(2)
-                        .saturating_sub(hash_len)
-                        > 0
-                    && !delta_to_base.contains_key(*t)
-                    && !reuse_delta_bases.contains(*t)
-            })
-            .map(|(t, _)| *t)
-            .collect();
-        let in_pack_oid: OidHashSet = in_pack.iter().copied().collect();
-        let window = opts.window.max(opts.max_depth).max(1);
-        let bitmap_index = peer_held.map(ReachableSet::bitmap_index);
-        let opened_index = match (bitmap_index, thin_targets.is_empty()) {
-            (None, false) => open_pack_bitmap_index(odb),
-            _ => None,
-        };
-        let bitmap_index = bitmap_index.or(opened_index.as_ref());
-        for t in thin_targets {
-            let t_data = odb.read(&t)?.data;
-            let path_key = name_hashes.get(&t).copied().unwrap_or(0);
-            let Some((base, _base_data)) = find_thin_pack_peer_blob_base(
-                odb,
-                &t,
-                &t_data,
-                path_key,
-                &in_pack_oid,
-                have_tips,
-                &mut peer_blobs,
-                peer_held,
-                bitmap_index,
-                &islands,
-                window,
-                hash_len,
-            )?
-            else {
-                continue;
-            };
-            delta_to_base.insert(t, base);
-        }
-    }
-    drop(in_pack);
+    drop((in_pack, thin_bases));
 
     if opts.max_depth > 0 && !delta_to_base.is_empty() {
         // Cap chain length. After snipping, any removed target reverts to whole.
@@ -1497,19 +1482,27 @@ type SearchedDelta = (ObjectId, ObjectId, (usize, Vec<u8>));
 
 /// Run the windowed delta search over the objects of `send` (with `infos` in the same
 /// order) that `skip` leaves, trying only pairs in compatible delta islands.
+///
+/// `thin_bases` join the search as bases only: they are never targets and never
+/// written, so a delta found against one names an object the receiver holds. An
+/// object in `reuse_dependents` (the base of reused on-disk deltas, with the longest
+/// chain that depends on it) is only paired with those bases, leaving room for that
+/// chain under the depth limit.
 #[allow(clippy::too_many_arguments)]
 fn search_new_deltas(
     odb: &Odb,
     send: &[ObjectId],
     infos: &[ObjectInfo],
+    thin_bases: &crate::pack_thin_bases::ThinBases,
     skip: impl Fn(&ObjectId) -> bool,
+    reuse_dependents: &OidHashMap<usize>,
     name_hashes: &HashMap<ObjectId, u32>,
     islands: &crate::delta_islands::DeltaIslands,
     opts: &PackBuildOptions,
     search_threads: Option<usize>,
     has_local_packs: bool,
 ) -> Result<Vec<SearchedDelta>> {
-    u32::try_from(send.len())
+    u32::try_from(send.len() + thin_bases.bases.len())
         .map_err(|_| Error::CorruptObject("too many objects for one pack".to_owned()))?;
     let ids: Vec<u32> = (0..send.len())
         .filter(|&i| infos[i].size > 0 && !skip(&send[i]))
@@ -1522,7 +1515,9 @@ fn search_new_deltas(
     } else {
         None
     };
-    let candidates: Vec<crate::delta_search::DeltaCandidate> = ids
+    let base_oids: Vec<ObjectId> = thin_bases.bases.iter().map(|b| b.oid).collect();
+    let base_infos = read_object_infos(odb, &base_oids, search_threads)?;
+    let mut candidates: Vec<crate::delta_search::DeltaCandidate> = ids
         .into_iter()
         .map(|id| {
             let oid = send[id as usize];
@@ -1536,14 +1531,40 @@ fn search_new_deltas(
                 name_hash: name_hashes.get(&oid).copied().unwrap_or(0),
                 whole_in_pack: slot.filter(|s| s.whole).map(|s| s.pack),
                 in_pack: slot.map(|s| s.pack),
-                dependent_depth: 0,
+                dependent_depth: reuse_dependents.get(&oid).copied().unwrap_or(0),
+                base_only: false,
             }
         })
         .collect();
     drop(packed);
+    candidates.extend(
+        (send.len()..)
+            .zip(thin_bases.bases.iter().zip(&base_infos))
+            .filter(|(_, (base, info))| info.kind == base.kind && info.size > 0)
+            .map(|(id, (base, info))| crate::delta_search::DeltaCandidate {
+                id: id as u32,
+                oid: base.oid,
+                kind: info.kind,
+                size: info.size,
+                name_hash: base.name_hash,
+                whole_in_pack: None,
+                in_pack: None,
+                dependent_depth: 0,
+                base_only: true,
+            }),
+    );
+    let oid_of = |id: u32| {
+        let id = id as usize;
+        send.get(id)
+            .copied()
+            .unwrap_or_else(|| base_oids[id - send.len()])
+    };
     let window_memory = crate::pack_delta::pack_config(odb)?.pack_window_memory_bytes();
     let threads = crate::pack_delta::pack_delta_search_parallel_options(odb, search_threads)?;
-    let in_islands = |target: &ObjectId, base: &ObjectId| islands.in_same_island(target, base);
+    let allowed = |target: &ObjectId, base: &ObjectId| {
+        islands.in_same_island(target, base)
+            && (!reuse_dependents.contains_key(target) || thin_bases.oids.contains(base))
+    };
     let found = crate::delta_search::search_deltas(
         odb,
         candidates,
@@ -1555,319 +1576,12 @@ fn search_new_deltas(
             compression: odb.pack_compression()?,
             threads: threads.threads.get(),
         },
-        &in_islands,
+        &allowed,
     )?;
     Ok(found
         .into_iter()
-        .map(|d| {
-            (
-                send[d.target as usize],
-                send[d.base as usize],
-                (d.delta_len, d.zlib),
-            )
-        })
+        .map(|d| (oid_of(d.target), oid_of(d.base), (d.delta_len, d.zlib)))
         .collect())
-}
-
-fn peer_side_delta_base(
-    base: &ObjectId,
-    in_send: &OidHashSet,
-    have_tips: &HashSet<ObjectId>,
-    peer_held: Option<&ReachableSet>,
-) -> bool {
-    if in_send.contains(base) {
-        return false;
-    }
-    peer_held.is_some_and(|held| held.contains(base)) || have_tips.contains(base)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn record_thin_peer_candidate(
-    best: &mut Option<(ObjectId, usize, Vec<u8>)>,
-    target: &ObjectId,
-    candidate: ObjectId,
-    base_data: Vec<u8>,
-    target_data: &[u8],
-    in_send: &OidHashSet,
-    have_tips: &HashSet<ObjectId>,
-    peer_held: Option<&ReachableSet>,
-    islands: &DeltaIslands,
-    max_size: usize,
-    known_peer: bool,
-) {
-    if !known_peer && !peer_side_delta_base(&candidate, in_send, have_tips, peer_held) {
-        return;
-    }
-    if !islands.in_same_island(target, &candidate) {
-        return;
-    }
-    let sizediff = if base_data.len() < target_data.len() {
-        target_data.len() - base_data.len()
-    } else {
-        0
-    };
-    if sizediff >= max_size || target_data.len() < base_data.len() / 32 {
-        return;
-    }
-    let Some(ds) = thin_pack_delta_size(&base_data, target_data, max_size) else {
-        return;
-    };
-    let better = best.as_ref().is_none_or(|(_, prev, _)| ds < *prev);
-    if better {
-        *best = Some((candidate, ds, base_data));
-    }
-}
-
-fn thin_pack_delta_size(base_data: &[u8], target_data: &[u8], max_size: usize) -> Option<usize> {
-    if target_data.starts_with(base_data) && target_data.len() > base_data.len() {
-        encode_prefix_extension_delta(base_data, target_data)
-            .ok()
-            .map(|d| d.len())
-    } else {
-        DeltaIndex::new(base_data)
-            .encode(target_data, max_size)
-            .map(|d| d.len())
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn find_thin_pack_peer_blob_base(
-    odb: &Odb,
-    target: &ObjectId,
-    target_data: &[u8],
-    name_hash: u32,
-    in_send: &OidHashSet,
-    have_tips: &HashSet<ObjectId>,
-    peer_blobs: &mut LazyPeerTreeBlobs,
-    peer_held: Option<&ReachableSet>,
-    bitmap_index: Option<&std::sync::Arc<BitmapIndex>>,
-    islands: &DeltaIslands,
-    window: usize,
-    hash_len: usize,
-) -> Result<Option<(ObjectId, Vec<u8>)>> {
-    let max_size = target_data.len().saturating_div(2).saturating_sub(hash_len);
-    if max_size == 0 {
-        return Ok(None);
-    }
-
-    let mut best: Option<(ObjectId, usize, Vec<u8>)> = None;
-    let mut tried = 0usize;
-
-    if let (Some(held), Some(index)) = (peer_held, bitmap_index) {
-        let peer_blobs: Vec<ObjectId> = held.iter_by_kind(ObjectKind::Blob).collect();
-        for oid in peer_blobs.into_iter().rev() {
-            if tried >= window {
-                break;
-            }
-            let Some(pos) = index.position_of(&oid) else {
-                continue;
-            };
-            let Some(h) = index.name_hash(pos) else {
-                continue;
-            };
-            if h != name_hash {
-                continue;
-            }
-            if in_send.contains(&oid) {
-                continue;
-            }
-            tried += 1;
-            let obj = odb.read(&oid)?;
-            if obj.kind != ObjectKind::Blob || obj.data.is_empty() {
-                continue;
-            }
-            record_thin_peer_candidate(
-                &mut best,
-                target,
-                oid,
-                obj.data,
-                target_data,
-                in_send,
-                have_tips,
-                peer_held,
-                islands,
-                max_size,
-                false,
-            );
-        }
-    }
-    if best.is_none() {
-        if let Some(index) = bitmap_index {
-            let count = index.object_count();
-            let mut seen_same_path = 0usize;
-            for pos in (0..count).rev() {
-                if seen_same_path >= window {
-                    break;
-                }
-                let Some(h) = index.name_hash(pos) else {
-                    continue;
-                };
-                if h != name_hash {
-                    continue;
-                }
-                let Ok(oid) = index.oid_at(pos) else {
-                    continue;
-                };
-                if in_send.contains(&oid) {
-                    continue;
-                }
-                seen_same_path += 1;
-                let info = match odb.read_info(&oid) {
-                    Ok(info) => info,
-                    Err(_) => continue,
-                };
-                if info.kind != ObjectKind::Blob || info.size == 0 {
-                    continue;
-                }
-                if !peer_side_delta_base(&oid, in_send, have_tips, peer_held) {
-                    continue;
-                }
-                let obj = odb.read(&oid)?;
-                record_thin_peer_candidate(
-                    &mut best,
-                    target,
-                    oid,
-                    obj.data,
-                    target_data,
-                    in_send,
-                    have_tips,
-                    peer_held,
-                    islands,
-                    max_size,
-                    false,
-                );
-            }
-        }
-    }
-    if best.is_none() {
-        let candidates = peer_blobs.get(odb, have_tips)?.with_name_hash(name_hash);
-        for &oid in candidates {
-            let Ok(blob) = odb.read(&oid) else {
-                continue;
-            };
-            if blob.kind != ObjectKind::Blob || blob.data.is_empty() {
-                continue;
-            }
-            let data = blob.data;
-            record_thin_peer_candidate(
-                &mut best,
-                target,
-                oid,
-                data,
-                target_data,
-                in_send,
-                have_tips,
-                peer_held,
-                islands,
-                max_size,
-                true,
-            );
-        }
-    }
-
-    Ok(best.map(|(oid, _, data)| (oid, data)))
-}
-
-/// Blobs in the trees of peer-held commits, keyed by the pack name hash of their path.
-///
-/// Thin packs may delta against these without sending them. Trees shared between
-/// commits are walked once, at the first path they are found at.
-#[derive(Default)]
-struct PeerTreeBlobs {
-    by_name_hash: HashMap<u32, Vec<ObjectId>>,
-    /// Blobs at paths without a name hash (non-regular modes).
-    unnamed: Vec<ObjectId>,
-}
-
-impl PeerTreeBlobs {
-    /// Walk the root trees of the commits in `commits`; other objects and missing
-    /// objects are skipped.
-    fn collect(odb: &Odb, commits: &HashSet<ObjectId>) -> Result<Self> {
-        let oid_len = odb.hash_algo().len();
-        let mut out = Self::default();
-        let mut seen: OidHashSet = oid_hash_set();
-        let mut queue: VecDeque<(ObjectId, String)> = VecDeque::new();
-        for &commit_oid in commits {
-            let Ok(commit_obj) = odb.read(&commit_oid) else {
-                continue;
-            };
-            if commit_obj.kind != ObjectKind::Commit {
-                continue;
-            }
-            queue.push_back((parse_commit(&commit_obj.data)?.tree, String::new()));
-        }
-        while let Some((tree_oid, path)) = queue.pop_front() {
-            if !seen.insert(tree_oid) {
-                continue;
-            }
-            let Ok(tree_obj) = odb.read(&tree_oid) else {
-                continue;
-            };
-            if tree_obj.kind != ObjectKind::Tree {
-                out.unnamed.push(tree_oid);
-                continue;
-            }
-            for entry in TreeRefIter::with_oid_len(&tree_obj.data, oid_len) {
-                let entry = entry?;
-                if entry.mode == 0o160000 {
-                    continue;
-                }
-                let child_path = || {
-                    let name = String::from_utf8_lossy(entry.name);
-                    if path.is_empty() {
-                        name.into_owned()
-                    } else {
-                        format!("{path}/{name}")
-                    }
-                };
-                match entry.mode & 0o170000 {
-                    0o100000 | 0o120000 => out
-                        .by_name_hash
-                        .entry(pack_name_hash(&child_path()))
-                        .or_default()
-                        .push(entry.oid),
-                    _ => queue.push_back((entry.oid, child_path())),
-                }
-            }
-        }
-        Ok(out)
-    }
-
-    /// Every blob found.
-    fn oids(&self) -> impl Iterator<Item = ObjectId> + '_ {
-        self.by_name_hash
-            .values()
-            .flatten()
-            .chain(&self.unnamed)
-            .copied()
-    }
-
-    /// Blobs found at paths with name hash `name_hash`.
-    fn with_name_hash(&self, name_hash: u32) -> &[ObjectId] {
-        self.by_name_hash
-            .get(&name_hash)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-    }
-}
-
-/// [`PeerTreeBlobs`] for one pack's have tips, collected on first use.
-#[derive(Default)]
-struct LazyPeerTreeBlobs(Option<PeerTreeBlobs>);
-
-impl LazyPeerTreeBlobs {
-    fn get(&mut self, odb: &Odb, have_tips: &HashSet<ObjectId>) -> Result<&PeerTreeBlobs> {
-        if self.0.is_none() {
-            self.0 = Some(PeerTreeBlobs::collect(odb, have_tips)?);
-        }
-        Ok(self.0.get_or_insert_default())
-    }
-}
-
-fn open_pack_bitmap_index(odb: &Odb) -> Option<std::sync::Arc<BitmapIndex>> {
-    let git_dir = odb.config_git_dir()?;
-    let repo = Repository::open(git_dir, &RepositoryOptions::empty()).ok()?;
-    BitmapIndex::open(&repo).ok().flatten()
 }
 
 /// Load delta-island marks for the objects being packed, honoring
@@ -2169,72 +1883,5 @@ pub(crate) mod tests {
             (10, crate::pack::DEFAULT_PACK_DEPTH)
         );
         assert!(defaults.reuse_deltas && defaults.reuse_objects && !defaults.thin);
-    }
-
-    #[test]
-    fn peer_tree_blobs_walk_shared_trees_once_and_key_blobs_by_path() {
-        use crate::objects::{serialize_tree, TreeEntry};
-        let dir = tempfile::TempDir::new().unwrap();
-        let repo =
-            Repository::init(dir.path(), &crate::repo::InitOptions::default()).expect("init");
-        let odb = repo.odb();
-        let tree = |entries: &[(u32, &str, ObjectId)]| {
-            let entries: Vec<TreeEntry> = entries
-                .iter()
-                .map(|&(mode, name, oid)| TreeEntry {
-                    mode,
-                    name: name.as_bytes().to_vec(),
-                    oid,
-                })
-                .collect();
-            odb.write(ObjectKind::Tree, &serialize_tree(&entries))
-                .unwrap()
-        };
-        let commit = |tree: ObjectId| {
-            let body = format!(
-                "tree {}\nauthor A <a@example.com> 0 +0000\ncommitter A <a@example.com> 0 +0000\n\nc\n",
-                tree.to_hex()
-            );
-            odb.write(ObjectKind::Commit, body.as_bytes()).unwrap()
-        };
-        let shared_blob = odb.write(ObjectKind::Blob, b"shared").unwrap();
-        let readme = odb.write(ObjectKind::Blob, b"readme").unwrap();
-        let other = odb.write(ObjectKind::Blob, b"other").unwrap();
-        let shared = tree(&[(0o100644, "lib.rs", shared_blob)]);
-        let gitlink = ObjectId::from_hex("1234567890123456789012345678901234567890").unwrap();
-        let first = commit(tree(&[
-            (0o100644, "README", readme),
-            (0o040000, "src", shared),
-            (0o160000, "module", gitlink),
-        ]));
-        let second = commit(tree(&[
-            (0o100644, "README", other),
-            (0o040000, "src", shared),
-        ]));
-        let blob_tag = ObjectId::from_hex("abcdefabcdefabcdefabcdefabcdefabcdefabcd").unwrap();
-
-        let blobs = PeerTreeBlobs::collect(odb, &HashSet::from([first, second, blob_tag])).unwrap();
-        let mut readmes = blobs.with_name_hash(pack_name_hash("README")).to_vec();
-        readmes.sort();
-        let mut expected = vec![readme, other];
-        expected.sort();
-        assert_eq!(readmes, expected);
-        assert_eq!(
-            blobs.with_name_hash(pack_name_hash("src/lib.rs")),
-            &[shared_blob],
-            "a tree both commits share is walked once"
-        );
-        let all: HashSet<ObjectId> = blobs.oids().collect();
-        assert_eq!(all, HashSet::from([readme, other, shared_blob]));
-        assert!(blobs.with_name_hash(pack_name_hash("missing")).is_empty());
-
-        let mut lazy = LazyPeerTreeBlobs::default();
-        let tips = HashSet::from([second]);
-        assert_eq!(lazy.get(odb, &tips).unwrap().oids().count(), 2);
-        assert_eq!(
-            lazy.get(odb, &HashSet::new()).unwrap().oids().count(),
-            2,
-            "collected once per pack"
-        );
     }
 }

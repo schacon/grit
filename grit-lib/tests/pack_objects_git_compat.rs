@@ -638,3 +638,204 @@ fn reuse_only_thin_pack_keeps_deltas_against_have_bases() {
     let map = pack_bytes_to_object_map(&thin, &odb).expect("resolve");
     assert!(map.contains_key(&tip));
 }
+
+/// A wide repository: hundreds of files at the root and in `src/`, plus a larger file in
+/// `doc/` that every commit edits. Returns the work tree.
+fn build_wide_tree_history(commits: usize) -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().expect("tmpdir");
+    let dir = tmp.path();
+    git(dir, &["init", "-q", "-b", "main", "."]);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("doc")).unwrap();
+    let body = |name: &str, version: usize| {
+        (0..12)
+            .map(|line| format!("{name} line {line} of a file that is long enough, v{version}\n"))
+            .collect::<String>()
+    };
+    for i in 0..400 {
+        let name = format!("root-file-{i:04}.txt");
+        std::fs::write(dir.join(&name), body(&name, 0)).unwrap();
+    }
+    for i in 0..300 {
+        let name = format!("module_{i:04}.rs");
+        std::fs::write(dir.join("src").join(&name), body(&name, 0)).unwrap();
+    }
+    let mut guide: Vec<String> = (0..300)
+        .map(|i| format!("guide paragraph {i} explains one more thing in some detail"))
+        .collect();
+    std::fs::write(dir.join("doc/guide.txt"), guide.join("\n")).unwrap();
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "initial"]);
+    for c in 1..=commits {
+        let at = (c * 37) % guide.len();
+        guide[at] = format!("guide paragraph rewritten in commit {c}");
+        std::fs::write(dir.join("doc/guide.txt"), guide.join("\n")).unwrap();
+        let src = format!("module_{:04}.rs", (c * 7) % 300);
+        std::fs::write(dir.join("src").join(&src), body(&src, c)).unwrap();
+        let root = format!("root-file-{:04}.txt", (c * 13) % 400);
+        std::fs::write(dir.join(&root), body(&root, c)).unwrap();
+        git(dir, &["commit", "-q", "-am", &format!("change {c}")]);
+    }
+    tmp
+}
+
+/// Object kind counts of a pack: `(whole trees, whole blobs, REF_DELTA bases)`.
+fn pack_entry_shape(pack: &[u8]) -> (usize, usize, HashSet<ObjectId>) {
+    let count = u32::from_be_bytes([pack[8], pack[9], pack[10], pack[11]]) as usize;
+    let mut pos = 12usize;
+    let (mut trees, mut blobs) = (0, 0);
+    let mut ref_bases = HashSet::new();
+    for _ in 0..count {
+        let mut byte = pack[pos];
+        pos += 1;
+        let kind = (byte >> 4) & 7;
+        while byte & 0x80 != 0 {
+            byte = pack[pos];
+            pos += 1;
+        }
+        match kind {
+            2 => trees += 1,
+            3 => blobs += 1,
+            6 => {
+                while pack[pos] & 0x80 != 0 {
+                    pos += 1;
+                }
+                pos += 1;
+            }
+            7 => {
+                ref_bases.insert(ObjectId::from_bytes(&pack[pos..pos + 20]).unwrap());
+                pos += 20;
+            }
+            _ => {}
+        }
+        let mut inflate = flate2::Decompress::new(true);
+        let mut sink = vec![0u8; 1 << 16];
+        loop {
+            let before = inflate.total_in();
+            let status = inflate
+                .decompress(&pack[pos..], &mut sink, flate2::FlushDecompress::None)
+                .expect("inflate pack entry");
+            pos += (inflate.total_in() - before) as usize;
+            if status == flate2::Status::StreamEnd {
+                break;
+            }
+        }
+    }
+    (trees, blobs, ref_bases)
+}
+
+/// The pack upload-pack sends a thin-pack client that has `have` and wants `want`.
+fn upload_pack_thin(repo_dir: &Path, want: ObjectId, have: ObjectId) -> Vec<u8> {
+    use grit_lib::config::environment::RepositoryOptions;
+    use grit_lib::objects::pack_objects::write_upload_pack_stream;
+    use grit_lib::repo::Repository;
+    let repo = Repository::open(&repo_dir.join(".git"), &RepositoryOptions::empty()).unwrap();
+    let mut pack = Vec::new();
+    write_upload_pack_stream(
+        &repo,
+        &[want],
+        &[have],
+        &HashSet::new(),
+        &HashSet::new(),
+        None,
+        &PackBuildOptions::for_serve(None, true, true),
+        &mut |_| {},
+        &mut pack,
+    )
+    .expect("upload-pack stream");
+    pack
+}
+
+fn assert_thin_upload_pack_matches_git(back: usize, bitmap: bool) {
+    let tmp = build_wide_tree_history(24);
+    let dir = tmp.path();
+    if bitmap {
+        git(dir, &["repack", "-adbq"]);
+        git(dir, &["commit-graph", "write", "--reachable"]);
+    } else {
+        git(dir, &["repack", "-adq"]);
+    }
+    assert_eq!(
+        dir.join(".git/objects/pack")
+            .read_dir()
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.path().extension().is_some_and(|x| x == "bitmap")),
+        bitmap
+    );
+    let want = rev_parse(dir, "HEAD");
+    let have = rev_parse(dir, &format!("HEAD~{back}"));
+    let pack = upload_pack_thin(dir, want, have);
+
+    git_index_pack_stdin_fix_thin(dir, have, &pack);
+    let (whole_trees, whole_blobs, ref_bases) = pack_entry_shape(&pack);
+    let old_root = rev_parse(dir, &format!("{have}^{{tree}}"));
+    let old_src = rev_parse(dir, &format!("{have}:src"));
+    let old_guide = rev_parse(dir, &format!("{have}:doc/guide.txt"));
+    for (what, oid) in [
+        ("root tree", old_root),
+        ("src tree", old_src),
+        ("guide blob", old_guide),
+    ] {
+        assert!(
+            ref_bases.contains(&oid),
+            "the client's {what} is a REF_DELTA base (back {back}, bitmap {bitmap})"
+        );
+    }
+    let git_thin = git_pack_objects_with_thin(dir, &[want], &[have], true);
+    if back == 1 {
+        let (git_trees, git_blobs, _) = pack_entry_shape(&git_thin);
+        assert!(
+            whole_trees <= git_trees && whole_blobs <= git_blobs,
+            "a one-commit increment sends no more whole trees ({whole_trees} vs {git_trees}) \
+             or blobs ({whole_blobs} vs {git_blobs}) than git (bitmap {bitmap})"
+        );
+    }
+    assert!(
+        pack.len() <= git_thin.len() * 5 / 4 + 256,
+        "grit thin pack {} bytes vs git pack-objects --thin {} (back {back}, bitmap {bitmap})",
+        pack.len(),
+        git_thin.len()
+    );
+}
+
+/// Issue #2135: changed trees and the previous version of a changed blob are sent as
+/// REF_DELTAs against what the client holds, not whole, with and without a bitmap.
+#[test]
+fn thin_upload_pack_one_commit_deltas_trees_and_blobs_against_client_objects() {
+    assert_thin_upload_pack_matches_git(1, false);
+    assert_thin_upload_pack_matches_git(1, true);
+}
+
+#[test]
+fn thin_upload_pack_twenty_commits_stays_close_to_git_size() {
+    assert_thin_upload_pack_matches_git(20, false);
+    assert_thin_upload_pack_matches_git(20, true);
+}
+
+/// A bitmap must not make a thin incremental pack bigger than the same repository
+/// without one.
+#[test]
+fn thin_upload_pack_with_bitmap_is_no_bigger_than_without() {
+    let tmp = build_wide_tree_history(24);
+    let dir = tmp.path();
+    git(dir, &["repack", "-adbq"]);
+    let want = rev_parse(dir, "HEAD");
+    let have = rev_parse(dir, "HEAD~20");
+    let with_bitmap = upload_pack_thin(dir, want, have);
+    for entry in dir.join(".git/objects/pack").read_dir().unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|x| x == "bitmap") {
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+    let without = upload_pack_thin(dir, want, have);
+    git_index_pack_stdin_fix_thin(dir, have, &with_bitmap);
+    git_index_pack_stdin_fix_thin(dir, have, &without);
+    assert!(
+        with_bitmap.len() <= without.len() * 11 / 10 + 256,
+        "bitmap pack {} bytes vs {} without the bitmap",
+        with_bitmap.len(),
+        without.len()
+    );
+}
