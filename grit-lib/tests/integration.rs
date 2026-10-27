@@ -617,6 +617,9 @@ mod fetch_refspec_git_compat;
 #[cfg(feature = "full-tests")]
 #[path = "fetch_remote_progress.rs"]
 mod fetch_remote_progress;
+#[cfg(feature = "full-tests")]
+#[path = "fetch_tag_refspec_git_compat.rs"]
+mod fetch_tag_refspec_git_compat;
 #[path = "fetch_tags_resolve.rs"]
 mod fetch_tags_resolve;
 #[cfg(feature = "full-tests")]

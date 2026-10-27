@@ -2595,6 +2595,10 @@ pub(crate) struct MatchedRef {
     pub(crate) oid: ObjectId,
     pub(crate) force: bool,
     pub(crate) is_tag: bool,
+    /// Added by [`TagMode::Following`] rather than selected by a refspec, so
+    /// [`crate::fetch::retain_following_tags`] may drop it when its target is not
+    /// in the fetched history.
+    pub(crate) auto_followed: bool,
     /// Local destination is under `refs/tags/` (tag clobber rules apply).
     pub(crate) dest_is_tag: bool,
     /// Peeled target from ls-refs `peeled:` (annotated tags), when known.
@@ -2969,6 +2973,7 @@ pub(crate) fn apply_tag_mode(
                 oid,
                 force: false,
                 is_tag: true,
+                auto_followed: mode == TagMode::Following,
                 dest_is_tag: true,
                 advertised_peel: peeled,
                 fetch_head: crate::fetch_request::FetchHeadPolicy::ForMerge,

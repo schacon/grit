@@ -2188,6 +2188,7 @@ pub(crate) fn add_wire_tags(
             oid: *oid,
             force: false,
             is_tag: true,
+            auto_followed: mode == crate::transfer::TagMode::Following,
             dest_is_tag: true,
             advertised_peel: advertised_peel.get(name).copied(),
             fetch_head: crate::fetch_request::FetchHeadPolicy::ForMerge,
@@ -2336,13 +2337,18 @@ pub(crate) fn following_tag_wants_peel_among_fetched_commits(
 /// kept only when its tag object is delivered or already local. Objects that
 /// are not stored locally are never read, so a partial clone does not
 /// lazy-fetch anything while following tags.
+///
+/// Only rows marked [`auto_followed`](crate::transfer::MatchedRef::auto_followed)
+/// are candidates: a tag a refspec selected is kept like any other ref the
+/// caller asked for.
 pub(crate) fn retain_following_tags(
     local_odb: &crate::odb::Odb,
     matched: &mut Vec<crate::transfer::MatchedRef>,
     pack_oids: &HashSet<ObjectId>,
     shallow_boundaries: &HashSet<ObjectId>,
 ) -> Result<()> {
-    if !matched.iter().any(|m| m.is_tag) {
+    let followed = |m: &crate::transfer::MatchedRef| m.is_tag && m.auto_followed;
+    if !matched.iter().any(followed) {
         return Ok(());
     }
 
@@ -2353,7 +2359,7 @@ pub(crate) fn retain_following_tags(
         .collect();
     let peeled_by_tag: std::collections::HashMap<ObjectId, ObjectId> = matched
         .iter()
-        .filter(|m| m.is_tag)
+        .filter(|m| followed(m))
         .map(|m| {
             let peeled = m.advertised_peel.unwrap_or_else(|| {
                 local_odb
@@ -2387,7 +2393,7 @@ pub(crate) fn retain_following_tags(
     let local_reach = reachable_commits(local_odb, &roots, &local_commits, shallow_boundaries)?;
     let mut keep = Vec::with_capacity(matched.len());
     for m in matched.iter() {
-        if !m.is_tag {
+        if !followed(m) {
             keep.push(true);
             continue;
         }
@@ -2759,6 +2765,7 @@ mod fetch_advertised_ref_tests {
             oid: shared,
             force: false,
             is_tag: false,
+            auto_followed: false,
             dest_is_tag: false,
             advertised_peel: None,
             fetch_head: crate::fetch_request::FetchHeadPolicy::ForMerge,
@@ -2808,6 +2815,7 @@ mod fetch_advertised_ref_tests {
             oid: tag_obj,
             force: false,
             is_tag: true,
+            auto_followed: true,
             dest_is_tag: true,
             advertised_peel: Some(commit),
             fetch_head: crate::fetch_request::FetchHeadPolicy::ForMerge,
@@ -2830,6 +2838,7 @@ mod fetch_advertised_ref_tests {
             oid: tag_obj,
             force: false,
             is_tag: true,
+            auto_followed: true,
             dest_is_tag: true,
             advertised_peel: Some(tip),
             fetch_head: crate::fetch_request::FetchHeadPolicy::ForMerge,
@@ -2894,6 +2903,7 @@ mod fetch_advertised_ref_tests {
             oid,
             force: false,
             is_tag,
+            auto_followed: is_tag,
             dest_is_tag: is_tag,
             advertised_peel: peel,
             fetch_head: crate::fetch_request::FetchHeadPolicy::ForMerge,
@@ -2945,6 +2955,29 @@ mod fetch_advertised_ref_tests {
             ]
         );
         assert!(matched.iter().any(|m| m.remote_ref == "refs/heads/main"));
+    }
+
+    #[test]
+    fn retain_following_tags_keeps_refspec_selected_tags() {
+        use std::collections::HashSet;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let objects = tmp.path().join("objects");
+        std::fs::create_dir_all(&objects).expect("objects");
+        let odb = crate::odb::Odb::new(&objects);
+        // The peeled commit is local, the annotated tag object is not, no
+        // branch is fetched and the pack is empty: a moved release tag.
+        let peel = write_commit_chain(&odb, 1)[0];
+        let tag_obj = ObjectId::from_hex(&"9".repeat(40)).expect("oid");
+        let followed = matched_ref("refs/tags/followed", tag_obj, Some(peel));
+        let mut selected = matched_ref("refs/tags/selected", tag_obj, Some(peel));
+        selected.auto_followed = false;
+        let mut matched = vec![followed, selected];
+
+        retain_following_tags(&odb, &mut matched, &HashSet::new(), &HashSet::new())
+            .expect("retain following tags");
+
+        assert_eq!(kept_tags(&matched), ["refs/tags/selected"]);
     }
 
     #[test]
