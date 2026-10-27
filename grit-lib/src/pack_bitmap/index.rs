@@ -15,7 +15,7 @@ use crate::repo::Repository;
 
 use super::error::BitmapError;
 use super::order::BitmapOrder;
-use crate::pack::read_pack_index;
+use crate::pack::read_pack_index_cached;
 
 const BITMAP_MAGIC: &[u8; 4] = b"BITM";
 const BITMAP_VERSION: u16 = 1;
@@ -381,13 +381,10 @@ fn try_open_bitmap(
     let mut bitmapped = bitmapped_pack_indexes(&pack_dir)?;
     bitmapped.sort_by_key(|(idx, _)| std::cmp::Reverse(idx.len()));
     for (idx, bitmap_path) in bitmapped {
-        let index_arc = Arc::new(idx);
         match open_bitmap_file(
             &bitmap_path,
             objects_dir,
-            BitmapSource::Pack {
-                index: Arc::clone(&index_arc),
-            },
+            BitmapSource::Pack { index: idx },
             repo,
         ) {
             Ok(index) => return Ok(Some(Arc::new(index))),
@@ -400,9 +397,11 @@ fn try_open_bitmap(
 /// Indexes of the packs in `pack_dir` that carry a `.bitmap` sidecar, with that path.
 ///
 /// Packs without a bitmap are never opened, so a repository without bitmaps pays for
-/// one directory listing instead of reading and checksumming every `.idx`. Unreadable
-/// indexes and indexes whose `.pack` is missing are skipped.
-fn bitmapped_pack_indexes(pack_dir: &Path) -> Result<Vec<(PackIndex, PathBuf)>, BitmapError> {
+/// one directory listing instead of reading every `.idx`. The indexes come from the
+/// shared pack-index cache, so the object store and the bitmap read one copy, and like
+/// Git's they are not re-hashed on open. Unreadable indexes and indexes whose `.pack`
+/// is missing are skipped.
+fn bitmapped_pack_indexes(pack_dir: &Path) -> Result<Vec<(Arc<PackIndex>, PathBuf)>, BitmapError> {
     let entries = match std::fs::read_dir(pack_dir) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -414,7 +413,7 @@ fn bitmapped_pack_indexes(pack_dir: &Path) -> Result<Vec<(PackIndex, PathBuf)>, 
         if bitmap_path.extension().and_then(|e| e.to_str()) != Some("bitmap") {
             continue;
         }
-        let Ok(idx) = read_pack_index(&bitmap_path.with_extension("idx")) else {
+        let Ok(idx) = read_pack_index_cached(&bitmap_path.with_extension("idx")) else {
             continue;
         };
         if idx.pack_path.is_file() && bitmap_path.is_file() {

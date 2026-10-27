@@ -60,6 +60,9 @@ pub(crate) struct DeltaCandidate {
     /// Length of the longest chain of kept deltas that already depend on this
     /// object; a new delta for it must leave room for them under the depth limit.
     pub dependent_depth: usize,
+    /// The object is only offered as a base and never gets a delta itself: an object
+    /// the receiver of a thin pack already holds (Git's preferred base).
+    pub base_only: bool,
 }
 
 /// Search settings.
@@ -98,12 +101,14 @@ fn searchable(c: &DeltaCandidate) -> bool {
 }
 
 /// Order that puts likely delta pairs next to each other: kind, then path hash,
-/// then larger objects first (deltas that remove data are smaller than ones that
-/// add it), then more recent objects first.
+/// then base-only objects (so every version of their path that follows within the
+/// window can use them), then larger objects first (deltas that remove data are
+/// smaller than ones that add it), then more recent objects first.
 fn search_order(a: &DeltaCandidate, b: &DeltaCandidate) -> CmpOrdering {
     kind_rank(b.kind)
         .cmp(&kind_rank(a.kind))
         .then_with(|| b.name_hash.cmp(&a.name_hash))
+        .then_with(|| b.base_only.cmp(&a.base_only))
         .then_with(|| b.size.cmp(&a.size))
         .then_with(|| a.id.cmp(&b.id))
 }
@@ -282,7 +287,7 @@ fn search_chunk(
 
         let max_depth = params.max_depth.saturating_sub(target.dependent_depth);
         let mut best_slot = None;
-        if max_depth > 0 {
+        if max_depth > 0 && !target.base_only {
             for back in 1..window {
                 let other = (idx + window - back) % window;
                 let Some(src_pos) = slots[other].pos else {
@@ -354,8 +359,10 @@ fn try_pair(
     let source = &list[src_pos];
 
     // Both stored in the same pack with the target whole: whoever wrote that pack
-    // already compared the pair and kept the target whole.
-    if target.whole_in_pack.is_some() && target.whole_in_pack == source.in_pack {
+    // already compared the pair and kept the target whole. That writer had no reason
+    // to prefer an object the receiver holds, so base-only objects are always tried.
+    if !source.base_only && target.whole_in_pack.is_some() && target.whole_in_pack == source.in_pack
+    {
         return Ok(false);
     }
     let src_depth = slots[src].depth;
@@ -454,7 +461,43 @@ mod tests {
             whole_in_pack: None,
             in_pack: None,
             dependent_depth: 0,
+            base_only: false,
         }
+    }
+
+    #[test]
+    fn search_order_puts_base_only_objects_first_within_their_path() {
+        let mut v = vec![
+            cand(0, ObjectKind::Blob, 5, 300),
+            DeltaCandidate {
+                base_only: true,
+                ..cand(1, ObjectKind::Blob, 5, 100)
+            },
+            cand(2, ObjectKind::Blob, 7, 50),
+        ];
+        v.sort_by(search_order);
+        let ids: Vec<u32> = v.iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec![2, 1, 0]);
+    }
+
+    #[test]
+    fn search_uses_base_only_objects_as_bases_but_never_as_targets() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let repo = Repository::init(dir.path(), &InitOptions::default()).unwrap();
+        let mut candidates = drifting_versions(&repo, 6);
+        // The oldest version is held by the receiver; everything else is sent, and
+        // all of it is in one pack that already kept the targets whole.
+        for c in &mut candidates {
+            c.whole_in_pack = Some(0);
+            c.in_pack = Some(0);
+        }
+        candidates[0].base_only = true;
+        let found = search_deltas(repo.odb(), candidates, params(50, 1), &any_pair).unwrap();
+        assert!(found.iter().all(|d| d.target != 0), "{found:?}");
+        assert!(
+            found.iter().any(|d| d.base == 0),
+            "the receiver's copy is a base: {found:?}"
+        );
     }
 
     #[test]
@@ -543,6 +586,7 @@ mod tests {
                     whole_in_pack: None,
                     in_pack: None,
                     dependent_depth: 0,
+                    base_only: false,
                 }
             })
             .collect()

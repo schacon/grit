@@ -2191,6 +2191,37 @@ cargo build --release -p grit-cli -p grit-utils -p grit-http-server
 cargo test -p grit-lib --test integration fetch_v2_negotiation_rounds::
 ```
 
+## Serving an incremental fetch: thin packs (2026-10-27, #2135)
+
+Answering a fetch of a few new commits from `git/git` took seconds in `grit upload-pack`, longer with a pack bitmap than without, and the thin pack was up to 7× bigger than Git's ([#2135](https://github.com/gitbutlerapp/grit/issues/2135)). Thin bases were only ever searched for blobs, and with a bitmap the search scanned the client's whole object set for every changed blob. Changed trees went out whole.
+
+Pack generation now picks thin-pack bases the way Git's preferred bases work. The edge commits are the client's commits that the new history builds on. The trees and blobs at the changed paths in their trees join the delta search as bases that are never written. A delta against one goes out as `REF_DELTA`, so a changed tree costs tens of bytes instead of its full size. Only the client's directories on the way to a changed path are read, matched by pack name hash. Further changes:
+
+- **Stored deltas.** On-disk deltas whose base the client holds are still reused. When the client also holds an older copy at the same path, the object goes through the search instead. An object that is the base of a reused delta may become a delta against a client-held base, with room left for its dependent chain.
+- **Commit walk.** Upload-pack stops walking the client's history where it meets the wants, as push already did, instead of reading every ancestor of every `have`.
+- **Bitmaps.** The bitmap walk for tips without a stored bitmap goes newest first and stops at objects a stored bitmap already covers. The want side starts from the have side's objects, so the have closure is computed once. The bitmap uses the shared pack index instead of re-reading and re-hashing the `.idx`.
+
+Factory VM, 4 vCPU, Linux 6.12, Rust 1.99, `release` profile, system Git 2.43.0. The fixture is a `git clone --bare` of upstream `git/git` (82,605 commits, 422k objects) after `git repack -adb` and `git commit-graph write --reachable`, and a copy with the `.bitmap` removed. One protocol v2 `command=fetch` request (want `HEAD`, have `HEAD~N`, `thin-pack`, `ofs-delta`, `done`) goes to `--stateless-rpc` of each server. The table shows the median of three runs and the largest `wait4` peak RSS. Every Grit pack passes `git index-pack --fix-thin`. Main is `9a9e069ca`.
+
+| Request | System Git | Grit main | Grit after |
+| --- | ---: | ---: | ---: |
+| `HEAD~1`, bitmap | 11 ms / 23 MB / 28.9 KB | 3,015 ms / 147 MB / 38.3 KB | 26 ms / 48 MB / 1.7 KB |
+| `HEAD~1`, no bitmap | 7 ms / 13 MB / 1.7 KB | 616 ms / 79 MB / 38.3 KB | 17 ms / 41 MB / 1.7 KB |
+| `HEAD~20`, bitmap | 23 ms / 37 MB / 536 KB | 4,943 ms / 200 MB / 1,083 KB | 114 ms / 91 MB / 145 KB |
+| `HEAD~20`, no bitmap | 62 ms / 52 MB / 145 KB | 757 ms / 99 MB / 1,018 KB | 92 ms / 83 MB / 145 KB |
+| `HEAD~100`, bitmap | 38 ms / 55 MB / 4.87 MB | 12,426 ms / 373 MB / 6.23 MB | 272 ms / 188 MB / 1.92 MB |
+| `HEAD~100`, no bitmap | 369 ms / 130 MB / 2.07 MB | 1,328 ms / 202 MB / 5.85 MB | 314 ms / 195 MB / 2.00 MB |
+| `HEAD~300`, bitmap | 57 ms / 74 MB / 10.80 MB | 26,992 ms / 454 MB / 13.53 MB | 458 ms / 225 MB / 4.52 MB |
+| `HEAD~300`, no bitmap | 782 ms / 205 MB / 4.43 MB | 1,467 ms / 270 MB / 12.93 MB | 677 ms / 273 MB / 4.56 MB |
+
+Without a bitmap, Grit now sends the same pack size as Git, at about Git's speed for larger ranges. With a bitmap, Git copies stored deltas and skips the delta search, so it answers faster but sends packs up to 2.4× bigger. Grit still runs the search, which costs time and memory but sends about the same pack as without a bitmap. A full clone is unchanged: the packs are byte-identical, and the bitmap clone took 4.4 s against 5.6 s on main (Git 2.4 s).
+
+The `thin_upload_pack_*` tests in `grit-lib/tests/pack_objects_git_compat.rs` build a wide-tree history and check the result with and without a bitmap. The client's root tree, changed subtree and the old version of a changed file must be `REF_DELTA` bases. A one-commit pack may hold no more whole objects than `git pack-objects --thin`. Every pack must stay within 1.25× of Git's size, pass `git index-pack --fix-thin` and `git fsck --strict`, and the bitmap pack may not be bigger than the one without.
+
+```bash
+cargo test -p grit-lib --features full-tests --test integration thin_upload_pack
+```
+
 ## Receiving a pack: clone and fetch memory (2026-10-25)
 
 Cloning over HTTPS peaked at several times the received pack's size ([#1672](https://github.com/gitbutlerapp/grit/issues/1672)). The received pack is spooled to disk and indexed through a memory map, and peak RSS counts the map's resident pages. The trailer checksum, the object scan and delta resolution each read the whole map, so the full pack stayed resident while it was indexed. After indexing, a check for thin-pack bases re-inflated every object again on one thread. Completing a thin pack then read the pack into memory and indexed it a second time.

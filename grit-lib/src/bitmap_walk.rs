@@ -3,12 +3,13 @@
 //! Computes want/have sets with optional object filters, falling back to callers when a query
 //! cannot be served from on-disk bitmaps alone.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BinaryHeap, HashSet, VecDeque};
 
 use crate::error::Error;
 use crate::ewah_bitmap::Bitmap;
 use crate::objects::{
-    empty_oid_set, oid_hash_set, parse_tag, ObjectId, ObjectKind, OidHashSet, TreeRefIter,
+    empty_oid_set, oid_hash_set, parse_tag, CommitRef, ObjectId, ObjectKind, OidHashSet,
+    TreeRefIter,
 };
 use crate::pack::read_object_info_from_packs;
 use crate::pack_bitmap::{BitmapError, BitmapIndex};
@@ -282,6 +283,21 @@ impl BitmapIndex {
         query: ReachabilityQuery<'_>,
         missing: MissingAction,
     ) -> std::result::Result<ReachableSet, BitmapWalkError> {
+        self.reachability_and_haves(repo, query, missing, missing)
+            .map(|(wants, _)| wants)
+    }
+
+    /// Like [`Self::reachability`], also returning every object reachable from the haves
+    /// (unfiltered), which the query computes anyway.
+    ///
+    /// `want_missing` applies to the wants, `have_missing` to the haves.
+    pub(crate) fn reachability_and_haves(
+        self: &std::sync::Arc<Self>,
+        repo: &Repository,
+        query: ReachabilityQuery<'_>,
+        want_missing: MissingAction,
+        have_missing: MissingAction,
+    ) -> std::result::Result<(ReachableSet, ReachableSet), BitmapWalkError> {
         if !shallow_boundary_oids(repo.git_dir()).is_empty()
             || crate::shallow::shallow_file_path(repo.git_dir()).is_file()
         {
@@ -291,11 +307,12 @@ impl BitmapIndex {
             return Err(BitmapWalkUnsupported.into());
         }
 
-        let haves = find_objects_union(repo, self, query.haves, missing, false)?;
-        let mut wants = find_objects_union(repo, self, query.wants, missing, false)?;
+        let haves = find_objects_union(repo, self, query.haves, have_missing, false, None)?;
+        let mut wants =
+            find_objects_union(repo, self, query.wants, want_missing, false, Some(&haves))?;
         wants.subtract(&haves);
         apply_filter(repo, self, &mut wants, query.filter, query.wants)?;
-        Ok(wants)
+        Ok((wants, haves))
     }
 
     /// Compare the on-disk commit bitmap for `commit` with a fresh non-bitmap walk (`rev-list --test-bitmap`).
@@ -315,7 +332,7 @@ impl BitmapIndex {
         let Some(stored) = self.commit_bitmap(commit) else {
             return Ok(false);
         };
-        let walked = find_objects_union(repo, self, &[*commit], missing, true)?;
+        let walked = find_objects_union(repo, self, &[*commit], missing, true, None)?;
         let stored_set: HashSet<u32> = stored.positions().collect();
         let walked_set: HashSet<u32> = walked
             .bits
@@ -344,20 +361,26 @@ impl BitmapIndex {
             return Err(BitmapWalkUnsupported.into());
         }
 
-        let haves = find_objects_union(repo, self, haves, missing, false)?;
-        let mut want_set = find_objects_peeled(repo, self, wants, missing, false)?;
+        let haves = find_objects_union(repo, self, haves, missing, false, None)?;
+        let mut want_set = find_objects_peeled(repo, self, wants, missing, false, Some(&haves))?;
         want_set.subtract(&haves);
         apply_filter(repo, self, &mut want_set, filter, filter_want_tips)?;
         Ok(want_set)
     }
 }
 
+/// Objects reachable from `tips`.
+///
+/// With `seed`, the walk starts from the objects already in it and stops wherever it
+/// reaches one of them, so the result is everything reachable from `tips` plus `seed`;
+/// a caller subtracting `seed` afterwards does not walk what it subtracts.
 fn find_objects_union(
     repo: &Repository,
     index: &std::sync::Arc<BitmapIndex>,
     tips: &[ObjectId],
     missing: MissingAction,
     ignore_stored_commit_bitmaps: bool,
+    seed: Option<&ReachableSet>,
 ) -> std::result::Result<ReachableSet, BitmapWalkError> {
     if tips.is_empty() {
         return Ok(ReachableSet {
@@ -367,30 +390,34 @@ fn find_objects_union(
             extended_set: oid_hash_set(),
         });
     }
-    find_objects(repo, index, tips, missing, ignore_stored_commit_bitmaps)
-}
-
-fn find_objects(
-    repo: &Repository,
-    index: &std::sync::Arc<BitmapIndex>,
-    tips: &[ObjectId],
-    missing: MissingAction,
-    ignore_stored_commit_bitmaps: bool,
-) -> std::result::Result<ReachableSet, BitmapWalkError> {
     let peeled = peel_tips(repo, tips, missing)?;
-    find_objects_peeled(repo, index, peeled, missing, ignore_stored_commit_bitmaps)
+    find_objects_peeled(
+        repo,
+        index,
+        peeled,
+        missing,
+        ignore_stored_commit_bitmaps,
+        seed,
+    )
 }
 
+/// [`find_objects_union`] for tips already split by kind.
 fn find_objects_peeled(
     repo: &Repository,
     index: &std::sync::Arc<BitmapIndex>,
     peeled: PeeledTips,
     missing: MissingAction,
     ignore_stored_commit_bitmaps: bool,
+    seed: Option<&ReachableSet>,
 ) -> std::result::Result<ReachableSet, BitmapWalkError> {
-    let mut bits = Bitmap::new();
-    let mut extended = Vec::new();
-    let mut extended_set = oid_hash_set();
+    let (mut bits, mut extended, mut extended_set) = match seed {
+        Some(seed) => (
+            seed.bits.clone(),
+            seed.extended.clone(),
+            seed.extended_set.clone(),
+        ),
+        None => (Bitmap::new(), Vec::new(), oid_hash_set()),
+    };
     let mut pending_commits = VecDeque::new();
 
     for commit in peeled.commits {
@@ -433,17 +460,18 @@ fn find_objects_peeled(
         )?;
     }
 
+    // Commits without a stored bitmap are walked newest first, so the bitmaps of the
+    // recent commits that cover most of the history are OR'ed in before the walk
+    // reaches what they cover, and a commit already covered ends its line of the walk.
     let mut seen_commits = oid_hash_set();
-    while let Some(commit) = pending_commits.pop_front() {
-        if !seen_commits.insert(commit) {
-            continue;
+    let mut queue = BinaryHeap::new();
+    for commit in pending_commits {
+        if seen_commits.insert(commit) {
+            queue_walk_commit(repo, &mut queue, commit)?;
         }
-        if try_or_commit_bitmap(index, &mut bits, &commit, ignore_stored_commit_bitmaps)? {
-            if let Ok(parents) = repo.odb().read_commit(&commit).map(|c| c.parents) {
-                for parent in parents {
-                    seen_commits.insert(parent);
-                }
-            }
+    }
+    while let Some(commit) = queue.pop() {
+        if already_marked(index, &bits, &extended_set, &commit.oid) {
             continue;
         }
         mark_index_or_extended(
@@ -451,27 +479,26 @@ fn find_objects_peeled(
             &mut bits,
             &mut extended,
             &mut extended_set,
-            commit,
+            commit.oid,
             ObjectKind::Commit,
         );
-        let commit_data = match repo.odb().read_commit(&commit) {
-            Ok(c) => c,
-            Err(Error::ObjectNotFound(_)) => continue,
-            Err(err) => return Err(err.into()),
-        };
         walk_tree(
             repo,
             index,
             &mut bits,
             &mut extended,
             &mut extended_set,
-            commit_data.tree,
+            commit.tree,
             missing,
         )?;
-        for parent in commit_data.parents {
-            if !seen_commits.contains(&parent) {
-                pending_commits.push_back(parent);
+        for parent in commit.parents {
+            if !seen_commits.insert(parent)
+                || already_marked(index, &bits, &extended_set, &parent)
+                || try_or_commit_bitmap(index, &mut bits, &parent, ignore_stored_commit_bitmaps)?
+            {
+                continue;
             }
+            queue_walk_commit(repo, &mut queue, parent)?;
         }
     }
 
@@ -481,6 +508,60 @@ fn find_objects_peeled(
         extended,
         extended_set,
     })
+}
+
+/// A commit waiting in the bitmap fallback walk, ordered newest first.
+struct WalkCommit {
+    time: i64,
+    seq: std::cmp::Reverse<u64>,
+    oid: ObjectId,
+    tree: ObjectId,
+    parents: Vec<ObjectId>,
+}
+
+impl PartialEq for WalkCommit {
+    fn eq(&self, other: &Self) -> bool {
+        (self.time, self.seq) == (other.time, other.seq)
+    }
+}
+
+impl Eq for WalkCommit {}
+
+impl PartialOrd for WalkCommit {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for WalkCommit {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.time, self.seq).cmp(&(other.time, other.seq))
+    }
+}
+
+/// Read `oid` and queue it for the fallback walk; a missing commit is skipped.
+fn queue_walk_commit(
+    repo: &Repository,
+    queue: &mut BinaryHeap<WalkCommit>,
+    oid: ObjectId,
+) -> std::result::Result<(), BitmapWalkError> {
+    let object = match repo.odb().read(&oid) {
+        Ok(obj) => obj,
+        Err(Error::ObjectNotFound(_)) => return Ok(()),
+        Err(err) => return Err(err.into()),
+    };
+    if object.kind != ObjectKind::Commit {
+        return Ok(());
+    }
+    let commit = CommitRef::parse(&object.data)?;
+    queue.push(WalkCommit {
+        time: commit.committer_unix_seconds_for_ordering(),
+        seq: std::cmp::Reverse(queue.len() as u64),
+        oid,
+        tree: commit.tree(),
+        parents: commit.parents().to_vec(),
+    });
+    Ok(())
 }
 
 fn try_or_commit_bitmap(
