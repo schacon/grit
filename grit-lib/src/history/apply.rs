@@ -1226,21 +1226,9 @@ fn commit_planned_ref_updates(
             opts,
         );
         if head_target.as_deref() == Some(planned.name.as_str()) {
-            if let Some(mut head_reflog) =
-                reflog_for_update(config.as_ref().map(|c| c.as_ref()), git_dir, "HEAD", opts)
+            if let Some(head_update) =
+                head_log_update(config.as_ref().map(|c| c.as_ref()), git_dir, planned, opts)
             {
-                head_reflog.old_oid = Some(planned.old);
-                head_reflog.new_oid = Some(planned.new);
-                let head_update = RefUpdate {
-                    name: "HEAD".into(),
-                    new_value: Some(RawRef::Direct(planned.new)),
-                    expected: Expected::Any,
-                    reflog: Some(head_reflog),
-                    flags: RefUpdateFlags {
-                        log_only: true,
-                        no_deref: true,
-                    },
-                };
                 txn = txn
                     .update(head_update)
                     .map_err(|e| map_ref_store_error(e, "HEAD"))?;
@@ -1289,6 +1277,58 @@ fn rollback_ref_updates(
         })
         .collect();
     commit_planned_ref_updates(repo, &inverse, opts)
+}
+
+/// Append one `HEAD` reflog entry for `branch` moving `old` → `new`, as if `HEAD` had been
+/// attached to that branch when it moved.
+///
+/// Used by callers that move the checked-out branch while `HEAD` is detached (a resumed rebase)
+/// and reattach it afterwards, so the `HEAD` log still records the move. Logging follows the
+/// same policy as [`apply_rewrite`]; nothing is written when that policy skips `HEAD`.
+pub(super) fn log_head_move(
+    repo: &Repository,
+    branch: &PlannedRefUpdate,
+    opts: &ApplyOptions,
+) -> Result<(), HistoryError> {
+    let config = repo.config().ok();
+    let Some(update) = head_log_update(
+        config.as_ref().map(|c| c.as_ref()),
+        repo.git_dir(),
+        branch,
+        opts,
+    ) else {
+        return Ok(());
+    };
+    let txn = RefTransaction::new()
+        .update(update)
+        .map_err(|e| map_ref_store_error(e, "HEAD"))?;
+    repo.refs()
+        .prepare(txn)
+        .and_then(|prepared| prepared.commit())
+        .map_err(|e| map_ref_store_error(e, "HEAD"))?;
+    Ok(())
+}
+
+/// Log-only `HEAD` update mirroring `branch`, or `None` when `HEAD` is not logged.
+fn head_log_update(
+    config: Option<&ConfigSet>,
+    git_dir: &std::path::Path,
+    branch: &PlannedRefUpdate,
+    opts: &ApplyOptions,
+) -> Option<RefUpdate> {
+    let mut reflog = reflog_for_update(config, git_dir, "HEAD", opts)?;
+    reflog.old_oid = Some(branch.old);
+    reflog.new_oid = Some(branch.new);
+    Some(RefUpdate {
+        name: "HEAD".into(),
+        new_value: Some(RawRef::Direct(branch.new)),
+        expected: Expected::Any,
+        reflog: Some(reflog),
+        flags: RefUpdateFlags {
+            log_only: true,
+            no_deref: true,
+        },
+    })
 }
 
 fn reflog_for_update(
