@@ -252,48 +252,26 @@ fn deepest_deltified_oid(pack_bytes: &[u8], stem: &str) -> (ObjectId, u64) {
 }
 
 pub(crate) fn build_delta_chain_pack(depth: usize) -> (Vec<u8>, ObjectId, u64) {
-    let tmp = tempfile::tempdir().expect("delta chain tempdir");
-    let repo = Repository::init(
-        tmp.path(),
-        &InitOptions::new()
-            .with_initial_branch("main".to_owned())
-            .with_ref_storage(grit_lib::RefStorageFormat::Files),
-    )
-    .expect("init bench repo for delta chain");
-    let mut parent = None;
-    let mut body = String::new();
-    for i in 0..128 {
-        body.push_str(&format!("seed {i:04}\n"));
-    }
+    use grit_test_support::objects::{
+        HashAlgo as PackHashAlgo, ObjectKind as PackKind, PackBuilder,
+    };
+
+    // Specify every edge explicitly: pack-writer heuristics may flatten similar blobs.
+    let mut builder = PackBuilder::new(PackHashAlgo::Sha1);
+    let mut body: Vec<u8> = (0..128)
+        .flat_map(|i| format!("seed {i:04}\n").into_bytes())
+        .collect();
+    let mut base = builder.add_full(PackKind::Blob, &body);
     for rev in 0..depth {
-        body.push_str(&format!("layer-{rev}\n"));
-        parent = Some(
-            grit_commit_file(
-                &repo,
-                parent,
-                "chain.txt",
-                body.as_bytes(),
-                &format!("c{rev}"),
-            )
-            .expect("grit commit in delta chain"),
-        );
+        let mut next = body.clone();
+        next.extend_from_slice(format!("layer-{rev}\n").as_bytes());
+        let delta = encode_lcp_delta(&body, &next).expect("encode chain delta");
+        base = builder.add_ofs_delta(base, &delta, delta.len());
+        body = next;
     }
-    let tip = parent.expect("delta chain must have at least one commit");
-    let odb =
-        Odb::new(&repo.git_dir().join("objects")).with_config_git_dir(repo.git_dir().to_path_buf());
-    let pack = build_pack(
-        &odb,
-        &[tip],
-        &[],
-        &PackBuildOptions {
-            delta: true,
-            max_depth: depth,
-            use_ofs_delta: true,
-            ..PackBuildOptions::default()
-        },
-    )
-    .expect("build delta pack");
+    let pack = builder.build().bytes;
     let (delta_oid, chain_depth) = deepest_deltified_oid(&pack, "verify-delta");
+    assert_eq!(chain_depth, depth as u64, "explicit delta chain depth");
     (pack, delta_oid, chain_depth)
 }
 

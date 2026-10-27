@@ -66,33 +66,37 @@ fn bench_revwalk_path_limited(c: &mut Criterion) {
 }
 
 fn revwalk_group(c: &mut Criterion, ordering: OrderingMode, label: &str) {
-    let fx = HistoryBenchFixtures::global();
     let mut group = c.benchmark_group(format!("revwalk_{label}"));
-    group.throughput(Throughput::Elements(fx.commit_count as u64));
+    group.throughput(Throughput::Elements(s7::history_commit_count() as u64));
 
-    for (graph_label, use_graph) in [("no_commit_graph", false), ("commit_graph", true)] {
-        group.bench_with_input(
-            BenchmarkId::new("walk", graph_label),
-            &use_graph,
-            |b, with_graph| {
-                if *with_graph {
-                    fx.ensure_commit_graph();
-                } else {
-                    fx.remove_commit_graph();
-                }
-                b.iter(|| {
-                    let opts = RevListOptions {
-                        ordering,
-                        max_count: None,
-                        use_commit_graph: *with_graph,
-                        ..Default::default()
-                    };
-                    let result =
-                        rev_list(&fx.repo, &[String::from("HEAD")], &[], &opts).expect("rev-list");
-                    black_box(result.commits.len())
-                });
-            },
-        );
+    for (storage, fx) in [
+        ("loose", HistoryBenchFixtures::global()),
+        ("packed", HistoryBenchFixtures::packed()),
+    ] {
+        for (graph_label, use_graph) in [("no_commit_graph", false), ("commit_graph", true)] {
+            group.bench_with_input(
+                BenchmarkId::new(storage, graph_label),
+                &use_graph,
+                |b, with_graph| {
+                    if *with_graph {
+                        fx.ensure_commit_graph();
+                    } else {
+                        fx.remove_commit_graph();
+                    }
+                    b.iter(|| {
+                        let opts = RevListOptions {
+                            ordering,
+                            max_count: None,
+                            use_commit_graph: *with_graph,
+                            ..Default::default()
+                        };
+                        let result = rev_list(&fx.repo, &[String::from("HEAD")], &[], &opts)
+                            .expect("rev-list");
+                        black_box(result.commits.len())
+                    });
+                },
+            );
+        }
     }
     group.finish();
 }
@@ -357,8 +361,7 @@ fn bench_tree_diff(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(name), &(old, new), |b, pair| {
             b.iter(|| {
                 black_box(
-                    diff_trees(&fx.repo.odb(), Some(&pair.0), Some(&pair.1), "")
-                        .expect("tree diff"),
+                    diff_trees(fx.repo.odb(), Some(&pair.0), Some(&pair.1), "").expect("tree diff"),
                 )
             });
         });

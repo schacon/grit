@@ -1,7 +1,7 @@
 //! History Criterion fixtures (s7): deterministic repos for revwalk, rev-parse, and diff benches.
 //!
 //! Builds repositories with `grit-lib` and uses the system `git` binary only for
-//! `index-pack`, which is allowed in benchmark harness code (same as `fixture.rs`).
+//! commit-graph construction and repacking of the packed history variant.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, dead_code)]
 
@@ -11,7 +11,6 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 use grit_lib::diff::bloom::BloomFilterSettings;
-use grit_lib::error::Result as GritResult;
 use grit_lib::index::write_tree::{write_tree_from_index, write_tree_update_index, WriteTreeFlags};
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::commit_graph::{
@@ -19,12 +18,10 @@ use grit_lib::objects::commit_graph::{
     CommitGraphCommitInfo,
 };
 use grit_lib::objects::odb::Odb;
-use grit_lib::objects::pack::{clear_pack_cache, read_pack_index};
 use grit_lib::objects::{
     serialize_commit, serialize_tag, CommitData, ObjectId, ObjectKind, TagData,
 };
 use grit_lib::refs::write_ref;
-use grit_lib::remote::transfer::{build_pack, PackBuildOptions};
 use grit_lib::repo::{InitOptions, Repository};
 use tempfile::TempDir;
 
@@ -52,44 +49,6 @@ pub fn head_tilde_distance() -> usize {
 
 fn bench_ident(seq: i64) -> String {
     format!("History Bench <bench@grit-scm.test> {seq} +0000")
-}
-
-fn git_index_pack(dir: &Path, pack_path: &Path) -> GritResult<()> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(dir).args([
-        "index-pack",
-        pack_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .expect("pack file name"),
-    ]);
-    for (k, v) in GIT_ENV {
-        cmd.env(k, v);
-    }
-    let out = cmd.output().map_err(grit_lib::error::Error::Io)?;
-    if !out.status.success() {
-        return Err(grit_lib::error::Error::Message(format!(
-            "git index-pack failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        )));
-    }
-    Ok(())
-}
-
-fn install_indexed_pack(objects_dir: &Path, stem: &str, pack_bytes: &[u8]) {
-    let pack_dir = objects_dir.join("pack");
-    std::fs::create_dir_all(&pack_dir).expect("pack dir");
-    let scratch = tempfile::tempdir().expect("index-pack scratch");
-    let pack_path = scratch.path().join(format!("{stem}.pack"));
-    std::fs::write(&pack_path, pack_bytes).expect("write pack bytes");
-    git_index_pack(scratch.path(), &pack_path).expect("index-pack");
-    let idx_path = scratch.path().join(format!("{stem}.idx"));
-    let dest_pack = pack_dir.join(format!("{stem}.pack"));
-    let dest_idx = pack_dir.join(format!("{stem}.idx"));
-    std::fs::copy(&pack_path, &dest_pack).expect("copy pack");
-    std::fs::copy(&idx_path, &dest_idx).expect("copy idx");
-    clear_pack_cache();
-    read_pack_index(&dest_idx).expect("read installed idx");
 }
 
 fn git_commit_graph_write(repo_root: &Path) -> std::result::Result<(), String> {
@@ -249,18 +208,6 @@ fn build_history_repo(dir: &Path, commit_count: usize) -> Repository {
         .expect("write tag");
     write_ref(repo.git_dir(), "refs/tags/bench-tag", &tag_oid).expect("write tag ref");
 
-    let pack = build_pack(
-        repo.odb(),
-        &[head],
-        &[],
-        &PackBuildOptions {
-            delta: false,
-            ..PackBuildOptions::default()
-        },
-    )
-    .expect("history pack");
-    install_indexed_pack(repo.odb().objects_dir(), "history", &pack);
-
     repo
 }
 
@@ -399,7 +346,7 @@ pub struct HistoryBenchFixtures {
 }
 
 impl HistoryBenchFixtures {
-    fn build() -> Self {
+    fn build(packed: bool) -> Self {
         let commit_count = history_commit_count();
         let root = tempfile::tempdir().expect("history tempdir");
         let repo = build_history_repo(root.path(), commit_count);
@@ -433,6 +380,34 @@ impl HistoryBenchFixtures {
             s
         };
         let (blob_pathological_old, blob_pathological_new) = pathological_blob_lines(4_000);
+
+        if packed {
+            let out = Command::new("git")
+                .args(["repack", "-ad"])
+                .current_dir(root.path())
+                .envs(GIT_ENV.iter().copied())
+                .output()
+                .expect("repack history");
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let hex = head.to_hex();
+        let loose_head = repo.odb().objects_dir().join(&hex[..2]).join(&hex[2..]);
+        assert_eq!(loose_head.is_file(), !packed, "history storage fixture");
+        let has_pack =
+            std::fs::read_dir(repo.odb().objects_dir().join("pack")).is_ok_and(|entries| {
+                entries
+                    .flatten()
+                    .any(|entry| entry.path().extension().is_some_and(|ext| ext == "pack"))
+            });
+        assert_eq!(
+            has_pack, packed,
+            "history must use only its declared storage"
+        );
+        let repo = Repository::open(repo.git_dir(), &Default::default()).expect("reopen history");
 
         Self {
             _root: root,
@@ -472,9 +447,16 @@ impl HistoryBenchFixtures {
         }
     }
 
+    /// History packed by system git, with loose reachable objects removed.
+    #[must_use]
+    pub fn packed() -> &'static Self {
+        static FIX: OnceLock<HistoryBenchFixtures> = OnceLock::new();
+        FIX.get_or_init(|| HistoryBenchFixtures::build(true))
+    }
+
     #[must_use]
     pub fn global() -> &'static Self {
         static FIX: OnceLock<HistoryBenchFixtures> = OnceLock::new();
-        FIX.get_or_init(HistoryBenchFixtures::build)
+        FIX.get_or_init(|| HistoryBenchFixtures::build(false))
     }
 }

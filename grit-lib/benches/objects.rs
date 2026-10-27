@@ -126,6 +126,93 @@ fn bench_zlib(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_zlib_reused(c: &mut Criterion) {
+    let fx = ObjectBenchFixtures::global();
+    let commit = b"tree 0123456789012345678901234567890123456789\nauthor Bench <b@example.com> 1 +0000\ncommitter Bench <b@example.com> 1 +0000\n\nsmall commit\n";
+    let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+    std::io::Write::write_all(&mut enc, commit).expect("compress commit");
+    let commit_zlib = enc.finish().expect("finish");
+    let mut group = c.benchmark_group("zlib_reused");
+    for (label, input, len) in [
+        ("commit", commit_zlib.as_slice(), commit.len()),
+        (
+            "tree",
+            fx.tree_small_zlib.as_slice(),
+            fx.tree_small_store.len(),
+        ),
+        (
+            "blob_4k",
+            fx.blob_4k_zlib.as_slice(),
+            fx.blob_4k_store.len(),
+        ),
+        (
+            "blob_1m",
+            fx.blob_1m_zlib.as_slice(),
+            fx.blob_1m_store.len(),
+        ),
+        ("delta", fx.delta_zlib.as_slice(), fx.delta_store.len()),
+    ] {
+        let mut decoder = flate2::Decompress::new(true);
+        let mut out = vec![0; len];
+        group.bench_function(BenchmarkId::new("flate2", label), |b| {
+            b.iter(|| {
+                decoder.reset(true);
+                let status = decoder
+                    .decompress(black_box(input), &mut out, flate2::FlushDecompress::Finish)
+                    .expect("inflate");
+                assert_eq!(status, flate2::Status::StreamEnd);
+                assert_eq!(decoder.total_in(), input.len() as u64);
+                assert_eq!(decoder.total_out(), len as u64);
+                black_box(&out);
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_packed_odb(c: &mut Criterion) {
+    let fx = s7::HistoryBenchFixtures::packed();
+    let head = fx.repo.odb().read(&fx.head).expect("commit");
+    let odb = Odb::new(fx.repo.odb().objects_dir());
+    let commit = grit_lib::objects::parse_commit(&head.data).expect("parse commit");
+    let mut group = c.benchmark_group("packed_odb_read");
+    for (label, oid) in [("commit", fx.head), ("tree", commit.tree)] {
+        group.bench_function(label, |b| {
+            // Batch context bypasses the ODB's small-object result cache, retaining only
+            // pack/index mappings and decoder scratch between actual decompressions.
+            odb.with_pack_read_context(|| {
+                b.iter(|| black_box(odb.read(black_box(&oid)).expect("packed ODB read")));
+            });
+        });
+    }
+    let objects = ObjectBenchFixtures::global();
+    // Isolate packs: the whole-blob fixture also has a loose copy for loose-read benches.
+    let packed_root = tempfile::tempdir().expect("packed-only ODB");
+    let pack_dir = packed_root.path().join("pack");
+    std::fs::create_dir(&pack_dir).expect("pack dir");
+    for entry in std::fs::read_dir(objects.odb.objects_dir().join("pack")).expect("packs") {
+        let entry = entry.expect("pack entry");
+        std::fs::copy(entry.path(), pack_dir.join(entry.file_name())).expect("copy pack");
+    }
+    let packed = Odb::new(packed_root.path());
+    for (label, oid) in [
+        ("blob", objects.packed_whole_oid),
+        ("delta", objects.packed_delta_oid),
+    ] {
+        group.bench_function(label, |b| {
+            packed.with_pack_read_context(|| {
+                b.iter(|| {
+                    if label == "delta" {
+                        packed.invalidate_packs();
+                    }
+                    black_box(packed.read(black_box(&oid)).expect("packed ODB read"))
+                });
+            });
+        });
+    }
+    group.finish();
+}
+
 fn bench_loose_read(c: &mut Criterion) {
     let fx = ObjectBenchFixtures::global();
     c.bench_function("loose_object_read", |b| {
@@ -172,10 +259,10 @@ fn bench_idx_lookup(c: &mut Criterion) {
     let mut group = c.benchmark_group("pack_idx_lookup");
 
     fn lookup_hit(idx: &PackIndex, oid: &grit_lib::objects::ObjectId) {
-        black_box(idx.find_offset(oid));
+        let _ = black_box(idx.find_offset(oid));
     }
     fn lookup_miss(idx: &PackIndex, oid: &grit_lib::objects::ObjectId) {
-        black_box(idx.find_offset(oid));
+        let _ = black_box(idx.find_offset(oid));
     }
 
     for (name, idx, hit, miss) in [
@@ -251,8 +338,9 @@ fn bench_read_info_mib_loose(c: &mut Criterion) {
 fn bench_exists_local_10k_oids_packed(c: &mut Criterion) {
     static FIX: OnceLock<(tempfile::TempDir, Odb, Vec<grit_lib::objects::ObjectId>)> =
         OnceLock::new();
-    let (_dir, odb, oids) = FIX.get_or_init(|| fixture::build_packed_exists_local_fixture(10_000));
     c.bench_function("exists_local_10k_oids_packed", |b| {
+        let (_dir, odb, oids) =
+            FIX.get_or_init(|| fixture::build_packed_exists_local_fixture(10_000));
         b.iter(|| {
             for oid in oids.iter().take(10_000) {
                 black_box(odb.exists_local(oid));
@@ -327,9 +415,11 @@ criterion_group!(
     bench_object_id_hash,
     bench_hash_object,
     bench_zlib,
+    bench_zlib_reused,
     bench_loose_read,
     bench_read_info_mib_loose,
     bench_packed_read,
+    bench_packed_odb,
     bench_idx_lookup,
     bench_exists_local_10k_oids_packed,
     bench_tree_iter,

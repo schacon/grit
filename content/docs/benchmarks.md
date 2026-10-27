@@ -9,6 +9,53 @@ For a map of **grit-lib** modules, **grit** commands, common workflows, and ever
 
 Command-level numbers below come from the committed **grit-bench** JSON baselines listed in `content/docs/site.toml`. Scenario suites use **hyperfine** against the system **`git`** binary and a release **`grit`** build on the same machine; individual studies below document their sampling method. Times are wall-clock milliseconds.
 
+## Sirocco packed-read evaluation (2026-10-26)
+
+The reference candidate [8a0f13f4](https://but.dev/c/01m5x3zw0zc7c88a4wzq0bjfks/b/factory%2Fsirocco-inflate?commit=8a0f13f4eb4cbc38642313001ca1b22de0567b8d) evaluated Sirocco 0.3.1 in the shared packed-object scratch for full-input reads and prefix probes. Complete reads had to finish a checksum-validated zlib member and match its declared output size, including empty objects. Loose-object reads, bounded streaming, checksum-validating scans, and compression retained flate2/zlib-rs.
+
+**Sirocco was not adopted.** Packed ODB reads improved, but median peak RSS grew by **56–364 KiB** and the **10k packed-history walk without a commit-graph regressed by about 5%**. This misses the requirement for measured wins without compatibility or memory regressions. Grit retains **flate2/zlib-rs as its only decoder** and ships no Sirocco dependency. The tables below document the rejected experiment; they are not published performance baselines for the current implementation.
+
+The baseline is `origin/main` at `99332d04950da7af39beff55b9874c42d17e0d5a`. Frozen before/after `dist` binaries and system Git 2.55.0 ran on the same 4-vCPU AMD EPYC 9V45 VM (16 GiB RAM, Linux, Rust 1.99). Builds and tests were stopped during measurement. The table uses two warmups and 21 fresh-process samples per tool, rotating tool order and pinning all children to CPU 0. Wall time includes the `/usr/bin/time -v` wrapper; RSS is the median of its per-process peak readings. Pinned and unpinned raw samples are preserved in the reference candidate commit.
+
+The synthetic repository has 50,000 commits and 20,000 files in Git-produced packs, with separate commit-graph and no-graph copies. The real repository is this checkout's `main` (11275 commits, limit 5,000). Library walks use `grit-bench lib-op rev-list-head`; the Git equivalent is `git rev-list HEAD`. CLI rows use `log --oneline -n <limit>` with output discarded.
+
+| Operation | Git ms / KiB | Grit before ms / KiB | Candidate ms / KiB |
+| --- | ---: | ---: | ---: |
+| walk-50000-no-graph | 90.06 / 19,020 | 181.79 / 53,248 | 173.38 / 53,612 |
+| log-50000-no-graph | 111.72 / 19,348 | 416.33 / 102,740 | 415.80 / 102,904 |
+| walk-50000-graph | 27.32 / 13,652 | 47.62 / 37,552 | 48.62 / 37,820 |
+| log-50000-graph | 111.00 / 22,472 | 407.45 / 105,276 | 407.77 / 105,548 |
+| log-100-no-graph | 2.25 / 6,664 | 3.35 / 12,268 | 3.32 / 12,520 |
+| log-real-grit-main | 32.26 / 16,756 | 73.68 / 30,872 | 67.94 / 30,928 |
+
+Packed-read Criterion timings below are means. Each ODB read inflates an object through the public API under a pack read context, bypassing the small-object result cache. The delta case invalidates the owning ODB's pack caches and checks an explicitly constructed 80-edge chain. The history fixture now distinguishes genuinely loose objects from Git-packed objects and asserts its storage layout. Graph use is enabled/disabled independently. The before/after generated history packs had identical checksums.
+
+| Library operation | Before µs | Candidate µs | Change |
+| --- | ---: | ---: | ---: |
+| `packed_odb_read/blob` | 1.61 | 1.46 | -9.7% |
+| `packed_odb_read/commit` | 1.42 | 1.22 | -14.5% |
+| `packed_odb_read/delta` | 85.81 | 82.38 | -4.0% |
+| `packed_odb_read/tree` | 0.48 | 0.37 | -22.8% |
+| `packed_object_read/deep_delta_chain` | 38.58 | 35.45 | -8.1% |
+| `packed_object_read/whole` | 1.34 | 1.25 | -6.6% |
+| `revwalk_topo/loose/commit_graph` | 6147.32 | 5839.02 | -5.0% |
+| `revwalk_topo/loose/no_commit_graph` | 68354.85 | 68161.40 | -0.3% |
+| `revwalk_topo/packed/commit_graph` | 5856.66 | 5838.78 | -0.3% |
+| `revwalk_topo/packed/no_commit_graph` | 32295.20 | 33906.03 | +5.0% |
+
+The retained object suite benchmarks a reusable flate2 decoder on small commit/tree payloads, 4 KiB and 1 MiB blobs, and delta instructions; the reference candidate also measured Sirocco. The 1 MiB case is highly compressible; it is not a prediction for arbitrary blobs. The existing direct `ZlibDecoder` microbench remains available. The full `revwalk` suite also records author-filtered walks, bounded walks, counts, and merge-base, with time and RSS against system Git.
+
+Historical raw data remains in reference candidate `8a0f13f4` under `grit-utils/baselines/`: `sirocco-process-comparison.json`, `sirocco-process-comparison-unpinned.json`, `sirocco-criterion.json`, and the before/candidate `sirocco-revwalk-*.json` reports. These experimental reports are excluded from the current baseline tables. Compression is separate follow-up work requiring its own wall-time evidence.
+
+Reproduce with a frozen binary for each revision:
+
+```bash
+cargo build --profile dist -p grit-cli -p grit-utils
+cargo bench -p grit-lib --bench objects -- 'zlib_reused|packed_odb_read|packed_object_read' --sample-size 20 --warm-up-time 1 --measurement-time 3
+cargo bench -p grit-lib --bench history -- revwalk_topo --sample-size 20 --warm-up-time 1 --measurement-time 3
+target/dist/grit-bench revwalk --grit /path/to/frozen/grit --warmup 2 --min-runs 5 --format json --output revwalk.json
+```
+
 ## Undoing a commit without a commit-graph (2026-10-27)
 
 On `git/git` (82,605 commits, 1,012 tags), `reset --soft HEAD~1` after an empty
