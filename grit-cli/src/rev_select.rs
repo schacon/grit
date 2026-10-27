@@ -224,6 +224,8 @@ impl RevSelectArgs {
             pickaxe,
             graph: false,
             retain_commit_data: false,
+            left_right: false,
+            cherry_mark: false,
         })
     }
 

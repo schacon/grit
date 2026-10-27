@@ -1,6 +1,7 @@
 //! `grit revs` — list or count commits matching revision ranges.
 
 use anyhow::{bail, Result};
+use grit_lib::revwalk::rev_list::RevListResult;
 use grit_lib::revwalk::LeftRightCounts;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -28,11 +29,60 @@ impl From<LeftRightCounts> for RevsLeftRightCount {
     }
 }
 
+/// Which side of a symmetric range (`A...B`) a listed commit is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum RevsSide {
+    /// Reachable from the left tip only.
+    Left,
+    /// Reachable from the right tip only.
+    Right,
+}
+
+/// One listed commit: the shared commit shape plus `--left-right` / `--cherry-mark` marks.
+#[derive(Serialize, JsonSchema)]
+pub struct RevsCommit {
+    #[serde(flatten)]
+    pub commit: CommitJson,
+    /// Side of the symmetric range, with `--left-right` or `--cherry-mark`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub side: Option<RevsSide>,
+    /// With `--cherry-mark`: a commit on the other side has the same patch-id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub equivalent: Option<bool>,
+    /// With `--cherry-mark`, for a one-to-one equivalent pair: the other side's commit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub equivalent_to: Option<String>,
+    /// With `--cherry-mark`, for a one-to-one equivalent pair: whether the messages differ.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_changed: Option<bool>,
+}
+
+impl RevsCommit {
+    fn marker(&self) -> Option<char> {
+        match (self.equivalent, self.side?) {
+            (Some(true), _) => Some('='),
+            (_, RevsSide::Left) => Some('<'),
+            (_, RevsSide::Right) => Some('>'),
+        }
+    }
+
+    fn note(&self) -> Option<String> {
+        let other = self.equivalent_to.as_deref()?;
+        let short = other.get(..12).unwrap_or(other);
+        Some(if self.message_changed == Some(true) {
+            format!("message changed, pairs with {short}")
+        } else {
+            format!("pairs with {short}")
+        })
+    }
+}
+
 /// Result of `grit revs`.
 #[derive(Serialize, JsonSchema)]
 pub struct RevsOutcome {
     /// Listed commits in `rev-list` order (empty when `--count` is set).
-    pub commits: Vec<CommitJson>,
+    pub commits: Vec<RevsCommit>,
     /// Total reachable commits when `--count` is set without `--left-right`; otherwise `null`.
     pub count: Option<usize>,
     /// Left/right counts when `--count` and `--left-right` are set; otherwise `null`.
@@ -55,7 +105,13 @@ impl HumanRender for RevsOutcome {
             return Ok(());
         }
         for row in &self.commits {
-            outln!(w, "{}  {}", row.oid, row.subject);
+            let oid = &row.commit.oid;
+            let subject = &row.commit.subject;
+            match (row.marker(), row.note()) {
+                (Some(m), Some(note)) => outln!(w, "{m} {oid}  {subject}  ({note})"),
+                (Some(m), None) => outln!(w, "{m} {oid}  {subject}"),
+                (None, _) => outln!(w, "{oid}  {subject}"),
+            }
         }
         Ok(())
     }
@@ -87,18 +143,78 @@ impl MarkdownRender for RevsOutcome {
             return Ok(());
         }
         for row in &self.commits {
-            outln!(w, "- `{}` {}", row.oid, row.subject);
+            let oid = &row.commit.oid;
+            let subject = &row.commit.subject;
+            let side = match (row.side, row.equivalent) {
+                (Some(RevsSide::Left), Some(true)) => "**left, equivalent** ",
+                (Some(RevsSide::Right), Some(true)) => "**right, equivalent** ",
+                (Some(RevsSide::Left), _) => "**left** ",
+                (Some(RevsSide::Right), _) => "**right** ",
+                (None, _) => "",
+            };
+            match row.note() {
+                Some(note) => outln!(w, "- {side}`{oid}` {subject} _({note})_"),
+                None => outln!(w, "- {side}`{oid}` {subject}"),
+            }
         }
         Ok(())
     }
 }
 
+/// Counting and side-marking switches for [`run`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RevsMode {
+    /// `--count`: print counts instead of commits.
+    pub count: bool,
+    /// `--left-right`: mark sides when listing, or count each side with `--count`.
+    pub left_right: bool,
+    /// `--cherry-mark`: pair the sides by patch-id when listing.
+    pub cherry_mark: bool,
+}
+
+fn mark_commits(
+    commits: Vec<CommitJson>,
+    oids: &[grit_lib::objects::ObjectId],
+    result: &RevListResult,
+    mode: RevsMode,
+) -> Vec<RevsCommit> {
+    let sides = mode.left_right || mode.cherry_mark;
+    let matches = result.cherry_match_index();
+    commits
+        .into_iter()
+        .zip(oids)
+        .map(|(commit, oid)| {
+            let side = sides
+                .then(|| result.left_right_map.get(oid))
+                .flatten()
+                .map(|&left| {
+                    if left {
+                        RevsSide::Left
+                    } else {
+                        RevsSide::Right
+                    }
+                });
+            let group = matches.get(oid);
+            let counterpart = group.and_then(|g| g.counterpart(oid));
+            RevsCommit {
+                commit,
+                side,
+                equivalent: mode.cherry_mark.then(|| group.is_some()),
+                equivalent_to: counterpart.map(|o| o.to_hex()),
+                message_changed: counterpart.and(group.and_then(|g| g.message_changed)),
+            }
+        })
+        .collect()
+}
+
 pub fn run(
     rev: RevSelectArgs,
     pathspecs: TrailingPathspecArgs,
-    count: bool,
-    left_right: bool,
+    mode: RevsMode,
 ) -> Result<RevsOutcome> {
+    let RevsMode {
+        count, left_right, ..
+    } = mode;
     if rev.revs.is_empty()
         && !rev.all
         && rev.branches.is_none()
@@ -106,9 +222,6 @@ pub fn run(
         && rev.remotes.is_none()
     {
         bail!("at least one revision range is required");
-    }
-    if left_right && !count {
-        bail!("`--left-right` requires `--count`");
     }
     let repo = context::discover()?;
     let env = repo.environment();
@@ -158,11 +271,14 @@ pub fn run(
     let mut fetch_opts = opts.clone();
     fetch_opts.limit = fetch_limit_plus_one(rev.max_count());
     fetch_opts.retain_commit_data = true;
-    let list_result = walk.rev_list_result(&token_refs, &fetch_opts)?;
-    let (oids, truncated) = truncate_oid_list(list_result.commits, rev.max_count());
+    fetch_opts.left_right = left_right;
+    fetch_opts.cherry_mark = mode.cherry_mark;
+    let mut list_result = walk.rev_list_result(&token_refs, &fetch_opts)?;
+    let (oids, truncated) =
+        truncate_oid_list(std::mem::take(&mut list_result.commits), rev.max_count());
     let now = context::wall_clock_now(env).unix_timestamp();
     let loader = CommitJsonLoader::for_listed_commits();
-    let mut parsed = list_result.commit_data;
+    let mut parsed = std::mem::take(&mut list_result.commit_data);
     let commits = repo
         .odb()
         .with_pack_read_context(|| {
@@ -170,7 +286,7 @@ pub fn run(
         })?
         .0;
     Ok(RevsOutcome {
-        commits,
+        commits: mark_commits(commits, &oids, &list_result, mode),
         count: None,
         left_right: None,
         truncated,

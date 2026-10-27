@@ -319,6 +319,171 @@ fn log_cursor_rejects_ref_set_selectors() -> TestResult {
     Ok(())
 }
 
+fn git_ok(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", null_device())
+        .env("GIT_CONFIG_SYSTEM", null_device())
+        .env("GIT_AUTHOR_NAME", "T")
+        .env("GIT_AUTHOR_EMAIL", "t@e.x")
+        .env("GIT_COMMITTER_NAME", "T")
+        .env("GIT_COMMITTER_EMAIL", "t@e.x")
+        .output()
+        .expect("spawn git");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Issue #2163: `feat` is rebased onto a new `main` commit and `c3` reworded; `old-feat` is
+/// the reviewed version.
+fn seed_rewritten_branch_repo(dir: &Path) {
+    let _ = fs::remove_dir_all(dir);
+    fs::create_dir_all(dir).expect("mkdir");
+    git_ok(dir, &["init", "-q", "-b", "main", "."]);
+    let commit = |path: &str, content: &str, msg: &str| {
+        fs::write(dir.join(path), content).expect("write");
+        git_ok(dir, &["add", path]);
+        git_ok(dir, &["commit", "-q", "-m", msg]);
+    };
+    commit("f", "0\n", "base");
+    git_ok(dir, &["switch", "-q", "-c", "feat"]);
+    for i in 1..=3 {
+        commit(&format!("f{i}"), &format!("{i}\n"), &format!("c{i}"));
+    }
+    git_ok(dir, &["branch", "old-feat"]);
+    git_ok(dir, &["switch", "-q", "main"]);
+    commit("m", "m\n", "m");
+    git_ok(dir, &["switch", "-q", "feat"]);
+    git_ok(dir, &["rebase", "-q", "main"]);
+    git_ok(dir, &["commit", "-q", "--amend", "-m", "c3 reworded"]);
+    commit("f1", "edited\n", "c4 edits f1");
+}
+
+#[test]
+fn revs_cherry_mark_pairs_rewritten_branch_like_git() -> TestResult {
+    let dir = std::env::temp_dir().join(format!("grit-rev-select-cherry-{}", std::process::id()));
+    seed_rewritten_branch_repo(&dir);
+    let range = "old-feat...feat";
+    let git_lines: Vec<(char, String)> =
+        git_ok(&dir, &["rev-list", "--left-right", "--cherry-mark", range])
+            .lines()
+            .map(|l| (l.chars().next().unwrap(), l[1..].trim().to_owned()))
+            .collect();
+
+    let v = grit_json(&dir, &["revs", "--cherry-mark", range]);
+    let commits = v["commits"].as_array().expect("commits");
+    let grit_lines: Vec<(char, String)> = commits
+        .iter()
+        .map(|c| {
+            let marker = match (c["equivalent"].as_bool(), c["side"].as_str()) {
+                (Some(true), _) => '=',
+                (_, Some("left")) => '<',
+                _ => '>',
+            };
+            (marker, c["oid"].as_str().unwrap().to_owned())
+        })
+        .collect();
+    assert_eq!(grit_lines, git_lines);
+
+    let rev = |spec: &str| git_ok(&dir, &["rev-parse", spec]).trim().to_owned();
+    let by_oid = |oid: &str| commits.iter().find(|c| c["oid"] == oid).expect(oid);
+    let old_c3 = by_oid(&rev("old-feat"));
+    assert_eq!(old_c3["side"], "left");
+    assert_eq!(old_c3["equivalent_to"], rev("feat~1"));
+    assert_eq!(old_c3["message_changed"], true);
+    let new_c1 = by_oid(&rev("feat~3"));
+    assert_eq!(new_c1["side"], "right");
+    assert_eq!(new_c1["equivalent_to"], rev("old-feat~2"));
+    assert_eq!(new_c1["message_changed"], false);
+    let c4 = by_oid(&rev("feat"));
+    assert_eq!(c4["equivalent"], false);
+    assert!(c4.get("equivalent_to").is_none());
+
+    let human = grit_run(&dir, &["revs", "--cherry-mark", range]);
+    assert!(human.status.success());
+    let markers: Vec<char> = String::from_utf8_lossy(&human.stdout)
+        .lines()
+        .map(|l| l.chars().next().unwrap())
+        .collect();
+    assert_eq!(
+        markers,
+        git_lines.iter().map(|(m, _)| *m).collect::<Vec<_>>()
+    );
+
+    let lr = grit_json(&dir, &["revs", "--left-right", "-n", "2", range]);
+    assert_eq!(lr["truncated"], true);
+    assert_eq!(lr["commits"][0]["side"], "left");
+    assert!(lr["commits"][0].get("equivalent").is_none());
+
+    let plain = grit_json(&dir, &["revs", "-n", "1", "feat"]);
+    assert!(
+        plain["commits"][0].get("side").is_none(),
+        "plain rows unchanged"
+    );
+
+    for args in [
+        &["revs", "--cherry-mark", "feat"][..],
+        &["revs", "--left-right", "main..feat"],
+    ] {
+        let out = grit_run(&dir, args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+    }
+    let _ = fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn patch_id_expands_ranges_like_git() -> TestResult {
+    let dir = std::env::temp_dir().join(format!("grit-patch-id-range-{}", std::process::id()));
+    seed_rewritten_branch_repo(&dir);
+    let mut want = Vec::new();
+    for commit in git_ok(&dir, &["rev-list", "main..old-feat"]).lines() {
+        let show = git_ok(&dir, &["show", commit]);
+        let mut child = Command::new("git")
+            .args(["patch-id", "--stable"])
+            .current_dir(&dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()?;
+        std::io::Write::write_all(&mut child.stdin.take().expect("stdin"), show.as_bytes())?;
+        want.push(
+            String::from_utf8(child.wait_with_output()?.stdout)?
+                .trim()
+                .to_owned(),
+        );
+    }
+    assert_eq!(want.len(), 3);
+
+    let v = grit_json(&dir, &["patch-id", "main..old-feat"]);
+    let got: Vec<String> = v["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .map(|e| {
+            format!(
+                "{} {}",
+                e["patch_id"].as_str().unwrap(),
+                e["commit"].as_str().unwrap()
+            )
+        })
+        .collect();
+    assert_eq!(got, want);
+
+    let human = grit_run(&dir, &["patch-id", "main..old-feat"]);
+    assert!(human.status.success());
+    assert_eq!(
+        String::from_utf8(human.stdout)?.lines().collect::<Vec<_>>(),
+        want
+    );
+    let _ = fs::remove_dir_all(&dir);
+    Ok(())
+}
+
 #[test]
 fn revs_left_right_count_json() -> TestResult {
     let dir = std::env::temp_dir().join(format!("grit-rev-select-lr-{}", std::process::id()));

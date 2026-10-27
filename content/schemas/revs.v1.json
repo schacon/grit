@@ -2,67 +2,6 @@
   "$id": "https://grit-scm.com/schemas/revs/v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "definitions": {
-    "CommitJson": {
-      "description": "Shared commit object in JSON output (`log`, `show`, `revs`, `shortlog`, …).",
-      "properties": {
-        "author": {
-          "$ref": "#/definitions/Person"
-        },
-        "change_id": {
-          "description": "Stable change id (reverse-hex; stored header or derived from commit id).",
-          "type": "string"
-        },
-        "change_id_stored": {
-          "description": "`true` when `change_id` came from a `change-id` commit header.",
-          "type": "boolean"
-        },
-        "committer": {
-          "$ref": "#/definitions/Person"
-        },
-        "message": {
-          "description": "Full message body with trailing whitespace trimmed.",
-          "type": "string"
-        },
-        "oid": {
-          "type": "string"
-        },
-        "parents": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "refs": {
-          "description": "Ref decorations (branches, tags, `HEAD`, …) for this commit.",
-          "items": {
-            "$ref": "#/definitions/CommitRefJson"
-          },
-          "type": "array"
-        },
-        "relative_date": {
-          "description": "Relative author date (e.g. `3 days ago`), when `now` is supplied.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "subject": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "author",
-        "change_id",
-        "change_id_stored",
-        "committer",
-        "message",
-        "oid",
-        "parents",
-        "refs",
-        "subject"
-      ],
-      "type": "object"
-    },
     "CommitRefJson": {
       "description": "Ref decoration attached to a commit in JSON output.",
       "properties": {
@@ -113,6 +52,99 @@
       ],
       "type": "object"
     },
+    "RevsCommit": {
+      "description": "One listed commit: the shared commit shape plus `--left-right` / `--cherry-mark` marks.",
+      "properties": {
+        "author": {
+          "$ref": "#/definitions/Person"
+        },
+        "change_id": {
+          "description": "Stable change id (reverse-hex; stored header or derived from commit id).",
+          "type": "string"
+        },
+        "change_id_stored": {
+          "description": "`true` when `change_id` came from a `change-id` commit header.",
+          "type": "boolean"
+        },
+        "committer": {
+          "$ref": "#/definitions/Person"
+        },
+        "equivalent": {
+          "description": "With `--cherry-mark`: a commit on the other side has the same patch-id.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "equivalent_to": {
+          "description": "With `--cherry-mark`, for a one-to-one equivalent pair: the other side's commit.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Full message body with trailing whitespace trimmed.",
+          "type": "string"
+        },
+        "message_changed": {
+          "description": "With `--cherry-mark`, for a one-to-one equivalent pair: whether the messages differ.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "oid": {
+          "type": "string"
+        },
+        "parents": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "refs": {
+          "description": "Ref decorations (branches, tags, `HEAD`, …) for this commit.",
+          "items": {
+            "$ref": "#/definitions/CommitRefJson"
+          },
+          "type": "array"
+        },
+        "relative_date": {
+          "description": "Relative author date (e.g. `3 days ago`), when `now` is supplied.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "side": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RevsSide"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Side of the symmetric range, with `--left-right` or `--cherry-mark`."
+        },
+        "subject": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "author",
+        "change_id",
+        "change_id_stored",
+        "committer",
+        "message",
+        "oid",
+        "parents",
+        "refs",
+        "subject"
+      ],
+      "type": "object"
+    },
     "RevsLeftRightCount": {
       "description": "Left/right counts for a symmetric range (`--left-right --count`).",
       "properties": {
@@ -132,6 +164,25 @@
         "right"
       ],
       "type": "object"
+    },
+    "RevsSide": {
+      "description": "Which side of a symmetric range (`A...B`) a listed commit is on.",
+      "oneOf": [
+        {
+          "description": "Reachable from the left tip only.",
+          "enum": [
+            "left"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Reachable from the right tip only.",
+          "enum": [
+            "right"
+          ],
+          "type": "string"
+        }
+      ]
     }
   },
   "description": "Result of `grit revs`.",
@@ -139,7 +190,7 @@
     "commits": {
       "description": "Listed commits in `rev-list` order (empty when `--count` is set).",
       "items": {
-        "$ref": "#/definitions/CommitJson"
+        "$ref": "#/definitions/RevsCommit"
       },
       "type": "array"
     },
