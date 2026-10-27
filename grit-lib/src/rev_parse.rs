@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use crate::check_ref_format::{check_refname_format, RefNameOptions};
 use crate::config::ConfigSet;
-use crate::error::{Error, Result};
+use crate::error::{Error, NotARepositoryReason, Result};
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::reflog::ReflogEntry;
 use crate::refs;
@@ -38,38 +38,33 @@ use crate::rev_parse_error::{AmbiguousObjectHint, RevParseError};
 /// # Errors
 ///
 /// Returns errors other than "not a repository" (for example I/O and path
-/// canonicalization failures).
+/// canonicalization failures). [`Error::NotARepository`] is returned too when discovery
+/// stopped at a malformed gitfile ([`NotARepositoryReason::GitfileNotRegularFile`] or
+/// [`NotARepositoryReason::GitfileMissingGitdir`]) or when `start` itself holds a `.git`
+/// file or symlink.
 pub fn discover_optional(start: Option<&Path>) -> Result<Option<Repository>> {
-    match Repository::discover(start, &RepositoryOptions::empty()) {
-        Ok(repo) => Ok(Some(repo)),
-        Err(Error::NotARepository(msg)) => {
-            // Repository not found while walking parents is optional, but
-            // structural `.git` problems at the starting directory should be
-            // surfaced so callers can show diagnostics (e.g. t0002/t0009).
-            if msg.contains("invalid gitfile format")
-                || msg.contains("gitfile does not contain 'gitdir:' line")
-                || msg.contains("not a regular file")
-            {
-                return Err(Error::NotARepository(msg));
-            }
-
-            if let Some(start) = start {
-                let start = if start.is_absolute() {
-                    start.to_path_buf()
-                } else {
-                    let cwd = crate::environment::Environment::empty().cwd.clone();
-                    cwd.join(start)
-                };
-                let dot_git = start.join(".git");
-                if dot_git.is_file() || dot_git.is_symlink() {
-                    return Err(Error::NotARepository(msg));
-                }
-            }
-
-            Ok(None)
-        }
-        Err(err) => Err(err),
+    let err = match Repository::discover(start, &RepositoryOptions::empty()) {
+        Ok(repo) => return Ok(Some(repo)),
+        Err(err) => err,
+    };
+    // A missing repository is an expected outcome, but a malformed `.git` entry found during
+    // discovery, or any `.git` file or symlink at `start`, is reported.
+    let Error::NotARepository(reason) = &err else {
+        return Err(err);
+    };
+    let malformed_gitfile = matches!(
+        reason,
+        NotARepositoryReason::GitfileNotRegularFile { .. }
+            | NotARepositoryReason::GitfileMissingGitdir { .. }
+    );
+    let dot_git_at_start = start.is_some_and(|start| {
+        let dot_git = start.join(".git");
+        dot_git.is_file() || dot_git.is_symlink()
+    });
+    if malformed_gitfile || dot_git_at_start {
+        return Err(err);
     }
+    Ok(None)
 }
 
 /// Compute whether `cwd` is inside the repository's work tree.
