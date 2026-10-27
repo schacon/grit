@@ -816,6 +816,8 @@ mod issue_1614_merge_no_dangling_empty_tree;
 mod large_blob_memory;
 #[path = "library_subprocess_hygiene.rs"]
 mod library_subprocess_hygiene;
+#[path = "linked_worktree_injected_ref_store.rs"]
+mod linked_worktree_injected_ref_store;
 #[cfg(feature = "full-tests")]
 #[path = "list_limit_handles.rs"]
 mod list_limit_handles;

@@ -295,6 +295,12 @@ impl RepositoryBuilder {
     /// [`crate::refs::store::MemoryRefStore`]) instead of the one the git directory selects.
     ///
     /// The default backend is never opened, so the git directory needs no `HEAD` or `refs/`.
+    ///
+    /// When [`Self::open`] is given a linked worktree's admin directory
+    /// (`<git dir>/worktrees/<id>`), `store` holds only the main worktree's `HEAD`, so the
+    /// handle reads and writes the linked worktree's own `HEAD` and `HEAD` reflog in that
+    /// admin directory and every other ref in `store`. Files and reftable stores keep
+    /// per-worktree refs apart themselves and are used as given.
     pub fn ref_store(mut self, store: Arc<dyn crate::refs::store::RefStore>) -> Self {
         self.ref_store = Some(store);
         self
@@ -766,16 +772,19 @@ impl Repository {
     /// Handle for the linked worktree administered at `admin_dir` with its files at
     /// `work_tree`.
     ///
-    /// When both stores live in the git directory the linked worktree is discovered from
-    /// `work_tree`, as any later open would. Otherwise discovery could not find an injected
-    /// store, so the handle shares this handle's object store and sees this handle's refs
-    /// with the worktree's own `HEAD` (read-only) from `admin_dir`.
+    /// `admin_dir` is the worktree's directory under `<common git dir>/worktrees/`
+    /// ([`crate::worktree::WorktreeEntry::admin_dir`]). When both stores live in the git
+    /// directory the linked worktree is discovered from `work_tree`, as any later open would.
+    /// Otherwise discovery could not find an injected store, so the handle shares this
+    /// handle's object store and refs, except that `HEAD` and the `HEAD` reflog are the
+    /// worktree's own, in `admin_dir/HEAD` and `admin_dir/logs/HEAD`: commits and checkouts
+    /// made through the handle move the branch that `HEAD` names, never the main worktree's.
     ///
     /// # Errors
     ///
     /// Discovery failures, [`Error::NotARepository`] when `admin_dir` is missing, and
     /// [`Error::PathError`] when `work_tree` cannot be canonicalized.
-    pub(crate) fn open_linked_worktree(&self, admin_dir: &Path, work_tree: &Path) -> Result<Self> {
+    pub fn open_linked_worktree(&self, admin_dir: &Path, work_tree: &Path) -> Result<Self> {
         let options = self.linked_worktree_discover_options();
         if self.refs_on_disk() && self.odb.uses_files_primary() {
             return Self::discover(Some(work_tree), &options);
@@ -1240,8 +1249,12 @@ impl Repository {
     }
 
     /// Replace the ref store (embedders injecting [`crate::refs::store::MemoryRefStore`]).
+    ///
+    /// On a linked worktree's handle, `HEAD` and its reflog stay in the worktree's admin
+    /// directory (see [`RepositoryBuilder::ref_store`]).
     #[must_use]
     pub fn with_ref_store(mut self, store: Arc<dyn crate::refs::store::RefStore>) -> Self {
+        let store = linked_worktree_view(&self.git_dir, store);
         self.caches
             .install_ref_store(&self.git_dir, Arc::clone(&store));
         self.ref_store = store;
@@ -4246,11 +4259,33 @@ fn open_or_install_ref_store(
 ) -> Result<Arc<dyn crate::refs::store::RefStore>> {
     match injected {
         Some(store) => {
+            let store = linked_worktree_view(git_dir, store);
             caches.install_ref_store(git_dir, Arc::clone(&store));
             Ok(store)
         }
         None => caches.open_ref_store(git_dir, environment),
     }
+}
+
+/// The ref store a handle on `git_dir` uses when its refs live in `store`.
+///
+/// An injected store holds one `HEAD`, the main worktree's. When `git_dir` is a linked
+/// worktree's admin directory the handle instead reads and writes that worktree's own `HEAD`
+/// and `HEAD` reflog in `git_dir`, and every other ref in `store`. Files and reftable stores
+/// already keep per-worktree refs apart and are returned unchanged.
+fn linked_worktree_view(
+    git_dir: &Path,
+    store: Arc<dyn crate::refs::store::RefStore>,
+) -> Arc<dyn crate::refs::store::RefStore> {
+    use crate::refs::store::{LinkedWorktreeRefStore, RefStorageFormat};
+    let on_disk = matches!(
+        store.format(),
+        RefStorageFormat::Files | RefStorageFormat::Reftable
+    );
+    if on_disk || !git_dir.join("commondir").is_file() {
+        return store;
+    }
+    Arc::new(LinkedWorktreeRefStore::new(git_dir.to_path_buf(), store))
 }
 
 /// Parse a gitfile's `"gitdir: <path>"` line.

@@ -16979,6 +16979,7 @@ pub fn grit_lib::repo::Repository::notes(&self) -> grit_lib::repo_handles::Repos
 pub fn grit_lib::repo::Repository::objects(&self) -> grit_lib::objects::handle::Objects<'_>
 pub fn grit_lib::repo::Repository::odb(&self) -> &grit_lib::objects::odb::Odb
 pub fn grit_lib::repo::Repository::open(&std::path::Path, &grit_lib::config::environment::RepositoryOptions) -> grit_lib::error::Result<Self>
+pub fn grit_lib::repo::Repository::open_linked_worktree(&self, &std::path::Path, &std::path::Path) -> grit_lib::error::Result<Self>
 pub fn grit_lib::repo::Repository::patch_id(&self, &grit_lib::objects::ObjectId, grit_lib::diff::patch_ids::PatchIdMode) -> grit_lib::error::Result<core::option::Option<grit_lib::objects::ObjectId>>
 pub fn grit_lib::repo::Repository::paths_match_pathspecs(&self, &str, &[alloc::string::String]) -> grit_lib::error::Result<bool>
 pub fn grit_lib::repo::Repository::pathspec_argv_prefix<'a>(&'a self, &str) -> core::option::Option<&'a str>
@@ -24275,6 +24276,7 @@ pub fn grit_lib::repo::Repository::notes(&self) -> grit_lib::repo_handles::Repos
 pub fn grit_lib::repo::Repository::objects(&self) -> grit_lib::objects::handle::Objects<'_>
 pub fn grit_lib::repo::Repository::odb(&self) -> &grit_lib::objects::odb::Odb
 pub fn grit_lib::repo::Repository::open(&std::path::Path, &grit_lib::config::environment::RepositoryOptions) -> grit_lib::error::Result<Self>
+pub fn grit_lib::repo::Repository::open_linked_worktree(&self, &std::path::Path, &std::path::Path) -> grit_lib::error::Result<Self>
 pub fn grit_lib::repo::Repository::patch_id(&self, &grit_lib::objects::ObjectId, grit_lib::diff::patch_ids::PatchIdMode) -> grit_lib::error::Result<core::option::Option<grit_lib::objects::ObjectId>>
 pub fn grit_lib::repo::Repository::paths_match_pathspecs(&self, &str, &[alloc::string::String]) -> grit_lib::error::Result<bool>
 pub fn grit_lib::repo::Repository::pathspec_argv_prefix<'a>(&'a self, &str) -> core::option::Option<&'a str>
