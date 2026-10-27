@@ -80,6 +80,7 @@ fn main() -> Result<(), grit_lib::error::Error> {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        hook_src_ref: None,
     };
     remote::push(&repo, &remote_info, &[spec], &PushOptions::default())
         .map_err(|e| grit_lib::error::Error::Message(e.to_string()))?;

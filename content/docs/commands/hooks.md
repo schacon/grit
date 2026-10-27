@@ -15,7 +15,7 @@ grit hooks run <NAME> [-- ARGS...]
 
 ## Description
 
-Discovers traditional hook scripts in the resolved hooks directory (`core.hooksPath` when set, otherwise `.git/hooks`). Configured `hook.<name>.*` aliases are resolved when a hook runs, not in the list.
+Discovers traditional hook scripts in the resolved hooks directory (`core.hooksPath` when set, otherwise `.git/hooks`). A relative `core.hooksPath` is relative to the directory hooks run in (the top of the work tree, or the git directory in a bare repository), so the same hooks are found from any subdirectory. Configured `hook.<name>.*` aliases are resolved when a hook runs, not in the list.
 
 `grit hooks run` executes every hook registered for the event (config hooks first, then the script in the hooks directory) through the repository [`CommandRunner`](../../library/maintenance.md). The process exits with the hook's status when a hook ran and returned non-zero.
 
@@ -35,6 +35,8 @@ $ echo $?
 In `--json` mode the same message is the `error` field. [`grit commit`](commit.md) reports it the same way for `pre-commit` and `commit-msg`; for `post-commit` and the other hooks that run after an operation completes, it is a warning and the operation still succeeds.
 
 [`grit commit`](commit.md) runs `pre-commit` and `commit-msg` automatically before writing the commit object, then `post-commit` after the branch moves. Use `grit commit --no-verify` to skip the first two (same as Git). JSON commit output lists hook basenames that actually ran in `hooks_run`.
+
+[`grit push`](push.md) runs `pre-push` before sending anything and stops when it exits non-zero; `grit push --no-verify` skips it.
 
 Other commands run the hooks Git runs after them, with Git's arguments:
 

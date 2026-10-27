@@ -383,6 +383,7 @@ fn push_from_custom_primary_fails_without_touching_remote() {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        hook_src_ref: None,
     };
     let err = repo
         .remotes()
@@ -527,6 +528,7 @@ fn files_primary_fetch_and_push_still_round_trip_with_git() {
         delete: false,
         expected_old: None,
         expect_absent: false,
+        hook_src_ref: None,
     };
     repo.remotes()
         .push(

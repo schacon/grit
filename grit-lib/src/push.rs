@@ -38,7 +38,7 @@ use crate::progress::{poll_cancel, Cancel, ProgressPhase, ProgressUnit, Received
 use crate::push_report::{PushRefResult, PushRefStatus};
 use crate::repo::Repository;
 use crate::sideband_lines::{RemoteLine, SidebandLines};
-use crate::transfer::{PackBuildOptions, PushOptions, PushOutcome, PushRefSpec};
+use crate::transfer::{PackBuildOptions, PrePushGate, PushOptions, PushOutcome, PushRefSpec};
 use crate::transport::Connection;
 
 fn finish_push_outcome(
@@ -173,6 +173,8 @@ const PUSH_CAPS_BASE: &str = "report-status report-status-v2 quiet";
 ///
 /// Protocol v0/v1 only; a v2 connection is rejected.
 ///
+/// The client-side `pre-push` hook is not run here; [`crate::remote::Remote::push`] runs it.
+///
 /// # Errors
 ///
 /// Returns an error if the connection is protocol v2, if a source object is
@@ -188,10 +190,12 @@ pub fn push_remote(
     cancel: &dyn Cancel,
 ) -> Result<PushOutcome> {
     let local = Repository::open(local_git_dir, &RepositoryOptions::empty())?;
-    push_remote_from(&local, conn, refs, opts, progress, cancel)
+    push_remote_from(&local, conn, refs, opts, progress, cancel, None)
 }
 
-/// Like [`push_remote`], reading the objects to send through `local`'s object store.
+/// Like [`push_remote`], reading the objects to send through `local`'s object store and
+/// running `pre_push` after every update is decided against the advertisement and before
+/// any command or pack is sent.
 pub(crate) fn push_remote_from(
     local: &Repository,
     conn: &mut dyn Connection,
@@ -199,8 +203,9 @@ pub(crate) fn push_remote_from(
     opts: &PushOptions,
     progress: &mut dyn Progress,
     cancel: &dyn Cancel,
+    pre_push: Option<&PrePushGate<'_>>,
 ) -> Result<PushOutcome> {
-    push_remote_with(local, conn, refs, opts, progress, cancel, None)
+    push_remote_with(local, conn, refs, opts, progress, cancel, None, pre_push)
 }
 
 /// A smart-HTTP remote a push may send a resumable bundle to, when its
@@ -213,6 +218,7 @@ pub(crate) struct BundlePushTarget<'a> {
 }
 
 /// [`push_remote_from`], optionally sending large packs as a resumable bundle.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn push_remote_with(
     local: &Repository,
     conn: &mut dyn Connection,
@@ -221,6 +227,7 @@ pub(crate) fn push_remote_with(
     progress: &mut dyn Progress,
     cancel: &dyn Cancel,
     bundle_target: Option<BundlePushTarget<'_>>,
+    pre_push: Option<&PrePushGate<'_>>,
 ) -> Result<PushOutcome> {
     crate::trace::trace_span!("grit.push");
     let local_git_dir = local.git_dir();
@@ -263,7 +270,12 @@ pub(crate) fn push_remote_with(
 
     // 2–3. Decide each ref update client-side, handling atomic/dry-run/no-op
     //       early-returns; the shared planner mirrors `push_local`'s gate.
-    let mut plan = match plan_push(refs, local, &adv, opts)? {
+    let planned = plan_push(refs, local, &adv, opts, pre_push);
+    if planned.is_err() && !opts.dry_run {
+        // End the command list so the server sees an empty push rather than a hang-up.
+        let _ = crate::transport::send_client_flush(conn);
+    }
+    let mut plan = match planned? {
         PlanOutcome::Send(plan) => plan,
         PlanOutcome::Done(results) => {
             if !opts.dry_run {
@@ -550,10 +562,14 @@ fn plan_push(
     local: &Repository,
     adv: &AdvertisedState,
     opts: &PushOptions,
+    pre_push: Option<&PrePushGate<'_>>,
 ) -> Result<PlanOutcome> {
     let mut decisions: Vec<PushDecision> = Vec::with_capacity(refs.len());
     for spec in refs {
         decisions.push(decide_push_wire(spec, local, &adv.remote_refs)?);
+    }
+    if let Some(gate) = pre_push {
+        gate.check(refs.iter().zip(decisions.iter().map(|d| &d.result)))?;
     }
 
     // Atomic: a single client-side rejection aborts the whole push without
@@ -1375,6 +1391,7 @@ mod tests {
             delete: false,
             expected_old: None,
             expect_absent: false,
+            hook_src_ref: None,
         };
         let decision = decide_push_wire(&spec, &repo, &HashMap::new()).unwrap();
         assert_eq!(decision.new_tip, Some(src));

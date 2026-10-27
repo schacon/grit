@@ -1009,13 +1009,11 @@ fn resolve_parsed_refspec(
     };
     let src_label = src_full.clone();
     let dst = resolve_dst_for_src(repo, item, src_label.as_deref().unwrap_or(src_name), ctx)?;
-    Ok(vec![push_spec(
-        Some(src_oid),
-        src_label,
-        dst,
-        item.force,
-        false,
-    )])
+    let mut spec = push_spec(Some(src_oid), src_label, dst, item.force, false);
+    if matches!(src_name, "HEAD" | "@") {
+        spec.hook_src_ref = Some("HEAD".to_owned());
+    }
+    Ok(vec![spec])
 }
 
 fn resolve_dst_for_src(

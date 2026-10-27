@@ -334,35 +334,34 @@ enum ResolvedHook {
 
 /// Resolve the hooks directory from config or fall back to `$GIT_DIR/hooks`.
 ///
+/// A relative `core.hooksPath` is taken relative to the directory hooks run in: the top of
+/// the work tree, or `$GIT_DIR` in a bare repository. It does not depend on the directory
+/// the repository was opened from.
+///
 /// Never carries a Windows `\\?\` prefix, so the path can be shown to users and handed to
 /// hook interpreters such as Git for Windows' `sh`.
 pub fn resolve_hooks_dir(repo: &Repository) -> PathBuf {
-    resolve_hooks_dir_for_config(
-        repo.environment(),
-        Some(repo.git_dir()),
-        repo.config().ok().as_deref(),
-    )
+    resolve_hooks_dir_for_config(repo, repo.config().ok().as_deref())
 }
 
-fn resolve_hooks_dir_for_config(
-    env: &crate::environment::Environment,
-    git_dir: Option<&Path>,
-    config: Option<&ConfigSet>,
-) -> PathBuf {
+fn resolve_hooks_dir_for_config(repo: &Repository, config: Option<&ConfigSet>) -> PathBuf {
     let dir = match config.and_then(|cfg| cfg.get("core.hooksPath")) {
         Some(hooks_path) => {
-            let p = PathBuf::from(parse_path(env, &hooks_path));
+            let p = PathBuf::from(parse_path(repo.environment(), &hooks_path));
             if p.is_absolute() {
                 p
             } else {
-                env.cwd.join(p)
+                hook_run_dir(repo).join(p)
             }
         }
-        None => git_dir
-            .map(|gd| crate::repo::common_git_dir_for_config(gd).join("hooks"))
-            .unwrap_or_else(|| PathBuf::from("hooks")),
+        None => crate::repo::common_git_dir_for_config(repo.git_dir()).join("hooks"),
     };
     path_without_verbatim_prefix(&dir).into_owned()
+}
+
+/// Directory hooks run in by default: the work tree top, or `$GIT_DIR` when bare.
+fn hook_run_dir(repo: &Repository) -> &Path {
+    repo.work_tree().unwrap_or(repo.git_dir())
 }
 
 fn hook_argv0(repo: &Repository, hooks_dir: &Path, hook_name: &str, cwd: &Path) -> PathBuf {
@@ -455,11 +454,9 @@ fn resolve_hook_sequence(
     for (_friendly, command) in tables.hooks_for_event(hook_name)? {
         seq.push(ResolvedHook::Configured { command });
     }
-    let hooks_dir =
-        resolve_hooks_dir_for_config(repo.environment(), Some(repo.git_dir()), Some(config));
+    let hooks_dir = resolve_hooks_dir_for_config(repo, Some(config));
     if let Some(path) = traditional_hook_candidate(repo, &hooks_dir, hook_name) {
-        let work_dir = repo.work_tree().unwrap_or(repo.git_dir());
-        let argv0 = hook_argv0(repo, &hooks_dir, hook_name, work_dir);
+        let argv0 = hook_argv0(repo, &hooks_dir, hook_name, hook_run_dir(repo));
         seq.push(ResolvedHook::Traditional { path, argv0 });
     }
     Ok(seq)
@@ -947,10 +944,7 @@ pub fn run_hook_opts(
 
     let work_dir: PathBuf = opts.cwd.map_or_else(
         || match repo {
-            Some(r) => r
-                .work_tree()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| r.git_dir().to_path_buf()),
+            Some(r) => hook_run_dir(r).to_path_buf(),
             None => PathBuf::from("."),
         },
         Path::to_path_buf,
@@ -1219,6 +1213,88 @@ pub fn run_hook_in_git_dir(
         },
     )
     .unwrap_or_else(|_| declined())
+}
+
+/// One ref update a push is about to make, as reported to the `pre-push` hook.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrePushRef {
+    /// Local source as named by the push (`refs/heads/main`, `HEAD`, …). `None` when the
+    /// source was a bare object id, or for a deletion.
+    pub local_ref: Option<String>,
+    /// Object the remote ref will point at; `None` for a deletion.
+    pub local_oid: Option<ObjectId>,
+    /// Destination ref on the remote (`refs/heads/main`).
+    pub remote_ref: String,
+    /// Current value of [`Self::remote_ref`] on the remote; `None` when it does not exist.
+    pub remote_oid: Option<ObjectId>,
+}
+
+impl PrePushRef {
+    /// The hook's stdin line: `<local ref> SP <local oid> SP <remote ref> SP <remote oid> LF`.
+    ///
+    /// A missing object id is written as the all-zero id of width `algo`; a deletion's local
+    /// ref is `(delete)` and a bare object id source repeats the id.
+    fn stdin_line(&self, algo: crate::objects::HashAlgo) -> String {
+        let zero = "0".repeat(algo.hex_len());
+        let hex = |oid: Option<ObjectId>| oid.map_or_else(|| zero.clone(), |o| o.to_hex());
+        let local_ref = match (&self.local_ref, self.local_oid) {
+            (Some(name), _) => name.clone(),
+            (None, Some(oid)) => oid.to_hex(),
+            (None, None) => "(delete)".to_owned(),
+        };
+        format!(
+            "{local_ref} {} {} {}\n",
+            hex(self.local_oid),
+            self.remote_ref,
+            hex(self.remote_oid)
+        )
+    }
+}
+
+/// Run the client-side `pre-push` hook before a push sends anything.
+///
+/// The hook receives `remote` (the remote's name, or its URL for an unnamed remote) and `url`
+/// as arguments, and one [`PrePushRef`] line per update on stdin. It runs even when `refs` is
+/// empty. Output follows [`Repository::hook_stdio`]; under [`HookStdio::Inherit`] the hook's
+/// stdout goes to stderr with its stderr, so a caller's own stdout (for example JSON output)
+/// stays clean.
+///
+/// Returns the hook's captured output (empty under [`HookStdio::Inherit`] or when no hook is
+/// installed).
+///
+/// # Errors
+///
+/// [`HookError::Failed`] when the hook exits non-zero (the push must not proceed),
+/// [`HookError::Spawn`] when it cannot be started, and [`HookError::Internal`] when the
+/// configuration cannot be loaded or `hook.*` entries are invalid.
+pub fn run_pre_push_hook(
+    repo: &Repository,
+    remote: &str,
+    url: &str,
+    refs: &[PrePushRef],
+) -> Result<HookOutput, HookError> {
+    let config = repo
+        .config()
+        .map_err(|e| HookError::Internal(e.to_string()))?;
+    let algo = repo.odb().hash_algo();
+    let stdin: String = refs.iter().map(|r| r.stdin_line(algo)).collect();
+    let result = run_hook_opts(
+        Some(repo),
+        "pre-push",
+        &[remote, url],
+        config.as_ref(),
+        RunHookOptions {
+            stdout_to_stderr: true,
+            stdin_data: Some(stdin.as_bytes()),
+            ..repo_hook_options(repo, "pre-push")
+        },
+    )?;
+    let output = match &result {
+        HookResult::Success { output } => output.clone(),
+        HookResult::NotFound | HookResult::Failed { .. } => HookOutput::default(),
+    };
+    result.check("pre-push")?;
+    Ok(output)
 }
 
 /// `reference-transaction` hook with phase `committed` after updating `HEAD` and (on a branch)

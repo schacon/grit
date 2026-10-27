@@ -144,6 +144,9 @@ mod commit_hook_output;
 #[cfg(feature = "full-tests")]
 #[path = "commit_hook_spawn_errors.rs"]
 mod commit_hook_spawn_errors;
+#[cfg(feature = "full-tests")]
+#[path = "commit_hooks_path_subdir.rs"]
+mod commit_hooks_path_subdir;
 #[path = "commit_hunks.rs"]
 mod commit_hunks;
 #[cfg(feature = "full-tests")]
@@ -416,6 +419,9 @@ mod push_force_lease;
 #[cfg(feature = "full-tests")]
 #[path = "push_json_flags.rs"]
 mod push_json_flags;
+#[cfg(feature = "full-tests")]
+#[path = "push_pre_push_hook.rs"]
+mod push_pre_push_hook;
 #[cfg(feature = "full-tests")]
 #[path = "push_remote_hook_sideband.rs"]
 mod push_remote_hook_sideband;
