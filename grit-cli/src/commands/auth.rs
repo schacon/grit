@@ -10,6 +10,23 @@
 //!
 //! There is no intermediate service: every request goes straight to github.com.
 //!
+//! ## `grit serve` hosts
+//!
+//! `grit auth <url>` (or `grit login <url>`) signs in to a `grit serve` host
+//! instead, in the same style: it prints (and opens) the server's authorize
+//! page, the user signs in there with their email address and password and
+//! approves the code, and `grit` polls for the new token. The token is stored
+//! for the URL's scheme and host with the same credential helper (see
+//! [`grit_lib::remote::grit_server_auth`]). `--token` stores a token an admin
+//! made with `grit serve token` instead, after checking it with the server.
+//!
+//! ## Credential helper
+//!
+//! Without a `credential.helper`, the token would have nowhere to go, so
+//! `grit auth` sets one in the global config first: the platform's secure store
+//! when it is installed (macOS keychain, libsecret), otherwise `store`, a
+//! plaintext file, with a warning. On Windows it is the built-in `grit manager`.
+//!
 //! ## Client id
 //!
 //! The flow needs the client id of a registered GitHub OAuth App. It is read,
@@ -21,10 +38,14 @@ use std::io::{IsTerminal, Write};
 
 use anyhow::{anyhow, bail, Context, Result};
 use grit_lib::config::ConfigSet;
+use grit_lib::remote::credentials::Credential;
 use grit_lib::remote::credentials::{CredentialProvider, HelperCredentialProvider};
 use grit_lib::remote::github_auth::{
     github_token_credential, is_github_https_url, DeviceFlow, DeviceFlowError, DeviceFlowStep,
     SystemPollClock, GITHUB_HOST,
+};
+use grit_lib::remote::grit_server_auth::{
+    fetch_identity, LoginFlow, ServerAuthError, ServerUrl, TokenCredentialProvider,
 };
 use grit_lib::remote::http_client::UreqHttpClient;
 use grit_lib::repo::Repository;
@@ -43,15 +64,22 @@ fn is_false(value: &bool) -> bool {
 pub struct AuthOutcome {
     pub authenticated: bool,
     pub host: String,
+    /// The user the token belongs to on a `grit serve` host (absent for GitHub).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
 }
 
 impl HumanRender for AuthOutcome {
     fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
-        outln!(
-            w,
-            "\n✓ Signed in to GitHub — token stored for {}.",
-            self.host
-        );
+        match &self.user {
+            Some(user) => outln!(w, "✓ Signed in to {} as {user} — token stored.", self.host),
+            None => outln!(
+                w,
+                "\n✓ Signed in to GitHub — token stored for {}.",
+                self.host
+            ),
+        }
         Ok(())
     }
 }
@@ -106,9 +134,14 @@ impl HumanRender for LogoutOutcome {
             return Ok(());
         }
         if self.logged_out {
+            let service = if self.host == GITHUB_HOST {
+                "GitHub"
+            } else {
+                &self.host
+            };
             outln!(
                 w,
-                "✓ Signed out of GitHub — removed the stored token for {}.",
+                "✓ Signed out of {service} — removed the stored token for {}.",
                 self.host
             );
         } else {
@@ -142,8 +175,8 @@ pub fn run() -> Result<AuthOutcome> {
 
     // Make sure there's somewhere to put the token before we send the user off
     // to authorize — otherwise they'd do the dance and we'd silently drop it.
-    // On Windows we can set one up automatically; elsewhere we explain how.
-    if !has_token_helper(&config) {
+    // When none is configured, set up the best one installed.
+    if !has_token_helper(&config, &github_token_credential(None)) {
         config = ensure_credential_helper()?;
     }
 
@@ -170,22 +203,155 @@ pub fn run() -> Result<AuthOutcome> {
     Ok(AuthOutcome {
         authenticated: true,
         host: GITHUB_HOST.to_owned(),
+        user: None,
     })
 }
 
-/// Run `grit auth logout`: erase the token `grit auth` stored, via the configured
-/// `credential.helper` (`erase`). This removes the same credential `grit auth`
-/// writes — `https://x-access-token@github.com` — so a later push/fetch no longer
-/// authenticates with it.
-pub fn logout(dry_run: bool) -> Result<LogoutOutcome> {
+/// The `grit serve` host `url` names, or `None` when it is GitHub (which signs
+/// in with the device flow instead).
+///
+/// # Errors
+///
+/// Fails when `url` is not an `http`/`https` URL with a host.
+pub fn grit_server(url: &str) -> Result<Option<ServerUrl>> {
+    let server = ServerUrl::parse(url).map_err(|e| anyhow!("{e}"))?;
+    let host = server.host().split(':').next().unwrap_or_default();
+    let is_github =
+        host.eq_ignore_ascii_case(GITHUB_HOST) || host.eq_ignore_ascii_case("www.github.com");
+    Ok((!is_github).then_some(server))
+}
+
+/// Run `grit auth <url>` for a `grit serve` host: sign in through the
+/// server's web page, wait for the user to approve, then store the new token
+/// with the credential helper under the server's scheme and host, with the
+/// user's email address as the user name.
+///
+/// # Errors
+///
+/// Fails when no credential helper can be set up, the server cannot be
+/// reached or is not a grit server, the user declines, or the code expires.
+pub fn run_server_login(server: &ServerUrl) -> Result<AuthOutcome> {
+    let config = credential_config(server)?;
+    let http = UreqHttpClient::from_config(&config).context("could not set up HTTP client")?;
+    let flow = LoginFlow::new(&http, server);
+    let login = flow.start().map_err(|e| server_error(server, e))?;
+    let url = server.authorize_url(&login.user_code);
+
+    // Like the GitHub flow, the instructions are interactive UX: stderr only.
+    eprintln!("To sign in, open this page in your browser:\n");
+    eprintln!("    {url}\n");
+    eprintln!("and check that it shows the code:\n");
+    eprintln!("    {}\n", login.user_code);
+    if std::io::stderr().is_terminal() && open_browser(&url) {
+        eprintln!("(Opened it for you.)");
+    }
+    eprintln!("Waiting for you to approve… (press Ctrl-C to cancel)");
+
+    let grant = flow
+        .wait(&login, &mut SystemPollClock)
+        .map_err(|e| server_error(server, e))?;
+    HelperCredentialProvider::new(config)
+        .approve(&server.credential(Some(&grant.email), Some(&grant.token)))
+        .context("storing the token with your credential helper")?;
+
+    Ok(AuthOutcome {
+        authenticated: true,
+        host: server.host().to_owned(),
+        user: Some(grant.email),
+    })
+}
+
+/// Run `grit auth <url> --token <token>` for a `grit serve` host: check
+/// `token` against the server, then store it like [`run_server_login`].
+///
+/// # Errors
+///
+/// Fails when no credential helper can be set up, the server rejects the
+/// token or cannot be reached, or the helper cannot store it.
+pub fn run_server_token(server: &ServerUrl, token: &str) -> Result<AuthOutcome> {
+    let config = credential_config(server)?;
+    let http = UreqHttpClient::from_config(&config)
+        .context("could not set up HTTP client")?
+        .with_credential_provider(Box::new(TokenCredentialProvider::new(token)));
+    let identity = fetch_identity(&http, server).map_err(|e| server_error(server, e))?;
+
+    HelperCredentialProvider::new(config)
+        .approve(&server.credential(Some(&identity.email), Some(token)))
+        .context("storing the token with your credential helper")?;
+
+    Ok(AuthOutcome {
+        authenticated: true,
+        host: server.host().to_owned(),
+        user: Some(identity.email),
+    })
+}
+
+/// Config with a credential helper that will receive `server`'s token,
+/// setting one up first when there is none.
+fn credential_config(server: &ServerUrl) -> Result<ConfigSet> {
     let config = load_config();
-    let lookup = github_token_credential(None);
+    if has_token_helper(&config, &server.credential(None, None)) {
+        return Ok(config);
+    }
+    ensure_credential_helper()
+}
+
+/// Describe a failed `grit serve` sign-in.
+fn server_error(server: &ServerUrl, err: ServerAuthError) -> anyhow::Error {
+    let root = server.root_url();
+    match err {
+        ServerAuthError::TokenRejected => anyhow!(
+            "{root} rejected the token. Sign in with `grit auth {root}` instead, \
+             or ask the server's admin for a new one (`grit serve token`)."
+        ),
+        ServerAuthError::LoginDenied => anyhow!("the sign-in was declined in the browser."),
+        ServerAuthError::LoginExpired => {
+            anyhow!("the code expired before you approved it. Run `grit auth {root}` to try again.")
+        }
+        ServerAuthError::Http(source) => {
+            anyhow::Error::new(source).context(format!("signing in to {root}"))
+        }
+        other => anyhow::Error::new(other),
+    }
+}
+
+/// Open `url` in the default browser. Returns whether a browser was started.
+fn open_browser(url: &str) -> bool {
+    let mut command = if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+    } else if cfg!(windows) {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "start", ""]);
+        command
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    command
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Run `grit auth logout`: erase the token `grit auth` stored, via the configured
+/// `credential.helper` (`erase`). Without `server` this removes the same
+/// credential `grit auth` writes — `https://x-access-token@github.com`; with a
+/// `grit serve` host it removes whatever is stored for that scheme and host. A
+/// later push/fetch then no longer authenticates with it.
+pub fn logout(server: Option<&ServerUrl>, dry_run: bool) -> Result<LogoutOutcome> {
+    let config = load_config();
+    let (lookup, host) = match server {
+        Some(server) => (server.credential(None, None), server.host().to_owned()),
+        None => (github_token_credential(None), GITHUB_HOST.to_owned()),
+    };
 
     // Without a helper there's nothing that could be holding the token.
-    if !has_token_helper(&config) {
+    if !has_token_helper(&config, &lookup) {
         return Ok(LogoutOutcome {
             logged_out: false,
-            host: GITHUB_HOST.to_owned(),
+            host,
             dry_run,
             credential: None,
         });
@@ -198,12 +364,12 @@ pub fn logout(dry_run: bool) -> Result<LogoutOutcome> {
             .filter(|c| c.password.as_ref().is_some_and(|p| !p.is_empty()));
         let credential = filled.map(|c| LogoutCredentialPreview {
             protocol: c.protocol.unwrap_or_else(|| "https".to_owned()),
-            host: c.host.unwrap_or_else(|| GITHUB_HOST.to_owned()),
+            host: c.host.unwrap_or_else(|| host.clone()),
             username: c.username,
         });
         return Ok(LogoutOutcome {
             logged_out: credential.is_some(),
-            host: GITHUB_HOST.to_owned(),
+            host,
             dry_run: true,
             credential,
         });
@@ -215,7 +381,7 @@ pub fn logout(dry_run: bool) -> Result<LogoutOutcome> {
 
     Ok(LogoutOutcome {
         logged_out: true,
-        host: GITHUB_HOST.to_owned(),
+        host,
         dry_run: false,
         credential: None,
     })
@@ -311,18 +477,19 @@ fn client_id(config: &ConfigSet) -> Result<String> {
     )
 }
 
-/// Whether any `credential.helper` would receive the GitHub token credential.
-fn has_token_helper(config: &ConfigSet) -> bool {
+/// Whether any `credential.helper` would receive `credential`.
+fn has_token_helper(config: &ConfigSet, credential: &Credential) -> bool {
     !HelperCredentialProvider::new(config.clone())
-        .helpers_for(&github_token_credential(None))
+        .helpers_for(credential)
         .is_empty()
 }
 
 /// Called when no `credential.helper` is configured. On Windows we wire one up
 /// automatically — pointing `credential.helper` at the built-in `grit manager`
 /// (Windows Credential Manager) — and return the reloaded config. Elsewhere we
-/// bail with instructions, since storing the token would otherwise be silently
-/// lost. We use `grit manager` rather than Git Credential Manager because the
+/// set the best installed helper ([`HelperCredentialProvider::suggested_helper`])
+/// and say so; only when none is installed do we bail, since storing the token
+/// would otherwise be silently lost. We use `grit manager` rather than Git Credential Manager because the
 /// latter only ships with Git for Windows, which may not be installed.
 #[cfg(windows)]
 fn ensure_credential_helper() -> Result<ConfigSet> {
@@ -340,13 +507,24 @@ fn ensure_credential_helper() -> Result<ConfigSet> {
 
 #[cfg(not(windows))]
 fn ensure_credential_helper() -> Result<ConfigSet> {
-    bail!(
-        "no credential helper is configured, so the token couldn't be stored.\n\
-         Enable one first, for example:\n  \
-         macOS:   grit config --global credential.helper osxkeychain\n  \
-         Linux:   grit config --global credential.helper libsecret\n  \
-         any:     grit config --global credential.helper store   (plaintext file)"
-    )
+    let Some(helper) = HelperCredentialProvider::new(load_config()).suggested_helper() else {
+        bail!(
+            "no credential helper is configured, and none is installed to store the token in.\n\
+             Install Git's credential helpers, or set one with \
+             `grit config --global credential.helper <helper>`."
+        )
+    };
+    crate::commands::config::set_global("credential.helper", helper)
+        .context("setting up a credential helper")?;
+    match helper {
+        "store" => eprintln!(
+            "Set credential.helper to `store`. It keeps tokens in plain text in ~/.git-credentials; \
+             set a keychain helper instead if you have one."
+        ),
+        "osxkeychain" => eprintln!("Set credential.helper to `osxkeychain` (the macOS keychain)."),
+        other => eprintln!("Set credential.helper to `{other}`."),
+    }
+    Ok(load_config())
 }
 
 /// Render a device-flow failure for the terminal.

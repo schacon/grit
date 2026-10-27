@@ -6,6 +6,7 @@
 //! resumable rebase session ([`start_rebase`]) with Git-compatible `.git/rebase-merge/`
 //! state, finished with [`continue_rebase`](crate::history::continue_rebase),
 //! [`skip_rebase`](crate::history::skip_rebase) or [`abort_rebase`](crate::history::abort_rebase).
+//! A caller that fetched the upstream itself passes it as [`PullOptions::upstream`].
 
 use crate::branch_tracking::resolve_pull_integration_base;
 use crate::change_id::{logical_change_id_for_commit, ChangeId};
@@ -13,7 +14,7 @@ use crate::config::environment::Environment;
 use crate::config::ident_resolve::IdentRole;
 use crate::config::parse_git_config_maybe_bool;
 use crate::config::ConfigSet;
-use crate::error::Error;
+use crate::error::{Error, OverwriteReason};
 use crate::fetch_request::{configured_remote_for_pull, resolve_remote_argument};
 use crate::merge_base::{count_symmetric_ahead_behind, is_ancestor, merge_bases_first_vs_rest};
 use crate::objects::ObjectId;
@@ -27,6 +28,7 @@ use crate::porcelain::merge::{
 use crate::porcelain::stash::{
     apply_operation_autostash, push_operation_autostash, restore_operation_autostash,
 };
+use crate::porcelain::switch::checkout_tree_transition_allow_local_reset;
 use crate::porcelain::worktree_guard::prepare_tree_checkout;
 use crate::remote::fetch::Progress;
 use crate::remote::transfer::{resolve_fetch_prune, FetchOptions, TagMode, TransferStats};
@@ -56,7 +58,8 @@ pub enum PullMode {
     FfOnly,
     /// Merge (or fast-forward when possible).
     Merge,
-    /// Rebase local commits onto the upstream tip via the history engine.
+    /// Rebase local commits onto the upstream tip via the history engine, in one line like
+    /// `git pull --rebase`: merge commits on the branch are dropped.
     Rebase,
 }
 
@@ -77,6 +80,39 @@ pub struct PullOptions {
     pub mode: Option<PullMode>,
     /// Fetch options (tags, prune, depth, environment, …).
     pub fetch: FetchOptions,
+    /// An upstream the caller already fetched: [`pull`] integrates it and fetches nothing.
+    ///
+    /// Snapshot checkouts set this: they fetch the server's snapshot themselves, from the URL
+    /// the checkout records, and then bring the current branch onto it.
+    pub upstream: Option<FetchedUpstream>,
+    /// Report a rebase that stops on a conflict as [`PullResult::RebaseStopped`], with
+    /// [`PullOutcome::oid`] at the branch's pre-pull tip, instead of
+    /// [`PullResult::RebaseConflicts`]. Both leave the same resumable rebase session; snapshot
+    /// checkouts set this so their refresh can tell its own stop apart. Ignored when an
+    /// autostash was made.
+    pub stop_on_conflict: bool,
+}
+
+/// An upstream commit [`pull`] integrates without fetching ([`PullOptions::upstream`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FetchedUpstream {
+    /// What to call it in results and reflog messages, such as `origin/main`.
+    pub label: String,
+    /// The commit to integrate.
+    pub oid: ObjectId,
+    /// A commit of the current branch whose changes [`Self::oid`] already has, though not as
+    /// an ancestor: work a server merged into the branch [`Self::oid`] is a snapshot of. The
+    /// branch's commits up to it are never replayed. A rebase replays only the commits above
+    /// it onto [`Self::oid`] (`git rebase --onto <oid> <landed>`), and a branch with nothing
+    /// above it moves to [`Self::oid`] in any mode, keeping uncommitted changes as
+    /// `git reset --keep` does ([`PullResult::Landed`]). Ignored unless it is in the
+    /// branch's history.
+    pub landed: Option<ObjectId>,
+    /// Commits of the current branch above [`Self::landed`] whose changes [`Self::oid`] already
+    /// has as other commits, which a patch-id can't match (a copy made on another base,
+    /// recognized by its change id): a rebase leaves them out, replaying the next commit onto
+    /// the one before.
+    pub copies: Vec<ObjectId>,
 }
 
 /// Dry-run result for [`PullOptions::check`].
@@ -120,6 +156,15 @@ pub enum PullResult {
     RebaseConflicts,
     /// Integration succeeded but re-applying `--autostash` left conflicts (stash kept).
     AutostashConflict,
+    /// [`PullResult::RebaseConflicts`] for a pull that set [`PullOptions::stop_on_conflict`]:
+    /// the conflicted files are in the worktree and index, `HEAD` is detached on the commits
+    /// replayed so far, and the branch still points at its old tip until the rebase is
+    /// continued (or is put back by aborting it).
+    RebaseStopped,
+    /// Every commit of the branch was already in the upstream, though not as an ancestor
+    /// ([`FetchedUpstream::landed`]): the branch moved to the upstream tip instead of
+    /// replaying them, keeping uncommitted and untracked changes as `git reset --keep` does.
+    Landed,
 }
 
 /// Structured outcome of [`pull`].
@@ -351,6 +396,8 @@ impl PullOptions {
                 remote_name: Some(remote_name),
                 ..Default::default()
             },
+            upstream: None,
+            stop_on_conflict: false,
         })
     }
 }
@@ -401,6 +448,8 @@ fn parse_pull_rebase_config(raw: &str) -> std::result::Result<bool, PullError> {
 }
 
 /// Fetch from a remote and integrate its upstream into the current branch.
+///
+/// With [`PullOptions::upstream`] set, nothing is fetched and that commit is integrated.
 ///
 /// # Errors
 ///
@@ -455,9 +504,10 @@ where
         None
     };
 
+    let stop_on_conflict = options.stop_on_conflict && stash_oid.is_none();
     let mut transfer = TransferStats::default();
     let core: std::result::Result<PullOutcome, PullError> = (|| {
-        if remote_name != "." {
+        if options.upstream.is_none() && remote_name != "." {
             let remote = resolve_remote_argument(config.as_ref(), &remote_name)
                 .map_err(PullError::Remote)?;
             transfer = remote
@@ -476,17 +526,21 @@ where
             });
         }
 
-        let upstream =
-            resolve_pull_integration_base(repo, &short_name, &remote_name, explicit_fetch).ok_or(
-                PullError::NoUpstream {
-                    branch: short_name.clone(),
-                },
-            )?;
-        let label = upstream.name.clone();
-        let upstream_oid = upstream.oid;
+        let (label, upstream_oid) = match &options.upstream {
+            Some(fetched) => (fetched.label.clone(), fetched.oid),
+            None => {
+                let upstream =
+                    resolve_pull_integration_base(repo, &short_name, &remote_name, explicit_fetch)
+                        .ok_or(PullError::NoUpstream {
+                            branch: short_name.clone(),
+                        })?;
+                (upstream.name, upstream.oid)
+            }
+        };
 
+        let landed = options.upstream.as_ref().and_then(|u| u.landed);
         if options.check {
-            return pull_check_outcome(repo, head_oid, upstream_oid, &label, integration);
+            return pull_check_outcome(repo, head_oid, upstream_oid, &label, integration, landed);
         }
 
         match head_oid {
@@ -495,9 +549,17 @@ where
                 repo,
                 &refname,
                 head_oid,
-                upstream_oid,
-                &label,
+                Upstream {
+                    oid: upstream_oid,
+                    label: &label,
+                    landed,
+                    copies: options
+                        .upstream
+                        .as_ref()
+                        .map_or(&[], |u| u.copies.as_slice()),
+                },
                 integration,
+                stop_on_conflict,
             ),
         }
     })();
@@ -526,7 +588,7 @@ where
             }
             if matches!(
                 outcome.result,
-                PullResult::Conflicts | PullResult::RefusedNotFf
+                PullResult::Conflicts | PullResult::RefusedNotFf | PullResult::RebaseStopped
             ) {
                 restore_autostash_after_abort(repo, stash_oid.as_ref());
                 return Ok(outcome);
@@ -571,6 +633,7 @@ fn apply_autostash_after_pull(
             | PullResult::FastForward
             | PullResult::Merged
             | PullResult::Rebased
+            | PullResult::Landed
             | PullResult::SetUpstream
     ) {
         return Ok(outcome);
@@ -590,13 +653,18 @@ fn pull_check_outcome(
     upstream_oid: ObjectId,
     label: &str,
     integration: PullIntegration,
+    landed: Option<ObjectId>,
 ) -> std::result::Result<PullOutcome, PullError> {
     let (ahead, behind, would, fast_forward_possible) = match head_oid {
         None => (0, 0, PullResult::SetUpstream, true),
         Some(head_oid) => {
             let (ahead, behind) = count_symmetric_ahead_behind(repo, head_oid, upstream_oid)
                 .map_err(PullError::Repository)?;
-            let would = predict_pull_result(repo, head_oid, upstream_oid, integration)?;
+            let would = if landed == Some(head_oid) && diverged(repo, head_oid, upstream_oid)? {
+                PullResult::Landed
+            } else {
+                predict_pull_result(repo, head_oid, upstream_oid, integration)?
+            };
             let up_to_date = head_oid == upstream_oid || is_ancestor(repo, upstream_oid, head_oid)?;
             let fast_forward = !up_to_date
                 && is_ancestor(repo, head_oid, upstream_oid).map_err(PullError::Repository)?;
@@ -694,17 +762,47 @@ fn adopt_unborn_upstream(
     })
 }
 
+/// Whether `head_oid` and `upstream_oid` each have commits the other lacks.
+fn diverged(
+    repo: &Repository,
+    head_oid: ObjectId,
+    upstream_oid: ObjectId,
+) -> std::result::Result<bool, PullError> {
+    Ok(head_oid != upstream_oid
+        && !is_ancestor(repo, upstream_oid, head_oid).map_err(PullError::Repository)?
+        && !is_ancestor(repo, head_oid, upstream_oid).map_err(PullError::Repository)?)
+}
+
+/// The upstream a pull integrates.
+#[derive(Clone, Copy)]
+struct Upstream<'a> {
+    oid: ObjectId,
+    label: &'a str,
+    /// [`FetchedUpstream::landed`].
+    landed: Option<ObjectId>,
+    /// [`FetchedUpstream::copies`].
+    copies: &'a [ObjectId],
+}
+
 fn integrate_fetched_upstream(
     repo: &Repository,
     refname: &str,
     head_oid: ObjectId,
-    upstream_oid: ObjectId,
-    label: &str,
+    upstream: Upstream<'_>,
     integration: PullIntegration,
+    stop_on_conflict: bool,
 ) -> std::result::Result<PullOutcome, PullError> {
-    let diverged = !is_ancestor(repo, upstream_oid, head_oid).map_err(PullError::Repository)?
-        && !is_ancestor(repo, head_oid, upstream_oid).map_err(PullError::Repository)?
-        && head_oid != upstream_oid;
+    let Upstream {
+        oid: upstream_oid,
+        label,
+        landed,
+        ..
+    } = upstream;
+    let diverged = diverged(repo, head_oid, upstream_oid)?;
+
+    if diverged && landed == Some(head_oid) {
+        return move_landed_branch(repo, refname, head_oid, upstream_oid, label);
+    }
 
     if diverged {
         match integration.mode {
@@ -718,7 +816,13 @@ fn integrate_fetched_upstream(
                 });
             }
             PullMode::Rebase => {
-                return rebase_fetched_upstream(repo, refname, head_oid, upstream_oid, label);
+                return rebase_fetched_upstream(
+                    repo,
+                    refname,
+                    head_oid,
+                    upstream,
+                    stop_on_conflict,
+                );
             }
             PullMode::Merge => {}
         }
@@ -742,25 +846,51 @@ fn rebase_fetched_upstream(
     repo: &Repository,
     refname: &str,
     head_oid: ObjectId,
-    upstream_oid: ObjectId,
-    label: &str,
+    upstream: Upstream<'_>,
+    stop_on_conflict: bool,
 ) -> std::result::Result<PullOutcome, PullError> {
-    if merge_bases_first_vs_rest(repo, head_oid, &[upstream_oid])
+    let Upstream {
+        oid: upstream_oid,
+        label,
+        landed,
+        copies,
+    } = upstream;
+    let fork = merge_bases_first_vs_rest(repo, head_oid, &[upstream_oid])
         .map_err(PullError::Repository)?
-        .is_empty()
-    {
-        return Err(PullError::Repository(Error::Message(format!(
-            "'{label}' has no common history with the current branch"
-        ))));
-    }
-
-    let start = StartRebaseOptions {
-        request: RebaseRequest {
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            PullError::Repository(Error::Message(format!(
+                "'{label}' has no common history with the current branch"
+            )))
+        })?;
+    // Commits up to a landed one are in the upstream already: replay only those above it,
+    // as `git rebase --onto <upstream> <landed>` does.
+    let request = match landed {
+        Some(base)
+            if base != fork
+                && is_ancestor(repo, base, head_oid).map_err(PullError::Repository)?
+                && is_ancestor(repo, fork, base).map_err(PullError::Repository)? =>
+        {
+            RebaseRequest {
+                upstream: base,
+                onto: Some(upstream_oid),
+                branch_tip: head_oid,
+            }
+        }
+        _ => RebaseRequest {
             upstream: upstream_oid,
             onto: None,
             branch_tip: head_oid,
         },
-        rebase: pull_rebase_options(repo)?,
+    };
+
+    let mut rebase = pull_rebase_options(repo)?;
+    // The upstream already has these commits: they are its copies of local ones.
+    rebase.drop = copies.to_vec();
+    let start = StartRebaseOptions {
+        request,
+        rebase,
         apply: ApplyOptions {
             identity: repo
                 .identity(IdentRole::Committer, repo.identity_now())
@@ -771,6 +901,11 @@ fn rebase_fetched_upstream(
         },
     };
     match start_rebase(repo, &start).map_err(map_rebase_session_error)? {
+        RebaseOutcome::Stopped(stop) if stop_on_conflict => Ok(PullOutcome {
+            conflicts: Some(stop.conflicts),
+            stopped_commit: Some(stop.commit),
+            ..PullOutcome::at_commit(PullResult::RebaseStopped, label, repo, head_oid)?
+        }),
         RebaseOutcome::Stopped(stop) => Ok(PullOutcome {
             conflicts: Some(stop.conflicts),
             stopped_commit: Some(stop.commit),
@@ -821,9 +956,68 @@ fn pull_rebase_options(repo: &Repository) -> std::result::Result<RebaseOntoOptio
     Ok(opts)
 }
 
+/// Move the checked-out branch from `head_oid`, whose commits `upstream_oid` already has
+/// ([`FetchedUpstream::landed`]), to `upstream_oid`, as `git reset --keep` does: the index
+/// and worktree go from the one tree to the other, keeping uncommitted and untracked changes
+/// that the move doesn't touch, and nothing moves when it would overwrite some.
+fn move_landed_branch(
+    repo: &Repository,
+    refname: &str,
+    head_oid: ObjectId,
+    upstream_oid: ObjectId,
+    label: &str,
+) -> std::result::Result<PullOutcome, PullError> {
+    ensure_branch_tip(repo, refname, Some(head_oid))?;
+    if repo.load_index()?.has_unmerged_entries() {
+        return Err(Error::IndexUnmerged.into());
+    }
+    let from = repo.odb().commit_tree(&head_oid)?;
+    let to = repo.odb().commit_tree(&upstream_oid)?;
+    checkout_tree_transition_allow_local_reset(
+        repo,
+        Some(&from),
+        &to,
+        &mut crate::progress::NullProgress,
+        &crate::progress::NeverCancel,
+    )
+    .map_err(|e| match e {
+        Error::WouldOverwrite {
+            reason: OverwriteReason::LocalChanges,
+            paths,
+            ..
+        } => local_changes_would_be_overwritten(paths),
+        other => other,
+    })?;
+    update_checked_out_branch(
+        repo,
+        refname,
+        Some(head_oid),
+        upstream_oid,
+        &format!("pull: move to {label}, which has the branch's commits"),
+    )?;
+    Ok(PullOutcome::at_commit(
+        PullResult::Landed,
+        label,
+        repo,
+        upstream_oid,
+    )?)
+}
+
+/// [`Error::WouldOverwrite`] for uncommitted changes to `paths` that a pull would overwrite.
+fn local_changes_would_be_overwritten(paths: Vec<String>) -> Error {
+    Error::WouldOverwrite {
+        reason: OverwriteReason::LocalChanges,
+        paths,
+        message: "local changes would be overwritten".to_owned(),
+    }
+}
+
 fn map_history_error(err: HistoryError) -> PullError {
     match err {
         HistoryError::Library(e) => PullError::Repository(*e),
+        HistoryError::LocalChangesWouldBeOverwritten { paths } => {
+            PullError::Repository(local_changes_would_be_overwritten(paths))
+        }
         other => PullError::Repository(Error::Message(other.to_string())),
     }
 }
@@ -1144,6 +1338,151 @@ mod tests {
         ignore = "starts system git or is heavy; run with --features full-tests"
     )]
     #[test]
+    fn pull_integrates_a_fetched_upstream_without_fetching() {
+        let tmp = TempDir::new().expect("tempdir");
+        let (_origin, clone) = origin_and_clone(&tmp);
+        git(&clone, &["checkout", "-q", "-b", "up"]);
+        let tip = commit(&clone, "b.txt", "two");
+        git(&clone, &["checkout", "-q", "main"]);
+        // A fetch from this remote would fail.
+        git(
+            &clone,
+            &["remote", "set-url", "origin", "/nonexistent/remote"],
+        );
+
+        let repo = open(&clone);
+        let mut options = pull_options(&repo);
+        options.upstream = Some(FetchedUpstream {
+            label: "origin/up".to_owned(),
+            oid: tip,
+            landed: None,
+            copies: Vec::new(),
+        });
+        let outcome = pull(&repo, &options, &mut NoProgress, &NeverCancel, None)
+            .expect("pull without a fetch");
+        assert_eq!(outcome.result, PullResult::FastForward);
+        assert_eq!(outcome.label, "origin/up");
+        assert_eq!(git(&clone, &["rev-parse", "main"]), tip.to_hex());
+        assert_eq!(outcome.transfer, TransferStats::default());
+    }
+
+    /// An origin and a clone whose `main` each changed `a.txt` differently.
+    fn conflicting_clone(tmp: &TempDir) -> (PathBuf, ObjectId, ObjectId) {
+        let (origin, clone) = origin_and_clone(tmp);
+        let upstream = commit(&origin, "a.txt", "theirs");
+        let local = commit(&clone, "a.txt", "ours");
+        git(&clone, &["config", "user.name", "T"]);
+        git(&clone, &["config", "user.email", "t@example.com"]);
+        git(&clone, &["fetch", "-q"]);
+        (clone, local, upstream)
+    }
+
+    fn rebase_options(repo: &Repository, upstream: ObjectId, stop: bool) -> PullOptions {
+        let mut options = pull_options(repo);
+        options.mode = Some(PullMode::Rebase);
+        options.stop_on_conflict = stop;
+        options.upstream = Some(FetchedUpstream {
+            label: "origin/main".to_owned(),
+            oid: upstream,
+            landed: None,
+            copies: Vec::new(),
+        });
+        options
+    }
+
+    fn abort(repo: &Repository) {
+        let identity = "T <t@example.com> 0 +0000".parse().expect("signature");
+        crate::history::abort_rebase(repo, &identity).expect("abort");
+    }
+
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
+    #[test]
+    fn a_conflicting_rebase_pull_stops_in_a_resumable_rebase() {
+        let tmp = TempDir::new().expect("tempdir");
+        let (clone, local, upstream) = conflicting_clone(&tmp);
+        let repo = open(&clone);
+
+        // Any rebase pull stops; `stop_on_conflict` only changes what it is called.
+        let plain = pull(
+            &repo,
+            &rebase_options(&repo, upstream, false),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
+        .expect("pull");
+        assert_eq!(plain.result, PullResult::RebaseConflicts);
+        assert!(clone.join(".git/rebase-merge").exists());
+        abort(&repo);
+        assert_eq!(git(&clone, &["rev-parse", "HEAD"]), local.to_hex());
+
+        let stopped = pull(
+            &repo,
+            &rebase_options(&repo, upstream, true),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
+        .expect("pull");
+        assert_eq!(stopped.result, PullResult::RebaseStopped);
+        assert_eq!(stopped.oid, Some(local));
+        let paths: Vec<&str> = stopped
+            .conflicts
+            .iter()
+            .flatten()
+            .map(|c| c.path.as_str())
+            .collect();
+        assert_eq!(paths, ["a.txt"]);
+        // The rebase is left for `rebase --continue`; the branch keeps its tip until then.
+        assert!(clone.join(".git/rebase-merge/grit-plan").is_file());
+        assert_eq!(git(&clone, &["rev-parse", "main"]), local.to_hex());
+        assert_eq!(git(&clone, &["rev-parse", "HEAD"]), upstream.to_hex());
+        assert!(std::fs::read_to_string(clone.join("a.txt"))
+            .expect("conflicted file")
+            .contains("<<<<<<<"));
+    }
+
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
+    #[test]
+    fn a_rebase_pull_with_local_changes_is_refused() {
+        let tmp = TempDir::new().expect("tempdir");
+        let (clone, _, upstream) = conflicting_clone(&tmp);
+        let local = commit(&clone, "b.txt", "tracked");
+        std::fs::write(clone.join("b.txt"), "edited, not committed").expect("write");
+        let repo = open(&clone);
+        let refused = pull(
+            &repo,
+            &rebase_options(&repo, upstream, true),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        );
+        assert!(
+            matches!(
+                refused,
+                Err(PullError::Repository(Error::DirtyWorktree { .. }))
+            ),
+            "{refused:?}"
+        );
+        assert!(!clone.join(".git/rebase-merge").exists());
+        assert_eq!(git(&clone, &["rev-parse", "HEAD"]), local.to_hex());
+        assert_eq!(
+            std::fs::read_to_string(clone.join("b.txt")).expect("read"),
+            "edited, not committed"
+        );
+    }
+
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
+    #[test]
     fn reflog_failure_after_ref_update_is_a_warning() {
         let tmp = TempDir::new().expect("tempdir");
         let (origin, clone) = origin_and_clone(&tmp);
@@ -1171,5 +1510,175 @@ mod tests {
             crate::diagnostics::Warning::ReflogNotWritten { refname, .. }
                 if refname == "refs/heads/main"
         )));
+    }
+
+    /// A clone whose `main` has three commits appending to `a.txt`, and an upstream commit
+    /// (`up`, on the clone's starting commit) holding their combined result, as a server's
+    /// snapshot of a merge of them would. Returns the clone, its tip and the upstream.
+    fn landed_clone(tmp: &TempDir) -> (PathBuf, ObjectId, ObjectId) {
+        let (_origin, clone) = origin_and_clone(tmp);
+        git(&clone, &["config", "user.name", "T"]);
+        git(&clone, &["config", "user.email", "t@example.com"]);
+        std::fs::write(clone.join("b.txt"), "b\n").expect("write");
+        git(&clone, &["add", "b.txt"]);
+        git(&clone, &["commit", "-qm", "b"]);
+        let base = git(&clone, &["rev-parse", "HEAD"]);
+        let mut text = "one".to_owned();
+        for line in ["1", "2", "3"] {
+            text = format!("{text}\n{line}");
+            commit(&clone, "a.txt", &text);
+        }
+        let tip = ObjectId::from_hex(&git(&clone, &["rev-parse", "HEAD"])).expect("oid");
+        git(&clone, &["switch", "-q", "-c", "up", &base]);
+        let upstream = commit(&clone, "a.txt", &text);
+        git(&clone, &["switch", "-q", "main"]);
+        (clone, tip, upstream)
+    }
+
+    fn landed_options(
+        repo: &Repository,
+        upstream: ObjectId,
+        landed: ObjectId,
+        stop: bool,
+    ) -> PullOptions {
+        let mut options = rebase_options(repo, upstream, stop);
+        if let Some(fetched) = options.upstream.as_mut() {
+            fetched.landed = Some(landed);
+        }
+        options
+    }
+
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
+    #[test]
+    fn a_landed_branch_moves_to_the_upstream_and_keeps_local_changes() {
+        let tmp = TempDir::new().expect("tempdir");
+        let (clone, tip, upstream) = landed_clone(&tmp);
+        let repo = open(&clone);
+        // Replayed one by one, the first commit conflicts with the upstream that has all three.
+        let replayed = pull(
+            &repo,
+            &rebase_options(&repo, upstream, false),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
+        .expect("pull");
+        assert_eq!(replayed.result, PullResult::RebaseConflicts);
+        abort(&repo);
+        assert_eq!(git(&clone, &["rev-parse", "main"]), tip.to_hex());
+
+        std::fs::write(clone.join("b.txt"), "b, edited\n").expect("write");
+        std::fs::write(clone.join("draft.txt"), "not committed\n").expect("write");
+        let mut check = landed_options(&repo, upstream, tip, false);
+        check.check = true;
+        let predicted = pull(&repo, &check, &mut NoProgress, &NeverCancel, None).expect("check");
+        assert_eq!(predicted.check.map(|c| c.would), Some(PullResult::Landed));
+
+        let landed = pull(
+            &repo,
+            &landed_options(&repo, upstream, tip, true),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
+        .expect("pull");
+        assert_eq!(landed.result, PullResult::Landed);
+        assert_eq!(landed.oid, Some(upstream));
+        assert_eq!(git(&clone, &["rev-parse", "main"]), upstream.to_hex());
+        assert_eq!(
+            git(&clone, &["status", "--porcelain"]),
+            "M b.txt\n?? draft.txt"
+        );
+        assert_eq!(
+            git(&clone, &["reflog", "-1", "--format=%gs", "main"]),
+            "pull: move to origin/main, which has the branch's commits"
+        );
+    }
+
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
+    #[test]
+    fn a_landed_branch_does_not_move_over_local_changes_the_upstream_has_other_content_for() {
+        let tmp = TempDir::new().expect("tempdir");
+        let (clone, tip, _) = landed_clone(&tmp);
+        // The upstream has the branch's commits and a change of its own to b.txt.
+        git(&clone, &["switch", "-q", "up"]);
+        let upstream = commit(&clone, "b.txt", "b, upstream");
+        git(&clone, &["switch", "-q", "main"]);
+        std::fs::write(clone.join("b.txt"), "b, edited\n").expect("write");
+        let repo = open(&clone);
+        let err = pull(
+            &repo,
+            &landed_options(&repo, upstream, tip, true),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
+        .expect_err("blocked");
+        assert!(
+            matches!(
+                &err,
+                PullError::Repository(Error::WouldOverwrite { paths, .. }) if paths == &["b.txt"]
+            ),
+            "{err:?}"
+        );
+        assert_eq!(git(&clone, &["rev-parse", "main"]), tip.to_hex());
+        assert_eq!(git(&clone, &["status", "--porcelain"]), "M b.txt");
+    }
+
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
+    #[test]
+    fn commits_above_a_landed_one_are_rebased_without_it() {
+        let tmp = TempDir::new().expect("tempdir");
+        let (clone, landed, upstream) = landed_clone(&tmp);
+        let own = commit(&clone, "c.txt", "c");
+        let repo = open(&clone);
+        let outcome = pull(
+            &repo,
+            &landed_options(&repo, upstream, landed, true),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
+        .expect("pull");
+        assert_eq!(outcome.result, PullResult::Rebased);
+        assert_eq!(git(&clone, &["rev-parse", "main^"]), upstream.to_hex());
+        assert_eq!(git(&clone, &["log", "-1", "--format=%s", "main"]), "c");
+        assert_ne!(git(&clone, &["rev-parse", "main"]), own.to_hex());
+
+        // One that conflicts stops on its own commit, not on the landed ones.
+        let tmp = TempDir::new().expect("tempdir");
+        let (clone, landed, _) = landed_clone(&tmp);
+        commit(&clone, "b.txt", "b, ours");
+        git(&clone, &["switch", "-q", "up"]);
+        let upstream = commit(&clone, "b.txt", "b, theirs");
+        git(&clone, &["switch", "-q", "main"]);
+        let repo = open(&clone);
+        let stopped = pull(
+            &repo,
+            &landed_options(&repo, upstream, landed, true),
+            &mut NoProgress,
+            &NeverCancel,
+            None,
+        )
+        .expect("pull");
+        assert_eq!(stopped.result, PullResult::RebaseStopped);
+        let paths: Vec<&str> = stopped
+            .conflicts
+            .iter()
+            .flatten()
+            .map(|c| c.path.as_str())
+            .collect();
+        assert_eq!(paths, ["b.txt"]);
+        // Nothing was replayed before it: the session stopped right on the upstream.
+        assert_eq!(git(&clone, &["rev-parse", "HEAD"]), upstream.to_hex());
     }
 }

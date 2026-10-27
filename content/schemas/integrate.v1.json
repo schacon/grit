@@ -1,0 +1,665 @@
+{
+  "$id": "https://grit-scm.com/schemas/integrate/v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "definitions": {
+    "CheckinBranchJson": {
+      "description": "One branch of `grit checkin`.",
+      "properties": {
+        "commits": {
+          "description": "Commits replayed onto the server's history.",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "grafted": {
+          "description": "The commit on the server's history the branch became.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Why it was refused.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The branch.",
+          "type": "string"
+        },
+        "previous": {
+          "description": "Where the server's branch was before.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "What kind of refusal it was: `invalid_name`, `target_branch`, `case_conflict`, `invalid_tip`, `not_pushed`, `not_on_snapshot`, `conflict`, `merge_conflict` or `diverged`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rule": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CheckinRuleJson"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For an `updated` branch, what allowed it."
+        },
+        "status": {
+          "description": "`created`, `updated`, `unchanged` or `refused`; `unchanged` when the server's branch was at the graft already, or ahead of it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "commits",
+        "name",
+        "status"
+      ],
+      "type": "object"
+    },
+    "CheckinOutcome": {
+      "description": "Result of `grit checkin`.",
+      "properties": {
+        "branches": {
+          "description": "One entry per branch; empty when no branch had commits to check in.",
+          "items": {
+            "$ref": "#/definitions/CheckinBranchJson"
+          },
+          "type": "array"
+        },
+        "gave_change_ids": {
+          "description": "Commits made with plain Git that were given a change id first (their branches were rewritten with it).",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "refused": {
+          "description": "Whether any branch was refused (the exit status is then `1`).",
+          "type": "boolean"
+        },
+        "url": {
+          "description": "The server repository.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "branches",
+        "gave_change_ids",
+        "refused",
+        "url"
+      ],
+      "type": "object"
+    },
+    "CheckinRuleJson": {
+      "description": "Why the server let a check-in move a branch it already had.",
+      "oneOf": [
+        {
+          "description": "The server's branch is in the new commit's history.",
+          "enum": [
+            "fast_forward"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "This checkout set the branch last, so it replaces its own work.",
+          "enum": [
+            "own_last_set"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A rebase that keeps every commit the server's branch had, by change id.",
+          "enum": [
+            "keeps_every_commit"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "`--force` replaced the branch.",
+          "enum": [
+            "forced"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "MergeConflictJson": {
+      "description": "One conflicted path in `--json` output (pull v1 `conflict_details` and merge v2 items).",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "path"
+      ],
+      "type": "object"
+    },
+    "PullCheckJson": {
+      "description": "Dry-run summary from `grit pull --check`.",
+      "properties": {
+        "ahead": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "behind": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "fast_forward_possible": {
+          "type": "boolean"
+        },
+        "would": {
+          "$ref": "#/definitions/PullResult"
+        }
+      },
+      "required": [
+        "ahead",
+        "behind",
+        "fast_forward_possible",
+        "would"
+      ],
+      "type": "object"
+    },
+    "PullOutcome": {
+      "description": "Outcome of `grit pull`.",
+      "properties": {
+        "ahead": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "alternatives": {
+          "description": "Abort/skip commands (not part of the ordered sequence).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "autostash": {
+          "description": "Autostash commit kept on `refs/stash` (rebase stopped, or re-applying it conflicted).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "behind": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "branch": {
+          "type": "string"
+        },
+        "change_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "check": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PullCheckJson"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "commit": {
+          "description": "Local commit the rebase stopped on (`operation` is `rebase`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "conflict_details": {
+          "items": {
+            "$ref": "#/definitions/MergeConflictJson"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "conflicts": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "next_steps": {
+          "description": "Ordered `grit` commands to finish the paused operation.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "oid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operation": {
+          "description": "Paused operation when `result` is `conflicts`: `merge` or `rebase`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "refresh": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PullRefreshJson"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "In a snapshot checkout, the server snapshot the pull refreshed onto."
+        },
+        "result": {
+          "$ref": "#/definitions/PullResult"
+        },
+        "server_branch": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PullServerBranchJson"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "In a snapshot checkout, `grit pull <branch>`: the server's branch as the checkout sees it, and what the local branch did."
+        },
+        "upstream": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "branch",
+        "result"
+      ],
+      "type": "object"
+    },
+    "PullRefreshJson": {
+      "description": "What `grit pull` refreshed in a checkout.",
+      "properties": {
+        "base": {
+          "description": "The real commit the newest snapshot stands for. With `--dry-run`, where the target is now.",
+          "type": "string"
+        },
+        "behind": {
+          "description": "Other branches with commits of their own still on an older snapshot.",
+          "items": {
+            "$ref": "#/definitions/RefreshBehindJson"
+          },
+          "type": "array"
+        },
+        "changes": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RefreshChangesJson"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What changed in the checkout's paths between the two snapshots; null when the target didn't move."
+        },
+        "dry_run": {
+          "description": "With `--dry-run`: nothing was fetched or changed, and the server made no snapshot.",
+          "type": "boolean"
+        },
+        "followed": {
+          "description": "Local branches with no commits of their own that moved to the new snapshot: the one named after the target, and others whose commits all landed in the target.",
+          "items": {
+            "$ref": "#/definitions/RefreshFollowedJson"
+          },
+          "type": "array"
+        },
+        "gave_change_ids": {
+          "description": "Commits made with plain Git on the current branch that were given a change id before the rebase (the branch was rewritten with it).",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "moved": {
+          "description": "Whether the target had moved since the checkout's last snapshot.",
+          "type": "boolean"
+        },
+        "previous_base": {
+          "description": "The real commit the checkout's previous snapshot stood for.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "previous_snapshot": {
+          "description": "The checkout's previous snapshot.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "snapshot": {
+          "description": "The newest snapshot commit, now `origin/<target>`. With `--dry-run`, the checkout's snapshot as it is.",
+          "type": "string"
+        },
+        "target": {
+          "description": "The server's target branch.",
+          "type": "string"
+        },
+        "upstream_ref": {
+          "description": "The local ref holding the newest snapshot, `refs/remotes/origin/<target>`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "base",
+        "behind",
+        "dry_run",
+        "followed",
+        "gave_change_ids",
+        "moved",
+        "snapshot",
+        "target",
+        "upstream_ref"
+      ],
+      "type": "object"
+    },
+    "PullResult": {
+      "description": "Result of `grit pull` (`--json` contract).",
+      "enum": [
+        "up_to_date",
+        "fast_forward",
+        "merged",
+        "refused_not_ff",
+        "conflicts",
+        "set_upstream",
+        "rebased",
+        "autostash_conflict",
+        "rebase_stopped",
+        "detached",
+        "landed",
+        "created"
+      ],
+      "type": "string"
+    },
+    "PullServerBranchJson": {
+      "description": "What `grit pull <branch>` did in a checkout: the server's branch as the checkout sees it, and the local branch brought onto it.",
+      "properties": {
+        "commits": {
+          "description": "The server branch's commits the target lacks, all shown to this checkout (cut down to its paths).",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "gave_change_ids": {
+          "description": "Commits made with plain Git on the branch that were given a change id first (the branch was rewritten with it).",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "made": {
+          "description": "How many of them were made afresh for this checkout.",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "The branch, as the server spells it (which can differ in case from the name given, on a server that ignores case).",
+          "type": "string"
+        },
+        "own": {
+          "description": "Commits of the local branch replayed onto the server's (its own commits, without copies of the server's).",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "previous": {
+          "description": "Where the local branch was; null when it was created.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "projected": {
+          "description": "What this checkout sees of it, now at `upstream_ref`.",
+          "type": "string"
+        },
+        "reused": {
+          "description": "How many were commits that were there already: checkout commits on the same snapshots that the server's are grafts of (this checkout's own among them), and what it was shown before.",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "switched": {
+          "description": "Whether `HEAD` was moved onto the branch to rebase it.",
+          "type": "boolean"
+        },
+        "tip": {
+          "description": "Where the server's branch is, on its real history.",
+          "type": "string"
+        },
+        "upstream_ref": {
+          "description": "The local ref holding the server's branch as this checkout sees it, `refs/remotes/origin/<branch>`.",
+          "type": "string"
+        },
+        "was_on": {
+          "description": "The branch `HEAD` was on before, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "commits",
+        "gave_change_ids",
+        "made",
+        "name",
+        "own",
+        "projected",
+        "reused",
+        "switched",
+        "tip",
+        "upstream_ref"
+      ],
+      "type": "object"
+    },
+    "RefreshBehindJson": {
+      "description": "A branch still building on an older snapshot after a refresh.",
+      "properties": {
+        "name": {
+          "description": "The branch.",
+          "type": "string"
+        },
+        "tip": {
+          "description": "Its tip.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "tip"
+      ],
+      "type": "object"
+    },
+    "RefreshChangesJson": {
+      "description": "What changed in a checkout's paths between two snapshots, as `git diff --shortstat` counts it.",
+      "properties": {
+        "deletions": {
+          "description": "Lines removed.",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "files": {
+          "description": "Files changed.",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "insertions": {
+          "description": "Lines added.",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "deletions",
+        "files",
+        "insertions"
+      ],
+      "type": "object"
+    },
+    "RefreshFollowedJson": {
+      "description": "A branch a refresh moved along with the snapshot.",
+      "properties": {
+        "from": {
+          "description": "The older snapshot it was at.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The branch.",
+          "type": "string"
+        },
+        "to": {
+          "description": "The new snapshot it is at.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "name",
+        "to"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Result of `grit integrate`.",
+  "properties": {
+    "checkin": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/CheckinOutcome"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The check-in done first, when the branch is here."
+    },
+    "commits": {
+      "description": "The branch's commits the merge brought in.",
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "follows": {
+      "description": "The branch this checkout follows, when the server merged into another one (its `HEAD` names a different branch now): the merge is not in this checkout's snapshots, so the branch keeps its commits here.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "head": {
+      "description": "Where it is now.",
+      "type": "string"
+    },
+    "moved_to": {
+      "description": "The new work branch you are on, when the branch you were on was the one merged: that branch is gone here (it stays on the server).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "name": {
+      "description": "The branch merged.",
+      "type": "string"
+    },
+    "previous": {
+      "description": "Where the target was.",
+      "type": "string"
+    },
+    "refresh": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/PullOutcome"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The refresh done after (as `grit pull` reports it); omitted when it failed (see `refresh_error`)."
+    },
+    "refresh_error": {
+      "description": "Why refreshing this checkout after the merge (or moving to a new work branch) failed. The merge stands on the server; the exit status is 1.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "description": "`merged` or `already_integrated`.",
+      "type": "string"
+    },
+    "target": {
+      "description": "The server's target branch.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "commits",
+    "head",
+    "name",
+    "previous",
+    "status",
+    "target"
+  ],
+  "title": "IntegrateOutcome",
+  "type": "object"
+}

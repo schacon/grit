@@ -707,12 +707,83 @@ enum HooksAction {
 /// Subcommands of `grit auth`.
 #[derive(Debug, Subcommand)]
 enum AuthAction {
-    /// Forget the stored GitHub token (sign out).
+    /// Forget the stored token (sign out) for GitHub, or for a `grit serve` URL.
     Logout {
+        /// A `grit serve` host to sign out of instead of GitHub.
+        #[arg(value_name = "URL")]
+        url: Option<String>,
         /// Report which stored credential would be removed without erasing it.
         #[arg(long = "dry-run")]
         dry_run: bool,
     },
+}
+
+/// Subcommands of `grit slice`.
+#[derive(Debug, Subcommand)]
+enum SliceAction {
+    /// List the slices.
+    List,
+    /// Make a slice.
+    New {
+        /// The slice's name.
+        name: String,
+        /// A path in the slice (repeatable).
+        #[arg(short = 'p', long = "path", value_name = "PATH")]
+        paths: Vec<String>,
+        /// What the slice is for.
+        #[arg(short = 'd', long, value_name = "TEXT")]
+        description: Option<String>,
+    },
+    /// Add paths to a slice or remove them.
+    Edit {
+        /// The slice's name.
+        name: String,
+        /// A path to add (repeatable).
+        #[arg(long, value_name = "PATH")]
+        add: Vec<String>,
+        /// A path to remove (repeatable).
+        #[arg(long, value_name = "PATH")]
+        remove: Vec<String>,
+        /// A new description.
+        #[arg(short = 'd', long, value_name = "TEXT")]
+        description: Option<String>,
+    },
+    /// Delete a slice.
+    Delete {
+        /// The slice's name.
+        name: String,
+    },
+}
+
+/// Subcommands of `grit serve`.
+#[derive(Debug, Subcommand)]
+enum ServeAction {
+    /// Add a user. Prompts for their password, or generates a temporary one.
+    #[command(name = "add-user")]
+    AddUser {
+        /// The user's email address, which is also their user name.
+        email: String,
+        /// Make the user an admin, with read and write access to every repository.
+        #[arg(long)]
+        admin: bool,
+    },
+    /// Create an access token for a user, for scripts and CI that cannot sign in in a browser.
+    Token {
+        /// The user's email address.
+        email: String,
+    },
+    /// Give a user read access to a repository (or write access with `--write`).
+    Grant {
+        /// The email address of the user to give access to.
+        user: String,
+        /// The repository name, with or without `.git`.
+        repository: String,
+        /// Allow pushing as well as fetching.
+        #[arg(long)]
+        write: bool,
+    },
+    /// List users, their tokens and their repository access.
+    Users,
 }
 
 /// Top-level `grit` commands.
@@ -749,6 +820,42 @@ enum Command {
             value_parser = parse_init_object_format
         )]
         object_format: Option<grit_lib::objects::HashAlgo>,
+    },
+    /// Start work on a repository from a snapshot of its main branch (or some of its paths) instead of a clone.
+    Checkout {
+        /// The repository on a server that offers snapshot checkouts (`grit serve`).
+        url: String,
+        /// A slice (named set of paths) on the server to check out; `--path` adds to it.
+        slice: Option<String>,
+        /// Check out only this path, plus the files in the directories above it (repeatable).
+        #[arg(short = 'p', long = "path", value_name = "PATH")]
+        paths: Vec<String>,
+        /// Directory to check out into (defaults to the repository name).
+        #[arg(long, value_name = "DIR")]
+        into: Option<std::path::PathBuf>,
+    },
+    /// Send a snapshot checkout's branches back to the server, grafted onto its real history.
+    Checkin {
+        /// Branches to check in (default: every branch with commits on top of the snapshot).
+        #[arg(value_name = "BRANCH")]
+        branches: Vec<String>,
+        /// Replace a server branch even where that drops commits it has.
+        #[arg(short = 'f', long)]
+        force: bool,
+    },
+    /// Merge a branch into the server's target branch (checking it in first), then refresh this checkout.
+    Integrate {
+        /// The branch to merge.
+        #[arg(value_name = "BRANCH")]
+        branch: String,
+    },
+    /// Named sets of paths to check out together, kept on the server's target branch.
+    Slice {
+        #[command(subcommand)]
+        action: SliceAction,
+        /// The repository whose slices to use (default: the checkout you are in).
+        #[arg(long, global = true, value_name = "URL")]
+        url: Option<String>,
     },
     /// Copy a remote repository into a new directory.
     Clone {
@@ -1301,7 +1408,7 @@ enum Command {
         dry_run: bool,
     },
     /// Switch to another branch, remote branch, or detached commit.
-    #[command(alias = "checkout", alias = "co")]
+    #[command(alias = "co")]
     Switch {
         /// Branch to switch to, revision with `--detach`, or new branch name with `-c`.
         #[arg(value_name = "NAME", required_unless_present = "detach")]
@@ -1588,6 +1695,10 @@ enum Command {
         fetch: commands::fetch_args::FetchArgs,
     },
     /// Fetch from the remote and integrate it into the current branch.
+    ///
+    /// In a snapshot checkout, refresh it onto the server's newest snapshot;
+    /// `grit pull <branch>` brings `<branch>` onto the server's branch of that
+    /// name, as the checkout sees it.
     Pull {
         #[command(flatten)]
         fetch: commands::fetch_args::FetchArgs,
@@ -1812,8 +1923,15 @@ enum Command {
         #[command(subcommand)]
         action: WorktreeAction,
     },
-    /// Sign in to GitHub (device flow) and store a token for HTTPS push/fetch.
+    /// Sign in to GitHub or a `grit serve` host in the browser, and store a token for push/fetch.
+    #[command(args_conflicts_with_subcommands = true, visible_alias = "login")]
     Auth {
+        /// A `grit serve` host (or one of its repository URLs) to sign in to instead of GitHub.
+        #[arg(value_name = "URL")]
+        url: Option<String>,
+        /// Store this access token for a `grit serve` host (from `grit serve token`) instead of signing in in the browser.
+        #[arg(long, value_name = "TOKEN", requires = "url")]
+        token: Option<String>,
         #[command(subcommand)]
         action: Option<AuthAction>,
     },
@@ -2001,6 +2119,37 @@ enum Command {
     Manager {
         /// The credential operation: get, store, or erase.
         operation: String,
+    },
+    /// Serve repositories over HTTP, with a web view where people sign in with email and password.
+    Serve {
+        #[command(subcommand)]
+        action: Option<ServeAction>,
+        /// A repository, or a directory of repositories, to serve.
+        #[arg(long, global = true, value_name = "PATH", default_value = ".")]
+        root: std::path::PathBuf,
+        /// The user database (default: `grit-serve.db` in the root, or in its `.git`).
+        #[arg(long, global = true, value_name = "FILE")]
+        db: Option<std::path::PathBuf>,
+        /// Address to listen on.
+        #[arg(long, value_name = "HOST:PORT", default_value = "127.0.0.1:8080")]
+        bind: String,
+        /// Create the user database and its first admin user, then exit. Prompts for a password (or generates one).
+        #[arg(long)]
+        setup: bool,
+        /// Email address of the admin `--setup` creates (asked for when omitted).
+        #[arg(long, value_name = "EMAIL", requires = "setup")]
+        email: Option<String>,
+        /// How often to rebuild a changed repository's clone bundle, like `24h`, `30m` or `2d`.
+        #[arg(
+            long,
+            value_name = "DURATION",
+            default_value = "24h",
+            value_parser = commands::serve_http::parse_interval
+        )]
+        bundle_interval: std::time::Duration,
+        /// Do not build or offer clone bundles.
+        #[arg(long)]
+        no_bundles: bool,
     },
     /// Serve a fetch or clone over stdin/stdout (run by ssh and grit-http-server).
     #[command(name = "upload-pack", hide = true)]
@@ -2423,6 +2572,69 @@ fn dispatch(
             opts,
             ctx,
         ),
+        // `grit checkout <branch>` is the Git habit for `grit switch`; only a URL
+        // asks for a snapshot checkout.
+        Command::Checkout {
+            url,
+            slice: None,
+            paths,
+            into: None,
+        } if paths.is_empty() && !url.contains("://") => emit_success(
+            &commands::switch::run(Some(url), None, false, false, false)?,
+            opts,
+            ctx,
+        ),
+        Command::Checkout {
+            url,
+            slice,
+            paths,
+            into,
+        } => emit_success(
+            &commands::checkout::run(&url, slice.as_deref(), &paths, into.as_deref(), opts.mode)?,
+            opts,
+            ctx,
+        ),
+        Command::Checkin { branches, force } => {
+            let outcome = commands::checkin::run(&branches, force, opts.mode)?;
+            emit_success(&outcome, opts, ctx)?;
+            Ok(ExitStatus::from_push_rejected(outcome.refused))
+        }
+        Command::Integrate { branch } => {
+            let outcome = commands::checkin::integrate(&branch, opts.mode)?;
+            emit_success(&outcome, opts, ctx)?;
+            Ok(ExitStatus::from_integrate(&outcome))
+        }
+        Command::Slice { action, url } => match action {
+            SliceAction::List => emit_success(&commands::slice::list(url.as_deref())?, opts, ctx),
+            SliceAction::New {
+                name,
+                paths,
+                description,
+            } => emit_success(
+                &commands::slice::new(url.as_deref(), &name, &paths, description.as_deref())?,
+                opts,
+                ctx,
+            ),
+            SliceAction::Edit {
+                name,
+                add,
+                remove,
+                description,
+            } => emit_success(
+                &commands::slice::edit(
+                    url.as_deref(),
+                    &name,
+                    &add,
+                    &remove,
+                    description.as_deref(),
+                )?,
+                opts,
+                ctx,
+            ),
+            SliceAction::Delete { name } => {
+                emit_success(&commands::slice::delete(url.as_deref(), &name)?, opts, ctx)
+            }
+        },
         Command::Clone {
             url,
             dir,
@@ -3821,12 +4033,38 @@ fn dispatch(
             // push is still a failure, so mirror Git and exit non-zero.
             Ok(ExitStatus::from_push_rejected(outcome.rejected))
         }
-        Command::Auth { action } => match action {
-            None => emit_success(&commands::auth::run()?, opts, ctx),
-            Some(AuthAction::Logout { dry_run }) => {
-                emit_success(&commands::auth::logout(dry_run)?, opts, ctx)
+        Command::Auth { url, token, action } => {
+            match action {
+                None => {
+                    let server = url
+                        .as_deref()
+                        .map(commands::auth::grit_server)
+                        .transpose()?;
+                    let outcome = match (server.flatten(), token) {
+                        (Some(server), Some(token)) => {
+                            commands::auth::run_server_token(&server, &token)?
+                        }
+                        (Some(server), None) => commands::auth::run_server_login(&server)?,
+                        (None, Some(_)) => {
+                            anyhow::bail!("--token is for `grit serve` hosts; GitHub signs in with the browser")
+                        }
+                        (None, None) => commands::auth::run()?,
+                    };
+                    emit_success(&outcome, opts, ctx)
+                }
+                Some(AuthAction::Logout { url, dry_run }) => {
+                    let server = url
+                        .as_deref()
+                        .map(commands::auth::grit_server)
+                        .transpose()?;
+                    emit_success(
+                        &commands::auth::logout(server.flatten().as_ref(), dry_run)?,
+                        opts,
+                        ctx,
+                    )
+                }
             }
-        },
+        }
         Command::Update => emit_success(&commands::update::run(opts.mode)?, opts, ctx),
         Command::Skill => emit_success(&commands::skill::run()?, opts, ctx),
         Command::Completions { shell } => {
@@ -3893,6 +4131,62 @@ fn dispatch(
             commands::manager::run(&operation)?;
             Ok(ExitStatus::Success)
         }
+        Command::Serve {
+            action,
+            root,
+            db,
+            bind,
+            setup,
+            email,
+            bundle_interval,
+            no_bundles,
+        } => {
+            let db = db.as_deref();
+            match action {
+                Some(ServeAction::AddUser { email, admin }) => {
+                    let password = commands::serve_http::read_new_password(&email)?;
+                    emit_success(
+                        &commands::serve_http::add_user(&root, db, &email, admin, password)?,
+                        opts,
+                        ctx,
+                    )
+                }
+                Some(ServeAction::Token { email }) => {
+                    emit_success(&commands::serve_http::token(&root, db, &email)?, opts, ctx)
+                }
+                Some(ServeAction::Grant {
+                    user,
+                    repository,
+                    write,
+                }) => emit_success(
+                    &commands::serve_http::grant(&root, db, &user, &repository, write)?,
+                    opts,
+                    ctx,
+                ),
+                Some(ServeAction::Users) => {
+                    emit_success(&commands::serve_http::users(&root, db)?, opts, ctx)
+                }
+                None if setup => {
+                    let email = commands::serve_http::read_admin_email(email)?;
+                    let password = commands::serve_http::read_new_password(&email)?;
+                    emit_success(
+                        &commands::serve_http::setup(&root, db, &email, password)?,
+                        opts,
+                        ctx,
+                    )
+                }
+                // The running server logs to stderr; it has no stdout result.
+                None => {
+                    let bundles = grit_http_server::bundles::BundleSettings {
+                        enabled: !no_bundles,
+                        interval: bundle_interval,
+                        ..Default::default()
+                    };
+                    commands::serve_http::run(&root, db, &bind, bundles)?;
+                    Ok(ExitStatus::Success)
+                }
+            }
+        }
         // The server programs speak the Git wire protocol on stdout.
         Command::UploadPack { args } => {
             commands::serve::run(
@@ -3958,8 +4252,15 @@ mod tests {
     ];
 
     /// In-process render snapshots that satisfy coverage for a top-level command.
-    const RENDER_SNAPSHOT_FOR_COMMAND: &[(&str, &str)] =
-        &[("auth", "auth_render"), ("update", "update_render")];
+    const RENDER_SNAPSHOT_FOR_COMMAND: &[(&str, &str)] = &[
+        ("auth", "auth_render"),
+        ("checkin", "checkin_render"),
+        ("checkout", "checkout_render"),
+        ("integrate", "integrate_render"),
+        ("slice", "slice_render"),
+        ("serve", "serve_render"),
+        ("update", "update_render"),
+    ];
 
     fn commands_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../content/docs/commands")

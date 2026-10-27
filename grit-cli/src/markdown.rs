@@ -15,6 +15,9 @@ use crate::commands::history::{
 use crate::commands::merge::{MergeOutcome, MergeResult};
 use crate::commands::pick::PickOutcome;
 use crate::commands::revert::RevertOutcome;
+use crate::commands::serve_http::{
+    ServeGrantOutcome, ServeTokenOutcome, ServeUserOutcome, ServeUsersOutcome,
+};
 use crate::commands::stash::{
     StashApplyOutcome, StashDropOutcome, StashPopOutcome, StashPushOutcome,
 };
@@ -768,6 +771,15 @@ pub fn print_pull_outcome(
     use crate::commands::pull::PullResult;
     outln!(w, "## Pull");
     outln!(w);
+    if let Some(r) = &outcome.refresh {
+        print_refresh_head(w, r)?;
+        if r.dry_run {
+            return Ok(());
+        }
+    }
+    if let Some(b) = &outcome.server_branch {
+        return print_pull_server_branch(w, outcome, b);
+    }
     if let Some(check) = &outcome.check {
         outln!(
             w,
@@ -873,6 +885,14 @@ pub fn print_pull_outcome(
                 outln!(w, "- change id `{short}`", short = short_change_id(id));
             }
         }
+        PullResult::Landed => {
+            let short = outcome.oid.as_deref().map(short_hex).unwrap_or("");
+            outln!(
+                w,
+                "- Moved to **`{}`** · `{short}`, which has this branch's commits; uncommitted changes kept",
+                outcome.branch
+            );
+        }
         PullResult::AutostashConflict => {
             outln!(
                 w,
@@ -880,6 +900,212 @@ pub fn print_pull_outcome(
                 outcome.branch
             );
         }
+        PullResult::RebaseStopped => {
+            outln!(
+                w,
+                "- Rebase onto **`{}`** stopped on a conflict; the rebase is in progress",
+                outcome.branch
+            );
+            outln!(w);
+            for item in outcome.conflict_details.as_deref().unwrap_or(&[]) {
+                outln!(w, "- **{}** — `{path}`", item.kind, path = item.path);
+            }
+            outln!(
+                w,
+                "→ resolve the conflicts, `grit add` the files, then `grit rebase --continue`; or `grit rebase --abort` to put the branch back"
+            );
+        }
+        PullResult::Detached => {
+            outln!(
+                w,
+                "- `HEAD` is detached, so only **`{}`** moved; the new snapshot is there",
+                outcome.branch
+            );
+        }
+        PullResult::Created => {
+            let short = outcome.oid.as_deref().map(short_hex).unwrap_or("");
+            outln!(
+                w,
+                "- Created a branch at **`{}`** · `{short}`",
+                outcome.branch
+            );
+        }
+    }
+    if let Some(r) = &outcome.refresh {
+        for f in &r.followed {
+            outln!(w, "- `{}` follows to `{}`", f.name, short_hex(&f.to));
+        }
+        for b in &r.behind {
+            outln!(
+                w,
+                "- `{}` still builds on an older snapshot → `grit switch {}`, then `grit pull`",
+                b.name,
+                b.name
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `grit pull <branch>` in a snapshot checkout: the server's branch as the
+/// checkout sees it, then what the local branch did.
+fn print_pull_server_branch(
+    w: &mut dyn Write,
+    outcome: &crate::commands::pull::PullOutcome,
+    b: &crate::commands::checkout::PullServerBranchJson,
+) -> anyhow::Result<()> {
+    use crate::commands::pull::PullResult;
+    if b.gave_change_ids > 0 {
+        outln!(
+            w,
+            "- Change ids: gave {}",
+            crate::commands::pull::gave_change_ids_phrase(b.gave_change_ids)
+        );
+    }
+    outln!(
+        w,
+        "- Server branch: **`{}`** at `{}` · {} · at `{}` (`{}`)",
+        b.name,
+        short_hex(&b.tip),
+        crate::commands::pull::commits_on_snapshots(b.commits),
+        b.upstream_ref,
+        short_hex(&b.projected)
+    );
+    if let Some(check) = &outcome.check {
+        outln!(
+            w,
+            "- Check: {ahead} ahead, {behind} behind · fast-forward {} · would `{would:?}`",
+            if check.fast_forward_possible {
+                "possible"
+            } else {
+                "not possible"
+            },
+            ahead = check.ahead,
+            behind = check.behind,
+            would = check.would
+        );
+        return Ok(());
+    }
+    let short = outcome.oid.as_deref().map(short_hex).unwrap_or("");
+    match outcome.result {
+        PullResult::Created => outln!(
+            w,
+            "- Created **`{}`** at `{short}`, the server's → `grit switch {}` to work on it",
+            b.name,
+            b.name
+        ),
+        PullResult::UpToDate => outln!(w, "- **`{}`** already has them", b.name),
+        PullResult::FastForward => outln!(
+            w,
+            "- Moved **`{}`** to **`{}`** · `{short}`; it had nothing of its own",
+            b.name,
+            outcome.branch
+        ),
+        PullResult::Rebased => outln!(
+            w,
+            "- Rebased **`{}`** onto **`{}`** · `{short}` · {} of yours on top → `grit checkin {}` sends it",
+            b.name,
+            outcome.branch,
+            if b.own == 1 {
+                "1 commit".to_owned()
+            } else {
+                format!("{} commits", b.own)
+            },
+            b.name
+        ),
+        PullResult::RebaseStopped => {
+            outln!(
+                w,
+                "- Rebase of **`{}`** onto **`{}`** stopped on a conflict; the rebase is in progress",
+                b.name,
+                outcome.branch
+            );
+            outln!(w);
+            for item in outcome.conflict_details.as_deref().unwrap_or(&[]) {
+                outln!(w, "- **{}** — `{path}`", item.kind, path = item.path);
+            }
+            outln!(
+                w,
+                "→ resolve the conflicts, `grit add` the files, then `grit rebase --continue`; or `grit rebase --abort` to put the branch back"
+            );
+        }
+        PullResult::Conflicts => {
+            outln!(
+                w,
+                "- Rebasing **`{}`** onto **`{}`** would stop on a conflict",
+                b.name,
+                outcome.branch
+            );
+            outln!(w);
+            for item in outcome.conflict_details.as_deref().unwrap_or(&[]) {
+                outln!(w, "- **{}** — `{path}`", item.kind, path = item.path);
+            }
+            outln!(
+                w,
+                "→ the index or worktree has changes of its own, so nothing changed; commit or stash them, then `grit pull {}` again",
+                b.name
+            );
+        }
+        PullResult::AutostashConflict => outln!(
+            w,
+            "- Rebased **`{}`**, but re-applying the stashed changes left conflicts (stash kept)",
+            b.name
+        ),
+        _ => {}
+    }
+    if b.switched {
+        match &b.was_on {
+            Some(was) => outln!(w, "- Now on `{}` (was `{was}`)", b.name),
+            None => outln!(w, "- Now on `{}` (`HEAD` was detached)", b.name),
+        }
+    }
+    Ok(())
+}
+
+/// The refresh line of `grit pull` in a snapshot checkout.
+fn print_refresh_head(
+    w: &mut dyn Write,
+    r: &crate::commands::checkout::PullRefreshJson,
+) -> anyhow::Result<()> {
+    if r.gave_change_ids > 0 {
+        outln!(
+            w,
+            "- Change ids: gave {}",
+            crate::commands::pull::gave_change_ids_phrase(r.gave_change_ids)
+        );
+    }
+    let previous = r.previous_base.as_deref().map(short_hex).unwrap_or("?");
+    if !r.moved {
+        outln!(
+            w,
+            "- Refresh: **`{}`** has not moved since this checkout's last snapshot (`{}`)",
+            r.target,
+            short_hex(&r.base)
+        );
+    } else if r.dry_run {
+        outln!(
+            w,
+            "- Refresh (dry run): **`{}`** moved `{previous}` → `{}`; `grit pull` would refresh onto it",
+            r.target,
+            short_hex(&r.base)
+        );
+    } else {
+        let changes = match &r.changes {
+            Some(c) if c.files == 0 => " · nothing changed in this checkout's paths".to_owned(),
+            Some(c) => format!(
+                " · {} in this checkout's paths",
+                crate::commands::pull::changes_phrase(c)
+            ),
+            None => String::new(),
+        };
+        outln!(
+            w,
+            "- Refresh: **`{}`** moved `{previous}` → `{}` · new snapshot `{}` at `{}`{changes}",
+            r.target,
+            short_hex(&r.base),
+            short_hex(&r.snapshot),
+            r.upstream_ref
+        );
     }
     Ok(())
 }
@@ -1575,7 +1801,10 @@ pub fn print_auth_outcome(w: &mut dyn Write, outcome: &AuthOutcome) -> anyhow::R
     outln!(w, "## Auth");
     outln!(w);
     if outcome.authenticated {
-        outln!(w, "- Signed in to **`{}`**", outcome.host);
+        match &outcome.user {
+            Some(user) => outln!(w, "- Signed in to **`{}`** as **`{user}`**", outcome.host),
+            None => outln!(w, "- Signed in to **`{}`**", outcome.host),
+        }
     } else {
         outln!(w, "- Not signed in to **`{}`**", outcome.host);
     }
@@ -1618,6 +1847,77 @@ pub fn print_logout_outcome(w: &mut dyn Write, outcome: &LogoutOutcome) -> anyho
 }
 
 /// Result of `grit update`.
+/// Result of `grit serve --setup` or `grit serve add-user`.
+pub fn print_serve_user_outcome(
+    w: &mut dyn Write,
+    outcome: &ServeUserOutcome,
+) -> anyhow::Result<()> {
+    outln!(w, "## Serve user");
+    outln!(w);
+    let role = if outcome.admin { "admin user" } else { "user" };
+    outln!(w, "- Created {role} **`{}`**", outcome.user);
+    outln!(w, "- Database: `{}`", outcome.database);
+    if let Some(password) = &outcome.password {
+        outln!(
+            w,
+            "- Temporary password (shown once, changed at first sign-in): `{password}`"
+        );
+    }
+    Ok(())
+}
+
+/// Result of `grit serve token`.
+pub fn print_serve_token_outcome(
+    w: &mut dyn Write,
+    outcome: &ServeTokenOutcome,
+) -> anyhow::Result<()> {
+    outln!(w, "## Serve token");
+    outln!(w);
+    outln!(w, "- User: **`{}`**", outcome.user);
+    outln!(w, "- Token (shown once): `{}`", outcome.token);
+    Ok(())
+}
+
+/// Result of `grit serve grant`.
+pub fn print_serve_grant_outcome(
+    w: &mut dyn Write,
+    outcome: &ServeGrantOutcome,
+) -> anyhow::Result<()> {
+    outln!(w, "## Serve grant");
+    outln!(w);
+    outln!(
+        w,
+        "- **`{}`** has **{}** access to `{}`",
+        outcome.user,
+        outcome.access,
+        outcome.repository
+    );
+    Ok(())
+}
+
+/// Result of `grit serve users`.
+pub fn print_serve_users_outcome(
+    w: &mut dyn Write,
+    outcome: &ServeUsersOutcome,
+) -> anyhow::Result<()> {
+    outln!(w, "## Serve users");
+    outln!(w);
+    outln!(w, "Database: `{}`", outcome.database);
+    outln!(w);
+    outln!(w, "| User | Tokens | Access |");
+    outln!(w, "| --- | ---: | --- |");
+    for user in &outcome.users {
+        outln!(
+            w,
+            "| `{}` | {} | {} |",
+            user.email,
+            user.tokens,
+            escape_table_cell(&user.access_summary())
+        );
+    }
+    Ok(())
+}
+
 pub fn print_update_outcome(w: &mut dyn Write, outcome: &UpdateOutcome) -> anyhow::Result<()> {
     outln!(w, "## Update");
     outln!(w);

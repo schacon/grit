@@ -1,0 +1,135 @@
+{
+  "$id": "https://grit-scm.com/schemas/checkin/v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "definitions": {
+    "CheckinBranchJson": {
+      "description": "One branch of `grit checkin`.",
+      "properties": {
+        "commits": {
+          "description": "Commits replayed onto the server's history.",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "grafted": {
+          "description": "The commit on the server's history the branch became.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Why it was refused.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The branch.",
+          "type": "string"
+        },
+        "previous": {
+          "description": "Where the server's branch was before.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "What kind of refusal it was: `invalid_name`, `target_branch`, `case_conflict`, `invalid_tip`, `not_pushed`, `not_on_snapshot`, `conflict`, `merge_conflict` or `diverged`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rule": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CheckinRuleJson"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For an `updated` branch, what allowed it."
+        },
+        "status": {
+          "description": "`created`, `updated`, `unchanged` or `refused`; `unchanged` when the server's branch was at the graft already, or ahead of it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "commits",
+        "name",
+        "status"
+      ],
+      "type": "object"
+    },
+    "CheckinRuleJson": {
+      "description": "Why the server let a check-in move a branch it already had.",
+      "oneOf": [
+        {
+          "description": "The server's branch is in the new commit's history.",
+          "enum": [
+            "fast_forward"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "This checkout set the branch last, so it replaces its own work.",
+          "enum": [
+            "own_last_set"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A rebase that keeps every commit the server's branch had, by change id.",
+          "enum": [
+            "keeps_every_commit"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "`--force` replaced the branch.",
+          "enum": [
+            "forced"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "Result of `grit checkin`.",
+  "properties": {
+    "branches": {
+      "description": "One entry per branch; empty when no branch had commits to check in.",
+      "items": {
+        "$ref": "#/definitions/CheckinBranchJson"
+      },
+      "type": "array"
+    },
+    "gave_change_ids": {
+      "description": "Commits made with plain Git that were given a change id first (their branches were rewritten with it).",
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "refused": {
+      "description": "Whether any branch was refused (the exit status is then `1`).",
+      "type": "boolean"
+    },
+    "url": {
+      "description": "The server repository.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "branches",
+    "gave_change_ids",
+    "refused",
+    "url"
+  ],
+  "title": "CheckinOutcome",
+  "type": "object"
+}

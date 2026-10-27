@@ -101,6 +101,8 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
             BundleCreateOutcome, BundleListOutcome, BundleUnbundleOutcome, BundleVerifyOutcome,
         },
         cat::CatOutcome,
+        checkin::{CheckinOutcome, IntegrateOutcome},
+        checkout::CheckoutOutcome,
         clean::CleanOutcome,
         clone::CloneOutcome,
         commit::CommitOutcome,
@@ -135,9 +137,11 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         revert::RevertOutcome,
         revs::RevsOutcome,
         rm::RmOutcome,
+        serve_http::{ServeGrantOutcome, ServeTokenOutcome, ServeUserOutcome, ServeUsersOutcome},
         shortlog::ShortlogOutcome,
         show::ShowRunResult,
         skill::SkillOutcome,
+        slice::{SliceChangeOutcome, SliceListOutcome},
         stash::{
             StashApplyOutcome, StashBranchOutcome, StashClearOutcome, StashDropOutcome,
             StashListOutcome, StashPopOutcome, StashPushOutcome, StashShowOutcome,
@@ -153,6 +157,13 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<StatusOutcome>("status"),
         entry::<InitOutcome>("init"),
         entry::<CloneOutcome>("clone"),
+        entry::<CheckoutOutcome>("checkout"),
+        entry::<CheckinOutcome>("checkin"),
+        entry::<IntegrateOutcome>("integrate"),
+        entry::<SliceListOutcome>("slice.list"),
+        entry::<SliceChangeOutcome>("slice.new"),
+        entry::<SliceChangeOutcome>("slice.edit"),
+        entry::<SliceChangeOutcome>("slice.delete"),
         entry::<RemoteOutcome>("remote"),
         entry::<RemoteOutcome>("remote.add"),
         entry::<RemoteOutcome>("remote.refs"),
@@ -244,6 +255,11 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<WorktreeOutcome>("worktree.repair"),
         entry::<AuthOutcome>("auth"),
         entry::<LogoutOutcome>("auth.logout"),
+        entry::<ServeUserOutcome>("serve"),
+        entry::<ServeUserOutcome>("serve.add-user"),
+        entry::<ServeTokenOutcome>("serve.token"),
+        entry::<ServeGrantOutcome>("serve.grant"),
+        entry::<ServeUsersOutcome>("serve.users"),
         entry::<UpdateOutcome>("update"),
         entry::<SkillOutcome>("skill"),
         entry::<ConfigOutcome>("config"),
@@ -337,7 +353,22 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
         },
         "auth" => match positional.get(1).copied() {
             Some("logout") => "auth.logout",
-            None => "auth",
+            // `grit auth` or `grit auth <url>`.
+            _ => "auth",
+        },
+        "slice" => match positional.get(1).copied() {
+            Some("list") => "slice.list",
+            Some("new") => "slice.new",
+            Some("edit") => "slice.edit",
+            Some("delete") => "slice.delete",
+            _ => return None,
+        },
+        "serve" => match positional.get(1).copied() {
+            None => "serve",
+            Some("add-user") => "serve.add-user",
+            Some("token") => "serve.token",
+            Some("grant") => "serve.grant",
+            Some("users") => "serve.users",
             _ => return None,
         },
         "ignore" => match positional.get(1).copied() {
@@ -690,7 +721,7 @@ fn collect_json_commands(cmd: &clap::Command, prefix: Option<&str>, out: &mut Ve
     // Parent commands that run with no subcommand still emit JSON (remote list, stash push, auth login).
     if matches!(
         full.as_str(),
-        "remote" | "stash" | "auth" | "hooks" | "reflog" | "gc"
+        "remote" | "stash" | "auth" | "hooks" | "reflog" | "gc" | "serve"
     ) {
         out.push(full.clone());
     }
@@ -709,6 +740,13 @@ pub const SNAPSHOT_FILE_PREFIX: &str = "grit_test_support__cli_fixture__";
 pub const SNAPSHOT_JSON_SCHEMA_SKIP: &[&str] = &[
     "auth_render",
     "log_json_filter_commits_oid",
+    "checkin_render",
+    "checkout_render",
+    "integrate_render",
+    "integrate_elsewhere_render",
+    "integrate_refresh_failed_render",
+    "slice_render",
+    "serve_render",
     "update_render",
 ];
 
@@ -919,6 +957,8 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
         ("fetch_new", &["fetch"]),
         ("fetch_prune", &["fetch", "--prune"]),
         ("pull_ff", &["pull"]),
+        ("pull_refresh_render", &["pull"]),
+        ("pull_branch_render", &["pull"]),
         ("push_ok", &["push"]),
         ("push_up_to_date", &["push"]),
         ("push_rejected", &["push"]),

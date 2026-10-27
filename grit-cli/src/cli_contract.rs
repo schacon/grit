@@ -116,6 +116,62 @@ const COMMAND_CONTRACTS: &[(&str, CommandContract)] = &[
         },
     ),
     (
+        "checkin",
+        CommandContract {
+            kind: CommandKind::Mutation,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
+        "integrate",
+        CommandContract {
+            kind: CommandKind::Mutation,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
+        "slice.list",
+        CommandContract {
+            kind: CommandKind::Query,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
+        "slice.new",
+        CommandContract {
+            kind: CommandKind::Mutation,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
+        "slice.edit",
+        CommandContract {
+            kind: CommandKind::Mutation,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
+        "slice.delete",
+        CommandContract {
+            kind: CommandKind::Mutation,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
+        "checkout",
+        CommandContract {
+            kind: CommandKind::Mutation,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
         "clone",
         CommandContract {
             kind: CommandKind::Mutation,
@@ -620,6 +676,46 @@ const COMMAND_CONTRACTS: &[(&str, CommandContract)] = &[
         },
     ),
     (
+        "serve",
+        CommandContract {
+            kind: CommandKind::Mutation,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
+        "serve.add-user",
+        CommandContract {
+            kind: CommandKind::Mutation,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
+        "serve.token",
+        CommandContract {
+            kind: CommandKind::Mutation,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
+        "serve.grant",
+        CommandContract {
+            kind: CommandKind::Mutation,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
+        "serve.users",
+        CommandContract {
+            kind: CommandKind::Query,
+            takes_message: false,
+            takes_paths: false,
+        },
+    ),
+    (
         "shortlog",
         CommandContract {
             kind: CommandKind::List,
@@ -864,6 +960,42 @@ const EXCEPTIONS: &[(&str, ContractRule, &str, &str)] = &[
         "notes add has no `--dry-run` yet (step 5)",
     ),
     (
+        "checkin",
+        ContractRule::DryRun,
+        "clone-remote",
+        "checkin has no `--dry-run` yet",
+    ),
+    (
+        "integrate",
+        ContractRule::DryRun,
+        "clone-remote",
+        "integrate has no `--dry-run` yet",
+    ),
+    (
+        "slice.new",
+        ContractRule::DryRun,
+        "clone-remote",
+        "slice new has no `--dry-run` yet",
+    ),
+    (
+        "slice.edit",
+        ContractRule::DryRun,
+        "clone-remote",
+        "slice edit has no `--dry-run` yet",
+    ),
+    (
+        "slice.delete",
+        ContractRule::DryRun,
+        "clone-remote",
+        "slice delete has no `--dry-run` yet",
+    ),
+    (
+        "checkout",
+        ContractRule::DryRun,
+        "clone-remote",
+        "checkout has no `--dry-run` yet",
+    ),
+    (
         "clone",
         ContractRule::DryRun,
         "clone-remote",
@@ -880,6 +1012,30 @@ const EXCEPTIONS: &[(&str, ContractRule, &str, &str)] = &[
         ContractRule::DryRun,
         "s6 dry-run",
         "auth sign-in has no `--dry-run` yet (step 6)",
+    ),
+    (
+        "serve",
+        ContractRule::DryRun,
+        "grit-serve",
+        "serve runs the server or creates the user database; no `--dry-run` yet",
+    ),
+    (
+        "serve.add-user",
+        ContractRule::DryRun,
+        "grit-serve",
+        "serve add-user has no `--dry-run` yet",
+    ),
+    (
+        "serve.token",
+        ContractRule::DryRun,
+        "grit-serve",
+        "serve token has no `--dry-run` yet",
+    ),
+    (
+        "serve.grant",
+        ContractRule::DryRun,
+        "grit-serve",
+        "serve grant has no `--dry-run` yet",
     ),
     (
         "hooks.run",
@@ -1019,7 +1175,7 @@ mod tests {
     fn parent_runs_without_subcommand(full: &str) -> bool {
         matches!(
             full,
-            "remote" | "stash" | "auth" | "hooks" | "reflog" | "gc" | "notes"
+            "remote" | "stash" | "auth" | "hooks" | "reflog" | "gc" | "notes" | "serve"
         )
     }
 
