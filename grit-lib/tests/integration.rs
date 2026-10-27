@@ -963,6 +963,11 @@ mod non_exhaustive_options_api;
 #[cfg(feature = "full-tests")]
 #[path = "non_utf8_path_git_compat.rs"]
 mod non_utf8_path_git_compat;
+#[path = "not_a_repository_reason.rs"]
+mod not_a_repository_reason;
+#[cfg(feature = "full-tests")]
+#[path = "not_a_repository_reason_git_compat.rs"]
+mod not_a_repository_reason_git_compat;
 #[cfg(feature = "full-tests")]
 #[path = "notes_concurrent_update.rs"]
 mod notes_concurrent_update;

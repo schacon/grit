@@ -5673,7 +5673,7 @@ pub grit_lib::error::Error::MoveNothingToMove::src: alloc::string::String
 pub grit_lib::error::Error::MoveSourceNotTracked
 pub grit_lib::error::Error::MoveSourceNotTracked::src: alloc::string::String
 pub grit_lib::error::Error::NoReplayInProgress
-pub grit_lib::error::Error::NotARepository(alloc::string::String)
+pub grit_lib::error::Error::NotARepository(grit_lib::error::NotARepositoryReason)
 pub grit_lib::error::Error::NotFastForward
 pub grit_lib::error::Error::NotRemovingRecursively(alloc::string::String)
 pub grit_lib::error::Error::NoteAlreadyExists
@@ -6085,6 +6085,28 @@ impl core::marker::Unpin for grit_lib::prelude::MidxError
 impl core::marker::UnsafeUnpin for grit_lib::prelude::MidxError
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::prelude::MidxError
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::prelude::MidxError
+#[non_exhaustive] pub enum grit_lib::error::NotARepositoryReason
+pub grit_lib::error::NotARepositoryReason::GitfileMissingGitdir
+pub grit_lib::error::NotARepositoryReason::GitfileMissingGitdir::path: std::path::PathBuf
+pub grit_lib::error::NotARepositoryReason::GitfileNotRegularFile
+pub grit_lib::error::NotARepositoryReason::GitfileNotRegularFile::path: std::path::PathBuf
+pub grit_lib::error::NotARepositoryReason::GitfileUnreadable
+pub grit_lib::error::NotARepositoryReason::GitfileUnreadable::error: core::io::error::Error
+pub grit_lib::error::NotARepositoryReason::GitfileUnreadable::path: std::path::PathBuf
+pub grit_lib::error::NotARepositoryReason::NoRepositoryAt
+pub grit_lib::error::NotARepositoryReason::NoRepositoryAt::path: std::path::PathBuf
+impl core::error::Error for grit_lib::error::NotARepositoryReason
+impl core::fmt::Debug for grit_lib::error::NotARepositoryReason
+pub fn grit_lib::error::NotARepositoryReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::error::NotARepositoryReason
+pub fn grit_lib::error::NotARepositoryReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::error::NotARepositoryReason
+impl core::marker::Send for grit_lib::error::NotARepositoryReason
+impl core::marker::Sync for grit_lib::error::NotARepositoryReason
+impl core::marker::Unpin for grit_lib::error::NotARepositoryReason
+impl core::marker::UnsafeUnpin for grit_lib::error::NotARepositoryReason
+impl !core::panic::unwind_safe::RefUnwindSafe for grit_lib::error::NotARepositoryReason
+impl !core::panic::unwind_safe::UnwindSafe for grit_lib::error::NotARepositoryReason
 pub enum grit_lib::error::OverwriteReason
 pub grit_lib::error::OverwriteReason::LocalChanges
 pub grit_lib::error::OverwriteReason::Untracked
@@ -15976,7 +15998,7 @@ pub grit_lib::prelude::Error::MoveNothingToMove::src: alloc::string::String
 pub grit_lib::prelude::Error::MoveSourceNotTracked
 pub grit_lib::prelude::Error::MoveSourceNotTracked::src: alloc::string::String
 pub grit_lib::prelude::Error::NoReplayInProgress
-pub grit_lib::prelude::Error::NotARepository(alloc::string::String)
+pub grit_lib::prelude::Error::NotARepository(grit_lib::error::NotARepositoryReason)
 pub grit_lib::prelude::Error::NotFastForward
 pub grit_lib::prelude::Error::NotRemovingRecursively(alloc::string::String)
 pub grit_lib::prelude::Error::NoteAlreadyExists

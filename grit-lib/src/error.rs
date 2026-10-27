@@ -721,6 +721,41 @@ pub enum PathOutsideRepoError {
     },
 }
 
+/// Why a path could not be opened as a Git repository; carried by [`Error::NotARepository`].
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum NotARepositoryReason {
+    /// No usable git directory exists at `path`, or discovery found none at or above it.
+    #[error("{}", crate::git_path::path_for_error_message(path))]
+    NoRepositoryAt {
+        /// Directory, git directory, or `.git` path that was probed.
+        path: std::path::PathBuf,
+    },
+    /// A `.git` entry is a FIFO, socket or device rather than a regular file or directory.
+    #[error(
+        "invalid gitfile format: {} is not a regular file",
+        crate::git_path::path_for_error_message(path)
+    )]
+    GitfileNotRegularFile {
+        /// The offending `.git` entry.
+        path: std::path::PathBuf,
+    },
+    /// A gitfile has no `gitdir: <path>` line.
+    #[error("invalid gitfile format")]
+    GitfileMissingGitdir {
+        /// The gitfile that was parsed.
+        path: std::path::PathBuf,
+    },
+    /// A gitfile exists but could not be read (permissions, invalid UTF-8, ...).
+    #[error("{error}")]
+    GitfileUnreadable {
+        /// The gitfile that could not be read.
+        path: std::path::PathBuf,
+        /// The underlying read failure.
+        error: std::io::Error,
+    },
+}
+
 fn maintenance_running_message(holder: &crate::maintenance::GcLockHolder) -> String {
     match (holder.pid, holder.host.as_deref()) {
         (Some(pid), Some(host)) => {
@@ -760,7 +795,7 @@ fn restore_unmerged_message(paths: &[String]) -> String {
 pub enum Error {
     /// A repository could not be found or is structurally invalid.
     #[error("not a git repository (or any of the parent directories): {0}")]
-    NotARepository(String),
+    NotARepository(NotARepositoryReason),
 
     /// A bare repository was found but access is forbidden by safe.bareRepository.
     #[error("cannot use bare repository '{0}' (safe.bareRepository is 'explicit')")]

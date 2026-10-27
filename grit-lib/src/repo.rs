@@ -43,7 +43,7 @@ use crate::config::{
 };
 use crate::diagnostics::{self, DiagnosticsHandle};
 use crate::environment::{Environment, RepositoryOptions};
-use crate::error::{Error, Result};
+use crate::error::{Error, NotARepositoryReason, Result};
 use crate::git_dir::io_error::map_index_write_error;
 use crate::git_path::path_for_error_message;
 use crate::hooks::run_hook;
@@ -3642,37 +3642,24 @@ fn try_open_at(options: &RepositoryOptions, dir: &Path) -> Result<Option<Discove
     #[cfg(unix)]
     {
         use std::os::unix::fs::FileTypeExt;
+        let is_special = |ft: fs::FileType| {
+            ft.is_fifo() || ft.is_socket() || ft.is_block_device() || ft.is_char_device()
+        };
         if let Ok(meta) = fs::symlink_metadata(&dot_git) {
             let ft = meta.file_type();
-            if ft.is_fifo() || ft.is_socket() || ft.is_block_device() || ft.is_char_device() {
-                return Err(Error::NotARepository(format!(
-                    "invalid gitfile format: {} is not a regular file",
-                    path_for_error_message(&dot_git)
-                )));
-            }
-            if ft.is_symlink() {
-                if let Ok(target_meta) = fs::metadata(&dot_git) {
-                    let tft = target_meta.file_type();
-                    if tft.is_fifo()
-                        || tft.is_socket()
-                        || tft.is_block_device()
-                        || tft.is_char_device()
-                    {
-                        return Err(Error::NotARepository(format!(
-                            "invalid gitfile format: {} is not a regular file",
-                            path_for_error_message(&dot_git)
-                        )));
-                    }
-                }
+            let target_special = ft.is_symlink()
+                && fs::metadata(&dot_git).is_ok_and(|target| is_special(target.file_type()));
+            if is_special(ft) || target_special {
+                return Err(Error::NotARepository(
+                    NotARepositoryReason::GitfileNotRegularFile { path: dot_git },
+                ));
             }
         }
     }
 
     if dot_git.is_file() {
         // gitfile indirection: file contains "gitdir: <path>"
-        let content =
-            fs::read_to_string(&dot_git).map_err(|e| Error::NotARepository(e.to_string()))?;
-        let git_dir = parse_gitfile(&content, dir)?;
+        let git_dir = resolve_gitfile(&dot_git)?;
         let mut opts = options.clone();
         opts.validate_repository_format = false;
         opts.work_tree = Some(dir.to_path_buf());
@@ -4177,12 +4164,7 @@ fn resolve_core_worktree_path(git_dir: &Path, raw: &str) -> Result<PathBuf> {
 /// When `GIT_DIR` names a gitfile, resolve to the real git directory.
 fn resolve_git_dir_env_path(git_dir: &Path) -> Result<PathBuf> {
     if git_dir.is_file() {
-        let content =
-            fs::read_to_string(git_dir).map_err(|e| Error::NotARepository(e.to_string()))?;
-        let base = git_dir
-            .parent()
-            .ok_or_else(|| not_a_repository_at(git_dir))?;
-        return parse_gitfile(&content, base);
+        return resolve_gitfile(git_dir);
     }
     Ok(git_dir.to_path_buf())
 }
@@ -4208,18 +4190,15 @@ pub fn resolve_dot_git(dot_git: &Path) -> Result<PathBuf> {
             .map_err(|_| not_a_repository_at(dot_git));
     }
     if dot_git.is_file() {
-        let content =
-            fs::read_to_string(dot_git).map_err(|e| Error::NotARepository(e.to_string()))?;
-        let base = dot_git
-            .parent()
-            .ok_or_else(|| not_a_repository_at(dot_git))?;
-        return parse_gitfile(&content, base);
+        return resolve_gitfile(dot_git);
     }
     Err(not_a_repository_at(dot_git))
 }
 
 fn not_a_repository_at(path: &Path) -> Error {
-    Error::NotARepository(path_for_error_message(path))
+    Error::NotARepository(NotARepositoryReason::NoRepositoryAt {
+        path: path.to_path_buf(),
+    })
 }
 
 /// Canonicalize the longest existing prefix of `path` and append the rest unchanged, so a
@@ -4315,23 +4294,38 @@ fn linked_worktree_view(
     Arc::new(LinkedWorktreeRefStore::new(git_dir.to_path_buf(), store))
 }
 
-/// Parse a gitfile's `"gitdir: <path>"` line.
-fn parse_gitfile(content: &str, base: &Path) -> Result<PathBuf> {
-    for line in content.lines() {
-        if let Some(rest) = line.strip_prefix("gitdir:") {
-            let rel = rest.trim();
-            let path = if Path::new(rel).is_absolute() {
-                PathBuf::from(rel)
-            } else {
-                base.join(rel)
-            };
-            if !path.exists() {
-                return Err(not_a_repository_at(&path));
-            }
-            return Ok(path);
-        }
+/// Read `gitfile` and resolve its `gitdir:` target.
+fn resolve_gitfile(gitfile: &Path) -> Result<PathBuf> {
+    let content = fs::read_to_string(gitfile).map_err(|error| {
+        Error::NotARepository(NotARepositoryReason::GitfileUnreadable {
+            path: gitfile.to_path_buf(),
+            error,
+        })
+    })?;
+    parse_gitfile(&content, gitfile)
+}
+
+/// Parse the `"gitdir: <path>"` line of `gitfile`'s `content`; a relative target resolves
+/// against the directory containing `gitfile`.
+fn parse_gitfile(content: &str, gitfile: &Path) -> Result<PathBuf> {
+    let Some(target) = content
+        .lines()
+        .find_map(|line| line.strip_prefix("gitdir:"))
+    else {
+        return Err(Error::NotARepository(
+            NotARepositoryReason::GitfileMissingGitdir {
+                path: gitfile.to_path_buf(),
+            },
+        ));
+    };
+    let path = gitfile
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(target.trim());
+    if !path.exists() {
+        return Err(not_a_repository_at(&path));
     }
-    Err(Error::NotARepository("invalid gitfile format".to_owned()))
+    Ok(path)
 }
 
 /// Resolve the initial branch name for a new repository.
@@ -4366,7 +4360,7 @@ fn resolve_git_dir_for_init(path: &Path, options: &InitOptions) -> Result<PathBu
     let dot_git = path.join(".git");
     if dot_git.is_file() {
         let content = fs::read_to_string(&dot_git)?;
-        return parse_gitfile(&content, path);
+        return parse_gitfile(&content, &dot_git);
     }
     Ok(dot_git)
 }
