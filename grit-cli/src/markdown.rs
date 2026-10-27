@@ -1370,6 +1370,26 @@ pub fn print_history_rewrite_outcome(
     print_history_rewrite_rows(w, &outcome.rewritten, &outcome.refs, outcome.head.as_ref())
 }
 
+pub fn print_history_undo_restores(
+    w: &mut dyn Write,
+    dry_run: bool,
+    restored_paths: &[String],
+    unrestored_edits: Option<&str>,
+) -> anyhow::Result<()> {
+    let verb = if dry_run { "would restore" } else { "restored" };
+    for path in restored_paths {
+        outln!(w, "- {verb} `{path}` (index and work tree)");
+    }
+    if let Some(oid) = unrestored_edits {
+        outln!(
+            w,
+            "- staged edits from the undone command were not restored; they remain in commit `{}`",
+            short_hex(oid)
+        );
+    }
+    Ok(())
+}
+
 fn print_history_rewrite_rows(
     w: &mut dyn Write,
     rewritten: &[RewrittenPair],

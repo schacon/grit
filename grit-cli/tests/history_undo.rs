@@ -154,3 +154,78 @@ fn history_undo_json_and_dry_run() -> TestResult {
     assert_eq!(applied_v["dry_run"], false);
     Ok(())
 }
+
+fn git_stdout(dir: &Path, args: &[&str]) -> Result<String, Box<dyn Error>> {
+    let out = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", null_device())
+        .env("GIT_CONFIG_SYSTEM", null_device())
+        .output()?;
+    assert!(out.status.success(), "git {args:?}");
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// The issue's reproduction: a staged edit folded into `HEAD~2` comes back on undo.
+fn fixup_staged_edit_into_root(dir: &Path) -> TestResult {
+    git(dir, &["init", "-q", "-b", "main"])?;
+    for (path, content, msg) in [("a.txt", "a\n", "c1"), ("b.txt", "b\n", "c2")] {
+        fs::write(dir.join(path), content)?;
+        git(dir, &["add", path])?;
+        git(dir, &["commit", "-q", "-m", msg])?;
+    }
+    fs::write(dir.join("a.txt"), "a\na-fixed\n")?;
+    git(dir, &["add", "a.txt"])?;
+    let fixup = gs(dir, ["history", "fixup", "HEAD~1"])?;
+    assert!(fixup.success(), "{}\n{}", fixup.stdout, fixup.stderr);
+    Ok(())
+}
+
+#[test]
+fn history_undo_after_fixup_reports_restored_paths() -> TestResult {
+    let dir = Scratch::new("fixup-human")?;
+    fixup_staged_edit_into_root(dir.path())?;
+    let undo = gs(dir.path(), ["history", "undo"])?;
+    assert!(undo.success(), "{}\n{}", undo.stdout, undo.stderr);
+    assert!(
+        undo.stdout.contains("restored a.txt (index and work tree)"),
+        "{}",
+        undo.stdout
+    );
+    assert_eq!(
+        git_stdout(dir.path(), &["status", "--porcelain"])?,
+        "M  a.txt\n"
+    );
+
+    let redo = gs(dir.path(), ["--markdown", "history", "undo"])?;
+    assert!(redo.success(), "{}\n{}", redo.stdout, redo.stderr);
+    assert!(
+        redo.stdout
+            .contains("- restored `a.txt` (index and work tree)"),
+        "{}",
+        redo.stdout
+    );
+    assert_eq!(git_stdout(dir.path(), &["status", "--porcelain"])?, "");
+    Ok(())
+}
+
+#[test]
+fn history_undo_json_lists_restored_paths_and_unrestored_edits() -> TestResult {
+    let dir = Scratch::new("fixup-json")?;
+    fixup_staged_edit_into_root(dir.path())?;
+    let fixed_tip = git_stdout(dir.path(), &["rev-parse", "HEAD"])?;
+
+    let dry = gs(dir.path(), ["--json", "history", "undo", "--dry-run"])?;
+    assert!(dry.success(), "{}\n{}", dry.stdout, dry.stderr);
+    let v: Value = serde_json::from_str(dry.stdout.trim())?;
+    assert_eq!(v["restored_paths"], serde_json::json!(["a.txt"]));
+    assert!(v.get("unrestored_edits").is_none());
+
+    fs::remove_file(dir.path().join(".git/grit/history-last-work"))?;
+    let undo = gs(dir.path(), ["--json", "history", "undo"])?;
+    assert!(undo.success(), "{}\n{}", undo.stdout, undo.stderr);
+    let v: Value = serde_json::from_str(undo.stdout.trim())?;
+    assert!(v.get("restored_paths").is_none());
+    assert_eq!(v["unrestored_edits"], fixed_tip.trim());
+    Ok(())
+}

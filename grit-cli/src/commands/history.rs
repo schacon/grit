@@ -643,6 +643,56 @@ impl MarkdownRender for HistoryRewriteOutcome {
     }
 }
 
+/// Result of `grit history undo`: the ref movement plus any edits put back.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct HistoryUndoOutcome {
+    /// Refs and `HEAD` the undo moved (or would move).
+    #[serde(flatten)]
+    pub rewrite: HistoryRewriteOutcome,
+    /// Paths whose staged and work tree edits were (or, with `--dry-run`, would be) put back,
+    /// because the undone fixup or absorb had folded them into history. Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub restored_paths: Vec<String>,
+    /// Commit (full hex) that still holds the edits an undone fixup or absorb folded in, when
+    /// they could not be put back. Omitted otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unrestored_edits: Option<String>,
+}
+
+impl HumanRender for HistoryUndoOutcome {
+    fn render_human(&self, w: &mut dyn Write, ctx: &RenderContext) -> Result<()> {
+        self.rewrite.render_human(w, ctx)?;
+        let verb = if self.rewrite.dry_run {
+            "would restore"
+        } else {
+            "restored"
+        };
+        for path in &self.restored_paths {
+            outln!(w, "  {verb} {path} (index and work tree)");
+        }
+        if let Some(oid) = &self.unrestored_edits {
+            outln!(
+                w,
+                "Staged edits from the undone command were not restored; they remain in commit {}",
+                short(oid)
+            );
+        }
+        Ok(())
+    }
+}
+
+impl MarkdownRender for HistoryUndoOutcome {
+    fn render_markdown(&self, w: &mut dyn Write, ctx: &RenderContext) -> Result<()> {
+        self.rewrite.render_markdown(w, ctx)?;
+        markdown::print_history_undo_restores(
+            w,
+            self.rewrite.dry_run,
+            &self.restored_paths,
+            self.unrestored_edits.as_deref(),
+        )
+    }
+}
+
 /// Repository, config and rewrite options shared by every history subcommand.
 struct Rewrite {
     repo: Repository,
@@ -1491,7 +1541,7 @@ fn resolve_rebase_upstream(repo: &Repository, upstream: Option<&str>) -> Result<
 }
 
 /// Restore refs (and the worktree when needed) from the last recorded history rewrite.
-pub fn run_undo(shared: &HistoryRewriteArgs) -> Result<HistoryRewriteOutcome> {
+pub fn run_undo(shared: &HistoryRewriteArgs) -> Result<HistoryUndoOutcome> {
     let on_err = history_error("history undo");
     let repo = context::discover()?;
     let rewrite = Rewrite::new(repo, shared)?;
@@ -1507,7 +1557,7 @@ pub fn run_undo(shared: &HistoryRewriteArgs) -> Result<HistoryRewriteOutcome> {
         hooks: PostOperationHooks::Skip,
     };
     let outcome = undo_last_rewrite(&rewrite.repo, &apply_opts, shared.dry_run).map_err(on_err)?;
-    Ok(HistoryRewriteOutcome {
+    let rewrite = HistoryRewriteOutcome {
         operation: "undo".into(),
         rewritten: Vec::new(),
         refs: outcome
@@ -1526,6 +1576,11 @@ pub fn run_undo(shared: &HistoryRewriteArgs) -> Result<HistoryRewriteOutcome> {
         }),
         dry_run: outcome.dry_run,
         exec: Vec::new(),
+    };
+    Ok(HistoryUndoOutcome {
+        rewrite,
+        restored_paths: outcome.restored_paths,
+        unrestored_edits: outcome.unrestored_edits.map(|oid| oid.to_hex()),
     })
 }
 

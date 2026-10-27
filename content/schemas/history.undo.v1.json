@@ -107,7 +107,7 @@
       "type": "object"
     }
   },
-  "description": "Result of `grit history drop`, `move`, `reword`, `fixup`, `squash`, `absorb`, `rebase`, and `undo`, and top-level `grit rebase`.",
+  "description": "Result of `grit history undo`: the ref movement plus any edits put back.",
   "properties": {
     "dry_run": {
       "description": "Whether refs were left unchanged (`true` for `--dry-run`).",
@@ -142,12 +142,26 @@
       },
       "type": "array"
     },
+    "restored_paths": {
+      "description": "Paths whose staged and work tree edits were (or, with `--dry-run`, would be) put back, because the undone fixup or absorb had folded them into history. Omitted when empty.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
     "rewritten": {
       "description": "Original and replacement commit OIDs for every rewritten commit.",
       "items": {
         "$ref": "#/definitions/RewrittenPair"
       },
       "type": "array"
+    },
+    "unrestored_edits": {
+      "description": "Commit (full hex) that still holds the edits an undone fixup or absorb folded in, when they could not be put back. Omitted otherwise.",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
@@ -157,6 +171,6 @@
     "refs",
     "rewritten"
   ],
-  "title": "HistoryRewriteOutcome",
+  "title": "HistoryUndoOutcome",
   "type": "object"
 }

@@ -112,7 +112,8 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         fsck::FsckOutcome,
         gc::GcOutcome,
         history::{
-            HistoryAbsorbOutcome, HistoryRewriteOutcome, RebaseCheckOutcome, RebaseCliOutcome,
+            HistoryAbsorbOutcome, HistoryRewriteOutcome, HistoryUndoOutcome, RebaseCheckOutcome,
+            RebaseCliOutcome,
         },
         hooks::HooksOutcome,
         ignore::IgnoreCheckOutcome,
@@ -224,7 +225,7 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<HistoryRewriteOutcome>("history.split"),
         entry::<RebaseCheckOutcome>("rebase.check"),
         entry::<HistoryAbsorbOutcome>("history.absorb"),
-        entry::<HistoryRewriteOutcome>("history.undo"),
+        entry::<HistoryUndoOutcome>("history.undo"),
         entry::<RevertOutcome>("revert"),
         entry::<StashPushOutcome>("stash"),
         entry::<StashPushOutcome>("stash.push"),
