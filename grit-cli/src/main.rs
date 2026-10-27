@@ -2357,7 +2357,12 @@ fn run() -> Result<ExitStatus, anyhow::Error> {
         now: context::wall_clock_now(&env),
     };
     let auto_maintenance = cli.command.as_ref().is_some_and(writes_objects);
-    match dispatch(cli, &opts, &render_ctx, &env) {
+    let result = if cli.command.as_ref().is_some_and(talks_to_remotes) {
+        stdio::with_sigpipe_ignored(|| dispatch(cli, &opts, &render_ctx, &env))
+    } else {
+        dispatch(cli, &opts, &render_ctx, &env)
+    };
+    match result {
         Ok(ExitStatus::Success) if auto_maintenance => {
             commands::gc::run_auto_after_command(opts.mode, render_ctx.now);
             Ok(ExitStatus::Success)
@@ -2399,6 +2404,25 @@ fn writes_objects(command: &Command) -> bool {
         }
         _ => false,
     }
+}
+
+/// Commands that may run credential helpers or remote transports. Those children can exit
+/// without reading what grit writes to them, which must fail the write (as in Git) instead
+/// of killing grit with `SIGPIPE`.
+fn talks_to_remotes(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Push { .. }
+            | Command::Fetch { .. }
+            | Command::Pull { .. }
+            | Command::Clone { .. }
+            | Command::Remote { .. }
+            | Command::Auth { .. }
+            | Command::Checkout { .. }
+            | Command::Checkin { .. }
+            | Command::Integrate { .. }
+            | Command::Slice { .. }
+    )
 }
 
 fn history_action_shared(action: &HistoryAction) -> &commands::history::HistoryRewriteArgs {

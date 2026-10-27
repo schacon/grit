@@ -353,10 +353,9 @@ fn push_once(
         no_verify: wire.no_verify,
         ..Default::default()
     };
-    crate::stdio::with_sigpipe_ignored(|| {
-        remote.push(repo, specs, options, progress, &NeverCancel, Some(factory))
-    })
-    .map_err(map_remote_error)
+    remote
+        .push(repo, specs, options, progress, &NeverCancel, Some(factory))
+        .map_err(map_remote_error)
 }
 
 #[cfg(test)]

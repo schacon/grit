@@ -685,6 +685,22 @@ fn credential_helper_commands_never_appear_in_auth_errors() {
         assert!(!shown.contains("literal-secret"), "{args:?}: {shown}");
         assert!(!shown.contains("!echo"), "{args:?}: {shown}");
     }
+
+    // The helper exits without reading its request, so writing it can hit a closed pipe;
+    // that must fail the request, never kill grit with SIGPIPE. Repeat to catch the race.
+    for _ in 0..20 {
+        for args in [
+            ["--json", "push", "origin", "main"],
+            ["--json", "fetch", "origin", "main"],
+        ] {
+            let out = run(&home, &work, &args);
+            assert_eq!(out.status.code(), Some(1), "{args:?}: {out:?}");
+            assert!(
+                String::from_utf8_lossy(&out.stdout).contains("has no credentials"),
+                "{args:?}: {out:?}"
+            );
+        }
+    }
 }
 
 #[test]

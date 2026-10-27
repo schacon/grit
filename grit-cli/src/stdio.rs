@@ -18,7 +18,8 @@ pub fn configure() {}
 
 /// Run `f` with `SIGPIPE` ignored, so a write to a pipe whose reader is gone (a `pre-push`
 /// hook that exits without reading its stdin, a transport helper that hangs up) fails with
-/// `BrokenPipe` instead of killing the process. Git ignores `SIGPIPE` while pushing too.
+/// `BrokenPipe` instead of killing the process. Git ignores `SIGPIPE` while pushing and while
+/// talking to credential helpers too; `main` runs every command that reaches a remote this way.
 #[cfg(unix)]
 pub fn with_sigpipe_ignored<T>(f: impl FnOnce() -> T) -> T {
     // SAFETY: `signal` only swaps this process's `SIGPIPE` disposition; the previous one is
