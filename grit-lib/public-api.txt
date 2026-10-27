@@ -5694,6 +5694,9 @@ pub grit_lib::error::Error::NothingStagedToCommit
 pub grit_lib::error::Error::NothingStagedToCommit::unstaged: usize
 pub grit_lib::error::Error::NothingStagedToCommit::untracked: usize
 pub grit_lib::error::Error::NothingToCommit
+#[non_exhaustive] pub grit_lib::error::Error::ObjectFormatMismatch
+pub grit_lib::error::Error::ObjectFormatMismatch::repository: grit_lib::objects::HashAlgo
+pub grit_lib::error::Error::ObjectFormatMismatch::store: grit_lib::objects::HashAlgo
 pub grit_lib::error::Error::ObjectHeaderTooLong
 pub grit_lib::error::Error::ObjectHeaderTooLong::oid: alloc::string::String
 pub grit_lib::error::Error::ObjectNotFound(alloc::string::String)
@@ -15994,6 +15997,9 @@ pub grit_lib::prelude::Error::NothingStagedToCommit
 pub grit_lib::prelude::Error::NothingStagedToCommit::unstaged: usize
 pub grit_lib::prelude::Error::NothingStagedToCommit::untracked: usize
 pub grit_lib::prelude::Error::NothingToCommit
+#[non_exhaustive] pub grit_lib::prelude::Error::ObjectFormatMismatch
+pub grit_lib::prelude::Error::ObjectFormatMismatch::repository: grit_lib::objects::HashAlgo
+pub grit_lib::prelude::Error::ObjectFormatMismatch::store: grit_lib::objects::HashAlgo
 pub grit_lib::prelude::Error::ObjectHeaderTooLong
 pub grit_lib::prelude::Error::ObjectHeaderTooLong::oid: alloc::string::String
 pub grit_lib::prelude::Error::ObjectNotFound(alloc::string::String)

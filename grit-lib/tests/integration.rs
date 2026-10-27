@@ -1037,6 +1037,8 @@ mod odb_loose_store_git_compat;
 #[cfg(feature = "full-tests")]
 #[path = "odb_midx_lookup_passes_git_compat.rs"]
 mod odb_midx_lookup_passes_git_compat;
+#[path = "odb_object_format.rs"]
+mod odb_object_format;
 #[path = "odb_open_stream.rs"]
 mod odb_open_stream;
 #[cfg(feature = "full-tests")]

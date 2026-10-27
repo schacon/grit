@@ -1000,6 +1000,11 @@ impl Odb {
     /// The git directory is taken from the attached `config_git_dir` when set,
     /// otherwise inferred as the parent of the `objects/` directory. Defaults
     /// to [`HashAlgo::Sha1`] when no config can be read.
+    ///
+    /// With a custom [`OdbBuilder::primary`] this is the store's own algorithm. A
+    /// successful [`RepositoryBuilder::open`](crate::repo::RepositoryBuilder::open) has
+    /// already checked that it equals the repository's object format; a standalone
+    /// [`OdbBuilder::build`] reports the store's algorithm unchecked.
     #[must_use]
     pub fn hash_algo(&self) -> HashAlgo {
         if let Some(primary) = &self.custom_primary {

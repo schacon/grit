@@ -29,7 +29,7 @@ use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::fsck::reachability_roots;
 use crate::gc::prune_loose_unreachable;
-use crate::objects::{oid_hash_map, ObjectId};
+use crate::objects::{oid_hash_map, HashAlgo, ObjectId};
 use crate::odb::store::{ObjectStore, WritableObjectStore};
 use crate::repo::Repository;
 
@@ -82,6 +82,11 @@ impl OdbBuilder {
     /// - `"push"`: [`Remote::push`](crate::remote::Remote::push) and
     ///   [`RepositoryRemotes::push`](crate::repo_handles::RepositoryRemotes::push)
     /// - maintenance: [`Odb::gc`], [`Odb::write_commit_graph`], repack, MIDX, and pack helpers
+    ///
+    /// The store's [`ObjectStore::hash_algo`] must match the repository's object format:
+    /// [`RepositoryBuilder::open`](crate::repo::RepositoryBuilder::open) fails with
+    /// [`Error::ObjectFormatMismatch`] otherwise. [`Self::build`] does not check, since it
+    /// has no repository config to compare against.
     #[must_use]
     pub fn primary(mut self, store: Arc<dyn WritableObjectStore>) -> Self {
         self.custom_primary = Some(store);
@@ -89,6 +94,10 @@ impl OdbBuilder {
     }
 
     /// Append a read-only store consulted after the primary and before alternates.
+    ///
+    /// Like [`Self::primary`], its hash algorithm must match the repository's object format
+    /// or [`RepositoryBuilder::open`](crate::repo::RepositoryBuilder::open) fails with
+    /// [`Error::ObjectFormatMismatch`].
     #[must_use]
     pub fn push_read_source(mut self, store: Arc<dyn ObjectStore>) -> Self {
         self.read_sources.push(store);
@@ -115,6 +124,14 @@ impl OdbBuilder {
     /// Whether [`Self::primary`] replaced the files-backed primary store.
     pub(crate) fn has_custom_primary(&self) -> bool {
         self.custom_primary.is_some()
+    }
+
+    /// Hash algorithms of the injected stores: the custom primary, then each read source.
+    pub(crate) fn injected_hash_algos(&self) -> impl Iterator<Item = HashAlgo> + '_ {
+        self.custom_primary
+            .iter()
+            .map(|store| store.hash_algo())
+            .chain(self.read_sources.iter().map(|store| store.hash_algo()))
     }
 
     /// Construct an [`Odb`] handle (attach [`Odb::with_config_git_dir`] when opening a repository).

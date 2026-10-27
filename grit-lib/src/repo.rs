@@ -328,6 +328,10 @@ impl RepositoryBuilder {
     /// - [`Error::OdbObjectsDirMismatch`] when a files-backed [`Self::odb_builder`] names a
     ///   directory other than the repository's `objects/` (or the environment's
     ///   `GIT_OBJECT_DIRECTORY`).
+    /// - [`Error::ObjectFormatMismatch`] when the builder's custom primary or a read source
+    ///   reports a [`hash_algo`](crate::odb::store::ObjectStore::hash_algo) other than the
+    ///   repository's `extensions.objectformat` (SHA-1 when unset or when the git directory
+    ///   has no config).
     /// - [`Error::InvalidRef`] when [`Self::initial_branch`] is not a valid branch name.
     /// - [`Error::RefStore`] when seeding `HEAD` in the ref store fails.
     pub fn open(self, git_dir: &Path, work_tree: Option<&Path>) -> Result<Repository> {
@@ -1688,6 +1692,7 @@ impl Repository {
             });
         }
         builder.set_objects_dir(objects_dir);
+        let injected_algos: Vec<HashAlgo> = builder.injected_hash_algos().collect();
 
         let work_tree = match work_tree {
             Some(p) => {
@@ -1746,9 +1751,31 @@ impl Repository {
         if options.validate_repository_format {
             repo.validate_repository_format_cached()?;
         }
+        repo.check_injected_object_format(&injected_algos)?;
         warn_core_bare_worktree_conflict(options, &repo);
         let _ = trace_repo_setup_if_requested(&repo);
         Ok(repo)
+    }
+
+    /// Fail with [`Error::ObjectFormatMismatch`] when one of `injected` (the hash algorithms
+    /// of the stores passed to [`RepositoryBuilder::odb_builder`]) differs from
+    /// `extensions.objectformat`, SHA-1 when unset.
+    ///
+    /// Reads the config snapshot the open already loaded. Files-backed primaries and
+    /// alternates take the repository's algorithm themselves and are not listed.
+    fn check_injected_object_format(&self, injected: &[HashAlgo]) -> Result<()> {
+        if injected.is_empty() {
+            return Ok(());
+        }
+        let repository = self
+            .ensure_config_arc_fast()?
+            .get("extensions.objectformat")
+            .and_then(|name| HashAlgo::from_name(&name))
+            .unwrap_or(HashAlgo::Sha1);
+        match injected.iter().find(|algo| **algo != repository) {
+            Some(&store) => Err(Error::ObjectFormatMismatch { repository, store }),
+            None => Ok(()),
+        }
     }
 
     /// Discover a repository starting from `start` (defaults to [`Environment::cwd`] when `None`).
