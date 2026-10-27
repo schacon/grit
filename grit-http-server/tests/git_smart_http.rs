@@ -571,3 +571,69 @@ fn receive_fsck_objects_refuses_malformed_commit_over_http() {
         rev_parse(&work, "HEAD")
     );
 }
+
+/// Issue #2136: a push from a `--depth 1` clone announces its shallow boundary.
+/// Over smart HTTP it used to fail with HTTP 500; it must apply like any push.
+#[test]
+fn push_from_shallow_clone_over_grit_http_server() {
+    let server_bin = require_binary("grit-http-server");
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let origin = tmp.path().join("origin");
+    std::fs::create_dir_all(&origin).unwrap();
+    git(&origin, &["init", "-q", "-b", "main", "."]);
+    for i in 0..3 {
+        std::fs::write(origin.join(format!("f{i}")), format!("{i}\n")).unwrap();
+        git(&origin, &["add", "."]);
+        git(&origin, &["commit", "-q", "-m", &format!("c{i}")]);
+    }
+    let root = tmp.path().join("srv");
+    std::fs::create_dir_all(&root).unwrap();
+    let bare = root.join("project.git");
+    git(
+        &origin,
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            ".",
+            bare.to_str().expect("utf8 path"),
+        ],
+    );
+
+    let client = tmp.path().join("sh1");
+    let file_url = format!("file://{}", origin.display());
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            file_url.as_str(),
+            client.to_str().expect("utf8"),
+        ],
+    );
+    git(&client, &["commit", "-q", "--allow-empty", "-m", "x"]);
+
+    let port = require_port();
+    let child = spawn_server(&server_bin, &root, port, None);
+    let _guard = ServerGuard(child);
+    assert!(
+        wait_ready(port),
+        "grit-http-server did not become ready on port {port}"
+    );
+    let url = format!("http://127.0.0.1:{port}/project.git");
+    let out = git_output(&client, &["push", url.as_str(), "HEAD:refs/heads/t2"]);
+    assert!(
+        out.status.success(),
+        "push from a shallow clone failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        rev_parse(&bare, "refs/heads/t2"),
+        rev_parse(&client, "HEAD")
+    );
+    assert!(!bare.join("shallow").exists());
+    assert!(git_ok(&bare, &["fsck", "--strict"]));
+}

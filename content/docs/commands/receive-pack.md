@@ -32,6 +32,7 @@ Every ref update is checked before it's applied, and the client is told which up
 | `transfer.fsckObjects` | Used when `receive.fsckObjects` is unset. |
 | `receive.fsck.<msg-id>` | Set one check to `error`, `warn` or `ignore`, for example `receive.fsck.missingEmail=warn`. The check after an accepted problem still runs, so ignoring one problem doesn't let another through. `nulInHeader` and `unterminatedHeader` are always errors. |
 | `receive.fsck.skipList` | A file of object ids, one per line (`#` starts a comment), that are never checked. A relative path is relative to the repository's git directory. If the file can't be read, every push is refused. |
+| `receive.shallowUpdate` | Accept pushes from a shallow clone that would make this repository shallow, and record the client's boundaries in its `shallow` file. Off by default: such an update is refused with `[remote rejected] ... (shallow update not allowed)`. A shallow clone pushing onto history this repository already has never needs it. |
 
 The pushed pack is streamed to a temp file in a quarantine directory inside the repository's object store, so memory use stays flat however large the push is. Its objects become visible in the repository only after the `pre-receive` hook accepts the push.
 
@@ -39,7 +40,9 @@ There is no other limit on push size. `grit-http-server` streams a push body str
 
 In a repository with [snapshot checkouts](../checkout/) (once [`grit serve`](../serve/#snapshot-checkouts) has made one), pushes that create, update or delete the target branch, the one `HEAD` names, are refused whatever these settings say, as `grit serve` refuses them: that branch changes only through [`grit integrate`](../integrate/) and [`grit slice`](../slice/). The refused client is told to push another branch and integrate it.
 
-Pushes that ask for an atomic update are applied all or nothing. The served repository's `pre-receive`, `update`, `post-receive` and `post-update` hooks run as they do under Git: from the repository directory with `GIT_DIR=.`, with the quarantine variables during `pre-receive`, and with push options in `GIT_PUSH_OPTION_*`.
+Pushes from a shallow clone work, such as a CI job that cloned with `--depth 1` and pushes a new branch back. Git sends the clone's shallow boundaries along with the push. When this repository already has the history below them, the push is applied as usual and the repository stays complete.
+
+Pushes that ask for an atomic update are applied all or nothing. The served repository's `pre-receive`, `update`, `post-receive` and `post-update` hooks run as they do under Git: from the repository directory with `GIT_DIR=.`, with the quarantine variables during `pre-receive`, and with push options in `GIT_PUSH_OPTION_*`. Under `receive.shallowUpdate`, a push from a shallow clone also sets `GIT_SHALLOW_FILE` to a file listing the client's boundaries, so hooks can walk the pushed history.
 
 Pushed objects are checked as strictly as `git receive-pack` checks them: problems a local `git fsck` only warns about, such as zero-padded file modes or `.git` tree entries, refuse the push unless `receive.fsck.<msg-id>` says otherwise. Problems that are only informational, such as `badFilemode`, are accepted.
 

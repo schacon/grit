@@ -19,6 +19,7 @@ use crate::parallel::{try_par_map, ParallelHashError, ParallelOp};
 use crate::receive_pack::{max_input_size_from_config, should_use_unpack_objects};
 use crate::receive_quarantine::ReceiveQuarantine;
 use crate::repo::Repository;
+use crate::shallow::{add_shallow_boundaries, load_shallow_boundaries, PushShallowInfo};
 use crate::unpack_objects::{unpack_objects, UnpackOptions};
 
 /// Bytes read from the client per call while spooling a pushed pack.
@@ -55,6 +56,14 @@ pub struct ReceivePolicy {
     /// refuses the whole push with [`UnpackError::Rejected`]. `None` skips the
     /// check.
     pub fsck_objects: Option<ObjectFsckPolicy>,
+    /// Accept pushes from a shallow client that would make this repository
+    /// shallow at one of the client's boundaries (`receive.shallowUpdate`).
+    /// The new boundaries are added to the repository's `shallow` file.
+    /// When false, such updates are refused with
+    /// [`RefUpdateRefusal::ShallowUpdateNotAllowed`]; pushes whose history the
+    /// repository already holds below the client's boundaries are accepted
+    /// either way.
+    pub shallow_update: bool,
 }
 
 impl Default for ReceivePolicy {
@@ -65,6 +74,7 @@ impl Default for ReceivePolicy {
             deny_current_branch: true,
             deny_delete_current: true,
             fsck_objects: None,
+            shallow_update: false,
         }
     }
 }
@@ -112,6 +122,7 @@ impl ReceivePolicy {
             deny_current_branch: !allows("receive.denyCurrentBranch", true),
             deny_delete_current: !allows("receive.denyDeleteCurrent", false),
             fsck_objects: fsck.then(|| ObjectFsckPolicy::from_config(config, "receive.fsck")),
+            shallow_update: flag("receive.shallowUpdate"),
         }
     }
 }
@@ -213,6 +224,11 @@ pub enum RefUpdateRefusal {
     /// fast-forward.
     #[error("unable to verify fast-forward")]
     FastForwardCheckFailed,
+    /// The pushed history ends at a boundary of the shallow client that this
+    /// repository does not hold the ancestry of, and
+    /// [`ReceivePolicy::shallow_update`] is off.
+    #[error("shallow update not allowed")]
+    ShallowUpdateNotAllowed,
     /// The pushed pack could not be stored; see
     /// [`ReceiveOutcome::unpack_error`].
     #[error("unpacker error")]
@@ -448,6 +464,15 @@ pub fn receive_pack(
 /// The pack is read only up to its trailing checksum, never to end of input:
 /// a push client keeps its side open until it has read the status report.
 ///
+/// A shallow client announces its boundaries with `shallow <oid>` lines before
+/// the commands. Their parents are not required when the pushed objects are
+/// checked. An update whose history ends at such a boundary that this
+/// repository's refs do not already reach would make the repository shallow:
+/// it is refused with [`RefUpdateRefusal::ShallowUpdateNotAllowed`] unless
+/// [`ReceivePolicy::shallow_update`] is on, in which case the boundaries are
+/// added to the `shallow` file before the ref is written and hook scripts see
+/// the client's boundaries through `GIT_SHALLOW_FILE`.
+///
 /// # Parameters
 ///
 /// - `repo`: the repository receiving the push.
@@ -506,11 +531,20 @@ pub fn receive_pack_with_hook(
         None
     };
 
+    let receiver_grafts = if request.shallow.is_empty() {
+        HashSet::new()
+    } else {
+        load_shallow_boundaries(repo.git_dir())
+    };
+    let mut shallow_info =
+        PushShallowInfo::classify(&request.shallow, repo.odb(), &receiver_grafts)?;
+    let client_boundaries: HashSet<ObjectId> = request.shallow.iter().copied().collect();
+
     let unpack_error = match quarantine.as_ref() {
         Some(q) => {
             let odb = q.odb();
             spool_push_pack(input, &odb, max_input)
-                .and_then(|pack| ingest_spooled_pack(&odb, pack, cfg.as_ref()))
+                .and_then(|pack| ingest_spooled_pack(&odb, pack, cfg.as_ref(), &client_boundaries))
                 .and_then(|indexed| match &policy.fsck_objects {
                     Some(fsck) => check_received_objects(repo, &odb, indexed, cfg.as_ref(), fsck),
                     None => Ok(()),
@@ -518,6 +552,21 @@ pub fn receive_pack_with_hook(
                 .err()
         }
         None => None,
+    };
+
+    let shallow = match quarantine.as_ref() {
+        Some(q) if unpack_error.is_none() => {
+            shallow_info.retain_received(&q.odb())?;
+            ShallowPlan::new(
+                repo,
+                &q.odb(),
+                &request,
+                policy,
+                &shallow_info,
+                &receiver_grafts,
+            )?
+        }
+        _ => ShallowPlan::none(request.commands.len()),
     };
 
     let mut hook_records = Vec::new();
@@ -535,6 +584,7 @@ pub fn receive_pack_with_hook(
             policy,
             hook,
             quarantine.as_mut(),
+            &shallow,
             sideband.then_some(&mut *output),
             &mut hook_records,
         )?
@@ -626,17 +676,27 @@ struct PushRequest {
     commands: Vec<RefCommand>,
     caps: HashSet<String>,
     push_options: Vec<String>,
+    /// The client's shallow boundaries, from `shallow <oid>` lines.
+    shallow: Vec<ObjectId>,
 }
 
 /// Read the command list up to its flush. Returns `None` when the client sent
 /// no commands (nothing to push).
+///
+/// A shallow client sends a `shallow <oid>` line for each of its boundaries
+/// before the commands; they are collected wherever they appear in the list.
 fn read_commands(repo: &Repository, input: &mut dyn Read) -> Result<Option<PushRequest>> {
     let mut commands = Vec::new();
     let mut caps = HashSet::new();
+    let mut shallow = Vec::new();
     loop {
         match read_packet(input)? {
             None | Some(Packet::Flush) => break,
             Some(Packet::Data(line)) => {
+                if let Some(hex) = line.strip_prefix("shallow ") {
+                    shallow.push(parse_oid(repo, hex)?);
+                    continue;
+                }
                 let (line, line_caps) = line.split_once('\0').unwrap_or((line.as_str(), ""));
                 if commands.is_empty() {
                     caps.extend(
@@ -692,7 +752,110 @@ fn read_commands(repo: &Repository, input: &mut dyn Read) -> Result<Option<PushR
         commands,
         caps,
         push_options,
+        shallow,
     }))
+}
+
+/// The shallow-file changes a push from a shallow client needs.
+struct ShallowPlan {
+    /// For each command, in request order, the boundaries accepting it would
+    /// add to the repository's `shallow` file.
+    roots: Vec<Vec<ObjectId>>,
+    /// Under [`ReceivePolicy::shallow_update`], a shallow file listing the
+    /// repository's boundaries and the client's, which hooks see as
+    /// `GIT_SHALLOW_FILE` so they can walk the pushed history.
+    hook_file: Option<tempfile::NamedTempFile>,
+}
+
+impl ShallowPlan {
+    /// No shallow-file changes for `commands` commands.
+    fn none(commands: usize) -> Self {
+        Self {
+            roots: vec![Vec::new(); commands],
+            hook_file: None,
+        }
+    }
+
+    /// Work out the new boundaries of every command once the pushed objects
+    /// are in `odb`.
+    fn new(
+        repo: &Repository,
+        odb: &Odb,
+        request: &PushRequest,
+        policy: &ReceivePolicy,
+        info: &PushShallowInfo,
+        receiver_grafts: &HashSet<ObjectId>,
+    ) -> Result<Self> {
+        if info.is_empty() {
+            return Ok(Self::none(request.commands.len()));
+        }
+        let mut receiver_tips: HashSet<ObjectId> = advertised_refs(repo, &[], &[], Peel::Yes)?
+            .into_iter()
+            .map(|r| r.peeled.unwrap_or(r.oid))
+            .collect();
+        receiver_tips.extend(crate::refs::resolve_ref(repo.git_dir(), "HEAD").ok());
+        let graph = repo.caches().commit_graph_chain(repo.odb().objects_dir());
+        let roots = request
+            .commands
+            .iter()
+            .map(|c| match c.new {
+                Some(new) => {
+                    info.new_roots(odb, graph.as_deref(), new, receiver_grafts, &receiver_tips)
+                }
+                None => Ok(Vec::new()),
+            })
+            .collect::<crate::error::Result<_>>()?;
+        let hook_file = if policy.shallow_update {
+            Some(temporary_shallow_file(
+                repo,
+                receiver_grafts,
+                &request.shallow,
+            )?)
+        } else {
+            None
+        };
+        Ok(Self { roots, hook_file })
+    }
+
+    /// `GIT_SHALLOW_FILE` for hook scripts, when set.
+    fn hook_env(&self) -> Result<Vec<(String, String)>> {
+        let Some(file) = &self.hook_file else {
+            return Ok(Vec::new());
+        };
+        let path = std::path::absolute(file.path())?;
+        Ok(vec![(
+            "GIT_SHALLOW_FILE".to_owned(),
+            path.to_string_lossy().into_owned(),
+        )])
+    }
+}
+
+/// Write the union of `receiver_grafts` and `client` to a temporary shallow
+/// file next to the repository's own.
+fn temporary_shallow_file(
+    repo: &Repository,
+    receiver_grafts: &HashSet<ObjectId>,
+    client: &[ObjectId],
+) -> Result<tempfile::NamedTempFile> {
+    let mut hexes: Vec<String> = receiver_grafts
+        .iter()
+        .chain(client)
+        .map(ObjectId::to_hex)
+        .collect();
+    hexes.sort_unstable();
+    hexes.dedup();
+    let dir = crate::shallow::shallow_file_path(repo.git_dir())
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| repo.git_dir().to_path_buf());
+    let mut file = tempfile::Builder::new()
+        .prefix("shallow_")
+        .tempfile_in(dir)?;
+    for hex in hexes {
+        writeln!(file, "{hex}")?;
+    }
+    file.flush()?;
+    Ok(file)
 }
 
 /// Validate, run hooks, migrate quarantine objects, and apply ref updates.
@@ -704,6 +867,7 @@ fn apply_commands_with_hooks(
     policy: &ReceivePolicy,
     hook: &dyn ReceiveHook,
     quarantine: Option<&mut ReceiveQuarantine>,
+    shallow: &ShallowPlan,
     mut sideband_out: Option<&mut dyn Write>,
     hook_records: &mut Vec<HookRunRecord>,
 ) -> Result<Vec<RefUpdateResult>> {
@@ -717,7 +881,11 @@ fn apply_commands_with_hooks(
     let mut results: Vec<RefUpdateResult> = request
         .commands
         .iter()
-        .map(|c| {
+        .zip(&shallow.roots)
+        .map(|(c, roots)| {
+            if !roots.is_empty() && !policy.shallow_update {
+                return Ok(c.refused(RefUpdateRefusal::ShallowUpdateNotAllowed));
+            }
             Ok(
                 match ref_update_policy::validate_ref_update(
                     repo,
@@ -756,7 +924,9 @@ fn apply_commands_with_hooks(
     }
 
     let algo = repo.odb().hash_algo();
-    let push_option_env = push_option_env_owned(&request.push_options);
+    let shallow_env = shallow.hook_env()?;
+    let mut push_option_env = push_option_env_owned(&request.push_options);
+    push_option_env.extend(shallow_env.iter().cloned());
     let mut pre_hook_env_owned = push_option_env.clone();
     if let Some(q) = quarantine.as_ref() {
         pre_hook_env_owned.extend(q.hook_env());
@@ -765,7 +935,11 @@ fn apply_commands_with_hooks(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let update_hook_env: &[(&str, &str)] = &[];
+    let update_hook_env: Vec<(&str, &str)> = shallow_env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let update_hook_env = update_hook_env.as_slice();
     let post_receive_env_owned = push_option_env;
     let post_receive_env: Vec<(&str, &str)> = post_receive_env_owned
         .iter()
@@ -820,6 +994,26 @@ fn apply_commands_with_hooks(
     if atomic && results.iter().any(|r| r.error.is_some()) {
         refuse_remaining(&mut results, &RefUpdateRefusal::AtomicTransactionFailed);
         return Ok(results);
+    }
+
+    let new_roots: HashSet<ObjectId> = shallow
+        .roots
+        .iter()
+        .zip(&results)
+        .filter(|(_, r)| r.error.is_none())
+        .flat_map(|(roots, _)| roots.iter().copied())
+        .collect();
+    if let Err(e) = add_shallow_boundaries(repo.git_dir(), &new_roots) {
+        let refusal = RefUpdateRefusal::RefStore(e.to_string());
+        for (roots, result) in shallow.roots.iter().zip(results.iter_mut()) {
+            if !roots.is_empty() && result.error.is_none() {
+                result.error = Some(refusal.clone());
+            }
+        }
+        if atomic {
+            refuse_remaining(&mut results, &RefUpdateRefusal::AtomicTransactionFailed);
+            return Ok(results);
+        }
     }
 
     let pending: Vec<(usize, crate::refs::store::RefUpdate)> = request
@@ -1125,10 +1319,15 @@ fn check_received_objects(
 ///
 /// Returns the ids of the installed pack's objects; `None` when the objects
 /// were unpacked as loose files.
+///
+/// The loose path checks that every pushed object's references resolve,
+/// except the parents of `shallow_boundaries`: the pushing client is shallow
+/// there and does not have them.
 fn ingest_spooled_pack(
     odb: &Odb,
     pack: SpooledPack,
     cfg: &ConfigSet,
+    shallow_boundaries: &HashSet<ObjectId>,
 ) -> std::result::Result<Option<HashSet<ObjectId>>, UnpackError> {
     if should_use_unpack_objects(&pack.header, cfg) {
         let mut reader = BufReader::with_capacity(SPOOL_CHUNK, pack.file.reopen()?);
@@ -1138,6 +1337,7 @@ fn ingest_spooled_pack(
             &UnpackOptions {
                 quiet: true,
                 strict: true,
+                shallow_boundaries: shallow_boundaries.clone(),
                 ..UnpackOptions::default()
             },
         )?;
@@ -1226,6 +1426,10 @@ mod tests {
             (
                 RefUpdateRefusal::FastForwardCheckFailed,
                 "unable to verify fast-forward",
+            ),
+            (
+                RefUpdateRefusal::ShallowUpdateNotAllowed,
+                "shallow update not allowed",
             ),
             (RefUpdateRefusal::UnpackerError, "unpacker error"),
             (
@@ -1365,6 +1569,14 @@ mod tests {
         assert!(!policy_for(Some("ignore")));
         assert!(!policy_for(Some("updateInstead")));
         assert!(policy_for(Some("refuse")));
+    }
+
+    #[test]
+    fn shallow_update_is_off_unless_configured() {
+        assert!(!ReceivePolicy::default().shallow_update);
+        let mut config = ConfigSet::new();
+        let _ = config.add_command_override("receive.shallowUpdate", "true");
+        assert!(ReceivePolicy::from_config(&config).shallow_update);
     }
 
     #[test]

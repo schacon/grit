@@ -79,74 +79,159 @@ pub fn add_shallow_boundaries(
     fs::write(shallow_file_path(git_dir), body)
 }
 
-/// Determine which of `boundaries` become *new* shallow roots when `tip` is pushed into a receiver
-/// whose existing reachable history is described by `have_tips`.
+/// The shallow boundaries a pushing client announced with `shallow <oid>` lines, classified
+/// against the receiving repository.
 ///
-/// This mirrors the receive-pack rule that a push introduces a "shallow update" when the pushed
-/// history bottoms out at a graft commit (one whose parent objects were not transferred) that the
-/// receiver cannot already reach from its own refs. The walk descends from `tip` through the
-/// `source_odb`, stopping at:
-///
-/// * commits already reachable from `have_tips` (the receiver "has" them, so no new root), and
-/// * commits in `boundaries` (recorded grafts — their parents are intentionally absent).
-///
-/// A boundary commit reached during the walk *before* hitting a have-commit is returned as a new
-/// shallow root. An empty result means the push needs no shallow update for this tip.
-///
-/// `source_odb` is the *pushing* side's object store (it holds the boundary commits and the new
-/// history); `have_tips` are the receiver's current ref tips (expressed as commit OIDs the receiver
-/// already has).
-#[must_use]
-pub fn new_shallow_roots_for_push(
-    source_odb: &Odb,
-    tip: ObjectId,
-    boundaries: &HashSet<ObjectId>,
-    have_tips: &[ObjectId],
-) -> HashSet<ObjectId> {
-    let mut new_roots = HashSet::new();
-    if boundaries.is_empty() {
-        return new_roots;
+/// A shallow client sends its own grafts before the ref commands. The pushed history may bottom
+/// out at one of them, in which case the receiver either already has that commit's ancestry, or
+/// accepting the push would make the receiver shallow there too (a *shallow update*).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct PushShallowInfo {
+    /// Announced commits the receiver already stored before the push and does not record as
+    /// grafts of its own.
+    ours: HashSet<ObjectId>,
+    /// Announced commits the receiver did not have before the push.
+    theirs: HashSet<ObjectId>,
+}
+
+impl PushShallowInfo {
+    /// Classify `announced` against the receiver as it was before the push.
+    ///
+    /// Commits the receiver already records as grafts (`receiver_grafts`) are ignored: their
+    /// ancestry is already cut there.
+    ///
+    /// # Errors
+    ///
+    /// Returns object database errors from the existence checks.
+    pub(crate) fn classify(
+        announced: &[ObjectId],
+        receiver: &Odb,
+        receiver_grafts: &HashSet<ObjectId>,
+    ) -> Result<Self> {
+        let mut info = Self::default();
+        for oid in announced.iter().filter(|o| !receiver_grafts.contains(o)) {
+            if receiver.contains(oid)? {
+                info.ours.insert(*oid);
+            } else {
+                info.theirs.insert(*oid);
+            }
+        }
+        Ok(info)
     }
 
-    // Commits the receiver already has (everything reachable from its ref tips, walked through the
-    // source object store since the receiver's tips are a subset of the source's history for a
-    // fast-forward-style push). Walking here marks the "uninteresting" cut for the descent below.
-    let mut have: HashSet<ObjectId> = HashSet::new();
-    let mut have_stack: Vec<ObjectId> = have_tips.to_vec();
-    while let Some(oid) = have_stack.pop() {
-        if !have.insert(oid) {
-            continue;
+    /// Drop announced commits the push did not deliver: they cannot be part of the pushed
+    /// history.
+    ///
+    /// # Errors
+    ///
+    /// Returns object database errors from the existence checks.
+    pub(crate) fn retain_received(&mut self, odb: &Odb) -> Result<()> {
+        let mut kept = HashSet::with_capacity(self.theirs.len());
+        for oid in self.theirs.drain() {
+            if odb.contains(&oid)? {
+                kept.insert(oid);
+            }
         }
-        // Do not walk past a boundary when collecting haves: the receiver only has the boundary
-        // commit, not its ancestors.
-        if boundaries.contains(&oid) {
-            continue;
-        }
-        if let Some(parents) = commit_parents(source_odb, &oid) {
-            have_stack.extend(parents);
-        }
+        self.theirs = kept;
+        Ok(())
     }
 
-    let mut seen: HashSet<ObjectId> = HashSet::new();
-    let mut stack = vec![tip];
-    while let Some(oid) = stack.pop() {
-        if have.contains(&oid) {
-            continue;
-        }
-        if !seen.insert(oid) {
-            continue;
-        }
-        if boundaries.contains(&oid) {
-            // Reached a graft commit not already on the receiver: this is a new shallow root.
-            new_roots.insert(oid);
-            continue;
-        }
-        if let Some(parents) = commit_parents(source_odb, &oid) {
-            stack.extend(parents);
-        }
+    /// Whether no announced commit can affect the push.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.ours.is_empty() && self.theirs.is_empty()
     }
 
-    new_roots
+    /// The announced commits that become new shallow roots on the receiver if `tip` is accepted.
+    ///
+    /// History is walked from `tip` (peeled through tags) in `odb`, which must see both the
+    /// receiver's objects and the pushed ones. A line of history ends at a receiver ref tip, at
+    /// one of the receiver's own grafts, or at an announced commit, which is then a candidate.
+    /// A candidate the push delivered is a new root. One the receiver already had is a new root
+    /// only when no receiver ref reaches it: otherwise the receiver already holds its ancestry.
+    ///
+    /// # Parameters
+    ///
+    /// - `odb`: object database holding the receiver's objects and the pushed ones.
+    /// - `graph`: the receiver's commit-graph, used to bound the ancestry checks.
+    /// - `tip`: the value a ref command asks for.
+    /// - `receiver_grafts`: the receiver's `shallow` file entries.
+    /// - `receiver_tips`: the receiver's ref values before the push, peeled to commits.
+    ///
+    /// # Returns
+    ///
+    /// The new roots, sorted; empty when accepting `tip` needs no shallow update.
+    ///
+    /// # Errors
+    ///
+    /// Returns parse errors for commits on the ancestry checks.
+    pub(crate) fn new_roots(
+        &self,
+        odb: &Odb,
+        graph: Option<&crate::commit_graph_file::CommitGraphChain>,
+        tip: ObjectId,
+        receiver_grafts: &HashSet<ObjectId>,
+        receiver_tips: &HashSet<ObjectId>,
+    ) -> Result<Vec<ObjectId>> {
+        if self.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some(tip) = peel_to_commit(odb, tip) else {
+            return Ok(Vec::new());
+        };
+        let mut roots = Vec::new();
+        let mut seen = HashSet::new();
+        let mut stack = vec![tip];
+        while let Some(oid) = stack.pop() {
+            if receiver_tips.contains(&oid) || !seen.insert(oid) {
+                continue;
+            }
+            if self.theirs.contains(&oid) {
+                roots.push(oid);
+                continue;
+            }
+            if self.ours.contains(&oid) {
+                if !reached_by_any(odb, graph, oid, receiver_tips)? {
+                    roots.push(oid);
+                }
+                continue;
+            }
+            if receiver_grafts.contains(&oid) {
+                continue;
+            }
+            if let Some(parents) = commit_parents(odb, &oid) {
+                stack.extend(parents);
+            }
+        }
+        roots.sort_unstable();
+        Ok(roots)
+    }
+}
+
+/// Whether any of `tips` reaches `commit`.
+fn reached_by_any(
+    odb: &Odb,
+    graph: Option<&crate::commit_graph_file::CommitGraphChain>,
+    commit: ObjectId,
+    tips: &HashSet<ObjectId>,
+) -> Result<bool> {
+    for tip in tips {
+        if crate::merge_base::is_ancestor_odb_walk_with_graph(odb, graph, commit, *tip)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Follow tags from `oid` to a commit; `None` when it ends elsewhere or an object is missing.
+fn peel_to_commit(odb: &Odb, mut oid: ObjectId) -> Option<ObjectId> {
+    loop {
+        let obj = odb.read(&oid).ok()?;
+        match obj.kind {
+            ObjectKind::Commit => return Some(oid),
+            ObjectKind::Tag => oid = crate::objects::parse_tag(&obj.data).ok()?.object,
+            _ => return None,
+        }
+    }
 }
 
 /// Read the shallow boundary OIDs recorded in `<git_dir>/shallow`, in file order.
@@ -349,44 +434,131 @@ mod tests {
             .expect("write commit")
     }
 
+    fn roots(
+        info: &PushShallowInfo,
+        odb: &Odb,
+        tip: ObjectId,
+        grafts: &[ObjectId],
+        tips: &[ObjectId],
+    ) -> Vec<ObjectId> {
+        info.new_roots(
+            odb,
+            None,
+            tip,
+            &grafts.iter().copied().collect(),
+            &tips.iter().copied().collect(),
+        )
+        .unwrap()
+    }
+
     #[test]
-    fn no_boundaries_means_no_shallow_roots() {
+    fn no_announced_boundaries_means_no_shallow_roots() {
         let dir = tempdir().unwrap();
         let odb = Odb::new(&dir.path().join("objects"));
         let root = write_commit(&odb, &[], "root");
         let tip = write_commit(&odb, &[root], "tip");
-        let roots = new_shallow_roots_for_push(&odb, tip, &HashSet::new(), &[]);
-        assert!(roots.is_empty());
+        let info = PushShallowInfo::classify(&[], &odb, &HashSet::new()).unwrap();
+        assert!(info.is_empty());
+        assert!(roots(&info, &odb, tip, &[], &[]).is_empty());
     }
 
     #[test]
-    fn boundary_not_on_receiver_is_a_new_root() {
-        // Source history: a(boundary) <- b <- c, with `a`'s parent intentionally absent.
+    fn delivered_boundary_is_a_new_root() {
+        // Receiver is empty; the push delivers c on top of the client's boundary b.
+        let receiver_dir = tempdir().unwrap();
+        let receiver = Odb::new(&receiver_dir.path().join("objects"));
+        let pushed_dir = tempdir().unwrap();
+        let pushed = Odb::new(&pushed_dir.path().join("objects"));
+        let a = write_commit(&pushed, &[], "a");
+        let b = write_commit(&pushed, &[a], "b");
+        let c = write_commit(&pushed, &[b], "c");
+        let mut info = PushShallowInfo::classify(&[b], &receiver, &HashSet::new()).unwrap();
+        info.retain_received(&pushed).unwrap();
+        assert_eq!(roots(&info, &pushed, c, &[], &[]), vec![b]);
+    }
+
+    #[test]
+    fn undelivered_announcement_is_dropped() {
+        let dir = tempdir().unwrap();
+        let odb = Odb::new(&dir.path().join("objects"));
+        let mut info = PushShallowInfo::classify(&[oid(0x42)], &odb, &HashSet::new()).unwrap();
+        assert!(!info.is_empty());
+        info.retain_received(&odb).unwrap();
+        assert!(info.is_empty());
+    }
+
+    #[test]
+    fn boundary_the_receiver_already_reaches_is_not_a_new_root() {
+        // The receiver has full history a <- b with `main` at b; the client is shallow at b
+        // (the reported depth-1 clone) and pushes c on top.
         let dir = tempdir().unwrap();
         let odb = Odb::new(&dir.path().join("objects"));
         let a = write_commit(&odb, &[], "a");
         let b = write_commit(&odb, &[a], "b");
+        let info = PushShallowInfo::classify(&[b], &odb, &HashSet::new()).unwrap();
         let c = write_commit(&odb, &[b], "c");
-        let mut boundaries = HashSet::new();
-        boundaries.insert(a);
-        // Receiver has nothing reachable yet, so pushing `c` introduces graft `a`.
-        let roots = new_shallow_roots_for_push(&odb, c, &boundaries, &[]);
-        assert_eq!(roots, boundaries);
+        assert!(roots(&info, &odb, c, &[], &[b]).is_empty());
     }
 
     #[test]
-    fn boundary_already_on_receiver_is_not_a_new_root() {
-        // If the receiver already has the boundary commit (and its ancestry), no shallow update.
+    fn boundary_below_a_receiver_tip_is_not_a_new_root() {
+        // The receiver's `main` moved past the client's boundary `a`, and the walk from the
+        // pushed tip does not pass through `main`: only the ancestry check covers `a`.
+        let dir = tempdir().unwrap();
+        let odb = Odb::new(&dir.path().join("objects"));
+        let root = write_commit(&odb, &[], "root");
+        let a = write_commit(&odb, &[root], "a");
+        let main = write_commit(&odb, &[a], "main");
+        let info = PushShallowInfo::classify(&[a], &odb, &HashSet::new()).unwrap();
+        let pushed = write_commit(&odb, &[a], "side");
+        assert!(roots(&info, &odb, pushed, &[], &[main]).is_empty());
+    }
+
+    #[test]
+    fn stored_boundary_no_ref_reaches_is_a_new_root() {
+        // `a` is stored on the receiver (dangling) but no ref reaches it.
+        let dir = tempdir().unwrap();
+        let odb = Odb::new(&dir.path().join("objects"));
+        let a = write_commit(&odb, &[], "a");
+        let other = write_commit(&odb, &[], "other");
+        let info = PushShallowInfo::classify(&[a], &odb, &HashSet::new()).unwrap();
+        let c = write_commit(&odb, &[a], "c");
+        assert_eq!(roots(&info, &odb, c, &[], &[other]), vec![a]);
+    }
+
+    #[test]
+    fn receiver_grafts_are_ignored_and_end_the_walk() {
+        // The receiver is itself shallow at `b`; the client announces `b` and an older `a`.
         let dir = tempdir().unwrap();
         let odb = Odb::new(&dir.path().join("objects"));
         let a = write_commit(&odb, &[], "a");
         let b = write_commit(&odb, &[a], "b");
+        let grafts = HashSet::from([b]);
+        let info = PushShallowInfo::classify(&[a, b], &odb, &grafts).unwrap();
         let c = write_commit(&odb, &[b], "c");
-        let mut boundaries = HashSet::new();
-        boundaries.insert(a);
-        // Receiver already has `b` (hence `a` via the walk), so the boundary is covered.
-        let roots = new_shallow_roots_for_push(&odb, c, &boundaries, &[b]);
-        assert!(roots.is_empty());
+        assert!(roots(&info, &odb, c, &[b], &[]).is_empty());
+    }
+
+    #[test]
+    fn tags_are_peeled_before_the_walk() {
+        let receiver_dir = tempdir().unwrap();
+        let receiver = Odb::new(&receiver_dir.path().join("objects"));
+        let dir = tempdir().unwrap();
+        let odb = Odb::new(&dir.path().join("objects"));
+        let a = write_commit(&odb, &[], "a");
+        let b = write_commit(&odb, &[a], "b");
+        let tag = odb
+            .write_loose_materialize(
+                ObjectKind::Tag,
+                format!(
+                    "object {}\ntype commit\ntag v1\ntagger A <a@x> 1 +0000\n\nv1\n",
+                    b.to_hex()
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        let info = PushShallowInfo::classify(&[a], &receiver, &HashSet::new()).unwrap();
+        assert_eq!(roots(&info, &odb, tag, &[], &[]), vec![a]);
     }
 
     #[test]
