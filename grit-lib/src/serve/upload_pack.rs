@@ -683,7 +683,7 @@ fn fetch_v2(
     let mut deepen_relative = false;
     let mut filter_spec: Option<String> = None;
     let mut want_ref_names: Vec<String> = Vec::new();
-    let mut _wait_for_done = false;
+    let mut wait_for_done = false;
     for arg in args {
         if let Some(hex) = arg.strip_prefix("want ") {
             wants.push(parse_oid(repo, hex.trim())?);
@@ -715,7 +715,7 @@ fn fetch_v2(
         } else if arg == "done" {
             done = true;
         } else if arg == "wait-for-done" {
-            _wait_for_done = true;
+            wait_for_done = true;
         } else if arg == "deepen-relative" {
             deepen_relative = true;
         } else if let Some(value) = arg.strip_prefix("server-option ") {
@@ -768,7 +768,12 @@ fn fetch_v2(
         for oid in &common {
             write_v2_fetch_line(output, &format!("ACK {}", oid.to_hex()), sideband_all)?;
         }
-        return write_flush(output);
+        if wait_for_done || !ready_to_send_pack(repo, &wants, &common)? {
+            return write_flush(output);
+        }
+        // After `ready` the pack follows in this same response.
+        write_v2_fetch_line(output, "ready", sideband_all)?;
+        write_v2_section_delim(output)?;
     }
 
     let client_shallow: Vec<ObjectId> = args
@@ -833,6 +838,39 @@ fn fetch_v2(
         output,
         true,
     )
+}
+
+/// Whether a v2 negotiation can stop at this round: some have was acknowledged
+/// and every want that peels to a commit reaches the acknowledged commits.
+///
+/// Wants that do not peel to a commit (trees, blobs) cannot be judged by
+/// ancestry and do not hold the negotiation open.
+fn ready_to_send_pack(repo: &Repository, wants: &[ObjectId], common: &[ObjectId]) -> Result<bool> {
+    if common.is_empty() {
+        return Ok(false);
+    }
+    let odb = repo.odb();
+    let mut want_commits = Vec::with_capacity(wants.len());
+    for want in wants {
+        let (peeled, kind) = odb.peel_tags(*want)?;
+        if kind == ObjectKind::Commit {
+            want_commits.push(peeled);
+        }
+    }
+    if want_commits.is_empty() {
+        return Ok(true);
+    }
+    let mut have_commits = Vec::new();
+    for oid in common {
+        if odb.read_info(oid)?.kind == ObjectKind::Commit {
+            have_commits.push(*oid);
+        }
+    }
+    Ok(crate::merge_base::wants_covered_by_haves(
+        repo,
+        &want_commits,
+        &have_commits,
+    )?)
 }
 
 fn write_v2_section_delim(output: &mut dyn Write) -> Result<()> {
@@ -1134,5 +1172,70 @@ mod tests {
         })
         .unwrap();
         assert_eq!(tags, vec![fx.tags[2].oid]);
+    }
+
+    /// Write a commit with an empty tree, `parents`, and committer time `time`.
+    fn commit_at(repo: &Repository, parents: &[ObjectId], time: i64) -> ObjectId {
+        let tree = repo
+            .odb()
+            .write_loose_materialize(ObjectKind::Tree, b"")
+            .unwrap();
+        let parents: String = parents.iter().map(|p| format!("parent {p}\n")).collect();
+        let body = format!(
+            "tree {tree}\n{parents}author T <t@x> {time} +0000\ncommitter T <t@x> {time} +0000\n\nc{time}\n"
+        );
+        repo.odb()
+            .write_loose_materialize(ObjectKind::Commit, body.as_bytes())
+            .unwrap()
+    }
+
+    #[test]
+    fn ready_needs_an_acknowledged_have() {
+        let fx = fixture(3, &[]);
+        assert!(!ready_to_send_pack(&fx.repo, &[fx.commits[2]], &[]).unwrap());
+        assert!(ready_to_send_pack(&fx.repo, &[fx.commits[2]], &[fx.commits[0]]).unwrap());
+    }
+
+    #[test]
+    fn ready_when_the_want_is_a_have_or_its_parent() {
+        let fx = fixture(3, &[]);
+        let [c0, c1, c2] = [fx.commits[0], fx.commits[1], fx.commits[2]];
+        assert!(ready_to_send_pack(&fx.repo, &[c2], &[c2]).unwrap());
+        assert!(ready_to_send_pack(&fx.repo, &[c1], &[c2]).unwrap());
+        assert!(!ready_to_send_pack(&fx.repo, &[c0], &[c2]).unwrap());
+    }
+
+    #[test]
+    fn ready_walk_stops_at_commits_older_than_the_oldest_have() {
+        let fx = fixture(1, &[]);
+        let base = fx.commits[0];
+        // `skewed` is older than the have, so the walk from `tip` stops there
+        // even though `skewed`'s parent is the have's parent.
+        let skewed = commit_at(&fx.repo, &[base], 10);
+        let tip = commit_at(&fx.repo, &[skewed], 300);
+        let recent_have = commit_at(&fx.repo, &[base], 200);
+        assert!(!ready_to_send_pack(&fx.repo, &[tip], &[recent_have]).unwrap());
+        let old_have = commit_at(&fx.repo, &[base], 5);
+        assert!(ready_to_send_pack(&fx.repo, &[tip], &[old_have]).unwrap());
+    }
+
+    #[test]
+    fn ready_requires_every_commit_want_but_not_tree_wants() {
+        let fx = fixture(6, &[3]);
+        let side = commit_at(&fx.repo, &[fx.commits[2]], 50);
+        let have = [fx.commits[0]];
+        assert!(ready_to_send_pack(&fx.repo, &[fx.commits[5], fx.commits[3]], &have).unwrap());
+        assert!(ready_to_send_pack(&fx.repo, &[fx.tags[0].oid], &have).unwrap());
+        assert!(ready_to_send_pack(&fx.repo, &[side, fx.commits[4]], &have).unwrap());
+
+        let have = [fx.commits[5]];
+        assert!(!ready_to_send_pack(&fx.repo, &[fx.commits[4], side], &have).unwrap());
+        assert!(!ready_to_send_pack(&fx.repo, &[side, fx.commits[4]], &have).unwrap());
+        let tree = fx
+            .repo
+            .odb()
+            .write_loose_materialize(ObjectKind::Tree, b"")
+            .unwrap();
+        assert!(ready_to_send_pack(&fx.repo, &[tree, fx.commits[4]], &have).unwrap());
     }
 }

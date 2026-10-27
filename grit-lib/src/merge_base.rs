@@ -231,6 +231,82 @@ pub fn is_ancestor(repo: &Repository, ancestor: ObjectId, descendant: ObjectId) 
     cache.is_ancestor(ancestor, descendant)
 }
 
+/// Whether the acknowledged haves of a fetch negotiation cover every wanted
+/// commit, so upload-pack may answer `ready` and send the pack.
+///
+/// Each have commit and its immediate parents count as held by the client.
+/// A want is covered when walking its parents reaches a held commit. Commits
+/// older (by committer date) than the oldest have are not walked through,
+/// which keeps the check to the few commits between the wants and the haves
+/// instead of a history scan. Parents and dates come from the commit-graph
+/// when the repository has one.
+///
+/// # Parameters
+///
+/// - `repo` - repository being served.
+/// - `wants` - wanted tips, already peeled through tags; only commits.
+/// - `have_commits` - acknowledged haves that are commits (tags are not peeled).
+///
+/// # Returns
+///
+/// `false` when `have_commits` is empty or some want cannot reach a held
+/// commit within the date cutoff; `true` otherwise.
+///
+/// # Errors
+///
+/// Returns object read and parse errors for commits on the walk.
+pub(crate) fn wants_covered_by_haves(
+    repo: &Repository,
+    wants: &[ObjectId],
+    have_commits: &[ObjectId],
+) -> Result<bool> {
+    if have_commits.is_empty() {
+        return Ok(false);
+    }
+    let mut cache = CommitGraphCache::new(repo);
+    // Commits that reach a held commit; grows with each covered want's path.
+    let mut covered = oid_hash_set();
+    let mut oldest_have = i64::MAX;
+    for &have in have_commits {
+        covered.insert(have);
+        covered.extend(cache.parents_of(have)?);
+        oldest_have = oldest_have.min(cache.commit_time(have)?);
+    }
+    // Commits whose walk finished without reaching a held commit.
+    let mut explored = oid_hash_set();
+    for &want in wants {
+        if covered.contains(&want) {
+            continue;
+        }
+        if !explored.insert(want) {
+            return Ok(false);
+        }
+        let mut path = vec![(want, cache.parents_of(want)?, 0usize)];
+        let mut reached = false;
+        while let Some((_, parents, next)) = path.last_mut() {
+            let Some(&parent) = parents.get(*next) else {
+                path.pop();
+                continue;
+            };
+            *next += 1;
+            if covered.contains(&parent) {
+                reached = true;
+                break;
+            }
+            if cache.commit_time(parent)? < oldest_have || !explored.insert(parent) {
+                continue;
+            }
+            let grandparents = cache.parents_of(parent)?;
+            path.push((parent, grandparents, 0));
+        }
+        if !reached {
+            return Ok(false);
+        }
+        covered.extend(path.into_iter().map(|(oid, _, _)| oid));
+    }
+    Ok(true)
+}
+
 /// Reachability test using only the given object database (no commit-graph,
 /// grafts or shallow boundaries).
 ///
