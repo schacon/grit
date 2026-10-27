@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { CliDemo } from "@/components/CliDemo";
 import { CopyCommand } from "@/components/CopyCommand";
 import { Footer, Rail, TopBar } from "@/components/Rail";
 import { highlightHtml, initHighlighter } from "@/lib/highlight";
@@ -20,6 +21,43 @@ if let Some(wt) = &repo.work_tree {
     println!("{:?} {}", f.status, f.path());
   }
 }`;
+
+// Transcripts from the command pages in content/docs/commands/ (clone trimmed to its progress lines).
+const CLI_EXAMPLES = [
+  {
+    label: "clone",
+    code: `$ grit clone https://github.com/BurntSushi/ripgrep.git
+Cloning https://github.com/BurntSushi/ripgrep.git → ripgrep
+✓ Receiving  ▃▃▃▃▆▆▆███▆▆▆▆▆▆▆▆▆▆▆▆▇▇▇▅▅▅          5.67 MiB         13.0 MiB/s   435ms
+✓ Indexing   ▆▆▆▆▆▆▆▆▆▆▆▆▆▆██████████████    14,062 objects   343.1k objects/s    40ms
+✓ Resolving  ████████████████████████████      9,840 deltas    370.3k deltas/s    26ms
+✓ Checkout   ████████████████████████████         237 files       4.6k files/s    51ms
+
+✓ Cloned into ripgrep on master in 1.6s`,
+  },
+  {
+    label: "switch",
+    code: `$ grit switch -c feature
+Created and switched to branch feature
+
+$ grit switch main
+Switched to branch main
+
+$ grit switch -
+Switched to branch feature`,
+  },
+  {
+    label: "commit",
+    code: `$ grit commit --dry-run -m "Add the greeting"
+Would commit 2 files
+  M README
+  A src/main.rs
+
+$ grit commit "Add the greeting"
+[main 217c6f9] Add the greeting
+2 changes committed`,
+  },
+];
 
 export default async function Home() {
   await initHighlighter();
@@ -62,6 +100,21 @@ export default async function Home() {
         </section>
 
         <section className="commit">
+          <Rail parts={["line", "dot"]} />
+          <div className="body">
+            <div>
+              <div className="sha">deadbeef · refactor(cli)</div>
+              <h2>Simpler on purpose.</h2>
+              <p>
+                The commands you know, with clearer output and fewer footguns. The CLI is a thin layer over the
+                library, so whatever the CLI can do, your code can do.
+              </p>
+            </div>
+            <CliDemo examples={CLI_EXAMPLES.map((ex) => ({ label: ex.label, html: highlightHtml("console", ex.code) }))} />
+          </div>
+        </section>
+
+        <section className="commit">
           <Rail parts={["line", "branch-out", "branch-line", "branch-in", "branch-dot"]} />
           <div className="body branched">
             <div>
@@ -73,20 +126,6 @@ export default async function Home() {
               </p>
             </div>
             <div dangerouslySetInnerHTML={{ __html: highlightHtml("rust", LIB_EXAMPLE) }} />
-          </div>
-        </section>
-
-        <section className="commit">
-          <Rail parts={["line", "dot"]} />
-          <div className="body">
-            <div>
-              <div className="sha">deadbeef · refactor(cli)</div>
-              <h2>Simpler on purpose.</h2>
-            </div>
-            <p>
-              The commands you know, with clearer output and fewer footguns. The CLI is a thin layer over the library,
-              so whatever the CLI can do, your code can do.
-            </p>
           </div>
         </section>
 
