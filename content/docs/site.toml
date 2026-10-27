@@ -112,6 +112,8 @@ baseline = [
   "grit-utils/baselines/daily-perf-4744-before.json",
   "grit-utils/baselines/daily-perf-4744-new.json",
   "grit-utils/baselines/daily-perf-4744-old.json",
+  "grit-utils/baselines/daily-branch-rename-many-refs-before.json",
+  "grit-utils/baselines/daily-branch-rename-many-refs-after.json",
   "grit-utils/baselines/midx-status-2064.json",
   "grit-utils/baselines/filtered-revision-count.json",
   "grit-utils/baselines/filtered-revision-count-range.json",
