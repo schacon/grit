@@ -220,6 +220,24 @@ impl ExecRewrites {
             }
         }
         let head_name = plan.head.head_ref.as_deref().unwrap_or("HEAD");
+        if !plan
+            .ref_updates
+            .iter()
+            .any(|update| update.name == head_name)
+        {
+            if let Some((old, new)) = plan
+                .head
+                .old_commit
+                .and_then(|old| self.remap.get(&old).map(|new| (old, *new)))
+            {
+                plan.ref_updates.push(super::PlannedRefUpdate {
+                    name: head_name.to_owned(),
+                    old,
+                    new,
+                });
+                plan.ref_updates.sort_by(|a, b| a.name.cmp(&b.name));
+            }
+        }
         if let Some(new) = plan
             .ref_updates
             .iter()
@@ -1644,6 +1662,64 @@ mod tests {
         assert_eq!(
             resolve_ref(repo.git_dir(), "refs/heads/main").expect("branch"),
             tip
+        );
+    }
+
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
+    #[test]
+    fn exec_amend_of_unchanged_head_commit_adds_its_ref_update() {
+        let (_dir, repo) = init_repo();
+        let root = commit_file(&repo, "main", "a.txt", b"1\n", "root\n", None);
+        let tip = commit_file(&repo, "main", "b.txt", b"2\n", "tip\n", Some(root));
+        let mut edits = HistoryEdits::new();
+        edits.insert(tip, CommitEdit::Reuse(tip));
+        let mut plan = plan_rewrite(&repo, &edits, &test_rewrite()).expect("plan");
+        assert!(plan.ref_updates.is_empty(), "reusing the tip moves no ref");
+        let spec = ExecSpec {
+            commands: vec!["env GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME=T \
+                GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=T GIT_COMMITTER_EMAIL=t@t \
+                git commit -q --amend -m amended"
+                .into()],
+        };
+        verify_rebase_with_exec(
+            &repo,
+            &mut plan,
+            &spec,
+            &test_rewrite(),
+            system_command_runner().as_ref(),
+        )
+        .expect("exec");
+        let [update] = plan.ref_updates.as_slice() else {
+            panic!("expected one ref update, got {:?}", plan.ref_updates)
+        };
+        assert_eq!(update.name, "refs/heads/main");
+        assert_eq!(update.old, tip);
+        assert_eq!(plan.commits[0].new, Some(update.new));
+        assert_eq!(plan.commits[0].subject.as_deref(), Some("amended"));
+        assert!(plan.head.commit_changes);
+        assert_eq!(
+            resolve_ref(repo.git_dir(), "refs/heads/main").expect("main"),
+            tip
+        );
+        crate::history::apply_rewrite(
+            &repo,
+            &plan,
+            &crate::history::ApplyOptions {
+                identity: "T <t@t> 2 +0000".parse().expect("identity"),
+                reflog_message: "rebase".into(),
+                record_operation: None,
+                hooks: crate::PostOperationHooks::Skip,
+            },
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .expect("apply");
+        assert_eq!(
+            resolve_ref(repo.git_dir(), "refs/heads/main").expect("main"),
+            update.new
         );
     }
 
