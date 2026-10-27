@@ -1,7 +1,11 @@
 //! Fast object transfer between on-disk repositories (local / `file://` remotes).
 //!
 //! When the source stores objects in packfiles, linking or copying those packs
-//! avoids rebuilding a pack in memory (Git's `--local` fetch/clone path).
+//! avoids rebuilding a pack in memory. A transfer may only install a pack whose
+//! objects are all part of the set being sent ([`link_packs_within`]); linking
+//! the whole source object store ([`link_remote_pack_files`],
+//! [`link_loose_objects`]) is reserved for a clone from a plain local path
+//! (Git's `clone --local`).
 
 use std::collections::{HashSet, VecDeque};
 use std::fs;
@@ -183,45 +187,78 @@ pub(crate) fn refresh_local_odb_after_link(local_odb: &Odb) {
     pack::clear_pack_cache();
 }
 
-/// Try to satisfy `needed` by linking the remote's on-disk objects into `local`.
+/// Link or copy every source pack whose objects all belong to `send` into `dest_objects/pack/`.
 ///
-/// Returns `true` when every oid in `needed` is present in `local_odb` afterward.
-pub(crate) fn try_satisfy_via_object_link(
-    remote_objects: &Path,
-    local_objects: &Path,
-    local_odb: &Odb,
-    needed: &[ObjectId],
-    link_loose: bool,
+/// `send` is the exact set of objects the destination must receive, so a pack that
+/// qualifies carries nothing the requested refs do not reach and nothing the
+/// destination already has. Packs holding any other object (other branches, hidden
+/// refs, excluded tags, unreachable leftovers) are skipped; the caller packs the
+/// remainder itself. Only the `.pack`, `.idx` and the per-pack `.rev` / `.bitmap`
+/// files are installed; `.keep`, `.promisor` and `.mtimes` markers describe the
+/// source's storage policy and are not carried over.
+///
+/// # Parameters
+///
+/// - `source_objects`: the sender's `objects/` directory.
+/// - `dest_objects`: the receiver's `objects/` directory.
+/// - `send`: objects the receiver lacks and must end up with.
+/// - `progress` / `cancel`: polled between packs.
+///
+/// # Returns
+///
+/// The number of objects in the newly installed packs.
+///
+/// # Errors
+///
+/// Fails on I/O errors, unreadable source indexes, symlinked / non-regular pack
+/// files, or cancellation.
+pub(crate) fn link_packs_within(
+    source_objects: &Path,
+    dest_objects: &Path,
+    send: &[ObjectId],
     progress: &mut dyn crate::progress::ProgressSink,
     cancel: &dyn crate::progress::Cancel,
-) -> Result<bool> {
-    if needed.is_empty() {
-        return Ok(true);
+) -> Result<usize> {
+    let source_pack = source_objects.join("pack");
+    if send.is_empty() || !source_pack.is_dir() {
+        return Ok(0);
     }
-    crate::progress::poll_cancel(progress, cancel)?;
-    let linked_packs = link_remote_pack_files(
-        remote_objects,
-        local_objects,
-        progress,
-        cancel,
-        needed.len(),
-    )?;
-    let linked_loose = if link_loose {
-        link_loose_objects(remote_objects, local_objects, progress, cancel)?
-    } else {
-        0
-    };
-    if linked_packs == 0 && linked_loose == 0 {
-        return Ok(false);
+    let send: HashSet<ObjectId> = send.iter().copied().collect();
+    let dest_pack = dest_objects.join("pack");
+    let mut linked = 0usize;
+    for entry in fs::read_dir(&source_pack).map_err(Error::Io)? {
+        crate::progress::poll_cancel(progress, cancel)?;
+        let entry = entry.map_err(Error::Io)?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let Some(stem) = name_str.strip_suffix(".idx") else {
+            continue;
+        };
+        if !pack_entry_name_ok(&name_str) || dest_pack.join(&name).exists() {
+            continue;
+        }
+        if !source_pack.join(format!("{stem}.pack")).is_file() {
+            continue;
+        }
+        let index = pack::read_pack_index_no_verify(&entry.path())?;
+        let within = !index.is_empty()
+            && (0..index.len()).all(|i| {
+                ObjectId::from_bytes(index.oid_at(i)).is_ok_and(|oid| send.contains(&oid))
+            });
+        if !within {
+            continue;
+        }
+        fs::create_dir_all(&dest_pack).map_err(Error::Io)?;
+        // The `.idx` goes in last so a concurrent reader never sees an index without its pack.
+        for ext in ["pack", "rev", "bitmap", "idx"] {
+            let src = source_pack.join(format!("{stem}.{ext}"));
+            if ext == "pack" || ext == "idx" || src.is_file() {
+                hard_link_or_copy(&src, &dest_pack.join(format!("{stem}.{ext}")))?;
+            }
+        }
+        linked += index.len();
     }
-    refresh_local_odb_after_link(local_odb);
-    if linked_packs > 0 && needed.iter().all(|oid| local_odb.exists(oid)) {
-        return Ok(true);
-    }
-    if linked_loose > 0 && needed.iter().all(|oid| local_odb.exists(oid)) {
-        return Ok(true);
-    }
-    Ok(false)
+    Ok(linked)
 }
 
 /// Hard-link or copy loose object files for `oids` from `source_objects` into `dest_objects`.

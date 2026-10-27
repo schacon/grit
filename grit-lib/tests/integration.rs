@@ -817,6 +817,9 @@ mod library_subprocess_hygiene;
 #[path = "list_limit_handles.rs"]
 mod list_limit_handles;
 #[cfg(feature = "full-tests")]
+#[path = "local_transport_reachable.rs"]
+mod local_transport_reachable;
+#[cfg(feature = "full-tests")]
 #[path = "lockfile_contention_git_compat.rs"]
 mod lockfile_contention_git_compat;
 #[cfg(feature = "full-tests")]
