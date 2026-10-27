@@ -711,7 +711,14 @@ counts expanded sparse descendants per repository and requires zero for unchange
 excluded trees. A separate test removes an excluded tree object to prove that
 building the target index never reads that subtree. Compatibility tests cover
 nested cones, changed/deleted excluded trees, staged and unstaged files, gitlinks,
-reset-to-HEAD repair, and Git operations after grit writes the index.
+reset-to-HEAD repair, and Git operations after grit writes the index. The
+`sparse_reset_present_child_parent_becomes_file` and
+`sparse_reset_present_child_parent_becomes_symlink` regressions materialize an
+excluded tracked child before resetting to a parent replacement. They check the
+new HEAD, index rows and skip-worktree bits, full worktree contents, strict fsck,
+and subsequent Git resets. An external sentinel must survive the symlink case.
+Late sparse cleanup only considers paths still tracked in the target and never
+follows symlinked parents; checkout handles deleted children before replacement.
 
 ```bash
 cargo test -p grit-lib --lib sparse_reset_and_switch_do_not_expand

@@ -142,7 +142,16 @@ fn worktree_files(dir: &Path, rel: &str, out: &mut BTreeMap<String, Vec<u8>>) {
         if entry.file_type().expect("type").is_dir() {
             worktree_files(dir, &path, out);
         } else {
-            out.insert(path, fs::read(entry.path()).expect("read"));
+            let bytes = if entry.file_type().expect("type").is_symlink() {
+                fs::read_link(entry.path())
+                    .expect("read link")
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .to_vec()
+            } else {
+                fs::read(entry.path()).expect("read")
+            };
+            out.insert(path, bytes);
         }
     }
 }
@@ -150,7 +159,7 @@ fn worktree_files(dir: &Path, rel: &str, out: &mut BTreeMap<String, Vec<u8>>) {
 /// What a sparse checkout looks like from the outside, as reported by system `git`.
 #[derive(Debug, PartialEq, Eq)]
 struct Observed {
-    files: Vec<String>,
+    files: BTreeMap<String, Vec<u8>>,
     stages: String,
     tags: String,
     status: String,
@@ -161,7 +170,7 @@ fn observe(dir: &Path) -> Observed {
     let mut files = BTreeMap::new();
     worktree_files(dir, "", &mut files);
     Observed {
-        files: files.into_keys().collect(),
+        files,
         stages: git(dir, &["ls-files", "-s"]),
         tags: git(dir, &["ls-files", "-t"]),
         status: git(dir, &["status", "--porcelain"]),
@@ -898,4 +907,126 @@ fn sparse_head_reset_honors_expect_files_outside_patterns() {
         fs::read(pair.grit_dir.join("b/f")).expect("present file"),
         b"left outside cone\n"
     );
+}
+
+/// A present tracked child outside the cone must be deleted before checkout replaces its
+/// parent. The saved child path must never be resolved through the replacement symlink.
+#[cfg(unix)]
+fn reset_sparse_present_child_with_parent_replacement(symlink: bool) {
+    let root = unique_tmp(
+        "sparse-checkout-writes",
+        if symlink {
+            "parent-symlink"
+        } else {
+            "parent-file"
+        },
+    );
+    let seed = root.join("seed");
+    fs::create_dir_all(&seed).expect("mkdir");
+    git(&seed, &["init", "-q", "-b", "main"]);
+    identity(&seed);
+    put(&seed, "a/f", "visible\n");
+    put(&seed, "b/f", "tracked outside cone\n");
+    commit_all(&seed, "base");
+    git(&seed, &["tag", "base"]);
+    let external = root.join("external");
+    put(&external, "f", "external sentinel\n");
+    fs::remove_dir_all(seed.join("b")).expect("remove old directory");
+    if symlink {
+        std::os::unix::fs::symlink(&external, seed.join("b")).expect("symlink");
+    } else {
+        put(&seed, "b", "replacement file\n");
+    }
+    commit_all(&seed, "replace directory");
+    git(&seed, &["tag", "target"]);
+    git(&seed, &["reset", "--hard", "base"]);
+    enable_cone(&seed, true);
+    put(&seed, "b/f", "present outside cone\n");
+    let pair = Pair {
+        git_dir: root.join("git"),
+        grit_dir: root.join("grit"),
+    };
+    copy_dir(&seed, &pair.git_dir);
+    copy_dir(&seed, &pair.grit_dir);
+    git(&pair.git_dir, &["reset", "--hard", "target"]);
+    assert_eq!(
+        fs::read(external.join("f")).expect("Git preserved sentinel"),
+        b"external sentinel\n"
+    );
+    reset(
+        &open(&pair.grit_dir),
+        rev(&pair.grit_dir, "target"),
+        ResetMode::Hard,
+    );
+    assert_eq!(
+        fs::read(external.join("f")).expect("grit preserved sentinel"),
+        b"external sentinel\n"
+    );
+    assert_eq!(rev(&pair.grit_dir, "HEAD"), rev(&pair.grit_dir, "target"));
+    if symlink {
+        assert_eq!(
+            fs::read_link(pair.grit_dir.join("b")).expect("target link"),
+            external
+        );
+    } else {
+        assert_eq!(
+            fs::read(pair.grit_dir.join("b")).expect("target file"),
+            b"replacement file\n"
+        );
+    }
+    assert_matches_git(&pair);
+    for dir in [&pair.git_dir, &pair.grit_dir] {
+        assert!(git(dir, &["status", "--porcelain"]).is_empty());
+        git(dir, &["fsck", "--strict"]);
+        // Git must be able to use the index grit wrote in both directions.
+        git(dir, &["reset", "--hard", "base"]);
+        git(dir, &["reset", "--hard", "target"]);
+        git(dir, &["fsck", "--strict"]);
+    }
+    assert_matches_git(&pair);
+    assert_eq!(
+        fs::read(external.join("f")).expect("sentinel after round trip"),
+        b"external sentinel\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sparse_reset_present_child_parent_becomes_symlink() {
+    reset_sparse_present_child_with_parent_replacement(true);
+}
+
+#[cfg(unix)]
+#[test]
+fn sparse_reset_present_child_parent_becomes_file() {
+    reset_sparse_present_child_with_parent_replacement(false);
+}
+
+#[cfg(unix)]
+#[test]
+fn sparse_head_reset_preserves_files_under_symlinked_excluded_parent() {
+    let pair = sparse_pair("head-symlink-parent", true);
+    let external = pair
+        .grit_dir
+        .parent()
+        .expect("fixture root")
+        .join("external");
+    put(&external, "f", "external sentinel\n");
+    for dir in [&pair.git_dir, &pair.grit_dir] {
+        std::os::unix::fs::symlink(&external, dir.join("b")).expect("symlink");
+    }
+    git(&pair.git_dir, &["reset", "--hard", "HEAD"]);
+    reset(
+        &open(&pair.grit_dir),
+        rev(&pair.grit_dir, "HEAD"),
+        ResetMode::Hard,
+    );
+    assert_eq!(
+        fs::read(external.join("f")).expect("external sentinel"),
+        b"external sentinel\n"
+    );
+    assert_matches_git(&pair);
+    for dir in [&pair.git_dir, &pair.grit_dir] {
+        git(dir, &["fsck", "--strict"]);
+    }
 }

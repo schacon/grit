@@ -612,7 +612,9 @@ pub fn checkout_hard_to_tree_from_head_tree(
     prefetch_promisor_blobs(repo, blobs.chain(attributes))?;
     // Hard reset reapplies the sparse definition. Tracked files that caused skip-worktree
     // to be cleared are removed again; paths still marked skip-worktree (including the
-    // expectFilesOutsideOfPatterns opt-out) and untracked files are left alone.
+    // expectFilesOutsideOfPatterns opt-out) and untracked files are left alone. Only retain
+    // paths still tracked in the target: checkout already handles deletions and ancestor
+    // replacements, and resolving their old child paths afterwards could follow a new symlink.
     let sparse_removals: Vec<_> = pre_reset_index
         .entries
         .iter()
@@ -622,6 +624,9 @@ pub fn checkout_hard_to_tree_from_head_tree(
                 && sparse
                     .as_ref()
                     .is_some_and(|s| !s.includes_index_path(&entry.path))
+                && target_entries
+                    .binary_search_by(|target| target.path.cmp(&entry.path))
+                    .is_ok()
         })
         .map(|entry| (entry.path.clone(), entry.mode))
         .collect();
@@ -648,7 +653,12 @@ pub fn checkout_hard_to_tree_from_head_tree(
         )?;
     }
 
+    let sparse_parent_symlinks = crate::diff::SymlinkDirCache::default();
     for (path, mode) in sparse_removals {
+        crate::progress::poll_cancel(progress, cancel)?;
+        if sparse_parent_symlinks.has_symlink_in_path_bytes(work_tree, &path, false, false) {
+            continue;
+        }
         let abs = crate::index::worktree_path_from_index_rel(work_tree, &path);
         if mode == MODE_GITLINK {
             remove_uninitialized_gitlink_worktree(&abs);

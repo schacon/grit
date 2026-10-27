@@ -165,6 +165,38 @@ fixture setup and correctness checks are outside the timed interval.
 Raw commands, GNU time output, samples and verification output:
 [`sparse-transitions-2081.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/sparse-transitions-2081.json).
 
+### Parent replacement review follow-up
+
+Sparse cleanup now retains only paths still tracked in the target and checks for
+symlinked parents. Deleted descendants stay in checkout's deletion phase, before
+a parent can be replaced by a file or symlink. Git-control regressions check both
+replacements, reset-to-HEAD with a symlinked parent, an external sentinel, and Git
+operations after grit writes. Sparse round trips compare file contents as well as
+paths and index state.
+
+A fresh comparison on the follow-up VM used main `e98de8a16348`, pre-review
+`283078a7f`, and the fix, with stock Git 2.55.0 and Rust 1.99.0 release builds.
+Values are median **milliseconds / peak KiB** from ten endpoint samples per
+operation, after a warmup pair, with tool order rotated over five rounds. Builds
+and tests were paused. The full-checkout control has 10,000 visible files and 300
+edits. All tools retain the expected worktree/index shape and pass Git status and
+strict fsck. These are a separate run from the initial measurements above.
+
+| Fixture / operation | Git | Current main | Pre-review | Fixed |
+| --- | ---: | ---: | ---: | ---: |
+| sparse120k reset | 22.87 / 10,642 | 765.78 / 75,320 | 35.01 / 17,884 | 35.00 / 17,684 |
+| sparse120k switch | 29.94 / 6,224 | 333.93 / 37,122 | 35.80 / 18,150 | 35.55 / 17,974 |
+| sparse240k reset | 28.03 / 15,480 | 1588.11 / 141,744 | 34.92 / 17,720 | 34.85 / 17,880 |
+| sparse240k switch | 40.39 / 6,524 | 695.74 / 57,146 | 35.47 / 18,198 | 35.71 / 18,024 |
+| unique120k_changed5000 reset | 32.27 / 18,406 | 829.94 / 110,646 | 404.66 / 108,354 | 403.64 / 108,456 |
+| unique120k_changed5000 switch | 40.96 / 13,940 | 412.18 / 76,180 | 349.12 / 76,364 | 339.30 / 76,552 |
+| full10k reset | 35.09 / 7,894 | 55.74 / 23,476 | 52.32 / 23,178 | 52.38 / 22,922 |
+| full10k switch | 30.82 / 8,146 | 36.06 / 19,024 | 36.14 / 19,562 | 37.11 / 19,348 |
+
+The cleanup fix preserves the pre-review timing and memory profile, including
+changed excluded trees and full checkouts. Endpoint samples and binary hashes are
+in [`sparse-transitions-review-2081.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/sparse-transitions-review-2081.json).
+
 ## Inexact rename detection (2026-10-27)
 
 Issue [#1683](https://github.com/gitbutlerapp/grit/issues/1683) reproduced on
