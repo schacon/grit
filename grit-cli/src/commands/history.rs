@@ -1221,7 +1221,12 @@ pub fn run_rebase(opts: &RebaseRunOptions<'_>) -> Result<RebaseRunOutcome> {
     }
 
     let rewrite = Rewrite::new(repo, shared)?;
-    let resume_apply = rewrite.apply_options("rebase", "rebase: continue".into())?;
+    let resume_message = if opts.skip {
+        "rebase: skip"
+    } else {
+        "rebase: continue"
+    };
+    let resume_apply = rewrite.apply_options("rebase", resume_message.into())?;
 
     if opts.continue_rebase || opts.skip {
         let head_oid = resolve_commit(&rewrite.repo, "HEAD", "HEAD")?;
