@@ -1190,6 +1190,9 @@ mod push_flags_git_compat;
 #[path = "push_lease_git_compat.rs"]
 mod push_lease_git_compat;
 #[cfg(feature = "full-tests")]
+#[path = "push_local_receive_hooks_git_compat.rs"]
+mod push_local_receive_hooks_git_compat;
+#[cfg(feature = "full-tests")]
 #[path = "push_plan_git_compat.rs"]
 mod push_plan_git_compat;
 #[cfg(feature = "full-tests")]

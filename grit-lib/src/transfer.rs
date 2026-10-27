@@ -2078,10 +2078,12 @@ pub(crate) fn push_local_from(
     let local_git_dir = local.git_dir();
     let mut progress_sink = crate::progress::NullProgress;
     crate::progress::poll_cancel(&mut progress_sink, cancel)?;
-    if !opts.push_options.is_empty() {
+    ensure_local_remote_repository(remote_git_dir)?;
+    // Like receive-pack, accept push options only when the receiving repository
+    // advertises them.
+    if !opts.push_options.is_empty() && !local_receive_accepts_push_options(remote_git_dir) {
         return Err(Error::PushOptionsUnsupported);
     }
-    ensure_local_remote_repository(remote_git_dir)?;
 
     let local_odb = local.odb();
     let remote_odb = open_odb(remote_git_dir);
@@ -2152,6 +2154,17 @@ pub(crate) fn push_local_from(
         });
     }
 
+    // Run the receiving repository's hooks as receive-pack would.
+    let mut remote_messages = Vec::new();
+    let receive_hooks = if opts.dry_run {
+        None
+    } else {
+        Some(LocalReceiveHooks::open(remote_git_dir, &opts.push_options)?)
+    };
+    if let Some(hooks) = &receive_hooks {
+        hooks.run_pre_receive_and_update(&mut decisions, opts.atomic, &mut remote_messages);
+    }
+
     // Second pass: apply ref updates (one transaction per ref unless `atomic`).
     let mut ref_batch: Vec<crate::refs::store::RefUpdate> = Vec::new();
     for d in &mut decisions {
@@ -2189,6 +2202,10 @@ pub(crate) fn push_local_from(
         }
     }
 
+    if let Some(hooks) = &receive_hooks {
+        hooks.run_post_receive(&decisions, &mut remote_messages);
+    }
+
     let results: Vec<_> = decisions.into_iter().map(|d| d.result).collect();
     if !opts.dry_run {
         if let Some(remote) = opts.tracking_remote.as_deref() {
@@ -2202,8 +2219,162 @@ pub(crate) fn push_local_from(
 
     Ok(PushOutcome {
         results,
-        remote_messages: Vec::new(),
+        remote_messages,
     })
+}
+
+/// Whether the repository at `git_dir` accepts push options
+/// (`receive.advertisePushOptions`).
+fn local_receive_accepts_push_options(git_dir: &Path) -> bool {
+    config_for_git_dir(git_dir)
+        .and_then(|cfg| cfg.get_bool("receive.advertisePushOptions"))
+        .is_some_and(|value| value.unwrap_or(false))
+}
+
+/// The receiving repository's `pre-receive`, `update`, `post-receive` and
+/// `post-update` hooks for a local push.
+struct LocalReceiveHooks {
+    repo: crate::repo::Repository,
+    push_option_env: Vec<(String, String)>,
+}
+
+impl LocalReceiveHooks {
+    fn open(git_dir: &Path, push_options: &[String]) -> Result<Self> {
+        let repo = crate::repo::Repository::open(git_dir, &RepositoryOptions::empty())?;
+        let mut push_option_env = Vec::new();
+        if !push_options.is_empty() {
+            push_option_env.push((
+                "GIT_PUSH_OPTION_COUNT".to_owned(),
+                push_options.len().to_string(),
+            ));
+            for (i, option) in push_options.iter().enumerate() {
+                push_option_env.push((format!("GIT_PUSH_OPTION_{i}"), option.clone()));
+            }
+        }
+        Ok(Self {
+            repo,
+            push_option_env,
+        })
+    }
+
+    fn env(&self) -> Vec<(&str, &str)> {
+        self.push_option_env
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect()
+    }
+
+    /// The `<old> <new> <ref>` lines hooks read on stdin.
+    fn commands_stdin<'a>(&self, decisions: impl Iterator<Item = &'a PushDecision>) -> String {
+        decisions
+            .map(|d| {
+                let (old, new) = self.old_new_hex(d);
+                format!("{old} {new} {}\n", d.result.remote_ref)
+            })
+            .collect()
+    }
+
+    fn old_new_hex(&self, d: &PushDecision) -> (String, String) {
+        let zero = ObjectId::null(self.repo.odb().hash_algo()).to_hex();
+        let new = match &d.action {
+            PushAction::Update(src) => src.to_hex(),
+            _ => zero.clone(),
+        };
+        let old = d.result.old_oid.map_or(zero, |oid| oid.to_hex());
+        (old, new)
+    }
+
+    /// Collects what a hook wrote, as the lines receive-pack relays.
+    fn relay(result: &crate::hooks::HookResult, messages: &mut Vec<String>) {
+        let Some(output) = result.output() else {
+            return;
+        };
+        for bytes in [&output.stdout, &output.stderr] {
+            let text = String::from_utf8_lossy(bytes);
+            messages.extend(text.lines().map(ToOwned::to_owned));
+        }
+    }
+
+    fn reject(d: &mut PushDecision, message: &str) {
+        d.result.status = PushRefStatus::RemoteRejected;
+        d.result.message = Some(message.to_owned());
+        d.apply = false;
+    }
+
+    /// Runs `pre-receive` over the updates to apply, then `update` for each one,
+    /// rejecting the updates the hooks decline.
+    fn run_pre_receive_and_update(
+        &self,
+        decisions: &mut [PushDecision],
+        atomic: bool,
+        messages: &mut Vec<String>,
+    ) {
+        if !decisions.iter().any(|d| d.apply) {
+            return;
+        }
+        let env = self.env();
+        let stdin = self.commands_stdin(decisions.iter().filter(|d| d.apply));
+        let result = crate::hooks::run_hook_in_git_dir(
+            &self.repo,
+            "pre-receive",
+            &[],
+            Some(stdin.as_bytes()),
+            &env,
+        );
+        Self::relay(&result, messages);
+        if !result.is_ok() {
+            for d in decisions.iter_mut().filter(|d| d.apply) {
+                Self::reject(d, "pre-receive hook declined");
+            }
+            return;
+        }
+        for d in decisions.iter_mut().filter(|d| d.apply) {
+            let (old, new) = self.old_new_hex(d);
+            let args = [d.result.remote_ref.as_str(), old.as_str(), new.as_str()];
+            let result = crate::hooks::run_hook_in_git_dir(&self.repo, "update", &args, None, &[]);
+            Self::relay(&result, messages);
+            if !result.is_ok() {
+                messages.push(format!(
+                    "error: hook declined to update {}",
+                    d.result.remote_ref
+                ));
+                Self::reject(d, "hook declined");
+            }
+        }
+        if atomic && decisions.iter().any(|d| d.result.status.is_error()) {
+            for d in decisions.iter_mut().filter(|d| d.apply) {
+                d.result.status = PushRefStatus::AtomicPushFailed;
+                d.apply = false;
+            }
+        }
+    }
+
+    /// Runs `post-receive` and `post-update` over the applied updates.
+    fn run_post_receive(&self, decisions: &[PushDecision], messages: &mut Vec<String>) {
+        let applied: Vec<&PushDecision> = decisions
+            .iter()
+            .filter(|d| d.apply && !d.result.status.is_error())
+            .collect();
+        if applied.is_empty() {
+            return;
+        }
+        let env = self.env();
+        let stdin = self.commands_stdin(applied.iter().copied());
+        let result = crate::hooks::run_hook_in_git_dir(
+            &self.repo,
+            "post-receive",
+            &[],
+            Some(stdin.as_bytes()),
+            &env,
+        );
+        Self::relay(&result, messages);
+        let refs: Vec<&str> = applied
+            .iter()
+            .map(|d| d.result.remote_ref.as_str())
+            .collect();
+        let result = crate::hooks::run_hook_in_git_dir(&self.repo, "post-update", &refs, None, &[]);
+        Self::relay(&result, messages);
+    }
 }
 
 /// Object database for receive-policy checks during local push.
