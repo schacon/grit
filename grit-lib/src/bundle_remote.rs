@@ -421,23 +421,8 @@ fn complete_bundle_fetch(
     let local_repo = (!opts.dry_run).then_some(local);
 
     let mut updates: Vec<RefUpdate> = Vec::new();
-    let mut prune_batch: Vec<crate::refs::store::RefUpdate> = Vec::new();
     if opts.prune {
-        prune_tracking_refs(
-            local_git_dir,
-            &positive,
-            remote_refs,
-            opts.dry_run,
-            &mut updates,
-            if opts.dry_run {
-                None
-            } else {
-                Some(&mut prune_batch)
-            },
-        )?;
-    }
-    if !opts.dry_run && !prune_batch.is_empty() {
-        crate::refs::commit_ref_store_batch(local_git_dir, &prune_batch)?;
+        prune_tracking_refs(local, &positive, remote_refs, opts.dry_run, &mut updates)?;
     }
 
     let mut store_batch: Vec<crate::refs::store::RefUpdate> = Vec::new();
@@ -454,7 +439,7 @@ fn complete_bundle_fetch(
             continue;
         };
 
-        let old = crate::refs::resolve_ref(local_git_dir, local_ref).ok();
+        let old = local.resolve_ref_oid(local_ref).ok();
         let mode = classify_update(
             old.as_ref(),
             &m.oid,
@@ -510,7 +495,7 @@ fn complete_bundle_fetch(
 
     if !opts.dry_run && !store_batch.is_empty() {
         crate::transfer::apply_fetch_ref_updates(
-            local_git_dir,
+            local,
             &store_batch,
             &mut updates,
             crate::transfer::FetchRefRejectHint {
@@ -522,11 +507,7 @@ fn complete_bundle_fetch(
         )?;
     }
 
-    crate::fetch::finish_initial_remote_fetch_layout(
-        local_git_dir,
-        opts,
-        default_branch.as_deref(),
-    )?;
+    crate::fetch::finish_initial_remote_fetch_layout(local, opts, default_branch.as_deref())?;
     crate::transfer::finish_anonymous_url_fetch(
         local_git_dir,
         opts,

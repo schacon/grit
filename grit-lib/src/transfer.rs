@@ -1840,23 +1840,8 @@ pub(crate) fn fetch_local_into(
     // (e.g. `refs/remotes/origin/a`) otherwise blocks creating a nested ref the
     // same fetch introduces (`refs/remotes/origin/a/b`) with a "File exists"
     // directory/file conflict (matches `git fetch --prune` ordering).
-    let mut prune_batch: Vec<crate::refs::store::RefUpdate> = Vec::new();
     if opts.prune {
-        prune_tracking_refs(
-            local_git_dir,
-            &positive,
-            &remote_refs,
-            opts.dry_run,
-            &mut updates,
-            if opts.dry_run {
-                None
-            } else {
-                Some(&mut prune_batch)
-            },
-        )?;
-    }
-    if !opts.dry_run && !prune_batch.is_empty() {
-        crate::refs::commit_ref_store_batch(local_git_dir, &prune_batch)?;
+        prune_tracking_refs(local, &positive, &remote_refs, opts.dry_run, &mut updates)?;
     }
 
     let mut store_batch: Vec<crate::refs::store::RefUpdate> = Vec::new();
@@ -1943,10 +1928,10 @@ pub(crate) fn fetch_local_into(
         if !opts.dry_run {
             if let Some(branch) = default_branch.as_deref() {
                 let head_ref = format!("refs/remotes/{remote}/HEAD");
-                if crate::refs::resolve_ref(local_git_dir, &head_ref).is_err() {
+                if crate::refs::resolve_ref_in(local, &head_ref).is_err() {
                     let target = format!("refs/remotes/{remote}/{branch}");
                     let target_will_exist = store_batch.iter().any(|u| u.name == target)
-                        || crate::refs::resolve_ref(local_git_dir, &target).is_ok();
+                        || crate::refs::resolve_ref_in(local, &target).is_ok();
                     if target_will_exist {
                         store_batch.push(crate::refs::store::RefUpdate {
                             name: head_ref,
@@ -1962,7 +1947,7 @@ pub(crate) fn fetch_local_into(
     }
     if !opts.dry_run && !store_batch.is_empty() {
         apply_fetch_ref_updates(
-            local_git_dir,
+            local,
             &store_batch,
             &mut updates,
             FetchRefRejectHint {
@@ -1974,14 +1959,10 @@ pub(crate) fn fetch_local_into(
         )?;
     }
 
-    crate::fetch::finish_initial_remote_fetch_layout(
-        local_git_dir,
-        opts,
-        default_branch.as_deref(),
-    )?;
+    crate::fetch::finish_initial_remote_fetch_layout(local, opts, default_branch.as_deref())?;
     if let Some(remote) = opts.remote_name.as_deref() {
         crate::fetch::ensure_remote_tracking_head_symref(
-            local_git_dir,
+            local,
             remote,
             default_branch.as_deref(),
             opts.dry_run,
@@ -2192,11 +2173,7 @@ pub(crate) fn push_local_from(
     let results: Vec<_> = decisions.into_iter().map(|d| d.result).collect();
     if !opts.dry_run {
         if let Some(remote) = opts.tracking_remote.as_deref() {
-            crate::branch_tracking::apply_push_remote_tracking_updates(
-                local_git_dir,
-                remote,
-                &results,
-            )?;
+            crate::branch_tracking::apply_push_remote_tracking_updates_in(local, remote, &results)?;
         }
     }
 
@@ -3083,6 +3060,39 @@ pub fn tracking_refs_gone_on_remote(
     positive: &[RefspecItem],
     remote_refs: &[(String, ObjectId)],
 ) -> Result<Vec<(String, ObjectId)>> {
+    tracking_refs_gone_with(
+        positive,
+        remote_refs,
+        |prefix| crate::refs::list_refs(local_git_dir, prefix),
+        |name| crate::refs::resolve_ref(local_git_dir, name),
+    )
+}
+
+/// [`tracking_refs_gone_on_remote`] reading the local tracking refs through `local`'s ref
+/// store, so an injected [`crate::refs::store::RefStore`] is honoured.
+///
+/// # Errors
+///
+/// Propagates ref listing failures.
+pub(crate) fn tracking_refs_gone_in(
+    local: &crate::repo::Repository,
+    positive: &[RefspecItem],
+    remote_refs: &[(String, ObjectId)],
+) -> Result<Vec<(String, ObjectId)>> {
+    tracking_refs_gone_with(
+        positive,
+        remote_refs,
+        |prefix| crate::refs::list_refs_in(local, prefix),
+        |name| crate::refs::resolve_ref_in(local, name),
+    )
+}
+
+fn tracking_refs_gone_with(
+    positive: &[RefspecItem],
+    remote_refs: &[(String, ObjectId)],
+    list: impl Fn(&str) -> Result<Vec<(String, ObjectId)>>,
+    resolve: impl Fn(&str) -> Result<ObjectId>,
+) -> Result<Vec<(String, ObjectId)>> {
     let mut live: HashSet<String> = HashSet::new();
     for (name, _) in remote_refs {
         if let Some(Some(dst)) = match_positive(name, positive) {
@@ -3097,7 +3107,7 @@ pub fn tracking_refs_gone_on_remote(
         };
         if let Some(star) = dst.find('*') {
             let prefix = &dst[..star];
-            for (name, oid) in crate::refs::list_refs(local_git_dir, prefix)? {
+            for (name, oid) in list(prefix)? {
                 if !name.starts_with(prefix) {
                     continue;
                 }
@@ -3113,7 +3123,7 @@ pub fn tracking_refs_gone_on_remote(
             if exact_prefix.is_some_and(|p| is_default_head_under_tracking_prefix(dst, p)) {
                 continue;
             }
-            if let Ok(oid) = crate::refs::resolve_ref(local_git_dir, dst) {
+            if let Ok(oid) = resolve(dst) {
                 pruned.entry(dst.to_owned()).or_insert(oid);
             }
         }
@@ -3196,7 +3206,8 @@ fn mark_fetch_ref_update_rejected(
     update.note = Some(note);
 }
 
-/// Commit tracking-ref writes from a fetch, applying every ref that can be updated.
+/// Commit tracking-ref writes from a fetch into `local`'s ref store, applying every ref
+/// that can be updated.
 ///
 /// Uses one batch transaction when the full batch validates; otherwise falls back to
 /// per-ref commits and records lock or namespace failures on the matching
@@ -3206,7 +3217,7 @@ fn mark_fetch_ref_update_rejected(
 ///
 /// Propagates non-rejectable ref-store and I/O errors from the fallback path.
 pub(crate) fn apply_fetch_ref_updates(
-    local_git_dir: &Path,
+    local: &crate::repo::Repository,
     store_batch: &[crate::refs::store::RefUpdate],
     updates: &mut [RefUpdate],
     hint: FetchRefRejectHint<'_>,
@@ -3214,21 +3225,22 @@ pub(crate) fn apply_fetch_ref_updates(
     if store_batch.is_empty() {
         return Ok(());
     }
-    if crate::refs::commit_ref_store_batch(local_git_dir, store_batch).is_ok() {
+    let store = local.refs();
+    if crate::refs::commit_ref_updates_on_store(store, store_batch, &[]).is_ok() {
         return Ok(());
     }
 
     let stale_tracking: HashSet<String> = if hint.prune {
         HashSet::new()
     } else {
-        tracking_refs_gone_on_remote(local_git_dir, hint.positive, hint.remote_refs)?
+        tracking_refs_gone_in(local, hint.positive, hint.remote_refs)?
             .into_iter()
             .map(|(name, _)| name)
             .collect()
     };
 
     for store_update in store_batch {
-        match crate::refs::commit_store_update(local_git_dir, store_update.clone()) {
+        match crate::refs::commit_ref_update_on_store(store, store_update.clone()) {
             Ok(()) => {}
             Err(err) if fetch_ref_store_error_rejectable(&err) => {
                 mark_fetch_ref_update_rejected(
@@ -3250,34 +3262,36 @@ pub(crate) fn apply_fetch_ref_updates(
 /// A local tracking ref is a prune candidate when it lives under the destination
 /// namespace of some positive wildcard refspec and no current remote ref maps to
 /// it. Matches `git fetch --prune` for the common `refs/remotes/<remote>/*` case.
+///
+/// Candidates are read from, and (unless `dry_run`) deleted in one batch through, `local`'s
+/// ref store. Each pruned ref is reported in `updates`.
+///
+/// # Errors
+///
+/// Propagates ref listing and ref-store failures.
 pub(crate) fn prune_tracking_refs(
-    local_git_dir: &Path,
+    local: &crate::repo::Repository,
     positive: &[RefspecItem],
     remote_refs: &[(String, ObjectId)],
     dry_run: bool,
     updates: &mut Vec<RefUpdate>,
-    mut store_batch: Option<&mut Vec<crate::refs::store::RefUpdate>>,
 ) -> Result<()> {
-    let pruned: Vec<(String, ObjectId)> =
-        tracking_refs_gone_on_remote(local_git_dir, positive, remote_refs)?;
+    let pruned: Vec<(String, ObjectId)> = tracking_refs_gone_in(local, positive, remote_refs)?;
 
     let prune_delete_flags = crate::refs::store::RefUpdateFlags {
         no_deref: true,
         ..Default::default()
     };
+    let mut batch: Vec<crate::refs::store::RefUpdate> = Vec::new();
     for (name, oid) in pruned.into_iter() {
         if !dry_run {
-            if let Some(batch) = store_batch.as_mut() {
-                batch.push(crate::refs::store::RefUpdate {
-                    name: name.clone(),
-                    new_value: None,
-                    expected: crate::refs::store::Expected::Any,
-                    reflog: None,
-                    flags: prune_delete_flags,
-                });
-            } else {
-                crate::refs::delete_ref(local_git_dir, &name)?;
-            }
+            batch.push(crate::refs::store::RefUpdate {
+                name: name.clone(),
+                new_value: None,
+                expected: crate::refs::store::Expected::Any,
+                reflog: None,
+                flags: prune_delete_flags,
+            });
         }
         updates.push(RefUpdate {
             remote_ref: String::new(),
@@ -3288,7 +3302,7 @@ pub(crate) fn prune_tracking_refs(
             note: Some("pruned (gone on remote)".to_owned()),
         });
     }
-    Ok(())
+    crate::refs::commit_owned_ref_updates_on_store(local.refs(), batch)
 }
 
 #[cfg(test)]

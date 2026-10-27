@@ -14,7 +14,7 @@ use crate::remote::{
     RemoteRef, RemoteSummary, DEFAULT_REMOTE,
 };
 use crate::repo::Repository;
-use crate::transfer::tracking_refs_gone_on_remote;
+use crate::transfer::tracking_refs_gone_in;
 use crate::transfer::{FetchOptions, FetchOutcome, PushOptions, PushOutcome, PushRefSpec};
 use crate::url_rewrite;
 
@@ -424,8 +424,7 @@ impl<'repo> RepositoryRemotes<'repo> {
         )?;
         let remote_pairs: Vec<(String, crate::objects::ObjectId)> =
             advertised.iter().map(|r| (r.name.clone(), r.oid)).collect();
-        let git_dir = self.repo.git_dir();
-        let stale = tracking_refs_gone_on_remote(git_dir, &positive, &remote_pairs)
+        let stale = tracking_refs_gone_in(self.repo, &positive, &remote_pairs)
             .map_err(RemoteError::Library)?;
         let mut refs: Vec<String> = stale
             .into_iter()
@@ -476,19 +475,16 @@ impl<'repo> RepositoryRemotes<'repo> {
             return Err(RemoteError::UnknownRemote(name.to_owned()));
         }
         let head_ref = format!("refs/remotes/{name}/HEAD");
-        let git_dir = self.repo.git_dir();
-        let previous_target =
-            crate::refs::read_symbolic_ref(git_dir, &head_ref).map_err(RemoteError::Library)?;
+        let store = self.repo.refs();
+        let previous_target = crate::refs::read_symbolic_ref_for_repository(self.repo, &head_ref)
+            .map_err(RemoteError::Library)?;
 
         let target = match mode {
             SetHead::Delete => {
-                if !dry_run
-                    && !matches!(
-                        crate::refs::read_raw_ref(git_dir, &head_ref),
-                        Ok(crate::refs::RawRefLookup::NotFound)
-                    )
-                {
-                    crate::refs::delete_ref(git_dir, &head_ref).map_err(RemoteError::Library)?;
+                let exists = !matches!(store.read_raw(&head_ref), Ok(None));
+                if !dry_run && exists {
+                    crate::refs::delete_ref_on_store(store, &head_ref)
+                        .map_err(RemoteError::Library)?;
                 }
                 return Ok(SetHeadOutcome {
                     target: None,
@@ -524,14 +520,19 @@ impl<'repo> RepositoryRemotes<'repo> {
             }
         };
 
-        if crate::refs::resolve_ref(git_dir, &target).is_err() {
+        if crate::refs::resolve_ref_in(self.repo, &target).is_err() {
             return Err(RemoteError::Library(crate::error::Error::Message(format!(
                 "Not a valid ref: {target}"
             ))));
         }
         if !dry_run {
-            crate::refs::write_symbolic_ref(git_dir, &head_ref, &target)
-                .map_err(RemoteError::Library)?;
+            crate::refs::write_symbolic_ref_on_store(
+                store,
+                self.repo.git_dir(),
+                &head_ref,
+                &target,
+            )
+            .map_err(RemoteError::Library)?;
         }
         Ok(SetHeadOutcome {
             target: Some(target),

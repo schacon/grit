@@ -27,7 +27,7 @@ type LsRefsAdvertised = (
 );
 use crate::progress::{poll_cancel, Cancel, ProgressSink};
 use crate::transfer::{
-    classify_update, open_odb, prune_tracking_refs, ref_excluded, validate_fetch_depth_local,
+    classify_update, prune_tracking_refs, ref_excluded, validate_fetch_depth_local,
     validate_fetch_depth_server, FetchOptions, FetchOutcome, RefUpdate, UpdateMode,
 };
 use crate::transport::Connection;
@@ -270,7 +270,6 @@ fn negotiate_pack(
     skip_local_haves: bool,
 ) -> Result<(Option<std::path::PathBuf>, ShallowUpdate)> {
     crate::trace::trace_span!("grit.fetch.negotiate");
-    let local_git_dir = local.git_dir();
     let want_set: HashSet<ObjectId> = wants.iter().copied().collect();
 
     let Some(first_want) = wants.first().copied() else {
@@ -335,14 +334,14 @@ fn negotiate_pack(
     // `known_common`.
     let mut negotiator = SkippingNegotiator::new(local);
     if !skip_haves {
-        add_negotiation_tips(&mut negotiator, local_git_dir, &want_set)?;
+        add_negotiation_tips(&mut negotiator, &want_set)?;
         // Seed `known_common` only for advertised refs we already track at the same
         // peeled commit. Unchanged refs avoid walking parent chains for every server
         // tip during incremental fetch; moved refs are discovered via `have`s.
         let mut local_by_name: std::collections::HashMap<String, ObjectId> =
             std::collections::HashMap::new();
         for prefix in ["refs/heads/", "refs/tags/"] {
-            if let Ok(entries) = crate::refs::list_refs(local_git_dir, prefix) {
+            if let Ok(entries) = crate::refs::list_refs_in(local, prefix) {
                 for (name, oid) in entries {
                     local_by_name.insert(name, oid);
                 }
@@ -805,7 +804,7 @@ pub(crate) fn v2_local_haves<'r>(
 ) -> Result<V2LocalHaves<'r>> {
     let want_set: HashSet<ObjectId> = wants.iter().copied().collect();
     let mut negotiator = SkippingNegotiator::new(local);
-    add_negotiation_tips(&mut negotiator, local.git_dir(), &want_set)?;
+    add_negotiation_tips(&mut negotiator, &want_set)?;
     Ok(V2LocalHaves {
         negotiator,
         taken: Vec::new(),
@@ -819,9 +818,9 @@ pub(crate) fn v2_local_haves<'r>(
 /// server is about to send, so offering them keeps the pack minimal.
 fn add_negotiation_tips(
     negotiator: &mut SkippingNegotiator<'_>,
-    local_git_dir: &Path,
     wants: &HashSet<ObjectId>,
 ) -> Result<()> {
+    let local = negotiator.repo();
     let mut tips: Vec<ObjectId> = Vec::new();
     let mut seen_tip: HashSet<ObjectId> = HashSet::new();
     let mut push_tip = |negotiator: &SkippingNegotiator<'_>, oid: ObjectId| {
@@ -837,13 +836,13 @@ fn add_negotiation_tips(
         "refs/tags/",
         crate::bundle_uri::BUNDLE_REFS_PREFIX,
     ] {
-        if let Ok(entries) = crate::refs::list_refs(local_git_dir, prefix) {
+        if let Ok(entries) = crate::refs::list_refs_in(local, prefix) {
             for (_, oid) in entries {
                 push_tip(negotiator, oid);
             }
         }
     }
-    if let Ok(h) = crate::refs::resolve_ref(local_git_dir, "HEAD") {
+    if let Ok(h) = crate::refs::resolve_ref_in(local, "HEAD") {
         push_tip(negotiator, h);
     }
     tips.sort_unstable();
@@ -1726,24 +1725,9 @@ pub(crate) fn fetch_remote_into(
 
     let mut updates: Vec<RefUpdate> = Vec::new();
 
-    let mut prune_batch: Vec<crate::refs::store::RefUpdate> = Vec::new();
     let t_prune = std::time::Instant::now();
     if opts.prune {
-        prune_tracking_refs(
-            local_git_dir,
-            &positive,
-            &remote_refs,
-            opts.dry_run,
-            &mut updates,
-            if opts.dry_run {
-                None
-            } else {
-                Some(&mut prune_batch)
-            },
-        )?;
-    }
-    if !opts.dry_run && !prune_batch.is_empty() {
-        crate::refs::commit_ref_store_batch(local_git_dir, &prune_batch)?;
+        prune_tracking_refs(local, &positive, &remote_refs, opts.dry_run, &mut updates)?;
     }
     let d_prune = t_prune.elapsed();
 
@@ -1753,9 +1737,14 @@ pub(crate) fn fetch_remote_into(
     // value (and the per-write namespace-conflict check) would otherwise re-read
     // and re-scan the entire file per ref — O(refs × packed-refs size), which
     // dominates fetches on repositories with tens of thousands of packed refs
-    // even when no objects are transferred.
+    // even when no objects are transferred. Refs not kept in the git directory
+    // are resolved through the repository's store instead.
     let t_packed = std::time::Instant::now();
-    let packed = crate::refs::PackedRefs::load(local_git_dir)?;
+    let packed = if local.refs_on_disk() {
+        Some(crate::refs::PackedRefs::load(local_git_dir)?)
+    } else {
+        None
+    };
     let d_packed = t_packed.elapsed();
 
     // Per-sub-step timing accumulators for the apply loop, surfaced via the
@@ -1780,9 +1769,12 @@ pub(crate) fn fetch_remote_into(
         };
 
         let t = std::time::Instant::now();
-        let old = crate::refs::resolve_ref_cached(local_git_dir, local_ref, &packed)
-            .ok()
-            .flatten();
+        let old = match &packed {
+            Some(packed) => crate::refs::resolve_ref_cached(local_git_dir, local_ref, packed)
+                .ok()
+                .flatten(),
+            None => local.resolve_ref_oid(local_ref).ok(),
+        };
         d_resolve += t.elapsed();
 
         if old.as_ref().is_some_and(|o| o != &m.oid) {
@@ -1848,7 +1840,7 @@ pub(crate) fn fetch_remote_into(
     if !opts.dry_run && !store_batch.is_empty() {
         let t = std::time::Instant::now();
         crate::transfer::apply_fetch_ref_updates(
-            local_git_dir,
+            local,
             &store_batch,
             &mut updates,
             crate::transfer::FetchRefRejectHint {
@@ -1888,14 +1880,9 @@ pub(crate) fn fetch_remote_into(
             .unwrap_or_default(),
         t_begin.elapsed()
     );
-    finish_initial_remote_fetch_layout(local_git_dir, opts, default_branch.as_deref())?;
+    finish_initial_remote_fetch_layout(local, opts, default_branch.as_deref())?;
     if let Some(remote) = opts.remote_name.as_deref() {
-        ensure_remote_tracking_head_symref(
-            local_git_dir,
-            remote,
-            default_branch.as_deref(),
-            opts.dry_run,
-        )?;
+        ensure_remote_tracking_head_symref(local, remote, default_branch.as_deref(), opts.dry_run)?;
     }
     crate::transfer::finish_anonymous_url_fetch(
         local_git_dir,
@@ -2060,9 +2047,10 @@ pub fn fetch_operation_identity(
     crate::ident::Signature::new(name, email, now).map_err(crate::error::Error::InvalidSignature)
 }
 
-/// Ensure `refs/remotes/<remote>/HEAD` exists when the remote default branch is known.
+/// Ensure `refs/remotes/<remote>/HEAD` exists in `local`'s ref store when the remote default
+/// branch is known and its tracking ref exists.
 pub(crate) fn ensure_remote_tracking_head_symref(
-    git_dir: &Path,
+    local: &Repository,
     remote: &str,
     default_branch: Option<&str>,
     dry_run: bool,
@@ -2074,49 +2062,76 @@ pub(crate) fn ensure_remote_tracking_head_symref(
         return Ok(());
     };
     let head_ref = format!("refs/remotes/{remote}/HEAD");
-    if crate::refs::resolve_ref(git_dir, &head_ref).is_ok() {
+    if crate::refs::resolve_ref_in(local, &head_ref).is_ok() {
         return Ok(());
     }
     let target = format!("refs/remotes/{remote}/{branch}");
-    if crate::refs::resolve_ref(git_dir, &target).is_err() {
+    if crate::refs::resolve_ref_in(local, &target).is_err() {
         return Ok(());
     }
-    crate::refs::write_symbolic_ref(git_dir, &head_ref, &target)
+    crate::refs::write_symbolic_ref_on_store(local.refs(), local.git_dir(), &head_ref, &target)
 }
 
+/// Clone-only ref layout after the first fetch into `local`: pack the imported refs (files
+/// repositories only) and point `refs/remotes/<remote>/HEAD` at the default branch, with the
+/// optional clone reflog entry.
 pub(crate) fn finish_initial_remote_fetch_layout(
-    git_dir: &Path,
+    local: &Repository,
     opts: &FetchOptions,
     default_branch: Option<&str>,
 ) -> Result<()> {
     if opts.dry_run || !opts.initial_remote_fetch {
         return Ok(());
     }
-    crate::refs::pack_imported_refs_for_clone(git_dir, opts.remote_name.as_deref())?;
+    let git_dir = local.git_dir();
+    if local.refs_on_disk() {
+        crate::refs::pack_imported_refs_for_clone(git_dir, opts.remote_name.as_deref())?;
+    }
     let Some(remote) = opts.remote_name.as_deref() else {
         return Ok(());
     };
-    if let Some(branch) = default_branch {
-        let target = format!("refs/remotes/{remote}/{branch}");
-        let head_ref = format!("refs/remotes/{remote}/HEAD");
-        if crate::refs::resolve_ref(git_dir, &target).is_ok() {
-            crate::refs::write_symbolic_ref(git_dir, &head_ref, &target)?;
-            if let Some(ref log) = opts.clone_reflog {
-                let null = ObjectId::null(open_odb(git_dir).hash_algo());
-                let tip = crate::refs::resolve_ref(git_dir, &target).unwrap_or(null);
-                crate::refs::append_reflog_with_signature(
-                    git_dir,
-                    &head_ref,
-                    &null,
-                    &tip,
-                    &log.identity,
-                    &log.message,
-                    true,
-                )?;
-            }
-        }
+    let Some(branch) = default_branch else {
+        return Ok(());
+    };
+    let target = format!("refs/remotes/{remote}/{branch}");
+    let head_ref = format!("refs/remotes/{remote}/HEAD");
+    let Ok(tip) = crate::refs::resolve_ref_in(local, &target) else {
+        return Ok(());
+    };
+    crate::refs::write_symbolic_ref_on_store(local.refs(), git_dir, &head_ref, &target)?;
+    let Some(ref log) = opts.clone_reflog else {
+        return Ok(());
+    };
+    let null = ObjectId::null(local.odb().hash_algo());
+    if local.refs_on_disk() {
+        return crate::refs::append_reflog_with_signature(
+            git_dir,
+            &head_ref,
+            &null,
+            &tip,
+            &log.identity,
+            &log.message,
+            true,
+        );
     }
-    Ok(())
+    log.identity
+        .validate()
+        .map_err(crate::error::Error::InvalidSignature)?;
+    let identity = crate::refs::store::format_reflog_identity(
+        &log.identity.reflog_name_email(),
+        log.identity.time,
+    );
+    let config = local.config()?;
+    crate::refs::append_reflog_on_store(
+        local.refs(),
+        &head_ref,
+        &null,
+        &tip,
+        &identity,
+        &log.message,
+        true,
+        &config,
+    )
 }
 
 /// Add advertised tags to the matched set per [`crate::transfer::TagMode`].

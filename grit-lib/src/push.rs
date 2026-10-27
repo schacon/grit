@@ -42,14 +42,14 @@ use crate::transfer::{PackBuildOptions, PrePushGate, PushOptions, PushOutcome, P
 use crate::transport::Connection;
 
 fn finish_push_outcome(
-    local_git_dir: &Path,
+    local: &Repository,
     opts: &PushOptions,
     results: Vec<PushRefResult>,
     remote_messages: Vec<String>,
 ) -> Result<PushOutcome> {
     if !opts.dry_run {
         if let Some(remote) = opts.tracking_remote.as_deref() {
-            branch_tracking::apply_push_remote_tracking_updates(local_git_dir, remote, &results)?;
+            branch_tracking::apply_push_remote_tracking_updates_in(local, remote, &results)?;
         }
     }
     Ok(PushOutcome {
@@ -281,7 +281,7 @@ pub(crate) fn push_remote_with(
             if !opts.dry_run {
                 crate::transport::send_client_flush(conn)?;
             }
-            return finish_push_outcome(local_git_dir, opts, results, Vec::new());
+            return finish_push_outcome(local, opts, results, Vec::new());
         }
     };
 
@@ -357,7 +357,7 @@ pub(crate) fn push_remote_with(
             apply_report_status(&report, &mut plan.decisions);
             let results: Vec<_> = plan.decisions.into_iter().map(|d| d.result).collect();
             sideband.finish_pending();
-            return finish_push_outcome(local_git_dir, opts, results, sideband.remote_messages);
+            return finish_push_outcome(local, opts, results, sideband.remote_messages);
         }
     }
 
@@ -428,7 +428,7 @@ pub(crate) fn push_remote_with(
         "push_remote: done — {} result(s)",
         results.len()
     );
-    finish_push_outcome(local_git_dir, opts, results, remote_messages)
+    finish_push_outcome(local, opts, results, remote_messages)
 }
 
 /// Push refs to a remote over smart HTTP (`git-receive-pack`), returning a

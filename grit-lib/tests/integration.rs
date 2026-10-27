@@ -1313,6 +1313,9 @@ mod reftable_worktree_head_deref;
 #[path = "remote_config_git_compat.rs"]
 mod remote_config_git_compat;
 #[cfg(feature = "full-tests")]
+#[path = "remote_injected_ref_store.rs"]
+mod remote_injected_ref_store;
+#[cfg(feature = "full-tests")]
 #[path = "remote_inspect_git_compat.rs"]
 mod remote_inspect_git_compat;
 #[cfg(feature = "full-tests")]

@@ -161,25 +161,61 @@ pub fn apply_push_set_upstream(
 ///
 /// # Errors
 ///
-/// Propagates errors from [`refs::commit_ref_store_batch`].
+/// Propagates errors opening the ref store under `git_dir` and committing the batch.
 pub fn apply_push_remote_tracking_updates(
     git_dir: &Path,
     remote_name: &str,
     results: &[PushRefResult],
 ) -> Result<()> {
-    if remote_name.contains('/') || remote_name.starts_with('.') {
+    if !tracks_pushes_to(remote_name) {
         return Ok(());
     }
     let Ok(config) = ConfigSet::load(&Environment::empty(), Some(git_dir), true) else {
         return Ok(());
     };
-    let refspecs = FetchRefspecs::load(&config, remote_name);
+    let store = refs::store::open_ref_store(git_dir)?;
+    commit_push_tracking_updates(store.as_ref(), &config, remote_name, results)
+}
+
+/// [`apply_push_remote_tracking_updates`] for an open repository: the remote's refspecs come
+/// from `repo`'s config, and the tracking refs are read and written through
+/// [`Repository::refs`], so an injected ref store receives them.
+///
+/// # Errors
+///
+/// Propagates ref-store errors from the batch commit.
+pub(crate) fn apply_push_remote_tracking_updates_in(
+    repo: &Repository,
+    remote_name: &str,
+    results: &[PushRefResult],
+) -> Result<()> {
+    if !tracks_pushes_to(remote_name) {
+        return Ok(());
+    }
+    let Ok(config) = repo.config() else {
+        return Ok(());
+    };
+    commit_push_tracking_updates(repo.refs(), &config, remote_name, results)
+}
+
+/// Path-like remote names (a URL or path given as the push destination) have no tracking refs.
+fn tracks_pushes_to(remote_name: &str) -> bool {
+    !(remote_name.contains('/') || remote_name.starts_with('.'))
+}
+
+fn commit_push_tracking_updates(
+    store: &dyn refs::store::RefStore,
+    config: &ConfigSet,
+    remote_name: &str,
+    results: &[PushRefResult],
+) -> Result<()> {
+    let refspecs = FetchRefspecs::load(config, remote_name);
     let batch: Vec<RefUpdate> = results
         .iter()
         .filter(|result| matches!(result.status, PushRefStatus::Ok | PushRefStatus::UpToDate))
         .filter_map(|result| {
             let name = refspecs.tracking_ref(remote_name, &result.remote_ref)?;
-            let current = refs::resolve_ref(git_dir, &name).ok();
+            let current = store.resolve(&name).ok();
             let new_value = match result.new_oid {
                 Some(oid) if current == Some(oid) => return None,
                 Some(oid) => Some(RawRef::Direct(oid)),
@@ -195,10 +231,7 @@ pub fn apply_push_remote_tracking_updates(
             })
         })
         .collect();
-    if !batch.is_empty() {
-        refs::commit_ref_store_batch(git_dir, &batch)?;
-    }
-    Ok(())
+    refs::commit_owned_ref_updates_on_store(store, batch)
 }
 
 /// Full ref for the configured upstream of `branch_short` (`refs/remotes/...` or `refs/heads/...`).
