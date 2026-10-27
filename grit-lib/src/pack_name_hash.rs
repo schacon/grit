@@ -25,6 +25,16 @@ pub(crate) fn pack_name_hash_extend(mut hash: u32, bytes: &[u8]) -> u32 {
     hash
 }
 
+/// [`pack_name_hash`] of the path `parent/name`, or of `name` alone for a root tree
+/// entry, where `parent` is the hash of the containing directory's path.
+#[must_use]
+pub(crate) fn pack_name_hash_child(parent: Option<u32>, name: &[u8]) -> u32 {
+    match parent {
+        None => pack_name_hash_extend(0, name),
+        Some(hash) => pack_name_hash_extend(pack_name_hash_extend(hash, b"/"), name),
+    }
+}
+
 /// The v2 pack name hash: path-component aware, used for newer bitmap formats.
 #[must_use]
 pub fn pack_name_hash_v2(name: &[u8]) -> u32 {
@@ -85,6 +95,21 @@ mod tests {
             assert_eq!(pack_name_hash(path), v1, "v1 {path}");
             assert_eq!(pack_name_hash_v2(path.as_bytes()), v2, "v2 {path}");
         }
+    }
+
+    #[test]
+    fn child_hash_matches_full_path_hash() {
+        assert_eq!(
+            pack_name_hash_child(None, b"Cargo.toml"),
+            pack_name_hash("Cargo.toml")
+        );
+        let src = pack_name_hash_child(None, b"src");
+        let cargo = pack_name_hash_child(Some(src), b"cargo");
+        assert_eq!(cargo, pack_name_hash("src/cargo"));
+        assert_eq!(
+            pack_name_hash_child(Some(cargo), b"lib.rs"),
+            pack_name_hash("src/cargo/lib.rs")
+        );
     }
 
     #[test]

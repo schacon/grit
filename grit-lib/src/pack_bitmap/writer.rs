@@ -16,7 +16,7 @@ use crate::gc::collect_referenced_object_roots;
 use crate::ident::parse_signature_times;
 use crate::objects::{parse_commit, parse_tag, Object, ObjectId, ObjectKind, TreeRefIter};
 use crate::pack::{read_pack_index, PackIndex, SingleLocalPackReader};
-use crate::pack_name_hash::pack_name_hash_extend;
+use crate::pack_name_hash::pack_name_hash_child;
 use crate::pack_rev::{
     append_hashfile_checksum, build_pack_rev_bytes_from_index_order_offsets_and_checksum,
     rev_path_for_index, verify_pack_rev_file,
@@ -857,14 +857,6 @@ fn hash_cache_row_count(order: &BitmapOrder) -> usize {
         .map_or(order.object_count() as usize, |idx| idx.len())
 }
 
-/// Name hash of the path `parent/name`, or of `name` alone for root tree entries.
-fn child_name_hash(parent: Option<u32>, name: &[u8]) -> u32 {
-    match parent {
-        None => pack_name_hash_extend(0, name),
-        Some(hash) => pack_name_hash_extend(pack_name_hash_extend(hash, b"/"), name),
-    }
-}
-
 fn fill_commit_bitmap(
     fill: &mut TreeBitmapFill<'_>,
     commits: &CommitTable,
@@ -959,7 +951,7 @@ impl TreeBitmapFill<'_> {
             let Some((child_pos, child_row)) = self.locate(&entry.oid)? else {
                 continue;
             };
-            let hash = child_name_hash(name_hash, entry.name);
+            let hash = pack_name_hash_child(name_hash, entry.name);
             if kind == TreeChild::Tree {
                 self.fill_tree(bitmap, entry.oid, child_pos, child_row, Some(hash))?;
             } else {
@@ -1143,21 +1135,5 @@ mod tests {
         for mode in [0o100644, 0o100755, 0o120000, 0o100664] {
             assert_eq!(TreeChild::from_mode(mode), TreeChild::Blob, "{mode:o}");
         }
-    }
-
-    #[test]
-    fn child_name_hash_matches_full_path_hash() {
-        use crate::pack_name_hash::pack_name_hash;
-        assert_eq!(
-            child_name_hash(None, b"Cargo.toml"),
-            pack_name_hash("Cargo.toml")
-        );
-        let src = child_name_hash(None, b"src");
-        let cargo = child_name_hash(Some(src), b"cargo");
-        assert_eq!(cargo, pack_name_hash("src/cargo"));
-        assert_eq!(
-            child_name_hash(Some(cargo), b"lib.rs"),
-            pack_name_hash("src/cargo/lib.rs")
-        );
     }
 }
