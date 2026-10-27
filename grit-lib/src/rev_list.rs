@@ -315,12 +315,6 @@ impl ObjectFilter {
             ObjectKind::Commit | ObjectKind::Tag => self.includes_commit_or_tag_object(kind),
         }
     }
-
-    /// Whether an object passes this filter for direct OID lookup (`git cat-file --filter`).
-    #[must_use]
-    pub fn passes_for_object(&self, kind: ObjectKind, size: usize) -> bool {
-        self.includes_loose_object(kind, size as u64)
-    }
 }
 
 /// Reachable object IDs enumerated the same way as `git rev-list --objects --no-object-names --all`,
@@ -10246,7 +10240,7 @@ mod tests {
         assert!(!depth.includes_blob_under_tree(100, 2));
         assert!(!depth.includes_tree(2));
         assert!(depth.includes_loose_object(ObjectKind::Tree, 0));
-        assert!(depth.passes_for_object(ObjectKind::Blob, 1));
+        assert!(depth.includes_loose_object(ObjectKind::Blob, 1));
     }
 
     #[test]

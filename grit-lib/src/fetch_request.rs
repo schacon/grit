@@ -164,19 +164,6 @@ pub fn resolve_remote_argument(
     Err(RemoteError::UnknownRemote(remote_or_url.to_owned()))
 }
 
-/// Former name of [`resolve_remote_argument`].
-///
-/// # Errors
-///
-/// Same as [`resolve_remote_argument`].
-#[deprecated(note = "renamed to resolve_remote_argument")]
-pub fn resolve_fetch_remote(
-    config: &ConfigSet,
-    remote_or_url: &str,
-) -> Result<Remote, RemoteError> {
-    resolve_remote_argument(config, remote_or_url)
-}
-
 /// `branch.<branch>.remote`, trimmed; `None` when unset, blank, or `branch` is `None`.
 fn branch_remote(config: &ConfigSet, branch: Option<&str>) -> Option<String> {
     branch
