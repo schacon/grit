@@ -1815,21 +1815,29 @@ fn exec_fixture() -> (
     (fixture, opts, plan)
 }
 
-fn run_dirty_exec(
+fn run_exec(
     wt: &std::path::Path,
-    plan: &grit_lib::revwalk::history::RewritePlan,
-    command: &str,
-) -> grit_lib::revwalk::history::HistoryError {
+    plan: &mut grit_lib::revwalk::history::RewritePlan,
+    commands: &[&str],
+) -> Result<grit_lib::revwalk::history::ExecReport, grit_lib::revwalk::history::HistoryError> {
     use grit_lib::revwalk::history::{verify_rebase_with_exec, ExecSpec};
     verify_rebase_with_exec(
         &open_grit(wt),
         plan,
         &ExecSpec {
-            commands: vec![command.into(), "echo later >> exec-log".into()],
+            commands: commands.iter().map(|c| (*c).to_owned()).collect(),
         },
+        &rebase_opts().rewrite,
         grit_lib::command_runner::system_command_runner().as_ref(),
     )
-    .unwrap_err()
+}
+
+fn run_dirty_exec(
+    wt: &std::path::Path,
+    plan: &grit_lib::revwalk::history::RewritePlan,
+    command: &str,
+) -> grit_lib::revwalk::history::HistoryError {
+    run_exec(wt, &mut plan.clone(), &[command, "echo later >> exec-log"]).unwrap_err()
 }
 
 #[test]
@@ -2073,20 +2081,13 @@ fn exec_abort_removes_staged_addition_and_restores_exact_index() {
 
 #[test]
 fn exec_recovery_can_stop_again_at_next_command_and_final_commit() {
-    use grit_lib::revwalk::history::{verify_rebase_with_exec, ExecSpec, HistoryError};
+    use grit_lib::revwalk::history::HistoryError;
     let (fixture, opts, plan) = exec_fixture();
     let wt = fixture.worktree();
-    let commands = vec!["echo first >> f".into(), "echo second >> f".into()];
-    let mut result = verify_rebase_with_exec(
-        &open_grit(wt),
-        &plan,
-        &ExecSpec {
-            commands: commands.clone(),
-        },
-        grit_lib::command_runner::system_command_runner().as_ref(),
-    )
-    .map(|_| ())
-    .map_err(RebaseSessionError::from);
+    let commands = ["echo first >> f", "echo second >> f"];
+    let mut result = run_exec(wt, &mut plan.clone(), &commands)
+        .map(|_| ())
+        .map_err(RebaseSessionError::from);
     let commits: Vec<_> = plan.commits.iter().filter_map(|r| r.new).collect();
     for (step, expected_commit) in [commits[0], commits[0], commits[1], commits[1]]
         .into_iter()
@@ -2130,20 +2131,14 @@ fn exec_recovery_can_stop_again_at_next_command_and_final_commit() {
 
 #[test]
 fn exec_failure_during_recovery_rolls_back_and_clears_exec_stop() {
-    use grit_lib::revwalk::history::{verify_rebase_with_exec, ExecSpec, HistoryError};
+    use grit_lib::revwalk::history::HistoryError;
     let (fixture, opts, plan) = exec_fixture();
     let wt = fixture.worktree();
     let index = std::fs::read(wt.join(".git/index")).unwrap();
-    let error = verify_rebase_with_exec(
-        &open_grit(wt),
-        &plan,
-        &ExecSpec {
-            commands: vec![
-                "echo edit >> f".into(),
-                "echo captured; echo failed >&2; exit 7".into(),
-            ],
-        },
-        grit_lib::command_runner::system_command_runner().as_ref(),
+    let error = run_exec(
+        wt,
+        &mut plan.clone(),
+        &["echo edit >> f", "echo captured; echo failed >&2; exit 7"],
     )
     .unwrap_err();
     assert!(matches!(error, HistoryError::ExecDirty { .. }));
@@ -2273,4 +2268,339 @@ fn flattened_session_drops_merge_and_chains_commits_after_continue() {
     );
     assert_eq!(git_oid(wt, "topic~2"), upstream);
     assert_git_fsck_strict(wt);
+}
+
+/// `git` with a fixed identity and no user config, for commands run by `--exec`.
+const EXEC_GIT: &str = "env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
+    GIT_AUTHOR_NAME=T GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=T \
+    GIT_COMMITTER_EMAIL=t@example.com GIT_AUTHOR_DATE='1700000500 +0000' \
+    GIT_COMMITTER_DATE='1700000500 +0000' git";
+
+fn amend_command(edit: &str) -> String {
+    format!("{edit} && {EXEC_GIT} commit -qa --amend --no-edit")
+}
+
+/// Run `git rebase --exec` on a fresh [`exec_fixture`]; returns the fixture and the exit code.
+fn git_exec_twin(commands: &[&str]) -> (HistoryRepo, Option<i32>) {
+    let (fixture, opts, _) = exec_fixture();
+    let onto = opts.request.onto.unwrap().to_hex();
+    let upstream = opts.request.upstream.to_hex();
+    let mut args = vec!["rebase", "--onto", onto.as_str(), upstream.as_str()];
+    for command in commands {
+        args.extend(["--exec", command]);
+    }
+    let code = git_hermetic(fixture.worktree(), &args).status.code();
+    (fixture, code)
+}
+
+fn git_hermetic(wt: &std::path::Path, args: &[&str]) -> std::process::Output {
+    std::process::Command::new("git")
+        .args(args)
+        .current_dir(wt)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_EDITOR", ":")
+        .env("GIT_AUTHOR_NAME", "T")
+        .env("GIT_AUTHOR_EMAIL", "t@example.com")
+        .env("GIT_COMMITTER_NAME", "T")
+        .env("GIT_COMMITTER_EMAIL", "t@example.com")
+        .output()
+        .unwrap()
+}
+
+fn apply_exec_plan(
+    wt: &std::path::Path,
+    opts: &StartRebaseOptions,
+    plan: &grit_lib::revwalk::history::RewritePlan,
+) {
+    grit_lib::revwalk::history::apply_rewrite(
+        &open_grit(wt),
+        plan,
+        &opts.apply,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .unwrap();
+}
+
+fn subjects(wt: &std::path::Path, rev: &str) -> String {
+    git(wt, &["log", "--format=%s", rev])
+}
+
+#[test]
+fn exec_amend_is_adopted_and_later_commits_replay_onto_it() {
+    let (fixture, opts, mut plan) = exec_fixture();
+    let wt = fixture.worktree();
+    let planned = plan.clone();
+    let command = amend_command("echo fmt >> one");
+    let report = run_exec(wt, &mut plan, &[&command]).expect("amending exec completes");
+    assert_eq!(report.runs.len(), 2);
+    assert_eq!(
+        report.runs[0].commit,
+        planned.commits[0].new.unwrap(),
+        "the first command runs at the planned replay"
+    );
+    assert_ne!(
+        plan, planned,
+        "the amended commits replace the planned ones"
+    );
+    assert_eq!(
+        plan.commits[0].change_id, planned.commits[0].change_id,
+        "git commit --amend keeps the change-id header"
+    );
+    assert_eq!(plan.commits[1].change_id, planned.commits[1].change_id);
+    assert_eq!(
+        git_oid(wt, &format!("{}^", report.runs[1].commit)),
+        plan.commits[0].new.unwrap(),
+        "the second commit is replayed onto the amended first commit before its command"
+    );
+    assert_eq!(git_oid(wt, "topic"), opts.request.branch_tip);
+    apply_exec_plan(wt, &opts, &plan);
+
+    let tip = plan.mapped_tip(opts.request.branch_tip).unwrap();
+    assert_eq!(git_oid(wt, "topic"), tip);
+    assert_eq!(
+        git(wt, &["symbolic-ref", "HEAD"]).trim(),
+        "refs/heads/topic"
+    );
+    assert_eq!(git_oid(wt, "topic~1"), plan.commits[0].new.unwrap());
+    assert_eq!(git_oid(wt, "topic~2"), opts.request.onto.unwrap());
+    assert_eq!(git(wt, &["show", "topic~1:one"]), "one\nfmt\n");
+    assert_eq!(git(wt, &["show", "topic:one"]), "one\nfmt\nfmt\n");
+    assert_eq!(git(wt, &["show", "topic:two"]), "two\n");
+    assert_eq!(subjects(wt, "topic"), "two\none\nmain moves\nbase\n");
+    assert_eq!(git(wt, &["status", "--porcelain"]), "");
+    assert_git_fsck_strict(wt);
+
+    let (twin, code) = git_exec_twin(&[&command]);
+    assert_eq!(code, Some(0));
+    for rev in ["topic^{tree}", "topic~1^{tree}"] {
+        assert_eq!(git_oid(wt, rev), git_oid(twin.worktree(), rev), "{rev}");
+    }
+    assert_eq!(subjects(twin.worktree(), "topic"), subjects(wt, "topic"));
+}
+
+#[test]
+fn exec_message_only_amend_rewords_the_replayed_commit() {
+    let (fixture, opts, mut plan) = exec_fixture();
+    let wt = fixture.worktree();
+    let planned_tip_tree = git_oid(
+        wt,
+        &format!(
+            "{}^{{tree}}",
+            plan.mapped_tip(opts.request.branch_tip).unwrap()
+        ),
+    );
+    let command = format!("if ! test -f two; then {EXEC_GIT} commit -q --amend -m reworded; fi");
+    run_exec(wt, &mut plan, &[&command]).expect("exec");
+    assert_eq!(plan.commits[0].subject.as_deref(), Some("reworded"));
+    apply_exec_plan(wt, &opts, &plan);
+    assert_eq!(subjects(wt, "topic"), "two\nreworded\nmain moves\nbase\n");
+    assert_eq!(git_oid(wt, "topic^{tree}"), planned_tip_tree);
+    assert_git_fsck_strict(wt);
+
+    let (twin, code) = git_exec_twin(&[&command]);
+    assert_eq!(code, Some(0));
+    assert_eq!(subjects(twin.worktree(), "topic"), subjects(wt, "topic"));
+}
+
+#[test]
+fn exec_later_command_sees_the_amended_tree() {
+    let (fixture, opts, mut plan) = exec_fixture();
+    let wt = fixture.worktree();
+    let amend = amend_command("echo fmt >> one");
+    let report = run_exec(wt, &mut plan, &[&amend, "grep -q fmt one"])
+        .expect("the second command sees the amended file");
+    assert_eq!(report.runs.len(), 4);
+    assert_eq!(report.runs[1].commit, plan.commits[0].new.unwrap());
+    assert_eq!(report.runs[3].commit, plan.commits[1].new.unwrap());
+    apply_exec_plan(wt, &opts, &plan);
+    assert_eq!(git(wt, &["show", "topic:one"]), "one\nfmt\nfmt\n");
+    assert_git_fsck_strict(wt);
+}
+
+#[test]
+fn exec_commits_added_on_top_are_kept_below_later_commits() {
+    let (fixture, opts, mut plan) = exec_fixture();
+    let wt = fixture.worktree();
+    let command = format!(
+        "if ! test -f two; then echo lock > lock && {EXEC_GIT} add lock && {EXEC_GIT} commit -qm lockfile; fi"
+    );
+    run_exec(wt, &mut plan, &[&command]).expect("exec");
+    apply_exec_plan(wt, &opts, &plan);
+    assert_eq!(
+        subjects(wt, "topic"),
+        "two\nlockfile\none\nmain moves\nbase\n"
+    );
+    assert_eq!(git_oid(wt, "topic~2"), plan.commits[0].new.unwrap());
+    assert_eq!(git(wt, &["show", "topic:lock"]), "lock\n");
+    assert_git_fsck_strict(wt);
+
+    let (twin, code) = git_exec_twin(&[&command]);
+    assert_eq!(code, Some(0));
+    assert_eq!(subjects(twin.worktree(), "topic"), subjects(wt, "topic"));
+    assert_eq!(
+        git_oid(wt, "topic^{tree}"),
+        git_oid(twin.worktree(), "topic^{tree}")
+    );
+}
+
+#[test]
+fn exec_amend_with_leftover_edits_stops_at_the_amended_commit() {
+    use grit_lib::revwalk::history::HistoryError;
+    let (fixture, opts, mut plan) = exec_fixture();
+    let wt = fixture.worktree();
+    let command = format!(
+        "if ! test -f two; then {} && echo dirt >> f; fi",
+        amend_command("echo fmt >> one")
+    );
+    let err = run_exec(wt, &mut plan, &[&command]).unwrap_err();
+    let HistoryError::ExecDirty { commit, paths, .. } = err else {
+        panic!("expected a dirty stop, got {err:?}")
+    };
+    assert_eq!(paths, ["f"], "the amended file is not reported as dirty");
+    assert_eq!(git_oid(wt, "HEAD"), commit);
+    assert_eq!(git(wt, &["show", "HEAD:one"]), "one\nfmt\n");
+    git(wt, &["stash", "push", "-m", "dirt"]);
+    let RebaseOutcome::ExecDone { plan: done, .. } =
+        continue_rebase(&open_grit(wt), &opts).expect("continue after saving the edits")
+    else {
+        panic!("done")
+    };
+    assert_eq!(done.commits[0].new, Some(commit));
+    assert_eq!(git_oid(wt, "topic~1"), commit);
+    assert_eq!(git(wt, &["show", "topic:one"]), "one\nfmt\n");
+    assert_eq!(git(wt, &["show", "topic:two"]), "two\n");
+    assert!(!wt.join(".git/rebase-merge").exists());
+    assert_eq!(
+        done.mapped_tip(opts.request.branch_tip),
+        Some(git_oid(wt, "topic"))
+    );
+    assert_git_fsck_strict(wt);
+}
+
+#[test]
+fn exec_moving_head_elsewhere_rolls_back() {
+    use grit_lib::revwalk::history::HistoryError;
+    let (fixture, opts, mut plan) = exec_fixture();
+    let wt = fixture.worktree();
+    let index = std::fs::read(wt.join(".git/index")).unwrap();
+    let err = run_exec(wt, &mut plan, &["git checkout -q --detach HEAD~1"]).unwrap_err();
+    assert!(
+        matches!(err, HistoryError::ExecHeadMoved { head: Some(_), .. }),
+        "{err:?}"
+    );
+    assert_eq!(git_oid(wt, "HEAD"), opts.request.branch_tip);
+    assert_eq!(
+        git(wt, &["symbolic-ref", "HEAD"]).trim(),
+        "refs/heads/topic"
+    );
+    assert_eq!(std::fs::read(wt.join(".git/index")).unwrap(), index);
+    assert_eq!(git(wt, &["status", "--porcelain"]), "");
+    assert!(!wt.join(".git/rebase-merge").exists());
+}
+
+/// An amend at the first commit that adds `two` conflicts with the second commit adding it.
+fn conflicting_amend() -> String {
+    format!(
+        "if ! test -f two; then echo amended > two && {EXEC_GIT} add two && {EXEC_GIT} commit -q --amend --no-edit; fi"
+    )
+}
+
+#[test]
+fn exec_amend_conflicting_with_next_commit_stops_resumably_and_matches_git() {
+    use grit_lib::revwalk::history::HistoryError;
+    let (fixture, opts, mut plan) = exec_fixture();
+    let wt = fixture.worktree();
+    let command = conflicting_amend();
+    let err = run_exec(wt, &mut plan, &[&command, "true"]).unwrap_err();
+    let HistoryError::ExecConflict {
+        commit,
+        conflicts,
+        runs,
+    } = err
+    else {
+        panic!("expected an exec conflict stop, got {err:?}")
+    };
+    let second_original = git_oid(wt, "topic");
+    assert_eq!(commit, second_original);
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].path, "two");
+    assert_eq!(runs.len(), 2);
+    let amended = git_oid(wt, "HEAD");
+    assert_eq!(git(wt, &["show", "HEAD:two"]), "amended\n");
+    assert_eq!(git_oid(wt, "HEAD~1"), opts.request.onto.unwrap());
+    assert!(std::fs::read_to_string(wt.join("two"))
+        .unwrap()
+        .contains("<<<<<<<"));
+    assert_eq!(git_oid(wt, "topic"), opts.request.branch_tip);
+
+    let repo = open_grit(wt);
+    assert!(matches!(
+        continue_rebase(&repo, &opts),
+        Err(RebaseSessionError::UnmergedPaths)
+    ));
+    std::fs::write(wt.join("two"), "resolved\n").unwrap();
+    git(wt, &["add", "two"]);
+    let RebaseOutcome::ExecDone { exec, plan, .. } =
+        continue_rebase(&open_grit(wt), &opts).expect("continue")
+    else {
+        panic!("done")
+    };
+    assert_eq!(exec.runs.len(), 2, "commands run at the resolved commit");
+    assert_eq!(plan.commits[0].new, Some(amended));
+    assert_eq!(git_oid(wt, "topic~1"), amended);
+    assert_eq!(git(wt, &["show", "topic:two"]), "resolved\n");
+    assert_eq!(subjects(wt, "topic"), "two\none\nmain moves\nbase\n");
+    assert_eq!(
+        git(wt, &["symbolic-ref", "HEAD"]).trim(),
+        "refs/heads/topic"
+    );
+    assert_eq!(git(wt, &["status", "--porcelain"]), "");
+    assert!(!wt.join(".git/rebase-merge").exists());
+    assert_git_fsck_strict(wt);
+
+    let (twin, code) = git_exec_twin(&[&command]);
+    assert_eq!(code, Some(1), "git stops on the same conflict");
+    let other = twin.worktree();
+    std::fs::write(other.join("two"), "resolved\n").unwrap();
+    git(other, &["add", "two"]);
+    let cont = git_hermetic(other, &["rebase", "--continue"]);
+    assert!(cont.status.success(), "{cont:?}");
+    for rev in ["topic^{tree}", "topic~1^{tree}"] {
+        assert_eq!(git_oid(wt, rev), git_oid(other, rev), "{rev}");
+    }
+    assert_eq!(subjects(other, "topic"), subjects(wt, "topic"));
+}
+
+#[test]
+fn exec_conflict_stop_skip_drops_the_commit_and_abort_restores() {
+    use grit_lib::revwalk::history::HistoryError;
+    for skip in [true, false] {
+        let (fixture, opts, mut plan) = exec_fixture();
+        let wt = fixture.worktree();
+        let index = std::fs::read(wt.join(".git/index")).unwrap();
+        let err = run_exec(wt, &mut plan, &[&conflicting_amend()]).unwrap_err();
+        assert!(matches!(err, HistoryError::ExecConflict { .. }), "{err:?}");
+        let amended = git_oid(wt, "HEAD");
+        if skip {
+            let RebaseOutcome::ExecDone { plan, .. } =
+                skip_rebase(&open_grit(wt), &opts).expect("skip")
+            else {
+                panic!("done")
+            };
+            assert_eq!(plan.commits[1].new, None);
+            assert_eq!(git_oid(wt, "topic"), amended);
+            assert_eq!(subjects(wt, "topic"), "one\nmain moves\nbase\n");
+        } else {
+            abort_rebase(&open_grit(wt), &test_ident()).unwrap();
+            assert_eq!(git_oid(wt, "topic"), opts.request.branch_tip);
+            assert_eq!(git_oid(wt, "HEAD"), opts.request.branch_tip);
+            assert_eq!(std::fs::read(wt.join(".git/index")).unwrap(), index);
+            assert_eq!(std::fs::read(wt.join("two")).unwrap(), b"two\n");
+        }
+        assert_eq!(git(wt, &["status", "--porcelain"]), "");
+        assert!(!wt.join(".git/rebase-merge").exists());
+        assert_git_fsck_strict(wt);
+    }
 }

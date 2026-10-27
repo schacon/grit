@@ -415,17 +415,7 @@ impl RebaseCliOutcome {
         outcome.commit = Some(commit.to_hex());
         outcome.command = Some(command);
         outcome.paths = paths;
-        outcome.exec = runs
-            .iter()
-            .map(|row| {
-                write_exec_streams_to_stderr(row);
-                ExecResultJson {
-                    commit: row.commit.to_hex(),
-                    command: row.command.clone(),
-                    exit_code: row.exit_code,
-                }
-            })
-            .collect();
+        outcome.exec = exec_rows(&runs);
         outcome.next_steps = Some(vec![
             "grit stash push -m 'exec edits'".into(),
             "grit rebase --continue".into(),
@@ -434,6 +424,16 @@ impl RebaseCliOutcome {
             "grit rebase --skip".into(),
             "grit rebase --abort".into(),
         ]);
+        outcome
+    }
+
+    fn from_exec_conflict(
+        commit: ObjectId,
+        conflicts: &[Conflict],
+        runs: &[ExecRunRecord],
+    ) -> Self {
+        let mut outcome = Self::from_stop(commit, conflicts);
+        outcome.exec = exec_rows(runs);
         outcome
     }
 
@@ -1152,6 +1152,19 @@ impl std::fmt::Display for RebaseExecExit {
 
 impl std::error::Error for RebaseExecExit {}
 
+fn exec_rows(runs: &[ExecRunRecord]) -> Vec<ExecResultJson> {
+    runs.iter()
+        .map(|row| {
+            write_exec_streams_to_stderr(row);
+            ExecResultJson {
+                commit: row.commit.to_hex(),
+                command: row.command.clone(),
+                exit_code: row.exit_code,
+            }
+        })
+        .collect()
+}
+
 fn write_exec_streams_to_stderr(row: &ExecRunRecord) {
     let _ = io::stderr().write_all(&row.stdout);
     let _ = io::stderr().write_all(&row.stderr);
@@ -1190,24 +1203,20 @@ fn run_rebase_with_exec(
             conflict_paths(conflicts),
             Some(commit),
         )),
-        RebasePlan::Plan(plan) => {
+        RebasePlan::Plan(mut plan) => {
             verify_rewrite_plan(&rewrite.repo, &plan).map_err(on_err)?;
             let spec = ExecSpec {
                 commands: exec.to_vec(),
             };
             let runner = system_command_runner();
-            let mut exec_json = Vec::new();
-            match verify_rebase_with_exec(&rewrite.repo, &plan, &spec, runner.as_ref()) {
-                Ok(report) => {
-                    for row in &report.runs {
-                        write_exec_streams_to_stderr(row);
-                        exec_json.push(ExecResultJson {
-                            commit: row.commit.to_hex(),
-                            command: row.command.clone(),
-                            exit_code: row.exit_code,
-                        });
-                    }
-                }
+            let exec_json = match verify_rebase_with_exec(
+                &rewrite.repo,
+                &mut plan,
+                &spec,
+                &rebase_opts.rewrite,
+                runner.as_ref(),
+            ) {
+                Ok(report) => exec_rows(&report.runs),
                 Err(HistoryError::ExecDirty {
                     commit,
                     command,
@@ -1217,6 +1226,15 @@ fn run_rebase_with_exec(
                     return Ok(RebaseRunOutcome::Rebase(RebaseCliOutcome::from_exec_dirty(
                         commit, command, paths, runs,
                     )));
+                }
+                Err(HistoryError::ExecConflict {
+                    commit,
+                    conflicts,
+                    runs,
+                }) => {
+                    return Ok(RebaseRunOutcome::Rebase(
+                        RebaseCliOutcome::from_exec_conflict(commit, &conflicts, &runs),
+                    ));
                 }
                 Err(HistoryError::ExecFailed {
                     exit_code,
@@ -1233,7 +1251,7 @@ fn run_rebase_with_exec(
                     ));
                 }
                 Err(other) => return Err(on_err(other)),
-            }
+            };
             let effective_onto = onto_oid.unwrap_or(upstream_oid);
             let message = format!("rebase: onto {}", short(&effective_onto.to_hex()));
             apply_rewrite(
@@ -1312,6 +1330,11 @@ pub fn run_rebase(opts: &RebaseRunOptions<'_>) -> Result<RebaseRunOutcome> {
                 paths,
                 runs,
             })) => RebaseCliOutcome::from_exec_dirty(commit, command, paths, runs),
+            Err(RebaseSessionError::History(HistoryError::ExecConflict {
+                commit,
+                conflicts,
+                runs,
+            })) => RebaseCliOutcome::from_exec_conflict(commit, &conflicts, &runs),
             Err(RebaseSessionError::History(HistoryError::ExecFailed {
                 exit_code,
                 stdout,
@@ -1462,23 +1485,9 @@ fn map_rebase_outcome(outcome: RebaseOutcome) -> Result<RebaseCliOutcome> {
             });
             Ok(RebaseCliOutcome::from_rewrite(outcome))
         }
-        RebaseOutcome::ExecDone { plan, exec, .. } => {
-            let rows = exec
-                .runs
-                .iter()
-                .map(|row| {
-                    write_exec_streams_to_stderr(row);
-                    ExecResultJson {
-                        commit: row.commit.to_hex(),
-                        command: row.command.clone(),
-                        exit_code: row.exit_code,
-                    }
-                })
-                .collect();
-            Ok(RebaseCliOutcome::from_rewrite(
-                HistoryRewriteOutcome::new("rebase", &plan, false).with_exec(rows),
-            ))
-        }
+        RebaseOutcome::ExecDone { plan, exec, .. } => Ok(RebaseCliOutcome::from_rewrite(
+            HistoryRewriteOutcome::new("rebase", &plan, false).with_exec(exec_rows(&exec.runs)),
+        )),
         RebaseOutcome::Stopped(stop) => {
             Ok(RebaseCliOutcome::from_stop(stop.commit, &stop.conflicts))
         }

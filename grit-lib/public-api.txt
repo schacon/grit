@@ -25608,6 +25608,10 @@ pub grit_lib::revwalk::history::HistoryError::Conflict::conflicts: alloc::vec::V
 pub grit_lib::revwalk::history::HistoryError::DivergentBranch
 pub grit_lib::revwalk::history::HistoryError::DivergentBranch::name: alloc::string::String
 pub grit_lib::revwalk::history::HistoryError::EmptyMessage
+pub grit_lib::revwalk::history::HistoryError::ExecConflict
+pub grit_lib::revwalk::history::HistoryError::ExecConflict::commit: grit_lib::objects::ObjectId
+pub grit_lib::revwalk::history::HistoryError::ExecConflict::conflicts: alloc::vec::Vec<grit_lib::operation::Conflict>
+pub grit_lib::revwalk::history::HistoryError::ExecConflict::runs: alloc::vec::Vec<grit_lib::revwalk::history::ExecRunRecord>
 pub grit_lib::revwalk::history::HistoryError::ExecDirty
 pub grit_lib::revwalk::history::HistoryError::ExecDirty::command: alloc::string::String
 pub grit_lib::revwalk::history::HistoryError::ExecDirty::commit: grit_lib::objects::ObjectId
@@ -25619,6 +25623,9 @@ pub grit_lib::revwalk::history::HistoryError::ExecFailed::completed_runs: alloc:
 pub grit_lib::revwalk::history::HistoryError::ExecFailed::exit_code: i32
 pub grit_lib::revwalk::history::HistoryError::ExecFailed::stderr: alloc::vec::Vec<u8>
 pub grit_lib::revwalk::history::HistoryError::ExecFailed::stdout: alloc::vec::Vec<u8>
+pub grit_lib::revwalk::history::HistoryError::ExecHeadMoved
+pub grit_lib::revwalk::history::HistoryError::ExecHeadMoved::commit: grit_lib::objects::ObjectId
+pub grit_lib::revwalk::history::HistoryError::ExecHeadMoved::head: core::option::Option<grit_lib::objects::ObjectId>
 pub grit_lib::revwalk::history::HistoryError::FixupMakesTargetEmpty
 pub grit_lib::revwalk::history::HistoryError::FixupMakesTargetEmpty::commit: grit_lib::objects::ObjectId
 pub grit_lib::revwalk::history::HistoryError::HeadMovedSincePlan
@@ -26483,7 +26490,7 @@ pub fn grit_lib::revwalk::history::staged_absorb_paths(&grit_lib::repo::Reposito
 pub fn grit_lib::revwalk::history::staged_fixup_paths(&grit_lib::repo::Repository) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, grit_lib::revwalk::history::HistoryError>
 pub fn grit_lib::revwalk::history::start_rebase(&grit_lib::repo::Repository, &grit_lib::revwalk::history::StartRebaseOptions, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> core::result::Result<grit_lib::revwalk::history::RebaseOutcome, grit_lib::revwalk::history::RebaseSessionError>
 pub fn grit_lib::revwalk::history::undo_last_rewrite(&grit_lib::repo::Repository, &grit_lib::revwalk::history::ApplyOptions, bool) -> core::result::Result<grit_lib::revwalk::history::UndoOutcome, grit_lib::revwalk::history::HistoryError>
-pub fn grit_lib::revwalk::history::verify_rebase_with_exec(&grit_lib::repo::Repository, &grit_lib::revwalk::history::RewritePlan, &grit_lib::revwalk::history::ExecSpec, &dyn grit_lib::command_runner::CommandRunner) -> core::result::Result<grit_lib::revwalk::history::ExecReport, grit_lib::revwalk::history::HistoryError>
+pub fn grit_lib::revwalk::history::verify_rebase_with_exec(&grit_lib::repo::Repository, &mut grit_lib::revwalk::history::RewritePlan, &grit_lib::revwalk::history::ExecSpec, &grit_lib::revwalk::history::RewriteOptions, &dyn grit_lib::command_runner::CommandRunner) -> core::result::Result<grit_lib::revwalk::history::ExecReport, grit_lib::revwalk::history::HistoryError>
 pub fn grit_lib::revwalk::history::verify_rewrite_plan(&grit_lib::repo::Repository, &grit_lib::revwalk::history::RewritePlan) -> core::result::Result<(), grit_lib::revwalk::history::HistoryError>
 pub type grit_lib::revwalk::history::HistoryEdits = alloc::collections::btree::map::BTreeMap<grit_lib::objects::ObjectId, grit_lib::revwalk::history::CommitEdit>
 pub type grit_lib::revwalk::history::Pathspec<'a> = &'a [alloc::string::String]

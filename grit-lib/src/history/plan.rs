@@ -1073,6 +1073,70 @@ fn replay_commit_descendant(
     )
 }
 
+/// Replay `commit` onto the replacements `mapping` records for its parents, keeping its
+/// author, message and change id.
+///
+/// Returns the replacement, or the mapped first parent when the replay became empty and
+/// `opts.empty` is [`EmptyPolicy::Drop`].
+///
+/// # Errors
+///
+/// [`HistoryError::Conflict`] when the tree merge conflicts, [`HistoryError::BecameEmpty`]
+/// under [`EmptyPolicy::Abort`], and object database or signing failures.
+pub(crate) fn replay_commit_onto_mapping(
+    repo: &Repository,
+    mapping: &HashMap<ObjectId, ObjectId>,
+    commit: ObjectId,
+    opts: &RewriteOptions,
+) -> Result<ObjectId, HistoryError> {
+    let change_ids = ChangeIdWriteContext::from_repo(repo)?;
+    let old = load_commit(repo, commit)?;
+    replay_commit_descendant(
+        repo,
+        &change_ids,
+        mapping,
+        &old,
+        commit,
+        None,
+        MergeFavor::default(),
+        opts,
+    )
+}
+
+/// Write the replacement of `template` with a caller-resolved `tree` on top of `parent`,
+/// keeping its author, message and change id.
+///
+/// # Errors
+///
+/// Object database or signing failures.
+pub(crate) fn write_resolved_replay(
+    repo: &Repository,
+    template: ObjectId,
+    tree: ObjectId,
+    parent: ObjectId,
+    opts: &RewriteOptions,
+) -> Result<ObjectId, HistoryError> {
+    let change_ids = ChangeIdWriteContext::from_repo(repo)?;
+    let old = load_commit(repo, template)?;
+    let committer = if opts.preserve_committer {
+        old.committer.clone()
+    } else {
+        opts.committer_line()?
+    };
+    write_rewritten_commit(
+        repo,
+        opts,
+        &change_ids,
+        &old,
+        template,
+        tree,
+        &[parent],
+        &old.author,
+        &committer,
+        &old.message,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn replay_descendant(
     repo: &Repository,

@@ -344,13 +344,14 @@ fn rebase_exec_detaches_and_restores_head_in_the_store() {
     let disk_head = fs::read_to_string(git_dir.join("HEAD")).expect("HEAD");
     let tips = three_commits(&repo, dir.path());
 
-    let plan = reword(&repo, tips[1], "reworded\n".into(), &rewrite_opts()).expect("plan");
+    let mut plan = reword(&repo, tips[1], "reworded\n".into(), &rewrite_opts()).expect("plan");
     let report = verify_rebase_with_exec(
         &repo,
-        &plan,
+        &mut plan,
         &ExecSpec {
             commands: vec!["test -f f2".into()],
         },
+        &rewrite_opts(),
         system_command_runner().as_ref(),
     )
     .expect("exec");

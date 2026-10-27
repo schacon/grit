@@ -159,14 +159,44 @@ pub enum HistoryError {
     /// original branch refs are unchanged and rebase recovery state is persisted.
     #[error("rebase --exec left tracked changes at commit {commit}; save the edits before continuing, or abort the rebase")]
     ExecDirty {
-        /// Replay commit checked out when the command ran.
+        /// Detached `HEAD` after the command: the replay commit, or the commit the command
+        /// amended it into. Recovery expects `HEAD` here.
         commit: ObjectId,
         /// Successful command that changed the index or worktree.
         command: String,
-        /// Changed paths relative to the replay commit, sorted and deduplicated.
+        /// Changed paths relative to `commit`, sorted and deduplicated.
         paths: Vec<String>,
         /// Captured invocations through the dirty command, in execution order.
         runs: Vec<super::ExecRunRecord>,
+    },
+
+    /// Replaying a later commit onto one that an `--exec` command amended or extended
+    /// produced conflicts. The conflicted replay is checked out with conflict markers on
+    /// top of the rewritten commit, branch refs are unchanged, and recovery state is
+    /// persisted: resolve and stage, then [`super::continue_rebase`]; or
+    /// [`super::skip_rebase`] to drop the commit, or [`super::abort_rebase`].
+    #[error(
+        "replay of commit {commit} onto the commit rewritten by rebase --exec produced conflicts"
+    )]
+    ExecConflict {
+        /// Original commit that could not be replayed cleanly.
+        commit: ObjectId,
+        /// Conflicted paths and how they conflicted, sorted by path.
+        conflicts: Vec<Conflict>,
+        /// Captured invocations before the conflict, in execution order.
+        runs: Vec<super::ExecRunRecord>,
+    },
+
+    /// A successful `--exec` command left `HEAD` somewhere other than the replay commit, an
+    /// amended replacement of it, or new commits on top of either (for example it switched
+    /// branches or reset away the commit). Repository state was restored; commits the
+    /// command created remain in the object database.
+    #[error("rebase --exec command moved HEAD away from commit {commit}; it may only amend or add commits on top of it")]
+    ExecHeadMoved {
+        /// Replay commit checked out when the command ran.
+        commit: ObjectId,
+        /// Commit `HEAD` resolved to after the command, when readable.
+        head: Option<ObjectId>,
     },
 
     /// A `rebase --exec` command exited non-zero; repository state was restored.

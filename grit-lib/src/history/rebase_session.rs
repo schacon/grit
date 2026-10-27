@@ -249,7 +249,9 @@ pub fn start_rebase(
 /// For an exec stop, requires a clean index/worktree at the recorded replay HEAD,
 /// then resumes at the next command (the successful dirty command is not rerun).
 /// Save exec edits with a stash before continuing. A moved HEAD is rejected;
-/// save new commits on a branch, abort, and restart in that case.
+/// save new commits on a branch, abort, and restart in that case. For an exec replay
+/// conflict ([`HistoryError::ExecConflict`]), commits the staged resolution and runs the
+/// commands at it. Later replays and new commits use `opts.rebase.rewrite`.
 ///
 /// # Errors
 ///
@@ -265,7 +267,7 @@ pub fn continue_rebase(
     cancel: &dyn Cancel,
 ) -> Result<RebaseOutcome, RebaseSessionError> {
     if matches!(active_rebase(repo.git_dir()), Some(ActiveRebase::Exec)) {
-        return super::exec::resume_exec_rebase(repo, &opts.apply, false);
+        return super::exec::resume_exec_rebase(repo, &opts.rebase.rewrite, &opts.apply, false);
     }
     super::ensure_rewrite_apply_ready(repo)?;
     let state = load_persisted_state(repo.git_dir())?;
@@ -325,6 +327,7 @@ pub fn continue_rebase(
 ///
 /// For an exec stop, requires the edits to be saved or removed first, then skips
 /// remaining commands at that replay commit; the already replayed commit is kept.
+/// For an exec replay conflict, drops the conflicted commit instead.
 ///
 /// # Errors
 ///
@@ -338,7 +341,7 @@ pub fn skip_rebase(
     cancel: &dyn Cancel,
 ) -> Result<RebaseOutcome, RebaseSessionError> {
     if matches!(active_rebase(repo.git_dir()), Some(ActiveRebase::Exec)) {
-        return super::exec::resume_exec_rebase(repo, &opts.apply, true);
+        return super::exec::resume_exec_rebase(repo, &opts.rebase.rewrite, &opts.apply, true);
     }
     let state = load_persisted_state(repo.git_dir())?;
     let current = state
