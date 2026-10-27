@@ -1,90 +1,186 @@
 {
   "schema": "grit-daily-bench/1",
-  "generated_at": "2026-10-26T02:56:08.970554323Z",
+  "generated_at": "2026-10-27T04:05:44.202091914Z",
   "machine": {
-    "cpu_model": "Intel(R) Xeon(R) Processor",
-    "physical_cores": 4,
+    "cpu_model": "AMD EPYC 7763 64-Core Processor",
+    "physical_cores": 2,
     "logical_cores": 4,
-    "ram_bytes": 16780574720,
+    "ram_bytes": 16766414848,
     "os": "linux",
-    "kernel": "Linux 6.12.94+",
+    "kernel": "Linux 6.17.0-1022-azure",
     "scratch_filesystem": "ext4",
-    "rustc_version": "rustc 1.83.0 (90b35a623 2024-11-26)",
-    "cargo_profile": "dev"
+    "rustc_version": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "cargo_profile": "release"
   },
   "tools": {
-    "git": "git version 2.43.0",
-    "grit": "grit 0.5.21",
-    "grit_commit": "71efc5db081daa92a53db839e6e9fa7668e4498e"
+    "git": "git version 2.55.0",
+    "grit": "grit 0.5.22",
+    "grit_commit": "beb3bd741ba10280dfd11212e91ac259e26f692b"
   },
   "scenarios": [
+    {
+      "id": "log/json-100@git-git",
+      "area": "revwalk",
+      "headline": true,
+      "name": "log",
+      "description": "Last 100 commits as JSON vs git log with a verbose --format",
+      "git": {
+        "median_wall_ms": 3.9031719999999996,
+        "peak_rss_bytes": 15527936,
+        "runs": 20,
+        "samples_ms": [
+          3.906,
+          4.107,
+          4.009,
+          3.833,
+          3.856,
+          3.932,
+          3.836,
+          3.823,
+          3.9,
+          3.915,
+          3.856,
+          3.827,
+          3.748,
+          3.8,
+          3.935,
+          3.861,
+          4.057,
+          4.041,
+          4.182,
+          4.074
+        ],
+        "min_ms": 3.748077,
+        "max_ms": 4.182087,
+        "stddev_ms": 0.11646954224440427
+      },
+      "grit": {
+        "median_wall_ms": 5.838579,
+        "peak_rss_bytes": 24748032,
+        "runs": 20,
+        "samples_ms": [
+          5.718,
+          6.001,
+          5.899,
+          5.773,
+          5.725,
+          5.953,
+          5.789,
+          5.897,
+          5.866,
+          5.764,
+          5.852,
+          5.681,
+          5.76,
+          5.825,
+          5.807,
+          5.765,
+          5.932,
+          6.044,
+          5.995,
+          6.172
+        ],
+        "min_ms": 5.6812759999999995,
+        "max_ms": 6.1722920000000006,
+        "stddev_ms": 0.1259666885403377
+      },
+      "ratio": 1.4958549098015668,
+      "detail": {
+        "commands": {
+          "git": "git log -100 '--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%cn%x00%ce%x00%ct%x00%s%x00%b%x00'",
+          "grit": "grit log --limit 100 --json"
+        },
+        "phases": {
+          "grit": [
+            {
+              "name": "grit.repository.open",
+              "ms": 0.42,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.149,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.index.open",
+              "ms": 0.04,
+              "count": 1,
+              "depth": 0
+            }
+          ]
+        }
+      }
+    },
     {
       "id": "reset/undo-commit@git-git",
       "area": "worktree",
       "description": "Undo the last commit on pinned git.git (deep history, many tags): grit reset --soft HEAD~1 vs git reset --soft HEAD~1",
       "git": {
-        "median_wall_ms": 2.1310054999999997,
-        "peak_rss_bytes": 15269888,
+        "median_wall_ms": 3.6222385,
+        "peak_rss_bytes": 8396800,
         "runs": 20,
         "samples_ms": [
-          1.794,
-          1.998,
-          2.147,
-          2.189,
-          2.156,
-          2.015,
-          2.033,
-          2.144,
-          2.377,
-          2.137,
-          2.342,
-          2.086,
-          1.845,
-          2.166,
-          2.125,
-          1.861,
-          2.397,
-          1.999,
-          2.32,
-          2.121
+          3.763,
+          3.735,
+          3.722,
+          3.613,
+          3.666,
+          3.806,
+          3.601,
+          3.697,
+          3.57,
+          3.77,
+          3.608,
+          3.972,
+          3.556,
+          3.423,
+          3.472,
+          3.556,
+          3.631,
+          3.584,
+          3.717,
+          3.565
         ],
-        "min_ms": 1.794162,
-        "max_ms": 2.397489,
-        "stddev_ms": 0.16844129630914523
+        "min_ms": 3.422741,
+        "max_ms": 3.972243,
+        "stddev_ms": 0.12544266226207643
       },
       "grit": {
-        "median_wall_ms": 11.792303,
-        "peak_rss_bytes": 45883392,
+        "median_wall_ms": 20.150826000000002,
+        "peak_rss_bytes": 49459200,
         "runs": 20,
         "samples_ms": [
-          12.542,
-          11.79,
-          12.171,
-          12.005,
-          11.64,
-          11.745,
-          11.899,
-          11.772,
-          11.982,
-          12.195,
-          11.677,
-          12.105,
-          11.558,
-          11.794,
-          11.777,
-          11.729,
-          11.721,
-          11.37,
-          12.183,
-          12.575
+          20.138,
+          20.033,
+          20.545,
+          20.188,
+          19.908,
+          20.191,
+          20.309,
+          20.394,
+          19.631,
+          20.199,
+          20.15,
+          20.493,
+          19.519,
+          19.844,
+          19.838,
+          20.151,
+          20.505,
+          19.482,
+          20.318,
+          19.212
         ],
-        "min_ms": 11.3704,
-        "max_ms": 12.574615000000001,
-        "stddev_ms": 0.30954017326834576
+        "min_ms": 19.211966,
+        "max_ms": 20.544771,
+        "stddev_ms": 0.3688919072992863
       },
-      "ratio": 5.53368022747947,
+      "ratio": 5.563086472632877,
       "detail": {
-        "prepare": "set -eu\ngrit-bench prepare-daily-reset --git git\ncd /tmp/grit-bench-scratch/daily-git-git-wt/worktree-run-git-git-wt && git -c user.name=grit-bench -c user.email=bench@example.com commit -q --allow-empty --no-verify -m daily-bench-wip",
+        "prepare": "set -eu\ngrit-bench prepare-daily-reset --git git\ncd /tmp/grit-bench-scratch/daily-git-git-wt/worktree-run-git-git-wt && git -c gc.auto=0 -c maintenance.auto=false -c user.name=grit-bench -c user.email=bench@example.com commit -q --allow-empty --no-verify -m daily-bench-wip",
         "commands": {
           "git": "git reset --soft HEAD~1",
           "grit": "grit reset --soft HEAD~1"
@@ -93,13 +189,13 @@
           "git": [
             {
               "name": "index: do_read_index",
-              "ms": 0.312,
+              "ms": 0.453,
               "count": 1,
               "depth": 0
             },
             {
               "name": "cache_tree: read",
-              "ms": 0.042,
+              "ms": 0.041,
               "count": 1,
               "depth": 0
             }
@@ -107,21 +203,87 @@
           "grit": [
             {
               "name": "grit.repository.open",
-              "ms": 0.315,
+              "ms": 0.374,
               "count": 1,
               "depth": 0
             },
             {
               "name": "grit.config.load",
-              "ms": 0.091,
+              "ms": 0.106,
               "count": 2,
               "depth": 0
             },
             {
               "name": "grit.pack.index.open",
-              "ms": 0.017,
+              "ms": 0.028,
               "count": 1,
               "depth": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "revs/count@git-git",
+      "area": "revwalk",
+      "description": "Count commits at HEAD: grit revs --count HEAD vs git rev-list --count HEAD",
+      "git": {
+        "median_wall_ms": 558.793493,
+        "peak_rss_bytes": 65617920,
+        "runs": 3,
+        "samples_ms": [
+          558.793,
+          546.639,
+          569.339
+        ],
+        "min_ms": 546.6386180000001,
+        "max_ms": 569.338522,
+        "stddev_ms": 11.359462021340612
+      },
+      "grit": {
+        "median_wall_ms": 810.3305039999999,
+        "peak_rss_bytes": 132546560,
+        "runs": 3,
+        "samples_ms": [
+          826.311,
+          799.488,
+          810.331
+        ],
+        "min_ms": 799.487621,
+        "max_ms": 826.310825,
+        "stddev_ms": 13.493350484839743
+      },
+      "ratio": 1.45014305669447,
+      "detail": {
+        "commands": {
+          "git": "git rev-list --count HEAD",
+          "grit": "grit revs --count HEAD"
+        },
+        "phases": {
+          "grit": [
+            {
+              "name": "grit.revwalk.setup",
+              "ms": 776.21,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.repository.open",
+              "ms": 0.382,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.108,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.index.open",
+              "ms": 0.026,
+              "count": 1,
+              "depth": 1
             }
           ]
         }

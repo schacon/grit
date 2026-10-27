@@ -9,6 +9,53 @@ For a map of **grit-lib** modules, **grit** commands, common workflows, and ever
 
 Command-level numbers below come from the committed **grit-bench** JSON baselines listed in `content/docs/site.toml`. Scenario suites use **hyperfine** against the system **`git`** binary and a release **`grit`** build on the same machine; individual studies below document their sampling method. Times are wall-clock milliseconds.
 
+## Undoing a commit without a commit-graph (2026-10-27)
+
+On `git/git` (82,605 commits, 1,012 tags), `reset --soft HEAD~1` after an empty
+local commit now stays near the commits being left behind. It reuses packed-ref
+peel records and stops the advisory orphan paint by date when no commit-graph
+exists. With a graph it keeps the exact generation stop; log, revision listing,
+merge-base and transfer walks keep their existing exact behavior.
+
+Factory VM, four vCPUs, Rust 1.99.0, `release` profile, system Git 2.55.0.
+Both CLI binaries use `cargo build --release -p grit-cli`. One warmup and nine
+interleaved runs per tool use Python `perf_counter` around `/usr/bin/time -v`;
+preparation is excluded. Builds and tests are stopped during measurement, and
+automatic Git maintenance is disabled in the fixture.
+
+| Tool | Median wall (ms) | Peak RSS (MiB) |
+| --- | ---: | ---: |
+| System Git | 4.14 | 6.61 |
+| Main (`3c1a41ef2`) | 703.00 | 86.87 |
+| Bounded orphan report | 23.18 | 46.14 |
+
+The committed `daily-reset-undo-commit-before.json` and
+`daily-reset-undo-commit-after.json` compare reset and the existing log and
+revision-count scenarios on the canonical `v2.47.0` fixture (75,031 commits):
+
+| Scenario | Main (ms) | Branch (ms) | Git before / after (ms) |
+| --- | ---: | ---: | ---: |
+| Undo one commit | 722.30 | 20.15 | 3.64 / 3.62 |
+| Log, 100 JSON commits | 6.82 | 5.84 | 4.08 / 3.90 |
+| Revision count | 813.38 | 810.33 | 574.15 / 558.79 |
+
+Six additional paired, interleaved `/usr/bin/time -v` samples per CLI check the
+canaries' process memory and timing:
+
+| Operation | Main (ms / MiB median RSS) | Branch (ms / MiB median RSS) |
+| --- | ---: | ---: |
+| Log, 100 JSON commits | 6.79 / 20.92 | 6.25 / 21.66 |
+| Revision count | 789.12 / 124.68 | 785.97 / 125.00 |
+
+The log canary's median RSS is about 0.75 MiB higher in this sample; full revision
+counting differs by about 0.32 MiB. These walks retain their exact algorithms
+and gain no per-commit data from the orphan-report stop mode.
+
+Without a graph, the orphan report follows a date floor and a five-commit slop
+window. Severe clock skew can make its count inaccurate; it is advisory and
+never controls repository writes. See [reset](commands/reset.md) and
+[switch](commands/switch.md).
+
 ## Inexact rename detection (2026-10-27)
 
 Issue [#1683](https://github.com/gitbutlerapp/grit/issues/1683) reproduced on
