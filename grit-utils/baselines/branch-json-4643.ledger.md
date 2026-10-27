@@ -1,5 +1,10 @@
 # Branch JSON listing: shared environment snapshots (task 4643)
 
+**The original-base isolation check at the end supersedes the earlier end-to-end
+speed claims.** Those comparisons used newer main builds and did not isolate the patch.
+The daily before/after JSON files now contain the isolated check, not the historical tables
+below. Historical raw data remains in `branch-json-4643-recheck.json`.
+
 Main: `f23547129b04beca9bb4f38646eec82bf9f186f2`. Implementation:
 `4741577c8247a5ec5008416c6528ea49c6d1271a`.
 Measured 2026-10-26 on the same AMD EPYC 7763 VM (four vCPUs), Linux, system
@@ -188,3 +193,145 @@ startup were changed; the branch is independent of the corresponding work in fli
 ```json
 {"branch/create@many-refs":{"git":[5500,5872,5692,5564,5740,5928,5836,5728,5564,5808,5776,5796,5572,5924,5804,5792,5660,5792,5684,5484],"before":[13732,13544,13596,13380,13728,13848,13296,13412,13488,13224,13608,13552,13292,13656,13412,13412,13800,13408,13656,13792],"after":[13348,13336,13248,13180,13384,13176,13240,13120,13084,13184,13296,13296,13344,13308,13224,13404,13180,13180,13404,13512]},"branch/delete@many-refs":{"git":[5408,5668,5624,5316,5740,5272,5408,5424,5452,5676,5456,5336,5676,5560,5576,5456,5728,5440,5628,5516],"before":[14524,14600,14680,14760,14700,14828,14468,14740,14788,14596,14752,14700,14832,14356,14684,14516,14508,14356,14728,14596],"after":[14304,14544,14152,14564,14516,14216,14292,14384,14520,14292,14416,14224,14224,14580,14456,14664,14584,14288,14516,14452]},"branch/list-json@many-refs":{"git":[5596,5740,5620,5732,5560,5860,5864,5660,5632,5628,5556,5716,5848,5716,5608,5732,5500,5688,5692,5796],"before":[14172,14380,14496,13996,13896,14124,14208,14060,14504,14060,14188,13992,13996,14128,13996,14176,14112,14228,13996,14164],"after":[13712,13804,13668,13944,13952,13884,13956,13924,13348,13784,13944,13720,13976,13836,13404,13952,13924,13964,13592,13896]},"branch/list@many-refs":{"git":[5056,4812,5036,4732,4968,4892,4796,4860,4904,4864,4796,4792,4764,4864,4844,4732,4720,4900,4748,5092],"before":[12164,12292,12532,12160,12164,12476,12292,12140,12484,12396,12212,12228,12548,12412,12292,12544,12292,12160,12548,12548],"after":[11672,12164,12120,12116,12056,12128,11952,12180,12100,11972,11704,12056,11940,11696,12052,12008,12176,11940,11692,11936]},"branch/list@many-refs-loose":{"git":[5092,4732,4968,4920,4968,4864,4844,4968,4844,4892,4856,4852,4716,4820,4844,4780,4920,4756,4968,4728],"before":[12228,12224,12164,12540,12548,12420,12164,12152,12408,12548,12228,12520,12532,12416,12228,12292,12228,12164,12548,12416],"after":[11960,12068,11672,12008,12072,12232,11972,12216,11700,12056,12360,12076,11672,11972,11672,11692,12092,12232,12352,11700]},"branch/merged-ref@many-refs":{"git":[5472,5420,5312,5548,5412,5248,5552,5480,5296,5548,5468,5612,5312,5312,5484,5408,5568,5552,5616,5412],"before":[10384,10396,10584,10284,10076,10156,10280,10320,10100,10736,10276,10308,10220,10212,10444,10444,10384,10400,10572,10076],"after":[10140,10272,10192,10232,10028,10144,10284,10028,10112,10540,10596,10560,10056,10180,10564,10148,10620,10480,10272,10480]},"branch/merged@many-refs":{"git":[5796,5488,5508,5616,5744,5608,5728,5700,5628,5908,5680,5376,5800,5496,5700,5804,5816,5432,5600,5708],"before":[14104,13992,14108,13848,13864,13856,14108,14120,14312,14080,13956,14120,13992,14368,13948,13824,13988,14104,13896,13988],"after":[13884,13848,13852,13388,13520,13916,13692,13556,13868,13568,13552,13756,13556,13660,13928,13692,13756,13152,13688,13576]},"branch/rename@many-refs":{"git":[4996,4988,5036,4988,4844,4728,4932,5120,5124,4852,4964,5072,5148,4996,5104,4976,5112,4860,4804,5104],"before":[12424,12484,12484,12412,12272,12296,12312,12152,12360,12444,12188,12196,12556,12492,12480,12328,12236,12220,12432,12440],"after":[12208,12416,12484,12220,12352,12240,12448,12396,12184,12228,12408,12384,12412,12184,12320,12232,12448,12456,12188,12360]},"config/get@small":{"git":[4156,4028,4064,4016,4224,4068,4076,3972,3920,4004,3920,4216,4096,4000,4156,4144,3972,3920,3908,3920],"before":[10948,10820,10820,10648,10564,10436,10948,10692,10820,10884,10564,10820,10940,10948,10820,10692,10820,10820,10436,10948],"after":[10980,10488,10976,10500,10972,10624,11056,11044,10768,10764,10768,11048,10624,10972,10492,10972,10768,10764,11048,10972]},"status/clean@synth-10k":{"git":[7120,7188,7476,7120,7176,7180,7356,7312,7200,7184,7184,7316,7264,7312,7184,7096,7204,7124,7396,7376],"before":[16924,16932,16932,16872,17104,16940,16916,17108,17252,16976,16908,16972,17032,17064,16996,17260,16984,17192,16936,17044],"after":[16956,17004,17320,16840,16944,17068,17104,17020,17312,17092,17340,17244,17128,17068,17020,17204,16956,17016,17096,17436]},"tag/list@many-refs":{"git":[6076,5864,5996,5976,6036,5860,5856,6056,6036,6056,5864,6072,5796,5864,6076,5988,6072,5928,5964,5920],"before":[12392,12676,12548,12600,12464,12336,12448,12676,12696,12804,12280,12572,12536,12816,12604,12460,12200,12596,12576,12728],"after":[12756,12716,12864,12756,12700,12904,12488,12840,12924,12968,12568,12884,12864,12764,12824,12752,12580,13000,12860,12960]}}
 ```
+
+## Original-base isolation after review (2026-10-27)
+The earlier end-to-end timing claims above do not isolate the patch: those runs compared
+with newer main builds. Review measured original-base branch JSON at 2.9511 → 3.1676 ms
+(+7.34%) in direct sampling and +7.02% in hyperfine, and creation at +6.13%, on EPYC 7763.
+The experiment here follows the request to use one source **and** target path across both
+revisions. It favors the existing implementation on this EPYC 9V45 VM; no additional
+production-code change was made in response to the review.
+
+Exact revisions: `f23547129b04beca9bb4f38646eec82bf9f186f2` and
+`b04e11d542589b6e45756e789aeaa6d69753703d`. Both used
+`/tmp/perf4643/source` and `/tmp/perf4643/source/target`, the same Cargo.lock, Rust 1.99.0,
+and `cargo build --release -p grit-cli -p grit-utils`. After overlaying each archive, source
+timestamps were refreshed; both logs explicitly show grit-lib, grit-cli and grit-utils
+recompiled. An initial zero-rebuild attempt was detected and discarded before measurements.
+Source archives preserve old commit timestamps, so refreshing them is essential when
+reusing a build directory. The executable SHA-256 values are:
+
+- Base: `858746c5b177a9d0d1c014cbaa09cf597da24be28a90373a0ecf48a4141f2749`
+- Patch: `b26e6c9b5e8d1bc3d46ed703614959da75c1e7dac241471caa78a867c22adc10`
+
+The daily fixture matches review's HEAD `b2c0606217709fa3f65c3d522c290687721998c7`,
+10,000 generated refs (10,002 total in the working clone), and one local branch. System
+Git is 2.55.0, Linux 6.17.0-1022-azure, four vCPUs / 16 GiB RAM. Compilation, tests and
+profiling were idle during the accepted timing samples.
+
+### Direct timing and RSS controls
+
+Each row below has **120** timed direct-spawn samples per executable. Each round uses a
+deterministic randomized tool order. Mutation refs are reset outside the timed region;
+rename and merged-ref run matching per-revision grit-bench library drivers. RSS is the
+median of **20 additional `/usr/bin/time -v` samples**, also with randomized order.
+
+| Scenario | Git ms | Grit before ms | Grit after ms | Peak RSS before KiB | Peak RSS after KiB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| branch/list-json@many-refs | 1.460 | 2.134 | 2.046 | 14,318 | 14,042 |
+| branch/list@many-refs | 1.220 | 1.921 | 1.839 | 12,448 | 12,248 |
+| branch/list@many-refs-loose | 1.170 | 1.844 | 1.772 | 12,420 | 12,150 |
+| branch/create@many-refs | 1.371 | 2.353 | 2.245 | 13,700 | 13,478 |
+| branch/delete@many-refs | 1.725 | 6.352 | 6.319 | 14,694 | 14,538 |
+| branch/rename@many-refs | 1.666 | 6.097 | 5.932 | 12,568 | 12,498 |
+| branch/merged@many-refs | 1.420 | 2.272 | 2.182 | 14,164 | 13,790 |
+| branch/merged-ref@many-refs | 1.476 | 2.676 | 2.506 | 10,408 | 10,504 |
+| config/get@small | 1.001 | 1.772 | 1.694 | 10,820 | 10,934 |
+| status/clean@synth-10k | 12.748 | 13.092 | 13.046 | 19,152 | 19,210 |
+| tag/list@many-refs | 3.097 | 3.831 | 3.781 | 12,596 | 12,934 |
+
+Every branch scenario improves in this direct check; creation improves 4.6%, rather than
+the review's 6.1% increase. The separate **600-sample rotating-order** headline check on
+the daily fixture measures **2.1533 → 2.0744 ms** (−3.7%), system Git **1.4679 ms**.
+An independent 600-sample check on the initial fixture copy gives **2.2448 → 2.1696 ms**
+(−3.3%), Git **1.5256 ms**. Hyperfine (`--shell=none --warmup 20 --runs 300`) in each
+command order gives pooled medians **2.1084 → 1.9998 ms** (−5.2%), Git **1.3817 ms**;
+pooled means are **2.1163 → 2.0080 ms**, Git **1.3844 ms**.
+
+The repeated daily matrix uses revision order **base / patch / patch / base**, 20 samples
+per tool each batch. The refreshed daily JSON files pool the 40 samples per revision and
+record their exact source commit. Branch JSON is 2.9715 → 2.7645 ms; creation is
+3.1385 → 3.0095 ms. No daily timing increase exceeds 5% (human branch list is +3.6%;
+status +0.03%). The longer direct comparisons above favor the patch on those controls.
+Daily shell/helper timings and direct timings include different process overhead and must
+not be substituted for each other.
+
+### Profiles and interpretation
+
+Heaptrack on the same daily fixture measures branch JSON **5,582 → 4,477 allocations**
+(−19.8%); peak live heap stays about **325 KB**, set by clap before repository discovery.
+Tag allocations fall **22,064 → 20,962**, with peak live heap **1.24 → 1.22 MB**.
+Environment clones appear in baseline allocation stacks under config and repository setup:
+sharing the immutable captured-variable map removes over a thousand key/value allocations.
+Typed discovery and config fields still clone independently.
+
+`strace -c` reports **376 syscalls** in each headline executable, including **123 expected
+failed probes**. `perf record -e cpu-clock:u -F 3999 --call-graph dwarf` over 400 commands
+per revision still shows allocator, clap and process/config setup work. ELF relative
+relocations change 32,740 → 32,812 (+72). These observations do **not** establish whether
+CPU differences or build layout explain the review's timing reversal. The actual controlled
+same-path measurements are the evidence for the retained implementation; no claim of a
+portable fixed percentage gain is made.
+
+This remains **not a zero-regression result**. Tag RSS rises **338 KiB / 2.7%**, config
+**114 KiB / 1.1%**, status **58 KiB / 0.3%**, and merged-ref **96 KiB / 0.9%** here.
+Retain the historical tag **+2.1–2.8%**, status up to **+0.9%**, and config up to **+1.9%**
+disclosures as well. Tag peak live heap and allocations fall despite its RSS increase.
+The approved memory trade-off and allocator/startup work under **#4626** still apply.
+
+### Reproduce the isolated builds
+
+First create the full daily fixture with the command in the earlier reproduction section.
+Then use an unused output directory:
+
+```bash
+bash scripts/bench-branch-snapshots.sh \
+  f23547129b04beca9bb4f38646eec82bf9f186f2 \
+  b04e11d542589b6e45756e789aeaa6d69753703d \
+  /path/to/fixtures/daily-small/worktree-run-many-refs \
+  /tmp/branch-snapshot-isolation
+```
+
+The helper overlays both snapshots in one source directory, refreshes timestamps to force
+recompilation, preserves both executables and matched drivers, records fixture/revision
+identity and hashes, and runs hyperfine in both orders. It refuses an existing output
+directory and revisions with deleted files. Its shell syntax and both refreshed daily JSON
+schemas were checked. `branch-json-4643-isolated.json` contains raw direct, hyperfine and
+RSS samples, build metadata, and profile totals. The older `branch-json-4643-recheck.json`
+is historical evidence only.
+
+### Reconstructed baseline and final validation
+
+Reconstructing the original base again in exactly the same source/target path, refreshing
+all source timestamps and rebuilding both executables, produced the **identical** base
+SHA-256 above. A final idle 600-round direct check measured Git **1.4768 ms**, preserved
+base **2.1578 ms**, reconstructed base **2.1264 ms**, and patch **2.0754 ms**. The gain
+therefore remains **2.4–3.8%** against the two identical baseline executables in that check;
+small timing differences between identical binaries are themselves visible. This supports
+a repeatable local benefit, not a universal percentage or an explanation of the review CPU.
+
+- Original-base library units: initially **2,579 passed / 1 failed / 3 ignored**; repeat
+  **2,577 / 3 / 3**. The additional repeat failures were reset tests reporting system-Git
+  fsck missing-loose-object errors.
+- Patch library units: initially **2,578 / 4 / 3**; final full run **2,581 / 1 / 3**. The
+  remaining `hard_reset_delete_heavy_reads_no_worktree_files_and_stats_each_once` failure
+  also fails on the baseline. The baseline repeat also failed
+  `hard_reset_rewrites_racy_unchanged_file_with_same_size_edit`, another initial patch failure.
+  The initial commit object-count and worktree-lock failures pass alone on **both** versions.
+  No tests, assertions or lint levels were weakened; these broad unit runs are not all green.
+- Focused public library integration: **21 passed** across `environment_discover`,
+  `branch_mutation_git_compat`, and `branch_inventory_git_compat`. Branch mutations include
+  interoperability and `git fsck` checks. CLI branch suites: **24 passed**.
+- Required `cargo test -p grit-lib -p grit-cli` attempts on **both** exact revisions stop at
+  the existing `history_injected_ref_store` `Signature: From<&str>` compile failure.
+  The separate `serve_upload_pack_inprocess` attempt reproduces **14 obsolete ServeOptions
+  errors**. Both fixtures are unchanged from original main and current origin/main; the
+  serving integration compile failure is pre-existing and unrelated.
+- `cargo fmt --all --check` and `cargo clippy --workspace -- -D warnings`: passed on the
+  isolated patch. Both refreshed daily baselines validate. Human, JSON and Markdown branch
+  output matches byte-for-byte. The reproduction script passes shell syntax and usage checks.
+
+No additional production Rust code or public API changed after review. The follow-up commit
+contains the same-path reproduction procedure, corrected benchmark claims, refreshed daily
+baselines and raw isolated evidence. The EPYC 7763 timing discrepancy remains unproven;
+review can rerun the included procedure on that CPU without path or stale-artifact ambiguity.

@@ -1227,37 +1227,52 @@ Related `diff`, `add`, and `commit` rows are included in the reports. The commit
 ## Shared environment snapshots
 
 Repository discovery and config loading clone an explicit `Environment`. Its captured
-variables now share immutable storage, while typed overrides remain independent. This
-removes repeated copies of inherited variables from short commands.
+variables share immutable storage, while typed overrides remain independent. This removes
+repeated copies of inherited variables from short commands.
 
-On the factory VM (2026-10-26, AMD EPYC 7763, four vCPUs, system Git 2.55.0,
-`release` profile), the daily `many-refs` fixture contains 10,000 refs, mostly remote-tracking
-refs, and lists one local branch by default. Direct execution with hyperfine, 300 runs in
-each command order, measured:
+The isolated check on 2026-10-27 compares original base `f23547129` with implementation
+`b04e11d54`, both built with Rust 1.99.0 and `cargo build --release -p grit-cli -p grit-utils`
+in **the same source and target directory**, forcing recompilation between archives and
+checking executable hashes. The VM has four vCPUs on AMD EPYC 9V45, Linux, and system
+Git 2.55.0. The daily `many-refs` fixture has HEAD `b2c0606217`, 10,000 generated refs
+and one local branch in the working copy.
 
 | Operation | Git | Grit before | Grit after |
 | --- | ---: | ---: | ---: |
-| Branch JSON listing, median | 1.92 ms | 2.78 ms | 2.71 ms |
-| Peak RSS, median of 20 `time -v` runs | 5,690 KiB | 14,126 KiB | 13,890 KiB |
+| Branch JSON, 600 rotating direct-spawn samples, median | 1.468 ms | 2.153 ms | 2.074 ms |
+| Branch JSON, hyperfine in both orders, pooled median | 1.382 ms | 2.108 ms | 2.000 ms |
+| Branch creation, 120 rotating direct-spawn samples, median | 1.371 ms | 2.353 ms | 2.246 ms |
+| Branch JSON peak RSS, median of 20 `time -v` runs | 5,738 KiB | 14,318 KiB | 14,042 KiB |
 
-The Git comparison is `git branch -vv`, matching the daily scenario. Heaptrack allocation
-calls fell from 5,552 to 4,447; peak live heap stayed about 323 KB because argument parsing
-sets that peak earlier. Human, JSON and Markdown output remained byte-identical.
+A fresh baseline reconstruction produced the identical executable hash. A final 600-round
+check measured 2.158 ms for the preserved base, 2.126 ms for its reconstruction, and
+2.075 ms for the patch (a 2.4–3.8% gain); Git measured 1.477 ms.
 
-Reproduce the library measurement with `cargo bench -p grit-lib --bench environment`.
-It covers clones with 0, 64, 256 and 1,024 inherited variables. The accompanying daily
-baselines and measurement notes are recorded under `grit-utils/baselines/` for task 4643.
-Tag RSS was 2.1–2.8% higher across repetitions, despite lower peak heap usage and fewer
-allocations. Clean-status RSS increased 0.6% and config-get RSS increased 0.5%. The
-maintainer approved proceeding to review with these trade-offs documented; this is not a
-zero-regression result. Allocator and startup residency work is tracked under
-[#4626](https://github.com/gitbutlerapp/grit/issues/4626).
-A second VM check on 2026-10-27 measured 2.677 → 2.590 ms for branch JSON in 600 runs
-per executable (system Git: 1.903 ms). A lifetime probe found that the shared map is released
-with the repository, even while config and tag results remain alive. Removing a redundant
-discovery clone did not flatten tag RSS, so that candidate was discarded. Fresh status RSS
-samples rose 0.3–0.9%; config samples ranged from −0.3% to +1.9%.
-See the measurement ledger and `branch-json-4643-recheck.json` for complete results and limits.
+The Git headline comparison is `git branch -vv`, matching the daily scenario. The repeated
+daily matrix uses 40 samples per revision in opposite revision orders, including matching
+`grit-bench` library drivers for rename and merged-ref. None of its timing increases exceeds
+5%; all eight branch scenarios improve in the separate 120-sample direct comparisons.
+Heaptrack allocation calls for branch JSON fall from 5,582 to 4,477; peak live heap stays
+about 325 KB, set earlier by argument parsing. Human, JSON and Markdown output is unchanged.
+
+This is **not a zero-regression result**. In 20 alternating RSS samples, tag listing rises
+12,596 → 12,934 KiB (+2.7%), config get 10,820 → 10,934 KiB (+1.1%), clean status
+19,152 → 19,210 KiB (+0.3%), and the merged-ref helper 10,408 → 10,504 KiB (+0.9%).
+Tag peak live heap falls about 1.24 → 1.22 MB, with 22,064 → 20,962 allocations. Earlier
+VM checks observed tag +2.1–2.8%, status up to +0.9% and config up to +1.9%; the maintainer
+approved review with these trade-offs disclosed. Allocator and startup residency work is
+tracked under [#4626](https://github.com/gitbutlerapp/grit/issues/4626).
+
+The earlier end-to-end comparisons used newer main builds and do not isolate this patch.
+A reviewer measured a roughly 7% slowdown against the original base on EPYC 7763; the
+same-path experiment above does not reproduce it on this VM. These results do not establish
+whether CPU or build layout explains that discrepancy. Reproduce the isolated comparison
+with `bash scripts/bench-branch-snapshots.sh BEFORE AFTER FIXTURE NEW_OUTPUT_DIRECTORY`;
+archive timestamps are refreshed explicitly to prevent stale Cargo artifacts.
+The full measurements, hashes and limitations are in
+`grit-utils/baselines/branch-json-4643-isolated.json` and the measurement ledger. The
+committed daily before/after baselines now contain the isolated 40-sample results.
+For the library clone benchmark, run `cargo bench -p grit-lib --bench environment`.
 
 ## grit-bench fixture cache
 
