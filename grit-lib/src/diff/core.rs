@@ -1284,27 +1284,6 @@ pub fn resolve_indent_heuristic(
     }
 }
 
-/// Parse `--indent-heuristic` / `--no-indent-heuristic` from a plumbing argv slice (last occurrence wins).
-#[must_use]
-pub fn parse_indent_heuristic_cli_flags(argv: &[String]) -> (bool, bool) {
-    let mut indent_heuristic = false;
-    let mut no_indent_heuristic = false;
-    for a in argv {
-        match a.as_str() {
-            "--indent-heuristic" => {
-                indent_heuristic = true;
-                no_indent_heuristic = false;
-            }
-            "--no-indent-heuristic" => {
-                no_indent_heuristic = true;
-                indent_heuristic = false;
-            }
-            _ => {}
-        }
-    }
-    (indent_heuristic, no_indent_heuristic)
-}
-
 // ---------------------------------------------------------------------------
 // Git-compatible implementation of the xdiff Myers engine,
 // restricted to what the word-diff path needs (no rename/ignore-whitespace
@@ -2185,38 +2164,6 @@ fn changed_flags_to_ops(
     ops
 }
 
-/// Diff two token streams with a Git-compatible implementation of the xdiff Myers engine and return the
-/// result as `similar::DiffOp`s. Used by the word-diff machinery, where matching Git's exact
-/// record selection and tie-breaking matters: `imara-diff`/`similar` pick different — but
-/// equally minimal — alignments for streams with many repeated tokens (e.g. the `bibtex`
-/// driver's `{`/`}`/`,`), mismatching Git's reference output.
-#[must_use]
-pub fn word_diff_ops_imara(old_words: &[&str], new_words: &[&str]) -> Vec<similar::DiffOp> {
-    use std::collections::HashMap;
-
-    // Intern tokens to ids (equal id <=> equal token), mirroring xdiff's record hashing.
-    let mut interner: HashMap<&str, u32> = HashMap::new();
-    let mut ids1: Vec<u32> = Vec::with_capacity(old_words.len());
-    for &w in old_words {
-        let next = interner.len() as u32;
-        let id = *interner.entry(w).or_insert(next);
-        ids1.push(id);
-    }
-    let mut ids2: Vec<u32> = Vec::with_capacity(new_words.len());
-    for &w in new_words {
-        let next = interner.len() as u32;
-        let id = *interner.entry(w).or_insert(next);
-        ids2.push(id);
-    }
-
-    let (changed1, changed2) = git_xdiff::changed_flags(&ids1, &ids2, false);
-    let ops = changed_flags_to_ops(&changed1, &changed2, old_words.len(), new_words.len());
-
-    // Slide changed runs to Git's canonical position (`xdl_change_compact`); the word
-    // diff never enables the indent heuristic.
-    diff_indent_heuristic::apply_change_compact_to_ops(&ops, old_words, new_words, false)
-}
-
 /// Line-diff ops for string slices after Git `xdl_change_compact` (and optional indent heuristic).
 #[must_use]
 pub fn diff_slice_ops_compacted(
@@ -2426,9 +2373,6 @@ impl DiffEntry {
         }
     }
 }
-
-/// The zero (null) object ID used for "no object" in diff output.
-pub const ZERO_OID: &str = "0000000000000000000000000000000000000000";
 
 /// Return the zero ObjectId.
 #[must_use]
@@ -13884,12 +13828,6 @@ mod line_coverage_tests {
         let cfg = ConfigSet::new();
         assert!(resolve_indent_heuristic(&cfg, false, false));
         assert!(!resolve_indent_heuristic(&cfg, false, true));
-        let (indent, no_indent) = parse_indent_heuristic_cli_flags(&[
-            String::from("--no-indent-heuristic"),
-            String::from("--indent-heuristic"),
-        ]);
-        assert!(indent);
-        assert!(!no_indent);
 
         let old = "alpha beta\ngamma\n";
         let new = "alpha BETA\ngamma delta\n";
@@ -13905,8 +13843,6 @@ mod line_coverage_tests {
         assert_eq!(format_mode(0o100644), "100644");
         assert!(!format_rename_path("a/old", "b/new").is_empty());
 
-        let ops = word_diff_ops_imara(&["a", "b"], &["a", "c"]);
-        assert!(!ops.is_empty());
         let old_lines = ["a", "b", "c"];
         let new_lines = ["a", "b", "d"];
         let compact = diff_slice_ops_compacted(&old_lines, &new_lines, Algorithm::Myers, false);

@@ -32,13 +32,4 @@ impl HashAlgo {
             }
         }
     }
-
-    /// Git `init` / `hash-object` object format name.
-    #[must_use]
-    pub const fn git_object_format(self) -> &'static str {
-        match self {
-            Self::Sha1 => "sha1",
-            Self::Sha256 => "sha256",
-        }
-    }
 }

@@ -355,18 +355,6 @@ impl RunningCommand {
         }
     }
 
-    /// Underlying OS child for long-running filters (system runner only).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CommandHandleError`] when the handle is not backed by a live process.
-    pub fn into_child(self) -> Result<Child, CommandHandleError> {
-        match self.inner {
-            RunningCommandInner::System { child, .. } => Ok(child),
-            RunningCommandInner::Recording { .. } => Err(CommandHandleError),
-        }
-    }
-
     /// Split into OS child and taken stdio (system runner only).
     ///
     /// # Errors

@@ -8,14 +8,6 @@ use url::Url;
 
 use crate::error::Error;
 
-/// Errors returned while validating local transport paths.
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
-pub enum TransportPathError {
-    /// A repository path begins with `-` and could be interpreted as a command option.
-    #[error("strange pathname '{0}' blocked")]
-    OptionLikePath(String),
-}
-
 /// Returns true when `s` is non-empty and begins with `-`, matching Git's
 /// `looks_like_command_line_option` (used before quoting a path for shell-backed transport).
 #[must_use]

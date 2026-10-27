@@ -6,7 +6,7 @@
 //! Submodule name and URL validation rules matching Git's (`check_submodule_name`,
 //! `check_submodule_url`).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
@@ -459,37 +459,6 @@ impl DotFsckTracker {
         }
         Ok(out)
     }
-}
-
-/// Run `.gitmodules` / `.gitattributes` fsck on a fully resolved pack object map (blob/tree bytes).
-///
-/// Used by `index-pack --strict` and `unpack-objects --strict` so oddly ordered packs still
-/// validate malicious `.gitmodules` content after delta resolution.
-pub fn verify_packed_dot_special(by_oid: &HashMap<ObjectId, (ObjectKind, Vec<u8>)>) -> Result<()> {
-    let mut tracker = DotFsckTracker::default();
-    let mut keys: Vec<ObjectId> = by_oid.keys().copied().collect();
-    keys.sort();
-    for oid in keys {
-        let (kind, data) = &by_oid[&oid];
-        if *kind == ObjectKind::Tree {
-            for di in tracker.on_tree(&oid, data)? {
-                if di.is_error_severity() {
-                    return Err(crate::error::Error::CorruptObject(di.format_line()));
-                }
-            }
-        }
-        for di in tracker.on_object(&oid, *kind, data) {
-            if di.is_error_severity() {
-                return Err(crate::error::Error::CorruptObject(di.format_line()));
-            }
-        }
-    }
-    for di in tracker.finish_pending_resolve(|id| by_oid.get(id).map(|(k, d)| (*k, d.clone())))? {
-        if di.is_error_severity() {
-            return Err(crate::error::Error::CorruptObject(di.format_line()));
-        }
-    }
-    Ok(())
 }
 
 fn split_fsck_colon(msg: &str) -> (&'static str, &str) {

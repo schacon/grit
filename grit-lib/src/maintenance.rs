@@ -1884,12 +1884,8 @@ fn packs_holding_available_promises(
     Ok(retained)
 }
 
-/// Remove pack artifacts in `pack_dir` except `keep_pack`, `.keep` packs, and
-/// promisor packs (including every sidecar of those retained packs).
-pub fn remove_superseded_pack_files(pack_dir: &Path, keep_pack: &Path) -> Result<usize> {
-    remove_superseded_pack_files_retaining(pack_dir, keep_pack, &HashSet::new())
-}
-
+/// Remove pack artifacts in `pack_dir` except `keep_pack`, `.keep` packs, promisor packs, and
+/// `retained_packs` (including every sidecar of those retained packs).
 fn remove_superseded_pack_files_retaining(
     pack_dir: &Path,
     keep_pack: &Path,
@@ -2007,7 +2003,6 @@ mod tests {
 
     use super::*;
     use crate::config::{ConfigFile, ConfigScope, ConfigSet};
-    use crate::objects::ObjectKind;
     use crate::porcelain::add::stage_for_commit;
     use crate::porcelain::commit::{create_commit, CommitRequest};
     use crate::progress::{NeverCancel, NullProgress};

@@ -90,12 +90,6 @@ pub fn common_git_dir(git_dir: &Path) -> PathBuf {
     common_git_dir_for_config(git_dir)
 }
 
-/// Resolve HEAD for a linked worktree admin dir (`HEAD` local, branch refs in `common`).
-#[must_use]
-pub fn resolve_linked_head(admin: &Path, _common: &Path) -> HeadState {
-    resolve_head(admin).unwrap_or(HeadState::Invalid)
-}
-
 /// Number of registered worktrees (main + linked entries under `worktrees/`).
 #[must_use]
 pub fn registered_worktree_count(common: &Path) -> usize {

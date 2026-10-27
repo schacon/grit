@@ -48,11 +48,6 @@ impl<'a> CommitRef<'a> {
         &self.parents
     }
 
-    /// Iterate parent commit ids.
-    pub fn parents_iter(&self) -> impl Iterator<Item = &ObjectId> + '_ {
-        self.parents.iter()
-    }
-
     /// Raw `author` header payload (after `author `), with continuation lines merged.
     #[must_use]
     pub fn author_raw(&self) -> &[u8] {

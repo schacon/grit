@@ -1229,42 +1229,6 @@ fn recursive_set_has_strict_ancestor(recursive: &BTreeSet<String>, path: &str) -
     false
 }
 
-/// User-facing cone directory names from an expanded on-disk file (`folder1`, not `/folder1/`).
-///
-/// Git `sparse-checkout list` prints one directory per line for each `/dir/` + `!/dir/*/` pair
-/// written by `write_cone_to_file`, not the parent-only prefixes.
-#[must_use]
-pub fn parse_expanded_cone_user_directories(lines: &[String]) -> Vec<String> {
-    if !sparse_checkout_lines_look_like_expanded_cone(lines) {
-        return Vec::new();
-    }
-    let mut i = 2usize;
-    let mut out = Vec::new();
-    while i < lines.len() {
-        let line = &lines[i];
-        if line.starts_with('!') {
-            i += 1;
-            continue;
-        }
-        if !line.starts_with('/') || !line.ends_with('/') {
-            i += 1;
-            continue;
-        }
-        let body = line
-            .trim_start_matches('/')
-            .trim_end_matches('/')
-            .to_string();
-        let expected_neg = format!("!/{body}/*/");
-        if i + 1 < lines.len() && lines[i + 1] == expected_neg {
-            out.push(body);
-            i += 2;
-            continue;
-        }
-        i += 1;
-    }
-    out
-}
-
 /// Parse recursive directory paths from an expanded cone sparse-checkout file
 /// (for merging on `sparse-checkout add`).
 pub fn parse_expanded_cone_recursive_dirs(lines: &[String]) -> Vec<String> {
@@ -1568,7 +1532,6 @@ mod sparse_public_api_coverage {
         let lines = build_expanded_cone_sparse_checkout_lines(&["src".to_string()]);
         assert!(sparse_checkout_lines_look_like_expanded_cone(&lines));
         assert!(effective_cone_mode_for_sparse_file(true, &lines));
-        let _users = parse_expanded_cone_user_directories(&lines);
         let rec = parse_expanded_cone_recursive_dirs(&lines);
         assert!(!rec.is_empty());
         assert!(path_matches_sparse_patterns("src/x", &lines, true));

@@ -146,13 +146,3 @@ pub fn revert_mainline_extra_body(_reverted: ObjectId, mainline_parent: ObjectId
         mainline_parent.to_hex()
     )
 }
-
-/// Note appended when reverting a merge using an explicit mainline parent.
-#[must_use]
-pub fn merge_mainline_revert_note(source_oid: ObjectId, mainline_parent: ObjectId) -> String {
-    format!(
-        "Reverted merge {} using mainline parent {}.\n\n",
-        source_oid.to_hex(),
-        mainline_parent.to_hex()
-    )
-}

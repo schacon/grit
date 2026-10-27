@@ -231,15 +231,6 @@ impl FilePatch {
     pub fn involves_gitlink(&self) -> bool {
         self.old_mode.as_deref() == Some("160000") || self.new_mode.as_deref() == Some("160000")
     }
-
-    /// Work-tree-relative path for filesystem IO and `.gitattributes` (Git `prefix_patch`).
-    pub fn worktree_rel_operational(&self, adjusted: &str, setup_prefix: &str) -> String {
-        if self.is_toplevel_relative {
-            adjusted.to_string()
-        } else {
-            format!("{setup_prefix}{adjusted}")
-        }
-    }
 }
 
 /// Strip trailing `\r` and surrounding whitespace from parsed header tokens.

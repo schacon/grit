@@ -67,7 +67,7 @@ pub enum PackOffsetLabel {
 /// Output of [`PackBuilder::build`].
 #[derive(Debug, Clone)]
 pub struct PackBuilt {
-    /// Complete PACK v2 byte stream including trailer (unless configured otherwise).
+    /// Complete PACK v2 byte stream including the hash trailer.
     pub bytes: Vec<u8>,
     /// Pack offset of each entry's type/size header, in insertion order.
     pub entry_offsets: Vec<usize>,
@@ -83,12 +83,7 @@ impl PackBuilt {
         match label {
             PackOffsetLabel::HeaderObjectCount => Some(8),
             PackOffsetLabel::EntryHeader(i) => self.entry_offsets.get(i).copied(),
-            PackOffsetLabel::Trailer => {
-                if self.hash_len == 0 {
-                    return None;
-                }
-                Some(self.bytes.len().saturating_sub(self.hash_len))
-            }
+            PackOffsetLabel::Trailer => Some(self.bytes.len().saturating_sub(self.hash_len)),
         }
     }
 }
@@ -106,7 +101,6 @@ pub struct PackBuilder {
 enum TrailerMode {
     Correct,
     Corrupt,
-    Omit,
 }
 
 impl PackBuilder {
@@ -207,12 +201,6 @@ impl PackBuilder {
         self
     }
 
-    /// Omit the hash trailer entirely.
-    pub fn set_omit_trailer(&mut self) -> &mut Self {
-        self.trailer_mode = TrailerMode::Omit;
-        self
-    }
-
     /// Serialize the pack and record per-entry offsets.
     #[must_use]
     pub fn build(self) -> PackBuilt {
@@ -283,16 +271,12 @@ impl PackBuilder {
                 }
                 out.extend_from_slice(&digest);
             }
-            TrailerMode::Omit => {}
         }
 
         PackBuilt {
             bytes: out,
             entry_offsets,
-            hash_len: match self.trailer_mode {
-                TrailerMode::Omit => 0,
-                _ => self.algo.oid_len(),
-            },
+            hash_len: self.algo.oid_len(),
         }
     }
 }
