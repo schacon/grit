@@ -183,6 +183,8 @@ baseline = [
   "grit-utils/baselines/daily-log-git-git-after.json",
   "grit-utils/baselines/daily-log-index-4729-before.json",
   "grit-utils/baselines/daily-log-index-4729-after.json",
+  "grit-utils/baselines/daily-log-loose-tags-2080-before.json",
+  "grit-utils/baselines/daily-log-loose-tags-2080-after.json",
   "grit-utils/baselines/daily-log-path-4526.json",
   "grit-utils/baselines/daily-fetch-pull-git-git-before.json",
   "grit-utils/baselines/daily-fetch-pull-git-git-after.json",
