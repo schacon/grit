@@ -29011,6 +29011,45 @@ impl core::marker::Unpin for grit_lib::worktree::ignore::IgnoreMatcher
 impl core::marker::UnsafeUnpin for grit_lib::worktree::ignore::IgnoreMatcher
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::ignore::IgnoreMatcher
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::ignore::IgnoreMatcher
+pub struct grit_lib::worktree::ignore::IgnorePatternList
+impl grit_lib::worktree::ignore::IgnorePatternList
+pub fn grit_lib::worktree::ignore::IgnorePatternList::is_empty(&self) -> bool
+pub fn grit_lib::worktree::ignore::IgnorePatternList::is_ignored(&self, &str, bool, bool) -> core::option::Option<bool>
+pub fn grit_lib::worktree::ignore::IgnorePatternList::last_match(&self, &str, bool, bool) -> core::option::Option<grit_lib::worktree::ignore::IgnorePatternMatch>
+pub fn grit_lib::worktree::ignore::IgnorePatternList::len(&self) -> usize
+pub fn grit_lib::worktree::ignore::IgnorePatternList::parse(&[u8], &str) -> Self
+impl core::clone::Clone for grit_lib::worktree::ignore::IgnorePatternList
+pub fn grit_lib::worktree::ignore::IgnorePatternList::clone(&self) -> Self
+impl core::default::Default for grit_lib::worktree::ignore::IgnorePatternList
+pub fn grit_lib::worktree::ignore::IgnorePatternList::default() -> Self
+impl core::fmt::Debug for grit_lib::worktree::ignore::IgnorePatternList
+pub fn grit_lib::worktree::ignore::IgnorePatternList::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::worktree::ignore::IgnorePatternList
+impl core::marker::Send for grit_lib::worktree::ignore::IgnorePatternList
+impl core::marker::Sync for grit_lib::worktree::ignore::IgnorePatternList
+impl core::marker::Unpin for grit_lib::worktree::ignore::IgnorePatternList
+impl core::marker::UnsafeUnpin for grit_lib::worktree::ignore::IgnorePatternList
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::ignore::IgnorePatternList
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::ignore::IgnorePatternList
+pub struct grit_lib::worktree::ignore::IgnorePatternMatch
+pub grit_lib::worktree::ignore::IgnorePatternMatch::line_number: usize
+pub grit_lib::worktree::ignore::IgnorePatternMatch::negative: bool
+pub grit_lib::worktree::ignore::IgnorePatternMatch::pattern_text: alloc::string::String
+impl core::clone::Clone for grit_lib::worktree::ignore::IgnorePatternMatch
+pub fn grit_lib::worktree::ignore::IgnorePatternMatch::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::worktree::ignore::IgnorePatternMatch
+impl core::cmp::PartialEq for grit_lib::worktree::ignore::IgnorePatternMatch
+pub fn grit_lib::worktree::ignore::IgnorePatternMatch::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::worktree::ignore::IgnorePatternMatch
+pub fn grit_lib::worktree::ignore::IgnorePatternMatch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::worktree::ignore::IgnorePatternMatch
+impl core::marker::Freeze for grit_lib::worktree::ignore::IgnorePatternMatch
+impl core::marker::Send for grit_lib::worktree::ignore::IgnorePatternMatch
+impl core::marker::Sync for grit_lib::worktree::ignore::IgnorePatternMatch
+impl core::marker::Unpin for grit_lib::worktree::ignore::IgnorePatternMatch
+impl core::marker::UnsafeUnpin for grit_lib::worktree::ignore::IgnorePatternMatch
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::ignore::IgnorePatternMatch
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::ignore::IgnorePatternMatch
 pub fn grit_lib::worktree::ignore::normalize_repo_relative(&grit_lib::repo::Repository, &std::path::Path, &str) -> grit_lib::error::Result<alloc::string::String>
 pub fn grit_lib::worktree::ignore::parse_sparse_patterns_from_blob(&str) -> alloc::vec::Vec<alloc::string::String>
 pub fn grit_lib::worktree::ignore::path_in_sparse_checkout(&str, &[alloc::string::String], core::option::Option<&std::path::Path>) -> bool

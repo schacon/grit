@@ -62,6 +62,129 @@ pub struct IgnoreCheck {
     pub matched: Option<IgnoreMatch>,
 }
 
+/// Patterns parsed from one exclude file (such as a `.gitignore`), for matching single paths.
+///
+/// Unlike [`IgnoreMatcher`], a list is not tied to a repository: the caller decides which
+/// files apply to a path and in what order, as tools that layer their own ignore handling on
+/// top of Git's file format need to. Matching follows Git's `last_matching_pattern_from_list`
+/// for one path: patterns without a slash match the path's last component, other patterns match
+/// the whole path relative to the list's base directory, and directory-only patterns (`foo/`)
+/// match only when the path is a directory. Parent directories are not consulted; callers that
+/// walk a tree stop descending into ignored directories, as Git does.
+///
+/// # Examples
+///
+/// ```
+/// use grit_lib::worktree::ignore::IgnorePatternList;
+///
+/// let list = IgnorePatternList::parse(b"*.log\n!keep.log\nbuild/\n", "");
+/// assert!(list.is_ignored("debug.log", false, false).unwrap());
+/// assert!(!list.is_ignored("keep.log", false, false).unwrap());
+/// assert!(list.is_ignored("build", true, false).unwrap());
+/// assert_eq!(list.is_ignored("build", false, false), None);
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct IgnorePatternList {
+    rules: Vec<IgnoreRule>,
+}
+
+/// The pattern that decided an [`IgnorePatternList::last_match`] query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IgnorePatternMatch {
+    /// Line number of the pattern in the parsed content (1-based).
+    pub line_number: usize,
+    /// Pattern text as written (without trailing whitespace).
+    pub pattern_text: String,
+    /// Whether this is a negated pattern (`!pattern`), which re-includes the path.
+    pub negative: bool,
+}
+
+impl IgnorePatternList {
+    /// Parse exclude-file `content` whose patterns are relative to `base_dir`.
+    ///
+    /// `base_dir` is the slash-separated directory holding the file, relative to the root
+    /// paths are matched against (`""` for the root). Blank lines and comments are skipped,
+    /// a UTF-8 byte order mark on the first line is dropped, and invalid UTF-8 is replaced
+    /// as in [`String::from_utf8_lossy`].
+    #[must_use]
+    pub fn parse(content: &[u8], base_dir: &str) -> Self {
+        let content = String::from_utf8_lossy(content);
+        let base_dir = base_dir.trim_matches('/');
+        let source = IgnoreSource::PerDirectory(if base_dir.is_empty() {
+            ".gitignore".to_owned()
+        } else {
+            format!("{base_dir}/.gitignore")
+        });
+        let mut warnings = Vec::new();
+        let rules =
+            parse_gitignore_content(&content, source, base_dir, &mut warnings).unwrap_or_default();
+        Self { rules }
+    }
+
+    /// Whether the list has no patterns.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty()
+    }
+
+    /// Number of patterns in the list.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.rules.len()
+    }
+
+    /// The last pattern matching `path`, if any.
+    ///
+    /// `path` is slash-separated and relative to the root the list's base directory is
+    /// relative to. Paths outside the base directory never match. With `ignore_case`,
+    /// patterns compare without regard to ASCII case (`core.ignorecase`).
+    #[must_use]
+    pub fn last_match(
+        &self,
+        path: &str,
+        is_dir: bool,
+        ignore_case: bool,
+    ) -> Option<IgnorePatternMatch> {
+        self.rules
+            .iter()
+            .rev()
+            .find(|rule| rule_matches_path_exact(rule, path, is_dir, ignore_case))
+            .map(|rule| IgnorePatternMatch {
+                line_number: rule.line_number,
+                pattern_text: rule.pattern_text.clone(),
+                negative: rule.negative,
+            })
+    }
+
+    /// Whether the last matching pattern ignores `path` (`Some(false)` when it re-includes
+    /// it), or `None` when no pattern matches. See [`Self::last_match`].
+    #[must_use]
+    pub fn is_ignored(&self, path: &str, is_dir: bool, ignore_case: bool) -> Option<bool> {
+        self.last_match(path, is_dir, ignore_case)
+            .map(|m| !m.negative)
+    }
+}
+
+/// Git's single-path pattern test (`dir.c` `last_matching_pattern_from_list`), without the
+/// parent-directory probing [`rule_matches`] adds for [`IgnoreMatcher`].
+fn rule_matches_path_exact(rule: &IgnoreRule, path: &str, is_dir: bool, ignore_case: bool) -> bool {
+    if rule.directory_only && !is_dir {
+        return false;
+    }
+    let Some(rel_to_base) = strip_base(&rule.base_dir, path, ignore_case) else {
+        return false;
+    };
+    if rel_to_base.is_empty() {
+        return false;
+    }
+    if rule.has_slash || rule.anchored {
+        rule_body_matches(rule, rel_to_base, true, ignore_case)
+    } else {
+        let basename = rel_to_base.rsplit('/').next().unwrap_or(rel_to_base);
+        rule_body_matches(rule, basename, false, ignore_case)
+    }
+}
+
 #[derive(Debug, Clone)]
 enum IgnorePatternKind {
     Wild,
@@ -1802,5 +1925,81 @@ mod index_lookup_scaling_tests {
             cmps < bound,
             "index path comparisons {cmps} should stay under {bound} (N={N}, M={M})"
         );
+    }
+}
+
+#[cfg(test)]
+mod pattern_list_tests {
+    use super::IgnorePatternList;
+
+    fn ignored(content: &str, path: &str, is_dir: bool) -> bool {
+        IgnorePatternList::parse(content.as_bytes(), "")
+            .is_ignored(path, is_dir, false)
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn basename_patterns_match_last_component_only() {
+        assert!(ignored("foo\n", "foo", false));
+        assert!(ignored("foo\n", "dir/foo", false));
+        assert!(!ignored("foo\n", "foo/bar", false));
+        assert!(ignored("*.o\n", "a/b/c.o", false));
+    }
+
+    #[test]
+    fn slash_patterns_match_whole_path() {
+        assert!(ignored("/foo\n", "foo", false));
+        assert!(!ignored("/foo\n", "dir/foo", false));
+        assert!(ignored("dir/foo\n", "dir/foo", false));
+        assert!(!ignored("dir/foo\n", "x/dir/foo", false));
+        assert!(ignored("dir/*.o\n", "dir/a.o", false));
+        assert!(!ignored("dir/*.o\n", "dir/sub/a.o", false));
+        assert!(ignored("**/foo\n", "a/b/foo", false));
+        assert!(ignored("a/**/b\n", "a/x/y/b", false));
+    }
+
+    #[test]
+    fn directory_only_patterns_need_a_directory() {
+        assert!(ignored("foo/\n", "foo", true));
+        assert!(!ignored("foo/\n", "foo", false));
+        assert!(!ignored("foo/\n", "foo/bar", false));
+    }
+
+    #[test]
+    fn last_matching_pattern_wins() {
+        let list = IgnorePatternList::parse(b"*.log\n!keep.log\n", "");
+        assert_eq!(list.is_ignored("a.log", false, false), Some(true));
+        assert_eq!(list.is_ignored("keep.log", false, false), Some(false));
+        assert_eq!(list.is_ignored("a.txt", false, false), None);
+        let m = list.last_match("keep.log", false, false).unwrap();
+        assert_eq!((m.line_number, m.pattern_text.as_str()), (2, "!keep.log"));
+    }
+
+    #[test]
+    fn comments_blank_lines_and_trailing_spaces() {
+        let list = IgnorePatternList::parse(b"\xef\xbb\xbf# comment\n\nfoo  \nbar\\ \n\\#x\n", "");
+        assert_eq!(list.len(), 3);
+        assert!(ignored("foo  \n", "foo", false));
+        assert!(list.is_ignored("bar ", false, false).unwrap());
+        assert!(list.is_ignored("#x", false, false).unwrap());
+    }
+
+    #[test]
+    fn base_directory_scopes_patterns() {
+        let list = IgnorePatternList::parse(b"foo\n/bar\n", "sub");
+        assert_eq!(list.is_ignored("sub/foo", false, false), Some(true));
+        assert_eq!(list.is_ignored("sub/x/foo", false, false), Some(true));
+        assert_eq!(list.is_ignored("sub/bar", false, false), Some(true));
+        assert_eq!(list.is_ignored("sub/x/bar", false, false), None);
+        assert_eq!(list.is_ignored("foo", false, false), None);
+        assert_eq!(list.is_ignored("subfoo", false, false), None);
+    }
+
+    #[test]
+    fn ignore_case() {
+        let list = IgnorePatternList::parse(b"*.LOG\nBuild/\n", "");
+        assert_eq!(list.is_ignored("debug.log", false, false), None);
+        assert_eq!(list.is_ignored("debug.log", false, true), Some(true));
+        assert_eq!(list.is_ignored("build", true, true), Some(true));
     }
 }
