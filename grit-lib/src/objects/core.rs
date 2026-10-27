@@ -466,6 +466,110 @@ impl FromStr for ObjectId {
     }
 }
 
+/// A Git file mode (`100644`, `100755`, `120000`, `160000`, `040000`), or
+/// [`FileMode::ABSENT`] for the missing side of an add or delete.
+///
+/// Displays and serializes as the six-digit octal text Git prints in raw diff
+/// output, so the zero mode reads `000000`.
+///
+/// # Examples
+///
+/// ```
+/// use grit_lib::objects::FileMode;
+///
+/// assert_eq!(FileMode::EXECUTABLE.to_string(), "100755");
+/// assert_eq!(FileMode::ABSENT.to_string(), "000000");
+/// assert_eq!(FileMode::new(0o120000), FileMode::SYMLINK);
+/// assert!(FileMode::SYMLINK.is_symlink());
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub struct FileMode(u32);
+
+impl FileMode {
+    /// No entry on this side (an add's old side, a delete's new side).
+    pub const ABSENT: Self = Self(0);
+    /// Regular, non-executable file.
+    pub const REGULAR: Self = Self(0o100644);
+    /// Executable file.
+    pub const EXECUTABLE: Self = Self(0o100755);
+    /// Symbolic link.
+    pub const SYMLINK: Self = Self(0o120000);
+    /// Submodule commit (gitlink).
+    pub const GITLINK: Self = Self(0o160000);
+    /// Tree (directory).
+    pub const TREE: Self = Self(0o040000);
+
+    /// Wrap raw mode bits as stored in a tree entry or the index.
+    #[must_use]
+    pub const fn new(bits: u32) -> Self {
+        Self(bits)
+    }
+
+    /// The raw mode bits.
+    #[must_use]
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+
+    /// Whether this is [`Self::ABSENT`].
+    #[must_use]
+    pub const fn is_absent(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The octal text, or `None` for [`Self::ABSENT`] (the missing side of an add or delete).
+    #[must_use]
+    pub fn octal_if_present(self) -> Option<String> {
+        (!self.is_absent()).then(|| self.to_string())
+    }
+
+    /// Whether the object-type bits name a symbolic link.
+    #[must_use]
+    pub const fn is_symlink(self) -> bool {
+        self.0 & 0o170000 == 0o120000
+    }
+
+    /// Whether the object-type bits name a gitlink (submodule commit).
+    #[must_use]
+    pub const fn is_gitlink(self) -> bool {
+        self.0 & 0o170000 == 0o160000
+    }
+}
+
+impl From<u32> for FileMode {
+    fn from(bits: u32) -> Self {
+        Self(bits)
+    }
+}
+
+impl From<FileMode> for u32 {
+    fn from(mode: FileMode) -> Self {
+        mode.0
+    }
+}
+
+impl fmt::Display for FileMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:06o}", self.0)
+    }
+}
+
+impl fmt::Debug for FileMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "FileMode({:06o})", self.0)
+    }
+}
+
+#[cfg(feature = "serde-models")]
+impl serde::Serialize for FileMode {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_str(self)
+    }
+}
+
 /// A parsed abbreviated object id: the leading hex digits ("nibbles") of a digest.
 ///
 /// Parse the user's hex once with [`ObjectIdPrefix::from_hex`], then test candidates

@@ -9,6 +9,7 @@ use std::borrow::Cow;
 use similar::{ChangeTag, TextDiff};
 
 use crate::diff::options::DiffOptions;
+use crate::objects::FileMode;
 
 #[path = "diff/line_engine.rs"]
 mod line_engine;
@@ -305,14 +306,14 @@ fn pin_canonical_line_text(
 /// Build a structured file diff including mode metadata from a tree diff entry.
 #[must_use]
 pub fn structured_file_diff(
-    old_mode: &str,
-    new_mode: &str,
+    old_mode: FileMode,
+    new_mode: FileMode,
     old: &SideBytes,
     new: &SideBytes,
     options: DiffOptions,
 ) -> StructuredFileDiff {
-    let old_mode = mode_display(old_mode);
-    let new_mode = mode_display(new_mode);
+    let old_mode = old_mode.octal_if_present();
+    let new_mode = new_mode.octal_if_present();
     let old_text = side_text_for_diff(old);
     let new_text = side_text_for_diff(new);
     let hunks = structured_text_diff_cow(old_text, new_text, options).hunks;
@@ -322,14 +323,6 @@ pub fn structured_file_diff(
         old_encoding_lossy: old.encoding_lossy,
         new_encoding_lossy: new.encoding_lossy,
         hunks,
-    }
-}
-
-fn mode_display(mode: &str) -> Option<String> {
-    if mode == "000000" {
-        None
-    } else {
-        Some(mode.to_owned())
     }
 }
 
@@ -752,7 +745,13 @@ mod tests {
     fn mode_only_change_has_empty_hunks() {
         let old = SideBytes::from_bytes(b"x\n".to_vec());
         let new = SideBytes::from_bytes(b"x\n".to_vec());
-        let f = structured_file_diff("100644", "100755", &old, &new, DiffOptions::default());
+        let f = structured_file_diff(
+            FileMode::REGULAR,
+            FileMode::EXECUTABLE,
+            &old,
+            &new,
+            DiffOptions::default(),
+        );
         assert!(f.hunks.is_empty());
     }
 }

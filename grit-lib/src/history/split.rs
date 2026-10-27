@@ -198,7 +198,7 @@ fn apply_diff_entry_to_index(
                 .new_path
                 .as_deref()
                 .ok_or_else(|| planning_err("added diff entry missing new path"))?;
-            let mode = mode_from_octal(&entry.new_mode)?;
+            let mode = entry.new_mode.bits();
             add_index_blob(index, path, mode, entry.new_oid);
         }
         DiffStatus::Deleted => {
@@ -220,7 +220,7 @@ fn apply_diff_entry_to_index(
                 .as_deref()
                 .or(entry.old_path.as_deref())
                 .ok_or_else(|| planning_err("modified diff entry missing path"))?;
-            let mode = mode_from_octal(&entry.new_mode)?;
+            let mode = entry.new_mode.bits();
             add_index_blob(index, path, mode, entry.new_oid);
         }
         DiffStatus::Renamed => {
@@ -232,14 +232,14 @@ fn apply_diff_entry_to_index(
                     .new_path
                     .as_deref()
                     .ok_or_else(|| planning_err("rename diff entry missing new path"))?;
-                let mode = mode_from_octal(&entry.new_mode)?;
+                let mode = entry.new_mode.bits();
                 add_index_blob(index, path, mode, entry.new_oid);
             } else if sides.new {
                 let path = entry
                     .new_path
                     .as_deref()
                     .ok_or_else(|| planning_err("rename diff entry missing new path"))?;
-                let mode = mode_from_octal(&entry.new_mode)?;
+                let mode = entry.new_mode.bits();
                 add_index_blob(index, path, mode, entry.new_oid);
             } else if sides.old {
                 let path = entry
@@ -275,12 +275,6 @@ fn index_entry(path: &str, mode: u32, oid: ObjectId) -> IndexEntry {
         path: path_bytes,
         base_index_pos: 0,
     }
-}
-
-fn mode_from_octal(raw: &str) -> Result<u32, HistoryError> {
-    u32::from_str_radix(raw, 8).map_err(|e| HistoryError::Planning {
-        message: format!("invalid file mode {raw:?}: {e}"),
-    })
 }
 
 fn planning_err(message: impl Into<String>) -> HistoryError {

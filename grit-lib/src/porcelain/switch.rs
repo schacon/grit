@@ -816,7 +816,7 @@ fn plan_allow_local_tree_transition_core(
         .filter(|c| c.status == DiffStatus::Deleted)
         .filter_map(|c| {
             let path = c.old_path.as_ref()?;
-            let mode = u32::from_str_radix(&c.old_mode, 8).unwrap_or(0);
+            let mode = c.old_mode.bits();
             (mode == MODE_GITLINK).then(|| path.clone())
         })
         .collect();
@@ -932,7 +932,7 @@ fn target_tree_entry_from_diff(change: &DiffEntry) -> Option<(&str, TargetTreeEn
     if change.status == DiffStatus::Deleted {
         return None;
     }
-    let mode = u32::from_str_radix(&change.new_mode, 8).unwrap_or(0);
+    let mode = change.new_mode.bits();
     Some((
         path,
         TargetTreeEntry {

@@ -33,7 +33,7 @@ use grit_lib::diff::{
 };
 use grit_lib::index::Index;
 use grit_lib::objects::odb::Odb;
-use grit_lib::objects::ObjectId;
+use grit_lib::objects::{FileMode, ObjectId};
 use grit_lib::parallel::ParallelOp;
 use grit_lib::state::resolve_head;
 use grit_lib::worktree::fsmonitor::fsmonitor_enabled;
@@ -427,8 +427,8 @@ fn outcome_from_change_names(changes: Vec<FileChange>, format: DiffFormatArgs) -
             path: fc.path,
             old_path: fc.old_path,
             status: fc.status.into(),
-            old_mode: diff_mode_display(&fc.old_mode),
-            new_mode: diff_mode_display(&fc.new_mode),
+            old_mode: fc.old_mode.octal_if_present(),
+            new_mode: fc.new_mode.octal_if_present(),
             old_encoding_lossy: fc.old_bytes.encoding_lossy,
             new_encoding_lossy: fc.new_bytes.encoding_lossy,
             binary: fc.binary,
@@ -1551,8 +1551,8 @@ struct FileChange {
     path: String,
     old_path: Option<String>,
     status: DiffStatus,
-    old_mode: String,
-    new_mode: String,
+    old_mode: FileMode,
+    new_mode: FileMode,
     old_bytes: SideBytes,
     new_bytes: SideBytes,
     binary: bool,
@@ -1724,8 +1724,8 @@ fn outcome_stat_from_changes(
                 path: fc.path,
                 old_path: fc.old_path,
                 status: fc.status.into(),
-                old_mode: diff_mode_display(&fc.old_mode),
-                new_mode: diff_mode_display(&fc.new_mode),
+                old_mode: fc.old_mode.octal_if_present(),
+                new_mode: fc.new_mode.octal_if_present(),
                 old_encoding_lossy: fc.old_bytes.encoding_lossy,
                 new_encoding_lossy: fc.new_bytes.encoding_lossy,
                 binary: fc.binary,
@@ -2098,13 +2098,13 @@ fn file_change(
 }
 
 fn old_side_bytes(odb: &Odb, e: &DiffEntry) -> Result<(SideBytes, bool)> {
-    if e.old_mode == "160000" {
+    if e.old_mode == FileMode::GITLINK {
         return Ok((
             SideBytes::from_bytes(gitlink_line(&e.old_oid, None).into_bytes()),
             false,
         ));
     }
-    if e.old_mode == "000000" {
+    if e.old_mode == FileMode::ABSENT {
         return Ok((SideBytes::from_bytes(Vec::new()), false));
     }
     blob_bytes(odb, &e.old_oid)
@@ -2115,20 +2115,20 @@ fn new_side_bytes(
     e: &DiffEntry,
     work_tree: Option<&WorktreeDiffSide<'_>>,
 ) -> Result<(SideBytes, bool)> {
-    if e.new_mode == "160000" {
+    if e.new_mode == FileMode::GITLINK {
         let wt = work_tree.map(|s| s.work_tree);
         return Ok((
             SideBytes::from_bytes(gitlink_new_line(e, wt).into_bytes()),
             false,
         ));
     }
-    if e.new_mode == "000000" {
+    if e.new_mode == FileMode::ABSENT {
         return Ok((SideBytes::from_bytes(Vec::new()), false));
     }
     if let (Some(ctx), Some(p)) = (work_tree, e.new_path.as_deref().or(e.old_path.as_deref())) {
         // Tree↔worktree collection often stores only a hash of normalized worktree bytes; the
         // Blob is not in the ODB until staging writes it. Always read the live worktree here.
-        let mode = u32::from_str_radix(&e.new_mode, 8).unwrap_or(0);
+        let mode = e.new_mode.bits();
         let path_bytes = grit_lib::repo_relpath::storage_bytes(p);
         let index_entry = ctx.index.get(&path_bytes, 0);
         let rules = ctx.rules.lock().unwrap_or_else(|e| e.into_inner());
@@ -2169,8 +2169,8 @@ fn gitlink_new_line(e: &DiffEntry, work_tree: Option<&Path>) -> String {
     if resolved == ObjectId::zero() {
         return String::new();
     }
-    let dirty = e.old_mode == "160000"
-        && e.new_mode == "160000"
+    let dirty = e.old_mode == FileMode::GITLINK
+        && e.new_mode == FileMode::GITLINK
         && work_tree.is_some_and(|wt| {
             path.is_some_and(|p| submodule_porcelain_flags(wt, p, e.old_oid).modified)
         });
@@ -2195,27 +2195,19 @@ fn bytes_for_diff(data: Vec<u8>) -> (SideBytes, bool) {
     }
 }
 
-fn diff_mode_display(mode: &str) -> Option<String> {
-    if mode == "000000" {
-        None
-    } else {
-        Some(mode.to_owned())
-    }
-}
-
 fn structured_for_file_change(fc: &FileChange, diff_options: DiffOptions) -> StructuredFileDiff {
     if fc.binary {
         StructuredFileDiff {
-            old_mode: diff_mode_display(&fc.old_mode),
-            new_mode: diff_mode_display(&fc.new_mode),
+            old_mode: fc.old_mode.octal_if_present(),
+            new_mode: fc.new_mode.octal_if_present(),
             old_encoding_lossy: fc.old_bytes.encoding_lossy,
             new_encoding_lossy: fc.new_bytes.encoding_lossy,
             hunks: Vec::new(),
         }
     } else {
         structured_file_diff(
-            &fc.old_mode,
-            &fc.new_mode,
+            fc.old_mode,
+            fc.new_mode,
             &fc.old_bytes,
             &fc.new_bytes,
             diff_options,

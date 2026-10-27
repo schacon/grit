@@ -2,6 +2,7 @@
 
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::{resolve_diff_arguments, DiffTarget, ResolveDiffArgumentsError};
+use grit_lib::objects::FileMode;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 use grit_test_support::git;
@@ -149,8 +150,8 @@ fn grit_raw(repo: &Repository, target: DiffTarget) -> Vec<String> {
                 } else {
                     Some(path)
                 },
-                old_mode: f.old_mode.clone().unwrap_or_else(|| "000000".into()),
-                new_mode: f.new_mode.clone().unwrap_or_else(|| "000000".into()),
+                old_mode: f.old_mode.clone().map_or(FileMode::ABSENT, octal_mode),
+                new_mode: f.new_mode.clone().map_or(FileMode::ABSENT, octal_mode),
                 old_oid: f.old_oid,
                 new_oid: f.new_oid,
                 score: None,
@@ -400,4 +401,8 @@ fn resolve_diff_arguments_against_with_commits() {
     )
     .unwrap_err();
     assert!(matches!(err, ResolveDiffArgumentsError::AgainstWithCommits));
+}
+
+fn octal_mode(text: String) -> FileMode {
+    FileMode::new(u32::from_str_radix(&text, 8).expect("octal mode"))
 }

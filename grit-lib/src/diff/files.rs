@@ -11,14 +11,6 @@ use super::tree_content::{
 };
 use super::{DiffEntry, DiffOptions, DiffStatus};
 
-fn mode_display(mode: &str) -> Option<String> {
-    if mode == "000000" {
-        None
-    } else {
-        Some(mode.to_owned())
-    }
-}
-
 fn path_from_entry(entry: &DiffEntry) -> String {
     entry
         .new_path
@@ -48,8 +40,8 @@ fn file_diff_name_only(entry: DiffEntry) -> FileDiff {
         path,
         old_path,
         status: entry.status,
-        old_mode: Some(entry.old_mode).filter(|mode| mode != "000000"),
-        new_mode: Some(entry.new_mode).filter(|mode| mode != "000000"),
+        old_mode: entry.old_mode.octal_if_present(),
+        new_mode: entry.new_mode.octal_if_present(),
         binary: false,
         similarity,
         stat: None,
@@ -82,8 +74,8 @@ fn file_diff_from_stat(entry: DiffEntry, binary: bool, stat: Option<LineStat>) -
         path: path.clone(),
         old_path: old_path_from_entry(&entry, &path),
         status: entry.status,
-        old_mode: mode_display(&entry.old_mode),
-        new_mode: mode_display(&entry.new_mode),
+        old_mode: entry.old_mode.octal_if_present(),
+        new_mode: entry.new_mode.octal_if_present(),
         binary,
         similarity: entry.rename_similarity(),
         stat,
@@ -203,7 +195,7 @@ pub fn name_status_line(entry: &DiffEntry) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::objects::ObjectId;
+    use crate::objects::{FileMode, ObjectId};
 
     #[test]
     fn metadata_rows_preserve_selected_paths_modes_and_similarity() {
@@ -226,17 +218,15 @@ mod tests {
                     .to_owned()
                 }),
                 old_mode: if status == DiffStatus::Added {
-                    "000000"
+                    FileMode::ABSENT
                 } else {
-                    "100644"
-                }
-                .to_owned(),
+                    FileMode::REGULAR
+                },
                 new_mode: if status == DiffStatus::Deleted {
-                    "000000"
+                    FileMode::ABSENT
                 } else {
-                    "100755"
-                }
-                .to_owned(),
+                    FileMode::EXECUTABLE
+                },
                 old_oid: ObjectId::zero(),
                 new_oid: ObjectId::zero(),
                 score: Some(75),

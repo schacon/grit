@@ -36,7 +36,9 @@ use crate::diff_rename_parallel::{
 };
 use crate::error::{Error, Result};
 use crate::index::{CacheTreeNode, Index, IndexEntry, MODE_SYMLINK};
-use crate::objects::{parse_commit, CommitData, ObjectId, ObjectKind, TreeEntry, TreeRefIter};
+use crate::objects::{
+    parse_commit, CommitData, FileMode, ObjectId, ObjectKind, TreeEntry, TreeRefIter,
+};
 use crate::odb::Odb;
 use crate::parallel::ThreadPolicy;
 use crate::repo::Repository;
@@ -2322,6 +2324,7 @@ pub fn map_new_to_old_lines_compacted(
 /// The kind of change between two sides of a diff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde-models", serde(rename_all = "snake_case"))]
 pub enum DiffStatus {
     /// File was added.
     Added,
@@ -2380,10 +2383,10 @@ pub struct DiffEntry {
     pub old_path: Option<String>,
     /// Path in the "new" side (None for Deleted).
     pub new_path: Option<String>,
-    /// Old file mode (as octal string, e.g. "100644").
-    pub old_mode: String,
-    /// New file mode.
-    pub new_mode: String,
+    /// Old file mode ([`FileMode::ABSENT`] for Added).
+    pub old_mode: FileMode,
+    /// New file mode ([`FileMode::ABSENT`] for Deleted).
+    pub new_mode: FileMode,
     /// Old object ID (zero OID for Added).
     pub old_oid: ObjectId,
     /// New object ID (zero OID for Deleted, or for Modified index↔worktree / tree↔worktree
@@ -2934,8 +2937,8 @@ fn diff_tree_entries_opts(
                                         status: DiffStatus::Modified,
                                         old_path: Some(path.clone()),
                                         new_path: Some(path.clone()),
-                                        old_mode: format_mode(o.mode),
-                                        new_mode: format_mode(n.mode),
+                                        old_mode: FileMode::new(o.mode),
+                                        new_mode: FileMode::new(n.mode),
                                         old_oid: o.oid,
                                         new_oid: n.oid,
                                         score: None,
@@ -2963,8 +2966,8 @@ fn diff_tree_entries_opts(
                                     status: DiffStatus::for_content_change(o.mode, n.mode),
                                     old_path: Some(path.clone()),
                                     new_path: Some(path),
-                                    old_mode: format_mode(o.mode),
-                                    new_mode: format_mode(n.mode),
+                                    old_mode: FileMode::new(o.mode),
+                                    new_mode: FileMode::new(n.mode),
                                     old_oid: o.oid,
                                     new_oid: n.oid,
                                     score: None,
@@ -3020,8 +3023,8 @@ fn emit_deleted_tree_from_index(index: &Index, dir_prefix: &str, result: &mut Ve
                 status: DiffStatus::Deleted,
                 old_path: Some(path),
                 new_path: None,
-                old_mode: format_mode(ie.mode),
-                new_mode: "000000".to_owned(),
+                old_mode: FileMode::new(ie.mode),
+                new_mode: FileMode::ABSENT,
                 old_oid: ie.oid,
                 new_oid: zero_oid(),
                 score: None,
@@ -3051,8 +3054,8 @@ fn emit_deleted_tree_from_index(index: &Index, dir_prefix: &str, result: &mut Ve
             status: DiffStatus::Deleted,
             old_path: Some(path.to_owned()),
             new_path: None,
-            old_mode: format_mode(ie.mode),
-            new_mode: "000000".to_owned(),
+            old_mode: FileMode::new(ie.mode),
+            new_mode: FileMode::ABSENT,
             old_oid: ie.oid,
             new_oid: zero_oid(),
             score: None,
@@ -3075,8 +3078,8 @@ fn emit_deleted_opts(
                 status: DiffStatus::Deleted,
                 old_path: Some(path.clone()),
                 new_path: None,
-                old_mode: format_mode(entry.mode),
-                new_mode: "000000".to_owned(),
+                old_mode: FileMode::new(entry.mode),
+                new_mode: FileMode::ABSENT,
                 old_oid: entry.oid,
                 new_oid: zero_oid(),
                 score: None,
@@ -3094,8 +3097,8 @@ fn emit_deleted_opts(
             status: DiffStatus::Deleted,
             old_path: Some(path.clone()),
             new_path: None,
-            old_mode: format_mode(entry.mode),
-            new_mode: "000000".to_owned(),
+            old_mode: FileMode::new(entry.mode),
+            new_mode: FileMode::ABSENT,
             old_oid: entry.oid,
             new_oid: zero_oid(),
             score: None,
@@ -3118,8 +3121,8 @@ fn emit_added_opts(
                 status: DiffStatus::Added,
                 old_path: None,
                 new_path: Some(path.clone()),
-                old_mode: "000000".to_owned(),
-                new_mode: format_mode(entry.mode),
+                old_mode: FileMode::ABSENT,
+                new_mode: FileMode::new(entry.mode),
                 old_oid: zero_oid(),
                 new_oid: entry.oid,
                 score: None,
@@ -3131,8 +3134,8 @@ fn emit_added_opts(
             status: DiffStatus::Added,
             old_path: None,
             new_path: Some(path),
-            old_mode: "000000".to_owned(),
-            new_mode: format_mode(entry.mode),
+            old_mode: FileMode::ABSENT,
+            new_mode: FileMode::new(entry.mode),
             old_oid: zero_oid(),
             new_oid: entry.oid,
             score: None,
@@ -3288,8 +3291,8 @@ pub fn append_untracked_worktree_added_for_rename_detection(
             status: DiffStatus::Added,
             old_path: None,
             new_path: Some(path),
-            old_mode: "000000".to_owned(),
-            new_mode: "100644".to_owned(),
+            old_mode: FileMode::ABSENT,
+            new_mode: FileMode::REGULAR,
             old_oid: zero_oid(),
             new_oid: zero_oid(),
             score: None,
@@ -3526,8 +3529,8 @@ fn diff_index_to_tree_flatten(
                         status: DiffStatus::for_content_change(te.mode, ie.mode),
                         old_path: Some(path.clone()),
                         new_path: Some(path),
-                        old_mode: format_mode(te.mode),
-                        new_mode: format_mode(ie.mode),
+                        old_mode: FileMode::new(te.mode),
+                        new_mode: FileMode::new(ie.mode),
                         old_oid: te.oid,
                         new_oid: ie.oid,
                         score: None,
@@ -3540,8 +3543,8 @@ fn diff_index_to_tree_flatten(
                     status: DiffStatus::Added,
                     old_path: None,
                     new_path: Some(path),
-                    old_mode: "000000".to_owned(),
-                    new_mode: format_mode(ie.mode),
+                    old_mode: FileMode::ABSENT,
+                    new_mode: FileMode::new(ie.mode),
                     old_oid: zero_oid(),
                     new_oid: ie.oid,
                     score: None,
@@ -3578,8 +3581,8 @@ fn diff_index_to_tree_finish_unmerged_and_deleted(
             status: DiffStatus::Unmerged,
             old_path: Some(path.clone()),
             new_path: Some(path.clone()),
-            old_mode: "000000".to_owned(),
-            new_mode: format_mode(*mode),
+            old_mode: FileMode::ABSENT,
+            new_mode: FileMode::new(*mode),
             old_oid: zero_oid(),
             new_oid: zero_oid(),
             score: None,
@@ -3595,8 +3598,8 @@ fn diff_index_to_tree_finish_unmerged_and_deleted(
             status: DiffStatus::Deleted,
             old_path: Some(path.to_owned()),
             new_path: None,
-            old_mode: format_mode(te.mode),
-            new_mode: "000000".to_owned(),
+            old_mode: FileMode::new(te.mode),
+            new_mode: FileMode::ABSENT,
             old_oid: te.oid,
             new_oid: zero_oid(),
             score: None,
@@ -3647,8 +3650,8 @@ fn diff_index_to_tree_with_cache_tree(
             status: DiffStatus::Added,
             old_path: None,
             new_path: Some(path),
-            old_mode: "000000".to_owned(),
-            new_mode: format_mode(ie.mode),
+            old_mode: FileMode::ABSENT,
+            new_mode: FileMode::new(ie.mode),
             old_oid: zero_oid(),
             new_oid: ie.oid,
             score: None,
@@ -3868,8 +3871,8 @@ fn diff_index_tree_at(
                                     status: DiffStatus::for_content_change(t_entry.mode, ie.mode),
                                     old_path: Some(path.clone()),
                                     new_path: Some(path),
-                                    old_mode: format_mode(t_entry.mode),
-                                    new_mode: format_mode(ie.mode),
+                                    old_mode: FileMode::new(t_entry.mode),
+                                    new_mode: FileMode::new(ie.mode),
                                     old_oid: t_entry.oid,
                                     new_oid: ie.oid,
                                     score: None,
@@ -3920,8 +3923,8 @@ fn emit_index_tree_deleted(
                 status: DiffStatus::Deleted,
                 old_path: Some(fe.path.clone()),
                 new_path: None,
-                old_mode: format_mode(fe.mode),
-                new_mode: "000000".to_owned(),
+                old_mode: FileMode::new(fe.mode),
+                new_mode: FileMode::ABSENT,
                 old_oid: fe.oid,
                 new_oid: zero_oid(),
                 score: None,
@@ -3932,8 +3935,8 @@ fn emit_index_tree_deleted(
             status: DiffStatus::Deleted,
             old_path: Some(path),
             new_path: None,
-            old_mode: format_mode(entry.mode),
-            new_mode: "000000".to_owned(),
+            old_mode: FileMode::new(entry.mode),
+            new_mode: FileMode::ABSENT,
             old_oid: entry.oid,
             new_oid: zero_oid(),
             score: None,
@@ -3958,8 +3961,8 @@ fn emit_index_tree_added(walk: &mut DiffIndexTreeWalk<'_, '_>, dir_prefix: &[u8]
                 status: DiffStatus::Added,
                 old_path: None,
                 new_path: Some(path),
-                old_mode: "000000".to_owned(),
-                new_mode: format_mode(ie.mode),
+                old_mode: FileMode::ABSENT,
+                new_mode: FileMode::new(ie.mode),
                 old_oid: zero_oid(),
                 new_oid: ie.oid,
                 score: None,
@@ -3981,8 +3984,8 @@ fn emit_index_tree_added(walk: &mut DiffIndexTreeWalk<'_, '_>, dir_prefix: &[u8]
                     status: DiffStatus::Added,
                     old_path: None,
                     new_path: Some(path),
-                    old_mode: "000000".to_owned(),
-                    new_mode: format_mode(ie.mode),
+                    old_mode: FileMode::ABSENT,
+                    new_mode: FileMode::new(ie.mode),
                     old_oid: zero_oid(),
                     new_oid: ie.oid,
                     score: None,
@@ -4232,8 +4235,8 @@ fn worktree_content_change_entry(
         status: DiffStatus::for_content_change(ie.mode, worktree_mode),
         old_path: Some(path.to_owned()),
         new_path: Some(path.to_owned()),
-        old_mode: format_mode(ie.mode),
-        new_mode: format_mode(worktree_mode),
+        old_mode: FileMode::new(ie.mode),
+        new_mode: FileMode::new(worktree_mode),
         old_oid: ie.oid,
         new_oid,
         score: None,
@@ -4331,8 +4334,8 @@ fn push_index_blob_worktree_diff(
                 status: DiffStatus::TypeChanged,
                 old_path: Some(path_owned.clone()),
                 new_path: Some(path_owned),
-                old_mode: format_mode(ie.mode),
-                new_mode: format_mode(0o160000),
+                old_mode: FileMode::new(ie.mode),
+                new_mode: FileMode::new(0o160000),
                 old_oid: ie.oid,
                 new_oid: head,
                 score: None,
@@ -4343,8 +4346,8 @@ fn push_index_blob_worktree_diff(
             status: DiffStatus::Deleted,
             old_path: Some(path_str_ref.to_owned()),
             new_path: None,
-            old_mode: format_mode(ie.mode),
-            new_mode: String::new(),
+            old_mode: FileMode::new(ie.mode),
+            new_mode: FileMode::ABSENT,
             old_oid: ie.oid,
             new_oid: zero_oid(),
             score: None,
@@ -4513,8 +4516,8 @@ fn worktree_diff_pass1_index_entry(
                         status: DiffStatus::Deleted,
                         old_path: Some(path_owned.clone()),
                         new_path: Some(path_owned),
-                        old_mode: format_mode(ie.mode),
-                        new_mode: "000000".to_owned(),
+                        old_mode: FileMode::new(ie.mode),
+                        new_mode: FileMode::ABSENT,
                         old_oid: ie.oid,
                         new_oid: zero_oid(),
                         score: None,
@@ -4542,8 +4545,8 @@ fn worktree_diff_pass1_index_entry(
                     status: DiffStatus::TypeChanged,
                     old_path: Some(path_owned.clone()),
                     new_path: Some(path_owned),
-                    old_mode: format_mode(ie.mode),
-                    new_mode: format_mode(worktree_mode),
+                    old_mode: FileMode::new(ie.mode),
+                    new_mode: FileMode::new(worktree_mode),
                     old_oid: ie.oid,
                     new_oid: worktree_oid,
                     score: None,
@@ -4575,8 +4578,8 @@ fn worktree_diff_pass1_index_entry(
                     status: DiffStatus::Modified,
                     old_path: Some(path_owned.clone()),
                     new_path: Some(path_owned),
-                    old_mode: format_mode(ie.mode),
-                    new_mode: format_mode(ie.mode),
+                    old_mode: FileMode::new(ie.mode),
+                    new_mode: FileMode::new(ie.mode),
                     old_oid: ie.oid,
                     new_oid,
                     score: None,
@@ -4605,8 +4608,8 @@ fn worktree_diff_pass1_index_entry(
                 status: DiffStatus::Modified,
                 old_path: Some(path_owned.clone()),
                 new_path: Some(path_owned),
-                old_mode: format_mode(ie.mode),
-                new_mode: format_mode(ie.mode),
+                old_mode: FileMode::new(ie.mode),
+                new_mode: FileMode::new(ie.mode),
                 old_oid: ie.oid,
                 new_oid,
                 score: None,
@@ -4639,8 +4642,8 @@ fn worktree_diff_pass1_index_entry(
                     status: DiffStatus::Added,
                     old_path: None,
                     new_path: Some(path_str_ref.to_owned()),
-                    old_mode: "000000".to_owned(),
-                    new_mode: format_mode(worktree_mode),
+                    old_mode: FileMode::ABSENT,
+                    new_mode: FileMode::new(worktree_mode),
                     old_oid: zero_oid(),
                     new_oid: worktree_oid,
                     score: None,
@@ -4654,8 +4657,8 @@ fn worktree_diff_pass1_index_entry(
                     status: DiffStatus::Deleted,
                     old_path: Some(path_str_ref.to_owned()),
                     new_path: None,
-                    old_mode: format_mode(ie.mode),
-                    new_mode: "000000".to_owned(),
+                    old_mode: FileMode::new(ie.mode),
+                    new_mode: FileMode::ABSENT,
                     old_oid: ie.oid,
                     new_oid: zero_oid(),
                     score: None,
@@ -4987,8 +4990,8 @@ fn diff_index_to_worktree_inner(
                     status: DiffStatus::Deleted,
                     old_path: Some(path_str_ref.to_owned()),
                     new_path: None,
-                    old_mode: format_mode(ie.mode),
-                    new_mode: "000000".to_owned(),
+                    old_mode: FileMode::new(ie.mode),
+                    new_mode: FileMode::ABSENT,
                     old_oid: ie.oid,
                     new_oid: zero_oid(),
                     score: None,
@@ -5156,14 +5159,14 @@ fn diff_index_to_worktree_inner(
         };
 
         let new_mode = wt_meta.as_ref().map_or_else(
-            || "000000".to_owned(),
-            |meta| format_mode(mode_from_metadata(meta)),
+            || FileMode::ABSENT,
+            |meta| FileMode::new(mode_from_metadata(meta)),
         );
         result.push(DiffEntry {
             status: DiffStatus::Unmerged,
             old_path: Some(path.clone()),
             new_path: Some(path.clone()),
-            old_mode: "000000".to_owned(),
+            old_mode: FileMode::ABSENT,
             new_mode,
             old_oid: zero_oid(),
             new_oid: zero_oid(),
@@ -5190,8 +5193,8 @@ fn diff_index_to_worktree_inner(
                         status: DiffStatus::for_content_change(base_entry.mode, wt_mode),
                         old_path: Some(path.clone()),
                         new_path: Some(path),
-                        old_mode: format_mode(base_entry.mode),
-                        new_mode: format_mode(wt_mode),
+                        old_mode: FileMode::new(base_entry.mode),
+                        new_mode: FileMode::new(wt_mode),
                         old_oid: base_entry.oid,
                         new_oid: wt_oid,
                         score: None,
@@ -7131,8 +7134,8 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                             status: DiffStatus::Deleted,
                             old_path: Some(path.clone()),
                             new_path: Some(path.clone()),
-                            old_mode: format_mode(te.mode),
-                            new_mode: "000000".to_string(),
+                            old_mode: FileMode::new(te.mode),
+                            new_mode: FileMode::ABSENT,
                             old_oid: te.oid,
                             new_oid: zero_oid(),
                             score: None,
@@ -7163,8 +7166,8 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                             status: DiffStatus::Modified,
                             old_path: Some(path.clone()),
                             new_path: Some(path.clone()),
-                            old_mode: format_mode(te.mode),
-                            new_mode: format_mode(te.mode),
+                            old_mode: FileMode::new(te.mode),
+                            new_mode: FileMode::new(te.mode),
                             old_oid: te.oid,
                             new_oid,
                             score: None,
@@ -7181,8 +7184,8 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                         status: DiffStatus::Added,
                         old_path: Some(path.clone()),
                         new_path: Some(path.clone()),
-                        old_mode: "000000".to_string(),
-                        new_mode: format_mode(0o160000),
+                        old_mode: FileMode::ABSENT,
+                        new_mode: FileMode::new(0o160000),
                         old_oid: zero_oid(),
                         new_oid,
                         score: None,
@@ -7221,8 +7224,8 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                         status: DiffStatus::for_content_change(te.mode, wt_mode),
                         old_path: Some(path.clone()),
                         new_path: Some(path.clone()),
-                        old_mode: format_mode(te.mode),
-                        new_mode: format_mode(wt_mode),
+                        old_mode: FileMode::new(te.mode),
+                        new_mode: FileMode::new(wt_mode),
                         old_oid: te.oid,
                         new_oid: wt_oid,
                         score: None,
@@ -7261,8 +7264,8 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                         status: DiffStatus::for_content_change(te.mode, ie.mode),
                         old_path: Some(path.clone()),
                         new_path: Some(path.clone()),
-                        old_mode: format_mode(te.mode),
-                        new_mode: format_mode(ie.mode),
+                        old_mode: FileMode::new(te.mode),
+                        new_mode: FileMode::new(ie.mode),
                         old_oid: te.oid,
                         new_oid: te.oid,
                         score: None,
@@ -7288,8 +7291,8 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                             status: DiffStatus::for_content_change(te.mode, wt_mode),
                             old_path: Some(path.clone()),
                             new_path: Some(path.clone()),
-                            old_mode: format_mode(te.mode),
-                            new_mode: format_mode(wt_mode),
+                            old_mode: FileMode::new(te.mode),
+                            new_mode: FileMode::new(wt_mode),
                             old_oid: te.oid,
                             // Raw `git diff <tree>` uses a null OID on the worktree side (patch
                             // output resolves content from the working tree).
@@ -7301,8 +7304,8 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                             status: DiffStatus::for_content_change(te.mode, wt_mode),
                             old_path: Some(path.clone()),
                             new_path: Some(path.clone()),
-                            old_mode: format_mode(te.mode),
-                            new_mode: format_mode(wt_mode),
+                            old_mode: FileMode::new(te.mode),
+                            new_mode: FileMode::new(wt_mode),
                             old_oid: te.oid,
                             new_oid: te.oid,
                             score: None,
@@ -7328,8 +7331,8 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                         status: DiffStatus::for_content_change(te.mode, wt_mode),
                         old_path: Some(path.clone()),
                         new_path: Some(path.clone()),
-                        old_mode: format_mode(te.mode),
-                        new_mode: format_mode(wt_mode),
+                        old_mode: FileMode::new(te.mode),
+                        new_mode: FileMode::new(wt_mode),
                         old_oid: te.oid,
                         new_oid,
                         score: None,
@@ -7342,8 +7345,8 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                     status: DiffStatus::Deleted,
                     old_path: Some(path.clone()),
                     new_path: None,
-                    old_mode: format_mode(te.mode),
-                    new_mode: "000000".to_owned(),
+                    old_mode: FileMode::new(te.mode),
+                    new_mode: FileMode::ABSENT,
                     old_oid: te.oid,
                     new_oid: zero_oid(),
                     score: None,
@@ -7368,8 +7371,8 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                     status: DiffStatus::Added,
                     old_path: None,
                     new_path: Some(path.clone()),
-                    old_mode: "000000".to_owned(),
-                    new_mode: format_mode(wt_mode),
+                    old_mode: FileMode::ABSENT,
+                    new_mode: FileMode::new(wt_mode),
                     old_oid: zero_oid(),
                     new_oid: wt_oid,
                     score: None,
@@ -7409,13 +7412,13 @@ fn modified_as_copy_from_sources(
     threshold: u32,
     sources: &[(String, ObjectId, bool)],
     source_contents: &[Option<Vec<u8>>],
-    source_tree_entries: &[(String, String, ObjectId)],
+    source_tree_entries: &[(String, FileMode, ObjectId)],
 ) -> Result<Option<DiffEntry>> {
-    fn regular_file_mode(mode: &str) -> bool {
-        mode == "100644" || mode == "100755"
+    fn regular_file_mode(mode: FileMode) -> bool {
+        mode == FileMode::REGULAR || mode == FileMode::EXECUTABLE
     }
 
-    if e.status != DiffStatus::Modified || !regular_file_mode(&e.new_mode) {
+    if e.status != DiffStatus::Modified || !regular_file_mode(e.new_mode) {
         return Ok(None);
     }
     let Some(new_data) = read_added_entry_bytes(odb, e, work_root) else {
@@ -7435,12 +7438,11 @@ fn modified_as_copy_from_sources(
         if e.new_path.as_deref() == Some(src_path.as_str()) {
             continue;
         }
-        let src_mode_str = source_tree_entries
+        let src_mode = source_tree_entries
             .iter()
             .find(|(p, _, _)| p == src_path)
-            .map(|(_, m, _)| m.as_str())
-            .unwrap_or("100644");
-        if !regular_file_mode(src_mode_str) {
+            .map_or(FileMode::REGULAR, |(_, m, _)| *m);
+        if !regular_file_mode(src_mode) {
             continue;
         }
 
@@ -7470,15 +7472,14 @@ fn modified_as_copy_from_sources(
     let src_mode = source_tree_entries
         .iter()
         .find(|(p, _, _)| p == src_path)
-        .map(|(_, m, _)| m.clone())
-        .unwrap_or_else(|| e.old_mode.clone());
+        .map_or(e.old_mode, |(_, m, _)| *m);
 
     Ok(Some(DiffEntry {
         status: DiffStatus::Copied,
         old_path: Some(src_path.clone()),
         new_path: e.new_path.clone(),
         old_mode: src_mode,
-        new_mode: e.new_mode.clone(),
+        new_mode: e.new_mode,
         old_oid: *src_oid,
         new_oid: e.new_oid,
         score: Some(score),
@@ -7554,8 +7555,8 @@ pub fn detect_renames_with_policy(
         return Ok(result);
     }
 
-    fn is_regularish_mode(mode: &str) -> bool {
-        mode == "100644" || mode == "100755"
+    fn is_regularish_mode(mode: FileMode) -> bool {
+        mode == FileMode::REGULAR || mode == FileMode::EXECUTABLE
     }
 
     fn same_path_same_blob(del: &DiffEntry, add: &DiffEntry) -> bool {
@@ -7604,8 +7605,8 @@ pub fn detect_renames_with_policy(
                 status: DiffStatus::Renamed,
                 old_path: del.old_path.clone(),
                 new_path: add.new_path.clone(),
-                old_mode: del.old_mode.clone(),
-                new_mode: add.new_mode.clone(),
+                old_mode: del.old_mode,
+                new_mode: add.new_mode,
                 old_oid: del.old_oid,
                 new_oid: add.new_oid,
                 score: Some(*score),
@@ -7674,7 +7675,7 @@ pub fn detect_renames_with_policy(
         for (row, &di) in remaining_deleted.iter().enumerate() {
             poll_rename_cancel(cancel_watch)?;
             let del = &deleted[di];
-            if !is_regularish_mode(&del.old_mode) {
+            if !is_regularish_mode(del.old_mode) {
                 continue;
             }
             let Some(ds) = deleted_sizes[row] else {
@@ -7682,7 +7683,7 @@ pub fn detect_renames_with_policy(
             };
             for (col, &ai) in remaining_added.iter().enumerate() {
                 let add = &added[ai];
-                if !is_regularish_mode(&add.new_mode) {
+                if !is_regularish_mode(add.new_mode) {
                     continue;
                 }
                 let Some(asz) = added_sizes[col] else {
@@ -7855,7 +7856,7 @@ pub fn detect_copies(
     entries: Vec<DiffEntry>,
     threshold: u32,
     find_copies_harder: bool,
-    source_tree_entries: &[(String, String, ObjectId)],
+    source_tree_entries: &[(String, FileMode, ObjectId)],
 ) -> Result<Vec<DiffEntry>> {
     let config = ConfigSet::new();
     let policy = ThreadPolicy::default();
@@ -7883,7 +7884,7 @@ pub fn detect_copies_with_policy(
     entries: Vec<DiffEntry>,
     threshold: u32,
     find_copies_harder: bool,
-    source_tree_entries: &[(String, String, ObjectId)],
+    source_tree_entries: &[(String, FileMode, ObjectId)],
     config: &ConfigSet,
     thread_policy: &ThreadPolicy,
 ) -> Result<Vec<DiffEntry>> {
@@ -7937,11 +7938,11 @@ pub fn detect_copies_with_policy(
 
     // Modes of every source, for the old side of copy and rename entries: the deleted and
     // modified entries carry their own, and `source_tree_entries` the rest.
-    let mut source_modes: Vec<(String, String, ObjectId)> = source_tree_entries.to_vec();
+    let mut source_modes: Vec<(String, FileMode, ObjectId)> = source_tree_entries.to_vec();
     for entry in deleted.iter().chain(&others) {
         if let Some(ref path) = entry.old_path {
             if !source_modes.iter().any(|(p, _, _)| p == path) {
-                source_modes.push((path.clone(), entry.old_mode.clone(), entry.old_oid));
+                source_modes.push((path.clone(), entry.old_mode, entry.old_oid));
             }
         }
     }
@@ -7961,7 +7962,7 @@ pub fn detect_copies_with_policy(
         scores: &[(u32, usize, usize)],
         sources: &[(String, ObjectId, bool)],
         added: &[DiffEntry],
-        source_tree_entries: &[(String, String, ObjectId)],
+        source_tree_entries: &[(String, FileMode, ObjectId)],
         used_added2: &mut [bool],
         renamed_deleted: &mut HashSet<usize>,
         result_entries: &mut Vec<DiffEntry>,
@@ -7990,8 +7991,7 @@ pub fn detect_copies_with_policy(
                     let src_mode = source_tree_entries
                         .iter()
                         .find(|(p, _, _)| p == src_path)
-                        .map(|(_, m, _)| m.clone())
-                        .unwrap_or_else(|| add.old_mode.clone());
+                        .map_or(add.old_mode, |(_, m, _)| *m);
 
                     let is_rename = Some(ai) == rename_ai;
                     result_entries.push(DiffEntry {
@@ -8003,7 +8003,7 @@ pub fn detect_copies_with_policy(
                         old_path: Some(src_path.clone()),
                         new_path: add.new_path.clone(),
                         old_mode: src_mode,
-                        new_mode: add.new_mode.clone(),
+                        new_mode: add.new_mode,
                         old_oid: sources[si].1,
                         new_oid: add.new_oid,
                         score: Some(score),
@@ -8018,15 +8018,14 @@ pub fn detect_copies_with_policy(
                     let src_mode = source_tree_entries
                         .iter()
                         .find(|(p, _, _)| p == src_path)
-                        .map(|(_, m, _)| m.clone())
-                        .unwrap_or_else(|| add.old_mode.clone());
+                        .map_or(add.old_mode, |(_, m, _)| *m);
 
                     result_entries.push(DiffEntry {
                         status: DiffStatus::Copied,
                         old_path: Some(src_path.clone()),
                         new_path: add.new_path.clone(),
                         old_mode: src_mode,
-                        new_mode: add.new_mode.clone(),
+                        new_mode: add.new_mode,
                         old_oid: sources[si].1,
                         new_oid: add.new_oid,
                         score: Some(score),
@@ -8295,7 +8294,7 @@ fn read_new_side_bytes(
         ))
     })?;
     if let Some(wctx) = worktree {
-        let mode = u32::from_str_radix(&entry.new_mode, 8).unwrap_or(crate::index::MODE_REGULAR);
+        let mode = entry.new_mode.bits();
         let index_entry = wctx.index.get(path.as_bytes(), 0);
         return read_worktree_side_bytes_for_diff(odb, root, path, mode, config, index_entry, None);
     }
@@ -8340,8 +8339,8 @@ fn split_broken_modifications(
                 status: DiffStatus::Deleted,
                 old_path: Some(path.clone()),
                 new_path: None,
-                old_mode: e.old_mode.clone(),
-                new_mode: "000000".to_owned(),
+                old_mode: e.old_mode,
+                new_mode: FileMode::ABSENT,
                 old_oid: e.old_oid,
                 new_oid: zero_oid(),
                 score: None,
@@ -8350,8 +8349,8 @@ fn split_broken_modifications(
                 status: DiffStatus::Added,
                 old_path: None,
                 new_path: Some(path),
-                old_mode: "000000".to_owned(),
-                new_mode: e.new_mode.clone(),
+                old_mode: FileMode::ABSENT,
+                new_mode: e.new_mode,
                 old_oid: zero_oid(),
                 new_oid: e.new_oid,
                 score: None,
@@ -8525,12 +8524,12 @@ pub fn postprocess_diff_entries(
 pub fn flatten_tree_entries(
     odb: &Odb,
     tree_oid: &ObjectId,
-) -> Result<Vec<(String, String, ObjectId)>> {
+) -> Result<Vec<(String, FileMode, ObjectId)>> {
     fn walk(
         odb: &Odb,
         tree_oid: &ObjectId,
         prefix: &str,
-        out: &mut Vec<(String, String, ObjectId)>,
+        out: &mut Vec<(String, FileMode, ObjectId)>,
     ) -> Result<()> {
         let obj = odb.read(tree_oid)?;
         let oid_len = odb.hash_algo().len();
@@ -8545,7 +8544,7 @@ pub fn flatten_tree_entries(
             if e.mode == 0o040000 {
                 walk(odb, &e.oid, &path, out)?;
             } else {
-                out.push((path, format!("{:o}", e.mode), e.oid));
+                out.push((path, FileMode::new(e.mode), e.oid));
             }
         }
         Ok(())
@@ -8586,10 +8585,10 @@ pub fn status_apply_rename_copy_detection(
             cancel_watch,
         );
     }
-    let source_tree_entries: Vec<(String, String, ObjectId)> = match head_tree {
+    let source_tree_entries: Vec<(String, FileMode, ObjectId)> = match head_tree {
         Some(oid) => flatten_tree(odb, oid, "")?
             .into_iter()
-            .map(|e| (e.path, format_mode(e.mode), e.oid))
+            .map(|e| (e.path, FileMode::new(e.mode), e.oid))
             .collect(),
         None => Vec::new(),
     };
@@ -12060,8 +12059,8 @@ mod diff_index_to_tree_cache_tree_tests {
         let diffs = diff_index_to_tree(&odb, &index, Some(&head_tree), false).expect("diff");
         assert_eq!(diffs.len(), 1);
         assert_eq!(diffs[0].status, DiffStatus::Modified);
-        assert_eq!(diffs[0].old_mode, format_mode(MODE_REGULAR));
-        assert_eq!(diffs[0].new_mode, format_mode(MODE_EXECUTABLE));
+        assert_eq!(diffs[0].old_mode, FileMode::new(MODE_REGULAR));
+        assert_eq!(diffs[0].new_mode, FileMode::new(MODE_EXECUTABLE));
 
         // Intent-to-add is omitted from staged diff.
         let mut ita = index_entry("new.txt", MODE_REGULAR, blob);
@@ -13740,11 +13739,13 @@ mod line_coverage_tests {
         let pairs: Vec<_> = result
             .iter()
             .filter(|e| matches!(e.status, DiffStatus::Renamed | DiffStatus::Copied))
-            .map(|e| (e.old_mode.as_str(), e.new_mode.as_str()))
+            .map(|e| (e.old_mode, e.new_mode))
             .collect();
         assert_eq!(pairs.len(), 2, "{result:?}");
         assert!(
-            pairs.iter().all(|p| *p == ("100644", "100644")),
+            pairs
+                .iter()
+                .all(|p| *p == (FileMode::REGULAR, FileMode::REGULAR)),
             "{pairs:?}"
         );
     }
@@ -13887,8 +13888,8 @@ mod line_coverage_tests {
                 status: DiffStatus::Modified,
                 old_path: Some("x".into()),
                 new_path: Some("x".into()),
-                old_mode: "100644".into(),
-                new_mode: "100644".into(),
+                old_mode: FileMode::REGULAR,
+                new_mode: FileMode::REGULAR,
                 old_oid: empty_blob_oid(),
                 new_oid: empty_blob_oid(),
                 score: Some(80),

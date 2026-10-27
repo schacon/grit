@@ -295,8 +295,8 @@ fn unstaged_status(root: &Path, threads: usize) -> Vec<(String, DiffStatus, Stri
             (
                 e.path().to_owned(),
                 e.status,
-                e.old_mode.clone(),
-                e.new_mode.clone(),
+                e.old_mode.to_string(),
+                e.new_mode.to_string(),
             )
         })
         .collect()

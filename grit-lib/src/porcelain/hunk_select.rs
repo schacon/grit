@@ -29,6 +29,7 @@ use crate::diff::{
 };
 use crate::error::{ApplyError, Error};
 use crate::index::{index_file_mtime, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR};
+use crate::objects::FileMode;
 use crate::objects::{parse_commit, ObjectId, ObjectKind};
 use crate::porcelain::checkout::{
     remove_empty_parent_dirs, smudge_bytes_for_worktree_path, write_smudged_blob_to_worktree,
@@ -518,9 +519,9 @@ fn file_patch_from_unified_slices(
     slices: &[&str],
 ) -> std::result::Result<FilePatch, HunkSelectError> {
     let path = &change.path;
-    let is_new = change.old_mode == "000000";
+    let is_new = change.old_mode == FileMode::ABSENT;
     let mut is_deleted =
-        matches!(change.status, DiffStatus::Deleted) || change.new_mode == "000000";
+        matches!(change.status, DiffStatus::Deleted) || change.new_mode == FileMode::ABSENT;
     let is_rename = matches!(change.status, DiffStatus::Renamed);
     let is_copy = matches!(change.status, DiffStatus::Copied);
     if !is_new && !is_deleted && side_text(&change.new_bytes).trim().is_empty() {
@@ -565,15 +566,15 @@ fn file_patch_from_unified_slices(
         change.old_path.clone().or_else(|| Some(path.clone()))
     };
     patch.new_path = if is_deleted { None } else { Some(path.clone()) };
-    patch.old_mode = Some(change.old_mode.clone());
-    patch.new_mode = Some(change.new_mode.clone());
+    patch.old_mode = Some(change.old_mode.to_string());
+    patch.new_mode = Some(change.new_mode.to_string());
     Ok(patch)
 }
 
 fn build_file_diff_for_stale(change: &FileChange, opts: &DiffOptions) -> FileDiff {
     let structured = structured_file_diff(
-        &change.old_mode,
-        &change.new_mode,
+        change.old_mode,
+        change.new_mode,
         &change.old_bytes,
         &change.new_bytes,
         opts.clone(),

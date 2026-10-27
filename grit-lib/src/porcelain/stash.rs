@@ -18,13 +18,14 @@ use std::io;
 use std::path::Path;
 
 use crate::diff::{
-    diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees, format_mode, zero_oid,
-    DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
+    diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees, zero_oid, DiffEntry,
+    DiffIndexToWorktreeOptions, DiffStatus,
 };
 use crate::error::{ApplyError, Error, Result};
 use crate::index::{
     index_file_mtime, Index, IndexEntry, IndexLock, MODE_GITLINK, MODE_SYMLINK, MODE_TREE,
 };
+use crate::objects::FileMode;
 use crate::worktree::{map_worktree_io, WorktreePathOperation};
 // `MODE_EXECUTABLE` only drives the Unix executable-bit application below.
 use crate::apply::{apply_patch_to_index, FilePatch, IndexApplyOptions};
@@ -164,19 +165,18 @@ impl StashTreeDelta {
         let mut before = Vec::new();
         let mut changes = Vec::new();
         for change in diff_trees(repo.odb(), Some(base), Some(other), "")? {
-            let entry = |path: String, mode: &str, oid| -> Result<StashTreeEntry> {
+            let entry = |path: String, mode: FileMode, oid| -> Result<StashTreeEntry> {
                 let path = crate::repo_relpath::storage_bytes(&path).into_owned();
-                let mode = u32::from_str_radix(mode, 8)
-                    .map_err(|_| Error::CorruptStash("invalid tree mode"))?;
+                let mode = mode.bits();
                 crate::path_population::validate_worktree_path(&path, mode, protect)?;
                 Ok(StashTreeEntry { path, mode, oid })
             };
             if let Some(path) = &change.old_path {
-                before.push(entry(path.clone(), &change.old_mode, change.old_oid)?);
+                before.push(entry(path.clone(), change.old_mode, change.old_oid)?);
             }
             let after = change
                 .new_path
-                .map(|path| entry(path, &change.new_mode, change.new_oid))
+                .map(|path| entry(path, change.new_mode, change.new_oid))
                 .transpose()?;
             if let Some(path) = after.as_ref().map(|e| e.path.clone()).or_else(|| {
                 change
@@ -1786,18 +1786,18 @@ fn append_stash_untracked_show_entries(
                 let (old_oid, old_mode, status) = if let Some(h) = head_entry {
                     (
                         h.oid,
-                        format_mode(h.mode),
+                        FileMode::new(h.mode),
                         DiffStatus::for_content_change(h.mode, entry.mode),
                     )
                 } else {
-                    (zero_oid(), "000000".to_owned(), DiffStatus::Modified)
+                    (zero_oid(), FileMode::ABSENT, DiffStatus::Modified)
                 };
                 diffs[idx] = DiffEntry {
                     status,
                     old_path: Some(entry.path.clone()),
                     new_path: Some(entry.path.clone()),
                     old_mode,
-                    new_mode: format_mode(entry.mode),
+                    new_mode: FileMode::new(entry.mode),
                     old_oid,
                     new_oid: entry.oid,
                     score: None,
@@ -1809,8 +1809,8 @@ fn append_stash_untracked_show_entries(
             status: DiffStatus::Added,
             old_path: None,
             new_path: Some(entry.path.clone()),
-            old_mode: "000000".to_owned(),
-            new_mode: format_mode(entry.mode),
+            old_mode: FileMode::ABSENT,
+            new_mode: FileMode::new(entry.mode),
             old_oid: zero_oid(),
             new_oid: entry.oid,
             score: None,
@@ -2190,8 +2190,8 @@ fn check_stash_untracked_restore(
             status: DiffStatus::Added,
             old_path: None,
             new_path: Some(entry.path.clone()),
-            old_mode: String::new(),
-            new_mode: format!("{:o}", entry.mode),
+            old_mode: FileMode::ABSENT,
+            new_mode: FileMode::new(entry.mode),
             old_oid: ObjectId::zero(),
             new_oid: entry.oid,
             score: None,
@@ -2619,10 +2619,10 @@ fn apply_stash_commit(
                     status: DiffStatus::Modified,
                     old_path: Some(crate::repo_relpath::storage_string(job.rel_path.as_bytes())),
                     new_path: Some(crate::repo_relpath::storage_string(job.rel_path.as_bytes())),
-                    old_mode: format_mode(
+                    old_mode: FileMode::new(
                         base.map(|e| e.mode).unwrap_or(crate::index::MODE_REGULAR),
                     ),
-                    new_mode: format_mode(job.mode),
+                    new_mode: FileMode::new(job.mode),
                     old_oid: base.map(|e| e.oid).unwrap_or_else(zero_oid),
                     new_oid: job.oid,
                     score: None,

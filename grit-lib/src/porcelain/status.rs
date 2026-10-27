@@ -2872,8 +2872,8 @@ fn porcelain_v2_worktree_mode(
         if entry.status == DiffStatus::Deleted {
             return "000000".to_owned();
         }
-        if !entry.new_mode.is_empty() {
-            return entry.new_mode.clone();
+        if !entry.new_mode.is_absent() {
+            return entry.new_mode.to_string();
         }
     }
     if let Some(wt) = work_tree {
@@ -2897,6 +2897,7 @@ mod guidance_tests {
     use super::*;
     use crate::branch_tracking::{StandingHeader, TrackedComparison};
     use crate::diff::DiffStatus;
+    use crate::objects::FileMode;
     use crate::state::{status_operation, InProgressOperation};
 
     fn model() -> StatusModel {
@@ -2927,8 +2928,8 @@ mod guidance_tests {
             status: DiffStatus::Modified,
             old_path: Some(path.to_owned()),
             new_path: Some(path.to_owned()),
-            old_mode: "100644".to_owned(),
-            new_mode: "100644".to_owned(),
+            old_mode: FileMode::REGULAR,
+            new_mode: FileMode::REGULAR,
             old_oid: ObjectId::zero(),
             new_oid: ObjectId::zero(),
             score: None,

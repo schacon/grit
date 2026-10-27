@@ -8,14 +8,14 @@ use thiserror::Error;
 
 use crate::config::ConfigSet;
 use crate::hash::hash_object;
-use crate::index::MODE_REGULAR;
+use crate::objects::FileMode;
 use crate::objects::{HashAlgo, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::parallel::ThreadPolicy;
 
 use super::core::{
-    apply_rename_detection_to_diff_entries, format_mode, mode_from_metadata,
-    read_worktree_bytes_for_mode, zero_oid, DiffEntry, DiffStatus,
+    apply_rename_detection_to_diff_entries, mode_from_metadata, read_worktree_bytes_for_mode,
+    zero_oid, DiffEntry, DiffStatus,
 };
 use super::options::DiffOptions;
 use super::patch_log::{write_patch, PatchTextOptions};
@@ -170,27 +170,21 @@ fn file_diff_from_entry(odb: &Odb, entry: &DiffEntry, opts: DiffOptions) -> Opti
         .filter(|op| entry.new_path.as_ref() != Some(op));
     let structured = if binary {
         super::structured::StructuredFileDiff {
-            old_mode: mode_display(&entry.old_mode),
-            new_mode: mode_display(&entry.new_mode),
+            old_mode: entry.old_mode.octal_if_present(),
+            new_mode: entry.new_mode.octal_if_present(),
             old_encoding_lossy: old_bytes.encoding_lossy,
             new_encoding_lossy: new_bytes.encoding_lossy,
             hunks: Vec::new(),
         }
     } else {
-        structured_file_diff(
-            &entry.old_mode,
-            &entry.new_mode,
-            &old_bytes,
-            &new_bytes,
-            opts,
-        )
+        structured_file_diff(entry.old_mode, entry.new_mode, &old_bytes, &new_bytes, opts)
     };
     Some(FileDiff {
         path,
         old_path,
         status: entry.status,
-        old_mode: mode_display(&entry.old_mode),
-        new_mode: mode_display(&entry.new_mode),
+        old_mode: entry.old_mode.octal_if_present(),
+        new_mode: entry.new_mode.octal_if_present(),
         old_oid: entry.old_oid,
         new_oid: entry.new_oid,
         binary,
@@ -208,10 +202,10 @@ enum Side {
 
 fn side_bytes_for_entry(odb: &Odb, entry: &DiffEntry, side: Side) -> Option<(SideBytes, bool)> {
     let (mode, oid) = match side {
-        Side::Old => (&entry.old_mode, entry.old_oid),
-        Side::New => (&entry.new_mode, entry.new_oid),
+        Side::Old => (entry.old_mode, entry.old_oid),
+        Side::New => (entry.new_mode, entry.new_oid),
     };
-    if *mode == "000000" {
+    if mode.is_absent() {
         return Some((SideBytes::from_bytes(Vec::new()), false));
     }
     let data = odb.read(&oid).ok()?.data;
@@ -223,25 +217,17 @@ fn bytes_for_diff(data: &[u8]) -> (SideBytes, bool) {
     (SideBytes::from_bytes(data.to_vec()), binary)
 }
 
-fn mode_display(mode: &str) -> Option<String> {
-    if mode == "000000" {
-        None
-    } else {
-        Some(mode.to_owned())
-    }
-}
-
 /// Write blob objects for changed sides only (rename detection reads from the ODB).
 fn store_changed_blobs(odb: &Odb, entries: &mut [DiffEntry]) -> Result<(), NoIndexError> {
     for entry in entries {
-        if entry.old_mode != "000000" && !entry.old_oid.is_zero() {
+        if entry.old_mode != FileMode::ABSENT && !entry.old_oid.is_zero() {
             if let Some(path) = entry.old_path.as_deref() {
-                write_blob_if_missing(odb, path, &entry.old_mode, &mut entry.old_oid)?;
+                write_blob_if_missing(odb, path, entry.old_mode, &mut entry.old_oid)?;
             }
         }
-        if entry.new_mode != "000000" && !entry.new_oid.is_zero() {
+        if entry.new_mode != FileMode::ABSENT && !entry.new_oid.is_zero() {
             if let Some(path) = entry.new_path.as_deref() {
-                write_blob_if_missing(odb, path, &entry.new_mode, &mut entry.new_oid)?;
+                write_blob_if_missing(odb, path, entry.new_mode, &mut entry.new_oid)?;
             }
         }
     }
@@ -251,15 +237,14 @@ fn store_changed_blobs(odb: &Odb, entries: &mut [DiffEntry]) -> Result<(), NoInd
 fn write_blob_if_missing(
     odb: &Odb,
     path: &str,
-    mode: &str,
+    mode: FileMode,
     oid: &mut ObjectId,
 ) -> Result<(), NoIndexError> {
     if !oid.is_zero() && odb.read(oid).is_ok() {
         return Ok(());
     }
     *oid = hash_side_at_path(path, mode)?;
-    let mode_u = u32::from_str_radix(mode, 8).unwrap_or(MODE_REGULAR);
-    let data = read_worktree_bytes_for_mode(Path::new(path), mode_u).map_err(|_| {
+    let data = read_worktree_bytes_for_mode(Path::new(path), mode.bits()).map_err(|_| {
         NoIndexError::PathNotAccessible {
             path: path.to_owned(),
         }
@@ -268,9 +253,8 @@ fn write_blob_if_missing(
     Ok(())
 }
 
-fn hash_side_at_path(path: &str, mode: &str) -> Result<ObjectId, NoIndexError> {
-    let mode_u = u32::from_str_radix(mode, 8).unwrap_or(MODE_REGULAR);
-    let data = read_worktree_bytes_for_mode(Path::new(path), mode_u).map_err(|_| {
+fn hash_side_at_path(path: &str, mode: FileMode) -> Result<ObjectId, NoIndexError> {
+    let data = read_worktree_bytes_for_mode(Path::new(path), mode.bits()).map_err(|_| {
         NoIndexError::PathNotAccessible {
             path: path.to_owned(),
         }
@@ -511,16 +495,8 @@ fn emit_pair(
         (None, None) => return Ok(()),
     };
 
-    let old_mode = if mode_left == 0 {
-        "000000".to_owned()
-    } else {
-        format_mode(mode_left)
-    };
-    let new_mode = if mode_right == 0 {
-        "000000".to_owned()
-    } else {
-        format_mode(mode_right)
-    };
+    let old_mode = FileMode::new(mode_left);
+    let new_mode = FileMode::new(mode_right);
 
     if let (Some(l), Some(r)) = (left, right) {
         if mode_left != 0

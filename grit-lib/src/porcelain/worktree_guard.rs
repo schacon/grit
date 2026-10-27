@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::config::ConfigSet;
-use crate::diff::format_mode;
 use crate::diff::{
     diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees, entry_is_racy_with_policy,
     index_mtime_for_diff, DiffEntry, DiffStatus,
@@ -19,6 +18,7 @@ use crate::diff::{
 use crate::error::{Error, Result, WorktreeOperation};
 use crate::index::StatMatchPolicy;
 use crate::index::{index_file_mtime, Index, IndexEntry};
+use crate::objects::FileMode;
 use crate::objects::{parse_commit, ObjectId};
 use crate::parallel::{try_par_map, ParallelHashError, ParallelOp};
 use crate::porcelain::checkout::tree_changes_touch_gitattributes;
@@ -509,10 +509,6 @@ enum HeadTreeSide {
     Absent,
 }
 
-fn parse_diff_mode(mode: &str) -> u32 {
-    u32::from_str_radix(mode, 8).unwrap_or(0)
-}
-
 fn head_tree_sides_from_changes(tree_changes: &[DiffEntry]) -> HashMap<String, HeadTreeSide> {
     let mut map = HashMap::with_capacity(tree_changes.len());
     for change in tree_changes {
@@ -523,7 +519,7 @@ fn head_tree_sides_from_changes(tree_changes: &[DiffEntry]) -> HashMap<String, H
             path.clone(),
             HeadTreeSide::Present {
                 oid: change.old_oid,
-                mode: parse_diff_mode(&change.old_mode),
+                mode: change.old_mode.bits(),
             },
         );
     }
@@ -639,8 +635,8 @@ fn staged_diff_for_tree_switch_paths(
                     status: DiffStatus::Added,
                     old_path: None,
                     new_path: Some(path.clone()),
-                    old_mode: String::new(),
-                    new_mode: format_mode(ie.mode),
+                    old_mode: FileMode::ABSENT,
+                    new_mode: FileMode::new(ie.mode),
                     old_oid: ObjectId::zero(),
                     new_oid: ie.oid,
                     score: None,
@@ -651,8 +647,8 @@ fn staged_diff_for_tree_switch_paths(
                     status: DiffStatus::Deleted,
                     old_path: Some(path.clone()),
                     new_path: None,
-                    old_mode: format_mode(mode),
-                    new_mode: String::new(),
+                    old_mode: FileMode::new(mode),
+                    new_mode: FileMode::ABSENT,
                     old_oid: oid,
                     new_oid: ObjectId::zero(),
                     score: None,
@@ -663,8 +659,8 @@ fn staged_diff_for_tree_switch_paths(
                     status: DiffStatus::for_content_change(mode, ie.mode),
                     old_path: Some(path.clone()),
                     new_path: Some(path.clone()),
-                    old_mode: format_mode(mode),
-                    new_mode: format_mode(ie.mode),
+                    old_mode: FileMode::new(mode),
+                    new_mode: FileMode::new(ie.mode),
                     old_oid: oid,
                     new_oid: ie.oid,
                     score: None,
@@ -1623,8 +1619,8 @@ mod tests {
             status: DiffStatus::Added,
             old_path: None,
             new_path: Some(path.to_owned()),
-            old_mode: String::new(),
-            new_mode: "100644".into(),
+            old_mode: FileMode::ABSENT,
+            new_mode: FileMode::REGULAR,
             old_oid: ObjectId::zero(),
             new_oid: ObjectId::zero(),
             score: None,
@@ -1636,8 +1632,8 @@ mod tests {
             status: DiffStatus::Modified,
             old_path: Some(path.to_owned()),
             new_path: Some(path.to_owned()),
-            old_mode: "100644".into(),
-            new_mode: "100644".into(),
+            old_mode: FileMode::REGULAR,
+            new_mode: FileMode::REGULAR,
             old_oid: ObjectId::zero(),
             new_oid: ObjectId::zero(),
             score: None,

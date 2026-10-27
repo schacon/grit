@@ -1,5 +1,6 @@
 //! `write_patch` / `--patch-text` round-trip vs system `git diff --binary` and `git apply`.
 
+use grit_lib::objects::FileMode;
 use std::io::Cursor;
 use std::process::Command;
 
@@ -272,8 +273,8 @@ fn entry(
         status,
         old_path: (old.0 != "000000").then(|| path.to_owned()),
         new_path: (new.0 != "000000").then(|| path.to_owned()),
-        old_mode: old.0.to_owned(),
-        new_mode: new.0.to_owned(),
+        old_mode: FileMode::new(u32::from_str_radix(old.0, 8).expect("octal mode")),
+        new_mode: FileMode::new(u32::from_str_radix(new.0, 8).expect("octal mode")),
         old_oid: old.1,
         new_oid: new.1,
         score: None,

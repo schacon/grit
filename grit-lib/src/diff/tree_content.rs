@@ -4,6 +4,7 @@ use crate::config::ConfigSet;
 use crate::diff_rename_parallel::parallel_map_indices;
 use crate::error::{Error, Result};
 use crate::objects::pack_store::PackReadContextGuard;
+use crate::objects::FileMode;
 use crate::objects::ObjectId;
 use crate::odb::Odb;
 use crate::parallel::run_ordered_batches;
@@ -189,8 +190,8 @@ pub fn tree_diff_structured_entry(
         return Ok(TreeDiffStructured {
             entry: entry.clone(),
             structured: StructuredFileDiff {
-                old_mode: mode_display(&entry.old_mode),
-                new_mode: mode_display(&entry.new_mode),
+                old_mode: entry.old_mode.octal_if_present(),
+                new_mode: entry.new_mode.octal_if_present(),
                 old_encoding_lossy: old_bytes.encoding_lossy,
                 new_encoding_lossy: old_bytes.encoding_lossy,
                 hunks: Vec::new(),
@@ -204,16 +205,16 @@ pub fn tree_diff_structured_entry(
     let binary = old_bin || new_bin;
     let structured = if binary {
         StructuredFileDiff {
-            old_mode: mode_display(&entry.old_mode),
-            new_mode: mode_display(&entry.new_mode),
+            old_mode: entry.old_mode.octal_if_present(),
+            new_mode: entry.new_mode.octal_if_present(),
             old_encoding_lossy: old_bytes.encoding_lossy,
             new_encoding_lossy: new_bytes.encoding_lossy,
             hunks: Vec::new(),
         }
     } else {
         structured_file_diff(
-            &entry.old_mode,
-            &entry.new_mode,
+            entry.old_mode,
+            entry.new_mode,
             &old_bytes,
             &new_bytes,
             diff_options.clone(),
@@ -304,26 +305,18 @@ pub fn tree_diff_structured_parallel(
     }
 }
 
-fn mode_display(mode: &str) -> Option<String> {
-    if mode == "000000" {
-        None
-    } else {
-        Some(mode.to_owned())
-    }
-}
-
 fn load_old_side(
     odb: &Odb,
     e: &DiffEntry,
     blob_reads: Option<&AtomicUsize>,
 ) -> Result<(SideBytes, bool)> {
-    if e.old_mode == "160000" {
+    if e.old_mode == FileMode::GITLINK {
         return Ok((
             SideBytes::from_bytes(gitlink_line(&e.old_oid).into_bytes()),
             false,
         ));
     }
-    if e.old_mode == "000000" {
+    if e.old_mode == FileMode::ABSENT {
         return Ok((SideBytes::from_bytes(Vec::new()), false));
     }
     blob_bytes(odb, &e.old_oid, blob_reads)
@@ -334,13 +327,13 @@ fn load_new_side(
     e: &DiffEntry,
     blob_reads: Option<&AtomicUsize>,
 ) -> Result<(SideBytes, bool)> {
-    if e.new_mode == "160000" {
+    if e.new_mode == FileMode::GITLINK {
         return Ok((
             SideBytes::from_bytes(gitlink_line(&e.new_oid).into_bytes()),
             false,
         ));
     }
-    if e.new_mode == "000000" {
+    if e.new_mode == FileMode::ABSENT {
         return Ok((SideBytes::from_bytes(Vec::new()), false));
     }
     blob_bytes(odb, &e.new_oid, blob_reads)

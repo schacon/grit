@@ -1,5 +1,6 @@
 //! Copy detection accepts blobs whose payload alone triggers sha1dc, as Git does.
 
+use grit_lib::objects::FileMode;
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
@@ -37,8 +38,8 @@ fn detect_copies_accepts_shattered_modified_worktree_blob() {
         status: DiffStatus::Modified,
         old_path: Some("source.txt".into()),
         new_path: Some("source.txt".into()),
-        old_mode: "100644".into(),
-        new_mode: "100644".into(),
+        old_mode: FileMode::REGULAR,
+        new_mode: FileMode::REGULAR,
         old_oid: src_oid,
         new_oid: src_oid,
         score: None,
@@ -47,8 +48,8 @@ fn detect_copies_accepts_shattered_modified_worktree_blob() {
         status: DiffStatus::Modified,
         old_path: Some("target.txt".into()),
         new_path: Some("target.txt".into()),
-        old_mode: "100644".into(),
-        new_mode: "100644".into(),
+        old_mode: FileMode::REGULAR,
+        new_mode: FileMode::REGULAR,
         old_oid: ObjectId::from_hex("0000000000000000000000000000000000000000").expect("zero"),
         new_oid: zero_oid(),
         score: None,

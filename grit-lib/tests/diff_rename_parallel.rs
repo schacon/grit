@@ -1,5 +1,6 @@
 //! Serial vs parallel rename/copy detection must match exactly.
 
+use grit_lib::objects::FileMode;
 use std::path::Path;
 use std::process::Command;
 
@@ -276,8 +277,8 @@ fn asymmetric_matrix_exact_matches_still_pair() {
             status: DiffStatus::Deleted,
             old_path: Some(format!("old{i}.txt")),
             new_path: None,
-            old_mode: "100644".into(),
-            new_mode: "000000".into(),
+            old_mode: FileMode::REGULAR,
+            new_mode: FileMode::ABSENT,
             old_oid: oid,
             new_oid: zero_oid(),
             score: None,
@@ -288,8 +289,8 @@ fn asymmetric_matrix_exact_matches_still_pair() {
             status: DiffStatus::Added,
             old_path: None,
             new_path: Some(format!("new{i}.txt")),
-            old_mode: "000000".into(),
-            new_mode: "100644".into(),
+            old_mode: FileMode::ABSENT,
+            new_mode: FileMode::REGULAR,
             old_oid: zero_oid(),
             new_oid: oid,
             score: None,
@@ -463,13 +464,13 @@ fn parallel_copy_many_to_one_matches_serial() {
 fn flatten_tree(
     odb: &grit_lib::objects::odb::Odb,
     tree_oid: &ObjectId,
-) -> Vec<(String, String, ObjectId)> {
+) -> Vec<(String, FileMode, ObjectId)> {
     use grit_lib::objects::parse_tree;
     fn walk(
         odb: &grit_lib::objects::odb::Odb,
         tree_oid: &ObjectId,
         prefix: &str,
-        out: &mut Vec<(String, String, ObjectId)>,
+        out: &mut Vec<(String, FileMode, ObjectId)>,
     ) {
         let obj = odb.read(tree_oid).expect("tree");
         let entries = parse_tree(&obj.data).expect("parse");
@@ -483,7 +484,7 @@ fn flatten_tree(
             if e.mode == 0o040000 {
                 walk(odb, &e.oid, &path, out);
             } else {
-                out.push((path, format!("{:o}", e.mode), e.oid));
+                out.push((path, FileMode::new(e.mode), e.oid));
             }
         }
     }

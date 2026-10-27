@@ -264,14 +264,8 @@ fn tree_metadata_matrix_matches_git_without_reading_blobs() {
                 assert_eq!(actual, expected, "{algo:?} {detail:?}");
                 assert_eq!(counter.load(Ordering::Relaxed), 0);
                 for (entry, file) in entries.iter().zip(&out.files) {
-                    assert_eq!(
-                        file.old_mode.as_deref(),
-                        (entry.old_mode != "000000").then_some(entry.old_mode.as_str())
-                    );
-                    assert_eq!(
-                        file.new_mode.as_deref(),
-                        (entry.new_mode != "000000").then_some(entry.new_mode.as_str())
-                    );
+                    assert_eq!(file.old_mode, entry.old_mode.octal_if_present());
+                    assert_eq!(file.new_mode, entry.new_mode.octal_if_present());
                 }
             }
         }

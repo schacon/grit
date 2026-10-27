@@ -5,6 +5,7 @@ use grit_lib::diff::{diff_tree_to_worktree_with_git_dir, mode_from_metadata};
 use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::index::{entry_from_stat, Index, MODE_EXECUTABLE, MODE_REGULAR};
 use grit_lib::objects::odb::Odb;
+use grit_lib::objects::FileMode;
 use grit_lib::objects::ObjectKind;
 use std::fs;
 use tempfile::TempDir;
@@ -147,8 +148,8 @@ fn explicit_index_chmod_reported_when_filemode_false() {
         1,
         "explicit index chmod must appear in tree diff even when core.filemode=false: {diff:?}"
     );
-    assert_eq!(diff[0].old_mode, "100644");
-    assert_eq!(diff[0].new_mode, "100755");
+    assert_eq!(diff[0].old_mode, FileMode::REGULAR);
+    assert_eq!(diff[0].new_mode, FileMode::EXECUTABLE);
     assert_eq!(diff[0].old_oid, diff[0].new_oid);
 }
 

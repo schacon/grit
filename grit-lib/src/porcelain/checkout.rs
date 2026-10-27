@@ -21,15 +21,14 @@ use std::rc::Rc;
 
 use crate::config::ConfigSet;
 use crate::crlf::{self, ConversionConfig};
-use crate::diff::{
-    diff_tree_path_change_count, diff_trees, format_mode, zero_oid, DiffEntry, DiffStatus,
-};
+use crate::diff::{diff_tree_path_change_count, diff_trees, zero_oid, DiffEntry, DiffStatus};
 use crate::error::{Error, Result};
 use crate::filter_process::{DelayedCheckoutError, DelayedProcessCheckout, FilterSmudgeMeta};
 use crate::index::{
     entry_from_metadata, entry_from_stat, Index, IndexEntry, IndexLock, MODE_EXECUTABLE,
     MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK, MODE_TREE,
 };
+use crate::objects::FileMode;
 use crate::objects::{Object, ObjectId, TreeEntry};
 use crate::odb::{BoundedRead, Odb};
 use crate::parallel::{try_par_map, ParallelHashError, ParallelOp, ParallelOptions};
@@ -266,8 +265,8 @@ fn populated_blob_to_added_diff(blob: &PopulatedTreeBlob) -> DiffEntry {
         status: DiffStatus::Added,
         old_path: None,
         new_path: Some(blob.path.clone()),
-        old_mode: "000000".to_owned(),
-        new_mode: format_mode(blob.mode),
+        old_mode: FileMode::ABSENT,
+        new_mode: FileMode::new(blob.mode),
         old_oid: zero_oid(),
         new_oid: blob.oid,
         score: None,
@@ -2029,8 +2028,7 @@ fn split_sparse_tree_changes<'a>(
                 .push(checkout_stored_index_path_bytes(path));
             continue;
         }
-        let mut entry =
-            prospective_index_entry(path, change.new_oid, parse_git_mode(&change.new_mode));
+        let mut entry = prospective_index_entry(path, change.new_oid, change.new_mode.bits());
         entry.path = checkout_stored_index_path_bytes(path);
         let untracked_file_present = index.get(&entry.path, 0).is_none()
             && fs::symlink_metadata(checkout_stored_worktree_abs(work_tree, path)).is_ok();
@@ -2071,7 +2069,7 @@ fn bulk_write_checkout_eligible(changes: &[DiffEntry], rules: &WorktreeRules) ->
             let Some(path) = change.new_path.as_deref() else {
                 return false;
             };
-            let mode = parse_git_mode(&change.new_mode);
+            let mode = change.new_mode.bits();
             mode != MODE_GITLINK
                 && is_eligible_for_parallel_checkout(mode, &rules.file_attrs(path, false))
         })
@@ -2093,7 +2091,7 @@ fn bulk_mod_delete_checkout_eligible(changes: &[DiffEntry], rules: &WorktreeRule
         let Some(path) = change.new_path.as_deref() else {
             return false;
         };
-        let mode = parse_git_mode(&change.new_mode);
+        let mode = change.new_mode.bits();
         if mode == MODE_GITLINK
             || !is_eligible_for_parallel_checkout(mode, &rules.file_attrs(path, false))
         {
@@ -2128,7 +2126,7 @@ fn checkout_bulk_added_tree_changes(
         let Some(path) = change.new_path.as_deref() else {
             continue;
         };
-        let mode = parse_git_mode(&change.new_mode);
+        let mode = change.new_mode.bits();
         let file_attrs = rules.file_attrs(path, false);
         write_jobs.push(CheckoutWriteJob::new(
             path.to_owned(),
@@ -2244,7 +2242,7 @@ fn checkout_bulk_mod_delete_tree_changes(
         .iter()
         .filter_map(|c| {
             let path = c.old_path.as_ref()?;
-            (parse_git_mode(&c.old_mode) == MODE_GITLINK).then(|| path.clone())
+            (c.old_mode.bits() == MODE_GITLINK).then(|| path.clone())
         })
         .collect();
     let owned_wholesale_candidates;
@@ -2271,7 +2269,7 @@ fn checkout_bulk_mod_delete_tree_changes(
         let Some(path) = change.new_path.as_deref() else {
             continue;
         };
-        let mode = parse_git_mode(&change.new_mode);
+        let mode = change.new_mode.bits();
         let file_attrs = rules.file_attrs(path, false);
         write_jobs.push(CheckoutWriteJob::new(
             path.to_owned(),
@@ -2301,7 +2299,7 @@ fn checkout_bulk_mod_delete_tree_changes(
         let Some(path) = &change.old_path else {
             continue;
         };
-        if parse_git_mode(&change.old_mode) == MODE_GITLINK
+        if change.old_mode.bits() == MODE_GITLINK
             || path_under_wholesale_directory(path, wholesale_index_prefixes)
         {
             continue;
@@ -2329,7 +2327,7 @@ fn checkout_bulk_mod_delete_tree_changes(
         let Some(path) = &change.old_path else {
             continue;
         };
-        let old_mode = parse_git_mode(&change.old_mode);
+        let old_mode = change.old_mode.bits();
         if old_mode == MODE_GITLINK
             || !path_under_wholesale_directory(path, &wholesale_dirs_removed)
         {
@@ -2437,7 +2435,7 @@ fn checkout_bulk_deleted_tree_changes(
         let Some(path) = &change.old_path else {
             continue;
         };
-        let old_mode = parse_git_mode(&change.old_mode);
+        let old_mode = change.old_mode.bits();
         if old_mode == MODE_GITLINK || path_under_wholesale_directory(path, wholesale_dirs_removed)
         {
             continue;
@@ -2468,7 +2466,7 @@ fn checkout_bulk_deleted_tree_changes(
         let Some(path) = &change.old_path else {
             continue;
         };
-        let old_mode = parse_git_mode(&change.old_mode);
+        let old_mode = change.old_mode.bits();
         if old_mode == MODE_GITLINK || !path_under_wholesale_directory(path, wholesale_dirs_removed)
         {
             if old_mode == MODE_GITLINK {
@@ -2516,7 +2514,7 @@ fn prefetch_promisor_blobs_for_checkout(repo: &Repository, changes: &[DiffEntry]
         if change.status == DiffStatus::Deleted {
             return None;
         }
-        let mode = parse_git_mode(&change.new_mode);
+        let mode = change.new_mode.bits();
         matches!(mode, MODE_REGULAR | MODE_EXECUTABLE | MODE_SYMLINK).then_some(change.new_oid)
     });
     prefetch_promisor_blobs(repo, oids)
@@ -2697,7 +2695,7 @@ fn apply_tree_changes(
                 .filter(|c| c.status == DiffStatus::Deleted)
                 .filter_map(|c| {
                     let path = c.old_path.as_ref()?;
-                    (parse_git_mode(&c.old_mode) == MODE_GITLINK).then(|| path.clone())
+                    (c.old_mode.bits() == MODE_GITLINK).then(|| path.clone())
                 })
                 .collect();
             let wholesale_candidates = if apply.wholesale_safety_precomputed {
@@ -2775,7 +2773,7 @@ fn apply_tree_changes(
         .filter(|c| c.status == DiffStatus::Deleted)
         .filter_map(|c| {
             let path = c.old_path.as_ref()?;
-            (parse_git_mode(&c.old_mode) == MODE_GITLINK).then(|| path.clone())
+            (c.old_mode.bits() == MODE_GITLINK).then(|| path.clone())
         })
         .collect();
     let wholesale_candidates = if apply.wholesale_safety_precomputed {
@@ -2819,7 +2817,7 @@ fn apply_tree_changes(
         let Some(path) = &change.old_path else {
             continue;
         };
-        let old_mode = parse_git_mode(&change.old_mode);
+        let old_mode = change.old_mode.bits();
         if old_mode == MODE_GITLINK || path_under_wholesale_directory(path, &wholesale_dirs_removed)
         {
             continue;
@@ -2847,7 +2845,7 @@ fn apply_tree_changes(
             if change.status == DiffStatus::Deleted {
                 crate::progress::poll_cancel(&mut progress, cancel)?;
                 if let Some(path) = &change.old_path {
-                    let old_mode = parse_git_mode(&change.old_mode);
+                    let old_mode = change.old_mode.bits();
                     if old_mode == MODE_GITLINK
                         || !path_under_wholesale_directory(path, &wholesale_dirs_removed)
                     {
@@ -2891,7 +2889,7 @@ fn apply_tree_changes(
             if conv.is_none() {
                 conv = Some(rules.conversion().clone());
             }
-            let mode = parse_git_mode(&change.new_mode);
+            let mode = change.new_mode.bits();
             if mode == MODE_GITLINK {
                 let index_path = checkout_stored_index_path_bytes(path);
                 let abs = checkout_stored_worktree_abs(work_tree, path);
@@ -3114,7 +3112,7 @@ fn prospective_index_for_checkout(index: &Index, changes: &[DiffEntry]) -> Index
                 idx.remove(old.as_bytes());
             }
         }
-        let mode = parse_git_mode(&change.new_mode);
+        let mode = change.new_mode.bits();
         idx.add_or_replace(prospective_index_entry(path, change.new_oid, mode));
     }
     idx.sort();
@@ -3368,16 +3366,12 @@ fn diff_entry_for_worktree_blob_refresh(
         status: DiffStatus::Modified,
         old_path: Some(rel_path.to_owned()),
         new_path: Some(rel_path.to_owned()),
-        old_mode: format_mode(old_mode),
-        new_mode: format_mode(target_mode),
+        old_mode: FileMode::new(old_mode),
+        new_mode: FileMode::new(target_mode),
         old_oid: oid,
         new_oid: oid,
         score: None,
     }
-}
-
-fn parse_git_mode(mode: &str) -> u32 {
-    u32::from_str_radix(mode, 8).unwrap_or(MODE_REGULAR)
 }
 
 fn validate_diff_changes_for_worktree(
@@ -3388,7 +3382,7 @@ fn validate_diff_changes_for_worktree(
         let Some(path) = &change.new_path else {
             continue;
         };
-        let mode = parse_git_mode(&change.new_mode);
+        let mode = change.new_mode.bits();
         validate_worktree_path(path.as_bytes(), mode, protect)?;
     }
     Ok(())
@@ -3485,8 +3479,8 @@ fn is_regular_git_mode(mode: u32) -> bool {
 
 fn can_overwrite_regular_in_place(change: &DiffEntry) -> bool {
     change.status == DiffStatus::Modified
-        && is_regular_git_mode(parse_git_mode(&change.old_mode))
-        && is_regular_git_mode(parse_git_mode(&change.new_mode))
+        && is_regular_git_mode(change.old_mode.bits())
+        && is_regular_git_mode(change.new_mode.bits())
 }
 
 /// Blobs larger than this are streamed from the object database into the work tree when
@@ -3678,7 +3672,7 @@ fn write_checkout_entry(
                 Error::PathError(format!("writing '{rel_path}' during checkout: {e}"))
             })?;
             drop(file);
-            let old_mode = parse_git_mode(&change.old_mode);
+            let old_mode = change.old_mode.bits();
             apply_in_place_git_mode_transition_at_path(&abs_path, old_mode, mode)?;
             let meta = written_file_symlink_metadata(&abs_path)?;
             return Ok(entry_from_metadata(&meta, &index_path, oid, mode));
@@ -4322,8 +4316,8 @@ mod tests {
                 status: DiffStatus::Modified,
                 old_path: Some(format!("f{i:03}.txt")),
                 new_path: Some(format!("f{i:03}.txt")),
-                old_mode: "100644".into(),
-                new_mode: "100644".into(),
+                old_mode: FileMode::REGULAR,
+                new_mode: FileMode::REGULAR,
                 old_oid: ObjectId::zero(),
                 new_oid: ObjectId::zero(),
                 score: None,
@@ -4334,8 +4328,8 @@ mod tests {
                 status: DiffStatus::Deleted,
                 old_path: Some(format!("gone{i:03}.txt")),
                 new_path: None,
-                old_mode: "100644".into(),
-                new_mode: String::new(),
+                old_mode: FileMode::REGULAR,
+                new_mode: FileMode::ABSENT,
                 old_oid: ObjectId::zero(),
                 new_oid: ObjectId::zero(),
                 score: None,
@@ -4365,8 +4359,8 @@ mod tests {
                 status: DiffStatus::Added,
                 old_path: None,
                 new_path: Some(format!("new{i:03}.txt")),
-                old_mode: String::new(),
-                new_mode: "100644".into(),
+                old_mode: FileMode::ABSENT,
+                new_mode: FileMode::REGULAR,
                 old_oid: ObjectId::zero(),
                 new_oid: ObjectId::zero(),
                 score: None,
@@ -4377,8 +4371,8 @@ mod tests {
                 status: DiffStatus::Modified,
                 old_path: Some(format!("f{i:03}.txt")),
                 new_path: Some(format!("f{i:03}.txt")),
-                old_mode: "100644".into(),
-                new_mode: "100644".into(),
+                old_mode: FileMode::REGULAR,
+                new_mode: FileMode::REGULAR,
                 old_oid: ObjectId::zero(),
                 new_oid: ObjectId::zero(),
                 score: None,
@@ -4389,8 +4383,8 @@ mod tests {
                 status: DiffStatus::Deleted,
                 old_path: Some(format!("gone{i:03}.txt")),
                 new_path: None,
-                old_mode: "100644".into(),
-                new_mode: String::new(),
+                old_mode: FileMode::REGULAR,
+                new_mode: FileMode::ABSENT,
                 old_oid: ObjectId::zero(),
                 new_oid: ObjectId::zero(),
                 score: None,
@@ -4675,8 +4669,8 @@ mod tests {
                 status: DiffStatus::Added,
                 old_path: None,
                 new_path: Some(new_rel),
-                old_mode: String::new(),
-                new_mode: "100644".into(),
+                old_mode: FileMode::ABSENT,
+                new_mode: FileMode::REGULAR,
                 old_oid: ObjectId::zero(),
                 new_oid,
                 score: None,
@@ -4752,8 +4746,8 @@ mod tests {
                 status: DiffStatus::Added,
                 old_path: None,
                 new_path: Some(new_rel),
-                old_mode: String::new(),
-                new_mode: "100644".into(),
+                old_mode: FileMode::ABSENT,
+                new_mode: FileMode::REGULAR,
                 old_oid: ObjectId::zero(),
                 new_oid,
                 score: None,

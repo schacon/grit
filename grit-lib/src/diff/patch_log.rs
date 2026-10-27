@@ -17,6 +17,7 @@ use crate::index::Index;
 use crate::merge_file;
 use crate::objects::pack_store::PackReadContextGuard;
 use crate::objects::CommitData;
+use crate::objects::FileMode;
 use crate::objects::{parse_commit, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::oid_abbrev_cache::OidAbbrevCache;
@@ -318,8 +319,8 @@ fn write_diff_entry_patch_from_structured<W: Write>(
     structured: &StructuredFileDiff,
 ) -> Result<()> {
     write_diff_entry_patch_headers(out, repo, entry, opts, abbrev_cache, is_binary)?;
-    let old_mode = log_patch_parse_mode_u32(&entry.old_mode);
-    let new_mode = log_patch_parse_mode_u32(&entry.new_mode);
+    let old_mode = entry.old_mode.bits();
+    let new_mode = entry.new_mode.bits();
     let git_old = entry
         .old_path
         .as_deref()
@@ -730,10 +731,6 @@ fn format_log_date(ident: &str) -> String {
     )
 }
 
-fn log_patch_parse_mode_u32(mode: &str) -> u32 {
-    u32::from_str_radix(mode.trim(), 8).unwrap_or(0)
-}
-
 /// Write the `diff --git` header and unified body for one [`DiffEntry`].
 ///
 /// # Errors
@@ -792,13 +789,13 @@ fn write_diff_entry_patch_headers<W: Write>(
         format_diff_path_with_prefix("b/", git_new, QUOTE_FULLY)
     )?;
 
-    let old_mode = log_patch_parse_mode_u32(&entry.old_mode);
-    let new_mode = log_patch_parse_mode_u32(&entry.new_mode);
+    let old_mode = entry.old_mode.bits();
+    let new_mode = entry.new_mode.bits();
 
     if old_mode == 0 {
-        writeln!(out, "new file mode {}", entry.new_mode.trim())?;
+        writeln!(out, "new file mode {}", entry.new_mode)?;
     } else if new_mode == 0 {
-        writeln!(out, "deleted file mode {}", entry.old_mode.trim())?;
+        writeln!(out, "deleted file mode {}", entry.old_mode)?;
     }
 
     match entry.status {
@@ -821,17 +818,17 @@ fn write_diff_entry_patch_headers<W: Write>(
             }
         }
         _ if old_mode != 0 && new_mode != 0 && old_mode != new_mode => {
-            writeln!(out, "old mode {}", entry.old_mode.trim())?;
-            writeln!(out, "new mode {}", entry.new_mode.trim())?;
+            writeln!(out, "old mode {}", entry.old_mode)?;
+            writeln!(out, "new mode {}", entry.new_mode)?;
         }
         _ => {}
     }
 
     if entry.old_oid != entry.new_oid {
         let index_mode = if new_mode != 0 {
-            entry.new_mode.trim()
+            entry.new_mode
         } else {
-            entry.old_mode.trim()
+            entry.old_mode
         };
         let mut index_pair = |old: &ObjectId, new: &ObjectId| -> Result<(String, String)> {
             if index_full_oid {
@@ -874,8 +871,8 @@ fn write_diff_entry_patch<W: Write>(
     binary_format: LogPatchBinaryFormat,
     config: &ConfigSet,
 ) -> Result<()> {
-    let old_mode = log_patch_parse_mode_u32(&entry.old_mode);
-    let new_mode = log_patch_parse_mode_u32(&entry.new_mode);
+    let old_mode = entry.old_mode.bits();
+    let new_mode = entry.new_mode.bits();
     let old_bytes = read_blob_side(odb, entry.old_oid, old_mode == 0)?;
     let new_bytes = read_blob_side(odb, entry.new_oid, new_mode == 0)?;
     write_diff_entry_patch_with_resolved_bytes(
@@ -916,8 +913,8 @@ fn write_diff_entry_patch_with_resolved_bytes<W: Write>(
         .as_deref()
         .or(entry.old_path.as_deref())
         .unwrap_or("dev/null");
-    let old_mode = log_patch_parse_mode_u32(&entry.old_mode);
-    let new_mode = log_patch_parse_mode_u32(&entry.new_mode);
+    let old_mode = entry.old_mode.bits();
+    let new_mode = entry.new_mode.bits();
     let is_binary = merge_file::is_binary(old_bytes) || merge_file::is_binary(new_bytes);
     let index_full_oid = is_binary && binary_format == LogPatchBinaryFormat::GitApplyBinaryPatch;
     write_diff_entry_patch_headers(out, repo, entry, opts, abbrev_cache, index_full_oid)?;
@@ -1125,11 +1122,11 @@ enum EntrySide {
 }
 
 impl EntrySide {
-    fn of(self, file: &PatchResolvedSide) -> (&PatchSide, &str, ObjectId) {
+    fn of(self, file: &PatchResolvedSide) -> (&PatchSide, FileMode, ObjectId) {
         let e = &file.entry;
         match self {
-            Self::Old => (&file.old, &e.old_mode, e.old_oid),
-            Self::New => (&file.new, &e.new_mode, e.new_oid),
+            Self::Old => (&file.old, e.old_mode, e.old_oid),
+            Self::New => (&file.new, e.new_mode, e.new_oid),
         }
     }
 
@@ -1181,7 +1178,7 @@ fn resolve_patch_side<'f, 'r>(
     worktree: &mut Option<WorktreeSideReader<'r>>,
 ) -> Result<Cow<'f, [u8]>> {
     let (source, mode, oid) = side.of(file);
-    let mode = log_patch_parse_mode_u32(mode);
+    let mode = mode.bits();
     if mode == 0 {
         return Ok(Cow::Borrowed(&[]));
     }
@@ -1211,7 +1208,7 @@ fn entry_with_content_ids(
 ) -> Result<DiffEntry> {
     let content_id = |side: EntrySide, bytes: &[u8]| -> Result<ObjectId> {
         let (source, mode, oid) = side.of(file);
-        if log_patch_parse_mode_u32(mode) == 0 {
+        if mode.is_absent() {
             return Ok(zero_oid());
         }
         match source {
@@ -1255,8 +1252,8 @@ mod tests {
             new_path: Some("dst/b.txt".into()),
             old_oid: blob_oid,
             new_oid: blob_oid,
-            old_mode: "100644".into(),
-            new_mode: "100644".into(),
+            old_mode: FileMode::REGULAR,
+            new_mode: FileMode::REGULAR,
             score: Some(100),
         };
         let dir = tempfile::tempdir().expect("tempdir");

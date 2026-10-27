@@ -21,6 +21,7 @@ use crate::index::{
     entry_from_metadata, index_file_mtime, index_path_outcome_key, Index, IndexEntry, IndexLock,
     MODE_GITLINK, MODE_REGULAR, MODE_TREE,
 };
+use crate::objects::FileMode;
 use crate::objects::ObjectId;
 use crate::odb::BULK_NEW_LOOSE_WRITE;
 use crate::path_icase::{
@@ -855,7 +856,7 @@ fn merge_tracked_stage_plan(
             );
         }
         DiffStatus::Modified | DiffStatus::TypeChanged | DiffStatus::Added => {
-            let mode = mode_from_diff_octal(&entry.new_mode).unwrap_or(0);
+            let mode = entry.new_mode.bits();
             changes.insert(
                 path,
                 TrackedStagePlan {
@@ -866,8 +867,8 @@ fn merge_tracked_stage_plan(
                 },
             );
         }
-        DiffStatus::Unmerged if entry.new_mode != "000000" => {
-            let mode = mode_from_diff_octal(&entry.new_mode).unwrap_or(0);
+        DiffStatus::Unmerged if entry.new_mode != FileMode::ABSENT => {
+            let mode = entry.new_mode.bits();
             changes.entry(path).or_insert(TrackedStagePlan {
                 remove: false,
                 oid: entry.new_oid,
@@ -889,13 +890,6 @@ fn mode_with_executable_hint(
         return base_mode;
     }
     staged_mode_with_hint(base_mode, hint)
-}
-
-fn mode_from_diff_octal(mode: &str) -> Result<u32> {
-    if mode.is_empty() || mode == "000000" {
-        return Ok(0);
-    }
-    u32::from_str_radix(mode, 8).map_err(|e| Error::Message(format!("invalid mode '{mode}': {e}")))
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -8,6 +8,7 @@
 #![cfg(unix)]
 #![allow(clippy::expect_used)]
 
+use grit_lib::objects::FileMode;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::Path;
 
@@ -74,8 +75,8 @@ fn grit_raw(repo: &Repository, target: &DiffTarget) -> Vec<String> {
                 status: f.status,
                 old_path: Some(f.path.clone()),
                 new_path: Some(f.path),
-                old_mode: f.old_mode.unwrap_or_else(|| "000000".into()),
-                new_mode: f.new_mode.unwrap_or_else(|| "000000".into()),
+                old_mode: f.old_mode.map_or(FileMode::ABSENT, octal_mode),
+                new_mode: f.new_mode.map_or(FileMode::ABSENT, octal_mode),
                 old_oid: f.old_oid,
                 new_oid: f.new_oid,
                 score: None,
@@ -358,4 +359,8 @@ fn staged_chmod_without_filemode_is_reported_vs_head() {
     );
     assert!(vs_head[0].starts_with(":100644 100755 "), "{vs_head:?}");
     assert!(vs_head[0].ends_with(" M\trun.sh"), "{vs_head:?}");
+}
+
+fn octal_mode(text: String) -> FileMode {
+    FileMode::new(u32::from_str_radix(&text, 8).expect("octal mode"))
 }

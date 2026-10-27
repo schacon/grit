@@ -2,6 +2,7 @@
 #![cfg(unix)]
 #![allow(clippy::expect_used)]
 
+use grit_lib::objects::FileMode;
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
@@ -149,7 +150,7 @@ fn check_scans(root: &Path) {
                     }
                     if matches!(scan, Scan::Preview | Scan::Stage) {
                         for entry in &entries {
-                            if entry.new_mode == "120000" {
+                            if entry.new_mode == FileMode::SYMLINK {
                                 let path = root.join(entry.path());
                                 let bytes = if fs::symlink_metadata(&path)
                                     .expect("metadata")

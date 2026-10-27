@@ -9,7 +9,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{detect_renames_with_policy, zero_oid, DiffEntry, DiffStatus};
 use grit_lib::objects::odb::Odb;
-use grit_lib::objects::ObjectKind;
+use grit_lib::objects::{FileMode, ObjectKind};
 use grit_lib::parallel::ThreadPolicy;
 use std::path::Path;
 use tempfile::TempDir;
@@ -56,8 +56,8 @@ fn fixture() -> &'static RenameBenchFixture {
                 status: DiffStatus::Deleted,
                 old_path: Some(path),
                 new_path: None,
-                old_mode: "100644".to_owned(),
-                new_mode: "000000".to_owned(),
+                old_mode: FileMode::REGULAR,
+                new_mode: FileMode::ABSENT,
                 old_oid: oid,
                 new_oid: zero_oid(),
                 score: None,
@@ -68,8 +68,8 @@ fn fixture() -> &'static RenameBenchFixture {
                 status: DiffStatus::Added,
                 old_path: None,
                 new_path: Some(path),
-                old_mode: "000000".to_owned(),
-                new_mode: "100644".to_owned(),
+                old_mode: FileMode::ABSENT,
+                new_mode: FileMode::REGULAR,
                 old_oid: zero_oid(),
                 new_oid: oid,
                 score: None,
@@ -157,8 +157,8 @@ fn adoc_fixture(count: usize, lines: usize, unique: bool) -> RenameBenchFixture 
             status: DiffStatus::Deleted,
             old_path: Some(format!("old/doc-{i}.txt")),
             new_path: None,
-            old_mode: "100644".to_owned(),
-            new_mode: "000000".to_owned(),
+            old_mode: FileMode::REGULAR,
+            new_mode: FileMode::ABSENT,
             old_oid,
             new_oid: zero_oid(),
             score: None,
@@ -167,8 +167,8 @@ fn adoc_fixture(count: usize, lines: usize, unique: bool) -> RenameBenchFixture 
             status: DiffStatus::Added,
             old_path: None,
             new_path: Some(format!("new/doc-{i}.adoc")),
-            old_mode: "000000".to_owned(),
-            new_mode: "100644".to_owned(),
+            old_mode: FileMode::ABSENT,
+            new_mode: FileMode::REGULAR,
             old_oid: zero_oid(),
             new_oid,
             score: None,

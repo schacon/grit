@@ -554,10 +554,6 @@ fn diff_entry_matches_paths(entry: &DiffEntry, paths: &[String]) -> bool {
         .any(|path| crate::pathspec::matches_pathspec_list(path, paths))
 }
 
-fn parse_mode_u32(mode: &str) -> u32 {
-    u32::from_str_radix(mode.trim(), 8).unwrap_or(0)
-}
-
 /// Abbreviated OID as it appears on `index` lines in `git show -p` (7 hex chars, or `0000000`).
 fn patch_id_write_line(out: &mut Vec<u8>, line: &str) {
     out.extend_from_slice(line.as_bytes());
@@ -577,12 +573,12 @@ fn write_patch_id_binary_entry(out: &mut Vec<u8>, entry: &DiffEntry) -> Result<(
         .or(entry.old_path.as_deref())
         .unwrap_or("");
     patch_id_write_line(out, &format!("diff --git a/{old_path} b/{new_path}"));
-    let old_mode = parse_mode_u32(&entry.old_mode);
-    let new_mode = parse_mode_u32(&entry.new_mode);
+    let old_mode = entry.old_mode.bits();
+    let new_mode = entry.new_mode.bits();
     if old_mode == 0 {
-        patch_id_write_line(out, &format!("new file mode {}", entry.new_mode.trim()));
+        patch_id_write_line(out, &format!("new file mode {}", entry.new_mode));
     } else if new_mode == 0 {
-        patch_id_write_line(out, &format!("deleted file mode {}", entry.old_mode.trim()));
+        patch_id_write_line(out, &format!("deleted file mode {}", entry.old_mode));
     }
     patch_id_write_line(
         out,
@@ -652,12 +648,12 @@ fn patch_id_append_git_show_entry(odb: &Odb, entry: &DiffEntry, out: &mut Vec<u8
         .unwrap_or("dev/null");
     patch_id_write_line(out, &format!("diff --git a/{git_old} b/{git_new}"));
 
-    let old_mode = parse_mode_u32(&entry.old_mode);
-    let new_mode = parse_mode_u32(&entry.new_mode);
+    let old_mode = entry.old_mode.bits();
+    let new_mode = entry.new_mode.bits();
     if old_mode == 0 {
-        patch_id_write_line(out, &format!("new file mode {}", entry.new_mode.trim()));
+        patch_id_write_line(out, &format!("new file mode {}", entry.new_mode));
     } else if new_mode == 0 {
-        patch_id_write_line(out, &format!("deleted file mode {}", entry.old_mode.trim()));
+        patch_id_write_line(out, &format!("deleted file mode {}", entry.old_mode));
     }
 
     if entry.status == DiffStatus::Renamed {
@@ -670,14 +666,14 @@ fn patch_id_append_git_show_entry(odb: &Odb, entry: &DiffEntry, out: &mut Vec<u8
             patch_id_write_line(out, &format!("rename to {path}"));
         }
     } else if old_mode != 0 && new_mode != 0 && old_mode != new_mode {
-        patch_id_write_line(out, &format!("old mode {}", entry.old_mode.trim()));
-        patch_id_write_line(out, &format!("new mode {}", entry.new_mode.trim()));
+        patch_id_write_line(out, &format!("old mode {}", entry.old_mode));
+        patch_id_write_line(out, &format!("new mode {}", entry.new_mode));
     }
 
     let index_mode = if new_mode != 0 {
-        entry.new_mode.trim()
+        entry.new_mode
     } else {
-        entry.old_mode.trim()
+        entry.old_mode
     };
     patch_id_write_line(
         out,
@@ -766,8 +762,8 @@ fn patch_id_hash_file_entry_into_ctx(
     let len1 = remove_space_bytes(&mut old_path_buf);
     let len2 = remove_space_bytes(&mut new_path_buf);
 
-    let old_mode = parse_mode_u32(&entry.old_mode);
-    let new_mode = parse_mode_u32(&entry.new_mode);
+    let old_mode = entry.old_mode.bits();
+    let new_mode = entry.new_mode.bits();
 
     patch_id_add_string(ctx, b"diff--git");
     patch_id_add_string(ctx, b"a/");
@@ -852,8 +848,8 @@ fn patch_id_hash_rename_entry_into_ctx(
     patch_id_add_string(ctx, b"renameto");
     ctx.update(&new_path_buf[..len2]);
 
-    let old_mode = parse_mode_u32(&entry.old_mode);
-    let new_mode = parse_mode_u32(&entry.new_mode);
+    let old_mode = entry.old_mode.bits();
+    let new_mode = entry.new_mode.bits();
     if old_mode != new_mode {
         patch_id_add_string(ctx, b"oldmode");
         patch_id_add_mode(ctx, old_mode);

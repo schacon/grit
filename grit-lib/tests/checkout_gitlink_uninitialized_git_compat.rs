@@ -1,5 +1,6 @@
 //! Checkout materializes uninitialized gitlinks as empty directories (issue #934).
 
+use grit_lib::objects::FileMode;
 use std::process::Command;
 
 use grit_lib::config::environment::RepositoryOptions;
@@ -145,7 +146,8 @@ fn checkout_removes_uninitialized_gitlink_on_delete() {
         .find(|c| c.status == DiffStatus::Deleted && c.old_path.as_deref() == Some("sub"))
         .unwrap_or_else(|| panic!("deleted sub in diff; got {changes:?}"));
     assert_eq!(
-        sub_delete.old_mode, "160000",
+        sub_delete.old_mode,
+        FileMode::GITLINK,
         "gitlink delete should carry mode 160000"
     );
     checkout_between_trees(&repo, Some(&with_sub_tree), &no_sub_tree)

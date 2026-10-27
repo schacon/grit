@@ -22,6 +22,7 @@ use crate::error::{Error, PathspecResolveError, Result};
 use crate::index::Index;
 use crate::index::MODE_TREE;
 use crate::objects::odb::Odb;
+use crate::objects::FileMode;
 use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
 use crate::parallel::{par_map, ParallelOp, ThreadPolicy};
 use crate::pathspec::{exact_literal_pathspec_set, PathspecMatchContext, PathspecMatcher};
@@ -535,8 +536,8 @@ pub(crate) struct FileChange {
     pub(crate) path: String,
     pub(crate) old_path: Option<String>,
     pub(crate) status: DiffStatus,
-    pub(crate) old_mode: String,
-    pub(crate) new_mode: String,
+    pub(crate) old_mode: FileMode,
+    pub(crate) new_mode: FileMode,
     pub(crate) old_oid: ObjectId,
     pub(crate) new_oid: ObjectId,
     pub(crate) old_bytes: SideBytes,
@@ -584,28 +585,20 @@ fn build_file_diff(fc: &FileChange, diff_options: DiffOptions) -> FileDiff {
 fn structured_for_file_change(fc: &FileChange, diff_options: DiffOptions) -> StructuredFileDiff {
     if fc.binary {
         StructuredFileDiff {
-            old_mode: diff_mode_display(&fc.old_mode),
-            new_mode: diff_mode_display(&fc.new_mode),
+            old_mode: fc.old_mode.octal_if_present(),
+            new_mode: fc.new_mode.octal_if_present(),
             old_encoding_lossy: fc.old_bytes.encoding_lossy,
             new_encoding_lossy: fc.new_bytes.encoding_lossy,
             hunks: Vec::new(),
         }
     } else {
         structured_file_diff(
-            &fc.old_mode,
-            &fc.new_mode,
+            fc.old_mode,
+            fc.new_mode,
             &fc.old_bytes,
             &fc.new_bytes,
             diff_options,
         )
-    }
-}
-
-fn diff_mode_display(mode: &str) -> Option<String> {
-    if mode == "000000" {
-        None
-    } else {
-        Some(mode.to_owned())
     }
 }
 
@@ -874,8 +867,8 @@ fn diff_index_to_tree_for_paths(
                 status: DiffStatus::Added,
                 old_path: None,
                 new_path: Some(path.clone()),
-                old_mode: "000000".to_owned(),
-                new_mode: crate::diff::format_mode(idx_mode),
+                old_mode: FileMode::ABSENT,
+                new_mode: FileMode::new(idx_mode),
                 old_oid: ObjectId::zero(),
                 new_oid: idx_oid,
                 score: None,
@@ -887,8 +880,8 @@ fn diff_index_to_tree_for_paths(
                 status: DiffStatus::Deleted,
                 old_path: Some(path.clone()),
                 new_path: None,
-                old_mode: crate::diff::format_mode(tree_mode),
-                new_mode: "000000".to_owned(),
+                old_mode: FileMode::new(tree_mode),
+                new_mode: FileMode::ABSENT,
                 old_oid: tree_oid,
                 new_oid: ObjectId::zero(),
                 score: None,
@@ -900,8 +893,8 @@ fn diff_index_to_tree_for_paths(
                 status: DiffStatus::for_content_change(tree_mode, idx_mode),
                 old_path: Some(path.clone()),
                 new_path: Some(path.clone()),
-                old_mode: crate::diff::format_mode(tree_mode),
-                new_mode: crate::diff::format_mode(idx_mode),
+                old_mode: FileMode::new(tree_mode),
+                new_mode: FileMode::new(idx_mode),
                 old_oid: tree_oid,
                 new_oid: idx_oid,
                 score: None,
@@ -1191,13 +1184,13 @@ fn file_change(
 }
 
 fn old_side_bytes(odb: &Odb, e: &DiffEntry) -> Result<(SideBytes, bool)> {
-    if e.old_mode == "160000" {
+    if e.old_mode == FileMode::GITLINK {
         return Ok((
             SideBytes::from_bytes(gitlink_line(&e.old_oid, None).into_bytes()),
             false,
         ));
     }
-    if e.old_mode == "000000" {
+    if e.old_mode == FileMode::ABSENT {
         return Ok((SideBytes::from_bytes(Vec::new()), false));
     }
     blob_bytes(odb, &e.old_oid)
@@ -1208,18 +1201,18 @@ fn new_side_bytes(
     e: &DiffEntry,
     work_tree: Option<&WorktreeDiffSide<'_>>,
 ) -> Result<(SideBytes, bool)> {
-    if e.new_mode == "160000" {
+    if e.new_mode == FileMode::GITLINK {
         let wt = work_tree.map(|s| s.work_tree);
         return Ok((
             SideBytes::from_bytes(gitlink_new_line(e, wt).into_bytes()),
             false,
         ));
     }
-    if e.new_mode == "000000" {
+    if e.new_mode == FileMode::ABSENT {
         return Ok((SideBytes::from_bytes(Vec::new()), false));
     }
     if let (Some(ctx), Some(p)) = (work_tree, e.new_path.as_deref().or(e.old_path.as_deref())) {
-        let mode = u32::from_str_radix(&e.new_mode, 8).unwrap_or(0);
+        let mode = e.new_mode.bits();
         let index_entry = ctx.index.get(p.as_bytes(), 0);
         let rules = ctx.rules.lock().unwrap_or_else(|e| e.into_inner());
         let data = read_worktree_side_bytes_for_diff(
@@ -1257,8 +1250,8 @@ fn gitlink_new_line(e: &DiffEntry, work_tree: Option<&Path>) -> String {
     if resolved == ObjectId::zero() {
         return String::new();
     }
-    let dirty = e.old_mode == "160000"
-        && e.new_mode == "160000"
+    let dirty = e.old_mode == FileMode::GITLINK
+        && e.new_mode == FileMode::GITLINK
         && work_tree.is_some_and(|wt| {
             path.is_some_and(|p| submodule_porcelain_flags(wt, p, e.old_oid).modified)
         });

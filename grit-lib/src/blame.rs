@@ -2944,7 +2944,7 @@ fn compute_blame_with_session(
                     )? {
                         parent_path = entry.old_path.clone().unwrap_or_default();
                         let p_blob_oid = entry.old_oid;
-                        let p_blob_mode = mode_from_diff_entry_mode(&entry.old_mode);
+                        let p_blob_mode = entry.old_mode.bits();
                         resolved = Some((p_blob_oid, p_blob_mode));
                     }
                 }
@@ -3161,7 +3161,7 @@ fn compute_blame_with_session(
             )? {
                 let old_path = entry.old_path.clone().unwrap_or_default();
                 let p_blob_oid = entry.old_oid;
-                let p_blob_mode = mode_from_diff_entry_mode(&entry.old_mode);
+                let p_blob_mode = entry.old_mode.bits();
                 if p_blob_oid == current_blob_oid {
                     note_blame_source_path(&mut pending, &old_path);
                     current_path = old_path;
@@ -3654,10 +3654,6 @@ fn compute_blame_with_session(
 
     result.sort_by_key(|b| b.final_lineno);
     Ok(result)
-}
-
-fn mode_from_diff_entry_mode(mode: &str) -> u32 {
-    u32::from_str_radix(mode, 8).unwrap_or(0o100644)
 }
 
 /// Git's default minimum line score for copy detection (`blame.h`).

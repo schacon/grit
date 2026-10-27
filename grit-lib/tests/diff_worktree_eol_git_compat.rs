@@ -110,7 +110,7 @@ fn diff_index_to_worktree_eol_crlf_single_line_change() {
         grit_repo.odb(),
         work_tree,
         "f.txt",
-        u32::from_str_radix(&entries[0].new_mode, 8).expect("mode"),
+        entries[0].new_mode.bits(),
         &cfg,
         index.get(b"f.txt", 0),
         Some(&rules),

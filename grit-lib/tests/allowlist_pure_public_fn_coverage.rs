@@ -2,6 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use grit_lib::objects::FileMode;
 use std::io::{Cursor, Write};
 use std::num::NonZeroUsize;
 use std::path::Path;
@@ -111,7 +112,7 @@ fn blame_diff_dotfile_ident_and_hash_helpers() {
         Vec::new(),
         50,
         false,
-        &[(String::new(), String::new(), empty_tree)],
+        &[(String::new(), FileMode::ABSENT, empty_tree)],
     )
     .expect("detect copies");
 

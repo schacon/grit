@@ -12,7 +12,7 @@ use crate::diff::posix_ere::PosixEre;
 use crate::diff::structured::SideBytes;
 use crate::diff::{diff_trees, DiffEntry};
 use crate::error::{Error, Result};
-use crate::objects::{parse_commit, ObjectId};
+use crate::objects::{parse_commit, FileMode, ObjectId};
 use crate::pathspec::matches_pathspec_list;
 use crate::repo::Repository;
 
@@ -184,7 +184,7 @@ impl Pickaxe {
                 let c1 = blob_occurrence_count(
                     odb,
                     &entry.old_oid,
-                    entry.old_mode.as_str(),
+                    entry.old_mode,
                     needle,
                     self.ignore_case,
                     self.ere.as_ref(),
@@ -193,7 +193,7 @@ impl Pickaxe {
                 let c2 = blob_occurrence_count(
                     odb,
                     &entry.new_oid,
-                    entry.new_mode.as_str(),
+                    entry.new_mode,
                     needle,
                     self.ignore_case,
                     self.ere.as_ref(),
@@ -202,8 +202,8 @@ impl Pickaxe {
                 Ok(c1 != c2)
             }
             PickaxeKind::LineGrep => {
-                let (old_bytes, old_bin) = blob_side(odb, entry.old_mode.as_str(), &entry.old_oid)?;
-                let (new_bytes, new_bin) = blob_side(odb, entry.new_mode.as_str(), &entry.new_oid)?;
+                let (old_bytes, old_bin) = blob_side(odb, entry.old_mode, &entry.old_oid)?;
+                let (new_bytes, new_bin) = blob_side(odb, entry.new_mode, &entry.new_oid)?;
                 if old_bin || new_bin {
                     return Ok(false);
                 }
@@ -223,16 +223,16 @@ impl Pickaxe {
 fn blob_occurrence_count(
     odb: &crate::odb::Odb,
     oid: &ObjectId,
-    mode: &str,
+    mode: FileMode,
     needle: &str,
     ignore_case: bool,
     ere: Option<&PosixEre>,
     cache: Option<&mut HashMap<ObjectId, usize>>,
 ) -> Result<usize> {
-    if mode == "000000" || *oid == ObjectId::zero() {
+    if mode.is_absent() || *oid == ObjectId::zero() {
         return Ok(0);
     }
-    if mode == "160000" {
+    if mode == FileMode::GITLINK {
         let (bytes, _) = blob_side(odb, mode, oid)?;
         return Ok(count_occurrences(
             bytes.data.as_slice(),
@@ -343,8 +343,8 @@ fn count_substr(haystack: &[u8], needle: &[u8]) -> usize {
     count
 }
 
-fn blob_side(odb: &crate::odb::Odb, mode: &str, oid: &ObjectId) -> Result<(SideBytes, bool)> {
-    if mode == "160000" {
+fn blob_side(odb: &crate::odb::Odb, mode: FileMode, oid: &ObjectId) -> Result<(SideBytes, bool)> {
+    if mode == FileMode::GITLINK {
         let line = if *oid == ObjectId::zero() {
             String::new()
         } else {
@@ -352,7 +352,7 @@ fn blob_side(odb: &crate::odb::Odb, mode: &str, oid: &ObjectId) -> Result<(SideB
         };
         return Ok((SideBytes::from_bytes(line.into_bytes()), false));
     }
-    if mode == "000000" || *oid == ObjectId::zero() {
+    if mode.is_absent() || *oid == ObjectId::zero() {
         return Ok((SideBytes::from_bytes(Vec::new()), false));
     }
     let data = odb.read(oid)?.data;

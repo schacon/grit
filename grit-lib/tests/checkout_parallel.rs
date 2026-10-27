@@ -8,6 +8,7 @@ use grit_lib::index::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::index::{
     entry_from_stat, Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR,
 };
+use grit_lib::objects::FileMode;
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::porcelain::checkout::checkout_between_trees;
@@ -516,8 +517,8 @@ fn parallel_pool_error_rolls_back_every_job() {
         status: DiffStatus::Added,
         old_path: None,
         new_path: Some("f0.txt".into()),
-        old_mode: "000000".into(),
-        new_mode: "100644".into(),
+        old_mode: FileMode::ABSENT,
+        new_mode: FileMode::REGULAR,
         old_oid: ObjectId::zero(),
         new_oid: good_oid,
         score: None,
@@ -526,8 +527,8 @@ fn parallel_pool_error_rolls_back_every_job() {
         status: DiffStatus::Added,
         old_path: None,
         new_path: Some("f1.txt".into()),
-        old_mode: "000000".into(),
-        new_mode: "100644".into(),
+        old_mode: FileMode::ABSENT,
+        new_mode: FileMode::REGULAR,
         old_oid: ObjectId::zero(),
         new_oid: missing,
         score: None,
@@ -537,8 +538,8 @@ fn parallel_pool_error_rolls_back_every_job() {
             status: DiffStatus::Added,
             old_path: None,
             new_path: Some(format!("f{i}.txt")),
-            old_mode: "000000".into(),
-            new_mode: "100644".into(),
+            old_mode: FileMode::ABSENT,
+            new_mode: FileMode::REGULAR,
             old_oid: ObjectId::zero(),
             new_oid: good_oid,
             score: None,
@@ -595,8 +596,8 @@ fn missing_blob_error_rolls_back_earlier_write() {
             status: DiffStatus::Added,
             old_path: None,
             new_path: Some("first.txt".into()),
-            old_mode: "000000".into(),
-            new_mode: "100644".into(),
+            old_mode: FileMode::ABSENT,
+            new_mode: FileMode::REGULAR,
             old_oid: ObjectId::zero(),
             new_oid: good_oid,
             score: None,
@@ -605,8 +606,8 @@ fn missing_blob_error_rolls_back_earlier_write() {
             status: DiffStatus::Added,
             old_path: None,
             new_path: Some("second.txt".into()),
-            old_mode: "000000".into(),
-            new_mode: "100644".into(),
+            old_mode: FileMode::ABSENT,
+            new_mode: FileMode::REGULAR,
             old_oid: ObjectId::zero(),
             new_oid: missing,
             score: None,
