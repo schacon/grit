@@ -832,3 +832,38 @@ fn t0003_cached_without_index_entries_is_empty() {
     let cached = load_gitattributes_for_check_attr_cached(&repo).expect("cached");
     assert!(cached.rules.is_empty());
 }
+
+#[test]
+fn quoted_attribute_patterns_roundtrip_with_git() {
+    use grit_lib::quote_path::quote_c_style;
+
+    let root = tempfile::tempdir().expect("tempdir");
+    let wt = root.path();
+    init_git_repo(wt);
+    let paths = [
+        "tab\tname",
+        "line\nname",
+        "quote\"name",
+        "café-東京",
+        "bell\x07name",
+    ];
+    let content: String = paths
+        .iter()
+        .map(|path| format!("{} test=quoted\n", quote_c_style(path, true)))
+        .collect();
+    std::fs::write(wt.join(".gitattributes"), content).expect("attributes");
+    hermetic_git_ok(wt, &["add", ".gitattributes"]);
+    hermetic_git_ok(wt, &["commit", "-qm", "attributes"]);
+    let repo = grit_repo(wt);
+    for parsed in [
+        load_worktree_parsed(&repo, wt),
+        load_cached_parsed(&repo),
+        load_source_parsed(&repo, "HEAD"),
+    ] {
+        for path in paths {
+            assert_eq!(grit_attr_value(&parsed, &repo, path, "test"), "quoted");
+        }
+        assert_all_attrs_match(wt, &repo, &parsed, &paths, &[]);
+    }
+    hermetic_git_ok(wt, &["fsck", "--strict"]);
+}

@@ -84,3 +84,68 @@ fn mixed_text_and_binary_patch_writes_git_compatible_index() {
     assert_eq!(git(root, &["show", ":b.bin"]), "after\0");
     git(root, &["fsck", "--strict"]);
 }
+
+#[cfg(unix)]
+#[test]
+fn quoted_patch_paths_roundtrip_through_git_index() {
+    use grit_lib::apply::{apply_patch_to_index_and_write, IndexApplyOptions};
+    use grit_lib::config::environment::RepositoryOptions;
+    use grit_lib::diff::{write_patch, PatchTextOptions};
+    use grit_lib::repo::Repository;
+    use grit_test_support::git;
+
+    let dir = TempDir::new().expect("tempdir");
+    let root = dir.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    let paths = [
+        "tab\tname",
+        "line\nname",
+        "quote\"name",
+        "café-東京",
+        "back\\slash",
+        "bell\x07name",
+    ];
+    for path in paths {
+        std::fs::write(root.join(path), b"before\n").unwrap();
+    }
+    git(root, &["add", "."]);
+    git(root, &["commit", "-qm", "initial"]);
+    for path in paths {
+        std::fs::write(root.join(path), b"after\n").unwrap();
+    }
+    let patch = git(root, &["-c", "core.quotePath=true", "diff"]);
+    let patches = parse_patch(&patch, 1, "quoted", false, None).expect("parse quoted git paths");
+    assert_eq!(patches.len(), paths.len());
+    for path in paths {
+        assert!(
+            patches.iter().any(|p| p.new_path.as_deref() == Some(path)),
+            "{path:?}"
+        );
+    }
+    git(root, &["add", "."]);
+    let expected_tree = git(root, &["write-tree"]);
+    git(root, &["reset", "--mixed", "HEAD"]);
+    let repo = Repository::discover(Some(root), &RepositoryOptions::default()).unwrap();
+    apply_patch_to_index_and_write(&repo, &patches, &IndexApplyOptions::default()).unwrap();
+    assert_eq!(git(root, &["write-tree"]), expected_tree);
+    git(root, &["fsck", "--strict"]);
+
+    // Have Git consume a grit-written patch for the same quoted paths.
+    let old_tree =
+        grit_lib::objects::ObjectId::from_hex(git(root, &["rev-parse", "HEAD^{tree}"]).trim())
+            .unwrap();
+    let new_tree = grit_lib::objects::ObjectId::from_hex(expected_tree.trim()).unwrap();
+    let entries = repo
+        .diff()
+        .tree_to_tree(Some(&old_tree), Some(&new_tree))
+        .unwrap();
+    let options = PatchTextOptions::from_repo(&repo, Default::default()).unwrap();
+    let mut grit_patch = Vec::new();
+    write_patch(&repo, &entries, &options, &mut grit_patch).unwrap();
+    git(root, &["reset", "--hard", "HEAD"]);
+    let patch_path = dir.path().join("quoted.patch");
+    std::fs::write(&patch_path, grit_patch).unwrap();
+    git(root, &["apply", "--cached", "quoted.patch"]);
+    assert_eq!(git(root, &["write-tree"]), expected_tree);
+    git(root, &["fsck", "--strict"]);
+}

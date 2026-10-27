@@ -1,4 +1,4 @@
-//! C-style path quoting compatible with Git's `quote.c` / `core.quotepath`.
+//! C-style path quoting and decoding compatible with Git's `quote.c` / `core.quotepath`.
 //!
 //! Git quotes pathnames for human-facing output (`ls-files`, `diff --name-only`,
 //! `ls-tree --name-only`) using a byte lookup table and optional full octal
@@ -179,9 +179,123 @@ pub fn format_diff_path_with_prefix(prefix: &str, path: &str, quote_fully: bool)
     }
 }
 
+/// Decode a leading C-style quoted path and return the text after its closing quote.
+///
+/// Accepts named control escapes and exactly three octal digits in `000..=377`.
+/// Returns `None` for missing quotes or invalid escapes. Decoded bytes may be
+/// non-UTF-8; callers decide whether their path representation accepts them.
+pub(crate) fn unquote_c_style_prefix(input: &str) -> Option<(Vec<u8>, &str)> {
+    let mut remaining = input.strip_prefix('"')?;
+    let mut decoded = Vec::new();
+    loop {
+        let bytes = remaining.as_bytes();
+        let end = bytes.iter().position(|b| matches!(b, b'"' | b'\\'))?;
+        decoded.extend_from_slice(&bytes[..end]);
+        remaining = &remaining[end + 1..];
+        if bytes[end] == b'"' {
+            return Some((decoded, remaining));
+        }
+        let (&escape, tail) = remaining.as_bytes().split_first()?;
+        let (byte, width) = match escape {
+            b'a' => (7, 1),
+            b'b' => (8, 1),
+            b'f' => (12, 1),
+            b'n' => (b'\n', 1),
+            b'r' => (b'\r', 1),
+            b't' => (b'\t', 1),
+            b'v' => (11, 1),
+            b'\\' | b'"' => (escape, 1),
+            b'0'..=b'3' => {
+                let octal = tail.get(..2)?;
+                if !octal.iter().all(|b| matches!(b, b'0'..=b'7')) {
+                    return None;
+                }
+                let byte = (escape - b'0') * 64 + (octal[0] - b'0') * 8 + (octal[1] - b'0');
+                (byte, 3)
+            }
+            _ => return None,
+        };
+        decoded.push(byte);
+        remaining = &remaining[width..];
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unquote_named_escapes_and_suffix() {
+        assert_eq!(
+            unquote_c_style_prefix(r#""\a\b\f\n\r\t\v\\\"" trailing "text""#),
+            Some((b"\x07\x08\x0c\n\r\t\x0b\\\"".to_vec(), " trailing \"text\"")),
+        );
+        assert_eq!(
+            unquote_c_style_prefix("\"\"\"next\""),
+            Some((vec![], "\"next\""))
+        );
+    }
+
+    #[test]
+    fn unquote_all_octal_bytes() {
+        for byte in 0..=255u8 {
+            let quoted = format!("\"\\{byte:03o}\" suffix");
+            assert_eq!(
+                unquote_c_style_prefix(&quoted),
+                Some((vec![byte], " suffix"))
+            );
+        }
+        let bytes: Vec<u8> = (0..=255).collect();
+        let quoted = quote_c_style_bytes(&bytes, true);
+        assert_eq!(unquote_c_style_prefix(&quoted), Some((bytes, "")));
+    }
+
+    #[test]
+    fn unquote_utf8_with_both_quoting_modes() {
+        for path in [
+            "",
+            "safe path",
+            "café\t東京",
+            "quote\"and\\slash",
+            "raw\nline",
+        ] {
+            for fully in [false, true] {
+                let quoted = quote_c_style(path, fully);
+                let quoted = if quoted.starts_with('"') {
+                    quoted
+                } else {
+                    format!("\"{quoted}\"")
+                };
+                let input = format!("{quoted} 尾");
+                assert_eq!(
+                    unquote_c_style_prefix(&input),
+                    Some((path.as_bytes().to_vec(), " 尾"))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unquote_rejects_missing_quotes_and_invalid_escapes() {
+        for input in [
+            "",
+            "plain",
+            "\"",
+            "\"unclosed",
+            "\"trailing\\",
+            r#""\x""#,
+            r#""\/""#,
+            r#""\1""#,
+            r#""\12""#,
+            r#""\128""#,
+            r#""\400""#,
+            r#""\777""#,
+            "\"\\é\"",
+            "\"\\0é\"",
+        ] {
+            assert_eq!(unquote_c_style_prefix(input), None, "{input:?}");
+        }
+    }
 
     #[test]
     fn ascii_safe_unchanged() {

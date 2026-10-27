@@ -49,6 +49,13 @@ To filter a path list by user-typed pathspecs, resolve each one with [`Repositor
 
 [`IgnoreMatcher::from_repository`](rustdoc:grit_lib::worktree::ignore::IgnoreMatcher::from_repository) loads `.git/info/exclude` and `core.excludesfile`, then reads each directory's `.gitignore` the first time a path under it is queried. It applies Git's precedence: a nested `.gitignore` beats its parents, and the last matching line wins. [`is_path_ignored`](rustdoc:grit_lib::worktree::ignore::IgnoreMatcher::is_path_ignored) answers yes or no for hot walks, and [`check_path`](rustdoc:grit_lib::worktree::ignore::IgnoreMatcher::check_path) also returns the deciding pattern. Status, staging, auto-stage commits and clean all use the same matcher. With `core.ignorecase=true`, patterns and nested `.gitignore` directories match without regard to ASCII case, as in Git: `Build/` ignores `build/` and `*.LOG` ignores `debug.log`. [`with_ignore_case`](rustdoc:grit_lib::worktree::ignore::IgnoreMatcher::with_ignore_case) overrides the setting. Tracked paths are also found without regard to case there, so status, clean and staging never treat `build/` as ignored while `Build/t` is tracked. The matcher's own tracked-path exemption stays exact-case, like `git check-ignore`.
 
+## Quoted attribute patterns
+
+Double-quoted patterns in `.gitattributes` accept C-style escapes for tabs, newlines,
+quotes, backslashes and other control characters, plus three-digit octal byte escapes
+(`\000` through `\377`). Octal escapes can encode the bytes of UTF-8 names.
+These patterns work when attributes are read from the worktree, index or a commit tree.
+
 ## Linked worktrees (handle)
 
 `Repository::worktrees` returns `RepositoryWorktrees`: list main and linked checkouts, add/remove/move/repair/lock linked worktrees with the same on-disk layout Git uses (`worktrees/` admin files, `gitdir` links). [`AddLinkedWorktreeOptions`](rustdoc:grit_lib::worktree::AddLinkedWorktreeOptions) uses [`WorktreeBranch`](rustdoc:grit_lib::worktree::WorktreeBranch) for branch modes (`Create`, `CreateOrReset`, `Existing`, `Detach`), optional lock-before-checkout, `--no-checkout`, and `--track`. [`move_linked_worktree`](rustdoc:grit_lib::worktree::move_linked_worktree) and [`repair_worktrees`](rustdoc:grit_lib::worktree::repair_worktrees) rewrite gitfile links atomically; repairs return [`WorktreeRepair`](rustdoc:grit_lib::worktree::WorktreeRepair) rows. [`prune_linked_worktrees`](rustdoc:grit_lib::worktree::prune_linked_worktrees) accepts [`PruneWorktreesOptions`](rustdoc:grit_lib::worktree::PruneWorktreesOptions) and returns [`PrunedWorktreeEntry`](rustdoc:grit_lib::worktree::PrunedWorktreeEntry) rows with a reason string.

@@ -20,6 +20,7 @@ mod apply_blob;
 pub use apply_blob::{apply_hunks_to_blob, ApplyOptions};
 
 use crate::error::{ApplyError, Error, Result};
+use crate::quote_path_root::unquote_c_style_prefix;
 use regex::Regex;
 use std::sync::OnceLock;
 
@@ -318,70 +319,6 @@ fn squash_slash_path(s: &str) -> String {
     out
 }
 
-/// Unquote a leading C-style `"..."` from `line`; returns decoded bytes and remainder after closing `"`.
-/// Matches Git `unquote_c_style` / `quote.c` escapes used in diff headers.
-fn unquote_c_style_diff_prefix(line: &str) -> Option<(Vec<u8>, &str)> {
-    let b = line.as_bytes();
-    if b.first() != Some(&b'"') {
-        return None;
-    }
-    let mut q = &b[1..];
-    let mut out = Vec::new();
-    loop {
-        let len = q
-            .iter()
-            .position(|&c| c == b'"' || c == b'\\')
-            .unwrap_or(q.len());
-        out.extend_from_slice(&q[..len]);
-        q = &q[len..];
-        if q.is_empty() {
-            return None;
-        }
-        match q[0] {
-            b'"' => {
-                let rest = std::str::from_utf8(&q[1..]).ok()?;
-                return Some((out, rest));
-            }
-            b'\\' => {
-                q = &q[1..];
-                if q.is_empty() {
-                    return None;
-                }
-                let ch = q[0];
-                q = &q[1..];
-                match ch {
-                    b'a' => out.push(0x07),
-                    b'b' => out.push(0x08),
-                    b'f' => out.push(0x0c),
-                    b'n' => out.push(b'\n'),
-                    b'r' => out.push(b'\r'),
-                    b't' => out.push(b'\t'),
-                    b'v' => out.push(0x0b),
-                    b'\\' => out.push(b'\\'),
-                    b'"' => out.push(b'"'),
-                    b'0'..=b'3' => {
-                        if q.len() < 2 {
-                            return None;
-                        }
-                        let ch2 = q[0];
-                        let ch3 = q[1];
-                        if !(b'0'..=b'7').contains(&ch2) || !(b'0'..=b'7').contains(&ch3) {
-                            return None;
-                        }
-                        let ac = u32::from(ch - b'0') * 64
-                            + u32::from(ch2 - b'0') * 8
-                            + u32::from(ch3 - b'0');
-                        out.push(ac as u8);
-                        q = &q[2..];
-                    }
-                    _ => return None,
-                }
-            }
-            _ => return None,
-        }
-    }
-}
-
 fn bytes_to_path_string(bytes: &[u8]) -> Result<String> {
     let s = String::from_utf8(bytes.to_vec())
         .map_err(|e| Error::Message(format!("diff path is not valid UTF-8: {e}")))?;
@@ -618,7 +555,7 @@ fn find_name_common_bounded(
 /// Git `find_name_traditional` on the line after `--- ` / `+++ ` (no prefix).
 fn find_name_traditional(line: &[u8], def: Option<&[u8]>, p_value: usize) -> Option<Vec<u8>> {
     if line.first() == Some(&b'"') {
-        let (decoded, _) = unquote_c_style_diff_prefix(std::str::from_utf8(line).ok()?)?;
+        let (decoded, _) = unquote_c_style_prefix(std::str::from_utf8(line).ok()?)?;
         let skip = skip_tree_prefix_bytes(&decoded, p_value)?;
         return Some(skip.to_vec());
     }
@@ -629,7 +566,7 @@ fn find_name_traditional(line: &[u8], def: Option<&[u8]>, p_value: usize) -> Opt
 
 fn find_name_tab_terminated(line: &[u8], p_value: usize) -> Option<Vec<u8>> {
     if line.first() == Some(&b'"') {
-        let (decoded, _) = unquote_c_style_diff_prefix(std::str::from_utf8(line).ok()?)?;
+        let (decoded, _) = unquote_c_style_prefix(std::str::from_utf8(line).ok()?)?;
         let skip = skip_tree_prefix_bytes(&decoded, p_value)?;
         return Some(skip.to_vec());
     }
@@ -817,14 +754,14 @@ fn git_header_def_name(line: &str, p_value: usize) -> Option<String> {
     let rest_b = rest.as_bytes();
 
     if rest_b.first() == Some(&b'"') {
-        let (first_decoded, second_raw) = unquote_c_style_diff_prefix(rest)?;
+        let (first_decoded, second_raw) = unquote_c_style_prefix(rest)?;
         let rel_first = skip_tree_prefix_bytes(&first_decoded, p_value)?;
         let second = second_raw.trim_start_matches(|c: char| c.is_ascii_whitespace());
         if second.is_empty() {
             return None;
         }
         if second.as_bytes().first() == Some(&b'"') {
-            let (second_decoded, _) = unquote_c_style_diff_prefix(second)?;
+            let (second_decoded, _) = unquote_c_style_prefix(second)?;
             let rel2 = skip_tree_prefix_bytes(&second_decoded, p_value)?;
             if rel2 != rel_first {
                 return None;
@@ -846,7 +783,7 @@ fn git_header_def_name(line: &str, p_value: usize) -> Option<String> {
             continue;
         }
         let second_slice = &rest_b[name_start + offset..];
-        let (decoded, _) = unquote_c_style_diff_prefix(std::str::from_utf8(second_slice).ok()?)?;
+        let (decoded, _) = unquote_c_style_prefix(std::str::from_utf8(second_slice).ok()?)?;
         let np = skip_tree_prefix_bytes(&decoded, p_value)?;
         let plen = np.len();
         if plen < offset
@@ -890,7 +827,7 @@ fn find_name_extended_header(rest: &str, p_extended: usize) -> Option<String> {
     let rest = rest.trim_end_matches(['\r', '\n']);
     let b = rest.as_bytes();
     if b.first() == Some(&b'"') {
-        let (decoded, tail) = unquote_c_style_diff_prefix(rest)?;
+        let (decoded, tail) = unquote_c_style_prefix(rest)?;
         if !tail.trim().is_empty() {
             return None;
         }
@@ -1384,13 +1321,13 @@ fn split_diff_git_paths(s: &str) -> Option<(String, String)> {
     let s = s.trim_end_matches(['\r', '\n']);
 
     if s.as_bytes().first() == Some(&b'"') {
-        let (first, rest_raw) = unquote_c_style_diff_prefix(s)?;
+        let (first, rest_raw) = unquote_c_style_prefix(s)?;
         let rest = rest_raw.trim_start_matches(|c: char| c.is_ascii_whitespace());
         if rest.is_empty() {
             return None;
         }
         if rest.as_bytes().first() == Some(&b'"') {
-            let (second, _) = unquote_c_style_diff_prefix(rest)?;
+            let (second, _) = unquote_c_style_prefix(rest)?;
             return Some((
                 String::from_utf8_lossy(&first).into_owned(),
                 String::from_utf8_lossy(&second).into_owned(),

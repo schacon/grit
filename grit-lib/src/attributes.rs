@@ -293,67 +293,10 @@ fn split_at_first_blank(s: &str) -> (&str, &str) {
     s.split_at(n)
 }
 
-/// C-style unquote for a pattern that starts with `"` (see Git `unquote_c_style` in `quote.c`).
+/// Decode a quoted pattern, retaining the attributes parser's UTF-8 requirement.
 fn unquote_c_style(quoted: &str) -> Result<(String, &str), ()> {
-    let b = quoted.as_bytes();
-    if b.is_empty() || b[0] != b'"' {
-        return Err(());
-    }
-    let mut q = &b[1..];
-    let mut out = Vec::new();
-    loop {
-        let len = q
-            .iter()
-            .position(|&c| c == b'"' || c == b'\\')
-            .unwrap_or(q.len());
-        out.extend_from_slice(&q[..len]);
-        q = &q[len..];
-        if q.is_empty() {
-            return Err(());
-        }
-        match q[0] {
-            b'"' => {
-                let rest = std::str::from_utf8(&q[1..]).map_err(|_| ())?;
-                return Ok((String::from_utf8(out).map_err(|_| ())?, rest));
-            }
-            b'\\' => {
-                q = &q[1..];
-                if q.is_empty() {
-                    return Err(());
-                }
-                let ch = q[0];
-                q = &q[1..];
-                match ch {
-                    b'a' => out.push(0x07),
-                    b'b' => out.push(0x08),
-                    b'f' => out.push(0x0c),
-                    b'n' => out.push(b'\n'),
-                    b'r' => out.push(b'\r'),
-                    b't' => out.push(b'\t'),
-                    b'v' => out.push(0x0b),
-                    b'\\' => out.push(b'\\'),
-                    b'"' => out.push(b'"'),
-                    b'0'..=b'3' => {
-                        let mut ac = u32::from(ch - b'0') << 6;
-                        if q.len() < 2 {
-                            return Err(());
-                        }
-                        let ch2 = q[0];
-                        let ch3 = q[1];
-                        if !(b'0'..=b'7').contains(&ch2) || !(b'0'..=b'7').contains(&ch3) {
-                            return Err(());
-                        }
-                        ac |= u32::from(ch2 - b'0') << 3;
-                        ac |= u32::from(ch3 - b'0');
-                        q = &q[2..];
-                        out.push(ac as u8);
-                    }
-                    _ => return Err(()),
-                }
-            }
-            _ => return Err(()),
-        }
-    }
+    let (bytes, rest) = crate::quote_path_root::unquote_c_style_prefix(quoted).ok_or(())?;
+    Ok((String::from_utf8(bytes).map_err(|_| ())?, rest))
 }
 
 /// One attribute assignment token (`parse_attr` in Git `attr.c`).
@@ -1561,6 +1504,15 @@ pub fn builtin_objectmode_index(index: &Index, rel_path: &str) -> Option<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unquote_c_style_requires_utf8_patterns() {
+        assert_eq!(
+            unquote_c_style(r#""caf\303\251" text"#),
+            Ok(("café".to_owned(), " text"))
+        );
+        assert_eq!(unquote_c_style(r#""\377" text"#), Err(()));
+    }
 
     #[test]
     fn parse_unclosed_quote_falls_back_to_literal_pattern() {
