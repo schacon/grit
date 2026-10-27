@@ -351,27 +351,6 @@ impl RepositoryBuilder {
     }
 }
 
-/// Fail with [`Error::ObjectFormatMismatch`] when an injected store in `builder` hashes with
-/// another algorithm than `git_dir`'s `extensions.objectformat`.
-///
-/// Files-backed primaries and alternates take the repository's algorithm themselves, so a
-/// builder without injected stores skips the config read.
-fn check_injected_object_format(
-    builder: &crate::odb::OdbBuilder,
-    environment: &Environment,
-    git_dir: &Path,
-) -> Result<()> {
-    let mut injected = builder.injected_hash_algos().peekable();
-    if injected.peek().is_none() {
-        return Ok(());
-    }
-    let repository = crate::odb::hash_algo_for_git_dir(environment, git_dir);
-    match injected.find(|algo| *algo != repository) {
-        Some(store) => Err(Error::ObjectFormatMismatch { repository, store }),
-        None => Ok(()),
-    }
-}
-
 /// Point `HEAD` at `refs/heads/<branch>` in `store` unless `HEAD` already exists.
 fn seed_unborn_head(store: &dyn crate::refs::store::RefStore, branch: &str) -> Result<()> {
     use crate::refs::store::{Expected, RawRef, RefStoreError, RefTransaction, RefUpdate};
@@ -1713,8 +1692,7 @@ impl Repository {
             });
         }
         builder.set_objects_dir(objects_dir);
-
-        check_injected_object_format(&builder, &environment, &git_dir)?;
+        let injected_algos: Vec<HashAlgo> = builder.injected_hash_algos().collect();
 
         let work_tree = match work_tree {
             Some(p) => {
@@ -1773,9 +1751,31 @@ impl Repository {
         if options.validate_repository_format {
             repo.validate_repository_format_cached()?;
         }
+        repo.check_injected_object_format(&injected_algos)?;
         warn_core_bare_worktree_conflict(options, &repo);
         let _ = trace_repo_setup_if_requested(&repo);
         Ok(repo)
+    }
+
+    /// Fail with [`Error::ObjectFormatMismatch`] when one of `injected` (the hash algorithms
+    /// of the stores passed to [`RepositoryBuilder::odb_builder`]) differs from
+    /// `extensions.objectformat`, SHA-1 when unset.
+    ///
+    /// Reads the config snapshot the open already loaded. Files-backed primaries and
+    /// alternates take the repository's algorithm themselves and are not listed.
+    fn check_injected_object_format(&self, injected: &[HashAlgo]) -> Result<()> {
+        if injected.is_empty() {
+            return Ok(());
+        }
+        let repository = self
+            .ensure_config_arc_fast()?
+            .get("extensions.objectformat")
+            .and_then(|name| HashAlgo::from_name(&name))
+            .unwrap_or(HashAlgo::Sha1);
+        match injected.iter().find(|algo| **algo != repository) {
+            Some(&store) => Err(Error::ObjectFormatMismatch { repository, store }),
+            None => Ok(()),
+        }
     }
 
     /// Discover a repository starting from `start` (defaults to [`Environment::cwd`] when `None`).
