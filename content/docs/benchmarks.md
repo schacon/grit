@@ -331,6 +331,17 @@ the existing readers. Clone packs imported tags and remote-tracking refs with th
 shared ref writer and CAS pruning, while retaining symbolic refs and reflogs.
 Directory cleanup is batched, and lock configuration is loaded once per pack.
 
+Sparse-read descriptors are owned by a repository-scoped pool capped at **16**,
+independently of the number of cached pack mappings. Evicted packs continue through
+the existing mapped reader without reopening paths, preserving the mapped inode
+when a pack is replaced. In-flight positioned reads keep their descriptor until
+completion. If opening a new pack hits the OS descriptor limit, the pool is
+cleared before retrying, leaving cached mappings valid. A Linux subprocess
+regression reads 96 mapped packs twice with `RLIMIT_NOFILE=64`, also testing a
+host that has reserved 48 descriptors. It checks all 96 tag decorations and
+compares the CLI's bounded JSON output with an unrestricted run. The scattered-read RSS and path-replacement
+regressions cover retained descriptors and eviction separately.
+
 Measured on a 4-vCPU AMD EPYC 7763 Linux VM with 16 GiB RAM, Ubuntu 24.04.5,
 Rust 1.99.0 `release` builds, and stock Git 2.55.0. The full git/git source is
 `37b3475f`, with 1,012 tags. Frozen main is `d99b149b`; the implementation is
@@ -380,6 +391,37 @@ maximum sampled RSS for their schema's `peak_rss_bytes`; the table above uses th
 median required by the issue. All raw samples, initial reproduction, clone
 measurements, and fixture details are in
 [`log-loose-tags-2080-study.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/log-loose-tags-2080-study.json).
+
+### Descriptor-pressure follow-up (2026-10-27)
+
+The bounded descriptor pool was checked again on the same VM shape and git/git
+revision (`37b3475f`). Frozen `origin/main` is `e98de8a163`; reviewed is
+`59557cb17` applied over that workspace target. The fixed build adds descriptor
+pooling and exhaustion recovery. The compared crates were rebuilt between source
+snapshots, and the raw study records distinct binary hashes. Remaining verification
+work was paused during measurement. Log cells are nine-sample interleaved medians
+after one warmup per tool; clone cells use one warmup and three rotated samples.
+Every cell is **wall ms / peak RSS KiB**:
+
+| Scenario | Git | origin/main | Reviewed | Fixed |
+| --- | ---: | ---: | ---: | ---: |
+| Log 10, loose tags | 21.24 / 16,816 | 36.62 / 44,836 | 37.55 / 25,664 | 37.62 / 25,908 |
+| Log 10, packed tags | 14.33 / 16,760 | 5.30 / 17,020 | 4.87 / 17,476 | 4.63 / 17,784 |
+| Log 1,000, packed tags | 27.80 / 18,656 | 23.07 / 29,988 | 22.97 / 30,052 | 22.67 / 30,236 |
+| Log 96, 96 packs | 7.45 / 6,852 | 17.08 / 16,128 | 16.93 / 16,008 | 16.73 / 16,380 |
+| Local clone | 470.13 / 103,460 | 675.95 / 111,500 | 858.88 / 112,620 | 854.66 / 112,784 |
+
+The final loose-tag log uses **1.54× Git's RSS**, versus **2.67×** on main.
+Descriptor bounding adds **0.08 ms** and **244 KiB** to the reviewed loose-tag
+median; packed log and local clone medians are slightly lower. The clone layout
+remains unchanged: main leaves 1,012 loose tags; reviewed, fixed, and Git leave none.
+
+With `RLIMIT_NOFILE=64`, Git, main, and fixed all return 96 commits from the
+96-pack fixture. Reviewed fails with an I/O error after exhausting descriptors.
+The library regression also checks every tag decoration and recovery when a host
+has already reserved 48 descriptors. The CLI RSS fixture's loose-versus-packed
+increase is **628 KiB**, within its 12 MiB allowance. Raw samples and controls:
+[`log-loose-tags-2080-descriptors.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/log-loose-tags-2080-descriptors.json).
 
 ## Multi-pack-index preparation and clean status (2026-10-26)
 

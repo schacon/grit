@@ -5,12 +5,13 @@
 use crate::error::{Error, Result};
 use crate::objects::HashAlgo;
 use memmap2::{Mmap, MmapOptions};
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 
 const PACK_SIGNATURE: &[u8; 4] = b"PACK";
 const HEADER_LEN: usize = 12;
@@ -31,8 +32,38 @@ pub(crate) struct PackFingerprint {
     pub trailer: [u8; 32],
 }
 
+/// Repository-scoped ownership of descriptors used for sparse pack reads.
+///
+/// Mappings outlive descriptor eviction and continue to serve reads from the same
+/// inode. Borrowers hold an Arc only during positioned I/O; mapped packs hold Weak
+/// references so an unbounded catalog cannot exhaust the process descriptor limit.
+#[derive(Default)]
+pub(crate) struct SparseReadFiles {
+    files: Mutex<VecDeque<Arc<File>>>,
+}
+
+impl SparseReadFiles {
+    const CAPACITY: usize = 16;
+
+    fn retain(&self, file: File) -> Weak<File> {
+        let file = Arc::new(file);
+        let weak = Arc::downgrade(&file);
+        let mut files = self.files.lock().unwrap_or_else(|e| e.into_inner());
+        if files.len() == Self::CAPACITY {
+            files.pop_front();
+        }
+        files.push_back(file);
+        weak
+    }
+
+    /// Release descriptors when packs are invalidated or descriptor pressure prevents opening a pack.
+    pub(crate) fn clear(&self) {
+        self.files.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+}
+
 enum Storage {
-    Mapped { map: Mmap, file: Option<File> },
+    Mapped { map: Mmap, file: Weak<File> },
     Owned(Vec<u8>),
 }
 
@@ -90,16 +121,31 @@ impl PackData {
     /// Map or read `path`, requiring at least `min_len` bytes (pack header vs index fanout).
     pub(crate) fn open_with_min_len(path: &Path, min_len: u64) -> Result<Arc<Self>> {
         let file = File::open(path).map_err(Error::Io)?;
-        Self::open_from_file(file, min_len, false)
+        Self::open_from_file(file, min_len, None)
     }
 
-    /// Keep the pack's descriptor for bounded positioned reads alongside its mapping.
+    /// Retain the pack's descriptor in a bounded pool for positioned reads.
     /// Indexes, graphs and other mapped metadata keep the descriptor-free `open` path.
-    pub(crate) fn open_for_sparse_reads(path: &Path) -> Result<Arc<Self>> {
-        Self::open_from_file(File::open(path)?, HEADER_LEN as u64, true)
+    pub(crate) fn open_for_sparse_reads(path: &Path, files: &SparseReadFiles) -> Result<Arc<Self>> {
+        let file = match File::open(path) {
+            Ok(file) => file,
+            #[cfg(unix)]
+            Err(err) if matches!(err.raw_os_error(), Some(libc::EMFILE) | Some(libc::ENFILE)) => {
+                // Mappings remain usable after eviction; make room before retrying a
+                // new open. Never reopen a cached mapping through its current path.
+                files.clear();
+                File::open(path)?
+            }
+            Err(err) => return Err(err.into()),
+        };
+        Self::open_from_file(file, HEADER_LEN as u64, Some(files))
     }
 
-    fn open_from_file(file: File, min_len: u64, sparse_reads: bool) -> Result<Arc<Self>> {
+    fn open_from_file(
+        file: File,
+        min_len: u64,
+        sparse_reads: Option<&SparseReadFiles>,
+    ) -> Result<Arc<Self>> {
         let len = file.metadata().map_err(Error::Io)?.len();
         if len < min_len {
             return Err(Error::CorruptObject(format!(
@@ -123,7 +169,9 @@ impl PackData {
             Ok(mmap) => Ok(Arc::new(Self {
                 storage: Storage::Mapped {
                     map: mmap,
-                    file: sparse_reads.then_some(file),
+                    file: sparse_reads
+                        .map(|files| files.retain(file))
+                        .unwrap_or_default(),
                 },
             })),
             Err(_) => {
@@ -149,16 +197,17 @@ impl PackData {
     /// Copy a bounded range without faulting scattered mmap windows into the process.
     ///
     /// Reads the same descriptor that backs the mapping, so replacing the path cannot
-    /// mix pack generations. Returns `None` on I/O failure or an invalid offset; callers
-    /// retain their normal mapped parsing and corruption/replacement recovery paths.
+    /// mix pack generations. Returns `None` after descriptor eviction, on I/O failure,
+    /// or at an invalid offset; callers retain their normal mapped parsing and
+    /// corruption/replacement recovery paths. Evicted descriptors are never reopened
+    /// through a path that might now name a different inode.
     pub(crate) fn read_sparse(&self, offset: u64, out: &mut [u8]) -> Option<usize> {
         let start = usize::try_from(offset).ok()?;
         let len = out.len().min(self.len().checked_sub(start)?);
         let out = &mut out[..len];
         match &self.storage {
-            Storage::Mapped {
-                file: Some(file), ..
-            } => {
+            Storage::Mapped { file, .. } => {
+                let file = file.upgrade()?;
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::FileExt;
@@ -184,7 +233,6 @@ impl PackData {
                     out.copy_from_slice(&self[start..start + len]);
                 }
             }
-            Storage::Mapped { file: None, .. } => return None,
             Storage::Owned(bytes) => out.copy_from_slice(&bytes[start..start + len]),
         }
         Some(len)
@@ -540,21 +588,22 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    fn mapped_test_pack(dir: &Path, len: usize) -> (Arc<PackData>, Vec<u8>) {
+    fn mapped_test_pack(dir: &Path, len: usize) -> (Arc<PackData>, Vec<u8>, SparseReadFiles) {
         let path = dir.join("resident.pack");
         let mut bytes = Vec::from(&b"PACK\x00\x00\x00\x02\x00\x00\x00\x00"[..]);
         bytes.extend((0..len).map(|i| u8::try_from(i % 251).unwrap_or(0)));
         fs::write(&path, &bytes).expect("write");
-        let data = PackData::open_for_sparse_reads(&path).expect("open");
+        let files = SparseReadFiles::default();
+        let data = PackData::open_for_sparse_reads(&path, &files).expect("open");
         assert!(data.is_mapped_backing());
-        (data, bytes)
+        (data, bytes, files)
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn sparse_reads_do_not_make_scattered_mapping_windows_resident() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (data, bytes) = mapped_test_pack(dir.path(), 24 << 20);
+        let (data, bytes, _files) = mapped_test_pack(dir.path(), 24 << 20);
         let mut prefix = [0; 16];
         for offset in (0..bytes.len() - prefix.len()).step_by(64 << 10) {
             assert_eq!(data.read_sparse(offset as u64, &mut prefix), Some(16));
@@ -567,6 +616,33 @@ mod tests {
         fs::write(&path, vec![0; bytes.len()]).expect("replacement");
         assert_eq!(data.read_sparse(100, &mut prefix), Some(16));
         assert_eq!(prefix, bytes[100..116]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn evicted_sparse_descriptor_keeps_original_mapped_generation() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (old, bytes, files) = mapped_test_pack(dir.path(), 16 << 10);
+        let path = dir.path().join("resident.pack");
+        let mut mappings = Vec::new();
+        for _ in 0..SparseReadFiles::CAPACITY {
+            mappings.push(PackData::open_for_sparse_reads(&path, &files).expect("map"));
+        }
+        assert_eq!(
+            files.files.lock().expect("pool").len(),
+            SparseReadFiles::CAPACITY
+        );
+        assert_eq!(old.read_sparse(100, &mut [0; 16]), None);
+        fs::rename(&path, dir.path().join("old.pack")).expect("rename");
+        fs::write(&path, vec![0; bytes.len()]).expect("replacement");
+        assert_eq!(&old[100..116], &bytes[100..116]);
+        let newest = mappings.last().expect("newest mapping");
+        let mut prefix = [0; 16];
+        assert_eq!(newest.read_sparse(100, &mut prefix), Some(16));
+        assert_eq!(prefix, bytes[100..116]);
+        files.clear();
+        assert_eq!(newest.read_sparse(100, &mut prefix), None);
+        assert_eq!(&newest[100..116], &bytes[100..116]);
     }
 
     #[test]
@@ -584,7 +660,7 @@ mod tests {
     #[test]
     fn release_resident_drops_pages_but_keeps_the_bytes() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (data, bytes) = mapped_test_pack(dir.path(), 24 << 20);
+        let (data, bytes, _files) = mapped_test_pack(dir.path(), 24 << 20);
         let digest = HashAlgo::Sha1.checksum_digest(&data);
         assert!(
             mapping_rss_kib(data.as_ptr()) > 20 << 10,
@@ -603,7 +679,7 @@ mod tests {
     #[test]
     fn resident_budget_bounds_a_full_pass() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (data, bytes) = mapped_test_pack(dir.path(), 24 << 20);
+        let (data, bytes, _files) = mapped_test_pack(dir.path(), 24 << 20);
         data.release_resident();
         let budget = ResidentBudget::new(&data, 4 << 20);
         assert_eq!(

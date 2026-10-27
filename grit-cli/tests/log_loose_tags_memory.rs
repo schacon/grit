@@ -135,3 +135,55 @@ fn bounded_log_loose_and_packed_tags_have_equal_output_and_bounded_rss() {
         loose.saturating_sub(packed)
     );
 }
+
+fn log_under_descriptor_limit(root: &Path, program: &str, args: &[&str]) -> Vec<u8> {
+    use std::os::unix::process::CommandExt;
+
+    let mut cmd = Command::new(program);
+    configure_git_env(&mut cmd);
+    cmd.current_dir(root).args(args);
+    // SAFETY: the child changes only its own resource limit before exec.
+    unsafe {
+        cmd.pre_exec(|| {
+            let limit = libc::rlimit {
+                rlim_cur: 64,
+                rlim_max: 64,
+            };
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &limit) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{program}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
+}
+
+#[test]
+fn bounded_log_many_packs_under_reduced_descriptor_limit() {
+    let (fixture, _) = grit_test_support::objects::many_tag_packs(96).unwrap();
+    let grit = env!("CARGO_BIN_EXE_grit");
+    let args = ["log", "-n", "96", "--json"];
+    let mut cmd = Command::new(grit);
+    configure_git_env(&mut cmd);
+    let expected = cmd.current_dir(fixture.path()).args(args).output().unwrap();
+    assert!(
+        expected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&expected.stderr)
+    );
+    let actual = log_under_descriptor_limit(fixture.path(), grit, &args);
+    assert_eq!(actual, expected.stdout);
+    let json: serde_json::Value = serde_json::from_slice(&actual).unwrap();
+    assert_eq!(json["commits"].as_array().unwrap().len(), 96);
+    let git_args = ["log", "-n", "96", "--format=%H"];
+    assert_eq!(
+        log_under_descriptor_limit(fixture.path(), "git", &git_args),
+        git(fixture.path(), &git_args)
+    );
+}

@@ -1222,8 +1222,8 @@ pub(crate) mod pack_cache {
         size: u64,
     ) -> Result<Arc<PackData>> {
         invalidate_thread_local_for_pack_path_change(pack_path);
-        let bytes = PackData::open_for_sparse_reads(pack_path)?;
         let store = crate::pack_store::PackStore::active_for_reads();
+        let bytes = PackData::open_for_sparse_reads(pack_path, &store.sparse_read_files)?;
         store.with_catalog(|g| {
             drop_delta_entries_locked(g, pack_path, store.delta_bases());
             g.by_idx.remove(&pack_path.with_extension("idx"));

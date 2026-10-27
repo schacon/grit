@@ -52,6 +52,7 @@ pub mod test_hooks {
 /// Alternate object directories get separate stores retained on the parent [`Odb`](crate::odb::Odb).
 pub struct PackStore {
     objects_dir: PathBuf,
+    pub(crate) sparse_read_files: crate::pack_map::SparseReadFiles,
     /// Bumped on every invalidation so other threads drop trusted thread-local pack caches.
     cache_epoch: AtomicU64,
     catalog: RwLock<crate::pack::pack_cache::CatalogState>,
@@ -81,6 +82,7 @@ impl PackStore {
     pub fn new(objects_dir: PathBuf) -> Self {
         Self {
             objects_dir,
+            sparse_read_files: crate::pack_map::SparseReadFiles::default(),
             cache_epoch: AtomicU64::new(0),
             catalog: RwLock::new(crate::pack::pack_cache::CatalogState::default()),
             delta_bases: crate::pack::pack_cache::ShardedDeltaBaseLru::new(),
@@ -262,6 +264,7 @@ impl PackStore {
     pub fn invalidate_packs(&self) {
         crate::pack::pack_cache::clear_catalog_on(&self.catalog);
         self.delta_bases.clear();
+        self.sparse_read_files.clear();
         let epoch = self.bump_cache_epoch();
         crate::pack::pack_cache::clear_thread_local_after_invalidation(epoch);
     }

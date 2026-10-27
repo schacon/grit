@@ -9,6 +9,7 @@ mod git_check;
 mod hash;
 mod install;
 mod loose;
+mod many_packs;
 mod pack_builder;
 mod repo_fixture;
 
@@ -23,6 +24,7 @@ pub use install::{write_pack_and_index, IndexPackOptions, IndexVersion, PackInst
 pub use loose::{
     git_hash_object_literally, hash_loose_object, loose_object_path, write_loose_object,
 };
+pub use many_packs::many_tag_packs;
 pub use pack_builder::{ObjectKind, PackBuilder, PackBuilt, PackOffsetLabel};
 pub use repo_fixture::RepoFixture;
 
