@@ -1642,6 +1642,9 @@ mod status_system_autocrlf_git_compat;
 #[path = "status_unmerged_kinds_git_compat.rs"]
 mod status_unmerged_kinds_git_compat;
 #[cfg(feature = "full-tests")]
+#[path = "status_unreadable_tracked_file_2107.rs"]
+mod status_unreadable_tracked_file_2107;
+#[cfg(feature = "full-tests")]
 #[path = "structured_diff_git_compat.rs"]
 mod structured_diff_git_compat;
 #[path = "submodule_gitdir_sweep.rs"]
