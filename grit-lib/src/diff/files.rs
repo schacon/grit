@@ -27,27 +27,44 @@ fn old_path_from_entry(entry: &DiffEntry, path: &str) -> Option<String> {
         .cloned()
 }
 
-fn file_diff_name_only(entry: DiffEntry) -> FileDiff {
-    let similarity = entry.rename_similarity();
-    let (path, old_path) = match (entry.new_path, entry.old_path) {
-        (Some(path), old) => {
-            let old = old.filter(|old| old != &path);
-            (path, old)
+impl FileDiff {
+    /// Metadata-only row for name-only and name-status output.
+    ///
+    /// Moves the paths and modes out of `entry` without reading any blob, so converting a
+    /// list entry by entry costs no more than the entries themselves. This is the row
+    /// [`build_file_diffs`] produces for [`DiffDetail::NameOnly`] and [`DiffDetail::NameStatus`].
+    ///
+    /// # Parameters
+    ///
+    /// - `entry`: one tree or index diff record.
+    ///
+    /// # Returns
+    ///
+    /// A [`FileDiff`] whose `path` is the new path (old path for deletions), with `old_path`
+    /// set only when it differs, absent-side modes (`000000`) as `None`, and no stat or hunks.
+    #[must_use]
+    pub fn from_metadata(entry: DiffEntry) -> Self {
+        let similarity = entry.rename_similarity();
+        let (path, old_path) = match (entry.new_path, entry.old_path) {
+            (Some(path), old) => {
+                let old = old.filter(|old| old != &path);
+                (path, old)
+            }
+            (None, old) => (old.unwrap_or_default(), None),
+        };
+        Self {
+            path,
+            old_path,
+            status: entry.status,
+            old_mode: entry.old_mode.octal_if_present(),
+            new_mode: entry.new_mode.octal_if_present(),
+            binary: false,
+            similarity,
+            stat: None,
+            structured: None,
+            combined: None,
+            combined_status: None,
         }
-        (None, old) => (old.unwrap_or_default(), None),
-    };
-    FileDiff {
-        path,
-        old_path,
-        status: entry.status,
-        old_mode: entry.old_mode.octal_if_present(),
-        new_mode: entry.new_mode.octal_if_present(),
-        binary: false,
-        similarity,
-        stat: None,
-        structured: None,
-        combined: None,
-        combined_status: None,
     }
 }
 
@@ -112,7 +129,7 @@ pub fn build_file_diffs(
 ) -> Result<DiffFilesOutput> {
     match detail {
         DiffDetail::NameOnly | DiffDetail::NameStatus => {
-            let files: Vec<FileDiff> = entries.into_iter().map(file_diff_name_only).collect();
+            let files: Vec<FileDiff> = entries.into_iter().map(FileDiff::from_metadata).collect();
             Ok(DiffFilesOutput {
                 files,
                 totals: None,
@@ -231,7 +248,7 @@ mod tests {
                 new_oid: ObjectId::zero(),
                 score: Some(75),
             };
-            let file = file_diff_name_only(entry);
+            let file = FileDiff::from_metadata(entry);
             assert_eq!(file.status, status);
             assert_eq!(
                 file.path,

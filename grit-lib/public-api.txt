@@ -4979,6 +4979,8 @@ pub grit_lib::diff::ListedFileDiff::similarity: core::option::Option<u32>
 pub grit_lib::diff::ListedFileDiff::stat: core::option::Option<grit_lib::diff::LineStat>
 pub grit_lib::diff::ListedFileDiff::status: grit_lib::diff::DiffStatus
 pub grit_lib::diff::ListedFileDiff::structured: core::option::Option<grit_lib::diff::structured::StructuredFileDiff>
+impl grit_lib::diff::ListedFileDiff
+pub fn grit_lib::diff::ListedFileDiff::from_metadata(grit_lib::diff::DiffEntry) -> Self
 impl core::clone::Clone for grit_lib::diff::ListedFileDiff
 pub fn grit_lib::diff::ListedFileDiff::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::diff::ListedFileDiff
@@ -5297,6 +5299,7 @@ pub fn grit_lib::diff::rewrite_merge_score(&[u8], &[u8]) -> core::option::Option
 pub fn grit_lib::diff::should_break_rewrite_for_stat(&[u8], &[u8]) -> bool
 pub fn grit_lib::diff::should_break_rewrite_pair(&[u8], &[u8], u64) -> bool
 pub fn grit_lib::diff::smudge_racily_clean_entries(&grit_lib::objects::odb::Odb, &std::path::Path, &mut grit_lib::index::Index, &std::path::Path, core::option::Option<(u32, u32)>, core::option::Option<&grit_lib::config::ConfigSet>, core::option::Option<&grit_lib::filter_process::FilterProcessState>) -> bool
+pub fn grit_lib::diff::sort_entries_by_path(&mut [grit_lib::diff::DiffEntry])
 pub fn grit_lib::diff::stat_matches(&grit_lib::index::IndexEntry, &std::fs::Metadata) -> bool
 pub fn grit_lib::diff::stat_matches_with_policy(&grit_lib::index::IndexEntry, &std::fs::Metadata, grit_lib::index::StatMatchPolicy) -> bool
 pub fn grit_lib::diff::status_apply_rename_copy_detection(&grit_lib::objects::odb::Odb, alloc::vec::Vec<grit_lib::diff::DiffEntry>, u32, bool, core::option::Option<&grit_lib::objects::ObjectId>, &grit_lib::config::ConfigSet, &grit_lib::parallel::ThreadPolicy, core::option::Option<&core::sync::atomic::AtomicBool>) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
