@@ -578,6 +578,9 @@ fn clone_after_claim(
         }
         _ => crate::bundle_uri::BundleSeed::NotOffered,
     };
+    if cancel.is_cancelled() {
+        return Err(CloneError::Library(Error::Cancelled));
+    }
     let mut fetch_outcome = remote.fetch(&repo, fetch_opts, progress, cancel, http_factory)?;
     if let crate::bundle_uri::BundleSeed::Seeded(seeded) = &bundle {
         crate::bundle_uri::remove_bundle_refs(&repo).map_err(CloneError::Library)?;

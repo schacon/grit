@@ -241,6 +241,7 @@ pub fn run(
         &client.bundle_url(&info.id),
         &bundle,
         &mut progress,
+        &NeverCancel,
     )?;
 
     let existed = dest.exists();

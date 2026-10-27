@@ -21038,6 +21038,7 @@ pub fn grit_lib::remote::receive_pack::receive_unpack_limit(&grit_lib::config::C
 pub fn grit_lib::remote::receive_pack::should_use_unpack_objects(&[u8], &grit_lib::config::ConfigSet) -> bool
 pub mod grit_lib::remote::resumable
 pub enum grit_lib::remote::resumable::ResumableError
+pub grit_lib::remote::resumable::ResumableError::Cancelled
 pub grit_lib::remote::resumable::ResumableError::Exhausted
 pub grit_lib::remote::resumable::ResumableError::Exhausted::attempts: u32
 pub grit_lib::remote::resumable::ResumableError::Exhausted::last: alloc::string::String
@@ -21164,7 +21165,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::resumable::TusUp
 pub const grit_lib::remote::resumable::TUS_PATCH_CONTENT_TYPE: &str
 pub const grit_lib::remote::resumable::TUS_VERSION: &str
 pub fn grit_lib::remote::resumable::discard_download(&std::path::Path) -> core::io::error::Result<()>
-pub fn grit_lib::remote::resumable::download_resumable(&dyn grit_lib::remote::transport::http::HttpClient, &str, &std::path::Path, &mut dyn grit_lib::remote::fetch::Progress) -> grit_lib::remote::resumable::Result<grit_lib::remote::resumable::DownloadOutcome>
+pub fn grit_lib::remote::resumable::download_resumable(&dyn grit_lib::remote::transport::http::HttpClient, &str, &std::path::Path, &mut dyn grit_lib::remote::fetch::Progress, &dyn grit_lib::progress::Cancel) -> grit_lib::remote::resumable::Result<grit_lib::remote::resumable::DownloadOutcome>
 pub fn grit_lib::remote::resumable::resolve_url(&str, &str) -> core::option::Option<alloc::string::String>
 pub type grit_lib::remote::resumable::Result<T> = core::result::Result<T, grit_lib::remote::resumable::ResumableError>
 pub mod grit_lib::remote::serve

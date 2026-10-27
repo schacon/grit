@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::fetch::Progress;
-use crate::progress::{ProgressPhase, ProgressUnit};
+use crate::progress::{Cancel, ProgressPhase, ProgressUnit};
 use crate::transport::http::{HttpClient, HttpMethod, HttpRequest, HttpResponse};
 
 /// TUS protocol version this client and `grit serve` speak.
@@ -124,6 +124,10 @@ pub enum ResumableError {
     /// Reading or writing the local file failed.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// [`Cancel`] asked the download to stop. The partial file is kept, so
+    /// the next call resumes it.
+    #[error("operation cancelled")]
+    Cancelled,
 }
 
 impl From<crate::error::Error> for ResumableError {
@@ -215,18 +219,20 @@ pub fn discard_download(dest: &Path) -> std::io::Result<()> {
 /// - `url`: what to download.
 /// - `dest`: where the finished file goes; its directory must exist.
 /// - `progress`: receives [`ResumableEvent`]s.
+/// - `cancel`: checked before each request and between body chunks.
 ///
 /// # Errors
 ///
 /// [`ResumableError::Status`] when the server refuses the download,
-/// [`ResumableError::Exhausted`] when the connection keeps dropping, and I/O
-/// errors from the local files. The partial file is kept so a later call can
-/// resume.
+/// [`ResumableError::Exhausted`] when the connection keeps dropping,
+/// [`ResumableError::Cancelled`] when `cancel` fires, and I/O errors from the
+/// local files. The partial file is kept so a later call can resume.
 pub fn download_resumable(
     client: &dyn HttpClient,
     url: &str,
     dest: &Path,
     progress: &mut dyn Progress,
+    cancel: &dyn Cancel,
 ) -> Result<DownloadOutcome> {
     let (part, state_path) = download_paths(dest);
     let mut state = load_state(&state_path).unwrap_or_default();
@@ -258,6 +264,9 @@ pub fn download_resumable(
     let mut attempt = 0;
     let mut last_failure = String::new();
     loop {
+        if cancel.is_cancelled() {
+            return Err(ResumableError::Cancelled);
+        }
         if attempt > 0 {
             let done = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
             if attempt >= MAX_ATTEMPTS {
@@ -277,6 +286,7 @@ pub fn download_resumable(
             &mut state,
             &state_path,
             progress,
+            cancel,
             |p, s| {
                 if !started {
                     started = true;
@@ -340,6 +350,7 @@ fn download_attempt(
     state: &mut DownloadState,
     state_path: &Path,
     progress: &mut dyn Progress,
+    cancel: &dyn Cancel,
     mut on_start: impl FnMut(&mut dyn Progress, &AttemptStart),
 ) -> Result<AttemptOutcome> {
     let have = std::fs::metadata(part).map(|m| m.len()).unwrap_or(0);
@@ -420,6 +431,10 @@ fn download_attempt(
     let mut body = response.body;
     let mut buf = vec![0u8; READ_CHUNK];
     loop {
+        if cancel.is_cancelled() {
+            file.flush()?;
+            return Err(ResumableError::Cancelled);
+        }
         let n = match body.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => n,
@@ -653,6 +668,7 @@ pub fn resolve_url(base: &str, reference: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::fetch::NoProgress;
+    use crate::progress::{FlagCancel, NeverCancel};
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
@@ -789,7 +805,7 @@ mod tests {
         let dest = dir.path().join("clone.bundle");
         let srv = server(&[70_000, 10_000]);
         let mut events = Events::default();
-        let outcome = download_resumable(&srv, "http://h/b", &dest, &mut events);
+        let outcome = download_resumable(&srv, "http://h/b", &dest, &mut events, &NeverCancel);
         assert_eq!(
             outcome.ok(),
             Some(DownloadOutcome {
@@ -838,14 +854,14 @@ mod tests {
         // The first run's connection keeps dropping until it gives up.
         let failing = server(&[50_000, 0, 0, 0, 0, 0]);
         assert!(matches!(
-            download_resumable(&failing, "http://h/b", &dest, &mut NoProgress),
+            download_resumable(&failing, "http://h/b", &dest, &mut NoProgress, &NeverCancel),
             Err(ResumableError::Exhausted { .. })
         ));
         assert!(!dest.exists());
 
         let srv = server(&[]);
         let mut events = Events::default();
-        let outcome = download_resumable(&srv, "http://h/b", &dest, &mut events);
+        let outcome = download_resumable(&srv, "http://h/b", &dest, &mut events, &NeverCancel);
         assert_eq!(outcome.ok().map(|o| o.resumed_from), Some(50_000));
         assert_eq!(std::fs::read(&dest).ok(), Some(srv.data.clone()));
         assert!(matches!(
@@ -858,7 +874,8 @@ mod tests {
 
         // Complete already: nothing is requested.
         let again = server(&[]);
-        let outcome = download_resumable(&again, "http://h/b", &dest, &mut NoProgress);
+        let outcome =
+            download_resumable(&again, "http://h/b", &dest, &mut NoProgress, &NeverCancel);
         assert_eq!(outcome.ok().map(|o| o.resumed_from), Some(200_000));
         assert!(again
             .ranges
@@ -872,16 +889,23 @@ mod tests {
         let dir = tempdir();
         let dest = dir.path().join("clone.bundle");
         let failing = server(&[50_000, 0, 0, 0, 0, 0]);
-        let _ = download_resumable(&failing, "http://h/b", &dest, &mut NoProgress);
+        let _ = download_resumable(&failing, "http://h/b", &dest, &mut NoProgress, &NeverCancel);
 
         let mut changed = server(&[]);
         changed.etag = "\"v2\"".to_owned();
-        let outcome = download_resumable(&changed, "http://h/b", &dest, &mut NoProgress);
+        let outcome =
+            download_resumable(&changed, "http://h/b", &dest, &mut NoProgress, &NeverCancel);
         assert_eq!(outcome.ok().map(|o| o.bytes), Some(200_000));
         assert_eq!(std::fs::read(&dest).ok(), Some(changed.data.clone()));
 
         let other = server(&[]);
-        let outcome = download_resumable(&other, "http://h/other", &dest, &mut NoProgress);
+        let outcome = download_resumable(
+            &other,
+            "http://h/other",
+            &dest,
+            &mut NoProgress,
+            &NeverCancel,
+        );
         assert_eq!(outcome.ok().map(|o| o.resumed_from), Some(0));
         assert_eq!(
             other
@@ -891,6 +915,67 @@ mod tests {
                 .as_slice(),
             [None]
         );
+    }
+
+    /// Cancels once `after` bytes of the download are on disk.
+    struct CancelAfter {
+        flag: FlagCancel,
+        after: u64,
+    }
+    impl crate::progress::ProgressSink for CancelAfter {}
+    impl Progress for CancelAfter {
+        fn resumable_transfer(&mut self, event: &ResumableEvent) {
+            if let ResumableEvent::Advanced { done, .. } = event {
+                if *done >= self.after {
+                    self.flag.cancel();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_cancelled_download_stops_mid_body_and_resumes_next_time() {
+        let dir = tempdir();
+        let dest = dir.path().join("clone.bundle");
+        let srv = server(&[]);
+        let flag = FlagCancel::new();
+        let mut progress = CancelAfter {
+            flag: flag.clone(),
+            after: 1,
+        };
+        assert!(matches!(
+            download_resumable(&srv, "http://h/b", &dest, &mut progress, &flag),
+            Err(ResumableError::Cancelled)
+        ));
+        assert!(!dest.exists());
+        let (part, _) = download_paths(&dest);
+        let kept = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+        assert!(
+            kept > 0 && kept < 200_000,
+            "one chunk is kept, got {kept} bytes"
+        );
+
+        let outcome = download_resumable(&srv, "http://h/b", &dest, &mut NoProgress, &NeverCancel);
+        assert_eq!(outcome.ok().map(|o| o.resumed_from), Some(kept));
+        assert_eq!(std::fs::read(&dest).ok(), Some(srv.data.clone()));
+    }
+
+    #[test]
+    fn an_already_cancelled_download_sends_no_request() {
+        let dir = tempdir();
+        let dest = dir.path().join("clone.bundle");
+        let srv = server(&[]);
+        let flag = FlagCancel::new();
+        flag.cancel();
+        assert!(matches!(
+            download_resumable(&srv, "http://h/b", &dest, &mut NoProgress, &flag),
+            Err(ResumableError::Cancelled)
+        ));
+        assert!(srv
+            .ranges
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty());
     }
 
     #[test]

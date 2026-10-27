@@ -544,7 +544,8 @@ impl Remote {
     /// - `repo`: the new repository the clone is filling.
     /// - `cache_dir`: where bundle downloads are kept between attempts.
     /// - `progress`: receives the download and unpack progress.
-    /// - `cancel`: checked while the bundle is unpacked.
+    /// - `cancel`: checked while the bundle is downloaded and unpacked; a
+    ///   cancelled seed comes back as `Failed`, so callers check `cancel` again.
     /// - `http_factory`: builds the HTTP client, as for [`Self::fetch`].
     #[must_use]
     pub fn seed_from_bundle_uri(

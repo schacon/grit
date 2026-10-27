@@ -31,7 +31,7 @@ use crate::pkt_line::{self, Packet};
 use crate::progress::{Cancel, ProgressPhase, ProgressSink, ProgressUnit};
 use crate::protocol_v2::{cap_lines_for_command_request, server_advertises_bundle_uri};
 use crate::repo::Repository;
-use crate::resumable::{discard_download, download_resumable, resolve_url};
+use crate::resumable::{discard_download, download_resumable, resolve_url, ResumableError};
 use crate::transfer::TransferStats;
 use crate::transport::http::{discover_upload_pack_exact, HttpClient};
 
@@ -278,7 +278,8 @@ pub fn bundle_cache_path(cache_dir: &Path, uri: &str) -> PathBuf {
 /// - `cache_dir`: where bundle downloads are kept; created when missing.
 /// - `progress`: receives the download's
 ///   [`crate::resumable::ResumableEvent`]s and the unpacking phases.
-/// - `cancel`: checked while the bundle is unpacked.
+/// - `cancel`: checked while the bundle is downloaded and unpacked. A
+///   cancelled download is kept in `cache_dir` for the next attempt.
 #[must_use]
 pub fn seed_from_bundle_uri(
     repo: &Repository,
@@ -328,7 +329,10 @@ fn seed_from(
     std::fs::create_dir_all(cache_dir)?;
     let dest = bundle_cache_path(cache_dir, uri);
     let downloaded =
-        download_resumable(client, uri, &dest, progress).map_err(|e| Error::from(Box::new(e)))?;
+        download_resumable(client, uri, &dest, progress, cancel).map_err(|e| match e {
+            ResumableError::Cancelled => Error::Cancelled,
+            e => Error::from(Box::new(e)),
+        })?;
     let bundle = repo.bundles().open(&dest).map_err(bundle_error)?;
     if !bundle.header().prerequisites.is_empty() {
         // An incremental bundle cannot seed an empty repository.
