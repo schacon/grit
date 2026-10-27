@@ -12097,23 +12097,29 @@ pub type grit_lib::objects::OidHashMap<V> = hashbrown::map::HashMap<grit_lib::ob
 pub type grit_lib::objects::OidHashSet = hashbrown::set::HashSet<grit_lib::objects::ObjectId, grit_lib::objects::OidBuildHasher>
 pub mod grit_lib::operation
 pub enum grit_lib::operation::ConflictKind
-pub grit_lib::operation::ConflictKind::AddAdd
-pub grit_lib::operation::ConflictKind::Content
-pub grit_lib::operation::ConflictKind::ModifyDelete
-pub grit_lib::operation::ConflictKind::ModifyDelete::deleted_in_current: bool
-pub grit_lib::operation::ConflictKind::RenameRename
-pub grit_lib::operation::ConflictKind::RenameRename::base_path: alloc::string::String
-pub grit_lib::operation::ConflictKind::RenameRename::ours_path: alloc::string::String
-pub grit_lib::operation::ConflictKind::RenameRename::theirs_path: alloc::string::String
+pub grit_lib::operation::ConflictKind::AddedByThem
+pub grit_lib::operation::ConflictKind::AddedByUs
+pub grit_lib::operation::ConflictKind::BothAdded
+pub grit_lib::operation::ConflictKind::BothDeleted
+pub grit_lib::operation::ConflictKind::BothModified
+pub grit_lib::operation::ConflictKind::DeletedByThem
+pub grit_lib::operation::ConflictKind::DeletedByUs
+pub grit_lib::operation::ConflictKind::RenameRename(alloc::boxed::Box<grit_lib::operation::RenamedPaths>)
 impl grit_lib::operation::ConflictKind
 pub fn grit_lib::operation::ConflictKind::as_str(&self) -> &'static str
 impl core::clone::Clone for grit_lib::operation::ConflictKind
 pub fn grit_lib::operation::ConflictKind::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::operation::ConflictKind
+impl core::cmp::Ord for grit_lib::operation::ConflictKind
+pub fn grit_lib::operation::ConflictKind::cmp(&self, &Self) -> core::cmp::Ordering
 impl core::cmp::PartialEq for grit_lib::operation::ConflictKind
 pub fn grit_lib::operation::ConflictKind::eq(&self, &Self) -> bool
+impl core::cmp::PartialOrd for grit_lib::operation::ConflictKind
+pub fn grit_lib::operation::ConflictKind::partial_cmp(&self, &Self) -> core::option::Option<core::cmp::Ordering>
 impl core::fmt::Debug for grit_lib::operation::ConflictKind
 pub fn grit_lib::operation::ConflictKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for grit_lib::operation::ConflictKind
+pub fn grit_lib::operation::ConflictKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::StructuralPartialEq for grit_lib::operation::ConflictKind
 impl core::marker::Freeze for grit_lib::operation::ConflictKind
 impl core::marker::Send for grit_lib::operation::ConflictKind
@@ -12186,6 +12192,8 @@ impl core::cmp::PartialEq for grit_lib::operation::Conflict
 pub fn grit_lib::operation::Conflict::eq(&self, &Self) -> bool
 impl core::fmt::Debug for grit_lib::operation::Conflict
 pub fn grit_lib::operation::Conflict::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for grit_lib::operation::Conflict
+pub fn grit_lib::operation::Conflict::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::StructuralPartialEq for grit_lib::operation::Conflict
 impl core::marker::Freeze for grit_lib::operation::Conflict
 impl core::marker::Send for grit_lib::operation::Conflict
@@ -12213,7 +12221,32 @@ impl core::marker::Unpin for grit_lib::state::Operation
 impl core::marker::UnsafeUnpin for grit_lib::state::Operation
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::state::Operation
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::state::Operation
-pub fn grit_lib::operation::conflict_kind_from_stages(bool, bool, bool) -> grit_lib::operation::ConflictKind
+pub struct grit_lib::operation::RenamedPaths
+pub grit_lib::operation::RenamedPaths::base_path: alloc::string::String
+pub grit_lib::operation::RenamedPaths::ours_path: alloc::string::String
+pub grit_lib::operation::RenamedPaths::theirs_path: alloc::string::String
+impl core::clone::Clone for grit_lib::operation::RenamedPaths
+pub fn grit_lib::operation::RenamedPaths::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::operation::RenamedPaths
+impl core::cmp::Ord for grit_lib::operation::RenamedPaths
+pub fn grit_lib::operation::RenamedPaths::cmp(&self, &Self) -> core::cmp::Ordering
+impl core::cmp::PartialEq for grit_lib::operation::RenamedPaths
+pub fn grit_lib::operation::RenamedPaths::eq(&self, &Self) -> bool
+impl core::cmp::PartialOrd for grit_lib::operation::RenamedPaths
+pub fn grit_lib::operation::RenamedPaths::partial_cmp(&self, &Self) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for grit_lib::operation::RenamedPaths
+pub fn grit_lib::operation::RenamedPaths::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for grit_lib::operation::RenamedPaths
+pub fn grit_lib::operation::RenamedPaths::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for grit_lib::operation::RenamedPaths
+impl core::marker::Freeze for grit_lib::operation::RenamedPaths
+impl core::marker::Send for grit_lib::operation::RenamedPaths
+impl core::marker::Sync for grit_lib::operation::RenamedPaths
+impl core::marker::Unpin for grit_lib::operation::RenamedPaths
+impl core::marker::UnsafeUnpin for grit_lib::operation::RenamedPaths
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::operation::RenamedPaths
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::operation::RenamedPaths
+pub fn grit_lib::operation::conflict_kind_from_stagemask(u8) -> core::option::Option<grit_lib::operation::ConflictKind>
 pub fn grit_lib::operation::conflicts_from_index(&grit_lib::index::Index) -> alloc::vec::Vec<grit_lib::operation::Conflict>
 pub fn grit_lib::operation::conflicts_from_tree_merge(&grit_lib::diff::merge_trees::TreeMergeOutput) -> alloc::vec::Vec<grit_lib::operation::Conflict>
 pub fn grit_lib::operation::next_step_grit_commands(&[grit_lib::state::NextStep]) -> alloc::vec::Vec<alloc::string::String>
@@ -13993,32 +14026,6 @@ impl core::marker::Unpin for grit_lib::porcelain::merge::MergeCommitMode
 impl core::marker::UnsafeUnpin for grit_lib::porcelain::merge::MergeCommitMode
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::merge::MergeCommitMode
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::merge::MergeCommitMode
-pub enum grit_lib::porcelain::merge::MergeConflictKind
-pub grit_lib::porcelain::merge::MergeConflictKind::AddAdd
-pub grit_lib::porcelain::merge::MergeConflictKind::Content
-pub grit_lib::porcelain::merge::MergeConflictKind::ModifyDelete
-pub grit_lib::porcelain::merge::MergeConflictKind::ModifyDelete::deleted_in_current: bool
-pub grit_lib::porcelain::merge::MergeConflictKind::RenameRename
-pub grit_lib::porcelain::merge::MergeConflictKind::RenameRename::base_path: alloc::string::String
-pub grit_lib::porcelain::merge::MergeConflictKind::RenameRename::ours_path: alloc::string::String
-pub grit_lib::porcelain::merge::MergeConflictKind::RenameRename::theirs_path: alloc::string::String
-impl grit_lib::operation::ConflictKind
-pub fn grit_lib::operation::ConflictKind::as_str(&self) -> &'static str
-impl core::clone::Clone for grit_lib::operation::ConflictKind
-pub fn grit_lib::operation::ConflictKind::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::operation::ConflictKind
-impl core::cmp::PartialEq for grit_lib::operation::ConflictKind
-pub fn grit_lib::operation::ConflictKind::eq(&self, &Self) -> bool
-impl core::fmt::Debug for grit_lib::operation::ConflictKind
-pub fn grit_lib::operation::ConflictKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for grit_lib::operation::ConflictKind
-impl core::marker::Freeze for grit_lib::operation::ConflictKind
-impl core::marker::Send for grit_lib::operation::ConflictKind
-impl core::marker::Sync for grit_lib::operation::ConflictKind
-impl core::marker::Unpin for grit_lib::operation::ConflictKind
-impl core::marker::UnsafeUnpin for grit_lib::operation::ConflictKind
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::operation::ConflictKind
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::operation::ConflictKind
 pub enum grit_lib::porcelain::merge::MergeDryRunPlan
 pub grit_lib::porcelain::merge::MergeDryRunPlan::Conflicts
 pub grit_lib::porcelain::merge::MergeDryRunPlan::Conflicts::conflicts: alloc::vec::Vec<grit_lib::operation::Conflict>
@@ -14143,24 +14150,6 @@ impl core::marker::Unpin for grit_lib::porcelain::merge::IntegrateBranchOptions
 impl core::marker::UnsafeUnpin for grit_lib::porcelain::merge::IntegrateBranchOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::merge::IntegrateBranchOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::merge::IntegrateBranchOptions
-pub struct grit_lib::porcelain::merge::MergeConflictDetail
-pub grit_lib::porcelain::merge::MergeConflictDetail::kind: grit_lib::operation::ConflictKind
-pub grit_lib::porcelain::merge::MergeConflictDetail::path: alloc::string::String
-impl core::clone::Clone for grit_lib::operation::Conflict
-pub fn grit_lib::operation::Conflict::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::operation::Conflict
-impl core::cmp::PartialEq for grit_lib::operation::Conflict
-pub fn grit_lib::operation::Conflict::eq(&self, &Self) -> bool
-impl core::fmt::Debug for grit_lib::operation::Conflict
-pub fn grit_lib::operation::Conflict::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for grit_lib::operation::Conflict
-impl core::marker::Freeze for grit_lib::operation::Conflict
-impl core::marker::Send for grit_lib::operation::Conflict
-impl core::marker::Sync for grit_lib::operation::Conflict
-impl core::marker::Unpin for grit_lib::operation::Conflict
-impl core::marker::UnsafeUnpin for grit_lib::operation::Conflict
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::operation::Conflict
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::operation::Conflict
 pub struct grit_lib::porcelain::merge::MergeOptions
 pub grit_lib::porcelain::merge::MergeOptions::allow_unrelated: bool
 pub grit_lib::porcelain::merge::MergeOptions::commit: grit_lib::porcelain::merge::MergeCommitMode
@@ -14271,7 +14260,6 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::merge::Writte
 pub fn grit_lib::porcelain::merge::abort_branch_merge(&grit_lib::repo::Repository) -> grit_lib::error::Result<()>
 pub fn grit_lib::porcelain::merge::compose_fast_forward_index(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, &grit_lib::index::Index) -> grit_lib::error::Result<grit_lib::index::Index>
 pub fn grit_lib::porcelain::merge::compose_octopus_final_index(&grit_lib::index::Index, &mut grit_lib::index::Index)
-pub fn grit_lib::porcelain::merge::conflicts_from_tree_merge(&grit_lib::diff::merge_trees::TreeMergeOutput) -> alloc::vec::Vec<grit_lib::operation::Conflict>
 pub fn grit_lib::porcelain::merge::continue_merge(&grit_lib::repo::Repository, &grit_lib::porcelain::merge::ContinueOptions, &mut dyn grit_lib::progress::ProgressSink) -> core::result::Result<grit_lib::porcelain::merge::ContinueOutcome, grit_lib::porcelain::merge::ContinueMergeError>
 pub fn grit_lib::porcelain::merge::integrate_branch(&grit_lib::repo::Repository, &str, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, &str) -> grit_lib::error::Result<grit_lib::porcelain::merge::IntegrateBranchOutcome>
 pub fn grit_lib::porcelain::merge::integrate_branch_with(&grit_lib::repo::Repository, &str, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, &str, &grit_lib::porcelain::merge::MergeOptions) -> grit_lib::error::Result<grit_lib::porcelain::merge::IntegrateBranchOutcome>
@@ -14281,7 +14269,6 @@ pub fn grit_lib::porcelain::merge::predict_merge(&grit_lib::repo::Repository, gr
 pub fn grit_lib::porcelain::merge::reduce_octopus_merge_heads(&grit_lib::repo::Repository, &[grit_lib::objects::ObjectId], &[alloc::string::String]) -> grit_lib::error::Result<(alloc::vec::Vec<grit_lib::objects::ObjectId>, alloc::vec::Vec<alloc::string::String>)>
 pub fn grit_lib::porcelain::merge::resolve_merge_conflict_style(&grit_lib::repo::Repository, core::option::Option<grit_lib::diff::merge_file::ConflictStyle>) -> grit_lib::diff::merge_file::ConflictStyle
 pub fn grit_lib::porcelain::merge::resolve_merge_source(&grit_lib::repo::Repository, &str) -> grit_lib::error::Result<grit_lib::porcelain::merge::MergeSource>
-pub fn grit_lib::porcelain::merge::tree_merge_has_conflicts(&grit_lib::diff::merge_trees::TreeMergeOutput) -> bool
 pub fn grit_lib::porcelain::merge::tree_to_index_entries(&grit_lib::repo::Repository, &grit_lib::objects::ObjectId, &str) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::index::IndexEntry>>
 pub fn grit_lib::porcelain::merge::tree_to_map(alloc::vec::Vec<grit_lib::index::IndexEntry>) -> std::collections::hash::map::HashMap<alloc::vec::Vec<u8>, grit_lib::index::IndexEntry>
 pub fn grit_lib::porcelain::merge::write_merge_tree(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, &grit_lib::porcelain::merge::MergePredictionOptions) -> grit_lib::error::Result<grit_lib::porcelain::merge::WrittenMergeTree>
@@ -15124,7 +15111,7 @@ impl core::marker::UnsafeUnpin for grit_lib::stash::StashApplyOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::stash::StashApplyOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::stash::StashApplyOptions
 pub struct grit_lib::porcelain::stash::StashApplyOutcome
-pub grit_lib::porcelain::stash::StashApplyOutcome::conflicted_paths: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::porcelain::stash::StashApplyOutcome::conflicts: alloc::vec::Vec<grit_lib::operation::Conflict>
 impl grit_lib::stash::StashApplyOutcome
 pub fn grit_lib::stash::StashApplyOutcome::has_conflicts(&self) -> bool
 impl core::clone::Clone for grit_lib::stash::StashApplyOutcome
@@ -15272,36 +15259,6 @@ pub fn grit_lib::porcelain::stash::stash_worktree_change_paths(&grit_lib::repo::
 pub fn grit_lib::porcelain::stash::worktree_bytes_for_index_mode(&std::path::Path, u32) -> core::io::error::Result<alloc::vec::Vec<u8>>
 pub fn grit_lib::porcelain::stash::write_regular_file_replacing_symlink(&std::path::Path, &[u8]) -> core::io::error::Result<()>
 pub mod grit_lib::porcelain::status
-pub enum grit_lib::porcelain::status::ConflictKind
-pub grit_lib::porcelain::status::ConflictKind::AddedByThem
-pub grit_lib::porcelain::status::ConflictKind::AddedByUs
-pub grit_lib::porcelain::status::ConflictKind::BothAdded
-pub grit_lib::porcelain::status::ConflictKind::BothDeleted
-pub grit_lib::porcelain::status::ConflictKind::BothModified
-pub grit_lib::porcelain::status::ConflictKind::DeletedByThem
-pub grit_lib::porcelain::status::ConflictKind::DeletedByUs
-impl grit_lib::porcelain::status::ConflictKind
-pub fn grit_lib::porcelain::status::ConflictKind::as_str(self) -> &'static str
-impl core::clone::Clone for grit_lib::porcelain::status::ConflictKind
-pub fn grit_lib::porcelain::status::ConflictKind::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::porcelain::status::ConflictKind
-impl core::cmp::Ord for grit_lib::porcelain::status::ConflictKind
-pub fn grit_lib::porcelain::status::ConflictKind::cmp(&self, &Self) -> core::cmp::Ordering
-impl core::cmp::PartialEq for grit_lib::porcelain::status::ConflictKind
-pub fn grit_lib::porcelain::status::ConflictKind::eq(&self, &Self) -> bool
-impl core::cmp::PartialOrd for grit_lib::porcelain::status::ConflictKind
-pub fn grit_lib::porcelain::status::ConflictKind::partial_cmp(&self, &Self) -> core::option::Option<core::cmp::Ordering>
-impl core::fmt::Debug for grit_lib::porcelain::status::ConflictKind
-pub fn grit_lib::porcelain::status::ConflictKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for grit_lib::porcelain::status::ConflictKind
-impl core::marker::StructuralPartialEq for grit_lib::porcelain::status::ConflictKind
-impl core::marker::Freeze for grit_lib::porcelain::status::ConflictKind
-impl core::marker::Send for grit_lib::porcelain::status::ConflictKind
-impl core::marker::Sync for grit_lib::porcelain::status::ConflictKind
-impl core::marker::Unpin for grit_lib::porcelain::status::ConflictKind
-impl core::marker::UnsafeUnpin for grit_lib::porcelain::status::ConflictKind
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::status::ConflictKind
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::status::ConflictKind
 pub enum grit_lib::porcelain::status::IgnoredMode
 pub grit_lib::porcelain::status::IgnoredMode::Matching
 pub grit_lib::porcelain::status::IgnoredMode::No
@@ -15458,26 +15415,8 @@ impl core::marker::Unpin for grit_lib::porcelain::status::UntrackedMode
 impl core::marker::UnsafeUnpin for grit_lib::porcelain::status::UntrackedMode
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::status::UntrackedMode
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::status::UntrackedMode
-pub struct grit_lib::porcelain::status::Conflict
-pub grit_lib::porcelain::status::Conflict::kind: grit_lib::porcelain::status::ConflictKind
-pub grit_lib::porcelain::status::Conflict::path: alloc::string::String
-impl core::clone::Clone for grit_lib::porcelain::status::Conflict
-pub fn grit_lib::porcelain::status::Conflict::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::porcelain::status::Conflict
-impl core::cmp::PartialEq for grit_lib::porcelain::status::Conflict
-pub fn grit_lib::porcelain::status::Conflict::eq(&self, &Self) -> bool
-impl core::fmt::Debug for grit_lib::porcelain::status::Conflict
-pub fn grit_lib::porcelain::status::Conflict::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for grit_lib::porcelain::status::Conflict
-impl core::marker::Freeze for grit_lib::porcelain::status::Conflict
-impl core::marker::Send for grit_lib::porcelain::status::Conflict
-impl core::marker::Sync for grit_lib::porcelain::status::Conflict
-impl core::marker::Unpin for grit_lib::porcelain::status::Conflict
-impl core::marker::UnsafeUnpin for grit_lib::porcelain::status::Conflict
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::status::Conflict
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::status::Conflict
 pub struct grit_lib::porcelain::status::ConflictGroup
-pub grit_lib::porcelain::status::ConflictGroup::kind: grit_lib::porcelain::status::ConflictKind
+pub grit_lib::porcelain::status::ConflictGroup::kind: grit_lib::operation::ConflictKind
 pub grit_lib::porcelain::status::ConflictGroup::paths: alloc::vec::Vec<alloc::string::String>
 impl core::clone::Clone for grit_lib::porcelain::status::ConflictGroup
 pub fn grit_lib::porcelain::status::ConflictGroup::clone(&self) -> Self
@@ -15514,7 +15453,7 @@ impl core::marker::UnsafeUnpin for grit_lib::porcelain::status::RenameDetection
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::status::RenameDetection
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::status::RenameDetection
 pub struct grit_lib::porcelain::status::StatusModel
-pub grit_lib::porcelain::status::StatusModel::conflict_details: alloc::vec::Vec<grit_lib::porcelain::status::Conflict>
+pub grit_lib::porcelain::status::StatusModel::conflict_details: alloc::vec::Vec<grit_lib::operation::Conflict>
 pub grit_lib::porcelain::status::StatusModel::conflicts: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::porcelain::status::StatusModel::head: grit_lib::state::HeadState
 pub grit_lib::porcelain::status::StatusModel::head_tree: core::option::Option<grit_lib::objects::ObjectId>
@@ -15584,9 +15523,6 @@ pub fn grit_lib::porcelain::status::collect_untracked_and_ignored(&grit_lib::rep
 pub fn grit_lib::porcelain::status::collect_untracked_and_ignored_with_cache(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &std::path::Path, grit_lib::porcelain::status::IgnoredMode, bool, &[alloc::string::String], bool) -> grit_lib::error::Result<(alloc::vec::Vec<alloc::string::String>, alloc::vec::Vec<alloc::string::String>)>
 pub fn grit_lib::porcelain::status::collect_untracked_and_ignored_with_rules(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &std::path::Path, grit_lib::porcelain::status::IgnoredMode, bool, &[alloc::string::String], &grit_lib::worktree::worktree_rules::WorktreeRules) -> grit_lib::error::Result<(alloc::vec::Vec<alloc::string::String>, alloc::vec::Vec<alloc::string::String>, grit_lib::porcelain::status::UntrackedCollectMeta)>
 pub fn grit_lib::porcelain::status::collect_untracked_and_ignored_with_rules_and_cancel(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &std::path::Path, grit_lib::porcelain::status::IgnoredMode, bool, &[alloc::string::String], &grit_lib::worktree::worktree_rules::WorktreeRules, core::option::Option<alloc::rcs::arc::Arc<core::sync::atomic::AtomicBool>>) -> grit_lib::error::Result<(alloc::vec::Vec<alloc::string::String>, alloc::vec::Vec<alloc::string::String>, grit_lib::porcelain::status::UntrackedCollectMeta)>
-pub fn grit_lib::porcelain::status::conflict_kind_from_stagemask(u8) -> grit_lib::porcelain::status::ConflictKind
-pub fn grit_lib::porcelain::status::conflict_kind_from_stages(bool, bool, bool) -> grit_lib::porcelain::status::ConflictKind
-pub fn grit_lib::porcelain::status::conflicts_from_index(&grit_lib::index::Index) -> alloc::vec::Vec<grit_lib::porcelain::status::Conflict>
 pub fn grit_lib::porcelain::status::dir_is_nested_submodule_worktree(&std::path::Path, &std::path::Path) -> bool
 pub fn grit_lib::porcelain::status::expand_untracked_for_staging(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &std::path::Path, alloc::vec::Vec<alloc::string::String>, &[alloc::string::String]) -> grit_lib::error::Result<alloc::vec::Vec<alloc::string::String>>
 pub fn grit_lib::porcelain::status::expand_untracked_for_staging_with_rules(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &std::path::Path, alloc::vec::Vec<alloc::string::String>, &[alloc::string::String], &grit_lib::worktree::worktree_rules::WorktreeRules) -> grit_lib::error::Result<alloc::vec::Vec<alloc::string::String>>
@@ -25701,7 +25637,7 @@ pub grit_lib::revwalk::history::HistoryError::BranchCheckedOutElsewhere::name: a
 pub grit_lib::revwalk::history::HistoryError::BranchCheckedOutElsewhere::worktree: alloc::string::String
 pub grit_lib::revwalk::history::HistoryError::Conflict
 pub grit_lib::revwalk::history::HistoryError::Conflict::commit: grit_lib::objects::ObjectId
-pub grit_lib::revwalk::history::HistoryError::Conflict::paths: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::revwalk::history::HistoryError::Conflict::conflicts: alloc::vec::Vec<grit_lib::operation::Conflict>
 pub grit_lib::revwalk::history::HistoryError::DivergentBranch
 pub grit_lib::revwalk::history::HistoryError::DivergentBranch::name: alloc::string::String
 pub grit_lib::revwalk::history::HistoryError::EmptyMessage
@@ -25817,7 +25753,7 @@ pub grit_lib::revwalk::history::RebaseCheckPlan::Clean
 pub grit_lib::revwalk::history::RebaseCheckPlan::Clean::commits: alloc::vec::Vec<grit_lib::objects::ObjectId>
 pub grit_lib::revwalk::history::RebaseCheckPlan::Conflict
 pub grit_lib::revwalk::history::RebaseCheckPlan::Conflict::commit: grit_lib::objects::ObjectId
-pub grit_lib::revwalk::history::RebaseCheckPlan::Conflict::paths: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::revwalk::history::RebaseCheckPlan::Conflict::conflicts: alloc::vec::Vec<grit_lib::operation::Conflict>
 pub grit_lib::revwalk::history::RebaseCheckPlan::UpToDate
 impl core::clone::Clone for grit_lib::revwalk::history::RebaseCheckPlan
 pub fn grit_lib::revwalk::history::RebaseCheckPlan::clone(&self) -> Self
@@ -25862,7 +25798,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::Rebase
 pub enum grit_lib::revwalk::history::RebasePlan
 pub grit_lib::revwalk::history::RebasePlan::Conflict
 pub grit_lib::revwalk::history::RebasePlan::Conflict::commit: grit_lib::objects::ObjectId
-pub grit_lib::revwalk::history::RebasePlan::Conflict::paths: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::revwalk::history::RebasePlan::Conflict::conflicts: alloc::vec::Vec<grit_lib::operation::Conflict>
 pub grit_lib::revwalk::history::RebasePlan::Plan(grit_lib::revwalk::history::RewritePlan)
 pub grit_lib::revwalk::history::RebasePlan::UpToDate
 impl core::clone::Clone for grit_lib::revwalk::history::RebasePlan
@@ -28108,7 +28044,7 @@ impl core::marker::UnsafeUnpin for grit_lib::stash::StashApplyOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::stash::StashApplyOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::stash::StashApplyOptions
 pub struct grit_lib::stash::StashApplyOutcome
-pub grit_lib::stash::StashApplyOutcome::conflicted_paths: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::stash::StashApplyOutcome::conflicts: alloc::vec::Vec<grit_lib::operation::Conflict>
 impl grit_lib::stash::StashApplyOutcome
 pub fn grit_lib::stash::StashApplyOutcome::has_conflicts(&self) -> bool
 impl core::clone::Clone for grit_lib::stash::StashApplyOutcome

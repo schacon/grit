@@ -366,9 +366,9 @@ mod raw_stash_paths {
             .unwrap();
             assert_eq!(outcome.has_conflicts(), conflict, "{path:?}");
             if conflict {
-                assert_eq!(outcome.conflicted_paths.len(), 1);
+                assert_eq!(outcome.conflicts.len(), 1);
                 assert_eq!(
-                    grit_lib::repo_relpath::storage_bytes(&outcome.conflicted_paths[0]).as_ref(),
+                    grit_lib::repo_relpath::storage_bytes(&outcome.conflicts[0].path).as_ref(),
                     path.as_os_str().as_bytes()
                 );
             }

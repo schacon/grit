@@ -1481,13 +1481,13 @@ fn transplant_tree_across_parent_move(
     .map_err(library_err)?;
 
     if merge.index.has_unmerged_entries() || !merge.conflict_content.is_empty() {
-        let paths = crate::operation::tree_merge_conflict_path_strings(&merge);
+        let conflicts = crate::operation::conflicts_from_tree_merge(&merge);
         if REPLAY_STOP_COMMIT.with(|c| c.get()) == Some(commit) {
             if let Some(replayed_parent) = REPLAY_STOP_PARENT.with(|p| p.get()) {
                 note_resumable_conflict(commit, replayed_parent, merge);
             }
         }
-        return Err(HistoryError::Conflict { commit, paths });
+        return Err(HistoryError::Conflict { commit, conflicts });
     }
     Ok(merge.result_tree)
 }

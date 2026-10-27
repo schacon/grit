@@ -9,7 +9,7 @@ use crate::progress::summary::{stdout_color, TransferSummary};
 use anyhow::Result;
 use grit_lib::change_id::ChangeId;
 use grit_lib::objects::ObjectId;
-use grit_lib::porcelain::merge::MergeConflictDetail;
+use grit_lib::operation::Conflict;
 use grit_lib::porcelain::pull::{
     PullCheck as LibPullCheck, PullOutcome as LibPullOutcome, PullResult as LibPullResult,
 };
@@ -298,7 +298,7 @@ impl PullOutcome {
 }
 
 fn map_conflicts(
-    details: &[MergeConflictDetail],
+    details: &[Conflict],
     merge_label: &str,
     rebase_stop: bool,
 ) -> (Option<Vec<String>>, Option<Vec<MergeConflictJson>>) {

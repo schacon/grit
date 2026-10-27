@@ -796,8 +796,9 @@ fn plan_rewrite_reports_conflict_with_paths() {
     )
     .expect_err("conflict");
     match err {
-        grit_lib::revwalk::history::HistoryError::Conflict { paths, .. } => {
-            assert!(paths.iter().any(|p| p.contains("conflict.txt")));
+        grit_lib::revwalk::history::HistoryError::Conflict { conflicts, .. } => {
+            assert!(conflicts.iter().any(|c| c.path.contains("conflict.txt")
+                && c.kind == grit_lib::operation::ConflictKind::BothModified));
         }
         other => panic!("expected conflict, got {other:?}"),
     }

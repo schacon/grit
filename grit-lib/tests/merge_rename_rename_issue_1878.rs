@@ -12,7 +12,7 @@ use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::merge_file::MergeFavor;
 use grit_lib::diff::merge_trees::{merge_trees_three_way, RenameRenameConflict};
 use grit_lib::objects::ObjectId;
-use grit_lib::operation::{conflicts_from_tree_merge, Conflict, ConflictKind};
+use grit_lib::operation::{conflicts_from_tree_merge, Conflict, ConflictKind, RenamedPaths};
 use grit_lib::porcelain::merge::{
     integrate_branch_with, predict_merge, IntegrateBranchOutcome, MergeOptions, MergePrediction,
     MergePredictionOptions,
@@ -100,11 +100,11 @@ fn rename_rename_repo(ours: Edit, theirs: Edit) -> Fixture {
 }
 
 fn expected_kind() -> ConflictKind {
-    ConflictKind::RenameRename {
+    ConflictKind::RenameRename(Box::new(RenamedPaths {
         base_path: "a".into(),
         ours_path: "b".into(),
         theirs_path: "c".into(),
-    }
+    }))
 }
 
 fn expected_conflicts() -> Vec<Conflict> {
@@ -298,11 +298,22 @@ fn rebase_onto_the_other_rename_conflicts() {
     });
     let err = rebase_onto(&fx.repo, fx.base, fx.topic, &[fx.main], &opts)
         .expect_err("rebase must stop on the rename/rename conflict");
-    let HistoryError::Conflict { commit, paths } = err else {
+    let HistoryError::Conflict { commit, conflicts } = err else {
         panic!("expected a conflict, got {err:?}");
     };
     assert_eq!(commit, fx.main);
+    let paths: Vec<&str> = conflicts.iter().map(|c| c.path.as_str()).collect();
     assert_eq!(paths, vec!["a", "b", "c"]);
+    // Replaying main onto topic: "ours" is topic's name for the file, "theirs" is main's.
+    let replayed = ConflictKind::RenameRename(Box::new(RenamedPaths {
+        base_path: "a".into(),
+        ours_path: "c".into(),
+        theirs_path: "b".into(),
+    }));
+    assert!(
+        conflicts.iter().all(|c| c.kind == replayed),
+        "{conflicts:?}"
+    );
 }
 
 /// Both sides renamed `a` to `b` (rename/rename 1to1) and edited different lines.

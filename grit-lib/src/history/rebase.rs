@@ -11,6 +11,7 @@ use crate::merge_base::{
 };
 use crate::merge_file::MergeFavor;
 use crate::objects::{parse_commit, ObjectId};
+use crate::operation::Conflict;
 use crate::patch_ids::{compute_patch_id, PatchIdMode};
 use crate::repo::Repository;
 use crate::revwalk::rev_list::topo_order_commit_subset;
@@ -64,8 +65,8 @@ pub enum RebasePlan {
     Conflict {
         /// Original commit that could not be replayed cleanly.
         commit: ObjectId,
-        /// Repository-relative paths that conflicted.
-        paths: Vec<String>,
+        /// Conflicted paths and how they conflicted, sorted by path.
+        conflicts: Vec<Conflict>,
     },
 }
 
@@ -129,8 +130,8 @@ pub enum RebaseCheckPlan {
     Conflict {
         /// Original commit that could not be replayed cleanly.
         commit: ObjectId,
-        /// Repository-relative paths that conflicted.
-        paths: Vec<String>,
+        /// Conflicted paths and how they conflicted, sorted by path.
+        conflicts: Vec<Conflict>,
     },
 }
 
@@ -149,7 +150,9 @@ pub fn plan_rebase_check(
 ) -> Result<RebaseCheckPlan, HistoryError> {
     match plan_rebase(repo, request, opts)? {
         RebasePlan::UpToDate => Ok(RebaseCheckPlan::UpToDate),
-        RebasePlan::Conflict { commit, paths } => Ok(RebaseCheckPlan::Conflict { commit, paths }),
+        RebasePlan::Conflict { commit, conflicts } => {
+            Ok(RebaseCheckPlan::Conflict { commit, conflicts })
+        }
         RebasePlan::Plan(plan) => {
             let commits = plan.commits.iter().filter_map(|row| row.new).collect();
             Ok(RebaseCheckPlan::Clean { commits })
@@ -205,7 +208,9 @@ pub fn plan_rebase(
         Some(&range),
     ) {
         Ok(plan) => Ok(RebasePlan::Plan(plan)),
-        Err(HistoryError::Conflict { commit, paths }) => Ok(RebasePlan::Conflict { commit, paths }),
+        Err(HistoryError::Conflict { commit, conflicts }) => {
+            Ok(RebasePlan::Conflict { commit, conflicts })
+        }
         Err(other) => Err(other),
     }
 }

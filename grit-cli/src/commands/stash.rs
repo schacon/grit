@@ -700,7 +700,7 @@ pub fn run_apply(index: Option<String>, restore_index: bool) -> Result<StashAppl
         index: n,
         conflicts: applied.has_conflicts(),
         index_restored: restore_index,
-        conflict_paths: applied.conflicted_paths,
+        conflict_paths: crate::operation_output::conflict_paths(applied.conflicts),
     })
 }
 
@@ -719,7 +719,7 @@ pub fn run_pop(index: Option<String>, restore_index: bool) -> Result<StashPopOut
         dropped: !conflicts,
         conflicts,
         index_restored: restore_index,
-        conflict_paths: popped.conflicted_paths,
+        conflict_paths: crate::operation_output::conflict_paths(popped.conflicts),
     })
 }
 

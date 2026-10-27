@@ -2,8 +2,9 @@
 
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
+use grit_lib::operation::ConflictKind;
 use grit_lib::porcelain::add::{stage, StageOptions};
-use grit_lib::porcelain::merge::{integrate_branch, IntegrateBranchOutcome, MergeConflictKind};
+use grit_lib::porcelain::merge::{integrate_branch, IntegrateBranchOutcome};
 use grit_lib::porcelain::paths::{remove_paths, RemoveOptions};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
@@ -51,12 +52,7 @@ fn modify_delete_conflict_materializes_incoming_version_and_resolves_with_add_or
     assert_eq!(paths, vec!["f".to_owned()]);
     assert_eq!(details.len(), 1);
     assert_eq!(details[0].path, "f");
-    assert!(matches!(
-        details[0].kind,
-        MergeConflictKind::ModifyDelete {
-            deleted_in_current: true
-        }
-    ));
+    assert_eq!(details[0].kind, ConflictKind::DeletedByUs);
 
     assert!(
         root.join("f").is_file(),

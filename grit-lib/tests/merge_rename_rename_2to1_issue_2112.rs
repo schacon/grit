@@ -96,7 +96,7 @@ fn two_to_one() -> Fixture {
 fn add_add_on_c() -> Vec<Conflict> {
     vec![Conflict {
         path: "c".into(),
-        kind: ConflictKind::AddAdd,
+        kind: ConflictKind::BothAdded,
     }]
 }
 

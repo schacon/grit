@@ -1,7 +1,8 @@
 //! Unmerged conflict kinds vs system `git status --porcelain=v2` (t7060 / t7508 cases).
 
 use grit_lib::config::environment::RepositoryOptions;
-use grit_lib::porcelain::status::{conflict_kind_from_stages, status, ConflictKind, StatusOptions};
+use grit_lib::operation::{conflict_kind_from_stagemask, ConflictKind};
+use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NeverCancel;
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
@@ -171,9 +172,20 @@ fn git_merge_modify_delete_reports_du() {
 
 #[test]
 fn stage_masks_match_porcelain_xy_table() {
-    assert_eq!(
-        conflict_kind_from_stages(true, true, true),
-        ConflictKind::BothModified
-    );
-    assert_eq!(xy_to_kind("UU"), ConflictKind::BothModified);
+    let table = [
+        (0b001, "DD"),
+        (0b010, "AU"),
+        (0b011, "UD"),
+        (0b100, "UA"),
+        (0b101, "DU"),
+        (0b110, "AA"),
+        (0b111, "UU"),
+    ];
+    for (mask, xy) in table {
+        assert_eq!(
+            conflict_kind_from_stagemask(mask),
+            Some(xy_to_kind(xy)),
+            "stage mask {mask:#05b}"
+        );
+    }
 }

@@ -2,7 +2,7 @@
 
 use crate::output::outln;
 use anyhow::Result;
-use grit_lib::operation::{Conflict, ConflictKind};
+use grit_lib::operation::{Conflict, ConflictKind, RenamedPaths};
 use grit_lib::state::{operation_alternatives, operation_next_steps, InProgressOperation};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -88,48 +88,48 @@ impl OperationConflictBlock {
 /// Map a library [`Conflict`] to CLI JSON, optionally with merge-style summaries.
 #[must_use]
 pub fn conflict_json(conflict: &Conflict, merge_label: Option<&str>) -> ConflictJson {
-    let (summary, kind) = match &conflict.kind {
-        ConflictKind::Content => (None, conflict.kind.as_str().to_owned()),
-        ConflictKind::AddAdd => (None, conflict.kind.as_str().to_owned()),
-        ConflictKind::RenameRename {
-            base_path,
-            ours_path,
-            theirs_path,
-        } => {
+    let path = &conflict.path;
+    let summary = match &conflict.kind {
+        ConflictKind::RenameRename(renamed) => {
+            let RenamedPaths {
+                base_path,
+                ours_path,
+                theirs_path,
+            } = renamed.as_ref();
             let incoming = merge_label.map_or_else(
                 || "on the incoming side".to_owned(),
                 |label| format!("in {label}"),
             );
             // One summary per conflict: the two new names are listed as plain paths.
-            let summary = (conflict.path == *base_path).then(|| {
+            (path == base_path).then(|| {
                 format!(
                     "{base_path} renamed to {ours_path} on the current branch and to {theirs_path} {incoming}; both names are in the work tree"
                 )
-            });
-            (summary, conflict.kind.as_str().to_owned())
+            })
         }
-        ConflictKind::ModifyDelete { deleted_in_current } => {
-            let summary = merge_label.map(|merge_label| {
-                if *deleted_in_current {
-                    format!(
-                        "{} deleted on the current branch and modified in {merge_label}; {merge_label}'s version is in the work tree",
-                        conflict.path
-                    )
-                } else {
-                    format!(
-                        "{} modified on the current branch and deleted in {merge_label}; the current branch's version is in the work tree",
-                        conflict.path
-                    )
-                }
-            });
-            (summary, conflict.kind.as_str().to_owned())
-        }
+        ConflictKind::DeletedByUs => merge_label.map(|label| {
+            format!(
+                "{path} deleted on the current branch and modified in {label}; {label}'s version is in the work tree"
+            )
+        }),
+        ConflictKind::DeletedByThem => merge_label.map(|label| {
+            format!(
+                "{path} modified on the current branch and deleted in {label}; the current branch's version is in the work tree"
+            )
+        }),
+        _ => None,
     };
     ConflictJson {
-        path: conflict.path.clone(),
-        kind,
+        path: path.clone(),
+        kind: conflict.kind.as_str().to_owned(),
         summary,
     }
+}
+
+/// The paths of `conflicts`, for outputs that list paths only.
+#[must_use]
+pub fn conflict_paths(conflicts: Vec<Conflict>) -> Vec<String> {
+    conflicts.into_iter().map(|c| c.path).collect()
 }
 
 /// Human stderr lines for conflict summaries (merge-style).

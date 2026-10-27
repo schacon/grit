@@ -17,11 +17,11 @@ use grit_lib::change_id::ChangeId;
 use grit_lib::config::ident_resolve::IdentRole;
 use grit_lib::error::Error;
 use grit_lib::objects::ObjectId;
+use grit_lib::operation::Conflict;
 use grit_lib::porcelain::merge::{
     abort_branch_merge, continue_merge, integrate_branch_with, plan_branch_merge, predict_merge,
     resolve_merge_source, ContinueOptions, FastForwardPolicy, IntegrateBranchOutcome,
-    MergeCommitMode, MergeConflictDetail, MergeDryRunPlan, MergeOptions, MergePrediction,
-    MergePredictionOptions,
+    MergeCommitMode, MergeDryRunPlan, MergeOptions, MergePrediction, MergePredictionOptions,
 };
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
@@ -111,10 +111,7 @@ pub struct MergeConflictJson {
     pub summary: Option<String>,
 }
 
-pub(crate) fn merge_conflict_json(
-    detail: &MergeConflictDetail,
-    merge_label: &str,
-) -> MergeConflictJson {
+pub(crate) fn merge_conflict_json(detail: &Conflict, merge_label: &str) -> MergeConflictJson {
     let ConflictJson {
         path,
         kind,
@@ -257,7 +254,7 @@ impl MergeOutcome {
         }
     }
 
-    fn conflicts_check(label: &str, details: Vec<MergeConflictDetail>) -> Self {
+    fn conflicts_check(label: &str, details: Vec<Conflict>) -> Self {
         let conflicts = Some(
             details
                 .iter()
@@ -279,14 +276,14 @@ impl MergeOutcome {
         }
     }
 
-    fn conflicts_dry_run(label: &str, details: Vec<MergeConflictDetail>) -> Self {
+    fn conflicts_dry_run(label: &str, details: Vec<Conflict>) -> Self {
         let mut o = Self::conflicts_check(label, details);
         o.check = false;
         o.dry_run = Some(true);
         o
     }
 
-    fn conflicts(label: &str, details: Vec<MergeConflictDetail>) -> Self {
+    fn conflicts(label: &str, details: Vec<Conflict>) -> Self {
         let block = OperationConflictBlock::for_merge(&details, label);
         Self {
             result: MergeResult::Conflicts,
@@ -733,9 +730,9 @@ mod tests {
             (
                 MergeOutcome::conflicts(
                     "topic",
-                    vec![MergeConflictDetail {
+                    vec![Conflict {
                         path: "a.txt".into(),
-                        kind: ConflictKind::Content,
+                        kind: ConflictKind::BothModified,
                     }],
                 ),
                 "conflicts",
@@ -904,7 +901,7 @@ mod tests {
         let conflicts = v["conflicts"].as_array().expect("conflicts array");
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0]["path"], "f.txt");
-        assert_eq!(conflicts[0]["kind"], "content");
+        assert_eq!(conflicts[0]["kind"], "both_modified");
         let next = v["next_steps"].as_array().expect("next_steps");
         assert!(
             next.iter().any(|s| s.as_str() == Some("grit diff")),

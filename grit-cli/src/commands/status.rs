@@ -4,9 +4,10 @@
 use anyhow::{Context, Result};
 use grit_lib::diff::DiffEntry;
 use grit_lib::objects::ObjectId;
+use grit_lib::operation::{Conflict, ConflictKind};
 use grit_lib::porcelain::status::{
-    short_status_lines, status, status_options_from_config, Conflict, ConflictGroup, ConflictKind,
-    IgnoredMode, InterruptedRewrite, StatusAction, StatusGuidance, UntrackedMode,
+    short_status_lines, status, status_options_from_config, ConflictGroup, IgnoredMode,
+    InterruptedRewrite, StatusAction, StatusGuidance, UntrackedMode,
 };
 use grit_lib::progress::NeverCancel;
 use grit_lib::progress::NullProgress;
@@ -431,7 +432,7 @@ impl StatusOutcome {
     ) -> Result<()> {
         outln!(w, "Conflicts");
         for group in &self.conflict_groups {
-            outln!(w, "  {} ({})", kind_label(group.kind), group.paths.len());
+            outln!(w, "  {} ({})", kind_label(&group.kind), group.paths.len());
             for path in &group.paths {
                 let path = display
                     .map(|d| d.format_path_for_human(path))
@@ -684,7 +685,7 @@ impl StatusOutcome {
             outln!(
                 w,
                 "- **{}** ({} paths)",
-                kind_label(group.kind),
+                kind_label(&group.kind),
                 group.paths.len()
             );
             for path in &group.paths {
@@ -705,7 +706,7 @@ fn short_hex(oid: &str) -> &str {
     oid.get(..7).unwrap_or(oid)
 }
 
-fn kind_label(kind: ConflictKind) -> &'static str {
+fn kind_label(kind: &ConflictKind) -> &'static str {
     match kind {
         ConflictKind::BothModified => "both modified",
         ConflictKind::BothAdded => "both added",
@@ -714,6 +715,7 @@ fn kind_label(kind: ConflictKind) -> &'static str {
         ConflictKind::AddedByThem => "added by them",
         ConflictKind::DeletedByUs => "deleted by us",
         ConflictKind::DeletedByThem => "deleted by them",
+        ConflictKind::RenameRename(_) => "renamed differently",
     }
 }
 

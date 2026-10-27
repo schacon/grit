@@ -432,6 +432,9 @@ mod config_set_getters_coverage;
 #[path = "config_write.rs"]
 mod config_write;
 #[cfg(feature = "full-tests")]
+#[path = "conflict_model_issue_2145.rs"]
+mod conflict_model_issue_2145;
+#[cfg(feature = "full-tests")]
 #[path = "coverage_floor_nudge_git_compat.rs"]
 mod coverage_floor_nudge_git_compat;
 #[cfg(feature = "full-tests")]

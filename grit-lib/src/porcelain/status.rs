@@ -39,6 +39,9 @@ use crate::hash::{try_par_hash_with, ParallelHashError};
 use crate::ignore::IgnoreMatcher;
 use crate::index::{index_file_mtime, Index, MODE_GITLINK, MODE_TREE};
 use crate::objects::ObjectId;
+use crate::operation::{
+    conflict_kind_from_stagemask, conflicts_from_index, Conflict, ConflictKind,
+};
 use crate::parallel::ParallelOp;
 use crate::precompose_config::effective_core_precomposeunicode_with_config;
 use crate::repo::Repository;
@@ -162,91 +165,6 @@ impl Default for StatusOptions {
     }
 }
 
-/// Unmerged index conflict category (matches `git status --porcelain=v2` `u` XY codes).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde-models", serde(rename_all = "snake_case"))]
-pub enum ConflictKind {
-    /// `UU` — both sides modified the same file.
-    BothModified,
-    /// `AA` — both sides added the same path.
-    BothAdded,
-    /// `DD` — both sides deleted the path.
-    BothDeleted,
-    /// `AU` — we added the path; they did not have it in the merge base.
-    AddedByUs,
-    /// `UA` — they added the path; we did not have it in the merge base.
-    AddedByThem,
-    /// `DU` — we deleted; they modified (or kept) the path.
-    DeletedByUs,
-    /// `UD` — we modified (or kept) the path; they deleted.
-    DeletedByThem,
-}
-
-impl ConflictKind {
-    /// Stable snake-case id for JSON and docs.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::BothModified => "both_modified",
-            Self::BothAdded => "both_added",
-            Self::BothDeleted => "both_deleted",
-            Self::AddedByUs => "added_by_us",
-            Self::AddedByThem => "added_by_them",
-            Self::DeletedByUs => "deleted_by_us",
-            Self::DeletedByThem => "deleted_by_them",
-        }
-    }
-}
-
-/// One unmerged path reported by status.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
-pub struct Conflict {
-    /// Repository-relative path.
-    pub path: String,
-    /// How the two sides collided (from index stages 1–3).
-    pub kind: ConflictKind,
-}
-
-/// Derive [`ConflictKind`] from which unmerged index stages exist for a path.
-#[must_use]
-pub fn conflict_kind_from_stages(stage1: bool, stage2: bool, stage3: bool) -> ConflictKind {
-    conflict_kind_from_stagemask(stagemask_from_stages(stage1, stage2, stage3))
-}
-
-fn stagemask_from_stages(stage1: bool, stage2: bool, stage3: bool) -> u8 {
-    let mut mask = 0u8;
-    if stage1 {
-        mask |= 1;
-    }
-    if stage2 {
-        mask |= 2;
-    }
-    if stage3 {
-        mask |= 4;
-    }
-    mask
-}
-
-/// Map Git's unmerged stage bitmask to [`ConflictKind`] (see upstream `wt-status.c`).
-#[must_use]
-pub fn conflict_kind_from_stagemask(stagemask: u8) -> ConflictKind {
-    match stagemask {
-        1 => ConflictKind::BothDeleted,
-        2 => ConflictKind::AddedByUs,
-        3 => ConflictKind::DeletedByThem,
-        4 => ConflictKind::AddedByThem,
-        5 => ConflictKind::DeletedByUs,
-        6 => ConflictKind::BothAdded,
-        7 => ConflictKind::BothModified,
-        other => {
-            debug_assert!(false, "unexpected unmerged stagemask {other:#x}");
-            ConflictKind::BothModified
-        }
-    }
-}
-
 /// Default rename similarity threshold for `git status` when detection is enabled (`-M50`).
 const STATUS_RENAME_DEFAULT_THRESHOLD: u32 = 50;
 
@@ -350,6 +268,8 @@ pub struct StatusModel {
     /// Paths with unmerged index stages (1–3), sorted and deduplicated.
     pub conflicts: Vec<String>,
     /// Unmerged paths with a [`ConflictKind`] derived from index stages 1–3.
+    ///
+    /// Never [`ConflictKind::RenameRename`]: the index does not record rename pairings.
     pub conflict_details: Vec<Conflict>,
     /// Paused operation and suggested follow-up steps, when any apply.
     pub operation: Option<Operation>,
@@ -464,7 +384,7 @@ impl StatusModel {
                 Err(at) => groups.insert(
                     at,
                     ConflictGroup {
-                        kind: conflict.kind,
+                        kind: conflict.kind.clone(),
                         paths: vec![path],
                     },
                 ),
@@ -2140,28 +2060,6 @@ fn directory_pathspec_matches_self(rel_dir: &str, pathspecs: &[String]) -> bool 
         || status_path_matches(&format!("{}/", rel_dir.trim_end_matches('/')), pathspecs)
 }
 
-/// Collect unmerged paths and their [`ConflictKind`] from the index.
-#[must_use]
-pub fn conflicts_from_index(index: &Index) -> Vec<Conflict> {
-    let paths = conflict_paths_from_index_raw(index);
-    paths
-        .into_iter()
-        .map(|path_bytes| {
-            let stage1 = index.get(&path_bytes, 1).is_some();
-            let stage2 = index.get(&path_bytes, 2).is_some();
-            let stage3 = index.get(&path_bytes, 3).is_some();
-            Conflict {
-                path: index_relpath_to_string(&path_bytes),
-                kind: conflict_kind_from_stages(stage1, stage2, stage3),
-            }
-        })
-        .collect()
-}
-
-fn index_relpath_to_string(path: &[u8]) -> String {
-    crate::repo_relpath::storage_string(path)
-}
-
 #[cfg(unix)]
 fn dir_entry_name_bytes(entry: &std::fs::DirEntry) -> Vec<u8> {
     use std::os::unix::ffi::OsStringExt;
@@ -2188,17 +2086,6 @@ fn named_entries_sorted(entries: ReadDir) -> Vec<(Vec<u8>, DirEntry)> {
         .collect();
     named.sort_unstable_by(|a, b| a.0.cmp(&b.0));
     named
-}
-
-fn conflict_paths_from_index_raw(index: &Index) -> Vec<Vec<u8>> {
-    let mut paths = BTreeSet::new();
-    for entry in &index.entries {
-        let stage = entry.stage();
-        if (1_u8..=3).contains(&stage) {
-            paths.insert(entry.path.clone());
-        }
-    }
-    paths.into_iter().collect()
 }
 
 /// Deduplicate conflict paths across staged/unstaged lists for status display.
@@ -2873,18 +2760,18 @@ fn unmerged_stagemask(stages: &[&crate::index::IndexEntry]) -> u8 {
     mask
 }
 
-/// Map Git's unmerged stage bitmask to porcelain short status letters (see upstream `wt-status.c`).
+/// Porcelain short-status letters for an unmerged path's stage bitmask.
 fn porcelain_v2_unmerged_xy(stagemask: u8) -> (char, char) {
-    let key = match stagemask {
-        1 => "DD",
-        2 => "AU",
-        3 => "UD",
-        4 => "UA",
-        5 => "DU",
-        6 => "AA",
-        7 => "UU",
-        other => {
-            debug_assert!(false, "unexpected unmerged stagemask {other:#x}");
+    let key = match conflict_kind_from_stagemask(stagemask) {
+        Some(ConflictKind::BothDeleted) => "DD",
+        Some(ConflictKind::AddedByUs) => "AU",
+        Some(ConflictKind::DeletedByThem) => "UD",
+        Some(ConflictKind::AddedByThem) => "UA",
+        Some(ConflictKind::DeletedByUs) => "DU",
+        Some(ConflictKind::BothAdded) => "AA",
+        Some(ConflictKind::BothModified | ConflictKind::RenameRename(_)) => "UU",
+        None => {
+            debug_assert!(false, "unexpected unmerged stagemask {stagemask:#x}");
             "UU"
         }
     };
@@ -3822,62 +3709,6 @@ mod status_op_tests {
         );
     }
 
-    #[test]
-    fn conflict_kind_from_stages_both_modified() {
-        assert_eq!(
-            conflict_kind_from_stages(true, true, true),
-            ConflictKind::BothModified
-        );
-    }
-
-    #[test]
-    fn conflict_kind_from_stages_both_added() {
-        assert_eq!(
-            conflict_kind_from_stages(false, true, true),
-            ConflictKind::BothAdded
-        );
-    }
-
-    #[test]
-    fn conflict_kind_from_stages_both_deleted() {
-        assert_eq!(
-            conflict_kind_from_stages(true, false, false),
-            ConflictKind::BothDeleted
-        );
-    }
-
-    #[test]
-    fn conflict_kind_from_stages_added_by_us() {
-        assert_eq!(
-            conflict_kind_from_stages(false, true, false),
-            ConflictKind::AddedByUs
-        );
-    }
-
-    #[test]
-    fn conflict_kind_from_stages_added_by_them() {
-        assert_eq!(
-            conflict_kind_from_stages(false, false, true),
-            ConflictKind::AddedByThem
-        );
-    }
-
-    #[test]
-    fn conflict_kind_from_stages_deleted_by_us() {
-        assert_eq!(
-            conflict_kind_from_stages(true, false, true),
-            ConflictKind::DeletedByUs
-        );
-    }
-
-    #[test]
-    fn conflict_kind_from_stages_deleted_by_them() {
-        assert_eq!(
-            conflict_kind_from_stages(true, true, false),
-            ConflictKind::DeletedByThem
-        );
-    }
-
     #[cfg_attr(
         not(feature = "full-tests"),
         ignore = "starts system git or is heavy; run with --features full-tests"
@@ -4021,41 +3852,6 @@ mod status_op_tests {
             .alternatives
             .contains(&NextStep::Skip(InProgressOperation::CherryPick)));
         assert!(!op.next_steps.iter().any(|s| matches!(s, NextStep::Commit)));
-    }
-
-    #[test]
-    fn conflicts_from_index_non_utf8_path_kind() {
-        use crate::index::{Index, IndexEntry, MODE_REGULAR};
-
-        let mut index = Index::new();
-        let path = vec![0xff, b'a'];
-        let o1 = ObjectId::from_hex("1111111111111111111111111111111111111111").unwrap();
-        let o2 = ObjectId::from_hex("2222222222222222222222222222222222222222").unwrap();
-        let o3 = ObjectId::from_hex("3333333333333333333333333333333333333333").unwrap();
-        for (stage, oid) in [(1u8, o1), (2, o2), (3, o3)] {
-            let mut entry = IndexEntry {
-                ctime_sec: 0,
-                ctime_nsec: 0,
-                mtime_sec: 0,
-                mtime_nsec: 0,
-                dev: 0,
-                ino: 0,
-                mode: MODE_REGULAR,
-                uid: 0,
-                gid: 0,
-                size: 1,
-                oid,
-                flags: 0,
-                flags_extended: None,
-                path: path.clone(),
-                base_index_pos: 0,
-            };
-            entry.set_stage(stage);
-            index.add_or_replace(entry);
-        }
-        let conflicts = conflicts_from_index(&index);
-        assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].kind, ConflictKind::BothModified);
     }
 
     fn merge_conflict_repo_for_tests() -> TempDir {

@@ -750,8 +750,14 @@ fn plan_rebase_conflict_reports_paths_changes_nothing() {
     )
     .expect("plan");
     match plan {
-        RebasePlan::Conflict { paths, .. } => {
-            assert!(paths.iter().any(|p| p.contains("conflict")));
+        RebasePlan::Conflict { conflicts, .. } => {
+            assert_eq!(
+                conflicts,
+                vec![grit_lib::operation::Conflict {
+                    path: "conflict.txt".into(),
+                    kind: grit_lib::operation::ConflictKind::BothAdded,
+                }]
+            );
         }
         other => panic!("expected conflict, got {other:?}"),
     }
@@ -1009,8 +1015,9 @@ fn rebase_check_reports_conflict_without_side_effects() {
     let after = snapshot_repo_side_effects(wt);
     assert_eq!(before, after, "refs, index, worktree and reflog must match");
     match check {
-        RebaseCheckPlan::Conflict { paths, .. } => {
-            assert!(paths.iter().any(|p| p.contains("conflict")));
+        RebaseCheckPlan::Conflict { conflicts, .. } => {
+            assert!(conflicts.iter().any(|c| c.path.contains("conflict")
+                && c.kind == grit_lib::operation::ConflictKind::BothModified));
         }
         other => panic!("expected conflict prediction, got {other:?}"),
     }

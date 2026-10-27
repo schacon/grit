@@ -8,6 +8,7 @@ use grit_lib::command_runner::system_command_runner;
 use grit_lib::config::ident_resolve::IdentRole;
 use grit_lib::error::Error as LibError;
 use grit_lib::objects::ObjectId;
+use grit_lib::operation::Conflict;
 use grit_lib::porcelain::hunk_select::{parse_hunk_id_list, HunkSelectError, HunkSelection};
 use grit_lib::repo::Repository;
 use grit_lib::revwalk::history::{
@@ -33,8 +34,8 @@ use crate::json_error;
 use crate::markdown;
 use crate::message_input::{parse_author_cli, read_message_input, AuthorArg, MessageInputArgs};
 use crate::operation_output::{
-    render_conflicts_human, render_rebase_conflict_footer_human, ConflictJson,
-    OperationConflictBlock,
+    conflict_json, conflict_paths, render_conflicts_human, render_rebase_conflict_footer_human,
+    ConflictJson, OperationConflictBlock,
 };
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 use crate::pathspec_args::TrailingPathspecArgs;
@@ -143,17 +144,8 @@ impl RebaseCheckOutcome {
         }
     }
 
-    fn conflicts(commit: ObjectId, paths: Vec<String>) -> Self {
-        let conflicts = Some(
-            paths
-                .iter()
-                .map(|path| ConflictJson {
-                    path: path.clone(),
-                    kind: "content".into(),
-                    summary: None,
-                })
-                .collect(),
-        );
+    fn conflicts(commit: ObjectId, conflicts: &[Conflict]) -> Self {
+        let conflicts = Some(conflicts.iter().map(|c| conflict_json(c, None)).collect());
         Self {
             operation: "rebase".into(),
             result: RebaseCheckResult::Conflicts,
@@ -445,7 +437,7 @@ impl RebaseCliOutcome {
         outcome
     }
 
-    fn from_stop(commit: ObjectId, conflicts: &[grit_lib::operation::Conflict]) -> Self {
+    fn from_stop(commit: ObjectId, conflicts: &[Conflict]) -> Self {
         let block = OperationConflictBlock::for_rebase(conflicts);
         Self {
             command: None,
@@ -1143,9 +1135,9 @@ fn run_rebase_with_exec(
         RebasePlan::UpToDate => Ok(RebaseRunOutcome::Rebase(RebaseCliOutcome::from_rewrite(
             HistoryRewriteOutcome::up_to_date("rebase", false),
         ))),
-        RebasePlan::Conflict { commit, paths } => Err(json_error::operation_conflict(
+        RebasePlan::Conflict { commit, conflicts } => Err(json_error::operation_conflict(
             "rebase",
-            paths,
+            conflict_paths(conflicts),
             Some(commit),
         )),
         RebasePlan::Plan(plan) => {
@@ -1321,9 +1313,9 @@ pub fn run_rebase(opts: &RebaseRunOptions<'_>) -> Result<RebaseRunOutcome> {
             RebasePlan::UpToDate => Ok(RebaseRunOutcome::Rebase(RebaseCliOutcome::from_rewrite(
                 HistoryRewriteOutcome::up_to_date("rebase", shared.dry_run),
             ))),
-            RebasePlan::Conflict { commit, paths } => Err(json_error::operation_conflict(
+            RebasePlan::Conflict { commit, conflicts } => Err(json_error::operation_conflict(
                 "rebase",
-                paths,
+                conflict_paths(conflicts),
                 Some(commit),
             )),
             RebasePlan::Plan(plan) => {
@@ -1457,8 +1449,8 @@ fn run_rebase_check(
         RebaseCheckPlan::Clean { commits } => {
             Ok(RebaseRunOutcome::Check(RebaseCheckOutcome::clean(commits)))
         }
-        RebaseCheckPlan::Conflict { commit, paths } => Ok(RebaseRunOutcome::Check(
-            RebaseCheckOutcome::conflicts(commit, paths),
+        RebaseCheckPlan::Conflict { commit, conflicts } => Ok(RebaseRunOutcome::Check(
+            RebaseCheckOutcome::conflicts(commit, &conflicts),
         )),
     }
 }
@@ -1585,10 +1577,8 @@ fn map_history_error(err: HistoryError, operation: &str) -> anyhow::Error {
             let short = &commit.to_hex()[..7];
             anyhow::anyhow!("{operation} makes commit {short} empty")
         }
-        HistoryError::Conflict { mut paths, .. } => {
-            paths.sort();
-            paths.dedup();
-            json_error::operation_conflict(operation, paths, None)
+        HistoryError::Conflict { conflicts, .. } => {
+            json_error::operation_conflict(operation, conflict_paths(conflicts), None)
         }
         HistoryError::Planning { message } => {
             anyhow::anyhow!("history rewrite planning failed: {message}")

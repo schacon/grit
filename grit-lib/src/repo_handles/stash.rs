@@ -120,7 +120,8 @@ impl<'repo> RepositoryStash<'repo> {
     ///
     /// # Returns
     ///
-    /// The conflicted paths; [`StashApplyOutcome::has_conflicts`] is false on a clean apply.
+    /// The conflicted paths and their kinds; [`StashApplyOutcome::has_conflicts`] is false on a
+    /// clean apply.
     ///
     /// # Errors
     ///
@@ -149,7 +150,8 @@ impl<'repo> RepositoryStash<'repo> {
     ///
     /// # Returns
     ///
-    /// The conflicted paths. When [`StashApplyOutcome::has_conflicts`] is true the entry is kept.
+    /// The conflicted paths and their kinds. When [`StashApplyOutcome::has_conflicts`] is true
+    /// the entry is kept.
     ///
     /// # Errors
     ///

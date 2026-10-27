@@ -1078,7 +1078,10 @@ fn a_conflicting_refresh_stops_in_a_rebase_to_finish_with_grit_rebase() {
     assert_eq!(stopped.status.code(), Some(1));
     let text = String::from_utf8_lossy(&stopped.stdout);
     assert!(text.contains("main moved"), "{text}");
-    assert!(text.contains("CONFLICT (content): src/a.rs"), "{text}");
+    assert!(
+        text.contains("CONFLICT (both_modified): src/a.rs"),
+        "{text}"
+    );
     assert!(
         text.contains("stopped on a conflict") && text.contains("grit rebase --continue"),
         "{text}"

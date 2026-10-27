@@ -4,6 +4,9 @@ use std::path::Path;
 
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::error::Error;
+use grit_lib::operation::ConflictKind;
+use grit_lib::porcelain::status::{status, StatusOptions};
+use grit_lib::progress::{NeverCancel, NullProgress};
 use grit_lib::repo::Repository;
 use grit_lib::stash::{StashApplyOptions, StashApplyOutcome};
 use grit_test_support::git;
@@ -38,6 +41,10 @@ fn git_unmerged(root: &Path) -> Vec<String> {
         .collect();
     paths.dedup();
     paths
+}
+
+fn conflicted_paths(outcome: &StashApplyOutcome) -> Vec<String> {
+    outcome.conflicts.iter().map(|c| c.path.clone()).collect()
 }
 
 fn copy_repo(from: &Path, to: &Path) {
@@ -100,15 +107,31 @@ fn apply_entry_reports_conflicts_git_also_sees() {
         .apply(0, &StashApplyOptions::default())
         .expect("apply");
     assert!(outcome.has_conflicts());
-    assert_eq!(outcome.conflicted_paths, ["a.txt", "dir/b.txt"]);
+    assert_eq!(conflicted_paths(&outcome), ["a.txt", "dir/b.txt"]);
+    assert!(outcome
+        .conflicts
+        .iter()
+        .all(|c| c.kind == ConflictKind::BothModified));
+    let model = status(
+        &repo,
+        &StatusOptions::default(),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("status");
+    assert_eq!(model.conflict_details, outcome.conflicts);
 
     // git reads the index grit wrote and sees the same unmerged paths.
-    assert_eq!(git_unmerged(dir.path()), outcome.conflicted_paths);
+    assert_eq!(git_unmerged(dir.path()), conflicted_paths(&outcome));
+    for path in ["a.txt", "dir/b.txt"] {
+        let xy = git(dir.path(), &["status", "--porcelain=v2", "--", path]);
+        assert!(xy.starts_with("u UU "), "{path}: {xy}");
+    }
     // system git applying the same stash leaves the same paths unmerged.
     let _ = grit_test_support::git_cmd(&["stash", "apply", "-q"])
         .in_dir(reference.path())
         .exec();
-    assert_eq!(git_unmerged(reference.path()), outcome.conflicted_paths);
+    assert_eq!(git_unmerged(reference.path()), conflicted_paths(&outcome));
 
     assert_eq!(
         std::fs::read_to_string(dir.path().join("clean.txt")).expect("read"),
@@ -131,7 +154,7 @@ fn pop_entry_with_conflicts_keeps_entry() {
         .stash()
         .pop(0, &StashApplyOptions::default())
         .expect("pop");
-    assert_eq!(outcome.conflicted_paths, ["a.txt", "dir/b.txt"]);
+    assert_eq!(conflicted_paths(&outcome), ["a.txt", "dir/b.txt"]);
     assert_eq!(repo.stash().list().expect("list").len(), 1);
     assert_eq!(git(dir.path(), &["stash", "list"]).lines().count(), 1);
 }
