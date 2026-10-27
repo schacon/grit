@@ -1736,6 +1736,24 @@ pub enum Error {
         repository: std::path::PathBuf,
     },
 
+    /// [`RepositoryBuilder::open`](crate::repo::RepositoryBuilder::open) was given an
+    /// [`OdbBuilder`](crate::odb::OdbBuilder) whose custom primary or read source hashes
+    /// objects with a different algorithm than the repository's `extensions.objectformat`
+    /// (SHA-1 when unset).
+    #[error(
+        "object store hashes with {} but the repository's object format is {}",
+        store.name(),
+        repository.name()
+    )]
+    #[non_exhaustive]
+    ObjectFormatMismatch {
+        /// The repository's object format from its config.
+        repository: crate::objects::HashAlgo,
+        /// The first injected store's [`hash_algo`](crate::odb::store::ObjectStore::hash_algo)
+        /// that differs from `repository`.
+        store: crate::objects::HashAlgo,
+    },
+
     /// Parsing a [`crate::tree_sha256::TreeSha256`] from hex failed (expected 64 hex digits).
     #[error("invalid tree-sha256 hex")]
     TreeSha256InvalidHex,

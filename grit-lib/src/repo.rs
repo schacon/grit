@@ -328,6 +328,10 @@ impl RepositoryBuilder {
     /// - [`Error::OdbObjectsDirMismatch`] when a files-backed [`Self::odb_builder`] names a
     ///   directory other than the repository's `objects/` (or the environment's
     ///   `GIT_OBJECT_DIRECTORY`).
+    /// - [`Error::ObjectFormatMismatch`] when the builder's custom primary or a read source
+    ///   reports a [`hash_algo`](crate::odb::store::ObjectStore::hash_algo) other than the
+    ///   repository's `extensions.objectformat` (SHA-1 when unset or when the git directory
+    ///   has no config).
     /// - [`Error::InvalidRef`] when [`Self::initial_branch`] is not a valid branch name.
     /// - [`Error::RefStore`] when seeding `HEAD` in the ref store fails.
     pub fn open(self, git_dir: &Path, work_tree: Option<&Path>) -> Result<Repository> {
@@ -344,6 +348,27 @@ impl RepositoryBuilder {
             seed_unborn_head(repo.refs(), &branch)?;
         }
         Ok(repo)
+    }
+}
+
+/// Fail with [`Error::ObjectFormatMismatch`] when an injected store in `builder` hashes with
+/// another algorithm than `git_dir`'s `extensions.objectformat`.
+///
+/// Files-backed primaries and alternates take the repository's algorithm themselves, so a
+/// builder without injected stores skips the config read.
+fn check_injected_object_format(
+    builder: &crate::odb::OdbBuilder,
+    environment: &Environment,
+    git_dir: &Path,
+) -> Result<()> {
+    let mut injected = builder.injected_hash_algos().peekable();
+    if injected.peek().is_none() {
+        return Ok(());
+    }
+    let repository = crate::odb::hash_algo_for_git_dir(environment, git_dir);
+    match injected.find(|algo| *algo != repository) {
+        Some(store) => Err(Error::ObjectFormatMismatch { repository, store }),
+        None => Ok(()),
     }
 }
 
@@ -1688,6 +1713,8 @@ impl Repository {
             });
         }
         builder.set_objects_dir(objects_dir);
+
+        check_injected_object_format(&builder, &environment, &git_dir)?;
 
         let work_tree = match work_tree {
             Some(p) => {

@@ -37,6 +37,8 @@ A damaged copy ([`Error::Zlib`](rustdoc:grit_lib::error::Error::Zlib) or [`Error
 
 Pass an [`OdbBuilder`](rustdoc:grit_lib::objects::odb::OdbBuilder) rooted at the repository's `objects/` directory (or at `GIT_OBJECT_DIRECTORY` when the environment sets it) to [`RepositoryBuilder::odb_builder`](rustdoc:grit_lib::repo::RepositoryBuilder::odb_builder). Any path naming that directory works: one through symlinks (such as macOS `/var` → `/private/var` or `/tmp` → `/private/tmp`) or one relative to the environment's current directory. The opened [`Odb`](rustdoc:grit_lib::objects::odb::Odb) reports the canonical path. A builder rooted anywhere else fails with [`Error::OdbObjectsDirMismatch`](rustdoc:grit_lib::error::Error::OdbObjectsDirMismatch).
 
+The custom primary and every read source must hash with the repository's object format: the `extensions.objectformat` value in `<git_dir>/config`, or SHA-1 when that key or the config file is missing. Create the store with the same [`HashAlgo`](rustdoc:grit_lib::objects::HashAlgo) the repository was initialized with (`MemoryStore::new(HashAlgo::Sha256)` for a SHA-256 repository). A store that reports another algorithm through `ObjectStore::hash_algo` fails to open with [`Error::ObjectFormatMismatch`](rustdoc:grit_lib::error::Error::ObjectFormatMismatch), whose `repository` and `store` fields name the two algorithms, instead of writing object ids the repository's refs, index and config disagree with. Calling `OdbBuilder::build` on its own does no check, since there is no repository config to compare against.
+
 <!-- include: grit-examples/src/bin/memory_primary.rs -->
 
 ```bash
