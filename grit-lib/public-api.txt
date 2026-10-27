@@ -5575,6 +5575,7 @@ pub grit_lib::error::Error::CheckoutRollbackIncomplete::unrestored: alloc::vec::
 pub grit_lib::error::Error::CommitGraphParentMissing
 pub grit_lib::error::Error::CommitGraphParentMissing::commit: grit_lib::objects::ObjectId
 pub grit_lib::error::Error::CommitGraphParentMissing::parent: grit_lib::objects::ObjectId
+pub grit_lib::error::Error::CommitPathsRequired
 pub grit_lib::error::Error::Config(grit_lib::error::ConfigError)
 pub grit_lib::error::Error::CorruptObject(alloc::string::String)
 pub grit_lib::error::Error::CorruptStash(&'static str)
@@ -15904,6 +15905,7 @@ pub grit_lib::prelude::Error::CheckoutRollbackIncomplete::unrestored: alloc::vec
 pub grit_lib::prelude::Error::CommitGraphParentMissing
 pub grit_lib::prelude::Error::CommitGraphParentMissing::commit: grit_lib::objects::ObjectId
 pub grit_lib::prelude::Error::CommitGraphParentMissing::parent: grit_lib::objects::ObjectId
+pub grit_lib::prelude::Error::CommitPathsRequired
 pub grit_lib::prelude::Error::Config(grit_lib::error::ConfigError)
 pub grit_lib::prelude::Error::CorruptObject(alloc::string::String)
 pub grit_lib::prelude::Error::CorruptStash(&'static str)

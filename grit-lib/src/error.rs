@@ -1320,6 +1320,11 @@ pub enum Error {
     #[error("you must specify path(s) to remove")]
     RemovePathsRequired,
 
+    /// [`crate::porcelain::commit::commit_with_scope`] was called with an empty
+    /// [`CommitScope::Paths`](crate::porcelain::commit::CommitScope::Paths) pathspec list.
+    #[error("you must specify path(s)")]
+    CommitPathsRequired,
+
     /// [`crate::porcelain::paths::move_path`] / [`crate::porcelain::paths::move_paths`] source is not tracked.
     #[error("not under version control, source={src}")]
     MoveSourceNotTracked {
@@ -1975,6 +1980,7 @@ impl Error {
             Self::RequiresWorkTree => "requires_work_tree",
             Self::EmptyCommitMessage => "empty_commit_message",
             Self::RemovePathsRequired => "remove_paths_required",
+            Self::CommitPathsRequired => "commit_paths_required",
             Self::MoveSourceNotTracked { .. } => "move_source_not_tracked",
             Self::MoveDestinationExists { .. } => "move_destination_exists",
             Self::MoveIntoSubdirectory { .. } => "move_into_subdirectory",

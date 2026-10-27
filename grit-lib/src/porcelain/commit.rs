@@ -330,8 +330,15 @@ pub fn pending_commit_message(repo: &Repository) -> Result<Option<String>> {
 ///
 /// # Errors
 ///
-/// Same as [`create_commit`] and [`commit_worktree`], plus [`Error::PartialCommitDuringMerge`]
-/// for [`CommitScope::Paths`] during an in-progress merge, and pathspec validation errors.
+/// Same as [`create_commit`] and [`commit_worktree`], plus:
+///
+/// - [`Error::CommitPathsRequired`] for an empty [`CommitScope::Paths`] list.
+/// - [`Error::PartialCommitDuringMerge`] for [`CommitScope::Paths`] or [`CommitScope::Patch`]
+///   during an in-progress merge, and pathspec validation errors.
+/// - [`Error::HunkSelection`] when a [`CommitScope::Patch`] hunk id is unknown, stale, binary, or
+///   for the wrong side, and [`Error::Apply`] when the selected patch does not apply to the
+///   index. These carry the same values as [`CommitPatchError::Select`] and
+///   [`CommitPatchError::Apply`] from [`commit_with_patch`].
 pub fn commit_with_scope(
     repo: &Repository,
     req: &CommitRequest,
@@ -352,8 +359,9 @@ pub fn commit_with_scope(
         CommitScope::Paths(paths) => commit_paths_scope(repo, req, &paths, progress, cancel),
         CommitScope::Patch { input, pathspecs } => {
             commit_with_patch(repo, req, input, &pathspecs, progress, cancel).map_err(|e| match e {
+                CommitPatchError::Select(err) => Error::HunkSelection(err),
+                CommitPatchError::Apply(err) => Error::Apply(err),
                 CommitPatchError::Commit(err) => err,
-                other => Error::Message(other.to_string()),
             })
         }
     }
@@ -522,7 +530,7 @@ fn commit_paths_scope(
     cancel: &dyn Cancel,
 ) -> Result<CommitOutcome> {
     if paths.specs.is_empty() {
-        return Err(Error::Message("you must specify path(s)".into()));
+        return Err(Error::CommitPathsRequired);
     }
     if !read_merge_heads(repo.git_dir())?.is_empty() {
         return Err(Error::PartialCommitDuringMerge);
@@ -541,7 +549,7 @@ fn commit_paths_scope(
         }
         HeadState::Branch { oid: None, .. } => None,
         HeadState::Invalid => {
-            return Err(Error::Message("HEAD is in an unknown state".into()));
+            return Err(Error::InvalidHead);
         }
     };
 
@@ -1200,7 +1208,7 @@ fn create_commit_with_index(
         } => (refname, Some(short_name), oid),
         HeadState::Detached { oid } => ("HEAD".to_owned(), None, Some(oid)),
         HeadState::Invalid => {
-            return Err(Error::Message("HEAD is in an unknown state".into()));
+            return Err(Error::InvalidHead);
         }
     };
 
@@ -4376,5 +4384,184 @@ mod tests {
             before_tip
         );
         assert_eq!(repo.load_index().unwrap().entries[0].oid, before_index_oid);
+    }
+
+    #[test]
+    fn commit_with_scope_stale_hunk_id_is_typed() {
+        use crate::diff::hunk_id::HunkId;
+        use crate::porcelain::hunk_select::{HunkSelectError, HunkSelection};
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("a.txt"), b"one\ntwo\n").unwrap();
+        commit_with_scope(
+            &repo,
+            &commit_req("first"),
+            CommitScope::AutoStage,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        let before_tip = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();
+        let before_index_oid = repo.load_index().unwrap().entries[0].oid;
+
+        fs::write(root.join("a.txt"), b"one\ntwo\nthree\n").unwrap();
+        let stale = HunkId::from_str("000000000000").unwrap();
+        let err = commit_with_scope(
+            &repo,
+            &commit_req("bogus"),
+            CommitScope::Patch {
+                input: CommitPatchInput::Hunks(HunkSelection {
+                    ids: vec![stale.clone()],
+                    ranges: Vec::new(),
+                }),
+                pathspecs: Vec::new(),
+            },
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap_err();
+        match &err {
+            Error::HunkSelection(HunkSelectError::StaleId { id, .. }) => assert_eq!(id, &stale),
+            other => panic!("expected stale hunk id error, got {other:?}"),
+        }
+        assert_eq!(err.to_string(), "stale hunk id 000000000000");
+        assert_eq!(err.kind_name(), "hunk_selection");
+        assert_eq!(
+            resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap(),
+            before_tip
+        );
+        assert_eq!(repo.load_index().unwrap().entries[0].oid, before_index_oid);
+
+        let plan_err = plan_commit(
+            &repo,
+            &commit_req("bogus"),
+            CommitScope::Patch {
+                input: CommitPatchInput::Hunks(HunkSelection {
+                    ids: vec![stale],
+                    ranges: Vec::new(),
+                }),
+                pathspecs: Vec::new(),
+            },
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            plan_err,
+            Error::HunkSelection(HunkSelectError::StaleId { .. })
+        ));
+    }
+
+    #[test]
+    fn commit_with_scope_patch_apply_failure_is_typed() {
+        use crate::diff::hunk_id::{hunk_ids_with_duplicate_peers, DiffSide};
+        use crate::diff::{unstaged_file_diffs_with_peer_hunks, DiffOptions};
+        use crate::porcelain::hunk_select::{resolve_selection, HunkSelection};
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        let (base, edited) = two_hunk_file();
+        fs::write(root.join("f.txt"), base).unwrap();
+        stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        create_commit(
+            &repo,
+            &commit_req("init"),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        fs::write(root.join("f.txt"), edited).unwrap();
+
+        let (files, peers) =
+            unstaged_file_diffs_with_peer_hunks(&repo, &[], DiffOptions::default()).unwrap();
+        let ids = hunk_ids_with_duplicate_peers(
+            DiffSide::Unstaged,
+            "f.txt",
+            &files[0].hunks,
+            peers.get("f.txt").map(|v| v.as_slice()).unwrap_or(&[]),
+        );
+        let patch = resolve_selection(
+            &repo,
+            DiffSide::Unstaged,
+            &HunkSelection {
+                ids: vec![ids[0].clone()],
+                ranges: Vec::new(),
+            },
+            &[],
+            DiffOptions::default(),
+        )
+        .unwrap();
+        let patch_scope = |patch: Vec<FilePatch>| CommitScope::Patch {
+            input: CommitPatchInput::Patches(patch),
+            pathspecs: Vec::new(),
+        };
+        commit_with_scope(
+            &repo,
+            &commit_req("first hunk"),
+            patch_scope(patch.clone()),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        let before_tip = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();
+
+        // The index already holds the postimage, so the same patch no longer applies.
+        let err = commit_with_scope(
+            &repo,
+            &commit_req("again"),
+            patch_scope(patch),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Apply(_)), "got {err:?}");
+        assert_eq!(err.kind_name(), "apply");
+        assert_eq!(
+            resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap(),
+            before_tip
+        );
+    }
+
+    #[test]
+    fn commit_with_scope_empty_paths_is_typed() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("a.txt"), b"one\n").unwrap();
+        commit_with_scope(
+            &repo,
+            &commit_req("first"),
+            CommitScope::AutoStage,
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        let before_tip = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();
+
+        fs::write(root.join("a.txt"), b"two\n").unwrap();
+        let err = commit_with_scope(
+            &repo,
+            &commit_req("x"),
+            CommitScope::Paths(ResolvedPathspecs::default()),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::CommitPathsRequired), "got {err:?}");
+        assert_eq!(err.to_string(), "you must specify path(s)");
+        assert_eq!(err.kind_name(), "commit_paths_required");
+        assert_eq!(
+            resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap(),
+            before_tip
+        );
     }
 }
