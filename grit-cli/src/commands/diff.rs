@@ -21,15 +21,15 @@ use grit_lib::diff::{
     diff_index_to_worktree_with_renames, diff_trees_with_renames_and_policy,
     for_each_tree_diff_structured, hunk_ids_with_duplicate_peers, line_change_counts,
     peer_hunks_by_primary_path, peer_scope_includes_path, read_submodule_head_oid,
-    read_worktree_side_bytes_for_diff, resolve_diff_request,
+    read_worktree_side_bytes_for_diff, resolve_diff_request, sort_entries_by_path,
     structured::{
         format_hunk_range, structured_file_diff, SideBytes, StructuredFileDiff, StructuredLineKind,
     },
     submodule_porcelain_flags, tree_diff_structured_parallel, write_commit_log_patch,
     write_commits_log_patch, write_patch, write_patch_resolved, DiffArguments, DiffDetail,
     DiffEntry, DiffFilesOutput, DiffIndexToWorktreeOptions, DiffMerges, DiffOptions, DiffRequest,
-    DiffSide, DiffStatus, DiffTarget, LogPatchCommitHeader, LogPatchOptions, PatchResolvedSide,
-    PatchSide, PatchTextOptions, ResolveDiffArgumentsError, TreeDiffStructured,
+    DiffSide, DiffStatus, DiffTarget, ListedFileDiff, LogPatchCommitHeader, LogPatchOptions,
+    PatchResolvedSide, PatchSide, PatchTextOptions, ResolveDiffArgumentsError, TreeDiffStructured,
 };
 use grit_lib::index::Index;
 use grit_lib::objects::odb::Odb;
@@ -504,11 +504,19 @@ fn outcome_from_lib(
         insertions: t.insertions,
         deletions: t.deletions,
     });
-    let files: Vec<FileDiff> = output
+    let files = output
         .files
         .into_iter()
         .map(|f| lib_file_to_cli(f, detail))
         .collect();
+    outcome_from_files(files, totals, format)
+}
+
+fn outcome_from_files(
+    files: Vec<FileDiff>,
+    totals: Option<DiffTotalsJson>,
+    format: DiffFormatArgs,
+) -> DiffOutcome {
     DiffOutcome {
         changed: !files.is_empty(),
         files,
@@ -520,7 +528,7 @@ fn outcome_from_lib(
     }
 }
 
-fn lib_file_to_cli(f: grit_lib::diff::ListedFileDiff, detail: DiffDetail) -> FileDiff {
+fn lib_file_to_cli(f: ListedFileDiff, detail: DiffDetail) -> FileDiff {
     let content_changed = f
         .stat
         .map(|s| s.insertions + s.deletions > 0)
@@ -613,6 +621,13 @@ fn outcome_from_entries(
     diff_options: DiffOptions,
     format: DiffFormatArgs,
 ) -> Result<DiffOutcome> {
+    if matches!(detail, DiffDetail::NameOnly | DiffDetail::NameStatus) {
+        let files = entries
+            .into_iter()
+            .map(|entry| lib_file_to_cli(ListedFileDiff::from_metadata(entry), detail))
+            .collect();
+        return Ok(outcome_from_files(files, None, format));
+    }
     let config = repo.config().context("could not load config")?;
     let thread_policy = repo.thread_policy();
     let output = build_file_diffs(
@@ -1165,7 +1180,7 @@ pub fn outcome_from_tree_entries(
     repo: &grit_lib::repo::Repository,
     mut entries: Vec<DiffEntry>,
 ) -> Result<DiffOutcome> {
-    sort_entries(&mut entries);
+    sort_entries_by_path(&mut entries);
     let changes = entries
         .into_iter()
         .map(|e| {
@@ -1639,7 +1654,7 @@ fn unstaged_entries_in_index(
         rename_similarity_threshold(diff_options),
     )
     .context("could not diff the index against the working tree")?;
-    sort_entries(&mut entries);
+    sort_entries_by_path(&mut entries);
     Ok(entries)
 }
 
@@ -1771,7 +1786,7 @@ fn tree_commit_entries(
     )
     .context("could not diff commits")?;
     entries = apply_diff_filter(entries, diff_options.filter);
-    sort_entries(&mut entries);
+    sort_entries_by_path(&mut entries);
     Ok(entries)
 }
 
@@ -1798,7 +1813,7 @@ fn commit_entries(
         thread_policy,
     )
     .context("could not diff the commit")?;
-    sort_entries(&mut entries);
+    sort_entries_by_path(&mut entries);
     Ok(entries)
 }
 
@@ -1935,7 +1950,7 @@ fn staged_entries_in_index(
         &thread_policy,
     )
     .context("could not diff the index against HEAD")?;
-    sort_entries(&mut entries);
+    sort_entries_by_path(&mut entries);
     Ok(entries)
 }
 
@@ -2024,7 +2039,7 @@ fn worktree_against_tree_entries_with_index(
         )
         .context("could not detect renames in the working tree diff")?
     };
-    sort_entries(&mut entries);
+    sort_entries_by_path(&mut entries);
     Ok(entries)
 }
 
@@ -2061,10 +2076,6 @@ fn worktree_against_tree(
             Ok(file_change(e, old_bytes, new_bytes, old_bin || new_bin))
         })
         .collect()
-}
-
-fn sort_entries(entries: &mut [DiffEntry]) {
-    entries.sort_by(|a, b| a.path().cmp(b.path()));
 }
 
 fn file_change(

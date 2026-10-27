@@ -219,6 +219,66 @@ estimates change from 20.620/24.655 ms to 19.828/23.989 ms. Repeated cold/warm
 estimates are 3.392/3.991 ms before and 3.493/3.932 ms after; Criterion detects no
 significant change in either repeated-subtree case.
 
+## Tree metadata diff through the CLI (2026-10-27)
+
+After the library fix above, `grit diff --name-status base HEAD` on the same
+fixture still peaked about 14 MB above the public `Diff::tree_to_tree` consumer.
+Three copies were responsible. Rename detection, which the CLI runs by default,
+split every entry into new vectors and rebuilt the list even when nothing could
+pair, so a diff of modifications briefly held its metadata twice. The CLI then
+converted the entries into library `FileDiff` rows and those into its own output
+rows, keeping a third full list alive. Finally, each tree read for the ODB’s
+parsed-tree cache was also copied into the raw loose-object cache.
+
+Rename detection now returns its input unchanged, without reading content, when the
+list has no added/deleted pair and its paths are already in order. The CLI maps each
+entry straight to its output row through `FileDiff::from_metadata`, and trees read for
+the parsed cache skip the raw copy. Diff lists are now ordered by raw path bytes in
+one shared helper, `sort_entries_by_path`, which also skips the stable sort’s scratch
+allocation when the list is already ordered. That moves non-UTF-8 paths to the
+position Git gives them: previously, an encoded name sorted by its encoded form.
+
+The setup matches the section above: the exact 120k/20k fixture, loose and packed
+copies, Rust 1.99.0, a four-vCPU AMD EPYC 7763 VM with 16 GiB RAM, and stock Git
+2.55.0. Main is `3681c1778`. Each tool gets one warmup, then five interleaved runs
+that reverse order each round, with builds and tests idle. Wall time is the median;
+RSS is the maximum process peak, in KiB. The Git column is `git diff --name-status`
+with the same rename setting (`--no-renames` for the API row).
+Release rows use `cargo build --release`. Dist rows use the `dist` profile that
+releases ship (fat LTO, one codegen unit).
+
+| Storage / operation | Git ms | Main ms | Fixed ms | Git RSS KiB | Main RSS KiB | Fixed RSS KiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| loose / public tree_to_tree consumer | 50.49 | 59.94 | 57.61 | 10,856 | 19,896 | 18,244 |
+| loose / CLI `--name-status` | 50.48 | 55.31 | 52.87 | 10,952 | 33,624 | 30,480 |
+| loose / CLI `--name-status --no-renames` | 50.64 | 55.98 | 53.91 | 10,888 | 33,652 | 30,604 |
+| loose / CLI `--name-only` | 50.88 | 54.42 | 52.71 | 10,944 | 33,560 | 30,592 |
+| loose / CLI `--name-status --json` | — | 61.25 | 56.93 | — | 33,640 | 30,480 |
+| loose / CLI `--name-status`, dist | 50.48 | 52.06 | 50.37 | 10,952 | 30,884 | 27,480 |
+| packed / public tree_to_tree consumer | 34.44 | 50.80 | 50.50 | 22,364 | 30,400 | 28,688 |
+| packed / CLI `--name-status` | 34.74 | 50.66 | 46.99 | 22,236 | 44,348 | 41,380 |
+| packed / CLI `--name-status`, dist | 34.74 | 47.57 | 45.15 | 22,236 | 41,460 | 38,124 |
+
+Peak RSS falls by 3.0–3.4 MB for every CLI row (9–11%) and by 1.7 MB for the API
+consumer, and no row gets slower. The live heap now matches the library’s: at exit, the CLI holds
+10.4 MB of anonymous memory and the consumer 9.8 MB. The remaining gap to the
+consumer, and most of the gap to Git, is executable code. The CLI runs about 0.9 MB
+of distinct machine code for this command, but that code is spread across 162
+separate 64 KiB blocks of the 24 MB text segment. The kernel maps whole fault-around
+windows, so about 10 MB of the `grit` binary stays resident. Git touches 1.9 MB of
+its binary, and the API consumer 2.4 MB. Fat LTO in the dist profile cuts this to
+6.9 MB; thin LTO does not help. This cost is per process rather than per diff, so it
+is a build-layout problem, not a diff-memory one: an empty `grit diff HEAD HEAD`
+peaks at 15 MB.
+
+Criterion’s `diff/tree_diff_siblings` gains a `distributed/cold+renames` case, the
+CLI’s path with default rename detection. With 1 s warmup, 3 s measurement and 20
+samples, it moves from 28.2–29.6 ms on main (three runs) to 26.3–27.2 ms (two runs).
+The other four cases stay within run-to-run noise: distributed cold/warm 23.7–24.9/26.8–28.5 ms before
+and 23.6–24.1/26.2–28.2 ms after, repeated cold/warm 4.28–4.57/4.59–4.71 ms before
+and 4.53–4.68/4.58–4.85 ms after. Raw samples are in
+[`tree-metadata-cli-2083.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/tree-metadata-cli-2083.json).
+
 ## Sparse reset and switch (2026-10-27)
 
 Issue [#2081](https://github.com/gitbutlerapp/grit/issues/2081) found full-tree

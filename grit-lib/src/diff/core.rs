@@ -3561,7 +3561,7 @@ fn diff_index_to_tree_flatten(
         &mut result,
     );
 
-    result.sort_by(|a, b| a.path().cmp(b.path()));
+    sort_entries_by_path(&mut result);
     Ok(result)
 }
 
@@ -3658,7 +3658,7 @@ fn diff_index_to_tree_with_cache_tree(
         });
     }
 
-    result.sort_by(|a, b| a.path().cmp(b.path()));
+    sort_entries_by_path(&mut result);
     Ok(result)
 }
 
@@ -7384,7 +7384,7 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
         }
     }
 
-    result.sort_by(|a, b| a.path().cmp(b.path()));
+    sort_entries_by_path(&mut result);
     Ok(result)
 }
 
@@ -7521,6 +7521,15 @@ fn poll_rename_cancel(
 }
 
 /// Like [`detect_renames`], but honors `index.threads` / `--threads` via `thread_policy`.
+///
+/// A list without both an added and a deleted entry has nothing to pair. When its paths
+/// are also unique and in [`sort_entries_by_path`] order, as tree diffs return them, the
+/// list comes back unchanged without reading blobs or allocating.
+///
+/// # Errors
+///
+/// Returns object database errors from reading candidate blobs, and the cancellation
+/// error when `cancel_watch` is set.
 pub fn detect_renames_with_policy(
     odb: &Odb,
     work_root: Option<&Path>,
@@ -7531,6 +7540,12 @@ pub fn detect_renames_with_policy(
     cancel_watch: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<Vec<DiffEntry>> {
     poll_rename_cancel(cancel_watch)?;
+    let has_deleted = entries.iter().any(|e| e.status == DiffStatus::Deleted);
+    let has_added = entries.iter().any(|e| e.status == DiffStatus::Added);
+    if (!has_deleted || !has_added) && entries_strictly_sorted_by_path(&entries) {
+        // With unique sorted paths, regrouping and re-sorting would rebuild the same list.
+        return Ok(entries);
+    }
     // Split entries into deleted, added, and others.
     let mut deleted: Vec<DiffEntry> = Vec::new();
     let mut added: Vec<DiffEntry> = Vec::new();
@@ -7549,9 +7564,7 @@ pub fn detect_renames_with_policy(
         let mut result = others;
         result.extend(deleted);
         result.extend(added);
-        if !entries_sorted_by_path(&result) {
-            result.sort_by(|a, b| a.path().cmp(b.path()));
-        }
+        sort_entries_by_path(&mut result);
         return Ok(result);
     }
 
@@ -7832,7 +7845,7 @@ pub fn detect_renames_with_policy(
     }
 
     result = prune_break_deletions_obviated_by_renames(result);
-    result.sort_by(|a, b| a.path().cmp(b.path()));
+    sort_entries_by_path(&mut result);
     Ok(result)
 }
 
@@ -7951,7 +7964,7 @@ pub fn detect_copies_with_policy(
         let mut result = others;
         result.extend(deleted);
         result.extend(added);
-        result.sort_by(|a, b| a.path().cmp(b.path()));
+        sort_entries_by_path(&mut result);
         return Ok(result);
     }
 
@@ -8223,7 +8236,7 @@ pub fn detect_copies_with_policy(
         }
     }
 
-    final_result.sort_by(|a, b| a.path().cmp(b.path()));
+    sort_entries_by_path(&mut final_result);
     Ok(final_result)
 }
 
@@ -11042,13 +11055,39 @@ fn is_tree_mode(mode: u32) -> bool {
     mode == 0o040000
 }
 
-/// Build a path with an optional prefix.
-fn entries_sorted_by_path(entries: &[DiffEntry]) -> bool {
-    entries
-        .windows(2)
-        .all(|pair| pair[0].path().cmp(pair[1].path()) != std::cmp::Ordering::Greater)
+/// Git orders diff lists by raw path bytes, which differs from the stored form of
+/// non-UTF-8 paths (see [`crate::repo_relpath::storage_bytes`]).
+fn path_order(a: &DiffEntry, b: &DiffEntry) -> std::cmp::Ordering {
+    use crate::repo_relpath::storage_bytes;
+    storage_bytes(a.path()).cmp(&storage_bytes(b.path()))
 }
 
+fn entries_sorted_by_path(entries: &[DiffEntry]) -> bool {
+    entries.is_sorted_by(|a, b| path_order(a, b).is_le())
+}
+
+fn entries_strictly_sorted_by_path(entries: &[DiffEntry]) -> bool {
+    entries.is_sorted_by(|a, b| path_order(a, b).is_lt())
+}
+
+/// Stable-sort diff entries by [`DiffEntry::path`] in raw byte order, Git's output order
+/// for diff lists (non-UTF-8 paths compare by their decoded bytes).
+///
+/// Tree diffs and rename detection already return entries in this order, so the common
+/// case is a single comparison pass with no allocation (a stable sort would otherwise
+/// allocate scratch space proportional to the list).
+///
+/// # Parameters
+///
+/// - `entries`: the list to order in place; entries with equal paths keep their order.
+pub fn sort_entries_by_path(entries: &mut [DiffEntry]) {
+    if entries_sorted_by_path(entries) {
+        return;
+    }
+    entries.sort_by(path_order);
+}
+
+/// Build a path with an optional prefix.
 fn format_path(prefix: &str, name: &str) -> String {
     if prefix.is_empty() {
         name.to_owned()
@@ -11720,6 +11759,96 @@ mod line_compare_key_tests {
         assert_eq!(body.lines().filter(|l| l.starts_with('-')).count(), 50);
         assert_eq!(body.lines().filter(|l| l.starts_with('+')).count(), 50);
         assert!(body.starts_with("@@ -1,4 +1,4 @@\n-line0\n+LINE0\n line1\n"));
+    }
+}
+
+#[cfg(test)]
+mod entry_order_tests {
+    use super::*;
+
+    fn entry(status: DiffStatus, path: &str, score: Option<u32>) -> DiffEntry {
+        let mode = |present: bool| {
+            if present {
+                FileMode::REGULAR
+            } else {
+                FileMode::ABSENT
+            }
+        };
+        DiffEntry {
+            status,
+            old_path: (status != DiffStatus::Added).then(|| path.to_owned()),
+            new_path: (status != DiffStatus::Deleted).then(|| path.to_owned()),
+            old_mode: mode(status != DiffStatus::Added),
+            new_mode: mode(status != DiffStatus::Deleted),
+            old_oid: ObjectId::zero(),
+            new_oid: ObjectId::zero(),
+            score,
+        }
+    }
+
+    #[test]
+    fn sort_entries_by_path_orders_by_path_and_keeps_equal_paths_in_place() {
+        let mut entries = vec![
+            entry(DiffStatus::Modified, "b", None),
+            entry(DiffStatus::Deleted, "a/x", Some(1)),
+            entry(DiffStatus::Added, "a/x", Some(2)),
+            entry(DiffStatus::Added, "a", None),
+        ];
+        sort_entries_by_path(&mut entries);
+        let order: Vec<_> = entries.iter().map(|e| (e.path(), e.score)).collect();
+        assert_eq!(
+            order,
+            [("a", None), ("a/x", Some(1)), ("a/x", Some(2)), ("b", None)]
+        );
+        let sorted = entries.clone();
+        sort_entries_by_path(&mut entries);
+        assert_eq!(entries, sorted);
+        sort_entries_by_path(&mut []);
+    }
+
+    #[test]
+    fn sort_entries_by_path_compares_non_utf8_paths_by_raw_bytes() {
+        let raw = crate::repo_relpath::format_path_stored("", b"raw-\xff");
+        assert!(raw.starts_with("grit+pathhex:"));
+        let mut entries = vec![
+            entry(DiffStatus::Modified, &raw, None),
+            entry(DiffStatus::Modified, "node/leaf", None),
+            entry(DiffStatus::Modified, "zeta", None),
+        ];
+        sort_entries_by_path(&mut entries);
+        let paths: Vec<_> = entries.iter().map(DiffEntry::path).collect();
+        assert_eq!(paths, ["node/leaf", raw.as_str(), "zeta"]);
+    }
+
+    #[test]
+    fn rename_pass_returns_unpairable_lists_in_path_order() {
+        let config = ConfigSet::new();
+        let policy = ThreadPolicy::default();
+        let odb = Odb::new(Path::new("/nonexistent-objects"));
+        let run = |entries: Vec<DiffEntry>| {
+            detect_renames_with_policy(&odb, None, entries, 50, &config, &policy, None)
+                .expect("no blob is read without both adds and deletes")
+        };
+        let sorted = vec![
+            entry(DiffStatus::Deleted, "a", None),
+            entry(DiffStatus::Modified, "b", None),
+            entry(DiffStatus::Deleted, "c", None),
+        ];
+        assert_eq!(run(sorted.clone()), sorted);
+        let unsorted = vec![
+            entry(DiffStatus::Added, "z", None),
+            entry(DiffStatus::Modified, "m", None),
+            entry(DiffStatus::Added, "a", None),
+        ];
+        let paths: Vec<_> = run(unsorted).iter().map(|e| e.path().to_owned()).collect();
+        assert_eq!(paths, ["a", "m", "z"]);
+        // A duplicate path takes the regrouping path: modifications before additions.
+        let duplicate = vec![
+            entry(DiffStatus::Added, "p", None),
+            entry(DiffStatus::Modified, "p", None),
+        ];
+        let statuses: Vec<_> = run(duplicate).iter().map(|e| e.status).collect();
+        assert_eq!(statuses, [DiffStatus::Modified, DiffStatus::Added]);
     }
 }
 

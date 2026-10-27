@@ -147,7 +147,7 @@ fn diff_one_commit(
         thread_policy,
     )?;
     if rename_threshold(&opts.diff_options) >= 100 {
-        entries.sort_by(|a, b| a.path().cmp(b.path()));
+        super::sort_entries_by_path(&mut entries);
     }
     entries = filter_entries(diff.repository(), entries, pathspecs)?;
     let mut output = build_file_diffs(

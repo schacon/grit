@@ -107,6 +107,7 @@ baseline = [
   "grit-utils/baselines/daily-revs-graph-range-1669-before.json",
   "grit-utils/baselines/daily-revs-graph-range-1669-after.json",
   "grit-utils/baselines/tree-metadata-2083.json",
+  "grit-utils/baselines/tree-metadata-cli-2083.json",
   "grit-utils/baselines/daily-revs-navigation-4759-before.json",
   "grit-utils/baselines/daily-revs-navigation-4759-after.json",
   "grit-utils/baselines/branch-inventory-4184-after.json",

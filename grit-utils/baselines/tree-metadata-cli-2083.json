@@ -1,0 +1,2470 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-10-27T15:03:36.855904+00:00",
+  "machine": {
+    "logical_cores": 4,
+    "os": "Linux-6.12.94+-x86_64-with-glibc2.39",
+    "cpu_model": "Intel(R) Xeon(R) Processor",
+    "cargo_profile": "release and dist",
+    "ram_bytes": 16780574720
+  },
+  "tools": {
+    "git": "git version 2.43.0",
+    "rust": "1.99.0",
+    "baseline_grit_commit": "3681c177862244c567960338d983da7554d45023",
+    "grit_commit": "factory/cli-tree-diff-memory (this change)",
+    "grit": "grit 0.5.22 with lean CLI tree metadata diff"
+  },
+  "methodology": "Exact issue #2083 fixture: 120000 files in 400 directories, 20 lines each, 20000 files appended with edited\\n. One warmup per tool, then five interleaved runs reversing order each round, builds and tests idle. Python perf_counter around /usr/bin/time -v; median wall time and maximum peak RSS. API consumer prints each returned DiffEntry. Release rows use cargo build --release; -dist rows use the shipped dist profile (fat LTO, one codegen unit). Packed copy uses git repack -ad and git prune-packed.",
+  "verification": "Every name-status run returns the same 20000 modified rows as system Git; --name-only and --json runs return 20000 paths; both 140804-object fixtures pass git fsck --strict.",
+  "criterion_tree_diff_siblings": {
+    "warmup_s": 1,
+    "measurement_s": 3,
+    "samples": 20,
+    "median_ms": {
+      "distributed/cold": {
+        "main": [
+          24.851,
+          24.331,
+          23.668
+        ],
+        "fixed": [
+          24.073,
+          23.637
+        ]
+      },
+      "distributed/warm": {
+        "main": [
+          28.537,
+          27.0,
+          26.84
+        ],
+        "fixed": [
+          28.157,
+          26.233
+        ]
+      },
+      "distributed/cold+renames": {
+        "main": [
+          28.196,
+          29.606,
+          28.226
+        ],
+        "fixed": [
+          27.22,
+          26.337
+        ]
+      },
+      "repeated/cold": {
+        "main": [
+          4.2839,
+          4.5696,
+          4.3332
+        ],
+        "fixed": [
+          4.6754,
+          4.5338
+        ]
+      },
+      "repeated/warm": {
+        "main": [
+          4.6149,
+          4.7135,
+          4.592
+        ],
+        "fixed": [
+          4.8512,
+          4.5818
+        ]
+      }
+    }
+  },
+  "scenarios": [
+    {
+      "id": "tree-metadata-cli-2083-loose-api",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; loose",
+      "description": "public tree_to_tree consumer",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-status",
+          "--no-renames",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/fx/consumer-main-target/release/diff-consumer",
+          "/tmp/fx/tree-diff"
+        ],
+        "grit": [
+          "/tmp/fx/consumer-target/release/diff-consumer",
+          "/tmp/fx/tree-diff"
+        ]
+      },
+      "git": {
+        "median_ms": 50.49,
+        "stddev_ms": 0.36,
+        "peak_rss_bytes": 11116544,
+        "runs_ms": [
+          50.64,
+          50.94,
+          50.49,
+          50.13,
+          49.92
+        ],
+        "samples": [
+          {
+            "wall_ms": 50.64,
+            "peak_rss_kib": 10828
+          },
+          {
+            "wall_ms": 50.94,
+            "peak_rss_kib": 10824
+          },
+          {
+            "wall_ms": 50.49,
+            "peak_rss_kib": 10764
+          },
+          {
+            "wall_ms": 50.13,
+            "peak_rss_kib": 10856
+          },
+          {
+            "wall_ms": 49.92,
+            "peak_rss_kib": 10808
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 59.94,
+        "stddev_ms": 1.7,
+        "peak_rss_bytes": 20373504,
+        "runs_ms": [
+          63.47,
+          58.7,
+          61.73,
+          59.65,
+          59.94
+        ],
+        "samples": [
+          {
+            "wall_ms": 63.47,
+            "peak_rss_kib": 19896
+          },
+          {
+            "wall_ms": 58.7,
+            "peak_rss_kib": 19780
+          },
+          {
+            "wall_ms": 61.73,
+            "peak_rss_kib": 19748
+          },
+          {
+            "wall_ms": 59.65,
+            "peak_rss_kib": 19896
+          },
+          {
+            "wall_ms": 59.94,
+            "peak_rss_kib": 19752
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 57.61,
+        "stddev_ms": 0.54,
+        "peak_rss_bytes": 18681856,
+        "runs_ms": [
+          58.28,
+          57.23,
+          58.3,
+          56.96,
+          57.61
+        ],
+        "samples": [
+          {
+            "wall_ms": 58.28,
+            "peak_rss_kib": 18244
+          },
+          {
+            "wall_ms": 57.23,
+            "peak_rss_kib": 18072
+          },
+          {
+            "wall_ms": 58.3,
+            "peak_rss_kib": 18108
+          },
+          {
+            "wall_ms": 56.96,
+            "peak_rss_kib": 18164
+          },
+          {
+            "wall_ms": 57.61,
+            "peak_rss_kib": 17936
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-loose-cli-name-status",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; loose",
+      "description": "CLI --name-status (default renames)",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/grit-main",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ],
+        "grit": [
+          "/tmp/grit-fixed",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ]
+      },
+      "git": {
+        "median_ms": 50.48,
+        "stddev_ms": 0.64,
+        "peak_rss_bytes": 11214848,
+        "runs_ms": [
+          50.48,
+          50.22,
+          50.05,
+          50.62,
+          51.86
+        ],
+        "samples": [
+          {
+            "wall_ms": 50.48,
+            "peak_rss_kib": 10828
+          },
+          {
+            "wall_ms": 50.22,
+            "peak_rss_kib": 10788
+          },
+          {
+            "wall_ms": 50.05,
+            "peak_rss_kib": 10888
+          },
+          {
+            "wall_ms": 50.62,
+            "peak_rss_kib": 10804
+          },
+          {
+            "wall_ms": 51.86,
+            "peak_rss_kib": 10952
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 55.31,
+        "stddev_ms": 1.79,
+        "peak_rss_bytes": 34430976,
+        "runs_ms": [
+          58.53,
+          55.7,
+          54.81,
+          53.0,
+          55.31
+        ],
+        "samples": [
+          {
+            "wall_ms": 58.53,
+            "peak_rss_kib": 33568
+          },
+          {
+            "wall_ms": 55.7,
+            "peak_rss_kib": 33588
+          },
+          {
+            "wall_ms": 54.81,
+            "peak_rss_kib": 33484
+          },
+          {
+            "wall_ms": 53.0,
+            "peak_rss_kib": 33624
+          },
+          {
+            "wall_ms": 55.31,
+            "peak_rss_kib": 33476
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 52.87,
+        "stddev_ms": 1.61,
+        "peak_rss_bytes": 31211520,
+        "runs_ms": [
+          51.65,
+          56.01,
+          53.59,
+          51.64,
+          52.87
+        ],
+        "samples": [
+          {
+            "wall_ms": 51.65,
+            "peak_rss_kib": 30132
+          },
+          {
+            "wall_ms": 56.01,
+            "peak_rss_kib": 30264
+          },
+          {
+            "wall_ms": 53.59,
+            "peak_rss_kib": 30464
+          },
+          {
+            "wall_ms": 51.64,
+            "peak_rss_kib": 30328
+          },
+          {
+            "wall_ms": 52.87,
+            "peak_rss_kib": 30480
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-loose-cli-name-status-dist",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; loose",
+      "description": "CLI --name-status (default renames) (dist profile)",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/dist-base-target/dist/grit",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ],
+        "grit": [
+          "/tmp/dist-target/dist/grit",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ]
+      },
+      "git": {
+        "median_ms": 50.48,
+        "stddev_ms": 0.64,
+        "peak_rss_bytes": 11214848,
+        "runs_ms": [
+          50.48,
+          50.22,
+          50.05,
+          50.62,
+          51.86
+        ],
+        "samples": [
+          {
+            "wall_ms": 50.48,
+            "peak_rss_kib": 10828
+          },
+          {
+            "wall_ms": 50.22,
+            "peak_rss_kib": 10788
+          },
+          {
+            "wall_ms": 50.05,
+            "peak_rss_kib": 10888
+          },
+          {
+            "wall_ms": 50.62,
+            "peak_rss_kib": 10804
+          },
+          {
+            "wall_ms": 51.86,
+            "peak_rss_kib": 10952
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 52.06,
+        "stddev_ms": 1.27,
+        "peak_rss_bytes": 31625216,
+        "runs_ms": [
+          54.48,
+          52.98,
+          52.06,
+          50.79,
+          51.53
+        ],
+        "samples": [
+          {
+            "wall_ms": 54.48,
+            "peak_rss_kib": 30680
+          },
+          {
+            "wall_ms": 52.98,
+            "peak_rss_kib": 30732
+          },
+          {
+            "wall_ms": 52.06,
+            "peak_rss_kib": 30884
+          },
+          {
+            "wall_ms": 50.79,
+            "peak_rss_kib": 30648
+          },
+          {
+            "wall_ms": 51.53,
+            "peak_rss_kib": 30828
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 50.37,
+        "stddev_ms": 0.52,
+        "peak_rss_bytes": 28139520,
+        "runs_ms": [
+          49.91,
+          50.17,
+          50.37,
+          51.41,
+          50.71
+        ],
+        "samples": [
+          {
+            "wall_ms": 49.91,
+            "peak_rss_kib": 27404
+          },
+          {
+            "wall_ms": 50.17,
+            "peak_rss_kib": 27480
+          },
+          {
+            "wall_ms": 50.37,
+            "peak_rss_kib": 27468
+          },
+          {
+            "wall_ms": 51.41,
+            "peak_rss_kib": 27408
+          },
+          {
+            "wall_ms": 50.71,
+            "peak_rss_kib": 27404
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-loose-cli-name-status-no-renames",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; loose",
+      "description": "CLI --name-status --no-renames",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-status",
+          "--no-renames",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/grit-main",
+          "diff",
+          "--name-status",
+          "--no-renames",
+          "base",
+          "HEAD"
+        ],
+        "grit": [
+          "/tmp/grit-fixed",
+          "diff",
+          "--name-status",
+          "--no-renames",
+          "base",
+          "HEAD"
+        ]
+      },
+      "git": {
+        "median_ms": 50.64,
+        "stddev_ms": 0.54,
+        "peak_rss_bytes": 11149312,
+        "runs_ms": [
+          51.63,
+          50.37,
+          50.64,
+          50.27,
+          51.35
+        ],
+        "samples": [
+          {
+            "wall_ms": 51.63,
+            "peak_rss_kib": 10700
+          },
+          {
+            "wall_ms": 50.37,
+            "peak_rss_kib": 10788
+          },
+          {
+            "wall_ms": 50.64,
+            "peak_rss_kib": 10888
+          },
+          {
+            "wall_ms": 50.27,
+            "peak_rss_kib": 10888
+          },
+          {
+            "wall_ms": 51.35,
+            "peak_rss_kib": 10764
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 55.98,
+        "stddev_ms": 2.39,
+        "peak_rss_bytes": 34459648,
+        "runs_ms": [
+          57.16,
+          55.98,
+          55.28,
+          53.06,
+          60.33
+        ],
+        "samples": [
+          {
+            "wall_ms": 57.16,
+            "peak_rss_kib": 33376
+          },
+          {
+            "wall_ms": 55.98,
+            "peak_rss_kib": 33496
+          },
+          {
+            "wall_ms": 55.28,
+            "peak_rss_kib": 33364
+          },
+          {
+            "wall_ms": 53.06,
+            "peak_rss_kib": 33652
+          },
+          {
+            "wall_ms": 60.33,
+            "peak_rss_kib": 33516
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 53.91,
+        "stddev_ms": 1.08,
+        "peak_rss_bytes": 31338496,
+        "runs_ms": [
+          52.02,
+          55.33,
+          54.19,
+          53.91,
+          53.37
+        ],
+        "samples": [
+          {
+            "wall_ms": 52.02,
+            "peak_rss_kib": 30112
+          },
+          {
+            "wall_ms": 55.33,
+            "peak_rss_kib": 30280
+          },
+          {
+            "wall_ms": 54.19,
+            "peak_rss_kib": 30200
+          },
+          {
+            "wall_ms": 53.91,
+            "peak_rss_kib": 30604
+          },
+          {
+            "wall_ms": 53.37,
+            "peak_rss_kib": 30272
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-loose-cli-name-status-no-renames-dist",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; loose",
+      "description": "CLI --name-status --no-renames (dist profile)",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-status",
+          "--no-renames",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/dist-base-target/dist/grit",
+          "diff",
+          "--name-status",
+          "--no-renames",
+          "base",
+          "HEAD"
+        ],
+        "grit": [
+          "/tmp/dist-target/dist/grit",
+          "diff",
+          "--name-status",
+          "--no-renames",
+          "base",
+          "HEAD"
+        ]
+      },
+      "git": {
+        "median_ms": 50.64,
+        "stddev_ms": 0.54,
+        "peak_rss_bytes": 11149312,
+        "runs_ms": [
+          51.63,
+          50.37,
+          50.64,
+          50.27,
+          51.35
+        ],
+        "samples": [
+          {
+            "wall_ms": 51.63,
+            "peak_rss_kib": 10700
+          },
+          {
+            "wall_ms": 50.37,
+            "peak_rss_kib": 10788
+          },
+          {
+            "wall_ms": 50.64,
+            "peak_rss_kib": 10888
+          },
+          {
+            "wall_ms": 50.27,
+            "peak_rss_kib": 10888
+          },
+          {
+            "wall_ms": 51.35,
+            "peak_rss_kib": 10764
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 53.02,
+        "stddev_ms": 2.29,
+        "peak_rss_bytes": 31666176,
+        "runs_ms": [
+          53.02,
+          52.25,
+          57.25,
+          50.23,
+          53.34
+        ],
+        "samples": [
+          {
+            "wall_ms": 53.02,
+            "peak_rss_kib": 30476
+          },
+          {
+            "wall_ms": 52.25,
+            "peak_rss_kib": 30924
+          },
+          {
+            "wall_ms": 57.25,
+            "peak_rss_kib": 30848
+          },
+          {
+            "wall_ms": 50.23,
+            "peak_rss_kib": 30616
+          },
+          {
+            "wall_ms": 53.34,
+            "peak_rss_kib": 30644
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 51.64,
+        "stddev_ms": 2.67,
+        "peak_rss_bytes": 28254208,
+        "runs_ms": [
+          57.89,
+          54.03,
+          51.52,
+          50.41,
+          51.64
+        ],
+        "samples": [
+          {
+            "wall_ms": 57.89,
+            "peak_rss_kib": 27344
+          },
+          {
+            "wall_ms": 54.03,
+            "peak_rss_kib": 27356
+          },
+          {
+            "wall_ms": 51.52,
+            "peak_rss_kib": 27592
+          },
+          {
+            "wall_ms": 50.41,
+            "peak_rss_kib": 27392
+          },
+          {
+            "wall_ms": 51.64,
+            "peak_rss_kib": 27340
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-loose-cli-name-only",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; loose",
+      "description": "CLI --name-only",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-only",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/grit-main",
+          "diff",
+          "--name-only",
+          "base",
+          "HEAD"
+        ],
+        "grit": [
+          "/tmp/grit-fixed",
+          "diff",
+          "--name-only",
+          "base",
+          "HEAD"
+        ]
+      },
+      "git": {
+        "median_ms": 50.88,
+        "stddev_ms": 0.69,
+        "peak_rss_bytes": 11206656,
+        "runs_ms": [
+          52.08,
+          50.88,
+          51.04,
+          50.56,
+          49.99
+        ],
+        "samples": [
+          {
+            "wall_ms": 52.08,
+            "peak_rss_kib": 10760
+          },
+          {
+            "wall_ms": 50.88,
+            "peak_rss_kib": 10752
+          },
+          {
+            "wall_ms": 51.04,
+            "peak_rss_kib": 10944
+          },
+          {
+            "wall_ms": 50.56,
+            "peak_rss_kib": 10892
+          },
+          {
+            "wall_ms": 49.99,
+            "peak_rss_kib": 10696
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 54.42,
+        "stddev_ms": 1.77,
+        "peak_rss_bytes": 34365440,
+        "runs_ms": [
+          58.32,
+          53.54,
+          56.44,
+          54.15,
+          54.42
+        ],
+        "samples": [
+          {
+            "wall_ms": 58.32,
+            "peak_rss_kib": 33560
+          },
+          {
+            "wall_ms": 53.54,
+            "peak_rss_kib": 33476
+          },
+          {
+            "wall_ms": 56.44,
+            "peak_rss_kib": 33428
+          },
+          {
+            "wall_ms": 54.15,
+            "peak_rss_kib": 33532
+          },
+          {
+            "wall_ms": 54.42,
+            "peak_rss_kib": 33540
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 52.71,
+        "stddev_ms": 0.51,
+        "peak_rss_bytes": 31326208,
+        "runs_ms": [
+          52.96,
+          51.59,
+          52.71,
+          52.08,
+          52.78
+        ],
+        "samples": [
+          {
+            "wall_ms": 52.96,
+            "peak_rss_kib": 30592
+          },
+          {
+            "wall_ms": 51.59,
+            "peak_rss_kib": 30352
+          },
+          {
+            "wall_ms": 52.71,
+            "peak_rss_kib": 30476
+          },
+          {
+            "wall_ms": 52.08,
+            "peak_rss_kib": 30284
+          },
+          {
+            "wall_ms": 52.78,
+            "peak_rss_kib": 30456
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-loose-cli-name-only-dist",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; loose",
+      "description": "CLI --name-only (dist profile)",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-only",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/dist-base-target/dist/grit",
+          "diff",
+          "--name-only",
+          "base",
+          "HEAD"
+        ],
+        "grit": [
+          "/tmp/dist-target/dist/grit",
+          "diff",
+          "--name-only",
+          "base",
+          "HEAD"
+        ]
+      },
+      "git": {
+        "median_ms": 50.88,
+        "stddev_ms": 0.69,
+        "peak_rss_bytes": 11206656,
+        "runs_ms": [
+          52.08,
+          50.88,
+          51.04,
+          50.56,
+          49.99
+        ],
+        "samples": [
+          {
+            "wall_ms": 52.08,
+            "peak_rss_kib": 10760
+          },
+          {
+            "wall_ms": 50.88,
+            "peak_rss_kib": 10752
+          },
+          {
+            "wall_ms": 51.04,
+            "peak_rss_kib": 10944
+          },
+          {
+            "wall_ms": 50.56,
+            "peak_rss_kib": 10892
+          },
+          {
+            "wall_ms": 49.99,
+            "peak_rss_kib": 10696
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 54.81,
+        "stddev_ms": 0.73,
+        "peak_rss_bytes": 31625216,
+        "runs_ms": [
+          55.0,
+          56.32,
+          54.11,
+          54.81,
+          54.75
+        ],
+        "samples": [
+          {
+            "wall_ms": 55.0,
+            "peak_rss_kib": 30828
+          },
+          {
+            "wall_ms": 56.32,
+            "peak_rss_kib": 30828
+          },
+          {
+            "wall_ms": 54.11,
+            "peak_rss_kib": 30728
+          },
+          {
+            "wall_ms": 54.81,
+            "peak_rss_kib": 30884
+          },
+          {
+            "wall_ms": 54.75,
+            "peak_rss_kib": 30780
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 50.64,
+        "stddev_ms": 0.92,
+        "peak_rss_bytes": 28078080,
+        "runs_ms": [
+          50.95,
+          48.71,
+          50.64,
+          51.06,
+          49.51
+        ],
+        "samples": [
+          {
+            "wall_ms": 50.95,
+            "peak_rss_kib": 27280
+          },
+          {
+            "wall_ms": 48.71,
+            "peak_rss_kib": 27344
+          },
+          {
+            "wall_ms": 50.64,
+            "peak_rss_kib": 27400
+          },
+          {
+            "wall_ms": 51.06,
+            "peak_rss_kib": 27420
+          },
+          {
+            "wall_ms": 49.51,
+            "peak_rss_kib": 27356
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-loose-cli-name-status-json",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; loose",
+      "description": "CLI --name-status --json",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/grit-main",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD",
+          "--json"
+        ],
+        "grit": [
+          "/tmp/grit-fixed",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD",
+          "--json"
+        ]
+      },
+      "git": {
+        "median_ms": 50.48,
+        "stddev_ms": 0.64,
+        "peak_rss_bytes": 11214848,
+        "runs_ms": [
+          50.48,
+          50.22,
+          50.05,
+          50.62,
+          51.86
+        ],
+        "samples": [
+          {
+            "wall_ms": 50.48,
+            "peak_rss_kib": 10828
+          },
+          {
+            "wall_ms": 50.22,
+            "peak_rss_kib": 10788
+          },
+          {
+            "wall_ms": 50.05,
+            "peak_rss_kib": 10888
+          },
+          {
+            "wall_ms": 50.62,
+            "peak_rss_kib": 10804
+          },
+          {
+            "wall_ms": 51.86,
+            "peak_rss_kib": 10952
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 61.25,
+        "stddev_ms": 2.15,
+        "peak_rss_bytes": 34447360,
+        "runs_ms": [
+          62.8,
+          62.5,
+          58.32,
+          57.6,
+          61.25
+        ],
+        "samples": [
+          {
+            "wall_ms": 62.8,
+            "peak_rss_kib": 33540
+          },
+          {
+            "wall_ms": 62.5,
+            "peak_rss_kib": 33640
+          },
+          {
+            "wall_ms": 58.32,
+            "peak_rss_kib": 33492
+          },
+          {
+            "wall_ms": 57.6,
+            "peak_rss_kib": 33436
+          },
+          {
+            "wall_ms": 61.25,
+            "peak_rss_kib": 33484
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 56.93,
+        "stddev_ms": 2.08,
+        "peak_rss_bytes": 31211520,
+        "runs_ms": [
+          54.61,
+          58.81,
+          56.93,
+          57.91,
+          53.23
+        ],
+        "samples": [
+          {
+            "wall_ms": 54.61,
+            "peak_rss_kib": 30352
+          },
+          {
+            "wall_ms": 58.81,
+            "peak_rss_kib": 30464
+          },
+          {
+            "wall_ms": 56.93,
+            "peak_rss_kib": 30480
+          },
+          {
+            "wall_ms": 57.91,
+            "peak_rss_kib": 30288
+          },
+          {
+            "wall_ms": 53.23,
+            "peak_rss_kib": 30272
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-loose-cli-name-status-json-dist",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; loose",
+      "description": "CLI --name-status --json (dist profile)",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/dist-base-target/dist/grit",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD",
+          "--json"
+        ],
+        "grit": [
+          "/tmp/dist-target/dist/grit",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD",
+          "--json"
+        ]
+      },
+      "git": {
+        "median_ms": 50.48,
+        "stddev_ms": 0.64,
+        "peak_rss_bytes": 11214848,
+        "runs_ms": [
+          50.48,
+          50.22,
+          50.05,
+          50.62,
+          51.86
+        ],
+        "samples": [
+          {
+            "wall_ms": 50.48,
+            "peak_rss_kib": 10828
+          },
+          {
+            "wall_ms": 50.22,
+            "peak_rss_kib": 10788
+          },
+          {
+            "wall_ms": 50.05,
+            "peak_rss_kib": 10888
+          },
+          {
+            "wall_ms": 50.62,
+            "peak_rss_kib": 10804
+          },
+          {
+            "wall_ms": 51.86,
+            "peak_rss_kib": 10952
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 56.92,
+        "stddev_ms": 1.15,
+        "peak_rss_bytes": 31551488,
+        "runs_ms": [
+          56.37,
+          58.88,
+          59.16,
+          56.92,
+          56.84
+        ],
+        "samples": [
+          {
+            "wall_ms": 56.37,
+            "peak_rss_kib": 30812
+          },
+          {
+            "wall_ms": 58.88,
+            "peak_rss_kib": 30612
+          },
+          {
+            "wall_ms": 59.16,
+            "peak_rss_kib": 30436
+          },
+          {
+            "wall_ms": 56.92,
+            "peak_rss_kib": 30552
+          },
+          {
+            "wall_ms": 56.84,
+            "peak_rss_kib": 30700
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 55.02,
+        "stddev_ms": 2.95,
+        "peak_rss_bytes": 28200960,
+        "runs_ms": [
+          53.13,
+          56.31,
+          55.02,
+          61.3,
+          53.52
+        ],
+        "samples": [
+          {
+            "wall_ms": 53.13,
+            "peak_rss_kib": 27224
+          },
+          {
+            "wall_ms": 56.31,
+            "peak_rss_kib": 27096
+          },
+          {
+            "wall_ms": 55.02,
+            "peak_rss_kib": 27540
+          },
+          {
+            "wall_ms": 61.3,
+            "peak_rss_kib": 27080
+          },
+          {
+            "wall_ms": 53.52,
+            "peak_rss_kib": 27272
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-packed-api",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; packed",
+      "description": "public tree_to_tree consumer",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-status",
+          "--no-renames",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/fx/consumer-main-target/release/diff-consumer",
+          "/tmp/fx/tree-diff-packed"
+        ],
+        "grit": [
+          "/tmp/fx/consumer-target/release/diff-consumer",
+          "/tmp/fx/tree-diff-packed"
+        ]
+      },
+      "git": {
+        "median_ms": 34.44,
+        "stddev_ms": 3.04,
+        "peak_rss_bytes": 22900736,
+        "runs_ms": [
+          41.58,
+          34.44,
+          33.55,
+          37.64,
+          33.97
+        ],
+        "samples": [
+          {
+            "wall_ms": 41.58,
+            "peak_rss_kib": 22340
+          },
+          {
+            "wall_ms": 34.44,
+            "peak_rss_kib": 22312
+          },
+          {
+            "wall_ms": 33.55,
+            "peak_rss_kib": 22336
+          },
+          {
+            "wall_ms": 37.64,
+            "peak_rss_kib": 22364
+          },
+          {
+            "wall_ms": 33.97,
+            "peak_rss_kib": 22272
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 50.8,
+        "stddev_ms": 1.04,
+        "peak_rss_bytes": 31129600,
+        "runs_ms": [
+          52.1,
+          52.14,
+          49.94,
+          50.8,
+          49.69
+        ],
+        "samples": [
+          {
+            "wall_ms": 52.1,
+            "peak_rss_kib": 30316
+          },
+          {
+            "wall_ms": 52.14,
+            "peak_rss_kib": 30400
+          },
+          {
+            "wall_ms": 49.94,
+            "peak_rss_kib": 30168
+          },
+          {
+            "wall_ms": 50.8,
+            "peak_rss_kib": 30184
+          },
+          {
+            "wall_ms": 49.69,
+            "peak_rss_kib": 30260
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 50.5,
+        "stddev_ms": 2.6,
+        "peak_rss_bytes": 29376512,
+        "runs_ms": [
+          48.44,
+          55.21,
+          50.5,
+          48.0,
+          51.77
+        ],
+        "samples": [
+          {
+            "wall_ms": 48.44,
+            "peak_rss_kib": 28460
+          },
+          {
+            "wall_ms": 55.21,
+            "peak_rss_kib": 28688
+          },
+          {
+            "wall_ms": 50.5,
+            "peak_rss_kib": 28448
+          },
+          {
+            "wall_ms": 48.0,
+            "peak_rss_kib": 28676
+          },
+          {
+            "wall_ms": 51.77,
+            "peak_rss_kib": 28616
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-packed-cli-name-status",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; packed",
+      "description": "CLI --name-status (default renames)",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/grit-main",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ],
+        "grit": [
+          "/tmp/grit-fixed",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ]
+      },
+      "git": {
+        "median_ms": 34.74,
+        "stddev_ms": 0.53,
+        "peak_rss_bytes": 22769664,
+        "runs_ms": [
+          34.31,
+          35.88,
+          34.71,
+          35.02,
+          34.74
+        ],
+        "samples": [
+          {
+            "wall_ms": 34.31,
+            "peak_rss_kib": 22160
+          },
+          {
+            "wall_ms": 35.88,
+            "peak_rss_kib": 22236
+          },
+          {
+            "wall_ms": 34.71,
+            "peak_rss_kib": 22216
+          },
+          {
+            "wall_ms": 35.02,
+            "peak_rss_kib": 22208
+          },
+          {
+            "wall_ms": 34.74,
+            "peak_rss_kib": 22172
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 50.66,
+        "stddev_ms": 2.04,
+        "peak_rss_bytes": 45412352,
+        "runs_ms": [
+          46.49,
+          50.66,
+          48.71,
+          50.7,
+          52.47
+        ],
+        "samples": [
+          {
+            "wall_ms": 46.49,
+            "peak_rss_kib": 44128
+          },
+          {
+            "wall_ms": 50.66,
+            "peak_rss_kib": 44348
+          },
+          {
+            "wall_ms": 48.71,
+            "peak_rss_kib": 44212
+          },
+          {
+            "wall_ms": 50.7,
+            "peak_rss_kib": 44256
+          },
+          {
+            "wall_ms": 52.47,
+            "peak_rss_kib": 44348
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 46.99,
+        "stddev_ms": 1.56,
+        "peak_rss_bytes": 42373120,
+        "runs_ms": [
+          49.11,
+          46.99,
+          45.67,
+          44.54,
+          47.4
+        ],
+        "samples": [
+          {
+            "wall_ms": 49.11,
+            "peak_rss_kib": 41380
+          },
+          {
+            "wall_ms": 46.99,
+            "peak_rss_kib": 41352
+          },
+          {
+            "wall_ms": 45.67,
+            "peak_rss_kib": 41220
+          },
+          {
+            "wall_ms": 44.54,
+            "peak_rss_kib": 41360
+          },
+          {
+            "wall_ms": 47.4,
+            "peak_rss_kib": 41372
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-packed-cli-name-status-dist",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; packed",
+      "description": "CLI --name-status (default renames) (dist profile)",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/dist-base-target/dist/grit",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ],
+        "grit": [
+          "/tmp/dist-target/dist/grit",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ]
+      },
+      "git": {
+        "median_ms": 34.74,
+        "stddev_ms": 0.53,
+        "peak_rss_bytes": 22769664,
+        "runs_ms": [
+          34.31,
+          35.88,
+          34.71,
+          35.02,
+          34.74
+        ],
+        "samples": [
+          {
+            "wall_ms": 34.31,
+            "peak_rss_kib": 22160
+          },
+          {
+            "wall_ms": 35.88,
+            "peak_rss_kib": 22236
+          },
+          {
+            "wall_ms": 34.71,
+            "peak_rss_kib": 22216
+          },
+          {
+            "wall_ms": 35.02,
+            "peak_rss_kib": 22208
+          },
+          {
+            "wall_ms": 34.74,
+            "peak_rss_kib": 22172
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 47.57,
+        "stddev_ms": 1.43,
+        "peak_rss_bytes": 42455040,
+        "runs_ms": [
+          48.13,
+          47.57,
+          45.22,
+          47.35,
+          49.66
+        ],
+        "samples": [
+          {
+            "wall_ms": 48.13,
+            "peak_rss_kib": 41032
+          },
+          {
+            "wall_ms": 47.57,
+            "peak_rss_kib": 41460
+          },
+          {
+            "wall_ms": 45.22,
+            "peak_rss_kib": 41288
+          },
+          {
+            "wall_ms": 47.35,
+            "peak_rss_kib": 41440
+          },
+          {
+            "wall_ms": 49.66,
+            "peak_rss_kib": 41260
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 45.15,
+        "stddev_ms": 1.26,
+        "peak_rss_bytes": 39038976,
+        "runs_ms": [
+          43.89,
+          46.55,
+          45.76,
+          43.05,
+          45.15
+        ],
+        "samples": [
+          {
+            "wall_ms": 43.89,
+            "peak_rss_kib": 38100
+          },
+          {
+            "wall_ms": 46.55,
+            "peak_rss_kib": 38124
+          },
+          {
+            "wall_ms": 45.76,
+            "peak_rss_kib": 37992
+          },
+          {
+            "wall_ms": 43.05,
+            "peak_rss_kib": 37916
+          },
+          {
+            "wall_ms": 45.15,
+            "peak_rss_kib": 38028
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-packed-cli-name-status-no-renames",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; packed",
+      "description": "CLI --name-status --no-renames",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-status",
+          "--no-renames",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/grit-main",
+          "diff",
+          "--name-status",
+          "--no-renames",
+          "base",
+          "HEAD"
+        ],
+        "grit": [
+          "/tmp/grit-fixed",
+          "diff",
+          "--name-status",
+          "--no-renames",
+          "base",
+          "HEAD"
+        ]
+      },
+      "git": {
+        "median_ms": 34.68,
+        "stddev_ms": 0.82,
+        "peak_rss_bytes": 22900736,
+        "runs_ms": [
+          34.68,
+          34.62,
+          33.64,
+          36.2,
+          34.93
+        ],
+        "samples": [
+          {
+            "wall_ms": 34.68,
+            "peak_rss_kib": 22276
+          },
+          {
+            "wall_ms": 34.62,
+            "peak_rss_kib": 22352
+          },
+          {
+            "wall_ms": 33.64,
+            "peak_rss_kib": 22340
+          },
+          {
+            "wall_ms": 36.2,
+            "peak_rss_kib": 22364
+          },
+          {
+            "wall_ms": 34.93,
+            "peak_rss_kib": 22308
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 47.09,
+        "stddev_ms": 2.48,
+        "peak_rss_bytes": 45252608,
+        "runs_ms": [
+          47.09,
+          45.62,
+          48.79,
+          52.19,
+          45.51
+        ],
+        "samples": [
+          {
+            "wall_ms": 47.09,
+            "peak_rss_kib": 44192
+          },
+          {
+            "wall_ms": 45.62,
+            "peak_rss_kib": 44064
+          },
+          {
+            "wall_ms": 48.79,
+            "peak_rss_kib": 44176
+          },
+          {
+            "wall_ms": 52.19,
+            "peak_rss_kib": 44144
+          },
+          {
+            "wall_ms": 45.51,
+            "peak_rss_kib": 44144
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 46.31,
+        "stddev_ms": 3.1,
+        "peak_rss_bytes": 42483712,
+        "runs_ms": [
+          45.27,
+          44.8,
+          53.34,
+          48.14,
+          46.31
+        ],
+        "samples": [
+          {
+            "wall_ms": 45.27,
+            "peak_rss_kib": 41116
+          },
+          {
+            "wall_ms": 44.8,
+            "peak_rss_kib": 41356
+          },
+          {
+            "wall_ms": 53.34,
+            "peak_rss_kib": 41092
+          },
+          {
+            "wall_ms": 48.14,
+            "peak_rss_kib": 41488
+          },
+          {
+            "wall_ms": 46.31,
+            "peak_rss_kib": 41352
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-packed-cli-name-status-no-renames-dist",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; packed",
+      "description": "CLI --name-status --no-renames (dist profile)",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-status",
+          "--no-renames",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/dist-base-target/dist/grit",
+          "diff",
+          "--name-status",
+          "--no-renames",
+          "base",
+          "HEAD"
+        ],
+        "grit": [
+          "/tmp/dist-target/dist/grit",
+          "diff",
+          "--name-status",
+          "--no-renames",
+          "base",
+          "HEAD"
+        ]
+      },
+      "git": {
+        "median_ms": 34.68,
+        "stddev_ms": 0.82,
+        "peak_rss_bytes": 22900736,
+        "runs_ms": [
+          34.68,
+          34.62,
+          33.64,
+          36.2,
+          34.93
+        ],
+        "samples": [
+          {
+            "wall_ms": 34.68,
+            "peak_rss_kib": 22276
+          },
+          {
+            "wall_ms": 34.62,
+            "peak_rss_kib": 22352
+          },
+          {
+            "wall_ms": 33.64,
+            "peak_rss_kib": 22340
+          },
+          {
+            "wall_ms": 36.2,
+            "peak_rss_kib": 22364
+          },
+          {
+            "wall_ms": 34.93,
+            "peak_rss_kib": 22308
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 46.83,
+        "stddev_ms": 8.83,
+        "peak_rss_bytes": 42364928,
+        "runs_ms": [
+          46.83,
+          43.64,
+          49.12,
+          67.55,
+          44.43
+        ],
+        "samples": [
+          {
+            "wall_ms": 46.83,
+            "peak_rss_kib": 40980
+          },
+          {
+            "wall_ms": 43.64,
+            "peak_rss_kib": 41252
+          },
+          {
+            "wall_ms": 49.12,
+            "peak_rss_kib": 40972
+          },
+          {
+            "wall_ms": 67.55,
+            "peak_rss_kib": 40980
+          },
+          {
+            "wall_ms": 44.43,
+            "peak_rss_kib": 41372
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 44.75,
+        "stddev_ms": 1.4,
+        "peak_rss_bytes": 39006208,
+        "runs_ms": [
+          46.44,
+          42.93,
+          45.46,
+          44.75,
+          42.89
+        ],
+        "samples": [
+          {
+            "wall_ms": 46.44,
+            "peak_rss_kib": 37932
+          },
+          {
+            "wall_ms": 42.93,
+            "peak_rss_kib": 37736
+          },
+          {
+            "wall_ms": 45.46,
+            "peak_rss_kib": 37656
+          },
+          {
+            "wall_ms": 44.75,
+            "peak_rss_kib": 38092
+          },
+          {
+            "wall_ms": 42.89,
+            "peak_rss_kib": 37988
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-packed-cli-name-only",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; packed",
+      "description": "CLI --name-only",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-only",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/grit-main",
+          "diff",
+          "--name-only",
+          "base",
+          "HEAD"
+        ],
+        "grit": [
+          "/tmp/grit-fixed",
+          "diff",
+          "--name-only",
+          "base",
+          "HEAD"
+        ]
+      },
+      "git": {
+        "median_ms": 36.27,
+        "stddev_ms": 1.1,
+        "peak_rss_bytes": 22814720,
+        "runs_ms": [
+          38.11,
+          35.06,
+          37.2,
+          35.55,
+          36.27
+        ],
+        "samples": [
+          {
+            "wall_ms": 38.11,
+            "peak_rss_kib": 22280
+          },
+          {
+            "wall_ms": 35.06,
+            "peak_rss_kib": 22220
+          },
+          {
+            "wall_ms": 37.2,
+            "peak_rss_kib": 22212
+          },
+          {
+            "wall_ms": 35.55,
+            "peak_rss_kib": 22132
+          },
+          {
+            "wall_ms": 36.27,
+            "peak_rss_kib": 22152
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 48.91,
+        "stddev_ms": 3.02,
+        "peak_rss_bytes": 45506560,
+        "runs_ms": [
+          56.03,
+          49.19,
+          47.62,
+          48.91,
+          48.7
+        ],
+        "samples": [
+          {
+            "wall_ms": 56.03,
+            "peak_rss_kib": 44160
+          },
+          {
+            "wall_ms": 49.19,
+            "peak_rss_kib": 44232
+          },
+          {
+            "wall_ms": 47.62,
+            "peak_rss_kib": 44184
+          },
+          {
+            "wall_ms": 48.91,
+            "peak_rss_kib": 44440
+          },
+          {
+            "wall_ms": 48.7,
+            "peak_rss_kib": 44240
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 46.56,
+        "stddev_ms": 1.4,
+        "peak_rss_bytes": 42491904,
+        "runs_ms": [
+          49.34,
+          45.42,
+          46.56,
+          47.0,
+          45.61
+        ],
+        "samples": [
+          {
+            "wall_ms": 49.34,
+            "peak_rss_kib": 41496
+          },
+          {
+            "wall_ms": 45.42,
+            "peak_rss_kib": 41228
+          },
+          {
+            "wall_ms": 46.56,
+            "peak_rss_kib": 41104
+          },
+          {
+            "wall_ms": 47.0,
+            "peak_rss_kib": 40936
+          },
+          {
+            "wall_ms": 45.61,
+            "peak_rss_kib": 41352
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-packed-cli-name-only-dist",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; packed",
+      "description": "CLI --name-only (dist profile)",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-only",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/dist-base-target/dist/grit",
+          "diff",
+          "--name-only",
+          "base",
+          "HEAD"
+        ],
+        "grit": [
+          "/tmp/dist-target/dist/grit",
+          "diff",
+          "--name-only",
+          "base",
+          "HEAD"
+        ]
+      },
+      "git": {
+        "median_ms": 36.27,
+        "stddev_ms": 1.1,
+        "peak_rss_bytes": 22814720,
+        "runs_ms": [
+          38.11,
+          35.06,
+          37.2,
+          35.55,
+          36.27
+        ],
+        "samples": [
+          {
+            "wall_ms": 38.11,
+            "peak_rss_kib": 22280
+          },
+          {
+            "wall_ms": 35.06,
+            "peak_rss_kib": 22220
+          },
+          {
+            "wall_ms": 37.2,
+            "peak_rss_kib": 22212
+          },
+          {
+            "wall_ms": 35.55,
+            "peak_rss_kib": 22132
+          },
+          {
+            "wall_ms": 36.27,
+            "peak_rss_kib": 22152
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 45.74,
+        "stddev_ms": 1.44,
+        "peak_rss_bytes": 42467328,
+        "runs_ms": [
+          48.43,
+          46.81,
+          44.25,
+          45.74,
+          45.15
+        ],
+        "samples": [
+          {
+            "wall_ms": 48.43,
+            "peak_rss_kib": 40876
+          },
+          {
+            "wall_ms": 46.81,
+            "peak_rss_kib": 41192
+          },
+          {
+            "wall_ms": 44.25,
+            "peak_rss_kib": 41052
+          },
+          {
+            "wall_ms": 45.74,
+            "peak_rss_kib": 41260
+          },
+          {
+            "wall_ms": 45.15,
+            "peak_rss_kib": 41472
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 44.29,
+        "stddev_ms": 1.92,
+        "peak_rss_bytes": 38883328,
+        "runs_ms": [
+          47.67,
+          42.6,
+          44.29,
+          42.43,
+          45.17
+        ],
+        "samples": [
+          {
+            "wall_ms": 47.67,
+            "peak_rss_kib": 37784
+          },
+          {
+            "wall_ms": 42.6,
+            "peak_rss_kib": 37860
+          },
+          {
+            "wall_ms": 44.29,
+            "peak_rss_kib": 37972
+          },
+          {
+            "wall_ms": 42.43,
+            "peak_rss_kib": 37504
+          },
+          {
+            "wall_ms": 45.17,
+            "peak_rss_kib": 37732
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-packed-cli-name-status-json",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; packed",
+      "description": "CLI --name-status --json",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/grit-main",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD",
+          "--json"
+        ],
+        "grit": [
+          "/tmp/grit-fixed",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD",
+          "--json"
+        ]
+      },
+      "git": {
+        "median_ms": 34.74,
+        "stddev_ms": 0.53,
+        "peak_rss_bytes": 22769664,
+        "runs_ms": [
+          34.31,
+          35.88,
+          34.71,
+          35.02,
+          34.74
+        ],
+        "samples": [
+          {
+            "wall_ms": 34.31,
+            "peak_rss_kib": 22160
+          },
+          {
+            "wall_ms": 35.88,
+            "peak_rss_kib": 22236
+          },
+          {
+            "wall_ms": 34.71,
+            "peak_rss_kib": 22216
+          },
+          {
+            "wall_ms": 35.02,
+            "peak_rss_kib": 22208
+          },
+          {
+            "wall_ms": 34.74,
+            "peak_rss_kib": 22172
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 53.21,
+        "stddev_ms": 1.44,
+        "peak_rss_bytes": 45510656,
+        "runs_ms": [
+          50.56,
+          53.21,
+          54.69,
+          51.6,
+          53.26
+        ],
+        "samples": [
+          {
+            "wall_ms": 50.56,
+            "peak_rss_kib": 44288
+          },
+          {
+            "wall_ms": 53.21,
+            "peak_rss_kib": 44384
+          },
+          {
+            "wall_ms": 54.69,
+            "peak_rss_kib": 44272
+          },
+          {
+            "wall_ms": 51.6,
+            "peak_rss_kib": 44164
+          },
+          {
+            "wall_ms": 53.26,
+            "peak_rss_kib": 44444
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 50.87,
+        "stddev_ms": 1.51,
+        "peak_rss_bytes": 42483712,
+        "runs_ms": [
+          49.0,
+          47.88,
+          51.84,
+          51.42,
+          50.87
+        ],
+        "samples": [
+          {
+            "wall_ms": 49.0,
+            "peak_rss_kib": 41348
+          },
+          {
+            "wall_ms": 47.88,
+            "peak_rss_kib": 41036
+          },
+          {
+            "wall_ms": 51.84,
+            "peak_rss_kib": 41348
+          },
+          {
+            "wall_ms": 51.42,
+            "peak_rss_kib": 41096
+          },
+          {
+            "wall_ms": 50.87,
+            "peak_rss_kib": 41488
+          }
+        ]
+      }
+    },
+    {
+      "id": "tree-metadata-cli-2083-packed-cli-name-status-json-dist",
+      "group": "tree-metadata",
+      "fixture": "120000 files, 400 directories, 20000 modified paths; packed",
+      "description": "CLI --name-status --json (dist profile)",
+      "driver": "cli",
+      "commands": {
+        "git": [
+          "git",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD"
+        ],
+        "baseline_grit": [
+          "/tmp/dist-base-target/dist/grit",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD",
+          "--json"
+        ],
+        "grit": [
+          "/tmp/dist-target/dist/grit",
+          "diff",
+          "--name-status",
+          "base",
+          "HEAD",
+          "--json"
+        ]
+      },
+      "git": {
+        "median_ms": 34.74,
+        "stddev_ms": 0.53,
+        "peak_rss_bytes": 22769664,
+        "runs_ms": [
+          34.31,
+          35.88,
+          34.71,
+          35.02,
+          34.74
+        ],
+        "samples": [
+          {
+            "wall_ms": 34.31,
+            "peak_rss_kib": 22160
+          },
+          {
+            "wall_ms": 35.88,
+            "peak_rss_kib": 22236
+          },
+          {
+            "wall_ms": 34.71,
+            "peak_rss_kib": 22216
+          },
+          {
+            "wall_ms": 35.02,
+            "peak_rss_kib": 22208
+          },
+          {
+            "wall_ms": 34.74,
+            "peak_rss_kib": 22172
+          }
+        ]
+      },
+      "baseline_grit": {
+        "median_ms": 51.28,
+        "stddev_ms": 1.61,
+        "peak_rss_bytes": 42434560,
+        "runs_ms": [
+          51.35,
+          47.83,
+          51.28,
+          51.51,
+          48.41
+        ],
+        "samples": [
+          {
+            "wall_ms": 51.35,
+            "peak_rss_kib": 41084
+          },
+          {
+            "wall_ms": 47.83,
+            "peak_rss_kib": 41440
+          },
+          {
+            "wall_ms": 51.28,
+            "peak_rss_kib": 41032
+          },
+          {
+            "wall_ms": 51.51,
+            "peak_rss_kib": 41048
+          },
+          {
+            "wall_ms": 48.41,
+            "peak_rss_kib": 41004
+          }
+        ]
+      },
+      "grit": {
+        "median_ms": 46.69,
+        "stddev_ms": 1.27,
+        "peak_rss_bytes": 38887424,
+        "runs_ms": [
+          47.33,
+          45.26,
+          48.67,
+          45.4,
+          46.69
+        ],
+        "samples": [
+          {
+            "wall_ms": 47.33,
+            "peak_rss_kib": 37720
+          },
+          {
+            "wall_ms": 45.26,
+            "peak_rss_kib": 37676
+          },
+          {
+            "wall_ms": 48.67,
+            "peak_rss_kib": 37972
+          },
+          {
+            "wall_ms": 45.4,
+            "peak_rss_kib": 37548
+          },
+          {
+            "wall_ms": 46.69,
+            "peak_rss_kib": 37976
+          }
+        ]
+      }
+    }
+  ]
+}

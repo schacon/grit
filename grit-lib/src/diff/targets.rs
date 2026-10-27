@@ -15,8 +15,9 @@ use crate::diff::{
     apply_rename_detection_to_diff_entries, diff_commits_with_renames_and_policy,
     diff_index_to_tree_with_renames, diff_index_to_worktree_with_renames,
     diff_tree_to_worktree_with_git_dir_and_rules, index_mtime_for_diff, read_submodule_head_oid,
-    read_worktree_side_bytes_for_diff, submodule_porcelain_flags, tree_diff_structured_parallel,
-    DiffEntry, DiffIndexToWorktreeOptions, DiffOptions, DiffStatus, TreeDiffStructured,
+    read_worktree_side_bytes_for_diff, sort_entries_by_path, submodule_porcelain_flags,
+    tree_diff_structured_parallel, DiffEntry, DiffIndexToWorktreeOptions, DiffOptions, DiffStatus,
+    TreeDiffStructured,
 };
 use crate::error::{Error, PathspecResolveError, Result};
 use crate::index::Index;
@@ -805,7 +806,7 @@ fn unstaged_changes_inner(
         diff_opts,
         rename_threshold,
     )?;
-    sort_entries(&mut entries);
+    sort_entries_by_path(&mut entries);
     let side = WorktreeDiffSide {
         work_tree,
         index: &index,
@@ -930,7 +931,7 @@ fn staged_changes(
             &thread_policy,
         )?
     };
-    sort_entries(&mut entries);
+    sort_entries_by_path(&mut entries);
     entries_to_file_changes(repo, entries, None)
 }
 
@@ -995,7 +996,7 @@ fn worktree_changes(
             &repo.thread_policy(),
         )?
     };
-    sort_entries(&mut entries);
+    sort_entries_by_path(&mut entries);
     let side = WorktreeDiffSide {
         work_tree,
         index: &index,
@@ -1035,7 +1036,7 @@ fn tree_commit_diff_entries(
         config,
         thread_policy,
     )?;
-    sort_entries(&mut entries);
+    sort_entries_by_path(&mut entries);
     Ok(entries)
 }
 
@@ -1076,7 +1077,7 @@ fn commit_diff_entries(
         config,
         thread_policy,
     )?;
-    sort_entries(&mut entries);
+    sort_entries_by_path(&mut entries);
     Ok(entries)
 }
 
@@ -1150,10 +1151,6 @@ fn read_commit(repo: &Repository, oid: &ObjectId) -> Result<CommitData> {
 
 fn commit_tree(repo: &Repository, commit: &ObjectId) -> Result<ObjectId> {
     Ok(read_commit(repo, commit)?.tree)
-}
-
-fn sort_entries(entries: &mut [DiffEntry]) {
-    entries.sort_by(|a, b| a.path().cmp(b.path()));
 }
 
 fn file_change(

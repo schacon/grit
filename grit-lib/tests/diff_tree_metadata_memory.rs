@@ -4,7 +4,10 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
 use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::config::ConfigSet;
+use grit_lib::diff::{diff_trees_with_renames_and_policy, DiffEntry, RENAME_DETECTION_DISABLED};
 use grit_lib::objects::{ObjectId, ObjectKind, TreeEntry};
+use grit_lib::parallel::ThreadPolicy;
 use grit_lib::repo::{InitOptions, Repository};
 
 struct LiveAllocator;
@@ -61,6 +64,8 @@ unsafe impl GlobalAlloc for LiveAllocator {
 #[global_allocator]
 static ALLOCATOR: LiveAllocator = LiveAllocator;
 
+const DIRS: usize = 400;
+
 fn write_tree(repo: &Repository, entries: &[TreeEntry]) -> ObjectId {
     repo.odb()
         .write(
@@ -70,8 +75,12 @@ fn write_tree(repo: &Repository, entries: &[TreeEntry]) -> ObjectId {
         .expect("write tree")
 }
 
-fn peak_for_width(width: usize) -> usize {
-    const DIRS: usize = 400;
+/// `DIRS` directories of `width` files each; the first `changed` files of every directory
+/// get new content. Returns the repository reopened without warmed caches.
+fn metadata_fixture(
+    width: usize,
+    changed: usize,
+) -> (tempfile::TempDir, Repository, ObjectId, ObjectId) {
     let dir = tempfile::tempdir().expect("tempdir");
     let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
     let old_blob = repo.odb().write(ObjectKind::Blob, b"old\n").expect("blob");
@@ -88,7 +97,9 @@ fn peak_for_width(width: usize) -> usize {
             })
             .collect();
         let old = write_tree(&repo, &entries);
-        entries[0].oid = new_blob;
+        for entry in &mut entries[..changed] {
+            entry.oid = new_blob;
+        }
         let new = write_tree(&repo, &entries);
         old_root.push(TreeEntry {
             mode: 0o040000,
@@ -108,16 +119,27 @@ fn peak_for_width(width: usize) -> usize {
         &RepositoryOptions::empty().with_work_tree(dir.path()),
     )
     .expect("reopen without warmed caches");
+    (dir, repo, old, new)
+}
 
-    // This API is serial; TLS excludes unrelated test-runner allocations. Count
+/// Peak live bytes allocated on this thread while `f` runs, plus its result.
+fn peak_during<T>(f: impl FnOnce() -> T) -> (usize, T) {
+    // These APIs run serially; TLS excludes unrelated test-runner allocations. Count
     // peak live bytes, not total allocations or allocator-dependent process RSS.
     let start = LIVE.with(Cell::get);
     PEAK.with(|peak| peak.set(start));
-    let entries = repo
-        .diff()
-        .tree_to_tree(Some(&old), Some(&new))
-        .expect("diff");
-    let peak = (PEAK.with(Cell::get) - start) as usize;
+    let value = f();
+    ((PEAK.with(Cell::get) - start) as usize, value)
+}
+
+fn peak_for_width(width: usize) -> usize {
+    let (_dir, repo, old, new) = metadata_fixture(width, 1);
+    let start = LIVE.with(Cell::get);
+    let (peak, entries) = peak_during(|| {
+        repo.diff()
+            .tree_to_tree(Some(&old), Some(&new))
+            .expect("diff")
+    });
     assert_eq!(entries.len(), DIRS);
     for (d, entry) in entries.iter().enumerate() {
         assert_eq!(entry.status.letter(), 'M');
@@ -144,5 +166,42 @@ fn completed_sibling_trees_do_not_accumulate_in_public_tree_diff() {
     assert!(
         large < small + 8 * 1024 * 1024,
         "completed sibling metadata accumulated: small={small}, large={large}"
+    );
+}
+
+#[test]
+fn rename_pass_without_pairs_adds_no_copy_of_the_metadata_list() {
+    // The `grit diff --name-status A B` path: rename detection is on, but a diff of
+    // modifications has nothing to pair and must hand back the list it was given.
+    let (_dir, repo, old, new) = metadata_fixture(64, 25);
+    let config = ConfigSet::new();
+    let policy = ThreadPolicy::default();
+    let run = |threshold| {
+        peak_during(|| {
+            diff_trees_with_renames_and_policy(
+                repo.odb(),
+                Some(&old),
+                Some(&new),
+                "",
+                threshold,
+                &config,
+                &policy,
+            )
+            .expect("diff")
+        })
+    };
+    // Warm the ODB caches so both runs see the same tree reads.
+    drop(run(RENAME_DETECTION_DISABLED));
+    let (plain_peak, plain) = run(RENAME_DETECTION_DISABLED);
+    let (renames_peak, renamed) = run(50);
+    assert_eq!(renamed, plain);
+    assert_eq!(renamed.len(), DIRS * 25);
+    let list_bytes = plain.capacity() * std::mem::size_of::<DiffEntry>();
+    eprintln!(
+        "metadata list={list_bytes}, no renames peak={plain_peak}, renames peak={renames_peak}"
+    );
+    assert!(
+        renames_peak < plain_peak + list_bytes / 8,
+        "rename pass copied the metadata list: plain={plain_peak}, renames={renames_peak}, list={list_bytes}"
     );
 }

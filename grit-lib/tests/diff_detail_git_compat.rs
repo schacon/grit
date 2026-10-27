@@ -3,7 +3,10 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
-use grit_lib::diff::{build_file_diffs, DiffDetail, DiffOptions, DiffTarget};
+use grit_lib::diff::{
+    build_file_diffs, diff_trees_with_renames_and_policy, DiffDetail, DiffOptions, DiffStatus,
+    DiffTarget, ListedFileDiff,
+};
 use grit_lib::objects::{ObjectKind, TreeEntry};
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::repo::{InitOptions, Repository};
@@ -263,10 +266,33 @@ fn tree_metadata_matrix_matches_git_without_reading_blobs() {
                     .collect();
                 assert_eq!(actual, expected, "{algo:?} {detail:?}");
                 assert_eq!(counter.load(Ordering::Relaxed), 0);
+                let rows: Vec<_> = entries
+                    .iter()
+                    .cloned()
+                    .map(ListedFileDiff::from_metadata)
+                    .collect();
+                assert_eq!(rows, out.files, "{algo:?} {detail:?} per-entry rows");
                 for (entry, file) in entries.iter().zip(&out.files) {
                     assert_eq!(file.old_mode, entry.old_mode.octal_if_present());
                     assert_eq!(file.new_mode, entry.new_mode.octal_if_present());
                 }
+            }
+            // With nothing to pair (only one side has adds or deletes), the rename pass the
+            // CLI runs must keep the metadata list as is and still read no blob.
+            let adds_and_deletes = entries.iter().any(|e| e.status == DiffStatus::Added)
+                && entries.iter().any(|e| e.status == DiffStatus::Deleted);
+            if !adds_and_deletes {
+                let renamed = diff_trees_with_renames_and_policy(
+                    repo.odb(),
+                    old.as_ref(),
+                    new.as_ref(),
+                    "",
+                    50,
+                    &grit_lib::config::ConfigSet::new(),
+                    &ThreadPolicy::default(),
+                )
+                .expect("rename pass without blobs");
+                assert_eq!(renamed, entries, "{algo:?} rename pass");
             }
         }
         let shown =

@@ -10,7 +10,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     build_file_diffs, count_changes_git_histogram, count_changes_with_algorithm,
-    diff_index_to_tree, diff_trees, DiffDetail, DiffOptions,
+    diff_index_to_tree, diff_trees, diff_trees_with_renames_and_policy, DiffDetail, DiffOptions,
 };
 use grit_lib::index::write_tree::{build_cache_tree_from_index, write_tree_from_index};
 use grit_lib::index::{Index, IndexEntry};
@@ -109,6 +109,31 @@ fn bench_tree_diff_siblings(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new(shape, "warm"), |b| {
             b.iter(|| black_box(diff_trees(&odb, Some(&old), Some(&new), "").expect("diff")));
         });
+        if !repeated {
+            // `grit diff --name-status A B`: default rename detection over modifications only.
+            let config = ConfigSet::new();
+            let policy = ThreadPolicy::default();
+            group.bench_function(BenchmarkId::new(shape, "cold+renames"), |b| {
+                b.iter_batched(
+                    || Odb::new(temp.path()),
+                    |odb| {
+                        black_box(
+                            diff_trees_with_renames_and_policy(
+                                &odb,
+                                Some(&old),
+                                Some(&new),
+                                "",
+                                50,
+                                &config,
+                                &policy,
+                            )
+                            .expect("diff"),
+                        )
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            });
+        }
     }
     group.finish();
 }
