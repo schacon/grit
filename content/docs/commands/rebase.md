@@ -43,13 +43,43 @@ When there is nothing to replay, human output is `Already up to date` and `--jso
 
 Shared rewrite flags match [`grit history`](history.md): `--dry-run`, `--update-refs`, `--empty`, and `--keep-committer`.
 
+### Exec commands that amend or add commits
+
+An `--exec` command may rewrite the commit it runs at, the way it can with `git rebase
+--exec`. When it exits zero with a detached `HEAD` that amends the replay commit, or
+adds new commits on top of it, grit keeps the result: later commits are replayed onto
+the new `HEAD`, later commands see its tree, and the branch ends up on the rewritten
+history. The common "format every commit" loop works as expected:
+
+```console
+$ grit rebase main --exec 'cargo fmt && git commit -qa --amend --no-edit'
+Rebased 2 commit(s)
+  commit d9b09e2 → 4ec1aa7 (one)
+  commit 3fe1bb2 → 0c24bc2 (two)
+  refs/heads/feature 3fe1bb2 → 0c24bc2
+```
+
+`git commit --amend` keeps the commit's change id. A command that leaves `HEAD`
+anywhere else (switching branches, resetting the commit away) fails the rebase: grit
+restores `HEAD`, the index, and the worktree without moving refs, and the commits the
+command made stay in the object database.
+
+If a later commit no longer applies on top of an amended one, replay stops with
+`result: "conflicts"` and conflict markers, like any rebase conflict, without
+undoing the commits already rewritten. Resolve and stage the paths, then run
+`grit rebase --continue` (the exec commands run at the resolved commit), or use
+`--skip` to drop that commit (its exec commands still run, at the current `HEAD`, as
+with Git), or `--abort` to restore the original branch. Resuming keeps the options the
+rebase started with, such as `--empty keep`; there is no need to repeat them.
+
 ### Successful exec commands that leave edits
 
 After **every** successful `--exec` command, grit reloads the index and checks tracked
-staged and unstaged changes against the replay commit. If anything changed, replay
-stops immediately with exit **1** and `result: "exec_dirty"`. The edits and index
-stay exactly as the command left them, `HEAD` remains detached at the replay commit,
-and the original branch refs remain unchanged. Later exec commands do not run.
+staged and unstaged changes against the resulting `HEAD` (the replay commit, or the
+commit the command amended it into). If anything changed, replay stops immediately
+with exit **1** and `result: "exec_dirty"`. The edits and index stay exactly as the
+command left them, `HEAD` remains detached at that commit, and the original branch
+refs remain unchanged. Later exec commands do not run.
 
 Save the edits before continuing:
 
@@ -76,14 +106,14 @@ exit code.
 | --- | --- |
 | `<upstream>` | Exclude commits reachable from this revision (default: `@{upstream}`). |
 | `--onto` | Replay onto this revision instead of `<upstream>`. |
-| `--continue` | Finish the current conflict resolution, or resume exec after saving its edits. |
+| `--continue` | Finish the current conflict resolution (including a replay conflict after an amending exec), or resume exec after saving its edits. |
 | `--abort` | Cancel the rebase and restore the branch to `orig-head`. Also cancels a rebase that `git` started. |
 | `--skip` | Skip a conflicted commit, or remaining exec commands at an exec stop (save edits first). |
 | `--dry-run` | List ref updates without moving refs (no session). |
 | `--update-refs` | `branches` (default) or `head`. |
 | `--empty` | `drop` (default), `keep`, or `abort` when a replay would become empty. |
 | `--keep-committer` | Preserve committer ident and timestamp on replayed commits. |
-| `--exec` | After each replayed commit is checked out, run `CMD` via `sh -c` in the worktree (repeatable; runs in order at every commit). Requires a clean index and worktree. Incompatible with `--dry-run`, `--check`, and `-X`. Command output goes to stderr. On nonzero command exit, grit restores `HEAD`, the index, and the worktree without moving refs; exit code is the command's exit code. A successful command that leaves tracked edits stops with `exec_dirty` and preserves them for recovery. |
+| `--exec` | After each replayed commit is checked out, run `CMD` via `sh -c` in the worktree (repeatable; runs in order at every commit). Requires a clean index and worktree. Incompatible with `--dry-run`, `--check`, and `-X`. Command output goes to stderr. On nonzero command exit, grit restores `HEAD`, the index, and the worktree without moving refs; exit code is the command's exit code. A successful command may amend the replayed commit or add commits on top of it; later commits are replayed onto the result. A successful command that leaves tracked edits stops with `exec_dirty` and preserves them for recovery. |
 | `--check` | Predict success or conflicts without changing refs, index, or worktree (conflicts with `--dry-run`). |
 | `-X ours\|theirs` | Auto-resolve replay conflicts in favor of the onto side (`ours`) or replayed commits (`theirs`). |
 
@@ -121,7 +151,7 @@ Pass `--json` on `grit rebase` or `grit history rebase`:
 | `head` | object or null | `{old,new}` for the completed invocation's `HEAD` OID change; `null` when unchanged. Dry runs show the planned change; conflict and abort outcomes use `null`. |
 | `dry_run` | boolean | Whether refs were left unchanged. |
 | `exec` | array | Captured invocations during this call, on completion or an exec stop: `{commit, command, exit_code}` per invocation (full hex `commit`). |
-| `commit` | string | Source commit for `conflicts`; checked-out replay commit for `exec_dirty`. |
+| `commit` | string | Source commit for `conflicts`; `HEAD` after the command (the replay commit or its amended replacement) for `exec_dirty`. |
 | `command` | string | Successful command that left edits, for `exec_dirty`. |
 | `paths` | array of strings | Changed tracked paths at an exec stop. |
 | `conflicts` | array | `{path,kind,summary?}` when `result` is `conflicts`; `kind` is a [conflict kind](../status/#conflict-kinds). |

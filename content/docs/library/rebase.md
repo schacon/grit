@@ -22,15 +22,41 @@ On completion, [`RebaseOutcome::Done`](rustdoc:grit_lib::revwalk::history::Rebas
 ## Exec verification and recovery
 
 [`verify_rebase_with_exec`](rustdoc:grit_lib::revwalk::history::verify_rebase_with_exec)
-checks out each replacement and runs the injected command runner. After every
-successful invocation it reloads the index and checks staged and unstaged tracked
-changes against the replay tree, including racy file timestamps. Clean commands
-restore the original HEAD, index, and tracked files before the caller applies the
-plan atomically.
+checks out each replacement and runs the injected command runner. It takes the
+plan by `&mut` with the plan's `RewriteOptions`: after a successful invocation, a
+detached `HEAD` that amends the replay commit (same first parent) or adds commits on
+top of it is adopted into the plan, later commits are replayed onto it with those
+options, and ref updates and the `HEAD` effect follow. Any other `HEAD` move returns
+[`HistoryError::ExecHeadMoved`](rustdoc:grit_lib::revwalk::history::HistoryError::ExecHeadMoved)
+after a rollback. After every successful invocation it also reloads the index and
+checks staged and unstaged tracked changes against the resulting `HEAD` tree,
+including racy file timestamps. Clean commands restore the original HEAD, index, and
+tracked files before the caller applies the updated plan atomically.
+
+```rust
+use grit_lib::progress::{NeverCancel, NullProgress};
+use grit_lib::revwalk::history::{apply_rewrite, verify_rebase_with_exec, ExecSpec};
+
+// `plan` comes from `plan_rebase(&repo, &request, &options)`.
+let spec = ExecSpec { commands: vec!["cargo fmt && git commit -qa --amend --no-edit".into()] };
+let report = verify_rebase_with_exec(&repo, &mut plan, &spec, &options.rewrite, runner.as_ref())?;
+apply_rewrite(&repo, &plan, &apply, &mut NullProgress, &NeverCancel)?;
+```
+
+When replaying a later commit onto an amended one conflicts,
+[`HistoryError::ExecConflict`](rustdoc:grit_lib::revwalk::history::HistoryError::ExecConflict)
+leaves the conflict checked out on top of the rewritten commit and saves recovery
+state: stage a resolution and call `continue_rebase` (commands then run at the
+resolved commit), or `skip_rebase` to drop the commit (its commands still run at the
+current `HEAD`, as in Git's todo list), or `abort_rebase`. The recovery record keeps
+the `RewriteOptions` the exec run started with, and resuming uses those rather than
+the options passed to `continue_rebase` / `skip_rebase`. If the record cannot be
+written, the run is rolled back instead of leaving a detached conflict behind.
 
 [`HistoryError::ExecDirty`](rustdoc:grit_lib::revwalk::history::HistoryError::ExecDirty)
-carries the replay commit, command, changed paths, and captured run records. The
-edited index and worktree are preserved at the detached replay HEAD. Original
+carries the `HEAD` the command left (the replay commit or its amended replacement),
+the command, changed paths, and captured run records. The
+edited index and worktree are preserved at that detached HEAD. Original
 branch refs remain unchanged. Do **not** apply the rewrite after this error.
 The library saves the original HEAD and index, plan, and next command position in
 `rebase-merge/grit-exec`; it distinguishes this stop from an unresolved pick.
