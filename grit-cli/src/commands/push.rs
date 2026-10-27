@@ -177,7 +177,7 @@ struct PushWireOptions<'a> {
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     tags: bool,
-    delete_refs: &[String],
+    delete_refs: bool,
     remote_flag: Option<String>,
     positionals: &[String],
     dry_run: bool,
@@ -211,7 +211,8 @@ pub fn run(
         remote: invocation.remote,
         refspecs: invocation.refspecs,
         tags,
-        delete: delete_refs.to_vec(),
+        delete_refs,
+        delete: Vec::new(),
         force: force_mode,
         follow_tags: follow,
         set_upstream,

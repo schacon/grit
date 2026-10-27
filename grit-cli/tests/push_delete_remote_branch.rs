@@ -157,3 +157,144 @@ fn delete_remote_branch_json_uses_short_name_for_qualified_ref() {
     );
     assert_eq!(json["results"][0]["ref"].as_str(), Some("refs/heads/topic"));
 }
+
+/// A work tree whose `origin` bare remote has `main`, `a`, `b` and `c`.
+fn remote_with_branches(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    let origin = root.join("origin.git");
+    std::fs::create_dir_all(&origin).unwrap();
+    git(&origin, &["init", "-q", "--bare", "-b", "main"]);
+    let local = root.join("local");
+    std::fs::create_dir_all(&local).unwrap();
+    git(&local, &["init", "-q", "-b", "main"]);
+    std::fs::write(local.join("f"), "x\n").unwrap();
+    git(&local, &["add", "f"]);
+    git(&local, &["commit", "-qm", "seed"]);
+    git(
+        &local,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    git(
+        &local,
+        &["push", "-q", "origin", "main", "main:a", "main:b", "main:c"],
+    );
+    (origin, local)
+}
+
+fn grit(dir: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(GRIT)
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("grit")
+}
+
+#[test]
+fn delete_two_remote_branches_in_one_push() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (origin, local) = remote_with_branches(tmp.path());
+
+    let out = grit(&local, &["push", "origin", "--delete", "a", "b", "--json"]);
+    assert!(
+        out.status.success(),
+        "grit push origin --delete a b: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+    assert_eq!(json["kind"].as_str(), Some("delete"));
+    assert!(json.get("branch").is_none(), "{json}");
+    let refs: Vec<_> = json["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["ref"].as_str().unwrap(), r["status"].as_str().unwrap()))
+        .collect();
+    assert_eq!(refs, [("refs/heads/a", "ok"), ("refs/heads/b", "ok")]);
+    assert_eq!(
+        ls_remote_heads(&origin),
+        ["refs/heads/c", "refs/heads/main"]
+    );
+
+    let out = grit(&local, &["push", "--delete", "origin", "c"]);
+    assert!(out.status.success());
+    assert_eq!(ls_remote_heads(&origin), ["refs/heads/main"]);
+}
+
+#[test]
+fn delete_reports_a_name_missing_on_the_remote() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (origin, local) = remote_with_branches(tmp.path());
+    git(&local, &["branch", "newbr"]);
+
+    let out = grit(
+        &local,
+        &["push", "origin", "--delete", "c", "newbr", "--json"],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+    assert_eq!(json["results"][0]["status"].as_str(), Some("ok"));
+    assert_eq!(json["results"][1]["ref"].as_str(), Some("refs/heads/newbr"));
+    assert_eq!(
+        json["results"][1]["reason"].as_str(),
+        Some("remote_ref_missing")
+    );
+    assert!(!ls_remote_heads(&origin).contains(&"refs/heads/c".to_owned()));
+}
+
+#[test]
+fn delete_with_a_refspec_is_rejected_before_touching_the_remote() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (origin, local) = remote_with_branches(tmp.path());
+    let before = ls_remote_heads(&origin);
+
+    let out = grit(
+        &local,
+        &["push", "origin", "HEAD:refs/heads/release", "--delete", "b"],
+    );
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("HEAD:refs/heads/release"),
+        "error must name the refspec: {stderr}"
+    );
+    assert_eq!(ls_remote_heads(&origin), before);
+
+    let out = grit(
+        &local,
+        &[
+            "push",
+            "origin",
+            "--delete",
+            "b",
+            "HEAD:refs/heads/release",
+            "--json",
+        ],
+    );
+    assert!(!out.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+    assert!(
+        json["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("HEAD:refs/heads/release")),
+        "{json}"
+    );
+    assert_eq!(ls_remote_heads(&origin), before);
+}
+
+#[test]
+fn delete_without_refs_is_an_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (origin, local) = remote_with_branches(tmp.path());
+    let before = ls_remote_heads(&origin);
+    for args in [&["push", "--delete"][..], &["push", "--delete", "origin"]] {
+        let out = grit(&local, args);
+        assert!(!out.status.success(), "{args:?} must fail");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("--delete"),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    assert_eq!(ls_remote_heads(&origin), before);
+}

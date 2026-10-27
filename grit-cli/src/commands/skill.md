@@ -176,6 +176,7 @@ Failures with a known next step carry a `hint` in `--json` (and a `hint:` line o
 | Push to a different remote branch name | `grit push origin HEAD:refs/heads/<name>` |
 | Publish rewritten history safely | `grit fetch`, then `grit push --force-with-lease` (or `--force-with-lease=<rev>` for one ref); stale lease → exit **1**, `"rejected": true` |
 | Publish all local tags | `grit push --tags` |
+| Delete remote branches or tags | `grit push origin --delete <ref>...` (one `results` row per ref; a missing ref → exit **1**, `remote_ref_missing`; a `src:dst` refspec next to `--delete` is an error and nothing is pushed) |
 
 Ordinary pushes must fast-forward the remote. If the remote has commits you don't, grit rejects the push (exit **1**, `"rejected": true`); run `grit pull`, then push again. After `grit history` edits (reword, drop, fixup, squash, split, rebase) or `grit rebase`, fetch and use `--force-with-lease` instead of `--force` so you don't overwrite someone else's work. `--force` overwrites unconditionally when you really need it. A failing `pre-push` hook stops the push before anything is sent (exit **1**, `"error": "hook pre-push failed …"`); `--no-verify` skips it.
 
