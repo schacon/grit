@@ -148,14 +148,18 @@ pub fn promisor_expanded_object_ids(repo: &Repository) -> Result<HashSet<ObjectI
 
 /// Classify promises using only available objects. Never hydrate missing targets while
 /// deciding which objects maintenance may omit from local packs and reachability walks.
+///
+/// A custom primary store has no promisor packs, so only the recorded missing ids apply.
 pub(crate) fn maintenance_promise_boundary(odb: &Odb) -> Result<HashSet<ObjectId>> {
     let mut queue = VecDeque::new();
-    odb.primary()?
-        .packed_objects()
-        .for_each_promisor_object(&mut |oid| {
-            queue.push_back(*oid);
-            ControlFlow::Continue(())
-        })?;
+    if odb.uses_files_primary() {
+        odb.primary()?
+            .packed_objects()
+            .for_each_promisor_object(&mut |oid| {
+                queue.push_back(*oid);
+                ControlFlow::Continue(())
+            })?;
+    }
     let mut set: HashSet<ObjectId> = HashSet::new();
 
     while let Some(oid) = queue.pop_front() {
