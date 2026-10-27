@@ -1,6 +1,7 @@
 //! Filesystem ref backend (loose refs + `packed-refs`) implementing [`super::RefStore`].
 
 use crate::git_path::CanonicalizeExt;
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -660,6 +661,12 @@ impl FilesRefStore {
     pub(crate) fn reflog_path(&self, logical: &str) -> PathBuf {
         let route = self.route(logical);
         route.storage_dir.join("logs").join(&route.storage_name)
+    }
+
+    /// Every parseable entry of `name`'s reflog, oldest first, without the per-entry clone
+    /// [`RefStore::for_each_reflog_entry`] needs; empty when the log is missing.
+    pub(crate) fn read_reflog_entries(&self, name: &str) -> Result<Vec<ReflogEntry>> {
+        read_reflog_at_path(&self.reflog_path(name))
     }
 
     fn ref_lock_paths(&self, refname: &str) -> (RefStorageRoute, PathBuf, PathBuf) {
@@ -1571,9 +1578,7 @@ impl RefStore for FilesRefStore {
                 return Ok(());
             };
             while let Some(line) = reader.next_nonempty_line()? {
-                let Some(entry) =
-                    reflog::parse_reflog_line_for_store(&String::from_utf8_lossy(&line))
-                else {
+                let Some(entry) = reflog::parse_reflog_line_for_store(&utf8_or_lossy(&line)) else {
                     continue;
                 };
                 if f(&entry).is_break() {
@@ -1874,10 +1879,20 @@ fn read_reflog_at_path(path: &Path) -> Result<Vec<ReflogEntry>> {
         }
         Err(e) => return Err(Error::Io(e)),
     };
-    Ok(String::from_utf8_lossy(&content)
+    let text = utf8_or_lossy(&content);
+    Ok(text
         .lines()
         .filter_map(reflog::parse_reflog_line_for_store)
         .collect())
+}
+
+/// `bytes` as text, validating on the fast path and replacing invalid sequences only when
+/// there are any (`String::from_utf8_lossy` alone is markedly slower on large logs).
+fn utf8_or_lossy(bytes: &[u8]) -> Cow<'_, str> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Cow::Borrowed(text),
+        Err(_) => String::from_utf8_lossy(bytes),
+    }
 }
 
 fn changed_ref_names(

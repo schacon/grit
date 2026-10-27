@@ -547,6 +547,9 @@ pub(crate) fn read_reflog_on_store(
     store: &dyn crate::refs::store::RefStore,
     refname: &str,
 ) -> Result<Vec<ReflogEntry>> {
+    if let Some(files) = store.as_files() {
+        return files.read_reflog_entries(refname);
+    }
     let mut entries = Vec::new();
     store.for_each_reflog_entry(refname, false, &mut |entry| {
         entries.push(entry.clone());
