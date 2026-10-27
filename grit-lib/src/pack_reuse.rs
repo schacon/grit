@@ -288,11 +288,16 @@ fn compute_reuse_bits(
     let mut reuse = Bitmap::new();
     let pack_bytes = pack.pack_bytes.as_ref();
     let hb = pack.idx.hash_bytes();
+    let pack_range = pack.bitmap_pos as usize..(pack.bitmap_pos + pack.bitmap_nr) as usize;
+    let send_positions: Vec<u32> = send_bits
+        .set_bits()
+        .filter(|pos| pack_range.contains(pos))
+        .map(|pos| pos as u32)
+        .collect();
     loop {
         let mut changed = false;
-        for rel in 0..pack.bitmap_nr {
-            let pos = pack.bitmap_pos + rel;
-            if !send_bits.get(pos as usize) || reuse.get(pos as usize) {
+        for &pos in &send_positions {
+            if reuse.get(pos as usize) {
                 continue;
             }
             let Ok(oid) = send_set.bitmap_index().oid_at(pos) else {

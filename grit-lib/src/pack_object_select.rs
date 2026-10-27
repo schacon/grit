@@ -162,28 +162,21 @@ pub fn try_bitmap_reachable_for_upload(
         return Ok(None);
     };
     let index = Arc::new(index);
-    let missing_wants = MissingAction::Error;
-
-    let Some(have_set) = try_bitmap_peer_held(odb, haves, shallow_grafts)? else {
-        return Ok(None);
-    };
-
-    let send_set = match index.reachability(
+    match index.reachability_and_haves(
         &repo,
         ReachabilityQuery {
             wants,
             haves,
             filter,
         },
-        missing_wants,
+        MissingAction::Error,
+        MissingAction::Allow,
     ) {
-        Ok(set) => set,
-        Err(BitmapWalkError::Unsupported(_)) => return Ok(None),
-        Err(BitmapWalkError::Bitmap(_)) => return Ok(None),
-        Err(BitmapWalkError::Repository(e)) => return Err(e),
-    };
-
-    Ok(Some((send_set, have_set)))
+        Ok(sets) => Ok(Some(sets)),
+        Err(BitmapWalkError::Unsupported(_)) => Ok(None),
+        Err(BitmapWalkError::Bitmap(_)) => Ok(None),
+        Err(BitmapWalkError::Repository(e)) => Err(e),
+    }
 }
 
 /// Bitmap `object:type` selection also drops the wanted commits and tags, which a
