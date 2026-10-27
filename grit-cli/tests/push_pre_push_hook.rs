@@ -109,3 +109,34 @@ fn passing_pre_push_hook_sees_remote_and_ref_lines() {
         )
     );
 }
+
+#[test]
+fn hook_that_ignores_its_stdin_fails_the_push_without_killing_grit() {
+    let fx = CliFixture::new().with_upstream();
+    let bare = fx.upstream_path();
+    let client = fx.git_clone_client("client");
+    let head = git(&client, &["rev-parse", "HEAD"]);
+    // More ref lines than a pipe buffer holds, so writing them must hit a closed pipe.
+    let updates: String = (0..800)
+        .map(|i| format!("create refs/heads/many-{i:04} {}\n", head.trim()))
+        .collect();
+    let out = git_cmd(&["update-ref", "--stdin"])
+        .in_dir(&client)
+        .stdin(updates)
+        .exec();
+    assert!(out.ok(), "{}", out.dump("update-ref"));
+    write_hook(&client.join(".git/hooks/pre-push"), "#!/bin/sh\nexit 1\n");
+
+    let names: Vec<String> = (0..800).map(|i| format!("many-{i:04}")).collect();
+    let mut args = vec!["push", "origin"];
+    args.extend(names.iter().map(String::as_str));
+    let out = grit_cmd(&args).in_dir(&client).exec();
+    assert_eq!(out.status, Some(1), "{}", out.dump("push"));
+    assert!(
+        out.stderr
+            .contains("hook pre-push failed with exit status 1"),
+        "{}",
+        out.stderr
+    );
+    assert!(!remote_has(bare, "refs/heads/many-0000"));
+}

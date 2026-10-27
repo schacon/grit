@@ -342,25 +342,20 @@ fn push_once(
     factory: &DefaultHttpClientFactory,
     progress: &mut TerminalProgress,
 ) -> Result<grit_lib::remote::transfer::PushOutcome> {
-    open_push_destination(config, remote_name)
-        .map_err(map_remote_error)?
-        .push(
-            repo,
-            specs,
-            PushOptions {
-                dry_run: wire.dry_run,
-                atomic: wire.atomic,
-                push_options: wire.push_options.to_vec(),
-                remote_ref_tips: wire.remote_ref_tips.clone(),
-                tracking_remote: Some(remote_name.to_owned()),
-                no_verify: wire.no_verify,
-                ..Default::default()
-            },
-            progress,
-            &NeverCancel,
-            Some(factory),
-        )
-        .map_err(map_remote_error)
+    let remote = open_push_destination(config, remote_name).map_err(map_remote_error)?;
+    let options = PushOptions {
+        dry_run: wire.dry_run,
+        atomic: wire.atomic,
+        push_options: wire.push_options.to_vec(),
+        remote_ref_tips: wire.remote_ref_tips.clone(),
+        tracking_remote: Some(remote_name.to_owned()),
+        no_verify: wire.no_verify,
+        ..Default::default()
+    };
+    crate::stdio::with_sigpipe_ignored(|| {
+        remote.push(repo, specs, options, progress, &NeverCancel, Some(factory))
+    })
+    .map_err(map_remote_error)
 }
 
 #[cfg(test)]
