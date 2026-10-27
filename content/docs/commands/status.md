@@ -31,6 +31,27 @@ During a paused merge or grit rebase, human output also lists **Conflicts** grou
 
 A rebase that `git` started (`.git/rebase-merge/` or `.git/rebase-apply/` without grit's plan) is recognised too. The header names the branch being rebased (`Rebasing topic onto 1a2b3c4`), JSON `branch` reports that branch, and `operation` is `rebase-interactive` (Git's default merge backend) or `rebase` (`git rebase --apply`). Its `next_steps` end with `git rebase --continue`, because only git can resume its own todo list. `grit rebase --abort` is listed in `alternatives` and cancels it. Conflict kinds match Git porcelain v2 unmerged XY codes: `both_modified` (UU), `both_added` (AA), `both_deleted` (DD), `added_by_us` (AU), `added_by_them` (UA), `deleted_by_us` (DU), `deleted_by_them` (UD).
 
+### Interrupted rebases and history edits
+
+A `grit rebase` or `grit history` edit that is killed after moving branches but before the files are updated leaves a recovery journal in `.git/grit/rewrite-apply/`. `grit status` finishes that work before it reports anything, and says what it did in one line above the usual screen:
+
+- **Finished the checkout.** The branches had already moved, so status puts back the files the interrupted checkout was writing and checks out the rewritten commit again. The rebase stands. Unrelated local edits are kept.
+- **Rolled back.** When that checkout cannot finish (or for an interrupted `history fixup` or `absorb`), branches, index and files go back to where they were before the command. Status still succeeds.
+- **Pending.** Another process holds `.git/index.lock`, so nothing is touched yet. If the lock belongs to a process that no longer runs (recorded with `core.lockfilePid`), status removes it and recovers. Otherwise, run `grit status` again after that process exits, or delete the lock when you know nothing owns it.
+
+`--json` reports the outcome in `interrupted_rewrite`. The line and the field appear only on the run that finished or rolled back the work, and on every run while it is pending.
+
+```console
+$ grit status
+Finished the checkout of an interrupted rebase or history edit; HEAD stays on the rewritten commits.
+
+On feat  ·  1 ahead of master
+
+  4f2a9c1  you  just now  feat
+
+Nothing to commit — working tree clean.
+```
+
 Paths are shown relative to the directory you run `grit` from. Valid UTF-8 file names print as-is in human and `--markdown` output (unlike Git’s default `core.quotepath=true`, which octal-escapes non-ASCII bytes). Names that contain C0 control characters (including ESC and BEL) are still C-quoted so a malicious repository cannot inject terminal escape sequences. Set `core.quotepath=true` in config if you want Git-style octal escaping for all non-ASCII bytes. `--json` path fields are always unquoted UTF-8 strings (JSON escapes controls as `\uXXXX`).
 
 ### The target branch
@@ -230,6 +251,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `operation` | object or null | Primary paused operation: `{ "kind", "next_steps", "alternatives" }`. `next_steps` is the ordered sequence; `alternatives` lists mutually exclusive options (for example `grit merge --abort`). Steps are `grit` commands, except `git rebase --continue` for a rebase that git started. Omitted when no operation is in progress. |
 | `ignored` | array | Ignored paths when `--ignored` was passed; omitted otherwise. |
 | `stash_count` | number | Entries on the stash reflog (`0` when empty). |
+| `interrupted_rewrite` | string | Recovery of a rebase or history edit that was killed after moving refs: `finished_checkout` (the rewrite stands), `rolled_back` (it was undone) or `pending` (another process holds `.git/index.lock`). Omitted when nothing was pending. |
 
 Example:
 

@@ -6,7 +6,7 @@ use grit_lib::diff::DiffEntry;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::status::{
     short_status_lines, status, status_options_from_config, Conflict, ConflictGroup, ConflictKind,
-    IgnoredMode, StatusAction, StatusGuidance, UntrackedMode,
+    IgnoredMode, InterruptedRewrite, StatusAction, StatusGuidance, UntrackedMode,
 };
 use grit_lib::progress::NeverCancel;
 use grit_lib::progress::NullProgress;
@@ -97,6 +97,11 @@ pub struct StatusOutcome {
     pub ignored: Option<Vec<String>>,
     /// Number of entries on the stash reflog.
     pub stash_count: usize,
+    /// What status did about a rebase or history edit that was killed after moving refs, when one
+    /// was pending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    pub interrupted_rewrite: Option<InterruptedRewriteJson>,
 
     // Human-only state, not part of the JSON schema.
     #[serde(skip)]
@@ -137,6 +142,41 @@ pub struct StatusOutcome {
     short_lines: Vec<String>,
 }
 
+/// Recovery of an interrupted rebase or history edit, in `--json` output.
+#[derive(Clone, Copy, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InterruptedRewriteJson {
+    /// Refs had already moved: the checkout was completed and the rewrite stands.
+    FinishedCheckout,
+    /// The rewrite was undone: refs, index and files are back to their earlier state.
+    RolledBack,
+    /// Another process holds `index.lock`; recovery runs on a later command.
+    Pending,
+}
+
+impl From<InterruptedRewrite> for InterruptedRewriteJson {
+    fn from(outcome: InterruptedRewrite) -> Self {
+        match outcome {
+            InterruptedRewrite::FinishedCheckout => Self::FinishedCheckout,
+            InterruptedRewrite::RolledBack => Self::RolledBack,
+            InterruptedRewrite::Pending => Self::Pending,
+        }
+    }
+}
+
+impl InterruptedRewriteJson {
+    /// One line for human and Markdown output; `lock` is how the index lock path is shown.
+    fn sentence(self, lock: &str) -> String {
+        match self {
+            Self::FinishedCheckout => "Finished the checkout of an interrupted rebase or history edit; HEAD stays on the rewritten commits.".to_owned(),
+            Self::RolledBack => "Rolled back an interrupted rebase or history edit; refs, index and files are back to where they were.".to_owned(),
+            Self::Pending => format!(
+                "An interrupted rebase or history edit is pending: another process holds {lock}. Run grit status again once it exits."
+            ),
+        }
+    }
+}
+
 fn conflict_json(c: &Conflict) -> ConflictJson {
     ConflictJson {
         path: c.path.clone(),
@@ -173,6 +213,10 @@ impl HumanRender for StatusOutcome {
             self.render_short_human(w)?;
             return Ok(());
         }
+        if let Some(outcome) = self.interrupted_rewrite {
+            outln!(w, "{}", outcome.sentence(".git/index.lock"));
+            outln!(w);
+        }
         self.render_header(w, ctx)?;
         self.render_changes(w)?;
         self.render_hints(w)?;
@@ -186,6 +230,10 @@ impl MarkdownRender for StatusOutcome {
         if self.short_format {
             self.render_short_human(w)?;
             return Ok(());
+        }
+        if let Some(outcome) = self.interrupted_rewrite {
+            outln!(w, "> {}", outcome.sentence("`.git/index.lock`"));
+            outln!(w);
         }
         self.render_markdown_header(w, ctx)?;
         self.render_markdown_changes(w)?;
@@ -817,6 +865,7 @@ pub fn run(args: &StatusCliArgs) -> Result<StatusOutcome> {
         operation,
         ignored: ignored_json,
         stash_count: model.stash_count,
+        interrupted_rewrite: model.interrupted_rewrite.map(InterruptedRewriteJson::from),
         header,
         commit_rows,
         staged_entries: model.staged,

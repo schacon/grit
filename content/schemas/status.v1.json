@@ -146,6 +146,32 @@
       ],
       "type": "object"
     },
+    "InterruptedRewriteJson": {
+      "description": "Recovery of an interrupted rebase or history edit, in `--json` output.",
+      "oneOf": [
+        {
+          "description": "Refs had already moved: the checkout was completed and the rewrite stands.",
+          "enum": [
+            "finished_checkout"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The rewrite was undone: refs, index and files are back to their earlier state.",
+          "enum": [
+            "rolled_back"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Another process holds `index.lock`; recovery runs on a later command.",
+          "enum": [
+            "pending"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "OperationJson": {
       "description": "Paused operation and suggested `grit` commands.",
       "properties": {
@@ -297,6 +323,17 @@
         "type": "string"
       },
       "type": "array"
+    },
+    "interrupted_rewrite": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/InterruptedRewriteJson"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "What status did about a rebase or history edit that was killed after moving refs, when one was pending."
     },
     "merging": {
       "description": "True when a merge is in progress (`MERGE_HEAD` exists). Deprecated: prefer `operation`.",

@@ -537,6 +537,9 @@ mod status_conflicts_operation;
 #[path = "status_ignored_short.rs"]
 mod status_ignored_short;
 #[cfg(feature = "full-tests")]
+#[path = "status_interrupted_rewrite.rs"]
+mod status_interrupted_rewrite;
+#[cfg(feature = "full-tests")]
 #[path = "status_midx_memory.rs"]
 mod status_midx_memory;
 #[cfg(feature = "full-tests")]
