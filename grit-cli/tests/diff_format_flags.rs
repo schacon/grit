@@ -322,31 +322,11 @@ fn revision_metadata_matches_git_with_missing_blob_content() {
             .collect();
         // Delete all blob objects after taking the Git oracle. Tree-only name
         // formats must still succeed, even through CLI argument/rendering glue.
-        let objects = git(
-            root,
-            &[
-                "cat-file",
-                "--batch-all-objects",
-                "--batch-check=%(objectname) %(objecttype)",
-            ],
-        );
-        for row in objects.lines() {
-            let (oid, kind) = row.split_once(' ').expect("object row");
-            if kind == "blob" {
-                std::fs::remove_file(root.join(".git/objects").join(&oid[..2]).join(&oid[2..]))
-                    .expect("remove blob");
-            }
-        }
+        remove_loose_blobs(root);
         for (flag, expected) in expected {
             let out = grit(root, &["diff", "--no-renames", flag, "HEAD~1", "HEAD"]);
             assert!(out.ok(), "{}", out.dump("metadata without blobs"));
-            // The CLI orders encoded non-UTF8 paths differently from Git;
-            // compare records while preserving every status and quoted path.
-            let mut actual: Vec<_> = out.stdout.lines().collect();
-            let mut expected: Vec<_> = expected.lines().collect();
-            actual.sort_unstable();
-            expected.sort_unstable();
-            assert_eq!(actual, expected, "{format} {flag}");
+            assert_eq!(out.stdout, expected, "{format} {flag}");
             let json = grit(
                 root,
                 &["diff", "--no-renames", flag, "HEAD~1", "HEAD", "--json"],
@@ -362,4 +342,64 @@ fn revision_metadata_matches_git_with_missing_blob_content() {
             assert!(md.stdout.contains("exec"));
         }
     }
+}
+
+/// Remove every loose blob so any content read fails the command.
+fn remove_loose_blobs(root: &std::path::Path) {
+    let objects = git(
+        root,
+        &[
+            "cat-file",
+            "--batch-all-objects",
+            "--batch-check=%(objectname) %(objecttype)",
+        ],
+    );
+    for row in objects.lines() {
+        let (oid, kind) = row.split_once(' ').expect("object row");
+        if kind == "blob" {
+            std::fs::remove_file(root.join(".git/objects").join(&oid[..2]).join(&oid[2..]))
+                .expect("remove blob");
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn name_status_with_default_renames_reads_no_blobs_when_nothing_pairs() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    git(root, &["init", "-q"]);
+    let names: Vec<std::path::PathBuf> = (0..40)
+        .map(|i| std::path::PathBuf::from(format!("d{:02}/f{i:03}.txt", i % 8)))
+        .chain([std::path::PathBuf::from(std::ffi::OsStr::from_bytes(
+            b"raw-\xff",
+        ))])
+        .collect();
+    for name in &names {
+        if let Some(parent) = name.parent() {
+            std::fs::create_dir_all(root.join(parent)).expect("mkdir");
+        }
+        std::fs::write(root.join(name), b"before\n").expect("write");
+    }
+    git(root, &["add", "."]);
+    git(root, &["commit", "-qm", "base"]);
+    for name in names.iter().step_by(3) {
+        std::fs::write(root.join(name), b"after\n").expect("edit");
+    }
+    git(root, &["commit", "-qam", "edited"]);
+    // Default rename detection, as in `git diff --name-status A B`.
+    let expected = git(root, &["diff", "--name-status", "HEAD~1", "HEAD"]);
+    assert_eq!(expected.lines().count(), 14);
+    remove_loose_blobs(root);
+    let out = grit(root, &["diff", "--name-status", "HEAD~1", "HEAD"]);
+    assert!(out.ok(), "{}", out.dump("renames on, nothing to pair"));
+    assert_eq!(out.stdout, expected);
+    let json = grit(root, &["diff", "--name-status", "HEAD~1", "HEAD", "--json"]);
+    assert!(json.ok(), "{}", json.dump("name-status JSON"));
+    let value: serde_json::Value = serde_json::from_str(&json.stdout).expect("JSON");
+    let files = value["files"].as_array().expect("files");
+    assert_eq!(files.len(), 14);
+    assert!(files.iter().all(|f| f["status"] == "modified"), "{value}");
 }
