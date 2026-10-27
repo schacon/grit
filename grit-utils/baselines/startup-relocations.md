@@ -1,5 +1,11 @@
 # PIE startup relocation investigation (#2028)
 
+Current shipping policy: keep the original GNU asset as the installer default
+on every glibc version. RELR remains a manual download for glibc 2.36+. The
+review follow-up below supersedes automatic selection and earlier performance
+claims for the final artifacts. Historical measurements retain their exact
+source revisions.
+
 Base: `f0e7cddd530a27366b74a4901b778395e404b458` (origin/main at checkout). Both variants use that exact source. Candidate changes only the CLI final link with `-Wl,-z,pack-relative-relocs`; the map option is diagnostic. No codegen units, LTO, panic policy, PIE, ASLR, features, library algorithms or CLI behavior change. The initial probe predates the shipping decision implemented in the addendum below.
 
 ## Environment and method
@@ -189,3 +195,30 @@ An additional filter smoke found that jaq Unicode property classes (`\p{L}`)
 are unsupported in both stock and RELR, with identical errors. Unicode literal
 regex filtering passes in both; this existing filter limitation is unchanged
 and outside the relocation work.
+
+## Review correction: stock installer default (2026-10-27)
+
+The review measured the actual `3fcfb24e9` tip, rather than extrapolating the
+`aa1964221` results. Same-source native dist medians from five warmups and 60
+rotated measured runs were:
+
+| Tiny command | Git ms | Stock dist ms | RELR dist ms | RELR change |
+| --- | ---: | ---: | ---: | ---: |
+| branch | 0.964554 | 1.515249 | 1.541162 | +1.71% |
+| status | 1.148274 | 1.782791 | 1.811804 | +1.63% |
+| resolve | 0.887730 | 1.545215 | 1.572446 | +1.76% |
+| help | 0.808081 | 2.319787 | 2.335541 | +0.68% |
+
+These are reviewer-supplied results on the 4-vCPU Xeon 8573C / glibc 2.39 host,
+not a new run on this VM. Independent 120-sample randomized and CPU-pinned
+repeats confirmed regressions, with all eight paired-bootstrap 95% intervals
+above zero. The earlier reports remain valid for their recorded artifacts but
+do not justify automatically selecting RELR for this tip.
+
+Both stable and nightly installers now retain stock selection for every glibc
+version, including 2.36+. The unused glibc version parser, RELR selection and
+optional-download retry are removed. The separate x86_64 GNU RELR release asset
+and both ELF/oldest-loader release checks remain available. RELR is a manual
+opt-in with no promised startup gain; no library/CLI code, dependency features,
+profiles, PIE or ASLR policy changes. Reconsider automatic selection only after
+exact release artifacts show a repeatable benefit.

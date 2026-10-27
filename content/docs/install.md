@@ -26,22 +26,20 @@ Linux x86_64 releases provide two GNU assets. Both preserve PIE and ASLR:
 | Asset | Loader support |
 | --- | --- |
 | `grit-x86_64-unknown-linux-gnu.tar.gz` | Default and fallback; glibc 2.34 or newer, standard relocations |
-| `grit-x86_64-unknown-linux-gnu-relr.tar.gz` | Optional faster startup; glibc 2.36 or newer, packed relative relocations (RELR) |
+| `grit-x86_64-unknown-linux-gnu-relr.tar.gz` | Manual opt-in; glibc 2.36 or newer, packed relative relocations (RELR) |
 
-The stable and nightly installers select RELR only when `getconf GNU_LIBC_VERSION`
-(or, if inconclusive, the first line of `ldd --version`) confidently identifies
-glibc 2.36 or newer. Older, unknown or malformed versions use the default asset.
-If the optional asset is unavailable, the installer retries the default asset;
-this also supports releases from before RELR was added. Manual downloads keep
-the existing GNU asset as the default. Its weak glibc 2.39 references do not
-require a newer loader.
+The stable and nightly installers always choose the existing GNU asset on glibc
+systems, including glibc 2.36 and newer. The RELR asset is available only as a
+manual download for glibc 2.36+. Its smaller relocation metadata does not
+consistently improve startup: final-tip review measurements found tiny commands
+about **1–2% slower**, despite gains at earlier revisions. Automatic selection
+is deferred until measurements on the release artifacts demonstrate a benefit;
+see [benchmarks](benchmarks.md#pie-startup-relocation-probe).
 
-The RELR link improved small-command startup by **5–8%** in the initial
-shipping `dist` measurement, with **4–5%** for branch/status/resolve in a fresh
-Xeon check; see [benchmarks](benchmarks.md#pie-startup-relocation-probe)
-for timings and memory limits. GNU aarch64, static musl, macOS and Windows keep
-their existing artifacts and selection. Static musl artifacts and source builds
-remain alternatives for other systems.
+The default asset's weak glibc 2.39 references do not require a newer loader.
+GNU aarch64, static musl, macOS and Windows keep their existing artifacts and
+selection. Static musl artifacts and source builds remain alternatives for
+other systems.
 
 ## Shell completions
 

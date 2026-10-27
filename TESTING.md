@@ -766,11 +766,13 @@ default/fallback. Only `grit-x86_64-unknown-linux-gnu-relr.tar.gz` adds a CLI-on
 `.github/workflows/release.yml`; workspace profiles and dependency builds are
 unchanged. Both assets contain the same commands and completions.
 
-Stable and nightly installers use `getconf GNU_LIBC_VERSION`, then `ldd --version`
-if inconclusive. Only a confidently recognized glibc version >= 2.36 selects the
-optional x86_64 GNU RELR asset. Other versions and failed optional downloads use
-the existing GNU asset. aarch64, musl, Apple and Windows are unchanged. Exercise
-the actual shell installers with isolated platform and download fixtures:
+Stable and nightly installers always use the existing GNU asset on glibc
+systems, including known glibc 2.36+ versions. The optional RELR asset is a manual
+download only: final-tip review measurements found a 1–2% startup regression,
+so loader compatibility alone is insufficient to select it automatically.
+aarch64, musl, Apple and Windows are unchanged. Exercise the actual shell
+installers with isolated platform and download fixtures; the tests must keep
+stock selection even when RELR is supported or its download is unavailable:
 
 ```bash
 cargo test -p grit-utils --test install_relr

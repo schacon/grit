@@ -80,30 +80,29 @@ cp "$TEST_ROOT/payload.tar.gz" "$4"
 }
 
 #[test]
-fn installers_select_relr_only_for_known_supported_x86_64_glibc() {
+fn installers_keep_stock_even_when_glibc_supports_relr() {
     for script in ["install", "install-nightly"] {
-        for (getconf, ldd, relr) in [
-            ("glibc 2.34", "ldd (GNU libc) 2.39", false),
-            ("glibc 2.35", "", false),
-            ("glibc 2.36", "", true),
-            ("glibc 2.39", "", true),
-            ("glibc 3.0", "", true),
-            ("", "ldd (GNU libc) 2.36", true),
-            ("", "ldd (GNU C Library) 2.36", true),
-            ("invalid", "ldd (Debian GLIBC 2.36-9+deb12u10) 2.36", true),
-            ("", "ldd (Ubuntu GLIBC 2.35-0ubuntu3) 2.35", false),
-            ("glibc 2.36-extra", "", false),
-            ("glibc 2.36\njunk", "", false),
-            ("glibc 2.36\nglibc 2.39", "", false),
-            ("glibc 2.x", "ldd 2.39", false),
-            ("", "ldd (unknown libc) 2.39", false),
-            ("", "", false),
+        for (getconf, ldd) in [
+            ("glibc 2.34", "ldd (GNU libc) 2.39"),
+            ("glibc 2.35", ""),
+            ("glibc 2.36", ""),
+            ("glibc 2.39", ""),
+            ("glibc 3.0", ""),
+            ("", "ldd (GNU libc) 2.36"),
+            ("", "ldd (GNU C Library) 2.36"),
+            ("invalid", "ldd (Debian GLIBC 2.36-9+deb12u10) 2.36"),
+            ("", "ldd (Ubuntu GLIBC 2.35-0ubuntu3) 2.35"),
+            ("glibc 2.36-extra", ""),
+            ("glibc 2.36\njunk", ""),
+            ("glibc 2.36\nglibc 2.39", ""),
+            ("glibc 2.x", "ldd 2.39"),
+            ("", "ldd (unknown libc) 2.39"),
+            ("", ""),
         ] {
             let urls = install(script, "x86_64", getconf, ldd, false);
             assert_eq!(urls.len(), 1);
-            assert_eq!(
-                urls[0].ends_with("-gnu-relr.tar.gz"),
-                relr,
+            assert!(
+                urls[0].ends_with("x86_64-unknown-linux-gnu.tar.gz"),
                 "{script}: {getconf:?} / {ldd:?}"
             );
             assert!(urls[0].contains(if script == "install" {
@@ -126,11 +125,10 @@ fn installers_select_relr_only_for_known_supported_x86_64_glibc() {
 }
 
 #[test]
-fn missing_relr_asset_falls_back_to_existing_gnu_asset() {
+fn unavailable_relr_asset_does_not_change_stock_selection() {
     for script in ["install", "install-nightly"] {
         let urls = install(script, "x86_64", "glibc 2.36", "", true);
-        assert_eq!(urls.len(), 2);
-        assert!(urls[0].ends_with("-gnu-relr.tar.gz"));
-        assert!(urls[1].ends_with("-gnu.tar.gz"));
+        assert_eq!(urls.len(), 1);
+        assert!(urls[0].ends_with("x86_64-unknown-linux-gnu.tar.gz"));
     }
 }

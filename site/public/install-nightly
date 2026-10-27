@@ -8,29 +8,6 @@
 # Installs the `grit` binary.
 # Usage: curl -fsSL https://grit-scm.com/install-nightly | sh
 
-# Only a recognized GNU libc version can opt into the extra x86_64 asset.
-# Return the major/minor pair, or nothing when detection is inconclusive.
-glibc_version() {
-  command -v sed >/dev/null 2>&1 || return 0
-  version=$(LC_ALL=C getconf GNU_LIBC_VERSION 2>/dev/null) || version=""
-  version=$(printf '%s\n' "$version" | sed -n '1{
-    ${s/^glibc \([0-9][0-9]*\)\.\([0-9][0-9]*\)$/\1 \2/p;}
-  }')
-  if [ -z "$version" ]; then
-    # Only inspect ldd's first line, and require an explicit GNU libc marker.
-    version=$(LC_ALL=C ldd --version 2>/dev/null) || version=""
-    version=$(printf '%s\n' "$version" | sed -n '1{
-      /GNU libc/b gnu
-      /GNU C Library/b gnu
-      /GLIBC/b gnu
-      b
-      :gnu
-      s/^ldd (.*) \([0-9][0-9]*\)\.\([0-9][0-9]*\)$/\1 \2/p
-    }')
-  fi
-  printf '%s\n' "$version"
-}
-
 main() {
   set -eu
 
@@ -79,18 +56,7 @@ main() {
       ;;
   esac
 
-  BASE_TARGET="${ARCH_TARGET}-${OS_TARGET}"
-  TARGET="$BASE_TARGET"
-  if [ "$TARGET" = "x86_64-unknown-linux-gnu" ]; then
-    version=$(glibc_version)
-    if [ -n "$version" ]; then
-      major=${version%% *}
-      minor=${version#* }
-      if { [ "$major" -gt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -ge 36 ]; }; } 2>/dev/null; then
-        TARGET="${BASE_TARGET}-relr"
-      fi
-    fi
-  fi
+  TARGET="${ARCH_TARGET}-${OS_TARGET}"
 
   echo "Detected: $OS/$ARCH -> $TARGET"
 
@@ -103,14 +69,7 @@ main() {
   BIN=grit
   URL="https://github.com/$REPO/releases/download/nightly/${BIN}-${TARGET}.tar.gz"
   echo "Downloading from: $URL"
-  if ! curl -fSL "$URL" -o "$TMP/${BIN}.tar.gz"; then
-    [ "$TARGET" != "$BASE_TARGET" ] || exit 1
-    # Older releases may not have the optional asset yet.
-    TARGET="$BASE_TARGET"
-    URL="https://github.com/$REPO/releases/download/nightly/${BIN}-${TARGET}.tar.gz"
-    echo "Falling back to: $URL"
-    curl -fSL "$URL" -o "$TMP/${BIN}.tar.gz"
-  fi
+  curl -fSL "$URL" -o "$TMP/${BIN}.tar.gz"
   tar xzf "$TMP/${BIN}.tar.gz" -C "$TMP"
   mv "$TMP/${BIN}" "$INSTALL_DIR/${BIN}"
   chmod +x "$INSTALL_DIR/${BIN}"

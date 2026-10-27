@@ -258,14 +258,17 @@ and tracing when considering source changes.
 
 The release workflow packages the original glibc 2.34 x86_64 GNU asset before
 performing this CLI-only RELR link for a separate `-gnu-relr` asset. The latter
-requires glibc 2.36+. Stable/nightly installers select it only after confident
-version detection with `getconf GNU_LIBC_VERSION`, falling back to
-`ldd --version`; otherwise they use the original asset. Failed optional downloads
-also fall back. This preserves the existing loader minimum and leaves other
-targets unchanged. Run both ELF/runtime checks and the pinned 2.34/2.36 container
-smokes in `.github/workflows/release.yml`; see [TESTING.md](https://github.com/gitbutlerapp/grit/blob/main/TESTING.md#linux-gnu-startup-and-loader-contract).
-The initial measured dist gain is 5–8% for tiny commands. The fresh Xeon
-shipping follow-up measures 4–5% for branch/status/resolve, with help within
+requires glibc 2.36+ and remains a manual download. Stable/nightly installers
+always use the original GNU asset on glibc systems: the final-tip review found
+a 1–2% startup regression, despite earlier gains. Before enabling automatic
+selection, benchmark stock and RELR from the exact release source again with
+builds/tests stopped; require a demonstrated benefit rather than inferring one
+from compressed metadata or loader support. This preserves the existing loader
+minimum and leaves other targets unchanged. Run both ELF/runtime checks and the
+pinned 2.34/2.36 container smokes in `.github/workflows/release.yml`; see
+[TESTING.md](https://github.com/gitbutlerapp/grit/blob/main/TESTING.md#linux-gnu-startup-and-loader-contract).
+The initial measured dist gain is 5–8% for tiny commands. The earlier Xeon
+shipping follow-up measured 4–5% for branch/status/resolve, with help within
 its sample spread. Both reports retain variance and independent RSS; layout
 changes mean metadata compression is not a general memory reduction. The
 shipping JSON also records 30 loader-only observations and ten GNU-time peak

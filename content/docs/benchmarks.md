@@ -999,14 +999,17 @@ relocation loop. No Unicode regex, filter, schema or tracing feature is removed.
 
 The x86_64 GNU release now provides a separate `grit-x86_64-unknown-linux-gnu-relr.tar.gz`
 asset for glibc 2.36+. The existing glibc 2.34 GNU artifact retains its build path
-and remains the default and fallback. Stable and nightly installers choose RELR
-only after confidently detecting glibc 2.36 or newer, falling back to the default
-when detection or the optional download is unavailable. Both assets pass ELF
-hardening, startup and address randomization checks; release CI runs them on
-2.34 and 2.36 respectively. Other targets are unchanged. These measurements
-predate the shipping selection change and retain their original source revision.
+and remains the default and fallback. Stable and nightly installers always use
+the existing GNU asset on glibc systems; RELR is a manual download only. The
+final-tip review on `3fcfb24e9` found tiny-command regressions of about 1–2%
+against a same-source stock build, confirmed by randomized and CPU-pinned
+repeats. The earlier gains below do not establish performance of those artifacts.
+Automatic selection is deferred until exact release artifacts demonstrate a
+benefit. Both assets pass ELF hardening, startup and address randomization
+checks; release CI runs them on 2.34 and 2.36 respectively. Other targets are
+unchanged.
 
-A fresh shipping-dist check on current-main CLI/library source `aa1964221`
+An earlier shipping-dist check on CLI/library source `aa1964221`
 (4-vCPU Intel Xeon Platinum 8573C, 60 rotated warm runs per tool) measured:
 
 | Tiny command | Git ms | Stock dist ms | RELR dist ms |
