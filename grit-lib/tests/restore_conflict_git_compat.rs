@@ -451,34 +451,70 @@ fn restore_excluding_unmerged_path_still_restores_others() {
     assert_eq!(worktree_bytes_path(&dir, "other.txt"), b"other\n");
 }
 
+/// Git's `restore --staged` drops the conflict stages and keeps the markers in the worktree.
+/// Grit refuses instead, because its auto-staging commit would record the markers.
 #[test]
-fn restore_staged_unmerged_path_resets_index_like_git() {
+fn restore_staged_unmerged_path_is_refused() {
     let staged_opts = RestoreOptions {
         staged: true,
         worktree: false,
         ..plain_restore_opts("f.txt")
     };
 
-    let (dir_git, _repo_git) = init_repo();
-    merge_conflict_repo(&dir_git);
-    assert!(git_restore_status(&dir_git, &["--staged", "f.txt"])
-        .status
-        .success());
-    let want_index = git_cmd(dir_git.path(), &["ls-files", "-s", "f.txt"]);
-
     let (dir, repo) = init_repo();
     merge_conflict_repo(&dir);
-    restore_paths(
+    let markers = worktree_bytes(&dir);
+    let unmerged = ls_files_unmerged(&dir);
+    let err = restore_paths(
         &repo,
         &staged_opts,
         &mut grit_lib::progress::NullProgress,
         &grit_lib::progress::NeverCancel,
     )
-    .expect("restore --staged");
+    .unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            grit_lib::error::Error::RestorePathUnmerged { paths } if paths == &["f.txt"]
+        ),
+        "{err:?}"
+    );
+    assert_eq!(ls_files_unmerged(&dir), unmerged);
+    assert_eq!(worktree_bytes(&dir), markers);
+    assert!(dir.path().join(".git/MERGE_HEAD").is_file());
+    assert!(git_cmd(dir.path(), &["ls-files", "--resolve-undo"])
+        .trim()
+        .is_empty());
+}
+
+#[test]
+fn restore_staged_and_worktree_on_unmerged_path_matches_git() {
+    let both_opts = RestoreOptions {
+        staged: true,
+        worktree: true,
+        ..plain_restore_opts("f.txt")
+    };
+
+    let (dir_git, _repo_git) = init_repo();
+    merge_conflict_repo(&dir_git);
+    git_restore(&dir_git, &["--staged", "--worktree", "f.txt"]);
+    let want_index = git_cmd(dir_git.path(), &["ls-files", "-s", "f.txt"]);
+    let want_worktree = worktree_bytes(&dir_git);
+
+    let (dir, repo) = init_repo();
+    merge_conflict_repo(&dir);
+    restore_paths(
+        &repo,
+        &both_opts,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("restore --staged --worktree");
     assert_eq!(
         git_cmd(dir.path(), &["ls-files", "-s", "f.txt"]),
         want_index
     );
+    assert_eq!(worktree_bytes(&dir), want_worktree);
     assert!(ls_files_unmerged(&dir).trim().is_empty());
 }
 

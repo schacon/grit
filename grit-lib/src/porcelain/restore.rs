@@ -88,10 +88,13 @@ pub struct RestoreOutcome {
 /// # Errors
 ///
 /// Returns [`Error::PathspecNoMatch`] when a positive pathspec matches nothing, and
-/// [`Error::RestorePathUnmerged`] (before writing anything) when the worktree would be
-/// restored from the index for paths with conflict stages; use [`RestoreOptions::stage`] or
-/// [`RestoreOptions::remerge`] for those. `--staged` and an explicit tree source replace
-/// conflict stages instead. Conflict options ([`RestoreOptions::stage`], [`RestoreOptions::remerge`]) also
+/// [`Error::RestorePathUnmerged`] (before writing anything) when a matched path has conflict
+/// stages and the restore would either write the worktree from the index or, with `--staged`
+/// alone, replace the stages while the worktree keeps its conflict markers. Use
+/// [`RestoreOptions::stage`] or [`RestoreOptions::remerge`] for those paths, or stage the
+/// edited file. `--staged --worktree` replaces the stages and the worktree file together, and
+/// `--source` without `--staged` writes only the worktree, leaving the stages in place.
+/// Conflict options ([`RestoreOptions::stage`], [`RestoreOptions::remerge`]) also
 /// return [`Error::RestoreConflictWithStaged`], [`Error::RestoreConflictWithSource`],
 /// [`Error::RestoreConflictMissingOurs`], [`Error::RestoreConflictMissingTheirs`],
 /// or [`Error::RestoreConflictNotUnmerged`] when the index shape does not allow
@@ -136,7 +139,11 @@ pub(crate) fn restore_paths_with_lock(
     let work_tree = repo.work_tree().ok_or(Error::RequiresWorkTree)?;
     let pathspec_ctx = repo.pathspec_match_context();
     let restore_staged = opts.staged;
-    if !restore_staged && matches!(opts.source, RestoreSource::Index) {
+    // An index-only restore would collapse the conflict stages while the worktree keeps its
+    // markers, so the next auto-staging commit would record them as the resolution.
+    let index_only = restore_staged && !opts.worktree;
+    let worktree_from_index = !restore_staged && matches!(opts.source, RestoreSource::Index);
+    if index_only || worktree_from_index {
         let unmerged = collect_conflict_matched_paths(&index, &opts.pathspecs, false, pathspec_ctx);
         if !unmerged.is_empty() {
             return Err(Error::RestorePathUnmerged {
@@ -1154,6 +1161,36 @@ mod tests {
         let err = restore_paths(&repo, &opts("."), &mut NullProgress, &NeverCancel).unwrap_err();
         assert!(matches!(err, Error::RestorePathUnmerged { .. }), "{err:?}");
         assert_eq!(std::fs::read(dir.path().join("g")).expect("g"), b"edited\n");
+    }
+
+    #[test]
+    fn restore_staged_only_refuses_unmerged_path_and_keeps_stages() {
+        let (dir, repo) = conflicted_repo();
+        for pathspec in ["f", "."] {
+            let err = restore_paths(
+                &repo,
+                &RestoreOptions {
+                    staged: true,
+                    worktree: false,
+                    ..opts(pathspec)
+                },
+                &mut NullProgress,
+                &NeverCancel,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(&err, Error::RestorePathUnmerged { paths } if paths == &["f"]),
+                "{err:?}"
+            );
+        }
+        let index = repo.load_index().expect("index");
+        assert!(index.get(b"f", 0).is_none());
+        assert!((1..=3).all(|stage| index.get(b"f", stage).is_some()));
+        assert!(index.resolve_undo.is_none());
+        assert_eq!(
+            std::fs::read(dir.path().join("f")).expect("f"),
+            b"<<<<<<< ours\n"
+        );
     }
 
     #[test]
