@@ -12,7 +12,9 @@ use thiserror::Error;
 
 use crate::config::ConfigSet;
 #[cfg(feature = "http-ureq")]
-use crate::credentials::{askpass_program, HelperCredentialProvider};
+use crate::credentials::{
+    askpass_program, Credential, CredentialProvider, HelperCredentialProvider,
+};
 #[cfg(feature = "http-ureq")]
 use crate::environment::Environment;
 use crate::error::Error;
@@ -298,6 +300,83 @@ pub trait HttpClientFactory: Send + Sync {
     ///
     /// Returns an error when the client cannot be constructed.
     fn create(&self, config: &ConfigSet) -> RemoteResult<Box<dyn HttpClient>>;
+
+    /// Create a client for a best-effort request whose failure the caller ignores,
+    /// such as the advertisement [`load_push_plan_context`](crate::remote::push_plan::load_push_plan_context)
+    /// reads before a push.
+    ///
+    /// Such a client must not erase credentials the server refuses (no
+    /// [`CredentialProvider::reject`](crate::credentials::CredentialProvider::reject)):
+    /// the request that reports the failure does that, so it can tell the user the
+    /// stored credentials were rejected rather than finding none. A factory whose
+    /// clients never reject (or carry no credentials) can return
+    /// [`create`](Self::create)'s client.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the client cannot be constructed.
+    fn create_for_probe(&self, config: &ConfigSet) -> RemoteResult<Box<dyn HttpClient>>;
+}
+
+/// An [`HttpClientFactory`] whose clients are all [probes](HttpClientFactory::create_for_probe)
+/// of the factory a request would otherwise use (the caller's, or the default one).
+pub(crate) struct ProbeHttpClientFactory<'a> {
+    inner: Option<&'a dyn HttpClientFactory>,
+    #[cfg(feature = "http-ureq")]
+    default: DefaultHttpClientFactory,
+}
+
+impl<'a> ProbeHttpClientFactory<'a> {
+    /// Probes of `inner`, or of the default factory for `repo` when there is none.
+    pub(crate) fn new(inner: Option<&'a dyn HttpClientFactory>, repo: &Repository) -> Self {
+        #[cfg(not(feature = "http-ureq"))]
+        let _ = repo;
+        Self {
+            inner,
+            #[cfg(feature = "http-ureq")]
+            default: DefaultHttpClientFactory::with_environment(repo.environment().clone()),
+        }
+    }
+}
+
+impl HttpClientFactory for ProbeHttpClientFactory<'_> {
+    fn create(&self, config: &ConfigSet) -> RemoteResult<Box<dyn HttpClient>> {
+        if let Some(inner) = self.inner {
+            return inner.create_for_probe(config);
+        }
+        #[cfg(feature = "http-ureq")]
+        {
+            self.default.create_for_probe(config)
+        }
+        #[cfg(not(feature = "http-ureq"))]
+        {
+            let _ = config;
+            Err(RemoteError::HttpUnavailable)
+        }
+    }
+
+    fn create_for_probe(&self, config: &ConfigSet) -> RemoteResult<Box<dyn HttpClient>> {
+        self.create(config)
+    }
+}
+
+/// Fills and approves through the wrapped provider, but never rejects.
+#[cfg(feature = "http-ureq")]
+struct KeepRejectedCredentials<P>(P);
+
+#[cfg(feature = "http-ureq")]
+impl<P: CredentialProvider> CredentialProvider for KeepRejectedCredentials<P> {
+    fn fill(&self, input: &Credential) -> crate::error::Result<Credential> {
+        self.0.fill(input)
+    }
+
+    fn approve(&self, cred: &Credential) -> crate::error::Result<()> {
+        self.0.approve(cred)
+    }
+
+    fn reject(&self, _cred: &Credential) -> crate::error::Result<()> {
+        Ok(())
+    }
 }
 
 /// Default [`HttpClientFactory`] using `UreqHttpClient` (`http-ureq` feature).
@@ -330,21 +409,37 @@ impl DefaultHttpClientFactory {
             environment: Some(environment),
         }
     }
+
+    fn credential_provider(&self, config: &ConfigSet) -> HelperCredentialProvider {
+        let askpass = match &self.environment {
+            Some(env) => askpass_program(env, config),
+            None => askpass_program(&Environment::empty(), config),
+        };
+        HelperCredentialProvider::new(config.clone()).with_askpass(askpass)
+    }
+
+    fn client(
+        config: &ConfigSet,
+        provider: Box<dyn CredentialProvider + Send + Sync>,
+    ) -> RemoteResult<Box<dyn HttpClient>> {
+        let client = UreqHttpClient::from_config(config)
+            .map_err(|e| RemoteError::InvalidUrl(e.to_string()))?
+            .with_credential_provider(provider);
+        Ok(Box::new(client))
+    }
 }
 
 #[cfg(feature = "http-ureq")]
 impl HttpClientFactory for DefaultHttpClientFactory {
     fn create(&self, config: &ConfigSet) -> RemoteResult<Box<dyn HttpClient>> {
-        let askpass = match &self.environment {
-            Some(env) => askpass_program(env, config),
-            None => askpass_program(&Environment::empty(), config),
-        };
-        let provider =
-            Box::new(HelperCredentialProvider::new(config.clone()).with_askpass(askpass));
-        let client = UreqHttpClient::from_config(config)
-            .map_err(|e| RemoteError::InvalidUrl(e.to_string()))?
-            .with_credential_provider(provider);
-        Ok(Box::new(client))
+        Self::client(config, Box::new(self.credential_provider(config)))
+    }
+
+    fn create_for_probe(&self, config: &ConfigSet) -> RemoteResult<Box<dyn HttpClient>> {
+        Self::client(
+            config,
+            Box::new(KeepRejectedCredentials(self.credential_provider(config))),
+        )
     }
 }
 
@@ -546,7 +641,10 @@ impl Remote {
     /// - `progress`: receives the download and unpack progress.
     /// - `cancel`: checked while the bundle is downloaded and unpacked; a
     ///   cancelled seed comes back as `Failed`, so callers check `cancel` again.
-    /// - `http_factory`: builds the HTTP client, as for [`Self::fetch`].
+    /// - `http_factory`: builds the HTTP client, as for [`Self::fetch`]. Seeding is
+    ///   best-effort, so it uses a [probe client](HttpClientFactory::create_for_probe):
+    ///   credentials the server refuses stay stored for the fetch that follows to
+    ///   report.
     #[must_use]
     pub fn seed_from_bundle_uri(
         &self,
@@ -568,7 +666,8 @@ impl Remote {
         if !enabled {
             return BundleSeed::NotOffered;
         }
-        let client = match http_client(http_factory, repo) {
+        let probe = ProbeHttpClientFactory::new(http_factory, repo);
+        let client = match http_client(Some(&probe), repo) {
             Ok(c) => c,
             Err(e) => {
                 return BundleSeed::Failed {

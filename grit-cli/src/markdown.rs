@@ -1826,6 +1826,11 @@ pub fn print_auth_outcome(w: &mut dyn Write, outcome: &AuthOutcome) -> anyhow::R
     outln!(w);
     if outcome.authenticated {
         match &outcome.user {
+            Some(user) if !outcome.verified => outln!(
+                w,
+                "- Stored a token for **`{user}`** on **`{}`** (not verified; the next push or fetch uses it)",
+                outcome.host
+            ),
             Some(user) => outln!(w, "- Signed in to **`{}`** as **`{user}`**", outcome.host),
             None => outln!(w, "- Signed in to **`{}`**", outcome.host),
         }

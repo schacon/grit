@@ -799,14 +799,9 @@ impl UreqHttpClient {
         let Some(input) = credential_for_url(&auth_url, &self.credential_config) else {
             return Err(auth_error(&auth_url, AuthFailure::UrlNotDescribable));
         };
-        let cred = provider.fill(&input).map_err(|e| {
-            auth_error(
-                &auth_url,
-                AuthFailure::CredentialsUnavailable {
-                    detail: e.to_string(),
-                },
-            )
-        })?;
+        let cred = provider
+            .fill(&input)
+            .map_err(|e| auth_error(&auth_url, AuthFailure::from_fill_error(e)))?;
         let Some(header) = basic_auth_header(&cred) else {
             return Err(auth_error(&auth_url, AuthFailure::UnusableCredentials));
         };
@@ -942,14 +937,9 @@ impl UreqHttpClient {
         let Some(input) = credential_for_url(url, &self.credential_config) else {
             return Err(auth_error(url, AuthFailure::UrlNotDescribable));
         };
-        let cred = provider.fill(&input).map_err(|e| {
-            auth_error(
-                url,
-                AuthFailure::CredentialsUnavailable {
-                    detail: e.to_string(),
-                },
-            )
-        })?;
+        let cred = provider
+            .fill(&input)
+            .map_err(|e| auth_error(url, AuthFailure::from_fill_error(e)))?;
         let Some(header) = basic_auth_header(&cred) else {
             return Err(auth_error(url, AuthFailure::UnusableCredentials));
         };
@@ -1010,14 +1000,9 @@ impl UreqHttpClient {
         // A provider that cannot supply a credential (no configured helper, or a
         // non-interactive failure) reports it as a typed auth error rather than a
         // generic message, and crucially never blocks on a TTY.
-        let cred = provider.fill(&input).map_err(|e| {
-            auth_error(
-                &auth_url,
-                AuthFailure::CredentialsUnavailable {
-                    detail: e.to_string(),
-                },
-            )
-        })?;
+        let cred = provider
+            .fill(&input)
+            .map_err(|e| auth_error(&auth_url, AuthFailure::from_fill_error(e)))?;
         let Some(header) = basic_auth_header(&cred) else {
             return Err(auth_error(&auth_url, AuthFailure::UnusableCredentials));
         };

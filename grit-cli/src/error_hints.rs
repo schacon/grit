@@ -260,30 +260,45 @@ fn looks_like_rev_syntax(name: &str) -> bool {
 
 fn auth_error(err: &LibError, url: &str, reason: &AuthFailure) -> Error {
     let github = is_github_https_url(url);
+    let store = format!("`grit auth {url} --username <user> --token <token>`");
     let (kind, hint) = match reason {
         AuthFailure::Rejected if github => (
             ErrorKind::AuthRejected,
-            Some("your saved GitHub token may have expired; sign in again with `grit auth`"),
+            Some("your saved GitHub token may have expired; sign in again with `grit auth`".to_owned()),
         ),
         AuthFailure::Rejected => (
             ErrorKind::AuthRejected,
-            Some("update the credentials your credential helper stores for this host, then try again"),
+            Some(format!(
+                "update the credentials your credential helper stores for this host (for example with {store}), then try again"
+            )),
         ),
         AuthFailure::UnsupportedScheme { .. } | AuthFailure::UrlNotDescribable => {
             (ErrorKind::AuthRequired, None)
         }
         _ if github => (
             ErrorKind::AuthRequired,
-            Some("sign in to GitHub with `grit auth` and try again; if it still fails, check the URL"),
+            Some("sign in to GitHub with `grit auth` and try again; if it still fails, check the URL".to_owned()),
+        ),
+        // Helper entries are commands that can embed secrets, so they are counted, never shown.
+        AuthFailure::CredentialsUnavailable { helpers, .. } if !helpers.is_empty() => (
+            ErrorKind::AuthRequired,
+            Some(format!(
+                "{} has no credentials for this host; save them with {store}, or point GIT_ASKPASS at a program that prints them, then try again",
+                if helpers.len() == 1 {
+                    "your credential helper".to_owned()
+                } else {
+                    format!("none of your {} credential helpers", helpers.len())
+                }
+            )),
         ),
         _ => (
             ErrorKind::AuthRequired,
-            Some(
-                "configure a credential helper that has your credentials (for example `grit config --global credential.helper store`) or point GIT_ASKPASS at a program that prints them, then try again",
-            ),
+            Some(format!(
+                "save a user name and token for this host with {store} (it sets up a credential helper), or point GIT_ASKPASS at a program that prints them, then try again"
+            )),
         ),
     };
-    guided(kind, err.to_string(), hint.map(str::to_owned), None)
+    guided(kind, err.to_string(), hint, None)
 }
 
 fn remote_not_found(name: &str) -> Error {
@@ -454,15 +469,54 @@ mod tests {
         };
         let unavailable = || AuthFailure::CredentialsUnavailable {
             detail: "none".into(),
+            helpers: Vec::new(),
         };
         let p = auth("https://github.com/o/r.git", unavailable());
         assert_eq!(p.kind, ErrorKind::AuthRequired);
         assert!(p.hint.expect("hint").contains("`grit auth`"));
         assert!(!p.error.contains("info/refs"));
         let p = auth("https://git.example.com/o/r.git", unavailable());
-        assert!(p.hint.expect("hint").contains("credential.helper"));
+        let hint = p.hint.expect("hint");
+        assert!(
+            hint.contains(
+                "`grit auth https://git.example.com/o/r.git --username <user> --token <token>`"
+            ),
+            "{hint}"
+        );
+        assert!(hint.contains("GIT_ASKPASS"), "{hint}");
+        let configured = |helpers: &[&str]| {
+            auth(
+                "https://git.example.com/o/r.git",
+                AuthFailure::CredentialsUnavailable {
+                    detail: "none".into(),
+                    helpers: helpers.iter().map(|h| (*h).to_owned()).collect(),
+                },
+            )
+        };
+        let secret = "!echo password=literal-secret";
+        let two = configured(&["store", secret]).hint.expect("hint");
+        assert!(two.contains("none of your 2 credential helpers"), "{two}");
+        assert!(
+            !two.contains("literal-secret") && !two.contains("store"),
+            "{two}"
+        );
+        let p = configured(&[secret]);
+        assert!(!p.error.contains("literal-secret"), "{}", p.error);
+        let hint = p.hint.expect("hint");
+        assert!(
+            hint.contains("your credential helper has no credentials"),
+            "{hint}"
+        );
+        assert!(!hint.contains("literal-secret"), "{hint}");
+        assert!(!hint.contains("configure a credential helper"), "{hint}");
+        assert!(hint.contains("--username <user> --token <token>"), "{hint}");
         let p = auth("https://git.example.com/o/r.git", AuthFailure::Rejected);
         assert_eq!(p.kind, ErrorKind::AuthRejected);
+        let hint = p.hint.expect("hint");
+        assert!(
+            hint.contains("update the credentials your credential helper stores"),
+            "{hint}"
+        );
     }
 
     #[test]

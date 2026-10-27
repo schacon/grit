@@ -1,8 +1,7 @@
 //! Credential layer — Git-compatible credential filling/approval/rejection for
 //! library embedders.
 //!
-//! This is the reusable core lifted from the CLI's `grit credential` command
-//! (`grit/src/commands/credential.rs`). It exposes:
+//! It exposes:
 //!
 //! - [`Credential`] — a structured credential with the standard Git fields
 //!   ([`protocol`](Credential::protocol), [`host`](Credential::host),
@@ -28,9 +27,12 @@
 //! the fallback.
 //!
 //! The provider **never** prompts on a TTY. Without an askpass program, or
-//! when it is disabled, [`fill`](CredentialProvider::fill) returns a typed
-//! [`Error::Message`] (see [`NON_INTERACTIVE_MESSAGE`]) rather than blocking on
-//! `/dev/tty`.
+//! when it is disabled, [`fill`](CredentialProvider::fill) returns the typed
+//! [`Error::CredentialsUnavailable`] (displayed as [`NON_INTERACTIVE_MESSAGE`],
+//! listing the helpers that were asked) rather than blocking on `/dev/tty`.
+//! Callers that want a person to supply a username and password store it up
+//! front with [`CredentialProvider::approve`], as `grit auth <url> --username
+//! <user> --token <token>` does.
 
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -45,7 +47,7 @@ use crate::config::{parse_bool, parse_path, ConfigSet};
 use crate::environment::Environment;
 use crate::error::{Error, Result};
 
-/// Message returned (as [`Error::Message`]) when credentials are required but
+/// How [`Error::CredentialsUnavailable`] displays: credentials are required but
 /// no configured helper could supply a complete username/password and no
 /// askpass program is available to ask for them.
 pub const NON_INTERACTIVE_MESSAGE: &str = "credentials required but unavailable (non-interactive)";
@@ -403,8 +405,8 @@ pub trait CredentialProvider {
 /// If no helper yields a complete credential, [`fill`](CredentialProvider::fill)
 /// asks the [askpass program](HelperCredentialProvider::with_askpass) for the
 /// missing username and password. It never prompts on a terminal: without an
-/// askpass program it returns [`Error::Message`] with
-/// [`NON_INTERACTIVE_MESSAGE`].
+/// askpass program it returns [`Error::CredentialsUnavailable`] with the
+/// helpers it asked.
 pub struct HelperCredentialProvider {
     config: ConfigSet,
     command_runner: Arc<dyn CommandRunner>,
@@ -547,10 +549,10 @@ impl CredentialProvider for HelperCredentialProvider {
         }
         let target_url = filled.target_url();
         let helper_list = self.helpers(target_url.as_deref());
-        for helper in helper_list {
+        for helper in &helper_list {
             let response = invoke_helper(
                 self.command_runner.as_ref(),
-                &helper,
+                helper,
                 "get",
                 &self.helper_request(&filled),
                 &self.exec_path_candidates(),
@@ -566,7 +568,9 @@ impl CredentialProvider for HelperCredentialProvider {
             }
         }
         let Some(askpass) = self.askpass.as_deref().filter(|_| self.prompts_allowed()) else {
-            return Err(Error::Message(NON_INTERACTIVE_MESSAGE.to_string()));
+            return Err(Error::CredentialsUnavailable {
+                helpers: helper_list,
+            });
         };
         let sanitize =
             credential_config_value(&self.config, target_url.as_deref(), "sanitizePrompt")
@@ -1773,6 +1777,49 @@ mod tests {
                 "askpass must not run for {value}"
             );
         }
+    }
+
+    #[test]
+    fn unavailable_credentials_name_the_helpers_that_were_asked() {
+        let input = Credential::from_url("https://example.com/r.git", &ConfigSet::new()).unwrap();
+        let err = HelperCredentialProvider::new(ConfigSet::new())
+            .fill(&input)
+            .expect_err("no helper");
+        assert!(
+            matches!(&err, Error::CredentialsUnavailable { helpers } if helpers.is_empty()),
+            "{err:?}"
+        );
+
+        let runner = Arc::new(RecordingRunner::default());
+        runner.push_response(answer(""));
+        let err = HelperCredentialProvider::new(config_with(&[("credential.helper", "!empty")]))
+            .with_command_runner(runner.clone())
+            .fill(&input)
+            .expect_err("the helper has nothing");
+        assert_eq!(err.to_string(), NON_INTERACTIVE_MESSAGE);
+        assert!(
+            runner
+                .specs()
+                .iter()
+                .any(|spec| format!("{spec:?}").contains("empty")),
+            "the helper was asked"
+        );
+        let failure = crate::error::AuthFailure::from_fill_error(err);
+        assert_eq!(
+            failure,
+            crate::error::AuthFailure::CredentialsUnavailable {
+                detail: NON_INTERACTIVE_MESSAGE.to_owned(),
+                helpers: vec!["!empty".to_owned()],
+            }
+        );
+
+        let other =
+            crate::error::AuthFailure::from_fill_error(Error::Message("helper crashed".into()));
+        assert!(matches!(
+            other,
+            crate::error::AuthFailure::CredentialsUnavailable { detail, helpers }
+                if detail == "helper crashed" && helpers.is_empty()
+        ));
     }
 
     #[test]

@@ -158,6 +158,10 @@ pub enum AuthFailure {
         /// The provider's explanation (for example that no helper has credentials and
         /// prompting is disabled).
         detail: String,
+        /// The `credential.helper` programs the provider asked, when it reported them
+        /// (see [`Error::CredentialsUnavailable`]); empty when none is configured or
+        /// the provider is not helper-based.
+        helpers: Vec<String>,
     },
     /// The provider answered without a usable username and password.
     #[error("the credential helper returned no usable username and password")]
@@ -181,6 +185,25 @@ impl AuthFailure {
     #[must_use]
     pub fn is_rejected(&self) -> bool {
         matches!(self, Self::Rejected)
+    }
+
+    /// The failure an HTTP client reports when a credential provider's
+    /// [`fill`](crate::credentials::CredentialProvider::fill) fails with `err`.
+    ///
+    /// Always [`AuthFailure::CredentialsUnavailable`]: `detail` is `err`'s message,
+    /// and `helpers` is the list an [`Error::CredentialsUnavailable`] carries (empty
+    /// for any other error). Custom [`HttpClient`](crate::transport::http::HttpClient)
+    /// implementations use it to report fill failures the way the built-in client does.
+    #[must_use]
+    pub fn from_fill_error(err: Error) -> Self {
+        let helpers = match &err {
+            Error::CredentialsUnavailable { helpers } => helpers.clone(),
+            _ => Vec::new(),
+        };
+        Self::CredentialsUnavailable {
+            detail: err.to_string(),
+            helpers,
+        }
     }
 }
 
@@ -1175,6 +1198,19 @@ pub enum Error {
         reason: AuthFailure,
     },
 
+    /// A credential provider could not supply a complete username and password:
+    /// no helper had them and no askpass program could be asked.
+    ///
+    /// Returned by [`HelperCredentialProvider`](crate::credentials::HelperCredentialProvider)
+    /// instead of prompting on a terminal; transports surface it as
+    /// [`AuthFailure::CredentialsUnavailable`].
+    #[error("{}", crate::credentials::NON_INTERACTIVE_MESSAGE)]
+    CredentialsUnavailable {
+        /// The `credential.helper` programs that were asked, in order (empty when none
+        /// is configured for the URL).
+        helpers: Vec<String>,
+    },
+
     /// An atomic wire push was requested, but the remote did not advertise the
     /// `atomic` capability. No ref-update commands or pack data were sent.
     #[error("the remote does not support atomic pushes")]
@@ -1957,6 +1993,7 @@ impl Error {
             Self::PathOutsideRepo(..) => "path_outside_repo",
             Self::Signing(..) => "signing",
             Self::Auth { .. } => "auth",
+            Self::CredentialsUnavailable { .. } => "credentials_unavailable",
             Self::PushAtomicUnsupported => "push_atomic_unsupported",
             Self::PushOptionsUnsupported => "push_options_unsupported",
             Self::FetchUnshallowNotShallow => "fetch_unshallow_not_shallow",

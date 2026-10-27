@@ -20,7 +20,7 @@ use crate::objects::{ObjectId, ObjectKind};
 use crate::push_report::PushRefResult;
 use crate::refs;
 use crate::refspec::{parse_push_refspec, RefspecItem};
-use crate::remote::{HttpClientFactory, Remote, RemoteError, RemoteRef};
+use crate::remote::{HttpClientFactory, ProbeHttpClientFactory, Remote, RemoteError, RemoteRef};
 use crate::repo::Repository;
 use crate::repo_handles::has_remote_section;
 use crate::rev_parse::{resolve_push_full_ref_for_branch, resolve_revision_for_verify};
@@ -721,6 +721,10 @@ impl PushPlanContext {
 /// listed with [`Remote::list_push_refs`]. The context is best-effort: a remote without a URL, or one whose refs cannot be listed,
 /// yields an empty context, and the push itself reports any connection failure.
 ///
+/// The listing uses a [probe client](HttpClientFactory::create_for_probe), so credentials the
+/// server refuses stay stored and the push reports them as rejected
+/// ([`AuthFailure::Rejected`](crate::error::AuthFailure::Rejected)).
+///
 /// # Errors
 ///
 /// Only errors from [`configured_remote_for_push`].
@@ -734,7 +738,8 @@ pub fn load_push_plan_context(
     let Ok(handle) = open_push_destination(config, &remote) else {
         return Ok(PushPlanContext::default());
     };
-    let Ok(advertised) = handle.list_push_refs(repo, http_factory) else {
+    let probe = ProbeHttpClientFactory::new(http_factory, repo);
+    let Ok(advertised) = handle.list_push_refs(repo, Some(&probe)) else {
         return Ok(PushPlanContext::default());
     };
     Ok(PushPlanContext::from_advertised_refs(advertised))

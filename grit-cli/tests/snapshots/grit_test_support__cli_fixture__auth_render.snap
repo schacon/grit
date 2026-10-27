@@ -11,7 +11,7 @@ expression: payload
     },
     "json": {
       "exit": 0,
-      "stdout": "{\"authenticated\":true,\"host\":\"github.com\"}\n",
+      "stdout": "{\"authenticated\":true,\"host\":\"github.com\",\"verified\":true}\n",
       "stderr": ""
     },
     "markdown": {
@@ -45,7 +45,7 @@ expression: payload
     },
     "json": {
       "exit": 0,
-      "stdout": "{\"authenticated\":true,\"host\":\"git.example.com:8080\",\"user\":\"bob@example.com\"}\n",
+      "stdout": "{\"authenticated\":true,\"host\":\"git.example.com:8080\",\"user\":\"bob@example.com\",\"verified\":true}\n",
       "stderr": ""
     },
     "markdown": {
@@ -68,6 +68,23 @@ expression: payload
     "markdown": {
       "exit": 0,
       "stdout": "## Auth logout\n\n- Signed out of **`git.example.com:8080`** (stored token removed)\n",
+      "stderr": ""
+    }
+  },
+  "stored_token": {
+    "human": {
+      "exit": 0,
+      "stdout": "✓ Stored the token for alice on gitlab.example.com — the next push or fetch uses it.\n",
+      "stderr": ""
+    },
+    "json": {
+      "exit": 0,
+      "stdout": "{\"authenticated\":true,\"host\":\"gitlab.example.com\",\"user\":\"alice\",\"verified\":false}\n",
+      "stderr": ""
+    },
+    "markdown": {
+      "exit": 0,
+      "stdout": "## Auth\n\n- Stored a token for **`alice`** on **`gitlab.example.com`** (not verified; the next push or fetch uses it)\n",
       "stderr": ""
     }
   }

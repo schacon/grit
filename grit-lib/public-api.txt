@@ -5400,6 +5400,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::error::AttrPathspecError
 #[non_exhaustive] pub enum grit_lib::error::AuthFailure
 pub grit_lib::error::AuthFailure::CredentialsUnavailable
 pub grit_lib::error::AuthFailure::CredentialsUnavailable::detail: alloc::string::String
+pub grit_lib::error::AuthFailure::CredentialsUnavailable::helpers: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::error::AuthFailure::NoCredentialProvider
 pub grit_lib::error::AuthFailure::Rejected
 pub grit_lib::error::AuthFailure::UnsupportedScheme
@@ -5407,6 +5408,7 @@ pub grit_lib::error::AuthFailure::UnsupportedScheme::schemes: alloc::vec::Vec<al
 pub grit_lib::error::AuthFailure::UnusableCredentials
 pub grit_lib::error::AuthFailure::UrlNotDescribable
 impl grit_lib::error::AuthFailure
+pub fn grit_lib::error::AuthFailure::from_fill_error(grit_lib::error::Error) -> Self
 pub fn grit_lib::error::AuthFailure::is_rejected(&self) -> bool
 impl core::clone::Clone for grit_lib::error::AuthFailure
 pub fn grit_lib::error::AuthFailure::clone(&self) -> Self
@@ -5579,6 +5581,8 @@ pub grit_lib::error::Error::CommitPathsRequired
 pub grit_lib::error::Error::Config(grit_lib::error::ConfigError)
 pub grit_lib::error::Error::CorruptObject(alloc::string::String)
 pub grit_lib::error::Error::CorruptStash(&'static str)
+pub grit_lib::error::Error::CredentialsUnavailable
+pub grit_lib::error::Error::CredentialsUnavailable::helpers: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::error::Error::DeltaChainTooDeep
 pub grit_lib::error::Error::DeltaChainTooDeep::limit: usize
 pub grit_lib::error::Error::DetachedHead
@@ -15909,6 +15913,8 @@ pub grit_lib::prelude::Error::CommitPathsRequired
 pub grit_lib::prelude::Error::Config(grit_lib::error::ConfigError)
 pub grit_lib::prelude::Error::CorruptObject(alloc::string::String)
 pub grit_lib::prelude::Error::CorruptStash(&'static str)
+pub grit_lib::prelude::Error::CredentialsUnavailable
+pub grit_lib::prelude::Error::CredentialsUnavailable::helpers: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::prelude::Error::DeltaChainTooDeep
 pub grit_lib::prelude::Error::DeltaChainTooDeep::limit: usize
 pub grit_lib::prelude::Error::DetachedHead
@@ -20485,6 +20491,7 @@ pub const grit_lib::remote::grit_server_auth::AUTHORIZE_PATH: &str
 pub const grit_lib::remote::grit_server_auth::IDENTITY_PATH: &str
 pub const grit_lib::remote::grit_server_auth::LOGIN_PATH: &str
 pub const grit_lib::remote::grit_server_auth::LOGIN_POLL_PATH: &str
+pub fn grit_lib::remote::grit_server_auth::credential_for_url(&str, &grit_lib::config::ConfigSet, &str, &str) -> core::result::Result<grit_lib::remote::credentials::Credential, grit_lib::remote::grit_server_auth::ServerAuthError>
 pub fn grit_lib::remote::grit_server_auth::fetch_identity(&dyn grit_lib::remote::transport::http::HttpClient, &grit_lib::remote::grit_server_auth::ServerUrl) -> core::result::Result<grit_lib::remote::grit_server_auth::ServerIdentity, grit_lib::remote::grit_server_auth::ServerAuthError>
 pub mod grit_lib::remote::http_client
 pub struct grit_lib::remote::http_client::UreqHttpClient
@@ -23987,6 +23994,7 @@ impl core::fmt::Debug for grit_lib::remote::DefaultHttpClientFactory
 pub fn grit_lib::remote::DefaultHttpClientFactory::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl grit_lib::remote::HttpClientFactory for grit_lib::remote::DefaultHttpClientFactory
 pub fn grit_lib::remote::DefaultHttpClientFactory::create(&self, &grit_lib::config::ConfigSet) -> grit_lib::remote::RemoteResult<alloc::boxed::Box<dyn grit_lib::remote::transport::http::HttpClient>>
+pub fn grit_lib::remote::DefaultHttpClientFactory::create_for_probe(&self, &grit_lib::config::ConfigSet) -> grit_lib::remote::RemoteResult<alloc::boxed::Box<dyn grit_lib::remote::transport::http::HttpClient>>
 impl core::marker::Freeze for grit_lib::remote::DefaultHttpClientFactory
 impl core::marker::Send for grit_lib::remote::DefaultHttpClientFactory
 impl core::marker::Sync for grit_lib::remote::DefaultHttpClientFactory
@@ -24165,8 +24173,10 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::RemoteSummary
 pub const grit_lib::remote::DEFAULT_REMOTE: &str
 pub trait grit_lib::remote::HttpClientFactory: core::marker::Send + core::marker::Sync
 pub fn grit_lib::remote::HttpClientFactory::create(&self, &grit_lib::config::ConfigSet) -> grit_lib::remote::RemoteResult<alloc::boxed::Box<dyn grit_lib::remote::transport::http::HttpClient>>
+pub fn grit_lib::remote::HttpClientFactory::create_for_probe(&self, &grit_lib::config::ConfigSet) -> grit_lib::remote::RemoteResult<alloc::boxed::Box<dyn grit_lib::remote::transport::http::HttpClient>>
 impl grit_lib::remote::HttpClientFactory for grit_lib::remote::DefaultHttpClientFactory
 pub fn grit_lib::remote::DefaultHttpClientFactory::create(&self, &grit_lib::config::ConfigSet) -> grit_lib::remote::RemoteResult<alloc::boxed::Box<dyn grit_lib::remote::transport::http::HttpClient>>
+pub fn grit_lib::remote::DefaultHttpClientFactory::create_for_probe(&self, &grit_lib::config::ConfigSet) -> grit_lib::remote::RemoteResult<alloc::boxed::Box<dyn grit_lib::remote::transport::http::HttpClient>>
 pub fn grit_lib::remote::fold_peeled_refs(&[grit_lib::remote::RemoteRef]) -> alloc::vec::Vec<grit_lib::remote::PeeledRemoteRef>
 pub fn grit_lib::remote::inspect_remote(&grit_lib::repo::Repository, &str, &grit_lib::remote::InspectOptions, core::option::Option<&dyn grit_lib::remote::HttpClientFactory>) -> core::result::Result<grit_lib::remote::RemoteSummary, grit_lib::remote::RemoteError>
 pub fn grit_lib::remote::list_refs_from_git_dir(&std::path::Path, core::option::Option<&grit_lib::objects::odb::Odb>, &grit_lib::remote::ListRefsOptions) -> grit_lib::remote::RemoteResult<alloc::vec::Vec<grit_lib::remote::RemoteRef>>

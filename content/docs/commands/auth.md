@@ -1,6 +1,6 @@
 ---
 title: grit auth
-summary: Sign in to GitHub or a grit serve host in the browser so pushes and fetches just work.
+summary: Sign in to GitHub or a grit serve host, or save a username and token for any HTTPS host, so pushes and fetches just work.
 group: Remotes
 order: 5
 ---
@@ -10,6 +10,7 @@ order: 5
 ```text
 grit auth
 grit auth <url> [--token <token>]
+grit auth <url> --username <user> --token <token>
 grit auth logout [<url>] [--dry-run]
 ```
 
@@ -50,12 +51,26 @@ To store a token you already have instead, for example one an admin made with `g
 
 `grit auth logout <url>` removes the token saved for that host.
 
+Any other host, such as GitLab, Gitea or a company server, is not a `grit serve` host: `grit auth <url>` says so and points at `--username` and `--token` below, without changing your config.
+
+### Saving a username and token for any HTTPS host
+
+`grit` never asks for a password on the terminal, so pushes and fetches don't hang waiting for input. To save the user name and personal access token (or password) a host gave you, pass both:
+
+```console
+$ grit auth https://gitlab.com/team/app.git --username ada --token "$GITLAB_TOKEN"
+✓ Stored the token for ada on gitlab.com — the next push or fetch uses it.
+```
+
+This works for any `http://` or `https://` URL, GitHub included. `grit` saves the pair with your credential helper (setting one up first, as above) under the URL's scheme and host, so it covers every repository on that host, for Git as well. With `credential.useHttpPath` set, it is saved for that repository's path instead, matching how pushes and fetches look it up, so pass the repository URL; `credential.<url>.helper` settings for the URL apply too. Nothing is sent to the host at this point: the next push, fetch or clone uses the token, and if the host refuses it, that command fails with `kind` `auth_rejected` and the helper drops it, as Git does. Run the same command again with the new token. A token on the command line can end up in your shell history; in CI, an askpass program (see [Credentials](../agents/#credentials-https)) avoids that.
+
 ## Options
 
 | Option | Description |
 | --- | --- |
-| `<url>` | Sign in to the `grit serve` host this URL names instead of GitHub. |
-| `--token <token>` | Store this access token for a `grit serve` host (from `grit serve token`) instead of signing in in the browser. A token on the command line can end up in your shell history. |
+| `<url>` | Sign in to the `grit serve` host this URL names instead of GitHub (or, with `--username`, the host to store a token for). |
+| `--token <token>` | Store this access token: alone, for a `grit serve` host (from `grit serve token`), checked with the server instead of signing in in the browser; with `--username`, for any HTTP(S) host. A token on the command line can end up in your shell history. |
+| `--username <user>` | Store `--token` for this user name on the URL's host, without contacting it. Needs `<url>` and `--token`. |
 | `logout` | Remove the saved GitHub token. |
 | `logout <url>` | Remove the token saved for a `grit serve` host. |
 | `--dry-run` | On `logout`, report which stored credential would be erased without calling the helper. |
@@ -118,7 +133,8 @@ Pass `--json` for stable, scripting-friendly output:
 | `authenticated` | boolean | For sign-in, whether a token was stored. |
 | `logged_out` | boolean | For `logout`, whether a stored token was removed (or would be removed with `--dry-run`). |
 | `host` | string | Host the credential applies to: `github.com`, or a `grit serve` host with its port (`git.example.com:8080`). |
-| `user` | string or omitted | For sign-in to a `grit serve` host, the email address of the user the token belongs to. Omitted for GitHub. |
+| `user` | string or omitted | For sign-in to a `grit serve` host, the email address of the user the token belongs to; with `--username`, that user name. Omitted for GitHub. |
+| `verified` | boolean | For sign-in, whether the host confirmed the token. `false` with `--username`, which stores the token without contacting the host. |
 | `dry_run` | boolean | On `logout`, `true` when `--dry-run` was used. |
 | `credential` | object or omitted | With `--dry-run`, describes the helper entry that would be removed (`protocol`, `host`, `username`; never includes a password). |
 
@@ -127,7 +143,8 @@ After sign-in:
 ```json
 {
   "authenticated": true,
-  "host": "github.com"
+  "host": "github.com",
+  "verified": true
 }
 ```
 
@@ -137,7 +154,19 @@ After signing in to a `grit serve` host:
 {
   "authenticated": true,
   "host": "git.example.com:8080",
-  "user": "bob@example.com"
+  "user": "bob@example.com",
+  "verified": true
+}
+```
+
+After storing a token with `--username`:
+
+```json
+{
+  "authenticated": true,
+  "host": "gitlab.com",
+  "user": "ada",
+  "verified": false
 }
 ```
 
@@ -168,7 +197,7 @@ Markdown uses headings, bullet lists, and fenced blocks; pipe characters inside 
 - Signed in to **`github.com`**
 ```
 
-For a `grit serve` host the line names the user: ``- Signed in to **`git.example.com:8080`** as **`bob@example.com`**``.
+For a `grit serve` host the line names the user: ``- Signed in to **`git.example.com:8080`** as **`bob@example.com`**``. With `--username` it reads ``- Stored a token for **`ada`** on **`gitlab.com`** (not verified; the next push or fetch uses it)``.
 
 ## Exit status
 

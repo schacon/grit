@@ -141,7 +141,7 @@ Each commit gets a stable **`change-id`** header (on by default) that survives `
 
 When another process holds `.git/index.lock`, staging and committing stop before updating the index or recording a commit, and `--json` emits `kind: lock_held` with `lock.path` (and `lock.holder.pid` / `lock.holder.running` when the owner was recorded). Retry later; remove `lock.path` only when no grit or git process is running, or when `lock.holder.running` is `false`.
 
-Failures with a known next step carry a `hint` in `--json` (and a `hint:` line on stderr) naming the command to run; branch on `kind`: `no_remote` / `remote_not_found` (`grit remote add <name> <url>`), `remote_no_url`, `auth_required` / `auth_rejected` (`grit auth` for github.com, else a `credential.helper` or a `GIT_ASKPASS` program), `remote_unreadable` (hint on a 404), `branch_no_upstream` (`grit pull origin <branch>` or `grit push -u origin <branch>`), `unmerged_paths` and `dirty_worktree` (both with `paths`).
+Failures with a known next step carry a `hint` in `--json` (and a `hint:` line on stderr) naming the command to run; branch on `kind`: `no_remote` / `remote_not_found` (`grit remote add <name> <url>`), `remote_no_url`, `auth_required` / `auth_rejected` (`grit auth` for github.com, else `grit auth <url> --username <user> --token <token>` or a `GIT_ASKPASS` program), `remote_unreadable` (hint on a 404), `branch_no_upstream` (`grit pull origin <branch>` or `grit push -u origin <branch>`), `unmerged_paths` and `dirty_worktree` (both with `paths`).
 
 ## Combining work
 
@@ -287,6 +287,7 @@ Run **`fetch`** steps from inside the clone (`$CLONE_DIR`). **`--depth 1`** on c
 ## Staying non-interactive
 
 - HTTPS GitHub: run `grit auth` once in an interactive session (it uses a browser device flow). After that, fetch, pull and push use the stored token. When stdin isn't a terminal, grit won't prompt to sign in; it fails with a hint instead.
+- HTTPS to any other host (GitLab, Gitea, a company server): grit never prompts for a password. Save the user name and token once with `grit auth <url> --username <user> --token <token>` (stored with the credential helper for that host), or provide a `GIT_ASKPASS` program in CI. A refused stored token fails with `auth_rejected`; store the new one the same way.
 - SSH: set `GIT_SSH_COMMAND='ssh -o BatchMode=yes'` so a missing key or unknown host fails fast instead of waiting for input.
 - Don't run `grit update` in automation; it reinstalls the binary.
 - `grit manager`, `grit upload-pack` and `grit receive-pack` are plumbing that speaks Git protocols on stdin/stdout. Don't call them directly.

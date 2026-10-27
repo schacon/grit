@@ -10,16 +10,21 @@
       "type": "string"
     },
     "user": {
-      "description": "The user the token belongs to on a `grit serve` host (absent for GitHub).",
+      "description": "The user the token belongs to on a `grit serve` host, or the `--username` it was stored for (absent for GitHub).",
       "type": [
         "string",
         "null"
       ]
+    },
+    "verified": {
+      "description": "Whether the host confirmed the token. `false` for `--username`/`--token`, which stores it without contacting the host.",
+      "type": "boolean"
     }
   },
   "required": [
     "authenticated",
-    "host"
+    "host",
+    "verified"
   ],
   "title": "AuthOutcome",
   "type": "object"

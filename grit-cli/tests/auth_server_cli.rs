@@ -2,7 +2,8 @@
 //! sign-in in the "browser" (plain HTTP here), the token is stored with the
 //! credential helper, used by `grit clone`, and removed by
 //! `grit auth logout <url>`. Also the `--token` path with a token from
-//! `grit serve token`, and the users `grit serve` creates.
+//! `grit serve token`, the users `grit serve` creates, and
+//! `--username`/`--token` for a Basic-auth host that is not a grit server.
 
 #![cfg(unix)]
 
@@ -407,5 +408,359 @@ fn token_requires_a_url_and_github_urls_use_the_device_flow() {
         String::from_utf8_lossy(&github.stderr).contains("--token is for `grit serve` hosts"),
         "{}",
         String::from_utf8_lossy(&github.stderr)
+    );
+    let no_token = run(
+        &home,
+        &home,
+        &["auth", "https://github.com", "--username", "octocat"],
+    );
+    assert_eq!(no_token.status.code(), Some(2), "{no_token:?}");
+}
+
+/// `grit-http-server --require-auth alice:s3cret` on an ephemeral port: a
+/// Basic-auth host that is not a `grit serve` host. Returns its root URL.
+fn basic_auth_server(root: &Path) -> (ServerGuard, String) {
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .expect("free port")
+        .port();
+    let child = Command::new(grit_test_support::grit_http_server_binary())
+        .arg("--root")
+        .arg(root)
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port}"))
+        .arg("--require-auth")
+        .arg("alice:s3cret")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn grit-http-server");
+    let guard = ServerGuard(child);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while TcpStream::connect(("127.0.0.1", port)).is_err() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "grit-http-server did not listen"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    (guard, format!("http://127.0.0.1:{port}"))
+}
+
+fn system_git(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("run git");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// The `--json` error object a failed command prints on stdout.
+fn json_error(out: &Output) -> Value {
+    assert!(!out.status.success(), "expected a failure");
+    serde_json::from_slice(&out.stdout).unwrap_or_else(|_| {
+        panic!(
+            "no JSON error: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    })
+}
+
+#[test]
+fn signing_in_to_a_host_that_is_not_a_grit_server_points_at_username_and_token() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    let root = tmp.path().join("srv");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+    std::fs::create_dir_all(&root).expect("mkdir srv");
+    let (_server, url) = basic_auth_server(&root);
+    let repo_url = format!("{url}/auth.git");
+
+    for args in [
+        vec!["auth", repo_url.as_str()],
+        vec!["auth", repo_url.as_str(), "--token", "s3cret"],
+    ] {
+        let out = run(&home, &home, &args);
+        assert!(!out.status.success(), "{args:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("is not a `grit serve` host"), "{stderr}");
+        assert!(
+            stderr.contains(&format!(
+                "grit auth {url}/ --username <user> --token <token>"
+            )),
+            "{stderr}"
+        );
+        assert!(stderr.contains("credential helper"), "{stderr}");
+        assert!(stderr.contains("GIT_ASKPASS"), "{stderr}");
+        assert!(!stderr.contains("HTTP 404"), "{stderr}");
+        assert!(!stderr.contains(".grit/"), "{stderr}");
+    }
+    assert!(
+        !home.join(".gitconfig").exists(),
+        "a failed sign-in must not set up a credential helper"
+    );
+}
+
+#[test]
+fn username_and_token_are_stored_for_any_host_and_push_uses_them() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    let root = tmp.path().join("srv");
+    let work = tmp.path().join("work");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+    std::fs::create_dir_all(&work).expect("mkdir work");
+    system_git(
+        &root.parent().expect("parent"),
+        &["init", "-q", "--bare", "srv/auth.git"],
+    );
+    let (_server, url) = basic_auth_server(&root);
+    let host = url.trim_start_matches("http://").to_owned();
+    let repo_url = format!("{url}/auth.git");
+
+    ok(&home, &work, &["init"]);
+    std::fs::write(work.join("a"), "a\n").expect("write a");
+    ok(&home, &work, &["commit", "-m", "a"]);
+    ok(&home, &work, &["remote", "add", "origin", &repo_url]);
+
+    // Nothing stored: the hint names `grit auth <url> --username`, not a helper to configure.
+    let missing = run(&home, &work, &["--json", "push", "-u", "origin", "main"]);
+    assert!(!missing.status.success());
+    let err = json_error(&missing);
+    assert_eq!(err["kind"], "auth_required", "{err}");
+    let hint = err["hint"].as_str().expect("hint");
+    assert!(
+        hint.contains(&format!(
+            "grit auth {repo_url} --username <user> --token <token>"
+        )),
+        "{hint}"
+    );
+
+    let store = home.join("credentials");
+    let helper = format!("store --file={}", store.display());
+    ok(
+        &home,
+        &home,
+        &["config", "--global", "credential.helper", &helper],
+    );
+
+    // The helper is configured but empty: say so instead of asking to configure one.
+    let empty = run(&home, &work, &["--json", "push", "-u", "origin", "main"]);
+    let err = json_error(&empty);
+    assert_eq!(err["kind"], "auth_required", "{err}");
+    let hint = err["hint"].as_str().expect("hint");
+    assert!(
+        hint.contains("your credential helper has no credentials"),
+        "{hint}"
+    );
+    assert!(!hint.contains(&helper), "{hint}");
+    assert!(!hint.contains("configure a credential helper"), "{hint}");
+
+    let stored = json_ok(
+        run(
+            &home,
+            &home,
+            &[
+                "--json",
+                "auth",
+                &repo_url,
+                "--username",
+                "alice",
+                "--token",
+                "s3cret",
+            ],
+        ),
+        &["auth"],
+    );
+    assert_eq!(stored["authenticated"], Value::Bool(true));
+    assert_eq!(stored["verified"], Value::Bool(false));
+    assert_eq!(stored["host"], host.as_str());
+    assert_eq!(stored["user"], "alice");
+    let entry = format!("http://alice:s3cret@{}", host.replace(':', "%3a"));
+    assert_eq!(
+        std::fs::read_to_string(&store).expect("store").trim(),
+        entry
+    );
+    let markdown = ok(
+        &home,
+        &home,
+        &[
+            "--markdown",
+            "auth",
+            &url,
+            "--username",
+            "alice",
+            "--token",
+            "s3cret",
+        ],
+    );
+    assert!(String::from_utf8_lossy(&markdown.stdout).contains("Stored a token for **`alice`**"));
+
+    ok(&home, &work, &["push", "-u", "origin", "main"]);
+    let bare = root.join("auth.git");
+    system_git(&bare, &["fsck", "--strict"]);
+    assert_eq!(
+        system_git(&bare, &["rev-parse", "refs/heads/main"]),
+        system_git(&work, &["rev-parse", "HEAD"])
+    );
+
+    // A stored credential the host refuses is reported as rejected, then erased (as Git does).
+    std::fs::write(
+        &store,
+        format!("http://alice:WRONG@{}\n", host.replace(':', "%3a")),
+    )
+    .expect("write store");
+    std::fs::write(work.join("b"), "b\n").expect("write b");
+    ok(&home, &work, &["commit", "-m", "b"]);
+    let rejected = run(&home, &work, &["--json", "push", "origin", "main"]);
+    assert!(!rejected.status.success());
+    let err = json_error(&rejected);
+    assert_eq!(err["kind"], "auth_rejected", "{err}");
+    assert!(
+        err["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("rejected the credentials")),
+        "{err}"
+    );
+    assert!(
+        err["hint"]
+            .as_str()
+            .is_some_and(|h| h.contains("update the credentials your credential helper stores")),
+        "{err}"
+    );
+    assert!(!err.to_string().contains("WRONG"), "{err}");
+    assert_eq!(std::fs::read_to_string(&store).expect("store"), "");
+}
+
+/// A repository with one commit whose `origin` is `repo_url`.
+fn repo_with_origin(home: &Path, work: &Path, repo_url: &str) {
+    std::fs::create_dir_all(work).expect("mkdir work");
+    ok(home, work, &["init"]);
+    std::fs::write(work.join("a"), "a\n").expect("write a");
+    ok(home, work, &["commit", "-m", "a"]);
+    ok(home, work, &["remote", "add", "origin", repo_url]);
+}
+
+#[test]
+fn credential_helper_commands_never_appear_in_auth_errors() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    let root = tmp.path().join("srv");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+    system_git(tmp.path(), &["init", "-q", "--bare", "srv/auth.git"]);
+    let (_server, url) = basic_auth_server(&root);
+    let work = tmp.path().join("work");
+    repo_with_origin(&home, &work, &format!("{url}/auth.git"));
+    // Supplies a password but no user name, so the credential stays incomplete.
+    ok(
+        &home,
+        &home,
+        &[
+            "config",
+            "--global",
+            "credential.helper",
+            "!echo password=literal-secret",
+        ],
+    );
+
+    for mode in [None, Some("--json"), Some("--markdown")] {
+        let mut args: Vec<&str> = mode.into_iter().collect();
+        args.extend(["push", "-u", "origin", "main"]);
+        let out = run(&home, &work, &args);
+        assert!(!out.status.success(), "{args:?}");
+        let shown = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(shown.contains("has no credentials"), "{args:?}: {shown}");
+        assert!(!shown.contains("literal-secret"), "{args:?}: {shown}");
+        assert!(!shown.contains("!echo"), "{args:?}: {shown}");
+    }
+}
+
+#[test]
+fn username_and_token_follow_use_http_path_and_push_uses_them() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    let root = tmp.path().join("srv");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+    system_git(tmp.path(), &["init", "-q", "--bare", "srv/auth.git"]);
+    let (_server, url) = basic_auth_server(&root);
+    let host = url.trim_start_matches("http://").replace(':', "%3a");
+    let repo_url = format!("{url}/auth.git");
+    let work = tmp.path().join("work");
+    repo_with_origin(&home, &work, &repo_url);
+
+    let store = home.join("credentials");
+    let helper = format!("store --file={}", store.display());
+    ok(
+        &home,
+        &home,
+        &["config", "--global", "credential.helper", &helper],
+    );
+    ok(
+        &home,
+        &home,
+        &["config", "--global", "credential.useHttpPath", "true"],
+    );
+
+    ok(
+        &home,
+        &home,
+        &[
+            "auth",
+            &repo_url,
+            "--username",
+            "alice",
+            "--token",
+            "s3cret",
+        ],
+    );
+    assert_eq!(
+        std::fs::read_to_string(&store).expect("store").trim(),
+        format!("http://alice:s3cret@{host}/auth.git")
+    );
+
+    // System git finds the same per-repository entry.
+    let fill = Command::new("git")
+        .args(["-c", &format!("credential.helper={helper}")])
+        .args(["-c", "credential.useHttpPath=true", "credential", "fill"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child
+                .stdin
+                .take()
+                .expect("stdin")
+                .write_all(format!("url={repo_url}\n\n").as_bytes())?;
+            child.wait_with_output()
+        })
+        .expect("git credential fill");
+    assert!(fill.status.success(), "git credential fill failed");
+    assert!(
+        String::from_utf8_lossy(&fill.stdout).contains("password=s3cret"),
+        "{}",
+        String::from_utf8_lossy(&fill.stdout)
+    );
+
+    ok(&home, &work, &["push", "-u", "origin", "main"]);
+    let bare = root.join("auth.git");
+    system_git(&bare, &["fsck", "--strict"]);
+    assert_eq!(
+        system_git(&bare, &["rev-parse", "refs/heads/main"]),
+        system_git(&work, &["rev-parse", "HEAD"])
     );
 }

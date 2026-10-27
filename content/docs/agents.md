@@ -188,7 +188,7 @@ For `https://github.com` remotes, sign in once with [`grit auth`](../auth/). Gri
 
 Sign out with `grit auth logout`. You need a credential helper configured (for example `grit config --global credential.helper store` on Linux — see the [`grit auth`](../auth/) page).
 
-The same helpers serve any HTTPS host, not only GitHub. In CI, a host-level line such as `https://ci:TOKEN@git.example.com` in the store file (`~/.git-credentials`) authenticates `grit clone`, `fetch` and `push` for every repository on that host, exactly as it does for Git.
+The same helpers serve any HTTPS host, not only GitHub. For GitLab, Gitea, Bitbucket or any other host, save a user name and token once with `grit auth <url> --username <user> --token <token>`: it stores them with your credential helper (setting one up if needed) for that host, without contacting it. `grit auth <url>` without `--username` signs in only to GitHub and `grit serve` hosts, and says so for anything else. In CI, a host-level line such as `https://ci:TOKEN@git.example.com` in the store file (`~/.git-credentials`) authenticates `grit clone`, `fetch` and `push` for every repository on that host, exactly as it does for Git.
 
 When no helper has the credentials, grit asks an **askpass** program for them, like Git: `GIT_ASKPASS`, then `core.askPass`, then `SSH_ASKPASS` (the first one set wins; an empty value turns askpass off). The program gets one prompt as its argument, `Username for 'https://git.example.com': ` and then `Password for 'https://ci@git.example.com': `, and prints the answer on stdout. That is how most CI systems inject a token:
 
@@ -201,7 +201,7 @@ chmod +x askpass.sh
 GIT_ASKPASS=$PWD/askpass.sh grit clone https://git.example.com/team/app.git
 ```
 
-A credential an askpass program supplies is saved with your credential helper once the server accepts it. Grit never prompts on the terminal: with no helper and no askpass program, the command fails with `kind` `auth_required`. Set `credential.interactive=never` to skip askpass as well. A `user:password@` in the URL is sent as it is; if the server refuses it the error is `auth_rejected`.
+A credential an askpass program supplies is saved with your credential helper once the server accepts it. Grit never prompts on the terminal, even when one is attached: when neither a helper nor an askpass program has the credentials, the command fails with `kind` `auth_required`, and the hint names the helpers that were asked and `grit auth <url> --username … --token …`. Set `credential.interactive=never` to skip askpass as well. When the server refuses a stored credential (an expired or rotated token), the error is `auth_rejected` and the helper erases the entry, as Git does; store the new token the same way. A `user:password@` in the URL is sent as it is; if the server refuses it the error is also `auth_rejected`.
 
 SSH remotes do not use the GitHub device-flow token; they can still block on SSH prompts (see the SSH row above).
 

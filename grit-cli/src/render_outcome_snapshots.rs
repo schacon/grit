@@ -39,6 +39,7 @@ struct AuthRenderSnapshot {
     logout: AuthModesSnapshot,
     server_sign_in: AuthModesSnapshot,
     server_logout: AuthModesSnapshot,
+    stored_token: AuthModesSnapshot,
 }
 
 #[derive(Serialize)]
@@ -83,6 +84,7 @@ fn auth_render() {
         authenticated: true,
         host: "github.com".to_owned(),
         user: None,
+        verified: true,
     };
     let logout = LogoutOutcome {
         logged_out: true,
@@ -94,6 +96,13 @@ fn auth_render() {
         authenticated: true,
         host: "git.example.com:8080".to_owned(),
         user: Some("bob@example.com".to_owned()),
+        verified: true,
+    };
+    let stored_token = AuthOutcome {
+        authenticated: true,
+        host: "gitlab.example.com".to_owned(),
+        user: Some("alice".to_owned()),
+        verified: false,
     };
     let server_logout = LogoutOutcome {
         logged_out: true,
@@ -106,6 +115,7 @@ fn auth_render() {
         logout: capture_outcome(&logout, &ctx),
         server_sign_in: capture_outcome(&server_sign_in, &ctx),
         server_logout: capture_outcome(&server_logout, &ctx),
+        stored_token: capture_outcome(&stored_token, &ctx),
     };
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_path(snapshot_dir());

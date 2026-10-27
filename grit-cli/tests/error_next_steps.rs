@@ -150,7 +150,7 @@ fn url_less_remote_suggests_set_url() {
 }
 
 #[test]
-fn push_without_credentials_names_the_repository_and_a_credential_helper() {
+fn push_without_credentials_names_the_repository_and_how_to_save_credentials() {
     let (repo, home) = fresh_repo();
     let url = serve_status(
         "401 Unauthorized",
@@ -167,7 +167,11 @@ fn push_without_credentials_names_the_repository_and_a_credential_helper() {
         !error.contains("info/refs") && !error.contains("service="),
         "{error}"
     );
-    failure.assert_kind_and_hint("auth_required", "credential.helper");
+    failure.assert_kind_and_hint(
+        "auth_required",
+        &format!("`grit auth {url} --username <user> --token <token>`"),
+    );
+    failure.assert_kind_and_hint("auth_required", "GIT_ASKPASS");
 }
 
 #[test]

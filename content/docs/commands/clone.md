@@ -62,7 +62,7 @@ The bundle download has its own display: an arrow and the bundle's URL, then a b
 
 When it finishes, the line becomes `✓ bundle 58.5 MiB in 8.5s · 5.23 MiB/s · resumed at 14.1 MiB`, and the summary gets a `bundle` row. Shallow (`--depth`) and partial (`--blobs`) clones never use a bundle, and `transfer.bundleURI=false` in config turns bundles off. When the bundle cannot be used, clone warns and fetches everything as usual.
 
-For private GitHub repositories over HTTPS, sign in first with [`grit auth`](../auth/).
+For private GitHub repositories over HTTPS, sign in first with [`grit auth`](../auth/). For other hosts, save a user name and token first with `grit auth <url> --username <user> --token <token>`.
 
 When the remote has no commits yet (an empty bare repository), grit still creates the destination directory, configures `origin`, and points `HEAD` at the remote's default branch without checking out files. Human output includes a short note on stderr (`note: the remote repository is empty.`); `--json` reports `"files": 0`, `"no_checkout_reason": "empty_remote"`, and the configured branch name.
 
@@ -324,7 +324,7 @@ Markdown uses headings, bullet lists, and fenced blocks; pipe characters inside 
 | Code | Meaning |
 | ---: | --- |
 | `0` | Clone succeeded (including empty remote with no checkout). |
-| `1` | Destination not empty, checkout failure, or other error. Missing or refused credentials are `kind` `auth_required` / `auth_rejected` with a `hint` in `--json` and on the human `hint:` line. HTTPS credentials come from your credential helper, then an askpass program (`GIT_ASKPASS`, `core.askPass`, `SSH_ASKPASS`); see [Credentials](../agents/#credentials-https). |
+| `1` | Destination not empty, checkout failure, or other error. Missing or refused credentials are `kind` `auth_required` / `auth_rejected` with a `hint` in `--json` and on the human `hint:` line. HTTPS credentials come from your credential helper (`grit auth <url> --username <user> --token <token>` saves one for any host), then an askpass program (`GIT_ASKPASS`, `core.askPass`, `SSH_ASKPASS`); see [Credentials](../agents/#credentials-https). |
 | `2` | Invalid flags ([`usage`](../exit-codes/)). |
 | `128` | Could not reach or read the source: missing path, DNS or connection failure, HTTP error status ([`remote_unreadable`](../exit-codes/)); a `404` adds a hint to check the URL. |
 | `130` | Interrupted with Ctrl-C ([`interrupted`](../exit-codes/)). The error is `operation cancelled` (`{"error":"operation cancelled"}` with `--json`). |

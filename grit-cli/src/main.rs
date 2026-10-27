@@ -1941,15 +1941,18 @@ enum Command {
         #[command(subcommand)]
         action: WorktreeAction,
     },
-    /// Sign in to GitHub or a `grit serve` host in the browser, and store a token for push/fetch.
+    /// Sign in to GitHub or a `grit serve` host, or store a username and token for any HTTPS host.
     #[command(args_conflicts_with_subcommands = true, visible_alias = "login")]
     Auth {
-        /// A `grit serve` host (or one of its repository URLs) to sign in to instead of GitHub.
+        /// The host (or one of its repository URLs) to sign in to instead of GitHub.
         #[arg(value_name = "URL")]
         url: Option<String>,
-        /// Store this access token for a `grit serve` host (from `grit serve token`) instead of signing in in the browser.
+        /// Store this access token: with `--username`, for any HTTP(S) host; alone, a `grit serve` token (from `grit serve token`), checked with the server.
         #[arg(long, value_name = "TOKEN", requires = "url")]
         token: Option<String>,
+        /// Store `--token` for this user name on any HTTP(S) host, without signing in.
+        #[arg(long, value_name = "USER", requires_all = ["url", "token"])]
+        username: Option<String>,
         #[command(subcommand)]
         action: Option<AuthAction>,
     },
@@ -4077,38 +4080,47 @@ fn dispatch(
             // push is still a failure, so mirror Git and exit non-zero.
             Ok(ExitStatus::from_push_rejected(outcome.rejected))
         }
-        Command::Auth { url, token, action } => {
-            match action {
-                None => {
+        Command::Auth {
+            url,
+            token,
+            username,
+            action,
+        } => match action {
+            None => {
+                let outcome = if let (Some(url), Some(token), Some(username)) =
+                    (url.as_deref(), token.as_deref(), username.as_deref())
+                {
+                    commands::auth::store_token(url, username, token)?
+                } else {
                     let server = url
                         .as_deref()
                         .map(commands::auth::grit_server)
                         .transpose()?;
-                    let outcome = match (server.flatten(), token) {
+                    match (server.flatten(), token) {
                         (Some(server), Some(token)) => {
                             commands::auth::run_server_token(&server, &token)?
                         }
                         (Some(server), None) => commands::auth::run_server_login(&server)?,
                         (None, Some(_)) => {
-                            anyhow::bail!("--token is for `grit serve` hosts; GitHub signs in with the browser")
+                            anyhow::bail!("--token is for `grit serve` hosts; GitHub signs in with the browser, or store a personal access token with `--username <user> --token <token>`")
                         }
                         (None, None) => commands::auth::run()?,
-                    };
-                    emit_success(&outcome, opts, ctx)
-                }
-                Some(AuthAction::Logout { url, dry_run }) => {
-                    let server = url
-                        .as_deref()
-                        .map(commands::auth::grit_server)
-                        .transpose()?;
-                    emit_success(
-                        &commands::auth::logout(server.flatten().as_ref(), dry_run)?,
-                        opts,
-                        ctx,
-                    )
-                }
+                    }
+                };
+                emit_success(&outcome, opts, ctx)
             }
-        }
+            Some(AuthAction::Logout { url, dry_run }) => {
+                let server = url
+                    .as_deref()
+                    .map(commands::auth::grit_server)
+                    .transpose()?;
+                emit_success(
+                    &commands::auth::logout(server.flatten().as_ref(), dry_run)?,
+                    opts,
+                    ctx,
+                )
+            }
+        },
         Command::Update => emit_success(&commands::update::run(opts.mode)?, opts, ctx),
         Command::Skill => emit_success(&commands::skill::run()?, opts, ctx),
         Command::Completions { shell } => {

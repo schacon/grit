@@ -29,6 +29,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::config::ConfigSet;
 use crate::credentials::{Credential, CredentialProvider};
 use crate::error::{Error, RemoteUnreadableReason, Result};
 use crate::github_auth::PollClock;
@@ -171,12 +172,7 @@ impl ServerUrl {
     /// `http` and `https`.
     pub fn parse(url: &str) -> std::result::Result<Self, ServerAuthError> {
         let trimmed = url.trim();
-        let with_scheme = if trimmed.contains("://") {
-            trimmed.to_owned()
-        } else {
-            format!("https://{trimmed}")
-        };
-        let parsed = url::Url::parse(&with_scheme)
+        let parsed = url::Url::parse(&with_default_scheme(trimmed))
             .map_err(|_| ServerAuthError::InvalidUrl(trimmed.to_owned()))?;
         let protocol = parsed.scheme().to_owned();
         if protocol != "http" && protocol != "https" {
@@ -243,6 +239,44 @@ impl ServerUrl {
             ..Default::default()
         }
     }
+}
+
+/// `url` with `https://` in front when it names no scheme.
+fn with_default_scheme(url: &str) -> String {
+    if url.contains("://") {
+        url.to_owned()
+    } else {
+        format!("https://{url}")
+    }
+}
+
+/// The credential to [`approve`](CredentialProvider::approve) so that `username`
+/// and `token` answer later requests to the repository or server `url`.
+///
+/// Built with [`Credential::from_url`] and `config`, so it is keyed exactly as an
+/// HTTP fetch or push to `url` looks it up: by scheme and host, plus the
+/// repository path when `credential.useHttpPath` applies, and it keeps `url` for
+/// choosing `credential.<url>.helper` entries. A URL without a scheme is taken as
+/// `https://`; user info in `url` is replaced by `username` and `token`.
+///
+/// # Errors
+///
+/// [`ServerAuthError::InvalidUrl`] when the URL does not parse or has no host,
+/// and [`ServerAuthError::UnsupportedScheme`] for anything but `http` and
+/// `https`.
+pub fn credential_for_url(
+    url: &str,
+    config: &ConfigSet,
+    username: &str,
+    token: &str,
+) -> std::result::Result<Credential, ServerAuthError> {
+    ServerUrl::parse(url)?;
+    let trimmed = url.trim();
+    let mut credential = Credential::from_url(&with_default_scheme(trimmed), config)
+        .ok_or_else(|| ServerAuthError::InvalidUrl(trimmed.to_owned()))?;
+    credential.username = Some(username.to_owned());
+    credential.password = Some(token.to_owned());
+    Ok(credential)
 }
 
 /// A [`CredentialProvider`] that answers every request with one token.
@@ -473,6 +507,40 @@ mod tests {
         assert!(provider.approve(&filled).is_ok());
         assert!(provider.reject(&filled).is_ok());
         assert!(!format!("{provider:?}").contains("grit_secret"));
+    }
+
+    #[test]
+    fn credentials_for_a_url_follow_use_http_path() {
+        let host_level = credential_for_url(
+            "http://bob:old@127.0.0.1:8080/org/app.git",
+            &ConfigSet::new(),
+            "alice",
+            "t0k",
+        )
+        .unwrap();
+        assert_eq!(host_level.protocol.as_deref(), Some("http"));
+        assert_eq!(host_level.host.as_deref(), Some("127.0.0.1:8080"));
+        assert_eq!(host_level.path, None);
+        assert_eq!(host_level.username.as_deref(), Some("alice"));
+        assert_eq!(host_level.password.as_deref(), Some("t0k"));
+        assert_eq!(
+            host_level.url.as_deref(),
+            Some("http://127.0.0.1:8080/org/app.git")
+        );
+
+        let mut config = ConfigSet::new();
+        config
+            .add_command_override("credential.useHttpPath", "true")
+            .unwrap();
+        let per_repo =
+            credential_for_url("example.com/org/app.git", &config, "alice", "t0k").unwrap();
+        assert_eq!(per_repo.protocol.as_deref(), Some("https"));
+        assert_eq!(per_repo.path.as_deref(), Some("org/app.git"));
+
+        assert!(matches!(
+            credential_for_url("ssh://example.com/app.git", &config, "a", "b"),
+            Err(ServerAuthError::UnsupportedScheme(_))
+        ));
     }
 
     /// Answers every GET with one canned result and records the URL.
