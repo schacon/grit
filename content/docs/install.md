@@ -19,6 +19,28 @@ irm https://grit-scm.com/install.ps1 | iex
 
 The script downloads the latest release from GitHub, installs the `grit` binary (by default into `~/.local/bin` on Unix), and prints the version it installed.
 
+## Linux GNU loader compatibility
+
+Linux x86_64 releases provide two GNU assets. Both preserve PIE and ASLR:
+
+| Asset | Loader support |
+| --- | --- |
+| `grit-x86_64-unknown-linux-gnu.tar.gz` | Default and fallback; glibc 2.34 or newer, standard relocations |
+| `grit-x86_64-unknown-linux-gnu-relr.tar.gz` | Manual opt-in; glibc 2.36 or newer, packed relative relocations (RELR) |
+
+The stable and nightly installers always choose the existing GNU asset on glibc
+systems, including glibc 2.36 and newer. The RELR asset is available only as a
+manual download for glibc 2.36+. Its smaller relocation metadata does not
+consistently improve startup: final-tip review measurements found tiny commands
+about **1–2% slower**, despite gains at earlier revisions. Automatic selection
+is deferred until measurements on the release artifacts demonstrate a benefit;
+see [benchmarks](benchmarks.md#pie-startup-relocation-probe).
+
+The default asset's weak glibc 2.39 references do not require a newer loader.
+GNU aarch64, static musl, macOS and Windows keep their existing artifacts and
+selection. Static musl artifacts and source builds remain alternatives for
+other systems.
+
 ## Shell completions
 
 Tab completion helps you discover `grit`'s subcommands and flags. Generate a script with [`grit completions`](../completions/) and load it from your shell config, or copy the pre-generated files from a release tarball's `completions/` directory.

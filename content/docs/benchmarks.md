@@ -960,6 +960,110 @@ caller contexts, concurrent views, independent stores, SHA-1/SHA-256, refresh,
 missing/malformed layers, diagnostics, corruption fallback, and system-Git fsck
 round trips.
 
+## PIE startup relocation probe
+
+Current policy: installers keep the stock GNU asset. Fresh final-tip source
+measurements below reproduce a RELR dist slowdown; the optional asset remains
+manual-only. Earlier results retain their original revisions and hosts.
+
+Issue [#2028](https://github.com/gitbutlerapp/grit/issues/2028) investigates loader
+work without disabling PIE or ASLR. A CLI-only `-z pack-relative-relocs` probe at
+`f0e7cddd5` keeps both Cargo profiles, dependency features and command behavior
+unchanged. On a 4 vCPU AMD EPYC 9V74 Linux VM (Rust 1.99, glibc 2.39, system Git
+2.55), each tool ran five warmups and 60 measured invocations, rotating stock,
+RELR and Git order with builds/tests idle.
+
+These are full fork/exec/wait medians in milliseconds, measured with a small C
+parent. The reports also retain daily-helper timings, standard deviations,
+per-child peak RSS and page faults. Every fixture passes system `git fsck`.
+
+| Profile / tiny command | Git ms | Stock grit ms | RELR probe ms |
+| --- | ---: | ---: | ---: |
+| release / branch | 1.237 | 2.177 | 2.144 |
+| release / status | 1.524 | 2.699 | 2.662 |
+| release / resolve | 1.127 | 2.292 | 2.264 |
+| release / help | 1.006 | 3.102 | 3.064 |
+| dist / branch | 1.182 | 2.013 | 1.858 |
+| dist / status | 1.428 | 2.408 | 2.243 |
+| dist / resolve | 1.068 | 2.083 | 1.926 |
+| dist / help | 0.962 | 2.934 | 2.790 |
+
+Tiny commands improve about **1–2% on release** and **5–8% on dist**. The
+20,000-ref branch, 20,000-path status and 20,000-commit log cases stay close to
+stock; the full report includes their variance and the differences in Git/grit
+branch output limits. Release peak RSS falls by roughly 0.6–0.8 MiB. Dist RSS
+does not consistently decrease: independent `/usr/bin/time -v` samples show tiny
+branch/status/resolve median changes of +34/+58/+48 KiB, and help falls by 242 KiB.
+
+RELR cuts relocation metadata from **793 KB to 14 KB** on release and **464 KB
+to 9.9 KB** on dist. It fixes up the same 32,865 / 19,174 pointer slots on the
+same 147 / 91 pages. Loader-only relocation cycles are mostly unchanged on dist;
+binary layout shifts too, so the wall-time gain is not proof of a faster loader
+relocation loop. No Unicode regex, filter, schema or tracing feature is removed.
+
+The x86_64 GNU release now provides a separate `grit-x86_64-unknown-linux-gnu-relr.tar.gz`
+asset for glibc 2.36+. The existing glibc 2.34 GNU artifact retains its build path
+and remains the default and fallback. Stable and nightly installers always use
+the existing GNU asset on glibc systems; RELR is a manual download only. The
+final-tip review on `3fcfb24e9` found tiny-command regressions of about 1–2%
+against a same-source stock build, confirmed by randomized and CPU-pinned
+repeats. The earlier gains below do not establish performance of those artifacts.
+Automatic selection is deferred until exact release artifacts demonstrate a
+benefit. Both assets pass ELF hardening, startup and address randomization
+checks; release CI runs them on 2.34 and 2.36 respectively. Other targets are
+unchanged.
+
+An earlier shipping-dist check on CLI/library source `aa1964221`
+(4-vCPU Intel Xeon Platinum 8573C, 60 rotated warm runs per tool) measured:
+
+| Tiny command | Git ms | Stock dist ms | RELR dist ms |
+| --- | ---: | ---: | ---: |
+| branch | 1.166 | 1.968 | 1.871 |
+| status | 1.402 | 2.359 | 2.254 |
+| resolve | 1.078 | 2.051 | 1.945 |
+| help | 0.966 | 2.911 | 2.880 |
+
+Branch/status/resolve improve **4.4–5.1%** here; help's 1.1% difference is within
+the sample spread. Larger many-ref branch, wide status and deep log medians
+improve 1.2–1.6%. Native peak RSS falls about 0.4–0.5 MiB in this layout;
+the earlier dist memory caveat still applies. Loader-only cycles increase in
+this run, so the wall-time result cannot be attributed solely to relocation
+processing. The [shipping follow-up data](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/startup-relocations-shipping-dist.json)
+retain all 20 scenarios, variance, RSS, faults, loader statistics and runtime
+checks. Builds and tests were stopped throughout measurement.
+
+A replacement-VM check rebuilt the exact reviewed `3fcfb24e9` CLI/library
+source (installer correction `d8b6e83c3` changes no linked code). This host is
+**AMD EPYC 7763**, 4 vCPU, Rust 1.99, glibc 2.39, system Git 2.55. With five
+warmups and 60 rotated runs per tool and builds/tests idle, full-process dist
+medians are:
+
+| Tiny command | Git ms | Stock dist ms | RELR dist ms | RELR change |
+| --- | ---: | ---: | ---: | ---: |
+| branch | 1.412 | 2.138 | 2.177 | +1.83% |
+| status | 1.713 | 2.529 | 2.581 | +2.07% |
+| resolve | 1.280 | 2.188 | 2.209 | +0.97% |
+| help | 1.148 | 3.172 | 3.201 | +0.88% |
+
+All four paired-bootstrap 95% intervals for RELR-minus-stock median time are
+above zero. Release differences are mixed and near zero (-0.20% to +0.40%).
+Dist many-ref branch, wide status and deep log medians regress
+0.54/0.33/0.39%, within their sample spread. Dist RSS is lower in this layout,
+but startup is slower: smaller relocation metadata is insufficient grounds for
+automatic selection. Fresh [dist data](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/startup-relocations-review-dist.json)
+and [release data](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/startup-relocations-review-release.json)
+include all 20 cases per profile, variance, peak RSS, faults, binary hashes,
+ELF/ASLR checks, independent GNU-time samples and separate loader statistics.
+
+The [complete report](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/startup-relocations.md)
+links the methodology, ELF attribution and portability checks. Raw
+[dist](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/startup-relocations-dist.json),
+[release](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/startup-relocations-release.json),
+[ELF metadata](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/startup-relocations-elf.json)
+and [loader/RSS](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/startup-relocations-loader-rss.json)
+reports retain the measurements. See [startup comparison methodology](benchmarking.md#startup-relocation-comparison)
+for reproduction commands.
+
 ## Ignore path normalization (2026-10-26)
 
 Ignore queries used to canonicalize the same worktree root for every path. The library now checks the normalized path against the root already resolved when opening the repository, retaining the filesystem-alias fallback. On the daily 1,000-path fixture this removes **4,000 `readlink` calls** and **10,000 allocation calls**; heaptrack peak heap stays at **795,340 bytes**.

@@ -1,0 +1,432 @@
+{
+  "release": {
+    "stock": {
+      "binary_bytes": 33743040,
+      "relative_pointer_slots": 32865,
+      "pages_with_relative_fixups": 147,
+      "sections": {
+        ".rela.dyn": {
+          "address": 8384,
+          "offset": 8384,
+          "bytes": 792936
+        },
+        ".rodata": {
+          "address": 802816,
+          "offset": 802816,
+          "bytes": 1961116
+        },
+        ".text": {
+          "address": 5809472,
+          "offset": 5805376,
+          "bytes": 20352343
+        },
+        ".data.rel.ro": {
+          "address": 26167616,
+          "offset": 26159424,
+          "bytes": 550016
+        }
+      },
+      "sha256": "1973062fdd826965cff5c5ccdb93ed4662ec359f4cc4481c6349ec6ea440e001"
+    },
+    "relr": {
+      "binary_bytes": 32964904,
+      "relative_pointer_slots": 32865,
+      "pages_with_relative_fixups": 147,
+      "sections": {
+        ".rela.dyn": {
+          "address": 8424,
+          "offset": 8424,
+          "bytes": 4176
+        },
+        ".relr.dyn": {
+          "address": 12600,
+          "offset": 12600,
+          "bytes": 9408
+        },
+        ".rodata": {
+          "address": 24576,
+          "offset": 24576,
+          "bytes": 1961116
+        },
+        ".text": {
+          "address": 5031232,
+          "offset": 5027136,
+          "bytes": 20352343
+        },
+        ".data.rel.ro": {
+          "address": 25389376,
+          "offset": 25381184,
+          "bytes": 550016
+        }
+      },
+      "data_rel_ro_attribution": {
+        "grit_cli": {
+          "sites": 3925,
+          "bytes": 55376
+        },
+        "jaq_json": {
+          "sites": 156,
+          "bytes": 2728
+        },
+        "hashbrown": {
+          "sites": 2,
+          "bytes": 48
+        },
+        "hifijson": {
+          "sites": 6,
+          "bytes": 176
+        },
+        "num_bigint": {
+          "sites": 64,
+          "bytes": 1536
+        },
+        "jaq_std": {
+          "sites": 51,
+          "bytes": 1240
+        },
+        "libm": {
+          "sites": 6,
+          "bytes": 144
+        },
+        "jiff": {
+          "sites": 563,
+          "bytes": 12728
+        },
+        "jiff_core": {
+          "sites": 153,
+          "bytes": 3688
+        },
+        "regex_bites": {
+          "sites": 102,
+          "bytes": 2432
+        },
+        "bstr": {
+          "sites": 60,
+          "bytes": 1584
+        },
+        "jaq_core": {
+          "sites": 20,
+          "bytes": 480
+        },
+        "tracing_subscriber": {
+          "sites": 39,
+          "bytes": 856
+        },
+        "thread_local": {
+          "sites": 12,
+          "bytes": 224
+        },
+        "sharded_slab": {
+          "sites": 4,
+          "bytes": 88
+        },
+        "clap_complete": {
+          "sites": 84,
+          "bytes": 1712
+        },
+        "grit_lib": {
+          "sites": 6202,
+          "bytes": 117944
+        },
+        "nix": {
+          "sites": 7,
+          "bytes": 176
+        },
+        "serde_json": {
+          "sites": 32,
+          "bytes": 680
+        },
+        "tzdb_data": {
+          "sites": 598,
+          "bytes": 9584
+        },
+        "tz": {
+          "sites": 45,
+          "bytes": 744
+        },
+        "tracing": {
+          "sites": 8,
+          "bytes": 144
+        },
+        "tracing_core": {
+          "sites": 46,
+          "bytes": 752
+        },
+        "ureq": {
+          "sites": 928,
+          "bytes": 22344
+        },
+        "rustls": {
+          "sites": 1096,
+          "bytes": 19552
+        },
+        "webpki": {
+          "sites": 39,
+          "bytes": 1064
+        },
+        "ring": {
+          "sites": 280,
+          "bytes": 6176
+        },
+        "rustls_pki_types": {
+          "sites": 28,
+          "bytes": 688
+        },
+        "utf8_zero": {
+          "sites": 3,
+          "bytes": 72
+        },
+        "ureq_proto": {
+          "sites": 384,
+          "bytes": 6872
+        },
+        "httparse": {
+          "sites": 1,
+          "bytes": 24
+        },
+        "base64": {
+          "sites": 26,
+          "bytes": 624
+        },
+        "http": {
+          "sites": 174,
+          "bytes": 4880
+        },
+        "itoa": {
+          "sites": 2,
+          "bytes": 48
+        },
+        "bytes": {
+          "sites": 37,
+          "bytes": 496
+        },
+        "log": {
+          "sites": 3,
+          "bytes": 48
+        },
+        "memmap2": {
+          "sites": 7,
+          "bytes": 120
+        },
+        "getrandom": {
+          "sites": 13,
+          "bytes": 120
+        },
+        "filetime": {
+          "sites": 2,
+          "bytes": 48
+        },
+        "serde_core": {
+          "sites": 4,
+          "bytes": 72
+        },
+        "sha1dc": {
+          "sites": 9,
+          "bytes": 216
+        },
+        "url": {
+          "sites": 76,
+          "bytes": 1752
+        },
+        "idna": {
+          "sites": 49,
+          "bytes": 1200
+        },
+        "icu_normalizer": {
+          "sites": 19,
+          "bytes": 488
+        },
+        "percent_encoding": {
+          "sites": 2,
+          "bytes": 48
+        },
+        "tempfile": {
+          "sites": 17,
+          "bytes": 208
+        },
+        "once_cell": {
+          "sites": 2,
+          "bytes": 48
+        },
+        "imara_diff": {
+          "sites": 49,
+          "bytes": 1176
+        },
+        "foldhash": {
+          "sites": 1,
+          "bytes": 24
+        },
+        "encoding_rs": {
+          "sites": 688,
+          "bytes": 10640
+        },
+        "simdutf8": {
+          "sites": 4,
+          "bytes": 104
+        },
+        "similar": {
+          "sites": 14,
+          "bytes": 336
+        },
+        "flate2": {
+          "sites": 11,
+          "bytes": 184
+        },
+        "zlib_rs": {
+          "sites": 340,
+          "bytes": 10856
+        },
+        "regex": {
+          "sites": 20,
+          "bytes": 360
+        },
+        "regex_automata": {
+          "sites": 1040,
+          "bytes": 21656
+        },
+        "aho_corasick": {
+          "sites": 519,
+          "bytes": 11288
+        },
+        "memchr": {
+          "sites": 22,
+          "bytes": 544
+        },
+        "regex_syntax": {
+          "sites": 8902,
+          "bytes": 191608
+        },
+        "anyhow": {
+          "sites": 21,
+          "bytes": 368
+        },
+        "clap_builder": {
+          "sites": 284,
+          "bytes": 4816
+        },
+        "strsim": {
+          "sites": 3,
+          "bytes": 72
+        },
+        "anstream": {
+          "sites": 2,
+          "bytes": 48
+        },
+        "clap_lex": {
+          "sites": 11,
+          "bytes": 304
+        },
+        "anstyle": {
+          "sites": 29,
+          "bytes": 504
+        },
+        "std": {
+          "sites": 328,
+          "bytes": 6352
+        },
+        "addr2line": {
+          "sites": 2,
+          "bytes": 48
+        },
+        "gimli": {
+          "sites": 12,
+          "bytes": 288
+        },
+        "rustc_demangle": {
+          "sites": 73,
+          "bytes": 1480
+        },
+        "miniz_oxide": {
+          "sites": 41,
+          "bytes": 984
+        },
+        "alloc": {
+          "sites": 14,
+          "bytes": 296
+        },
+        "core": {
+          "sites": 201,
+          "bytes": 3376
+        }
+      },
+      "sha256": "215c21fdb9d4498308396e19e2d08ea72a6835110cfd12c8c802e2b0da8d5d6b"
+    }
+  },
+  "dist": {
+    "stock": {
+      "binary_bytes": 24411872,
+      "relative_pointer_slots": 19174,
+      "pages_with_relative_fixups": 91,
+      "sections": {
+        ".rela.dyn": {
+          "address": 8232,
+          "offset": 8232,
+          "bytes": 464328
+        },
+        ".rodata": {
+          "address": 1118208,
+          "offset": 1118208,
+          "bytes": 1827493
+        },
+        ".text": {
+          "address": 4368256,
+          "offset": 4364160,
+          "bytes": 19681111
+        },
+        ".data.rel.ro": {
+          "address": 24055104,
+          "offset": 24046912,
+          "bytes": 355208
+        }
+      },
+      "sha256": "618d99de3f67cf419d69017597f8b9d8286e8ebecb0f384012672fbd61090463"
+    },
+    "relr": {
+      "binary_bytes": 23957320,
+      "relative_pointer_slots": 19174,
+      "pages_with_relative_fixups": 91,
+      "sections": {
+        ".rela.dyn": {
+          "address": 8264,
+          "offset": 8264,
+          "bytes": 4152
+        },
+        ".relr.dyn": {
+          "address": 12416,
+          "offset": 12416,
+          "bytes": 5720
+        },
+        ".rodata": {
+          "address": 663552,
+          "offset": 663552,
+          "bytes": 1827493
+        },
+        ".text": {
+          "address": 3913600,
+          "offset": 3909504,
+          "bytes": 19681111
+        },
+        ".data.rel.ro": {
+          "address": 23600448,
+          "offset": 23592256,
+          "bytes": 355208
+        }
+      },
+      "data_rel_ro_attribution": {
+        "grit_cli": {
+          "sites": 19039,
+          "bytes": 355176
+        }
+      },
+      "sha256": "bf4d200ea6668e1aee7a15eefd6527c42efb22589b757b960dab57e6a64f0c48"
+    }
+  },
+  "base_commit": "f0e7cddd530a27366b74a4901b778395e404b458",
+  "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), bundled LLD 23.1.1, system Git 2.55.0, glibc 2.39",
+  "runtime_portability": {
+    "stock": "glibc 2.34: help, branch, status, resolve pass",
+    "relr": "glibc 2.36: help, branch, status, resolve pass; glibc 2.34 fails GLIBC_ABI_DT_RELR",
+    "rockylinux9_digest": "sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6",
+    "debian_bookworm_digest": "sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8"
+  }
+}
