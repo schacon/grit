@@ -485,6 +485,31 @@ impl ObjectStore for FilesSource {
         }
     }
 
+    fn contains_many(&self, oids: &[ObjectId]) -> Result<Vec<bool>> {
+        // Batches are mostly packed objects (cached trees, unchanged tree members), so
+        // the loaded pack indexes answer first and only misses pay a loose-path stat. A
+        // pack failure falls through to `contains`, which reports it as a single probe would.
+        let filter = super::PackFilter {
+            include_promisor: true,
+            include_cruft: true,
+        };
+        let probe = || {
+            oids.iter()
+                .map(|oid| {
+                    if self.packs.contains_filtered(oid, filter).unwrap_or(false) {
+                        return Ok(true);
+                    }
+                    self.contains(oid)
+                })
+                .collect()
+        };
+        if PackStore::read_context_matches_objects_dir(&self.objects_dir) {
+            probe()
+        } else {
+            PackStore::with_context(self.packs.pack_store().clone(), probe)
+        }
+    }
+
     fn open_stream(&self, oid: &ObjectId) -> Result<Option<ObjectStream<'_>>> {
         if empty_tree_oid_matches(self.hash_algo(), oid) {
             return Ok(Some(ObjectStream {
