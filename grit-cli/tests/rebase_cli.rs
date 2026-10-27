@@ -799,6 +799,91 @@ fn successful_dirty_exec_stops_immediately_and_preserves_index_and_worktree() ->
     Ok(())
 }
 
+/// The issue #2156 fixture: `one` and `two` on `feature`, `up` on `main`.
+fn init_amend_exec_fixture(dir: &Path) -> Result<(), Box<dyn Error>> {
+    git(dir, &["init", "-q", "-b", "main"])?;
+    for (path, branch) in [("f", None), ("one", Some("feature")), ("two", None)] {
+        if let Some(branch) = branch {
+            git(dir, &["switch", "-qc", branch])?;
+        }
+        fs::write(dir.join(path), format!("{path}\n"))?;
+        git(dir, &["add", path])?;
+        git(dir, &["commit", "-qm", path])?;
+    }
+    git(dir, &["switch", "-q", "main"])?;
+    fs::write(dir.join("up"), "up\n")?;
+    git(dir, &["add", "up"])?;
+    git(dir, &["commit", "-qm", "up"])?;
+    git(dir, &["switch", "-q", "feature"])?;
+    Ok(())
+}
+
+#[test]
+fn exec_that_amends_each_commit_completes_like_git() -> TestResult {
+    let command = "echo fmt >> one && git commit -qa --amend --no-edit";
+    let scratch = Scratch::new("exec-amend")?;
+    let dir = scratch.path();
+    init_amend_exec_fixture(dir)?;
+    let out = gs(dir, ["rebase", "main", "--exec", command, "--json"])?;
+    assert!(out.success(), "{}\n{}", out.stdout, out.stderr);
+    let json = parse_json(&out.stdout)?;
+    assert_eq!(json["result"], "completed");
+    let tip = git(dir, &["rev-parse", "feature"])?.trim().to_owned();
+    assert_eq!(json["head"]["new"], tip);
+    assert_eq!(json["rewritten"].as_array().ok_or("rewritten")?.len(), 2);
+    assert_eq!(json["exec"].as_array().ok_or("exec")?.len(), 2);
+    assert_eq!(
+        git(dir, &["log", "--format=%s", "feature"])?,
+        "two\none\nup\nf\n"
+    );
+    assert_eq!(git(dir, &["show", "feature~1:one"])?, "one\nfmt\n");
+    assert_eq!(
+        git(dir, &["symbolic-ref", "HEAD"])?.trim(),
+        "refs/heads/feature"
+    );
+    assert_eq!(git(dir, &["status", "--porcelain"])?, "");
+    assert!(!dir.join(".git/rebase-merge").exists());
+    git_fsck_strict(dir)?;
+
+    let twin = Scratch::new("exec-amend-git")?;
+    init_amend_exec_fixture(twin.path())?;
+    git(twin.path(), &["rebase", "-q", "main", "--exec", command])?;
+    for rev in ["feature^{tree}", "feature~1^{tree}"] {
+        assert_eq!(
+            git(dir, &["rev-parse", rev])?,
+            git(twin.path(), &["rev-parse", rev])?
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn exec_amend_conflict_stops_with_conflicts_and_continues() -> TestResult {
+    let command = "if ! test -f two; then echo amended > two && git add two && git commit -q --amend --no-edit; fi";
+    let scratch = Scratch::new("exec-amend-conflict")?;
+    let dir = scratch.path();
+    init_amend_exec_fixture(dir)?;
+    let tip = git(dir, &["rev-parse", "feature"])?.trim().to_owned();
+    let out = gs(dir, ["rebase", "main", "--exec", command, "--json"])?;
+    assert_eq!(out.status, Some(1), "{}\n{}", out.stdout, out.stderr);
+    let json = parse_json(&out.stdout)?;
+    assert_eq!(json["result"], "conflicts");
+    assert_eq!(json["commit"], tip);
+    assert_eq!(json["conflicts"][0]["path"], "two");
+    assert_eq!(json["exec"].as_array().ok_or("exec")?.len(), 1);
+    assert_eq!(git(dir, &["rev-parse", "feature"])?.trim(), tip);
+    fs::write(dir.join("two"), "resolved\n")?;
+    git(dir, &["add", "two"])?;
+    let resume = gs(dir, ["rebase", "--continue", "--json"])?;
+    assert!(resume.success(), "{}\n{}", resume.stdout, resume.stderr);
+    assert_eq!(parse_json(&resume.stdout)?["result"], "completed");
+    assert_eq!(git(dir, &["show", "feature:two"])?, "resolved\n");
+    assert_eq!(git(dir, &["show", "feature~1:two"])?, "amended\n");
+    assert_eq!(git(dir, &["status", "--porcelain"])?, "");
+    git_fsck_strict(dir)?;
+    Ok(())
+}
+
 #[test]
 fn dirty_exec_human_and_markdown_explain_recovery() -> TestResult {
     for format in [None, Some("--markdown")] {
