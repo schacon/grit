@@ -70,7 +70,7 @@
       "type": "array"
     },
     "stranded_total": {
-      "description": "Total commits left behind; may exceed `stranded_commits` when truncated.",
+      "description": "Total commits left behind; may exceed `stranded_commits` when truncated. Advisory count; without a commit-graph, severe clock skew can make it inaccurate.",
       "format": "uint",
       "minimum": 0.0,
       "type": "integer"

@@ -98,6 +98,8 @@ pub struct SwitchOutcome {
     /// Filled for dry runs too.
     pub stranded_commits: Vec<OrphanedCommitSummary>,
     /// Total stranded commit count (may exceed [`Self::stranded_commits`].len()).
+    /// Advisory: without a commit-graph, date-based stopping can miscount under severe
+    /// clock skew. The report does not control repository mutations.
     pub stranded_total: usize,
     /// True when [`Self::stranded_commits`] was capped at [`DEFAULT_ORPHAN_LIMIT`].
     pub stranded_truncated: bool,

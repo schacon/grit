@@ -103,6 +103,8 @@ pub struct ResetPreview {
     /// Newest-first sample of commits that would become orphaned.
     pub orphaned_commits: Vec<OrphanedCommitSummary>,
     /// Total orphaned commit count (may exceed `orphaned_commits.len()`).
+    /// Advisory: without a commit-graph, date-based stopping can miscount under severe
+    /// clock skew. The report does not control repository mutations.
     pub orphaned_total: usize,
     /// True when `orphaned_total` exceeds the orphan limit.
     pub orphaned_truncated: bool,
@@ -128,6 +130,8 @@ pub struct ResetOutcome {
     /// Sample of commits orphaned by the reset (empty when the walk was skipped).
     pub orphaned_commits: Vec<OrphanedCommitSummary>,
     /// Total orphaned commit count (may exceed [`Self::orphaned_commits`].len()).
+    /// Advisory: without a commit-graph, date-based stopping can miscount under severe
+    /// clock skew. The report does not control repository mutations.
     pub orphaned_total: usize,
     /// True when the orphan listing was capped by [`ResetOptions::orphan_limit`].
     pub orphaned_truncated: bool,

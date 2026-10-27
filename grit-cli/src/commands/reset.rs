@@ -65,6 +65,7 @@ pub struct ResetCliOutcome {
     pub would_overwrite: Vec<String>,
     pub would_block: Vec<String>,
     pub orphaned_commits: Vec<OrphanedCommitJson>,
+    /// Advisory count; without a commit-graph, severe clock skew can make it inaccurate.
     pub orphaned_total: usize,
     pub orphaned_truncated: bool,
 }

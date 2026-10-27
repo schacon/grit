@@ -148,7 +148,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `changed_paths` | integer or null | With `--dry-run`, count of paths that would differ after checkout. |
 | `hooks_run` | array of strings | Hooks that ran after the switch (`post-checkout` when installed); empty on `--dry-run`. |
 | `stranded_commits` | array | Commits only the previous detached `HEAD` reached, newest first, at most 20. Each has `oid`, `change_id` and `subject`. Omitted when nothing is left behind. |
-| `stranded_total` | integer | Total commits left behind (may exceed the length of `stranded_commits`). Omitted when zero. |
+| `stranded_total` | integer | Advisory count of commits left behind (may exceed the length of `stranded_commits`). Without a commit-graph, severe clock skew can make this inaccurate; it never controls the switch. Omitted when zero. |
 | `stranded_truncated` | boolean | `true` when `stranded_commits` was capped (omitted when false). |
 
 Example (branch switch):

@@ -1402,6 +1402,10 @@ pub fn prepare_reset_undo_commit(ctx: &DailyHeadlineContext) -> DailyPrepare {
         &ctx.git,
         &[
             "-c",
+            "gc.auto=0",
+            "-c",
+            "maintenance.auto=false",
+            "-c",
             "user.name=grit-bench",
             "-c",
             "user.email=bench@example.com",

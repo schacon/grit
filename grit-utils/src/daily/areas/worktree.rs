@@ -278,7 +278,7 @@ pub fn plans() -> Vec<DailyHeadlinePlan> {
     plans.push(DailyHeadlinePlan {
         spec: scenario_spec("reset/undo-commit@git-git"),
         pending: false,
-        setup: super::super::helpers::setup_git_git_history,
+        setup: super::super::helpers::setup_git_git_no_commit_graph,
         prepare: super::super::matrix_helpers::prepare_reset_undo_commit,
         build_git: |c| super::super::helpers::reset_undo_commit_bench(c).1,
         build_grit: |c| super::super::helpers::reset_undo_commit_bench(c).0,

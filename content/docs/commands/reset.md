@@ -36,7 +36,7 @@ In a sparse checkout (`git sparse-checkout`), `--hard` and `--mixed` keep paths 
 
 A successful reset (any mode except `--dry-run`) ends an in-progress merge, cherry-pick, or revert the same way Git's `reset` does: operation sentinel files such as `MERGE_HEAD` and `CHERRY_PICK_HEAD` are removed.
 
-When resetting backward, grit lists commits that would become unreachable (not reachable from `<rev>` or any other ref, including branches, tags, remotes, stash, and other worktrees). A warning is printed when any would be orphaned. The check walks only the commits being left behind and the history next to them, never the whole history, so undoing the last commit stays fast on deep repositories; annotated tags are peeled from `packed-refs` when it records their targets. With a commit-graph the count is exact. Without one, the walk ends by commit date like Git's `git rev-list <previous> --not <refs>`, so under heavy clock skew (a ref that reaches a commit through history dated more than a day before it) the count can be wrong.
+When resetting backward, grit lists commits that would become unreachable (not reachable from `<rev>` or any other ref, including branches, tags, remotes, stash, and other worktrees). A warning is printed when any would be orphaned. The check usually stays near the commits being left behind, so undoing the last commit stays fast on deep repositories; annotated tags are peeled from `packed-refs` when it records their targets. With a commit-graph the count is exact. Without one, the walk ends by commit date like Git's `git rev-list <previous> --not <refs>`, so under heavy clock skew (a ref that reaches a commit through history dated more than a day before it) the count can be wrong.
 
 `<rev>` is any revision Grit understands: branch name, `HEAD~1`, full or abbreviated commit id, and so on.
 
@@ -93,7 +93,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `would_overwrite` | string[] | With `--dry-run --hard`: tracked paths whose local edits would be discarded. |
 | `would_block` | string[] | With `--dry-run --keep`: paths that would make the reset refuse. |
 | `orphaned_commits` | object[] | Sample of commits that would become unreachable (`oid`, `change_id`, `subject`). |
-| `orphaned_total` | number | Total unreachable commits (may exceed `orphaned_commits.length`). |
+| `orphaned_total` | number | Advisory unreachable count (may exceed `orphaned_commits.length`). Without a commit-graph, severe clock skew can make this inaccurate; it never controls the reset. |
 | `orphaned_truncated` | boolean | True when `-n`/`--limit` capped the orphan list. |
 
 Example:

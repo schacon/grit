@@ -47,6 +47,7 @@ pub struct SwitchOutcome {
     /// Total commits left behind; may exceed `stranded_commits` when truncated.
     #[serde(default, skip_serializing_if = "is_zero")]
     #[schemars(default)]
+    /// Advisory count; without a commit-graph, severe clock skew can make it inaccurate.
     pub stranded_total: usize,
     #[serde(default, skip_serializing_if = "is_false")]
     #[schemars(default)]
