@@ -1826,6 +1826,9 @@ mod worktree_move_repair_git_compat;
 #[path = "worktree_path_io_1915.rs"]
 mod worktree_path_io_1915;
 #[cfg(feature = "full-tests")]
+#[path = "worktree_prune_missing_gitfile_git_compat.rs"]
+mod worktree_prune_missing_gitfile_git_compat;
+#[cfg(feature = "full-tests")]
 #[path = "worktree_remove_1001_regression.rs"]
 mod worktree_remove_1001_regression;
 #[cfg(feature = "full-tests")]

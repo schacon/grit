@@ -1009,13 +1009,30 @@ fn linked_worktree_prunable_state(
     if admin.join("prunable").is_file() {
         return (true, Some(PrunableReason::ExplicitMarker));
     }
-    if wt_path.exists() {
+    // Like Git's `should_prune_worktree`, a worktree stays while the `.git` file its
+    // `gitdir` names exists, even if the directory around it is still there.
+    if linked_worktree_gitfile(admin).map_or_else(|| wt_path.exists(), |gitfile| gitfile.exists()) {
         return (false, None);
     }
     (
         true,
         Some(linked_worktree_prunable_reason_when_missing(admin)),
     )
+}
+
+/// The worktree's `.git` file named by the admin directory's `gitdir` file.
+fn linked_worktree_gitfile(admin: &Path) -> Option<PathBuf> {
+    let raw = fs::read_to_string(admin.join("gitdir")).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let gitfile = PathBuf::from(trimmed);
+    Some(if gitfile.is_relative() {
+        admin.join(gitfile)
+    } else {
+        gitfile
+    })
 }
 
 fn linked_worktree_prunable_reason_when_missing(admin: &Path) -> PrunableReason {
