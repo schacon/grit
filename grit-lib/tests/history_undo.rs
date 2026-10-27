@@ -7,11 +7,16 @@ use crate::support;
 use std::fs;
 use std::process::Command;
 
+use grit_lib::diff::hunk_id::{hunk_ids_with_duplicate_peers, DiffSide};
+use grit_lib::objects::ObjectId;
+use grit_lib::porcelain::hunk_select::{unstaged_file_diffs, HunkSelection};
 use grit_lib::refs::{resolve_ref, write_ref};
 use grit_lib::repo::Repository;
 use grit_lib::revwalk::history::{
-    apply_rewrite, drop as history_drop, rebase_onto, undo_last_rewrite, ApplyOptions, EmptyPolicy,
-    HistoryError, RebaseOntoOptions, RefScope, RewriteOptions,
+    absorb, apply_absorb_rewrite, apply_fixup_hunk_selection, apply_fixup_rewrite, apply_rewrite,
+    drop as history_drop, fixup, rebase_onto, staged_fixup_paths, undo_last_rewrite, AbsorbOptions,
+    ApplyOptions, EmptyPolicy, FixupOptions, HistoryError, RebaseOntoOptions, RefScope,
+    RewriteOptions,
 };
 
 use support::{
@@ -290,4 +295,309 @@ fn undo_old_commits_remain_in_reflog() {
         .expect("reflog");
     let text = String::from_utf8_lossy(&log.stdout);
     assert!(text.contains(&dropped_tip.to_hex()[..7]));
+}
+
+fn fixup_opts(selection: Option<HunkSelection>) -> FixupOptions {
+    FixupOptions {
+        message: None,
+        empty: EmptyPolicy::Drop,
+        rewrite: rewrite_opts(),
+        selection,
+        pathspecs: Vec::new(),
+    }
+}
+
+fn fixup_staged_into(grit: &Repository, target: ObjectId) {
+    let staged = staged_fixup_paths(grit).expect("staged paths");
+    let plan = fixup(grit, target, &fixup_opts(None)).expect("fixup plan");
+    apply_fixup_rewrite(grit, &plan, &apply_opts("fixup"), &staged).expect("apply fixup");
+}
+
+fn status_porcelain(wt: &std::path::Path) -> String {
+    git(wt, &["status", "--porcelain", "--untracked-files=no"])
+}
+
+fn read(wt: &std::path::Path, path: &str) -> String {
+    fs::read_to_string(wt.join(path)).expect("read work tree file")
+}
+
+/// Three commits `c1` (a.txt), `c2` (b.txt), `c3` (c.txt), as in the issue report.
+fn three_commit_repo() -> (HistoryRepo, ObjectId, ObjectId) {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let c1 = commit_file(wt, "a.txt", "a\n", "c1");
+    commit_file(wt, "b.txt", "b\n", "c2");
+    let c3 = commit_file(wt, "c.txt", "c\n", "c3");
+    (repo, c1, c3)
+}
+
+#[test]
+fn undo_after_staged_fixup_restores_the_staged_edit() {
+    let (repo, c1, c3) = three_commit_repo();
+    let wt = repo.worktree();
+    fs::write(wt.join("a.txt"), "a\na-fixed\n").expect("edit");
+    git(wt, &["add", "a.txt"]);
+    let grit = open_grit(wt);
+    fixup_staged_into(&grit, c1);
+    let fixed_tip = git_rev_parse(wt, "HEAD").expect("fixed tip");
+    assert_eq!(status_porcelain(wt), "");
+
+    let outcome = undo_last_rewrite(&grit, &undo_opts(), false).expect("undo");
+    assert_eq!(outcome.restored_paths, vec!["a.txt".to_owned()]);
+    assert_eq!(outcome.unrestored_edits, None);
+    assert_eq!(git_rev_parse(wt, "HEAD"), Some(c3));
+    assert_eq!(status_porcelain(wt), "M  a.txt\n");
+    assert_eq!(git(wt, &["show", ":a.txt"]), "a\na-fixed\n");
+    assert_eq!(read(wt, "a.txt"), "a\na-fixed\n");
+    git_fsck_strict(wt);
+
+    let redo = undo_last_rewrite(&grit, &undo_opts(), false).expect("redo");
+    assert_eq!(redo.restored_paths, vec!["a.txt".to_owned()]);
+    assert_eq!(git_rev_parse(wt, "HEAD"), Some(fixed_tip));
+    assert_eq!(status_porcelain(wt), "");
+    assert_eq!(read(wt, "a.txt"), "a\na-fixed\n");
+
+    undo_last_rewrite(&grit, &undo_opts(), false).expect("undo again");
+    assert_eq!(git_rev_parse(wt, "HEAD"), Some(c3));
+    assert_eq!(status_porcelain(wt), "M  a.txt\n");
+    git_fsck_strict(wt);
+}
+
+#[test]
+fn undo_after_fixup_restores_staged_and_unstaged_layers() {
+    let (repo, c1, _) = three_commit_repo();
+    let wt = repo.worktree();
+    fs::write(wt.join("a.txt"), "a\na-fixed\n").expect("stage edit");
+    git(wt, &["add", "a.txt"]);
+    fs::write(wt.join("a.txt"), "a\na-fixed\nunstaged\n").expect("unstaged edit");
+    fs::write(wt.join("new.txt"), "new\n").expect("new file");
+    git(wt, &["add", "new.txt"]);
+    let grit = open_grit(wt);
+    fixup_staged_into(&grit, c1);
+    assert_eq!(status_porcelain(wt), " M a.txt\n");
+
+    let outcome = undo_last_rewrite(&grit, &undo_opts(), false).expect("undo");
+    assert_eq!(
+        outcome.restored_paths,
+        vec!["a.txt".to_owned(), "new.txt".to_owned()]
+    );
+    assert_eq!(status_porcelain(wt), "MM a.txt\nA  new.txt\n");
+    assert_eq!(git(wt, &["show", ":a.txt"]), "a\na-fixed\n");
+    assert_eq!(read(wt, "a.txt"), "a\na-fixed\nunstaged\n");
+    assert_eq!(read(wt, "new.txt"), "new\n");
+    git_fsck_strict(wt);
+
+    undo_last_rewrite(&grit, &undo_opts(), false).expect("redo");
+    assert_eq!(status_porcelain(wt), " M a.txt\n");
+    assert_eq!(read(wt, "a.txt"), "a\na-fixed\nunstaged\n");
+}
+
+#[test]
+fn undo_dry_run_reports_restored_paths_without_touching_anything() {
+    let (repo, c1, _) = three_commit_repo();
+    let wt = repo.worktree();
+    fs::write(wt.join("a.txt"), "a\na-fixed\n").expect("edit");
+    git(wt, &["add", "a.txt"]);
+    let grit = open_grit(wt);
+    fixup_staged_into(&grit, c1);
+    let fixed_tip = git_rev_parse(wt, "HEAD");
+
+    let outcome = undo_last_rewrite(&grit, &undo_opts(), true).expect("dry run");
+    assert!(outcome.dry_run);
+    assert_eq!(outcome.restored_paths, vec!["a.txt".to_owned()]);
+    assert_eq!(git_rev_parse(wt, "HEAD"), fixed_tip);
+    assert_eq!(status_porcelain(wt), "");
+}
+
+#[test]
+fn undo_after_fixup_refuses_when_a_restored_path_was_edited() {
+    let (repo, c1, _) = three_commit_repo();
+    let wt = repo.worktree();
+    fs::write(wt.join("a.txt"), "a\na-fixed\n").expect("edit");
+    git(wt, &["add", "a.txt"]);
+    let grit = open_grit(wt);
+    fixup_staged_into(&grit, c1);
+    let fixed_tip = git_rev_parse(wt, "HEAD");
+    fs::write(wt.join("a.txt"), "a\na-fixed\nlater\n").expect("later edit");
+
+    let err = undo_last_rewrite(&grit, &undo_opts(), false).expect_err("edited");
+    assert!(
+        matches!(&err, HistoryError::LocalChangesWouldBeOverwritten { paths } if paths == &["a.txt"]),
+        "{err:?}"
+    );
+    assert_eq!(git_rev_parse(wt, "HEAD"), fixed_tip);
+    assert_eq!(read(wt, "a.txt"), "a\na-fixed\nlater\n");
+}
+
+#[test]
+fn undo_after_absorb_restores_assigned_hunks_and_keeps_unassigned_staged() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let base = commit_file(wt, "root.txt", "r\n", "root");
+    commit_file(wt, "a.txt", "a\n", "a");
+    let tip = commit_file(wt, "tail.txt", "t\n", "tail");
+    fs::write(wt.join("a.txt"), "a\nfix-a\n").expect("assigned edit");
+    fs::write(wt.join("root.txt"), "r2\n").expect("edit of a line older than base");
+    git(wt, &["add", "a.txt", "root.txt"]);
+    let grit = open_grit(wt);
+    let plan = absorb(
+        &grit,
+        &AbsorbOptions {
+            base: Some(base),
+            rewrite: rewrite_opts(),
+        },
+    )
+    .expect("absorb plan");
+    assert_eq!(plan.assignments.len(), 1);
+    assert_eq!(plan.unassigned.len(), 1);
+    apply_absorb_rewrite(&grit, &plan, &apply_opts("absorb")).expect("apply absorb");
+    let absorbed_tip = git_rev_parse(wt, "HEAD");
+    assert_eq!(git(wt, &["diff", "--cached", "--name-only"]), "root.txt\n");
+
+    let outcome = undo_last_rewrite(&grit, &undo_opts(), false).expect("undo");
+    assert_eq!(
+        outcome.restored_paths,
+        vec!["a.txt".to_owned(), "root.txt".to_owned()]
+    );
+    assert_eq!(git_rev_parse(wt, "HEAD"), Some(tip));
+    assert_eq!(status_porcelain(wt), "M  a.txt\nM  root.txt\n");
+    assert_eq!(git(wt, &["show", ":a.txt"]), "a\nfix-a\n");
+    assert_eq!(read(wt, "root.txt"), "r2\n");
+    git_fsck_strict(wt);
+
+    undo_last_rewrite(&grit, &undo_opts(), false).expect("redo");
+    assert_eq!(git_rev_parse(wt, "HEAD"), absorbed_tip);
+    assert_eq!(git(wt, &["diff", "--cached", "--name-only"]), "root.txt\n");
+}
+
+#[test]
+fn undo_after_hunk_selection_fixup_restores_the_work_tree() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let base: String = (0..24).map(|i| format!("line{i}\n")).collect();
+    let edited = base
+        .replacen("line5\n", "LINE5\n", 1)
+        .replacen("line18\n", "LINE18\n", 1);
+    let target = commit_file(wt, "f.txt", &base, "init");
+    let tip = commit_file(wt, "other.t", "x\n", "second");
+    fs::write(wt.join("f.txt"), &edited).expect("edit");
+    let grit = open_grit(wt);
+    let files = unstaged_file_diffs(&grit, &[]).expect("diff");
+    let (file, peer) = &files[0];
+    let ids = hunk_ids_with_duplicate_peers(DiffSide::Unstaged, &file.path, &file.hunks, peer);
+    let selection = HunkSelection {
+        ids: vec![ids[0].clone()],
+        ranges: Vec::new(),
+    };
+    let plan = fixup(&grit, target, &fixup_opts(Some(selection.clone()))).expect("plan");
+    apply_fixup_hunk_selection(&grit, &plan, &apply_opts("fixup"), &selection, &[])
+        .expect("apply hunk fixup");
+    assert_eq!(read(wt, "f.txt"), edited);
+
+    let outcome = undo_last_rewrite(&grit, &undo_opts(), false).expect("undo");
+    assert_eq!(outcome.restored_paths, vec!["f.txt".to_owned()]);
+    assert_eq!(git_rev_parse(wt, "HEAD"), Some(tip));
+    assert_eq!(status_porcelain(wt), " M f.txt\n");
+    assert_eq!(read(wt, "f.txt"), edited);
+    git_fsck_strict(wt);
+}
+
+#[test]
+fn undo_of_a_fixup_record_without_saved_state_names_the_commit_holding_the_edit() {
+    let (repo, c1, c3) = three_commit_repo();
+    let wt = repo.worktree();
+    fs::write(wt.join("a.txt"), "a\na-fixed\n").expect("edit");
+    git(wt, &["add", "a.txt"]);
+    let grit = open_grit(wt);
+    fixup_staged_into(&grit, c1);
+    let fixed_tip = git_rev_parse(wt, "HEAD").expect("fixed tip");
+    fs::remove_file(grit.git_dir().join("grit/history-last-work")).expect("drop sidecar");
+
+    let outcome = undo_last_rewrite(&grit, &undo_opts(), false).expect("undo");
+    assert!(outcome.restored_paths.is_empty());
+    assert_eq!(outcome.unrestored_edits, Some(fixed_tip));
+    assert_eq!(git_rev_parse(wt, "HEAD"), Some(c3));
+    assert_eq!(
+        git(wt, &["show", &format!("{}~2:a.txt", fixed_tip.to_hex())]),
+        "a\na-fixed\n"
+    );
+}
+
+#[test]
+fn a_later_rewrite_discards_the_saved_fixup_state() {
+    let (repo, c1, _) = three_commit_repo();
+    let wt = repo.worktree();
+    fs::write(wt.join("a.txt"), "a\na-fixed\n").expect("edit");
+    git(wt, &["add", "a.txt"]);
+    let grit = open_grit(wt);
+    fixup_staged_into(&grit, c1);
+    let sidecar = grit.git_dir().join("grit/history-last-work");
+    assert!(sidecar.is_file());
+    git_fsck_strict(wt);
+
+    let tip = git_rev_parse(wt, "HEAD").expect("tip");
+    drop_and_apply(&grit, tip);
+    assert!(
+        !sidecar.exists(),
+        "drop record must not inherit fixup state"
+    );
+    let outcome = undo_last_rewrite(&grit, &undo_opts(), false).expect("undo drop");
+    assert!(outcome.restored_paths.is_empty());
+    assert_eq!(outcome.unrestored_edits, None);
+    assert_eq!(git_rev_parse(wt, "HEAD"), Some(tip));
+    assert_eq!(status_porcelain(wt), "");
+}
+
+#[test]
+fn undo_after_fixup_restores_a_staged_submodule_pointer() {
+    let upstream = HistoryRepo::init();
+    let up = upstream.worktree();
+    let s1 = commit_file(up, "s.txt", "1\n", "s1");
+    let s2 = commit_file(up, "s.txt", "2\n", "s2");
+
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "a.txt", "a\n", "c1");
+    let url = up.to_str().expect("utf-8 path");
+    git(
+        wt,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            url,
+            "sub",
+        ],
+    );
+    git(&wt.join("sub"), &["checkout", "-q", &s1.to_hex()]);
+    git(wt, &["add", "sub"]);
+    git(wt, &["commit", "-q", "-m", "add sub"]);
+    let target = git_rev_parse(wt, "HEAD").expect("target");
+    let tip = commit_file(wt, "b.txt", "b\n", "c3");
+    git(&wt.join("sub"), &["checkout", "-q", &s2.to_hex()]);
+    git(wt, &["add", "sub"]);
+    let grit = open_grit(wt);
+    fixup_staged_into(&grit, target);
+    let fixed_tip = git_rev_parse(wt, "HEAD").expect("fixed tip");
+    assert_eq!(git_rev_parse(wt, "HEAD:sub"), Some(s2));
+    assert_eq!(status_porcelain(wt), "");
+
+    let outcome = undo_last_rewrite(&grit, &undo_opts(), false).expect("undo");
+    assert_eq!(outcome.restored_paths, vec!["sub".to_owned()]);
+    assert_eq!(git_rev_parse(wt, "HEAD"), Some(tip));
+    assert_eq!(git_rev_parse(wt, "HEAD:sub"), Some(s1));
+    assert_eq!(git_rev_parse(wt, ":sub"), Some(s2));
+    assert_eq!(status_porcelain(wt), "M  sub\n");
+    assert_eq!(git_rev_parse(&wt.join("sub"), "HEAD"), Some(s2));
+    git_fsck_strict(wt);
+
+    let redo = undo_last_rewrite(&grit, &undo_opts(), false).expect("redo");
+    assert_eq!(redo.restored_paths, vec!["sub".to_owned()]);
+    assert_eq!(git_rev_parse(wt, "HEAD"), Some(fixed_tip));
+    assert_eq!(git_rev_parse(wt, ":sub"), Some(s2));
+    assert_eq!(status_porcelain(wt), "");
+    assert_eq!(git_rev_parse(&wt.join("sub"), "HEAD"), Some(s2));
+    git_fsck_strict(wt);
 }

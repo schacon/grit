@@ -62,6 +62,7 @@ mod squash;
 mod subject;
 mod types;
 mod undo;
+mod undo_work;
 
 pub use absorb::{
     absorb, default_absorb_base, format_hunk_range_header, staged_absorb_paths, AbsorbOptions,

@@ -3,12 +3,13 @@
 use std::fs;
 
 use super::absorb::remaining_index_blob_for_path;
-use super::apply::{apply_fixup_rewrite, apply_index_to_worktree_delta};
+use super::apply::{apply_fixup_rewrite_then, apply_index_to_worktree_delta};
 use super::error::HistoryError;
 use super::plan::plan_rewrite;
 use super::reword::normalize_rewrite_message;
 use super::types::{AppliedRewrite, ApplyOptions};
 use super::types::{CommitEdit, EmptyPolicy, HistoryEdits, RewriteOptions, RewritePlan};
+use super::undo_work::capture_path_states;
 use crate::apply::{apply_patch_to_blob, BlobApplyOptions};
 use crate::diff::diff_index_to_tree;
 use crate::diff::hunk_id::DiffSide;
@@ -142,7 +143,7 @@ pub fn fixup(
     plan_rewrite(repo, &edits, &rewrite_opts)
 }
 
-/// Repository-relative paths touched by a hunk selection (for [`apply_fixup_rewrite`]).
+/// Repository-relative paths touched by a hunk selection (for [`apply_fixup_rewrite`](super::apply_fixup_rewrite)).
 ///
 /// # Errors
 ///
@@ -163,14 +164,14 @@ pub fn fixup_selection_paths(
     Ok(paths)
 }
 
-/// Apply a fixup plan built with [`FixupOptions::selection`]: stage selected hunks, then run [`apply_fixup_rewrite`].
+/// Apply a fixup plan built with [`FixupOptions::selection`]: stage selected hunks, then run [`apply_fixup_rewrite`](super::apply_fixup_rewrite).
 ///
 /// Pre-existing staged edits on the same path as a selected unstaged hunk are preserved in the
 /// index and worktree after apply. On failure, the index is restored to its pre-call state.
 ///
 /// # Errors
 ///
-/// Same as [`apply_fixup_rewrite`], plus hunk resolution and staging failures.
+/// Same as [`apply_fixup_rewrite`](super::apply_fixup_rewrite), plus hunk resolution and staging failures.
 pub fn apply_fixup_hunk_selection(
     repo: &Repository,
     plan: &RewritePlan,
@@ -180,6 +181,10 @@ pub fn apply_fixup_hunk_selection(
 ) -> Result<AppliedRewrite, HistoryError> {
     let paths = fixup_selection_paths(repo, selection, pathspecs)?;
     let snapshot = capture_hunk_fixup_apply_snapshot(repo, &paths)?;
+    let consumed = match apply_opts.record_operation {
+        Some(_) => Some(capture_path_states(repo, &paths)?),
+        None => None,
+    };
     let diff_opts = diff_options_for_hunk_select(repo).map_err(library_err)?;
     if let Err(err) = stage_hunks(
         repo,
@@ -191,19 +196,13 @@ pub fn apply_fixup_hunk_selection(
     ) {
         return Err(err.into());
     }
-    match apply_fixup_rewrite(repo, plan, apply_opts, &paths) {
-        Ok(applied) => {
-            if let Err(err) = restore_after_hunk_fixup_apply(repo, &snapshot) {
-                restore_full_hunk_fixup_snapshot(repo, &snapshot)?;
-                return Err(err);
-            }
-            Ok(applied)
-        }
-        Err(err) => {
-            restore_full_hunk_fixup_snapshot(repo, &snapshot)?;
-            Err(err)
-        }
-    }
+    apply_fixup_rewrite_then(repo, plan, apply_opts, &paths, consumed, |repo| {
+        restore_after_hunk_fixup_apply(repo, &snapshot)
+    })
+    .or_else(|err| {
+        restore_full_hunk_fixup_snapshot(repo, &snapshot)?;
+        Err(err)
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -529,6 +528,7 @@ pub fn staged_fixup_paths(repo: &Repository) -> Result<Vec<String>, HistoryError
 
 #[cfg(test)]
 mod hunk_selection_restore_tests {
+    use super::super::apply::apply_fixup_rewrite;
     use super::*;
     use crate::config::environment::RepositoryOptions;
     use crate::diff::hunk_id::hunk_ids_with_duplicate_peers;

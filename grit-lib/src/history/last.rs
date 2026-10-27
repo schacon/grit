@@ -9,6 +9,7 @@ use crate::repo::Repository;
 
 use super::error::HistoryError;
 use super::types::{HeadEffect, PlannedRefUpdate, RewritePlan};
+use super::undo_work::{remove_undo_work, StagedUndoWork, UndoWork};
 
 const FORMAT_VERSION: u32 = 1;
 
@@ -88,14 +89,18 @@ fn history_last_lock_path(repo: &Repository) -> PathBuf {
     repo.git_dir().join("grit/history-last.lock")
 }
 
-/// Write `record` to `.git/grit/history-last` atomically.
+/// Write `record` to `.git/grit/history-last` atomically, with `work` as its
+/// [`history-last-work`](super::undo_work) sidecar.
+///
+/// A previous sidecar is always removed first, so it is never paired with a newer record.
 ///
 /// # Errors
 ///
 /// Returns [`HistoryError::UndoRecordWrite`] on I/O or lock failures.
-pub fn write_history_last(
+pub(crate) fn write_history_last(
     repo: &Repository,
     record: &HistoryLastRecord,
+    work: Option<&UndoWork>,
 ) -> Result<(), HistoryError> {
     let grit_dir = repo.git_dir().join("grit");
     std::fs::create_dir_all(&grit_dir).map_err(|e| HistoryError::UndoRecordWrite {
@@ -113,10 +118,18 @@ pub fn write_history_last(
         .map_err(|e| HistoryError::UndoRecordWrite {
             message: e.to_string(),
         })?;
+    remove_undo_work(repo)?;
+    let staged = work.map(|w| StagedUndoWork::stage(repo, w)).transpose()?;
     lock.commit_to(&target)
         .map_err(|e| HistoryError::UndoRecordWrite {
             message: e.to_string(),
         })?;
+    if let Some(staged) = staged {
+        if let Err(err) = staged.commit() {
+            let _ = std::fs::remove_file(&target);
+            return Err(err);
+        }
+    }
     Ok(())
 }
 

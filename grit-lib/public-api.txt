@@ -26475,6 +26475,8 @@ pub grit_lib::revwalk::history::UndoOutcome::dry_run: bool
 pub grit_lib::revwalk::history::UndoOutcome::head: grit_lib::objects::ObjectId
 pub grit_lib::revwalk::history::UndoOutcome::head_change: core::option::Option<(grit_lib::objects::ObjectId, grit_lib::objects::ObjectId)>
 pub grit_lib::revwalk::history::UndoOutcome::ref_updates: alloc::vec::Vec<grit_lib::revwalk::history::PlannedRefUpdate>
+pub grit_lib::revwalk::history::UndoOutcome::restored_paths: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::revwalk::history::UndoOutcome::unrestored_edits: core::option::Option<grit_lib::objects::ObjectId>
 impl core::clone::Clone for grit_lib::revwalk::history::UndoOutcome
 pub fn grit_lib::revwalk::history::UndoOutcome::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::revwalk::history::UndoOutcome

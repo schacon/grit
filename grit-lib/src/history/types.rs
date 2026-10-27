@@ -296,6 +296,13 @@ pub struct UndoOutcome {
     pub head: ObjectId,
     /// Previous and new `HEAD` commit OIDs when undo moves `HEAD`'s commit.
     pub head_change: Option<(ObjectId, ObjectId)>,
+    /// Paths whose index entry and work tree file were (or, for a dry run, would be) put back to
+    /// their state before the undone command. Fixup and absorb consume staged or selected edits;
+    /// empty when the undone command left the index and work tree alone.
+    pub restored_paths: Vec<String>,
+    /// Commit that still holds the edits an undone fixup or absorb folded into history, when the
+    /// record was written without restorable state and the edits could not be put back.
+    pub unrestored_edits: Option<ObjectId>,
     /// Whether refs were left unchanged.
     pub dry_run: bool,
 }
