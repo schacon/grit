@@ -91,7 +91,11 @@ pub fn cache_tree_extension_valid(node: Option<&CacheTreeNode>) -> bool {
 ///
 /// The existence check asks the object store about all tree ids in one batch
 /// ([`ObjectStore::contains_many`](crate::odb::store::ObjectStore::contains_many)), so
-/// a database- or network-backed store answers in a single round trip. A store
+/// a database- or network-backed store answers in a single round trip. Every source
+/// [`Odb::contains`] consults counts: the primary, then any
+/// [`OdbBuilder::push_read_source`](crate::odb::OdbBuilder::push_read_source) store,
+/// then alternates, each asked only about the ids earlier sources lack. Trees present
+/// only in a promisor pack of a files primary therefore count as present too. A store
 /// failure counts as "not valid".
 #[must_use]
 pub fn cache_tree_fully_valid(odb: &Odb, node: Option<&CacheTreeNode>) -> bool {
@@ -102,7 +106,7 @@ pub fn cache_tree_fully_valid(odb: &Odb, node: Option<&CacheTreeNode>) -> bool {
     if !collect_reusable_tree_ids(root, &mut oids) {
         return false;
     }
-    odb.try_exists_local_many(&oids)
+    odb.contains_many(&oids)
         .is_ok_and(|present| present.into_iter().all(|p| p))
 }
 
@@ -122,12 +126,13 @@ fn collect_reusable_tree_ids(node: &CacheTreeNode, out: &mut Vec<ObjectId>) -> b
 /// Tree ids of the cached subtrees `cache_tree_update` may reuse, confirmed present in `odb`.
 ///
 /// Every candidate is probed in one batch up front instead of one store call per cached
-/// directory while rebuilding. A store failure leaves the set empty, so everything is
-/// rebuilt (and the writes surface the failure).
+/// directory while rebuilding, across every source (see [`cache_tree_fully_valid`]).
+/// A store failure leaves the set empty, so everything is rebuilt (and the writes
+/// surface the failure).
 fn present_reusable_trees(odb: &Odb, root: &CacheTreeNode) -> OidHashSet {
     let mut oids = Vec::new();
     collect_reusable_tree_ids(root, &mut oids);
-    let present = odb.try_exists_local_many(&oids).unwrap_or_default();
+    let present = odb.contains_many(&oids).unwrap_or_default();
     let mut reusable = oid_hash_set_with_capacity(oids.len());
     reusable.extend(
         oids.into_iter()
@@ -1610,10 +1615,11 @@ mod tests {
         index.add_or_replace(entry("d0/f", MODE_REGULAR, changed));
         odb.reset_exists_probe();
         cache_tree_update(&odb, &mut index, WriteTreeFlags::default()).unwrap();
-        // The changed blob, plus the write-skip check of the two rewritten trees (`d0`
-        // and the root). The reused directories were confirmed by the batched reuse
-        // check and the new `d0` tree was just written, so neither is probed again.
-        assert_eq!(odb.exists_probe_count(), 3);
+        // One batched reuse check of the other `dirs - 1` cached directories, then the
+        // changed blob and the write-skip check of the two rewritten trees (`d0` and the
+        // root). The reused directories were confirmed by that batch and the new `d0`
+        // tree was just written, so neither is probed again.
+        assert_eq!(odb.exists_probe_count(), dirs - 1 + 3);
         assert_eq!(
             index.cache_tree.as_ref().unwrap().oid,
             build_cache_tree_from_index(&odb, &index).unwrap().oid
