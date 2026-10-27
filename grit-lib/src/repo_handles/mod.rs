@@ -32,8 +32,8 @@ pub use crate::remote::{
 pub use bundle::RepositoryBundles;
 pub use hooks::{HookInfo, HookSource, RepositoryHooks};
 pub use notes::{
-    Note, NoteAddOutcome, NoteAddPlan, NoteListing, NoteRemovePlan, NotesWriteOptions,
-    RepositoryNotes,
+    Note, NoteAddOutcome, NoteAddPlan, NoteListing, NoteRemoveManyPlan, NoteRemovePlan,
+    NotesWriteOptions, RepositoryNotes,
 };
 pub use reflog::{
     ExpireOptions, IndexedReflogEntry, RefExpireResult, ReflogExpireOutcome, ReflogPage,
