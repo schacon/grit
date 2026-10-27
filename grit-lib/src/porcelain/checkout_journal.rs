@@ -4,9 +4,11 @@
 //! Recording is cheap on the success path: created and replaced paths are remembered by name,
 //! removed directories by prefix, and only per-file deletions move bytes (into a private spool,
 //! bounded memory, cross-device safe). Rollback rebuilds replaced and wholesale-removed paths
-//! from the on-disk index, which a checkout writes only as its last step.
+//! from the on-disk index, which a checkout writes only as its last step. That is right for
+//! clean paths; callers that may overwrite dirty files (hard reset) spool those first, and
+//! spooled bytes win over the index.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -331,12 +333,18 @@ impl CheckoutJournal {
         );
         remove_empty_parent_dirs_batch(&self.work_tree, &removed);
 
-        unrestored.extend(
-            self.spool
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .restore_all(&self.work_tree),
-        );
+        // Spooled bytes are what the path held before the checkout; the index must not
+        // overwrite them again below.
+        let spooled: HashSet<String> = {
+            let mut spool = self.spool.lock().unwrap_or_else(|e| e.into_inner());
+            let spooled = spool
+                .entries
+                .iter()
+                .map(|entry| entry.rel.clone())
+                .collect();
+            unrestored.extend(spool.restore_all(&self.work_tree));
+            spooled
+        };
 
         let replaced = std::mem::take(&mut self.replaced);
         let removed_gitlinks = std::mem::take(&mut self.removed_gitlinks);
@@ -346,6 +354,9 @@ impl CheckoutJournal {
         }
         let mut restore = RestoreFromIndex::new(repo, &self.work_tree);
         for entry in replaced.iter().rev() {
+            if spooled.contains(&entry.path) {
+                continue;
+            }
             if !restore.path(&entry.path, Some((entry.oid, entry.mode))) {
                 unrestored.push(entry.path.clone());
             }
@@ -356,7 +367,7 @@ impl CheckoutJournal {
             }
         }
         if !removed_dirs.is_empty() {
-            unrestored.extend(restore.directories(&removed_dirs));
+            unrestored.extend(restore.directories(&removed_dirs, &spooled));
         }
         unrestored
     }
@@ -415,9 +426,9 @@ impl<'a> RestoreFromIndex<'a> {
         }
     }
 
-    /// Restore every stage-0 index entry under `dirs`; returns the paths that failed (or the
-    /// directories themselves when the index could not be read).
-    fn directories(&mut self, dirs: &BTreeSet<String>) -> Vec<String> {
+    /// Restore every stage-0 index entry under `dirs` except `skip`; returns the paths that
+    /// failed (or the directories themselves when the index could not be read).
+    fn directories(&mut self, dirs: &BTreeSet<String>, skip: &HashSet<String>) -> Vec<String> {
         let Some(index) = self.index.take() else {
             return dirs.iter().cloned().collect();
         };
@@ -431,6 +442,7 @@ impl<'a> RestoreFromIndex<'a> {
             }
             let rel = crate::repo_relpath::storage_string(&entry.path);
             if path_under_wholesale_directory(&rel, dirs)
+                && !skip.contains(&rel)
                 && !self.write(&rel, entry.oid, entry.mode)
             {
                 failed.push(rel);

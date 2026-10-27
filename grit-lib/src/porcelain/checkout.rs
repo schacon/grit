@@ -532,9 +532,8 @@ pub fn checkout_between_trees_with_progress(
 /// replaces it, so no file is touched when the lock is unavailable.
 ///
 /// The reset is all or nothing: on cancellation or any failure before the index is written,
-/// the work tree is put back as it was (including files only the index tracked), and the
-/// index is not touched. Tree-diff paths are restored from the index, so unstaged edits in
-/// them are not recovered; the reset was discarding them anyway.
+/// the work tree is put back as it was, byte for byte (including unstaged edits it had
+/// started to discard and files only the index tracked), and the index is not touched.
 ///
 /// # Errors
 ///
@@ -734,6 +733,23 @@ fn checkout_hard_to_tree_journaled(
             ..CheckoutApplyOptions::default()
         })
     };
+    if hard_reset_apply.is_some() {
+        for rel in hard_reset_unrecorded_tree_diff_paths(
+            repo,
+            work_tree,
+            &pre_reset_index,
+            &config,
+            &changes,
+            sparse.as_ref(),
+            HardResetStatCheck {
+                policy: stat_policy,
+                trust_filemode,
+                index_mtime: pre_reset_index_mtime,
+            },
+        )? {
+            journal.spool_remove(&rel)?;
+        }
+    }
     let mut index = pre_reset_index;
 
     if let Some(apply) = hard_reset_apply {
@@ -993,6 +1009,113 @@ fn hard_reset_stat_probe_positions(
         }
     }
     positions
+}
+
+/// Inputs of [`hard_reset_entry_stat_clean`] that are fixed for one reset.
+#[derive(Clone, Copy)]
+struct HardResetStatCheck {
+    policy: crate::index::StatMatchPolicy,
+    trust_filemode: bool,
+    /// Mtime of the index the stat data came from, for the racy-entry check.
+    index_mtime: Option<(u32, u32)>,
+}
+
+/// Tree-diff paths a hard reset replaces or deletes whose work-tree bytes the index may not
+/// record: stat-dirty files (including entries Git smudged as racy), racily clean files whose
+/// content differs from their blob, symlinks, unmerged paths and paths without a stage-0 row.
+///
+/// Rollback rebuilds tree-diff paths from the index, which is only right for clean files, so
+/// the reset spools these first. Paths sparse checkout leaves alone and gitlinks are skipped.
+/// A stat match proves nothing for a racy entry, so those are compared by content, in
+/// parallel, as status does.
+#[allow(clippy::too_many_arguments)]
+fn hard_reset_unrecorded_tree_diff_paths(
+    repo: &Repository,
+    work_tree: &Path,
+    index: &Index,
+    config: &std::sync::Arc<ConfigSet>,
+    changes: &[DiffEntry],
+    sparse: Option<&SparseCheckout>,
+    check: HardResetStatCheck,
+) -> Result<Vec<String>> {
+    let mut unrecorded = Vec::new();
+    let mut probes: Vec<(usize, &str)> = Vec::new();
+    for change in changes {
+        if change.status == DiffStatus::Added || parse_git_mode(&change.old_mode) == MODE_GITLINK {
+            continue;
+        }
+        let Some(path) = change.old_path.as_deref() else {
+            continue;
+        };
+        if sparse.is_some_and(|sparse| sparse.checkout_skips(index, path)) {
+            continue;
+        }
+        let key = checkout_stored_index_path_bytes(path);
+        match index.find_entry_pos(&key, 0) {
+            Some(pos) if index.entries[pos].skip_worktree() => {}
+            Some(pos) => probes.push((pos, path)),
+            None => unrecorded.push(path.to_owned()),
+        }
+    }
+    let mut racy: Vec<(usize, &str, PathBuf, fs::Metadata)> = Vec::new();
+    for (pos, path) in probes {
+        let entry = &index.entries[pos];
+        let abs = checkout_stored_worktree_abs(work_tree, path);
+        let Ok(meta) = fs::symlink_metadata(&abs) else {
+            unrecorded.push(path.to_owned());
+            continue;
+        };
+        let stat_clean = hard_reset_entry_stat_clean(
+            entry,
+            &crate::worktree_scan::BlobDiskStat::from_metadata(&meta),
+            check.policy,
+            check.trust_filemode,
+            None,
+        );
+        if !stat_clean {
+            unrecorded.push(path.to_owned());
+        } else if crate::diff::entry_is_racy_with_policy(entry, check.index_mtime, check.policy) {
+            racy.push((pos, path, abs, meta));
+        }
+    }
+    if racy.is_empty() {
+        return Ok(unrecorded);
+    }
+    let rules = WorktreeRules::from_parts(repo, index, config.clone())?;
+    let attrs: Vec<crlf::FileAttrs> = racy
+        .iter()
+        .map(|(_, path, _, _)| rules.file_attrs(path, false))
+        .collect();
+    let mut options = repo
+        .thread_policy()
+        .resolve(ParallelOp::IndexRefresh, config.as_ref());
+    options.min_total_bytes = None;
+    let conv = rules.conversion();
+    let filter_process = rules.filter_process();
+    let jobs: Vec<usize> = (0..racy.len()).collect();
+    let unchanged = try_par_map(&jobs, options, 0, |&i| {
+        let (pos, path, abs, meta) = &racy[i];
+        let entry = &index.entries[*pos];
+        crate::diff::hash_worktree_file(
+            repo.odb(),
+            abs,
+            meta,
+            conv,
+            &attrs[i],
+            path,
+            Some(entry),
+            Some(filter_process),
+        )
+        .map(|oid| oid == entry.oid)
+    })
+    .map_err(|ParallelHashError::Task(e)| e)?;
+    unrecorded.extend(
+        racy.iter()
+            .zip(unchanged)
+            .filter(|(_, unchanged)| !unchanged)
+            .map(|((_, path, _, _), _)| (*path).to_owned()),
+    );
+    Ok(unrecorded)
 }
 
 /// What a hard reset does with one target-tree entry.

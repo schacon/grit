@@ -621,3 +621,182 @@ fn cancelled_hard_reset_keeps_dirty_and_index_only_files() {
     );
     git(&fx.root, &["fsck", "--no-progress", "--no-dangling"]);
 }
+
+/// A cancelled `reset --hard` to a different tree keeps unstaged edits in paths the tree diff
+/// replaces or deletes, including files under a directory the reset removes wholesale.
+#[test]
+fn cancelled_cross_tree_hard_reset_keeps_dirty_tree_diff_paths() {
+    let fx = fixture(Shape::RegularFiles);
+    let mut dirty = Vec::new();
+    for i in 0..60 {
+        dirty.push(format!("keep/f{i:02}.txt"));
+    }
+    for i in (0..20).step_by(2) {
+        dirty.push(format!("mixed/m{i:02}.txt"));
+    }
+    dirty.push("gone/g00.txt".to_owned());
+    dirty.push("gone/nested/deep.txt".to_owned());
+    for rel in &dirty {
+        write(
+            &fx.root,
+            rel,
+            &format!("unstaged edit of {rel}, longer than before\n"),
+        );
+    }
+    let status_before = git(
+        &fx.root,
+        &["status", "--porcelain", "--untracked-files=all"],
+    );
+    let signature: grit_lib::ident::Signature = "T <t@t> 0 +0000".parse().expect("signature");
+
+    for limit in [1, 5, 40, 100] {
+        let context = format!("cross-tree reset cancel at {limit}");
+        let before = repository_state(&fx.root);
+        let cancel = FlagCancel::new();
+        let mut progress = CancelAfter {
+            cancel: cancel.clone(),
+            limit,
+            seen: 0,
+            in_checkout: false,
+            at_cancel: || {},
+        };
+        let err = reset_to_commit(
+            &open(&fx.root),
+            &ResetOptions::new(fx.next, ResetMode::Hard, signature.clone(), "reset"),
+            &mut progress,
+            &cancel,
+        )
+        .expect_err(&context);
+        assert!(matches!(err, Error::Cancelled), "{context}: {err:?}");
+        assert!(progress.seen >= limit, "{context}: cancel never fired");
+        assert_eq!(
+            repository_state(&fx.root),
+            before,
+            "{context}: HEAD or index moved"
+        );
+        let lost: Vec<&String> = dirty
+            .iter()
+            .filter(|rel| {
+                fs::read_to_string(fx.root.join(rel)).ok()
+                    != Some(format!("unstaged edit of {rel}, longer than before\n"))
+            })
+            .collect();
+        assert!(
+            lost.is_empty(),
+            "{context}: unstaged edits lost in {lost:?}"
+        );
+        assert!(!fx.root.join("new").exists(), "{context}: new/ left behind");
+        assert_eq!(
+            git(
+                &fx.root,
+                &["status", "--porcelain", "--untracked-files=all"]
+            ),
+            status_before,
+            "{context}"
+        );
+    }
+
+    reset_to_commit(
+        &open(&fx.root),
+        &ResetOptions::new(fx.next, ResetMode::Hard, signature, "reset"),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("uncancelled reset");
+    assert_clean(&fx.root, "after reset --hard next");
+    assert_eq!(
+        git(&fx.root, &["rev-parse", "HEAD"]).trim(),
+        fx.next.to_hex()
+    );
+}
+
+/// Same-size edits whose stat still matches a racy index entry (`core.checkStat=minimal`,
+/// `core.trustctime=false`, mtimes put back) are real edits to `git status`; a cancelled
+/// cross-tree `reset --hard` must keep them too.
+#[test]
+fn cancelled_hard_reset_keeps_same_size_edits_behind_racy_stat_matches() {
+    let fx = fixture(Shape::RegularFiles);
+    git(&fx.root, &["config", "core.checkStat", "minimal"]);
+    git(&fx.root, &["config", "core.trustctime", "false"]);
+    let edited: Vec<String> = (0..60).map(|i| format!("keep/f{i:02}.txt")).collect();
+    let mut oldest = None;
+    for rel in &edited {
+        let path = fx.root.join(rel);
+        let mtime = fs::metadata(&path).expect(rel).modified().expect("mtime");
+        let before = fs::read_to_string(&path).expect(rel);
+        let after = before.replacen("keep", "KEEP", 1);
+        assert_eq!(before.len(), after.len());
+        fs::write(&path, &after).expect(rel);
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect(rel)
+            .set_modified(mtime)
+            .expect("restore mtime");
+        oldest = Some(oldest.map_or(mtime, |o: std::time::SystemTime| o.min(mtime)));
+    }
+    fs::File::options()
+        .write(true)
+        .open(fx.root.join(".git/index"))
+        .expect("index")
+        .set_modified(oldest.expect("edited"))
+        .expect("index mtime");
+    let status_before = git(
+        &fx.root,
+        &["status", "--porcelain", "--untracked-files=all"],
+    );
+    for rel in &edited {
+        assert!(
+            status_before.contains(&format!(" M {rel}")),
+            "git must see the edit of {rel}:\n{status_before}"
+        );
+    }
+    let signature: grit_lib::ident::Signature = "T <t@t> 0 +0000".parse().expect("signature");
+
+    for limit in [5, 100] {
+        let context = format!("racy same-size reset cancel at {limit}");
+        let before = repository_state(&fx.root);
+        let cancel = FlagCancel::new();
+        let mut progress = CancelAfter {
+            cancel: cancel.clone(),
+            limit,
+            seen: 0,
+            in_checkout: false,
+            at_cancel: || {},
+        };
+        let err = reset_to_commit(
+            &open(&fx.root),
+            &ResetOptions::new(fx.next, ResetMode::Hard, signature.clone(), "reset"),
+            &mut progress,
+            &cancel,
+        )
+        .expect_err(&context);
+        assert!(matches!(err, Error::Cancelled), "{context}: {err:?}");
+        assert!(progress.seen >= limit, "{context}: cancel never fired");
+        assert_eq!(
+            repository_state(&fx.root),
+            before,
+            "{context}: HEAD or index moved"
+        );
+        let lost: Vec<&String> = edited
+            .iter()
+            .filter(|rel| {
+                !fs::read_to_string(fx.root.join(rel))
+                    .expect("edited file")
+                    .starts_with("KEEP")
+            })
+            .collect();
+        assert!(
+            lost.is_empty(),
+            "{context}: same-size edits lost in {lost:?}"
+        );
+        assert_eq!(
+            git(
+                &fx.root,
+                &["status", "--porcelain", "--untracked-files=all"]
+            ),
+            status_before,
+            "{context}"
+        );
+    }
+}
