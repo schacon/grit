@@ -585,10 +585,8 @@ pub fn add_linked_worktree(
     repo: &Repository,
     opts: &AddLinkedWorktreeOptions,
 ) -> Result<WorktreeEntry> {
+    // Like Git, a bare repository can have linked worktrees.
     let common = common_git_dir(repo.git_dir());
-    if repo.is_bare() {
-        return Err(WorktreeError::BareRepository.into());
-    }
 
     let wt_path = if opts.path.exists() {
         path_for_disk_compare(&opts.path)
@@ -1740,7 +1738,7 @@ mod tests {
         ignore = "starts system git or is heavy; run with --features full-tests"
     )]
     #[test]
-    fn add_linked_worktree_rejects_bare_repository() {
+    fn add_linked_worktree_to_bare_repository() {
         let tmp = TempDir::new().unwrap();
         let bare = tmp.path().join("bare.git");
         fs::create_dir_all(bare.join("objects")).unwrap();
@@ -1751,11 +1749,12 @@ mod tests {
         )
         .unwrap();
         let repo = Repository::open(&bare, &RepositoryOptions::empty()).unwrap();
-        let err = add_linked_worktree(
+        let wt = tmp.path().join("wt");
+        let entry = add_linked_worktree(
             &repo,
             &AddLinkedWorktreeOptions {
-                path: tmp.path().join("wt"),
-                branch: Some(WorktreeBranch::Create("wt".into())),
+                path: wt.clone(),
+                branch: Some(WorktreeBranch::Orphan("wt".into())),
                 start_point: None,
                 force: false,
                 lock: None,
@@ -1763,11 +1762,23 @@ mod tests {
                 track: false,
             },
         )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            Error::Worktree(WorktreeError::BareRepository)
-        ));
+        .unwrap();
+        assert_eq!(
+            entry.admin_dir,
+            fs::canonicalize(&bare)
+                .unwrap()
+                .join("worktrees")
+                .join("wt")
+        );
+        assert_eq!(
+            fs::read_to_string(entry.admin_dir.join("HEAD")).unwrap(),
+            "ref: refs/heads/wt\n"
+        );
+        assert_eq!(
+            fs::read_to_string(entry.admin_dir.join("commondir")).unwrap(),
+            "../..\n"
+        );
+        assert!(wt.join(".git").is_file());
     }
 
     #[cfg_attr(
