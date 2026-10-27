@@ -22,9 +22,9 @@ use crate::merge_base::{
     walk_commits_reachable_excluding_ancestors_of, ReachableWalkLimit,
 };
 use crate::objects::{parse_commit, ObjectId};
+use crate::operation::Conflict;
 use crate::patch_ids::{compute_patch_id, PatchIdMode};
 use crate::porcelain::checkout_reflog::checkout_reflog_identity;
-use crate::porcelain::merge::MergeConflictDetail;
 use crate::porcelain::pull::{pull, FetchedUpstream, PullMode, PullOptions, PullResult};
 use crate::porcelain::switch::{switch_repository, SwitchMode, SwitchOptions};
 use crate::progress::NeverCancel;
@@ -61,13 +61,13 @@ pub enum BranchRefreshResult {
     /// still points at its old tip until it is continued.
     Stopped {
         /// The conflicted paths.
-        conflicts: Vec<MergeConflictDetail>,
+        conflicts: Vec<Conflict>,
     },
     /// The rebase would conflict, but the index or worktree has changes of
     /// their own, so it couldn't stop there: nothing changed.
     Conflicts {
         /// The conflicted paths.
-        conflicts: Vec<MergeConflictDetail>,
+        conflicts: Vec<Conflict>,
     },
     /// The branch was rebased, but putting back the changes stashed for it
     /// (`rebase.autoStash`) conflicted; the stash entry was kept.

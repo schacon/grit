@@ -432,7 +432,7 @@ fn pull_rebase_conflict_stops_like_git_and_continues() {
         outcome.conflicts,
         Some(vec![grit_lib::operation::Conflict {
             path: "conflict.txt".into(),
-            kind: grit_lib::operation::ConflictKind::AddAdd,
+            kind: grit_lib::operation::ConflictKind::BothAdded,
         }])
     );
     assert_eq!(

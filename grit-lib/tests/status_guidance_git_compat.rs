@@ -3,8 +3,9 @@
 //! upstream).
 
 use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::operation::ConflictKind;
 use grit_lib::porcelain::status::{
-    status, ConflictGroup, ConflictKind, StatusAction, StatusGuidance, StatusModel, StatusOptions,
+    status, ConflictGroup, StatusAction, StatusGuidance, StatusModel, StatusOptions,
 };
 use grit_lib::progress::{NeverCancel, NullProgress};
 use grit_lib::refs::branch_tracking::{BranchStanding, StandingOptions};

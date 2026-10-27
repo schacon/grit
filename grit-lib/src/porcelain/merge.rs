@@ -51,6 +51,7 @@ use crate::merge_trees::{
     TreeMergeConflictPresentation, TreeMergeOutput, WhitespaceMergeOptions,
 };
 use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
+use crate::operation::{conflicts_from_tree_merge, tree_merge_has_conflicts, Conflict};
 use crate::path_population::validate_tree_walk_entry;
 use crate::path_validate::ProtectOptions;
 use crate::porcelain::checkout;
@@ -248,9 +249,6 @@ pub fn reduce_octopus_merge_heads(
     Ok((out_oids, out_names))
 }
 
-pub use crate::operation::{conflicts_from_tree_merge, tree_merge_has_conflicts};
-pub use crate::operation::{Conflict as MergeConflictDetail, ConflictKind as MergeConflictKind};
-
 /// Fast-forward policy for branch integration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum FastForwardPolicy {
@@ -373,7 +371,7 @@ pub enum MergePrediction {
     /// A three-way merge would stop with conflicts.
     Conflicts {
         /// Conflicted paths and kinds (same classification as a real merge).
-        conflicts: Vec<MergeConflictDetail>,
+        conflicts: Vec<Conflict>,
     },
     /// The two commits share no common history.
     Unrelated,
@@ -440,7 +438,7 @@ pub struct WrittenMergeTree {
     /// content, exactly like the tree `git merge-tree --write-tree` writes.
     pub tree: ObjectId,
     /// Conflicted paths and kinds; empty when the merge is clean.
-    pub conflicts: Vec<MergeConflictDetail>,
+    pub conflicts: Vec<Conflict>,
     /// Unmerged entries (stages 1–3) sorted by path, then stage; empty when the merge is clean.
     pub stages: Vec<MergeTreeStage>,
 }
@@ -584,7 +582,7 @@ pub enum MergeDryRunPlan {
     /// The three-way merge would stop with conflicts.
     Conflicts {
         /// Conflicted paths and kinds (same classification as a real merge).
-        conflicts: Vec<MergeConflictDetail>,
+        conflicts: Vec<Conflict>,
     },
 }
 
@@ -801,7 +799,7 @@ pub enum IntegrateBranchOutcome {
         /// Conflicted paths in repository-relative form, sorted and deduplicated.
         paths: Vec<String>,
         /// Per-path conflict classification (same order as `paths` after sorting).
-        details: Vec<MergeConflictDetail>,
+        details: Vec<Conflict>,
     },
     /// A `--squash` merge applied the merged tree and wrote `SQUASH_MSG`.
     Squashed,

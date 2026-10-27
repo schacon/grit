@@ -4,6 +4,7 @@
 
 use grit_lib::change_id::ChangeId;
 use grit_lib::objects::ObjectId;
+use grit_lib::operation::{Conflict, ConflictKind, RenamedPaths};
 use grit_lib::porcelain::log::{CommitRefDecoration, DecorationKind, LoadedCommit};
 use grit_lib::porcelain::status::StatusModel;
 use grit_lib::state::HeadState;
@@ -27,7 +28,7 @@ fn result_models_implement_serialize() {
     assert_serialize::<grit_lib::revwalk::history::RewritePlan>();
     assert_serialize::<grit_lib::revwalk::history::RebaseOutcome>();
     assert_serialize::<grit_lib::operation::Operation>();
-    assert_serialize::<grit_lib::porcelain::merge::MergeConflictDetail>();
+    assert_serialize::<grit_lib::operation::Conflict>();
     assert_serialize::<grit_lib::error::Error>();
     assert_serialize::<grit_lib::porcelain::status::StatusModel>();
     assert_serialize::<grit_lib::porcelain::log::LoadedCommit>();
@@ -105,9 +106,9 @@ fn porcelain_dtos_serialize_to_stable_json_shapes() {
         untracked: vec![],
         ignored: vec![],
         conflicts: vec!["a.txt".into()],
-        conflict_details: vec![grit_lib::porcelain::status::Conflict {
+        conflict_details: vec![Conflict {
             path: "a.txt".into(),
-            kind: grit_lib::porcelain::status::ConflictKind::BothModified,
+            kind: ConflictKind::BothModified,
         }],
         operation,
         stash_count: 0,
@@ -124,6 +125,45 @@ fn porcelain_dtos_serialize_to_stable_json_shapes() {
     assert!(status_json["operation"]["next_steps"]
         .as_array()
         .is_some_and(|steps| !steps.is_empty()));
+    assert_eq!(
+        status_json["conflict_details"],
+        serde_json::json!([{"path": "a.txt", "kind": "both_modified"}])
+    );
+
+    let rename = Conflict {
+        path: "a".into(),
+        kind: ConflictKind::RenameRename(Box::new(RenamedPaths {
+            base_path: "a".into(),
+            ours_path: "b".into(),
+            theirs_path: "c".into(),
+        })),
+    };
+    assert_eq!(
+        serde_json::to_value(&rename).expect("rename conflict"),
+        serde_json::json!({
+            "path": "a",
+            "kind": "rename_rename",
+            "base_path": "a",
+            "ours_path": "b",
+            "theirs_path": "c",
+        })
+    );
+    for kind in [
+        ConflictKind::BothModified,
+        ConflictKind::BothAdded,
+        ConflictKind::BothDeleted,
+        ConflictKind::AddedByUs,
+        ConflictKind::AddedByThem,
+        ConflictKind::DeletedByUs,
+        ConflictKind::DeletedByThem,
+    ] {
+        let json = serde_json::to_value(Conflict {
+            path: "p".into(),
+            kind: kind.clone(),
+        })
+        .expect("conflict");
+        assert_eq!(json["kind"], kind.as_str());
+    }
 }
 
 #[test]

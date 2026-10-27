@@ -96,7 +96,7 @@ Dry run — refs would change:
 
 ```console
 $ grit rebase origin/main
-CONFLICT (content): docs/guide.md
+CONFLICT (both_modified): docs/guide.md
 
 Rebase stopped on conflicts; fix them and run `grit rebase --continue`, or `grit rebase --abort` / `grit rebase --skip`.
 $ grit add docs/guide.md
@@ -122,7 +122,7 @@ Pass `--json` on `grit rebase` or `grit history rebase`:
 | `commit` | string | Source commit for `conflicts`; checked-out replay commit for `exec_dirty`. |
 | `command` | string | Successful command that left edits, for `exec_dirty`. |
 | `paths` | array of strings | Changed tracked paths at an exec stop. |
-| `conflicts` | array | `{path,kind,summary?}` when `result` is `conflicts`. |
+| `conflicts` | array | `{path,kind,summary?}` when `result` is `conflicts`; `kind` is a [conflict kind](../status/#conflict-kinds). |
 | `next_steps` | array | Ordered `grit` commands after a stop. |
 | `alternatives` | array | `grit rebase --abort` and `grit rebase --skip` when paused. |
 
@@ -177,7 +177,7 @@ Schema: [rebase.check v1](/schemas/rebase.check/v1.json)
 | `result` | string | `up_to_date`, `clean`, or `conflicts`. |
 | `check` | boolean | Always `true`. |
 | `commits` | array of strings | Replacement commit OIDs when `result` is `clean`. |
-| `conflicts` | array | `{path, kind}` entries when `result` is `conflicts`. |
+| `conflicts` | array | `{path, kind}` entries when `result` is `conflicts`, with the [conflict kind](../status/#conflict-kinds) the replay would leave. |
 | `commit` | string | Original commit OID when `result` is `conflicts`. |
 
 Exit code is **0** for `up_to_date` and `clean`, **1** for `conflicts`.

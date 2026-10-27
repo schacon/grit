@@ -1613,7 +1613,14 @@ fn wide_sparse_pop_keeps_conflicts_and_unrelated_local_content() {
         .stash()
         .pop(0, &StashApplyOptions::default())
         .expect("pop");
-    assert_eq!(outcome.conflicted_paths, ["d000/f000"]);
+    assert_eq!(
+        outcome
+            .conflicts
+            .iter()
+            .map(|c| c.path.as_str())
+            .collect::<Vec<_>>(),
+        ["d000/f000"]
+    );
     let mut cmd = Command::new("git");
     grit_test_support::configure_git_env(&mut cmd);
     let out = cmd

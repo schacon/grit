@@ -894,15 +894,9 @@ fn merged_tree_for_target_with_trees(
     .map_err(library_err)?;
 
     if merge.index.has_unmerged_entries() || !merge.conflict_content.is_empty() {
-        let mut paths = merge
-            .conflict_content
-            .keys()
-            .map(|k| String::from_utf8_lossy(k).into_owned())
-            .collect::<Vec<_>>();
-        paths.sort();
         return Err(HistoryError::Conflict {
             commit: target,
-            paths,
+            conflicts: crate::operation::conflicts_from_tree_merge(&merge),
         });
     }
     Ok(merge.result_tree)

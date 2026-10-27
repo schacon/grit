@@ -11,7 +11,7 @@ The stash stack is Git-compatible ref and commit machinery. There is one API for
 
 ## Apply and pop
 
-`RepositoryStash::apply` applies `stash@{n}` and keeps the entry. `RepositoryStash::pop` applies it and drops it only when it applied cleanly. Both take one [`StashApplyOptions`](rustdoc:grit_lib::porcelain::stash::StashApplyOptions) (`restore_index` restores the stashed index, like `git stash apply --index`) and return a [`StashApplyOutcome`](rustdoc:grit_lib::porcelain::stash::StashApplyOutcome) whose `conflicted_paths` lists the sorted paths left with conflict stages in the index, the same paths `git ls-files -u` shows afterwards. `has_conflicts()` is true exactly when a pop kept the entry. `RepositoryStash::apply_commit` applies any stash-shaped commit, such as one built by `RepositoryStash::create`, without touching `refs/stash`. An index past the end of the stack is [`Error::StashNotFound`](rustdoc:grit_lib::error::Error::StashNotFound).
+`RepositoryStash::apply` applies `stash@{n}` and keeps the entry. `RepositoryStash::pop` applies it and drops it only when it applied cleanly. Both take one [`StashApplyOptions`](rustdoc:grit_lib::porcelain::stash::StashApplyOptions) (`restore_index` restores the stashed index, like `git stash apply --index`) and return a [`StashApplyOutcome`](rustdoc:grit_lib::porcelain::stash::StashApplyOutcome) whose `conflicts` lists each path left with conflict stages in the index as an [`operation::Conflict`](rustdoc:grit_lib::operation::Conflict), the same paths `git ls-files -u` shows afterwards, with the same [`ConflictKind`](rustdoc:grit_lib::operation::ConflictKind) `status` reports for them. `has_conflicts()` is true exactly when a pop kept the entry. `RepositoryStash::apply_commit` applies any stash-shaped commit, such as one built by `RepositoryStash::create`, without touching `refs/stash`. An index past the end of the stack is [`Error::StashNotFound`](rustdoc:grit_lib::error::Error::StashNotFound).
 
 Dropping an entry rewrites the `refs/stash` reflog without adding a new entry, so `drop`, `pop` and `branch` take no identity.
 
@@ -19,8 +19,12 @@ Dropping an entry rewrites the `refs/stash` reflog without adding a new entry, s
 use grit_lib::porcelain::stash::StashApplyOptions;
 
 let popped = repo.stash().pop(0, &StashApplyOptions::default())?;
-for path in &popped.conflicted_paths {
-    println!("conflict: {path} (stash@{{0}} was kept)");
+for conflict in &popped.conflicts {
+    println!(
+        "conflict: {} ({}; stash@{{0}} was kept)",
+        conflict.path,
+        conflict.kind.as_str()
+    );
 }
 ```
 

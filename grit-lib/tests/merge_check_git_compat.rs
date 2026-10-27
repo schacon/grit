@@ -12,7 +12,7 @@ use grit_lib::error::Error;
 use grit_lib::ident::Signature;
 use grit_lib::objects::{NewCommit, ObjectId};
 use grit_lib::porcelain::merge::{
-    predict_merge, write_merge_tree, MergeConflictKind, MergePrediction, MergePredictionOptions,
+    predict_merge, write_merge_tree, MergePrediction, MergePredictionOptions,
 };
 use grit_lib::repo::Repository;
 use grit_test_support::{git, git_cmd};
@@ -422,7 +422,10 @@ fn write_merge_tree_conflict_stages_match_git_merge_tree() {
     assert!(!written.is_clean());
     assert_eq!(written.conflicts.len(), 1);
     assert_eq!(written.conflicts[0].path, "a.txt");
-    assert_eq!(written.conflicts[0].kind, MergeConflictKind::Content);
+    assert_eq!(
+        written.conflicts[0].kind,
+        grit_lib::operation::ConflictKind::BothModified
+    );
     assert_eq!(
         git_object_type(root, &written.tree).as_deref(),
         Some("tree")

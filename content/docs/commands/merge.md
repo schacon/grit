@@ -99,7 +99,7 @@ When both branches change the same lines:
 
 ```console
 $ grit merge topic
-CONFLICT (content): README.md
+CONFLICT (both_modified): README.md
 
 Automatic merge failed; fix conflicts and run `grit merge --continue`, or run `grit merge --abort`.
 ```
@@ -108,7 +108,7 @@ When one branch deleted a file and the other modified it, grit leaves the modifi
 
 ```console
 $ grit merge feat
-CONFLICT (modify_delete): f deleted on the current branch and modified in feat; feat's version is in the work tree
+CONFLICT (deleted_by_us): f deleted on the current branch and modified in feat; feat's version is in the work tree
 
 Automatic merge failed; fix conflicts and run `grit merge --continue`, or run `grit merge --abort`.
 ```
@@ -130,11 +130,11 @@ $ grit merge --continue
 Merged topic into the current branch (b3e1fe8)
 ```
 
-When the branches put two different files at the same path (each renamed a different file to it, or one renamed a file onto a path the other added), grit reports an `add_add` conflict at that path, like Git. Both versions stay in the index and the work-tree file shows them between conflict markers; a renamed file already carries the other branch's edits to it. The old names are gone, so nothing is lost until you resolve the path.
+When the branches put two different files at the same path (each renamed a different file to it, or one renamed a file onto a path the other added), grit reports a `both_added` conflict at that path, like Git. Both versions stay in the index and the work-tree file shows them between conflict markers; a renamed file already carries the other branch's edits to it. The old names are gone, so nothing is lost until you resolve the path.
 
 ```console
 $ grit merge topic
-CONFLICT (add_add): c
+CONFLICT (both_added): c
 
 Automatic merge failed; fix conflicts and run `grit merge --continue`, or run `grit merge --abort`.
 ```
@@ -200,7 +200,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `oid` | string or null | Resulting commit after a real merge or fast-forward; for `--check` with `result: clean`, the predicted merge tree OID (the id `git merge-tree --write-tree` prints; `--check` does not store that tree, so it is not in the object database). Omitted for `--dry-run` when a new merge commit would be created. |
 | `parents` | array or null | For `--dry-run` with `result: merged`, the two parent commit ids of the merge commit that would be recorded. |
 | `change_id` | string or null | Stored `change-id` on `oid` when present (merge commit or fast-forward tip). |
-| `conflicts` | array or null | When `result` is `conflicts`, each item has `path`, `kind` (`content`, `add_add`, `modify_delete`, or `rename_rename`), and optional `summary` text. A `rename_rename` conflict lists all three paths (the old name and both new names); the `summary` is on the old name's item. |
+| `conflicts` | array or null | When `result` is `conflicts`, each item has `path`, a [conflict `kind`](../status/#conflict-kinds) (the same names `grit status` uses, plus `rename_rename`), and optional `summary` text for `deleted_by_us`, `deleted_by_them` and `rename_rename` conflicts. A `rename_rename` conflict lists all three paths (the old name and both new names); the `summary` is on the old name's item. |
 | `next_steps` | array or null | Ordered follow-up commands when `result` is `conflicts` (for example `grit diff`, `grit add .`), or suggested commands when `result` is `squashed` or `stopped`. |
 | `alternatives` | array or null | Mutually exclusive options such as `grit merge --abort` (not part of the ordered sequence). |
 
@@ -246,7 +246,7 @@ When the merge stops on conflicts (exit code 1), stdout is still a single JSON o
   "conflicts": [
     {
       "path": "src/lib.rs",
-      "kind": "content"
+      "kind": "both_modified"
     }
   ],
   "next_steps": ["grit diff", "grit add ."],

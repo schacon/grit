@@ -2284,7 +2284,7 @@ fn merge_conflict_json_is_structured() -> TestResult {
     assert_eq!(v["result"], "conflicts");
     assert_eq!(
         v["conflicts"],
-        serde_json::json!([{"kind": "content", "path": "f"}])
+        serde_json::json!([{"kind": "both_modified", "path": "f"}])
     );
     assert!(
         repo.join(".git/MERGE_HEAD").exists(),

@@ -4,7 +4,7 @@
 //! `refs/stash` and its reflog, and applies entries onto the worktree and index.
 //! The operations are reached through
 //! [`RepositoryStash`](crate::repo_handles::RepositoryStash) (`repo.stash()`); apply and
-//! pop report the paths left conflicted in a [`StashApplyOutcome`] (a pop keeps the entry
+//! pop report the paths left conflicted, with their kinds, in a [`StashApplyOutcome`] (a pop keeps the entry
 //! when there are any).
 //!
 //! Flattening and worktree helpers ([`FlatTreeEntry`], [`flatten_tree_full`],
@@ -40,6 +40,7 @@ use crate::merge_trees::{
 };
 use crate::objects::{parse_tree, CommitData, ObjectId, ObjectKind};
 use crate::odb::Odb;
+use crate::operation::{conflicts_from_index, Conflict};
 use crate::pathspec::{
     has_glob_chars, matches_pathspec_list, pathspec_is_exclude, PathspecListMatcher,
 };
@@ -1878,7 +1879,7 @@ pub(crate) fn stash_branch(repo: &Repository, name: &str, n: usize) -> Result<St
         base,
         index: n,
         conflicts: applied.has_conflicts(),
-        conflict_paths: applied.conflicted_paths,
+        conflict_paths: applied.conflicts.into_iter().map(|c| c.path).collect(),
     })
 }
 
@@ -2232,11 +2233,13 @@ pub(crate) fn apply_stash_oid(
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct StashApplyOutcome {
-    /// Paths left with conflict stages (1–3) in the index, sorted and de-duplicated.
+    /// Paths left with conflict stages (1–3) in the index, in index order, each with the
+    /// [`ConflictKind`](crate::operation::ConflictKind) `status` reports for it.
     ///
-    /// Paths use [`crate::repo_relpath::storage_string`] to preserve raw Git path bytes.
-    /// Empty when the stash applied cleanly.
-    pub conflicted_paths: Vec<String>,
+    /// Built by [`conflicts_from_index`], so paths use
+    /// [`crate::repo_relpath::storage_string`] to preserve raw Git path bytes. Empty when the
+    /// stash applied cleanly.
+    pub conflicts: Vec<Conflict>,
 }
 
 impl StashApplyOutcome {
@@ -2245,7 +2248,7 @@ impl StashApplyOutcome {
     /// After a pop, `true` also means the stash entry was kept.
     #[must_use]
     pub fn has_conflicts(&self) -> bool {
-        !self.conflicted_paths.is_empty()
+        !self.conflicts.is_empty()
     }
 }
 
@@ -2278,19 +2281,6 @@ pub(crate) fn pop_stash_entry(
         drop_stash(repo, n)?;
     }
     Ok(outcome)
-}
-
-/// Sorted, de-duplicated paths of every conflict-stage entry in `index`.
-fn unmerged_paths(index: &Index) -> Vec<String> {
-    let mut paths: Vec<String> = index
-        .entries
-        .iter()
-        .filter(|e| e.stage() != 0)
-        .map(|e| crate::repo_relpath::storage_string(&e.path))
-        .collect();
-    paths.sort();
-    paths.dedup();
-    paths
 }
 
 fn apply_stash_commit(
@@ -2836,8 +2826,8 @@ fn apply_stash_commit(
             }
         }
     }
-    let conflicted_paths = if has_conflicts {
-        unmerged_paths(&new_index)
+    let conflicts = if has_conflicts {
+        conflicts_from_index(&new_index)
     } else {
         Vec::new()
     };
@@ -2858,7 +2848,7 @@ fn apply_stash_commit(
         }
     }
 
-    Ok(StashApplyOutcome { conflicted_paths })
+    Ok(StashApplyOutcome { conflicts })
 }
 
 /// Refresh cached stat data for stage-0 entries whose worktree content matches their blob.

@@ -1,19 +1,24 @@
 //! Shared conflict classification and in-progress operation vocabulary.
 //!
-//! Merge, cherry-pick, revert (and later rebase) use the same [`Conflict`] shapes and
-//! [`ConflictKind`] names. Status porcelain uses a separate, Git-compatible
-//! [`ConflictKind`](crate::porcelain::status::ConflictKind) for `--porcelain=v2` XY codes.
+//! Status, merge, pick, revert, rebase, pull and stash all report conflicts with the same
+//! [`Conflict`] and [`ConflictKind`]. The kind is read from which unmerged index stages a
+//! path has (the same classification as the `u` lines of `git status --porcelain=v2`), so a
+//! conflict looks the same whether it comes from an operation's outcome or from
+//! [`status`](crate::porcelain::status::status) afterwards. Only a tree-merge result can add
+//! [`ConflictKind::RenameRename`], which needs the rename pairing the index does not keep.
 //!
 //! ```rust
-//! use grit_lib::operation::{conflict_kind_from_stages, ConflictKind};
+//! use grit_lib::operation::{conflict_kind_from_stagemask, ConflictKind};
 //!
+//! // Stage 1 (base) and stage 3 (theirs) only: we deleted the path, they kept it.
 //! assert_eq!(
-//!     conflict_kind_from_stages(false, true, true),
-//!     ConflictKind::AddAdd
+//!     conflict_kind_from_stagemask(0b101),
+//!     Some(ConflictKind::DeletedByUs)
 //! );
+//! assert_eq!(ConflictKind::DeletedByUs.as_str(), "deleted_by_us");
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::diff::merge_trees::TreeMergeOutput;
 use crate::index::Index;
@@ -23,89 +28,130 @@ pub use crate::state::{
     InProgressOperation, NextStep, Operation,
 };
 
-/// How a tree-merge conflict should be presented (content, add/add, modify/delete, …).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// How the two sides of a merge collided on one path.
+///
+/// "Us" is the side checked out when the operation started (index stage 2, `HEAD`); "them"
+/// is the side being brought in (stage 3): the merged branch, the picked or reverted commit,
+/// or the commit a rebase is replaying. Variants are ordered as `grit status` lists them.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde-models", serde(rename_all = "snake_case"))]
+#[cfg_attr(
+    feature = "serde-models",
+    serde(tag = "kind", rename_all = "snake_case")
+)]
 pub enum ConflictKind {
-    /// Both sides edited the same tracked file (textual or binary).
-    Content,
-    /// Both sides added the same path with different content.
-    AddAdd,
-    /// One side deleted the path and the other modified it.
-    ModifyDelete {
-        /// When true, the deletion is on the current branch (HEAD); the incoming side modified the file.
-        deleted_in_current: bool,
-    },
+    /// Both sides changed the file (stages 1, 2 and 3; porcelain `UU`).
+    BothModified,
+    /// Both sides added the path with different content (stages 2 and 3; `AA`).
+    BothAdded,
+    /// Both sides removed the path (stage 1 only; `DD`).
+    BothDeleted,
+    /// Only our side has the path (stage 2 only; `AU`).
+    AddedByUs,
+    /// Only their side has the path (stage 3 only; `UA`).
+    AddedByThem,
+    /// We deleted the path and they changed it (stages 1 and 3; `DU`).
+    DeletedByUs,
+    /// We changed the path and they deleted it (stages 1 and 2; `UD`).
+    DeletedByThem,
     /// Both sides renamed the same base file, to different paths.
     ///
     /// Reported once for each of the three paths involved; [`Conflict::path`] says which one.
-    RenameRename {
-        /// Path of the file in the merge base (left at stage 1).
-        base_path: String,
-        /// Name the current branch gave it (stage 2).
-        ours_path: String,
-        /// Name the incoming side gave it (stage 3).
-        theirs_path: String,
-    },
+    /// Only [`conflicts_from_tree_merge`] produces it: the index alone shows the three paths
+    /// as [`Self::BothDeleted`], [`Self::AddedByUs`] and [`Self::AddedByThem`]. The paths are
+    /// boxed so every other kind stays small in the long conflict lists `status` builds.
+    RenameRename(Box<RenamedPaths>),
+}
+
+/// The three names in a [`ConflictKind::RenameRename`] conflict.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+pub struct RenamedPaths {
+    /// Path of the file in the merge base (left at stage 1).
+    pub base_path: String,
+    /// Name our side gave it (stage 2).
+    pub ours_path: String,
+    /// Name their side gave it (stage 3).
+    pub theirs_path: String,
 }
 
 impl ConflictKind {
     /// Stable snake_case name for JSON and scripting.
+    ///
+    /// One of `both_modified`, `both_added`, `both_deleted`, `added_by_us`, `added_by_them`,
+    /// `deleted_by_us`, `deleted_by_them` or `rename_rename`.
     #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Content => "content",
-            Self::AddAdd => "add_add",
-            Self::ModifyDelete { .. } => "modify_delete",
-            Self::RenameRename { .. } => "rename_rename",
+            Self::BothModified => "both_modified",
+            Self::BothAdded => "both_added",
+            Self::BothDeleted => "both_deleted",
+            Self::AddedByUs => "added_by_us",
+            Self::AddedByThem => "added_by_them",
+            Self::DeletedByUs => "deleted_by_us",
+            Self::DeletedByThem => "deleted_by_them",
+            Self::RenameRename(_) => "rename_rename",
         }
     }
 }
 
-/// One conflicted path from a tree merge or unmerged index stages 1–3.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One conflicted path, as reported by status and by every operation that can stop on
+/// conflicts.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct Conflict {
     /// Repository-relative path.
     pub path: String,
-    /// Conflict shape derived from unmerged index stages.
+    /// How the two sides collided on [`Self::path`].
+    #[cfg_attr(feature = "serde-models", serde(flatten))]
     pub kind: ConflictKind,
 }
 
-/// Derive [`ConflictKind`] from which unmerged index stages exist for a path.
+/// Classify a path from the set of unmerged index stages it has.
 ///
-/// Matches the classification used when recording merge conflicts from
-/// [`TreeMergeOutput`].
+/// `stagemask` has bit 0 set for stage 1 (base), bit 1 for stage 2 (ours) and bit 2 for
+/// stage 3 (theirs).
+///
+/// # Returns
+///
+/// The [`ConflictKind`] for that combination, or `None` when `stagemask` has no stage bit
+/// set or has bits above stage 3 (such a path is not unmerged).
 #[must_use]
-pub fn conflict_kind_from_stages(stage1: bool, stage2: bool, stage3: bool) -> ConflictKind {
-    match (stage1, stage2, stage3) {
-        (false, true, true) => ConflictKind::AddAdd,
-        (true, true, true) => ConflictKind::Content,
-        (true, false, true) => ConflictKind::ModifyDelete {
-            deleted_in_current: true,
-        },
-        (true, true, false) => ConflictKind::ModifyDelete {
-            deleted_in_current: false,
-        },
-        _ => ConflictKind::Content,
-    }
+pub fn conflict_kind_from_stagemask(stagemask: u8) -> Option<ConflictKind> {
+    Some(match stagemask {
+        0b001 => ConflictKind::BothDeleted,
+        0b010 => ConflictKind::AddedByUs,
+        0b011 => ConflictKind::DeletedByThem,
+        0b100 => ConflictKind::AddedByThem,
+        0b101 => ConflictKind::DeletedByUs,
+        0b110 => ConflictKind::BothAdded,
+        0b111 => ConflictKind::BothModified,
+        _ => return None,
+    })
 }
 
-/// Classify unmerged paths in `index` (sorted, deduplicated).
+/// Classify every unmerged path in `index`.
+///
+/// # Returns
+///
+/// One [`Conflict`] per path with an entry at stage 1, 2 or 3, in index (byte) order. Paths
+/// use [`crate::repo_relpath::storage_string`], so non-UTF-8 paths round-trip.
 #[must_use]
 pub fn conflicts_from_index(index: &Index) -> Vec<Conflict> {
-    let paths = conflict_path_bytes_from_index(index);
-    paths
+    let mut masks: BTreeMap<&[u8], u8> = BTreeMap::new();
+    for entry in index.entries() {
+        let stage = entry.stage();
+        if (1..=3).contains(&stage) {
+            *masks.entry(entry.path.as_slice()).or_default() |= 1 << (stage - 1);
+        }
+    }
+    masks
         .into_iter()
-        .map(|path_bytes| {
-            let stage1 = index.get(&path_bytes, 1).is_some();
-            let stage2 = index.get(&path_bytes, 2).is_some();
-            let stage3 = index.get(&path_bytes, 3).is_some();
-            Conflict {
-                path: String::from_utf8_lossy(&path_bytes).into_owned(),
-                kind: conflict_kind_from_stages(stage1, stage2, stage3),
-            }
+        .filter_map(|(path, mask)| {
+            Some(Conflict {
+                path: crate::repo_relpath::storage_string(path),
+                kind: conflict_kind_from_stagemask(mask)?,
+            })
         })
         .collect()
 }
@@ -113,16 +159,18 @@ pub fn conflicts_from_index(index: &Index) -> Vec<Conflict> {
 /// Collect conflicted paths and kinds from a three-way tree merge result.
 ///
 /// Paths of a [`TreeMergeOutput::rename_conflicts`] entry are reported as
-/// [`ConflictKind::RenameRename`]; every other path is classified by its unmerged stages.
+/// [`ConflictKind::RenameRename`]; every other path is classified by its unmerged stages,
+/// like [`conflicts_from_index`]. A path that only has conflict-marker content and no
+/// unmerged stages is [`ConflictKind::BothModified`].
 #[must_use]
 pub fn conflicts_from_tree_merge(merged: &TreeMergeOutput) -> Vec<Conflict> {
     let mut rename_kinds: HashMap<&[u8], ConflictKind> = HashMap::new();
     for rr in &merged.rename_conflicts {
-        let kind = ConflictKind::RenameRename {
+        let kind = ConflictKind::RenameRename(Box::new(RenamedPaths {
             base_path: String::from_utf8_lossy(&rr.base_path).into_owned(),
             ours_path: String::from_utf8_lossy(&rr.ours_path).into_owned(),
             theirs_path: String::from_utf8_lossy(&rr.theirs_path).into_owned(),
-        };
+        }));
         for path in [&rr.base_path, &rr.ours_path, &rr.theirs_path] {
             rename_kinds.insert(path.as_slice(), kind.clone());
         }
@@ -138,12 +186,12 @@ pub fn conflicts_from_tree_merge(merged: &TreeMergeOutput) -> Vec<Conflict> {
                     path,
                 };
             }
-            let stage1 = merged.index.get(path_bytes, 1).is_some();
-            let stage2 = merged.index.get(path_bytes, 2).is_some();
-            let stage3 = merged.index.get(path_bytes, 3).is_some();
+            let mask = (1..=3u8)
+                .filter(|&stage| merged.index.get(path_bytes, stage).is_some())
+                .fold(0u8, |mask, stage| mask | 1 << (stage - 1));
             Conflict {
                 path,
-                kind: conflict_kind_from_stages(stage1, stage2, stage3),
+                kind: conflict_kind_from_stagemask(mask).unwrap_or(ConflictKind::BothModified),
             }
         })
         .collect()
@@ -162,7 +210,7 @@ pub fn next_step_grit_commands(steps: &[NextStep]) -> Vec<String> {
 }
 
 /// Conflicted paths of a tree merge (marker blobs and unmerged stages), sorted and deduplicated.
-pub(crate) fn tree_merge_conflict_path_strings(merged: &TreeMergeOutput) -> Vec<String> {
+fn tree_merge_conflict_path_strings(merged: &TreeMergeOutput) -> Vec<String> {
     let mut paths: Vec<String> = merged
         .conflict_content
         .keys()
@@ -179,18 +227,6 @@ pub(crate) fn tree_merge_conflict_path_strings(merged: &TreeMergeOutput) -> Vec<
     paths.sort();
     paths.dedup();
     paths
-}
-
-fn conflict_path_bytes_from_index(index: &Index) -> Vec<Vec<u8>> {
-    use std::collections::BTreeSet;
-    let mut paths = BTreeSet::new();
-    for entry in index.entries() {
-        let stage = entry.stage();
-        if (1..=3).contains(&stage) {
-            paths.insert(entry.path.clone());
-        }
-    }
-    paths.into_iter().collect()
 }
 
 #[cfg(test)]
@@ -225,60 +261,95 @@ mod tests {
     }
 
     #[test]
-    fn conflict_kind_from_stages_content() {
-        assert_eq!(
-            conflict_kind_from_stages(true, true, true),
-            ConflictKind::Content
-        );
+    fn conflict_kind_from_stagemask_covers_every_unmerged_combination() {
+        let cases = [
+            (0b001, ConflictKind::BothDeleted),
+            (0b010, ConflictKind::AddedByUs),
+            (0b011, ConflictKind::DeletedByThem),
+            (0b100, ConflictKind::AddedByThem),
+            (0b101, ConflictKind::DeletedByUs),
+            (0b110, ConflictKind::BothAdded),
+            (0b111, ConflictKind::BothModified),
+        ];
+        for (mask, kind) in cases {
+            assert_eq!(conflict_kind_from_stagemask(mask), Some(kind), "{mask:#b}");
+        }
     }
 
     #[test]
-    fn conflict_kind_from_stages_add_add() {
-        assert_eq!(
-            conflict_kind_from_stages(false, true, true),
-            ConflictKind::AddAdd
-        );
-    }
-
-    #[test]
-    fn conflict_kind_from_stages_modify_delete_deleted_in_current() {
-        assert_eq!(
-            conflict_kind_from_stages(true, false, true),
-            ConflictKind::ModifyDelete {
-                deleted_in_current: true
-            }
-        );
-    }
-
-    #[test]
-    fn conflict_kind_from_stages_modify_delete_deleted_incoming() {
-        assert_eq!(
-            conflict_kind_from_stages(true, true, false),
-            ConflictKind::ModifyDelete {
-                deleted_in_current: false
-            }
-        );
+    fn conflict_kind_from_stagemask_rejects_masks_without_unmerged_stages() {
+        assert_eq!(conflict_kind_from_stagemask(0), None);
+        assert_eq!(conflict_kind_from_stagemask(0b1000), None);
+        assert_eq!(conflict_kind_from_stagemask(0xff), None);
     }
 
     #[test]
     fn conflict_kind_as_str_is_stable_snake_case() {
-        assert_eq!(ConflictKind::Content.as_str(), "content");
-        assert_eq!(ConflictKind::AddAdd.as_str(), "add_add");
+        let cases = [
+            (ConflictKind::BothModified, "both_modified"),
+            (ConflictKind::BothAdded, "both_added"),
+            (ConflictKind::BothDeleted, "both_deleted"),
+            (ConflictKind::AddedByUs, "added_by_us"),
+            (ConflictKind::AddedByThem, "added_by_them"),
+            (ConflictKind::DeletedByUs, "deleted_by_us"),
+            (ConflictKind::DeletedByThem, "deleted_by_them"),
+            (
+                ConflictKind::RenameRename(Box::new(RenamedPaths {
+                    base_path: "a".into(),
+                    ours_path: "b".into(),
+                    theirs_path: "c".into(),
+                })),
+                "rename_rename",
+            ),
+        ];
+        for (kind, name) in cases {
+            assert_eq!(kind.as_str(), name);
+        }
+    }
+
+    #[test]
+    fn conflict_kind_stays_two_words() {
+        assert!(std::mem::size_of::<ConflictKind>() <= 2 * std::mem::size_of::<usize>());
+    }
+
+    #[test]
+    fn conflicts_from_index_groups_stages_per_path_in_byte_order() {
+        let mut index = Index::new();
+        index.add_or_replace(index_entry("z", 1));
+        index.add_or_replace(index_entry("z", 3));
+        index.add_or_replace(index_entry("clean", 0));
+        index.add_or_replace(index_entry("a", 2));
+        index.add_or_replace(index_entry("a", 3));
+        let conflicts = conflicts_from_index(&index);
         assert_eq!(
-            ConflictKind::ModifyDelete {
-                deleted_in_current: true
-            }
-            .as_str(),
-            "modify_delete"
+            conflicts,
+            vec![
+                Conflict {
+                    path: "a".into(),
+                    kind: ConflictKind::BothAdded,
+                },
+                Conflict {
+                    path: "z".into(),
+                    kind: ConflictKind::DeletedByUs,
+                },
+            ]
         );
+    }
+
+    #[test]
+    fn conflicts_from_index_non_utf8_path_uses_storage_string() {
+        let mut index = Index::new();
+        for stage in 1..=3 {
+            let mut entry = index_entry("", stage);
+            entry.path = vec![0xff, b'a'];
+            index.add_or_replace(entry);
+        }
+        let conflicts = conflicts_from_index(&index);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].kind, ConflictKind::BothModified);
         assert_eq!(
-            ConflictKind::RenameRename {
-                base_path: "a".into(),
-                ours_path: "b".into(),
-                theirs_path: "c".into(),
-            }
-            .as_str(),
-            "rename_rename"
+            crate::repo_relpath::storage_bytes(&conflicts[0].path).as_ref(),
+            [0xff, b'a']
         );
     }
 
@@ -301,11 +372,11 @@ mod tests {
                 theirs_path: b"c".to_vec(),
             }],
         };
-        let kind = ConflictKind::RenameRename {
+        let kind = ConflictKind::RenameRename(Box::new(RenamedPaths {
             base_path: "a".into(),
             ours_path: "b".into(),
             theirs_path: "c".into(),
-        };
+        }));
         let conflicts = conflicts_from_tree_merge(&merged);
         let got: Vec<(&str, &ConflictKind)> = conflicts
             .iter()
@@ -317,12 +388,7 @@ mod tests {
                 ("a", &kind),
                 ("b", &kind),
                 ("c", &kind),
-                (
-                    "d",
-                    &ConflictKind::ModifyDelete {
-                        deleted_in_current: false
-                    }
-                ),
+                ("d", &ConflictKind::DeletedByThem),
             ]
         );
     }
@@ -344,14 +410,9 @@ mod tests {
         let conflicts = conflicts_from_tree_merge(&merged);
         assert_eq!(conflicts.len(), 2);
         assert_eq!(conflicts[0].path, "a.txt");
-        assert_eq!(conflicts[0].kind, ConflictKind::Content);
+        assert_eq!(conflicts[0].kind, ConflictKind::BothModified);
         assert_eq!(conflicts[1].path, "b.txt");
-        assert_eq!(
-            conflicts[1].kind,
-            ConflictKind::ModifyDelete {
-                deleted_in_current: false
-            }
-        );
+        assert_eq!(conflicts[1].kind, ConflictKind::DeletedByThem);
     }
 
     #[test]

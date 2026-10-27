@@ -201,7 +201,7 @@ fn merge_check_reports_two_files_renamed_to_one_name() -> TestResult {
     assert_eq!(json["result"], "conflicts");
     assert_eq!(
         conflict_rows(&json),
-        vec![("c".to_owned(), "add_add".to_owned())]
+        vec![("c".to_owned(), "both_added".to_owned())]
     );
     assert_eq!(git(root, &["rev-parse", "HEAD"]), head);
     assert!(git(root, &["status", "--porcelain"]).is_empty());

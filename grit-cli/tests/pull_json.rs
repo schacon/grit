@@ -326,7 +326,7 @@ fn pull_rebase_conflict_stops_for_rebase_continue() -> TestResult {
     assert_eq!(json["commit"], local_tip.trim());
     assert!(json.get("oid").is_none(), "nothing was integrated: {json}");
     assert_eq!(json["conflicts"], serde_json::json!(["f"]));
-    assert_eq!(json["conflict_details"][0]["kind"], "content");
+    assert_eq!(json["conflict_details"][0]["kind"], "both_modified");
     let next: Vec<&str> = json["next_steps"]
         .as_array()
         .unwrap()
@@ -369,7 +369,7 @@ fn pull_rebase_conflict_human_and_markdown_name_the_rebase() -> TestResult {
     let human = grit_cmd(&client, &["pull", "--rebase"]);
     assert!(!human.ok);
     assert!(
-        human.stderr.contains("CONFLICT (content): f"),
+        human.stderr.contains("CONFLICT (both_modified): f"),
         "{}",
         human.stderr
     );

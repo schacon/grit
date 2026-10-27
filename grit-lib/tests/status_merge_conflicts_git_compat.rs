@@ -1,7 +1,8 @@
 //! Issue #940: merge conflicts should appear once in status with merge-in-progress state.
 
 use grit_lib::config::environment::RepositoryOptions;
-use grit_lib::porcelain::status::{status, ConflictKind, StatusOptions};
+use grit_lib::operation::ConflictKind;
+use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NeverCancel;
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;

@@ -92,7 +92,7 @@ pub fn fixup(
     if merge.index.has_unmerged_entries() || !merge.conflict_content.is_empty() {
         return Err(HistoryError::Conflict {
             commit: target,
-            paths: crate::operation::tree_merge_conflict_path_strings(&merge),
+            conflicts: crate::operation::conflicts_from_tree_merge(&merge),
         });
     }
 

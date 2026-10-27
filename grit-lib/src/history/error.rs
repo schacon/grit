@@ -2,6 +2,7 @@
 
 use crate::error::Error;
 use crate::objects::ObjectId;
+use crate::operation::Conflict;
 use thiserror::Error;
 
 /// Failure modes while building a [`super::RewritePlan`](crate::history::RewritePlan).
@@ -70,8 +71,8 @@ pub enum HistoryError {
     Conflict {
         /// Original commit that could not be replayed cleanly.
         commit: ObjectId,
-        /// Repository-relative paths that conflicted, sorted and deduplicated.
-        paths: Vec<String>,
+        /// Conflicted paths and how they conflicted, sorted by path.
+        conflicts: Vec<Conflict>,
     },
 
     /// A merge commit cannot be dropped, reordered, or otherwise edited in an unsupported way.

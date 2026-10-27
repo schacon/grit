@@ -29,7 +29,22 @@ A tracked file that grit cannot open to compare its content (another program hol
 
 During a paused merge or grit rebase, human output also lists **Conflicts** grouped by kind (`both modified`, `both added`, …). In `--json`, each conflict is `{ "path", "kind" }` and `operation.next_steps` lists the ordered `grit` commands while an operation is paused (for example `grit diff` then `grit add .` with conflicts, or `grit merge --continue` / `grit rebase --continue` once conflicts are resolved). Use `operation.alternatives` for cancel paths such as `grit merge --abort` or `grit rebase --abort` (not part of the ordered sequence). Grit rebase sessions are detected via `.git/rebase-merge/grit-plan`.
 
-A rebase that `git` started (`.git/rebase-merge/` or `.git/rebase-apply/` without grit's plan) is recognised too. The header names the branch being rebased (`Rebasing topic onto 1a2b3c4`), JSON `branch` reports that branch, and `operation` is `rebase-interactive` (Git's default merge backend) or `rebase` (`git rebase --apply`). Its `next_steps` end with `git rebase --continue`, because only git can resume its own todo list. `grit rebase --abort` is listed in `alternatives` and cancels it. Conflict kinds match Git porcelain v2 unmerged XY codes: `both_modified` (UU), `both_added` (AA), `both_deleted` (DD), `added_by_us` (AU), `added_by_them` (UA), `deleted_by_us` (DU), `deleted_by_them` (UD).
+A rebase that `git` started (`.git/rebase-merge/` or `.git/rebase-apply/` without grit's plan) is recognised too. The header names the branch being rebased (`Rebasing topic onto 1a2b3c4`), JSON `branch` reports that branch, and `operation` is `rebase-interactive` (Git's default merge backend) or `rebase` (`git rebase --apply`). Its `next_steps` end with `git rebase --continue`, because only git can resume its own todo list. `grit rebase --abort` is listed in `alternatives` and cancels it.
+
+### Conflict kinds
+
+Every grit command that reports conflicts (`status`, `merge`, `pick`, `revert`, `rebase` and `pull`) names each conflicted path with the same `kind`. The kind says which sides still have the path: "us" is the side you were on when the operation started (`HEAD`), "them" is the side being brought in (the merged branch, the picked or reverted commit, or the commit a rebase is replaying). So a conflict reads the same in an operation's output and in `grit status` afterwards, and matches the unmerged XY code of `git status --porcelain=v2`:
+
+| `kind` | Human label | Git XY | Meaning |
+| ------ | ----------- | ------ | ------- |
+| `both_modified` | both modified | `UU` | Both sides changed the file. |
+| `both_added` | both added | `AA` | Both sides added the path with different content. |
+| `both_deleted` | both deleted | `DD` | Both sides removed the path. |
+| `added_by_us` | added by us | `AU` | Only our side has the path. |
+| `added_by_them` | added by them | `UA` | Only their side has the path. |
+| `deleted_by_us` | deleted by us | `DU` | We deleted the path and they changed it. |
+| `deleted_by_them` | deleted by them | `UD` | We changed the path and they deleted it. |
+| `rename_rename` | — | — | Both sides renamed one file to different names (`merge`, `pick`, `revert`, `rebase` and `pull` only; `status` shows the three paths as `both_deleted`, `added_by_us` and `added_by_them`). |
 
 ### Interrupted rebases and history edits
 
@@ -247,7 +262,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `clean` | boolean | `true` when there is nothing to commit and nothing untracked. |
 | `merging` | boolean | **Deprecated.** Prefer `operation`. `true` when a merge is in progress (`MERGE_HEAD` exists). |
 | `in_progress` | array | **Deprecated.** Prefer `operation`. Stable operation ids while work is paused (for example `merge`, `rebase`). Omitted when empty. |
-| `conflicts` | array | Unmerged paths. Each item is `{ "path": "<path>", "kind": "<kind>" }`. Omitted when empty. |
+| `conflicts` | array | Unmerged paths. Each item is `{ "path": "<path>", "kind": "<kind>" }`, with a [conflict kind](#conflict-kinds). Omitted when empty. |
 | `operation` | object or null | Primary paused operation: `{ "kind", "next_steps", "alternatives" }`. `next_steps` is the ordered sequence; `alternatives` lists mutually exclusive options (for example `grit merge --abort`). Steps are `grit` commands, except `git rebase --continue` for a rebase that git started. Omitted when no operation is in progress. |
 | `ignored` | array | Ignored paths when `--ignored` was passed; omitted otherwise. |
 | `stash_count` | number | Entries on the stash reflog (`0` when empty). |

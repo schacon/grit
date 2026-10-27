@@ -156,7 +156,7 @@ fn rebase_stops_on_conflict_json() -> TestResult {
     assert_eq!(json["operation"], "rebase");
     assert!(json["commit"].is_string());
     assert_eq!(json["conflicts"][0]["path"], "f.txt");
-    assert_eq!(json["conflicts"][0]["kind"], "content");
+    assert_eq!(json["conflicts"][0]["kind"], "both_modified");
     let steps = json["next_steps"].as_array().expect("next_steps array");
     assert_eq!(steps[0], "grit diff");
     assert_eq!(steps[1], "grit add .");
@@ -176,7 +176,7 @@ fn rebase_stops_on_conflict_json() -> TestResult {
       "commit": "[commit]",
       "conflicts": [
         {
-          "kind": "content",
+          "kind": "both_modified",
           "path": "f.txt"
         }
       ],
@@ -342,7 +342,7 @@ fn rebase_conflict_markdown_snapshot() -> TestResult {
     assert_eq!(out.status, Some(1));
     assert!(out.stdout.contains("## Rebase"));
     assert!(out.stdout.contains("Rebase stopped with conflicts"));
-    assert!(out.stdout.contains("**content** — `f.txt`"));
+    assert!(out.stdout.contains("**both_modified** — `f.txt`"));
     assert!(out.stdout.contains("grit rebase --continue"));
     assert!(out.stdout.contains("grit rebase --abort"));
     assert!(out.stdout.contains("grit rebase --skip"));

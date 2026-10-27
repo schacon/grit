@@ -18,12 +18,12 @@ use crate::error::{Error, OverwriteReason};
 use crate::fetch_request::{configured_remote_for_pull, resolve_remote_argument};
 use crate::merge_base::{count_symmetric_ahead_behind, is_ancestor, merge_bases_first_vs_rest};
 use crate::objects::ObjectId;
+use crate::operation::Conflict;
 use crate::porcelain::checkout::checkout_between_trees;
 use crate::porcelain::checkout_reflog::checkout_reflog_identity;
 use crate::porcelain::merge::{
     ensure_branch_tip, integrate_branch_with_options, predict_merge, update_checked_out_branch,
-    IntegrateBranchOptions, IntegrateBranchOutcome, MergeConflictDetail, MergePrediction,
-    MergePredictionOptions,
+    IntegrateBranchOptions, IntegrateBranchOutcome, MergePrediction, MergePredictionOptions,
 };
 use crate::porcelain::stash::{
     apply_operation_autostash, push_operation_autostash, restore_operation_autostash,
@@ -182,7 +182,7 @@ pub struct PullOutcome {
     pub upstream: Option<String>,
     /// Conflicted paths when [`Self::result`] is [`PullResult::Conflicts`] or
     /// [`PullResult::RebaseConflicts`].
-    pub conflicts: Option<Vec<MergeConflictDetail>>,
+    pub conflicts: Option<Vec<Conflict>>,
     /// For [`PullResult::RebaseConflicts`], the local commit that could not be replayed.
     pub stopped_commit: Option<ObjectId>,
     /// Autostash commit left on `refs/stash` because it could not be re-applied: the pull
