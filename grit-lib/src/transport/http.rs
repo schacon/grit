@@ -102,6 +102,37 @@ pub trait HttpClient: Send + Sync {
         )?)))
     }
 
+    /// Issue a `POST` whose body is read from `body` while it is sent, and return
+    /// the response body as a readable stream.
+    ///
+    /// Push uses this for request bodies too large to hold in memory (the
+    /// packfile), sending them with chunked transfer encoding. The body cannot be
+    /// replayed, so the client should not expect an authentication challenge
+    /// here: the caller posts a small probe request through
+    /// [`post_into_reader`](Self::post_into_reader) first, which settles
+    /// credentials the way Git does before a large push.
+    ///
+    /// The default implementation reads `body` into memory and calls
+    /// [`post_into_reader`](Self::post_into_reader). Embedders should override it
+    /// so large pushes are not buffered.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on a transport failure, a failure reading `body`, or a
+    /// non-success HTTP status (including `401`, since the body cannot be resent).
+    fn post_streaming(
+        &self,
+        url: &str,
+        content_type: &str,
+        accept: &str,
+        body: &mut dyn Read,
+        git_protocol: Option<&str>,
+    ) -> Result<Box<dyn Read + Send>> {
+        let mut buffered = Vec::new();
+        body.read_to_end(&mut buffered).map_err(Error::Io)?;
+        self.post_into_reader(url, content_type, accept, &buffered, git_protocol)
+    }
+
     /// Issue a `GET` to `url` and return both the response body and the final
     /// URL the request resolved to after any HTTP redirects the client followed
     /// (`None` when the client does not track it).
@@ -335,6 +366,17 @@ impl HttpClient for std::sync::Arc<dyn HttpClient> {
         (**self).post_into_reader(url, content_type, accept, body, git_protocol)
     }
 
+    fn post_streaming(
+        &self,
+        url: &str,
+        content_type: &str,
+        accept: &str,
+        body: &mut dyn Read,
+        git_protocol: Option<&str>,
+    ) -> Result<Box<dyn Read + Send>> {
+        (**self).post_streaming(url, content_type, accept, body, git_protocol)
+    }
+
     fn get_with_final_url(
         &self,
         url: &str,
@@ -393,6 +435,17 @@ impl<C: HttpClient> HttpClient for std::sync::Arc<C> {
         git_protocol: Option<&str>,
     ) -> Result<Box<dyn Read + Send>> {
         (**self).post_into_reader(url, content_type, accept, body, git_protocol)
+    }
+
+    fn post_streaming(
+        &self,
+        url: &str,
+        content_type: &str,
+        accept: &str,
+        body: &mut dyn Read,
+        git_protocol: Option<&str>,
+    ) -> Result<Box<dyn Read + Send>> {
+        (**self).post_streaming(url, content_type, accept, body, git_protocol)
     }
 
     fn get_with_final_url(

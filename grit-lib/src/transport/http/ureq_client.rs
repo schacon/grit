@@ -687,6 +687,36 @@ impl UreqHttpClient {
         finish(url, result, &self.transport_timeouts)
     }
 
+    /// A `POST` to `url` carrying the headers every smart-HTTP request sends.
+    fn post_request(
+        &self,
+        url: &str,
+        content_type: &str,
+        accept: &str,
+        git_protocol: Option<&str>,
+        auth: Option<&str>,
+    ) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
+        let mut req = self
+            .agent
+            .post(url)
+            .header("Content-Type", content_type)
+            .header("Accept", accept)
+            .header("User-Agent", &self.user_agent);
+        if let Some(v) = resolve_git_protocol_header(git_protocol, self.git_protocol.as_deref()) {
+            req = req.header("Git-Protocol", v);
+        }
+        if let Some(a) = auth {
+            req = req.header("Authorization", a);
+        }
+        if let Some(cookie) = self.cookie_header_for_url(url) {
+            req = req.header("Cookie", &cookie);
+        }
+        for (name, value) in self.extra_headers_for_url(url) {
+            req = req.header(&name, &value);
+        }
+        req
+    }
+
     fn do_post_open(
         &self,
         url: &str,
@@ -698,26 +728,8 @@ impl UreqHttpClient {
     ) -> Result<(RawResponseHead, LowSpeedReader<Box<dyn Read + Send>>)> {
         let idempotent = content_type == "application/x-git-upload-pack-request";
         let result = retry_interrupted(idempotent, || {
-            let mut req = self
-                .agent
-                .post(url)
-                .header("Content-Type", content_type)
-                .header("Accept", accept)
-                .header("User-Agent", &self.user_agent);
-            if let Some(v) = resolve_git_protocol_header(git_protocol, self.git_protocol.as_deref())
-            {
-                req = req.header("Git-Protocol", v);
-            }
-            if let Some(a) = auth {
-                req = req.header("Authorization", a);
-            }
-            if let Some(cookie) = self.cookie_header_for_url(url) {
-                req = req.header("Cookie", &cookie);
-            }
-            for (name, value) in self.extra_headers_for_url(url) {
-                req = req.header(&name, &value);
-            }
-            req.send(body)
+            self.post_request(url, content_type, accept, git_protocol, auth)
+                .send(body)
         });
         match result {
             Ok(resp) => open_response_body(resp, &self.transport_timeouts),
@@ -738,26 +750,8 @@ impl UreqHttpClient {
         // push (receive-pack) request is not.
         let idempotent = content_type == "application/x-git-upload-pack-request";
         let result = retry_interrupted(idempotent, || {
-            let mut req = self
-                .agent
-                .post(url)
-                .header("Content-Type", content_type)
-                .header("Accept", accept)
-                .header("User-Agent", &self.user_agent);
-            if let Some(v) = resolve_git_protocol_header(git_protocol, self.git_protocol.as_deref())
-            {
-                req = req.header("Git-Protocol", v);
-            }
-            if let Some(a) = auth {
-                req = req.header("Authorization", a);
-            }
-            if let Some(cookie) = self.cookie_header_for_url(url) {
-                req = req.header("Cookie", &cookie);
-            }
-            for (name, value) in self.extra_headers_for_url(url) {
-                req = req.header(&name, &value);
-            }
-            req.send(body)
+            self.post_request(url, content_type, accept, git_protocol, auth)
+                .send(body)
         });
         finish(url, result, &self.transport_timeouts)
     }
@@ -1093,6 +1087,36 @@ impl HttpClient for UreqHttpClient {
             body,
             git_protocol,
         )?))
+    }
+
+    fn post_streaming(
+        &self,
+        url: &str,
+        content_type: &str,
+        accept: &str,
+        body: &mut dyn Read,
+        git_protocol: Option<&str>,
+    ) -> Result<Box<dyn Read + Send>> {
+        let auth = self.cached_auth_header_for_url(url);
+        let result = self
+            .post_request(url, content_type, accept, git_protocol, auth.as_deref())
+            .send(ureq::SendBody::from_reader(body));
+        let (head, reader) = match result {
+            Ok(resp) => open_response_body(resp, &self.transport_timeouts)?,
+            Err(e) => return Err(http_transport_error(url, &e)),
+        };
+        self.invalidate_auth_on_cross_origin_redirect(url, &head.final_url);
+        self.save_response_cookies(&head.set_cookie);
+        if head.status == 401 {
+            drain_response_body(reader);
+            self.clear_auth_header();
+            return Err(auth_error(url, AuthFailure::Rejected));
+        }
+        if head.status >= 400 {
+            drain_response_body(reader);
+            return Err(http_status_error(url, head.status));
+        }
+        Ok(Box::new(reader))
     }
 
     fn get_with_final_url(
