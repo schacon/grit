@@ -742,6 +742,13 @@ pub struct RevListResult {
     pub left_right_map: HashMap<ObjectId, bool>,
     /// For `--cherry-mark`: set of commits that are equivalent (patch-id match).
     pub cherry_equivalent: HashSet<ObjectId>,
+    /// For `--cherry-mark`: which commits share each patch-id across the two sides of the
+    /// symmetric range, so callers can pair the versions of a rewritten change.
+    ///
+    /// Covers the whole range before `--skip` / `--max-count`, in the walk order of the
+    /// first commit of each group on the side that was hashed. Empty without
+    /// [`RevListOptions::cherry_mark`]. Index it with [`Self::cherry_match_index`].
+    pub cherry_matches: Vec<CherryMatch>,
     /// Per-commit object counts (parallel to `commits`) for `--in-commit-order`.
     /// When non-empty, `objects[sum(counts[..i])..sum(counts[..=i])]` are the objects
     /// introduced by `commits[i]`.
@@ -792,6 +799,169 @@ impl RevListResult {
         }
         self.commits.len() + self.objects.len()
     }
+
+    /// Map every commit in [`Self::cherry_matches`] to the group it belongs to.
+    #[must_use]
+    pub fn cherry_match_index(&self) -> HashMap<ObjectId, &CherryMatch> {
+        self.cherry_matches
+            .iter()
+            .flat_map(|group| {
+                group
+                    .left
+                    .iter()
+                    .chain(&group.right)
+                    .map(move |o| (*o, group))
+            })
+            .collect()
+    }
+}
+
+/// Commits on the two sides of a symmetric range (`A...B`) that share one patch-id.
+///
+/// Produced by [`RevListOptions::cherry_mark`]. Both sides are non-empty. When several
+/// commits on one side share the patch-id, the group stays many-to-many: no commit is
+/// paired with a particular counterpart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CherryMatch {
+    /// The shared stable patch-id (path-limited when the walk has paths).
+    pub patch_id: ObjectId,
+    /// Left-side commits (reachable from the left tip only) with this patch-id, in walk order.
+    pub left: Vec<ObjectId>,
+    /// Right-side commits (reachable from the right tip only) with this patch-id, in walk order.
+    pub right: Vec<ObjectId>,
+    /// For a one-to-one group, whether the two commit messages differ; `None` otherwise.
+    pub message_changed: Option<bool>,
+}
+
+impl CherryMatch {
+    /// The commit on the other side of a one-to-one group, or `None` for many-to-many groups
+    /// or a commit not in this group.
+    #[must_use]
+    pub fn counterpart(&self, oid: &ObjectId) -> Option<ObjectId> {
+        match (self.left.as_slice(), self.right.as_slice()) {
+            ([left], [right]) if left == oid => Some(*right),
+            ([left], [right]) if right == oid => Some(*left),
+            _ => None,
+        }
+    }
+}
+
+/// A patch-id group before messages are compared.
+struct CherryPatchGroup {
+    patch_id: ObjectId,
+    left: Vec<ObjectId>,
+    right: Vec<ObjectId>,
+}
+
+impl CherryPatchGroup {
+    fn into_match(self, repo: &Repository) -> Result<CherryMatch> {
+        let message_changed = match (self.left.as_slice(), self.right.as_slice()) {
+            ([left], [right]) => Some(
+                repo.odb().read_commit(left)?.message != repo.odb().read_commit(right)?.message,
+            ),
+            _ => None,
+        };
+        Ok(CherryMatch {
+            patch_id: self.patch_id,
+            left: self.left,
+            right: self.right,
+            message_changed,
+        })
+    }
+}
+
+/// Fewest commits per worker before [`map_commits_in_parallel`] spawns threads; below this a
+/// per-commit diff is cheaper than a thread start.
+const PARALLEL_COMMIT_MAP_MIN_PER_THREAD: usize = 16;
+
+/// Apply `f` to every commit, splitting large lists across scoped worker threads.
+///
+/// Results keep the order of `commits`. Used for per-commit work that only reads the
+/// object database, such as patch-ids.
+pub(crate) fn map_commits_in_parallel<T, F>(commits: &[ObjectId], f: F) -> Vec<T>
+where
+    T: Send,
+    F: Fn(&ObjectId) -> T + Sync,
+{
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, 8)
+        .min(commits.len() / PARALLEL_COMMIT_MAP_MIN_PER_THREAD);
+    if threads <= 1 {
+        return commits.iter().map(f).collect();
+    }
+    let chunk = commits.len().div_ceil(threads);
+    let f = &f;
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = commits
+            .chunks(chunk)
+            .map(|part| scope.spawn(move || part.iter().map(f).collect::<Vec<T>>()))
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    })
+}
+
+/// Group left and right commits by patch-id, keeping only ids present on both sides.
+///
+/// Hashes the smaller side first and probes with the other, as Git's cherry detection does,
+/// so commits on the larger side whose patch-id matches nothing are hashed once and dropped.
+fn cherry_patch_groups(
+    repo: &Repository,
+    left_commits: &[ObjectId],
+    right_commits: &[ObjectId],
+    paths: &[String],
+) -> Vec<CherryPatchGroup> {
+    let left_first = !left_commits.is_empty()
+        && !right_commits.is_empty()
+        && left_commits.len() < right_commits.len();
+    let (hashed, probed) = if left_first {
+        (left_commits, right_commits)
+    } else {
+        (right_commits, left_commits)
+    };
+    let patch_id = |oid: &ObjectId| compute_cherry_patch_id(repo, oid, paths).ok().flatten();
+    let mut by_patch: HashMap<ObjectId, usize> = HashMap::new();
+    let mut groups: Vec<(ObjectId, Vec<ObjectId>, Vec<ObjectId>)> = Vec::new();
+    for (oid, pid) in hashed.iter().zip(map_commits_in_parallel(hashed, patch_id)) {
+        let Some(pid) = pid else { continue };
+        let idx = *by_patch.entry(pid).or_insert_with(|| {
+            groups.push((pid, Vec::new(), Vec::new()));
+            groups.len() - 1
+        });
+        groups[idx].1.push(*oid);
+    }
+    if by_patch.is_empty() {
+        return Vec::new();
+    }
+    for (oid, pid) in probed.iter().zip(map_commits_in_parallel(probed, patch_id)) {
+        if let Some(&idx) = pid.and_then(|pid| by_patch.get(&pid)) {
+            groups[idx].2.push(*oid);
+        }
+    }
+    groups
+        .into_iter()
+        .filter(|(_, _, probed)| !probed.is_empty())
+        .map(|(patch_id, hashed, probed)| {
+            let (left, right) = if left_first {
+                (hashed, probed)
+            } else {
+                (probed, hashed)
+            };
+            CherryPatchGroup {
+                patch_id,
+                left,
+                right,
+            }
+        })
+        .collect()
 }
 
 /// Per-commit bisection score for `rev-list --bisect*` output.
@@ -1043,6 +1213,7 @@ pub fn rev_list(
                 boundary_commits: Vec::new(),
                 left_right_map: HashMap::new(),
                 cherry_equivalent: HashSet::new(),
+                cherry_matches: Vec::new(),
                 per_commit_object_counts: Vec::new(),
                 object_walk_tips: Vec::new(),
                 objects_print_commit: Vec::new(),
@@ -1332,6 +1503,7 @@ pub fn rev_list(
             boundary_commits: Vec::new(),
             left_right_map: HashMap::new(),
             cherry_equivalent: HashSet::new(),
+            cherry_matches: Vec::new(),
             per_commit_object_counts: Vec::new(),
             object_walk_tips: Vec::new(),
             objects_print_commit: Vec::new(),
@@ -1505,6 +1677,7 @@ pub fn rev_list(
     // Cherry-pick / cherry-mark: match commits by Git-compatible patch-id (see `git revision.c`
     // `cherry_pick_list`, used by `git rebase` todo generation).
     let mut cherry_equivalent = HashSet::new();
+    let mut cherry_matches = Vec::new();
     if options.cherry_pick || options.cherry_mark {
         let left_commits: Vec<_> = ordered
             .iter()
@@ -1516,39 +1689,15 @@ pub fn rev_list(
             .filter(|o| left_right_map.get(o) == Some(&false))
             .copied()
             .collect();
-        let left_first = !left_commits.is_empty()
-            && !right_commits.is_empty()
-            && left_commits.len() < right_commits.len();
-
-        let mut by_patch: HashMap<ObjectId, Vec<ObjectId>> = HashMap::new();
-        if left_first {
-            for oid in &left_commits {
-                if let Ok(Some(pid)) = compute_cherry_patch_id(repo, oid, &options.paths) {
-                    by_patch.entry(pid).or_default().push(*oid);
-                }
-            }
-            for oid in &right_commits {
-                if let Ok(Some(pid)) = compute_cherry_patch_id(repo, oid, &options.paths) {
-                    if let Some(others) = by_patch.get(&pid) {
-                        cherry_equivalent.insert(*oid);
-                        cherry_equivalent.extend(others.iter().copied());
-                    }
-                }
-            }
-        } else {
-            for oid in &right_commits {
-                if let Ok(Some(pid)) = compute_cherry_patch_id(repo, oid, &options.paths) {
-                    by_patch.entry(pid).or_default().push(*oid);
-                }
-            }
-            for oid in &left_commits {
-                if let Ok(Some(pid)) = compute_cherry_patch_id(repo, oid, &options.paths) {
-                    if let Some(others) = by_patch.get(&pid) {
-                        cherry_equivalent.insert(*oid);
-                        cherry_equivalent.extend(others.iter().copied());
-                    }
-                }
-            }
+        let groups = cherry_patch_groups(repo, &left_commits, &right_commits, &options.paths);
+        for group in &groups {
+            cherry_equivalent.extend(group.left.iter().chain(&group.right).copied());
+        }
+        if options.cherry_mark {
+            cherry_matches = groups
+                .into_iter()
+                .map(|group| group.into_match(repo))
+                .collect::<Result<_>>()?;
         }
     }
 
@@ -1872,6 +2021,7 @@ pub fn rev_list(
         boundary_commits,
         left_right_map,
         cherry_equivalent,
+        cherry_matches,
         per_commit_object_counts,
         object_walk_tips: object_walk_tip_commits,
         objects_print_commit,
@@ -6001,6 +6151,7 @@ fn rev_list_result_from_commits_with_linkage(
         boundary_commits: Vec::new(),
         left_right_map: HashMap::new(),
         cherry_equivalent: HashSet::new(),
+        cherry_matches: Vec::new(),
         per_commit_object_counts: Vec::new(),
         object_walk_tips: Vec::new(),
         objects_print_commit: Vec::new(),
@@ -6315,6 +6466,7 @@ fn try_rev_list_accelerated(
         boundary_commits: Vec::new(),
         left_right_map: HashMap::new(),
         cherry_equivalent: HashSet::new(),
+        cherry_matches: Vec::new(),
         per_commit_object_counts: Vec::new(),
         object_walk_tips: if options.objects {
             filter_want_tips
@@ -10618,6 +10770,35 @@ mod line_coverage_tests {
         }
         fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n")).expect("main");
         (dir, repo, tip)
+    }
+
+    #[test]
+    fn cherry_match_counterpart_and_index() {
+        let oid = |b: u8| ObjectId::from_bytes(&[b; 20]).expect("oid");
+        let one_to_one = CherryMatch {
+            patch_id: oid(9),
+            left: vec![oid(1)],
+            right: vec![oid(2)],
+            message_changed: Some(true),
+        };
+        let many = CherryMatch {
+            patch_id: oid(8),
+            left: vec![oid(3), oid(4)],
+            right: vec![oid(5)],
+            message_changed: None,
+        };
+        assert_eq!(one_to_one.counterpart(&oid(1)), Some(oid(2)));
+        assert_eq!(one_to_one.counterpart(&oid(2)), Some(oid(1)));
+        assert_eq!(one_to_one.counterpart(&oid(3)), None);
+        assert_eq!(many.counterpart(&oid(5)), None);
+
+        let mut result = rev_list_result_from_commits(Vec::new());
+        result.cherry_matches = vec![one_to_one.clone(), many.clone()];
+        let index = result.cherry_match_index();
+        assert_eq!(index.len(), 5);
+        assert_eq!(index[&oid(2)], &one_to_one);
+        assert_eq!(index[&oid(4)], &many);
+        assert!(!index.contains_key(&oid(9)));
     }
 
     #[test]

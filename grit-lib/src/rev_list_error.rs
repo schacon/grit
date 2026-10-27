@@ -38,8 +38,10 @@ pub enum RevListError {
     #[error("invalid argument to --no-walk")]
     InvalidNoWalkArgument,
 
-    /// [`crate::revwalk::RevWalk::left_right_counts`] requires a single `A...B` token.
-    #[error("symmetric revision range (A...B) required for left/right commit counts")]
+    /// [`crate::revwalk::RevWalk::left_right_counts`], and listings with
+    /// [`crate::revwalk::RevWalkListOptions::left_right`] or
+    /// [`crate::revwalk::RevWalkListOptions::cherry_mark`], require a single `A...B` token.
+    #[error("symmetric revision range (A...B) required to compare left and right commits")]
     SymmetricRangeRequired,
 
     /// [`crate::revwalk::RevWalk::walk`] got something other than one revision or range: an

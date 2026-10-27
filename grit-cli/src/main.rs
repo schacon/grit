@@ -952,9 +952,14 @@ enum Command {
         /// Print only the number of reachable commits.
         #[arg(long)]
         count: bool,
-        /// With `--count`, print left/right counts for a symmetric range (`A...B`).
+        /// Mark each commit of a symmetric range (`A...B`) as left or right; with `--count`,
+        /// print left/right counts instead.
         #[arg(long = "left-right")]
         left_right: bool,
+        /// Pair the two sides of a symmetric range (`A...B`) by patch-id and mark
+        /// equivalent commits (implies `--left-right`).
+        #[arg(long = "cherry-mark", conflicts_with = "count")]
+        cherry_mark: bool,
     },
     /// Find merge bases or test whether one commit is an ancestor of another.
     #[command(name = "merge-base")]
@@ -1234,10 +1239,11 @@ enum Command {
         #[command(subcommand)]
         action: Option<HooksAction>,
     },
-    /// Print stable patch-IDs for one or more commits.
+    /// Print stable patch-IDs for commits or revision ranges.
     #[command(name = "patch-id")]
     PatchId {
-        /// Commits or revisions to hash (merge commits are skipped).
+        /// Commits or ranges to hash; `A..B` and `A...B` expand to one ID per commit
+        /// (merge commits are skipped).
         #[arg(value_name = "REV")]
         revs: Vec<String>,
         /// Use legacy unstable patch-ID algorithm (Git 1.9 and older).
@@ -2826,8 +2832,17 @@ fn dispatch(
             pathspecs,
             count,
             left_right,
+            cherry_mark,
         } => emit_success(
-            &commands::revs::run(rev, pathspecs, count, left_right)?,
+            &commands::revs::run(
+                rev,
+                pathspecs,
+                commands::revs::RevsMode {
+                    count,
+                    left_right,
+                    cherry_mark,
+                },
+            )?,
             opts,
             ctx,
         ),

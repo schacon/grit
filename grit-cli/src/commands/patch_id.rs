@@ -4,7 +4,6 @@ use std::io::Write;
 
 use anyhow::{bail, Result};
 use grit_lib::diff::patch_ids::PatchIdMode;
-use grit_lib::revwalk::rev_parse::resolve_revision_without_index_dwim;
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -49,7 +48,7 @@ impl MarkdownRender for PatchIdOutcome {
     }
 }
 
-/// Resolve revisions and compute patch-IDs (stable by default).
+/// Resolve revisions (expanding ranges) and compute patch-IDs (stable by default).
 pub fn run(revs: &[String], unstable: bool) -> Result<PatchIdOutcome> {
     if revs.is_empty() {
         bail!("specify at least one revision");
@@ -60,20 +59,14 @@ pub fn run(revs: &[String], unstable: bool) -> Result<PatchIdOutcome> {
         PatchIdMode::Stable
     };
     let repo = context::discover()?;
-    let mut entries = Vec::new();
-    for rev in revs {
-        let oid = resolve_revision_without_index_dwim(&repo, rev)
-            .map_err(|e| anyhow::anyhow!("{rev}: {e}"))?;
-        let Some(patch_id) = repo
-            .patch_id(&oid, mode)
-            .map_err(|e| anyhow::anyhow!("{e}"))?
-        else {
-            continue;
-        };
-        entries.push(PatchIdLine {
+    let specs: Vec<&str> = revs.iter().map(String::as_str).collect();
+    let entries = repo
+        .patch_ids_for_revs(&specs, mode)?
+        .into_iter()
+        .map(|(patch_id, commit)| PatchIdLine {
             patch_id: patch_id.to_hex(),
-            commit: oid.to_hex(),
-        });
-    }
+            commit: commit.to_hex(),
+        })
+        .collect();
     Ok(PatchIdOutcome { entries })
 }

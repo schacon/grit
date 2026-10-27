@@ -1219,6 +1219,49 @@ impl Repository {
         crate::patch_ids::compute_patch_id(self.odb().hash_algo(), self.odb(), commit, mode)
     }
 
+    /// Patch-IDs for every commit named by `specs`, as `(patch_id, commit)` pairs.
+    ///
+    /// A spec that is a top-level range expands to the commits that range selects, in
+    /// default `rev-list` order: `A..B` lists the commits reachable from `B` but not `A`,
+    /// and `A...B` lists the commits on both sides of the symmetric difference in one
+    /// walk-ordered sequence without saying which side each came from (use
+    /// [`crate::revwalk::RevWalkListOptions::cherry_mark`] to compare the sides). Any
+    /// other spec names one object, resolved like `git rev-parse` without index-path
+    /// guessing. Merge commits and commits with no file changes are skipped, as in
+    /// [`Self::patch_id`]. Results follow the order of `specs`; a commit named twice
+    /// appears twice.
+    ///
+    /// # Errors
+    ///
+    /// Propagates rev-parse, merge-base, and rev-list errors for unresolvable specs, and
+    /// object database read/parse failures while diffing.
+    pub fn patch_ids_for_revs(
+        &self,
+        specs: &[&str],
+        mode: crate::patch_ids::PatchIdMode,
+    ) -> crate::error::Result<Vec<(crate::objects::ObjectId, crate::objects::ObjectId)>> {
+        let walk = self.rev_walk();
+        let walk_options = crate::revwalk::RevWalkListOptions::default();
+        let mut out = Vec::new();
+        for spec in specs {
+            let commits = if crate::rev_parse::is_top_level_range(spec) {
+                walk.commits(&[spec], &walk_options)?
+            } else {
+                vec![crate::rev_parse::resolve_revision_without_index_dwim(
+                    self, spec,
+                )?]
+            };
+            let patch_ids =
+                crate::rev_list::map_commits_in_parallel(&commits, |c| self.patch_id(c, mode));
+            for (patch_id, commit) in patch_ids.into_iter().zip(commits) {
+                if let Some(patch_id) = patch_id? {
+                    out.push((patch_id, commit));
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Reflog listing, deletion, and expiry for this repository.
     #[must_use]
     pub fn reflogs(&self) -> crate::repo_handles::RepositoryReflogs<'_> {

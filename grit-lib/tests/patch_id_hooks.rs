@@ -120,6 +120,176 @@ fn patch_id_matches_git_patch_id_stable() {
     }
 }
 
+fn git_rev_list_oids(dir: &std::path::Path, range: &str) -> Vec<ObjectId> {
+    git_in(dir, &["rev-list", range])
+        .lines()
+        .map(|l| l.parse().expect("rev-list oid"))
+        .collect()
+}
+
+fn git_stable_patch_id_of(dir: &std::path::Path, commit: &ObjectId) -> ObjectId {
+    let show = git_in(dir, &["show", "-p", &commit.to_hex()]);
+    git_patch_id_from_text(dir, show.as_bytes(), "--stable")
+}
+
+#[test]
+fn patch_ids_for_revs_expands_two_dot_range_like_git() {
+    let history = crate::support::HistoryRepo::init();
+    let wt = history.worktree();
+    crate::support::rewritten_branch_fixture(wt);
+    let repo = crate::support::open_grit_repo(wt);
+
+    let got = repo
+        .patch_ids_for_revs(&["main..old-feat"], PatchIdMode::Stable)
+        .expect("range patch-ids");
+    let want: Vec<(ObjectId, ObjectId)> = git_rev_list_oids(wt, "main..old-feat")
+        .into_iter()
+        .map(|c| (git_stable_patch_id_of(wt, &c), c))
+        .collect();
+    assert_eq!(want.len(), 3, "c1..c3 on the old branch");
+    assert_eq!(got, want, "rev-list order and git patch-id --stable");
+
+    let rewritten = repo
+        .patch_ids_for_revs(&["main..feat"], PatchIdMode::Stable)
+        .expect("rewritten range");
+    let old_ids: Vec<ObjectId> = got.iter().map(|(p, _)| *p).collect();
+    let new_ids: Vec<ObjectId> = rewritten.iter().map(|(p, _)| *p).collect();
+    assert_eq!(new_ids, old_ids, "rebase and c3 reword keep every patch-id");
+    assert_ne!(rewritten[0].1, got[0].1, "c3 was rewritten");
+}
+
+#[test]
+fn patch_ids_for_revs_mixes_single_revisions_and_symmetric_ranges() {
+    let history = crate::support::HistoryRepo::init();
+    let wt = history.worktree();
+    crate::support::rewritten_branch_fixture(wt);
+    let repo = crate::support::open_grit_repo(wt);
+
+    let got = repo
+        .patch_ids_for_revs(&["feat", "old-feat...feat", "feat"], PatchIdMode::Stable)
+        .expect("mixed specs");
+    let tip: ObjectId = git_in(wt, &["rev-parse", "feat"]).trim().parse().unwrap();
+    let symmetric = git_rev_list_oids(wt, "old-feat...feat");
+    assert_eq!(
+        symmetric.len(),
+        7,
+        "3 old commits, 3 rewritten and main's m"
+    );
+    let mut want_commits = vec![tip];
+    want_commits.extend(&symmetric);
+    want_commits.push(tip);
+    let got_commits: Vec<ObjectId> = got.iter().map(|(_, c)| *c).collect();
+    assert_eq!(got_commits, want_commits, "spec order, then walk order");
+    for (patch_id, commit) in &got {
+        assert_eq!(*patch_id, git_stable_patch_id_of(wt, commit), "{commit}");
+    }
+
+    let unstable = repo
+        .patch_ids_for_revs(&["main..old-feat"], PatchIdMode::Unstable)
+        .expect("unstable range");
+    let single: Vec<(ObjectId, ObjectId)> = git_rev_list_oids(wt, "main..old-feat")
+        .into_iter()
+        .map(|c| {
+            (
+                repo.patch_id(&c, PatchIdMode::Unstable).unwrap().unwrap(),
+                c,
+            )
+        })
+        .collect();
+    assert_eq!(unstable, single, "mode applies to every expanded commit");
+}
+
+#[test]
+fn patch_ids_and_cherry_mark_match_git_on_ranges_split_across_workers() {
+    let history = crate::support::HistoryRepo::init();
+    let wt = history.worktree();
+    crate::support::commit_file(wt, "base", "base\n", "base");
+    git_in(wt, &["branch", "-M", "main"]);
+    git_in(wt, &["switch", "-q", "-c", "topic"]);
+    for i in 0..40 {
+        crate::support::commit_file(wt, &format!("t{i}"), &format!("{i}\n"), &format!("t{i}"));
+    }
+    git_in(wt, &["branch", "old-topic"]);
+    git_in(wt, &["switch", "-q", "main"]);
+    crate::support::commit_file(wt, "up", "up\n", "upstream");
+    git_in(wt, &["switch", "-q", "topic"]);
+    git_in(wt, &["rebase", "-q", "main"]);
+    let repo = crate::support::open_grit_repo(wt);
+
+    let got = repo
+        .patch_ids_for_revs(&["old-topic...topic"], PatchIdMode::Stable)
+        .expect("range patch-ids");
+    let want: Vec<(ObjectId, ObjectId)> = git_rev_list_oids(wt, "old-topic...topic")
+        .into_iter()
+        .map(|c| (git_stable_patch_id_of(wt, &c), c))
+        .collect();
+    assert_eq!(want.len(), 81);
+    assert_eq!(got, want);
+
+    let opts = grit_lib::revwalk::RevWalkListOptions {
+        cherry_mark: true,
+        ..Default::default()
+    };
+    let result = repo
+        .rev_walk()
+        .rev_list_result(&["old-topic...topic"], &opts)
+        .expect("cherry-mark");
+    assert_eq!(result.cherry_matches.len(), 40);
+    assert!(result
+        .cherry_matches
+        .iter()
+        .all(|m| m.left.len() == 1 && m.right.len() == 1 && m.message_changed == Some(false)));
+    let marked = git_in(
+        wt,
+        &[
+            "rev-list",
+            "--left-right",
+            "--cherry-mark",
+            "old-topic...topic",
+        ],
+    );
+    let equivalent: Vec<&str> = marked.lines().filter_map(|l| l.strip_prefix('=')).collect();
+    assert_eq!(equivalent.len(), 80);
+    for oid in equivalent {
+        assert!(result.cherry_equivalent.contains(&oid.parse().unwrap()));
+    }
+}
+
+#[test]
+fn patch_ids_for_revs_skips_merges_and_rejects_unknown_specs() {
+    let history = crate::support::HistoryRepo::init();
+    let wt = history.worktree();
+    crate::support::rewritten_branch_fixture(wt);
+    git_in(wt, &["switch", "-q", "main"]);
+    git_in(
+        wt,
+        &["merge", "-q", "--no-ff", "-m", "merge old", "old-feat"],
+    );
+    let repo = crate::support::open_grit_repo(wt);
+
+    let got = repo
+        .patch_ids_for_revs(&["old-feat..main", "main"], PatchIdMode::Stable)
+        .expect("range with merge");
+    let commits: Vec<ObjectId> = got.iter().map(|(_, c)| *c).collect();
+    let m: ObjectId = git_in(wt, &["rev-parse", "main^1"]).trim().parse().unwrap();
+    assert_eq!(
+        commits,
+        vec![m],
+        "merge skipped in the range and as a single spec"
+    );
+
+    assert!(repo
+        .patch_ids_for_revs(&["main..no-such-branch"], PatchIdMode::Stable)
+        .is_err());
+    assert!(repo
+        .patch_ids_for_revs(&["no-such-branch"], PatchIdMode::Stable)
+        .is_err());
+    assert!(repo
+        .patch_ids_for_revs(&[], PatchIdMode::Stable)
+        .expect("no specs")
+        .is_empty());
+}
+
 fn git_patch_id_from_show(dir: &std::path::Path, flag: &str) -> ObjectId {
     let show_p = git_in(dir, &["show", "-p", "HEAD"]);
     git_patch_id_from_text(dir, show_p.as_bytes(), flag)
