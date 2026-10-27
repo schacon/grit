@@ -4878,6 +4878,15 @@ fn diff_index_to_worktree_inner(
         },
         sparse,
     )?;
+    // Size-changed entries ask whether their clean conversion is the identity in both the stat
+    // refresh and the visit below; resolve each one's attributes once.
+    let identity_by_entry = std::cell::RefCell::new(std::collections::HashMap::new());
+    let conversion_is_identity = |entry_index: usize, path: &str| -> bool {
+        *identity_by_entry
+            .borrow_mut()
+            .entry(entry_index)
+            .or_insert_with(|| crlf::git_conversion_is_identity(&conv, &file_attrs_for(path)))
+    };
     let refresh_checks = if refresh_index_stat_in_pass {
         let par_opts =
             refresh_hash_parallel_options(&thread_policy, &config, options.stat_parallel_threads);
@@ -4887,7 +4896,7 @@ fn diff_index_to_worktree_inner(
             &blob_stat_batches,
             index_mtime,
             stat_policy,
-            &|ie, stat| {
+            &|entry_index, ie, stat| {
                 !(use_fsmonitor_stat_skip && crate::fsmonitor::entry_skips_worktree_stat(ie, index))
                     && worktree_diff_refreshes_entry(
                         ie,
@@ -4896,9 +4905,9 @@ fn diff_index_to_worktree_inner(
                         stat_policy,
                         options.for_status,
                         || {
-                            crlf::git_conversion_is_identity(
-                                &conv,
-                                &file_attrs_for(&crate::repo_relpath::storage_string(&ie.path)),
+                            conversion_is_identity(
+                                entry_index,
+                                &crate::repo_relpath::storage_string(&ie.path),
                             )
                         },
                     )
@@ -4953,15 +4962,19 @@ fn diff_index_to_worktree_inner(
                         index_mtime,
                         stat_policy,
                         options.for_status,
-                        || crlf::git_conversion_is_identity(&conv, &file_attrs_for(path_str_ref)),
+                        || conversion_is_identity(entry_index, path_str_ref),
                     )
                 {
+                    let content_matches = RefreshContent::matches(
+                        refresh_checks[entry_index],
+                        &index.entries[entry_index].oid,
+                    );
                     let refresh = refresh_index_blob_stat_from_scan(
                         &mut index.entries[entry_index],
                         &stat,
                         index_mtime,
                         stat_policy,
-                        refresh_checks[entry_index].unwrap_or(false),
+                        content_matches,
                     );
                     if refresh.index_changed {
                         index_stat_refresh_changed = true;
@@ -4982,6 +4995,24 @@ fn diff_index_to_worktree_inner(
                 let ie = &index.entries[entry_index];
                 let worktree_mode =
                     mode_policy.index_mode_for_worktree(stat.git_mode, Some(ie.mode));
+                // The stat refresh already hashed this file and found other content, so do not
+                // read it again. Staging hashes again because it needs the blob stored.
+                if !materialize_dirty_blobs
+                    && !stat.is_dir
+                    && stat.git_mode != crate::index::MODE_SYMLINK
+                    && RefreshContent::differs(
+                        refresh_checks.get(entry_index).copied().flatten(),
+                        &ie.oid,
+                    )
+                {
+                    result.push(worktree_content_change_entry(
+                        ie,
+                        path_str_ref,
+                        worktree_mode,
+                        zero_oid(),
+                    ));
+                    return Ok(());
+                }
                 // Streaming jobs read regular files. Links and directories need the shared
                 // classifier; use the physical type so core.symlinks=false placeholders
                 // keep the regular-file fast path even with an effective symlink mode.
@@ -5011,7 +5042,7 @@ fn diff_index_to_worktree_inner(
                         stat.worktree_size(),
                         worktree_mode,
                         options.for_status,
-                        || crlf::git_conversion_is_identity(&conv, &file_attrs_for(path_str_ref)),
+                        || conversion_is_identity(entry_index, path_str_ref),
                         &mut result,
                     ) {
                     } else if !refresh_content_verified[entry_index] {
@@ -5954,7 +5985,7 @@ pub fn refresh_index_stat_content_verified_with_rules(
         &refresh_batches,
         index_mtime,
         stat_policy,
-        &|_, _| true,
+        &|_, _, _| true,
         &WorktreeHashContext {
             work_tree,
             precompose_unicode,
@@ -5969,12 +6000,14 @@ pub fn refresh_index_stat_content_verified_with_rules(
         let BlobDiskLookup::Present(stat) = lookup else {
             return Ok(());
         };
+        let content_matches =
+            RefreshContent::matches(refresh_checks[entry_index], &index.entries[entry_index].oid);
         let refresh = refresh_index_blob_stat_from_scan(
             &mut index.entries[entry_index],
             &stat,
             index_mtime,
             stat_policy,
-            refresh_checks[entry_index].unwrap_or(false),
+            content_matches,
         );
         if refresh.index_changed {
             changed = true;
@@ -6092,9 +6125,9 @@ struct WorktreeHashContext<'a> {
 /// file then shares the index's timestamp second. Hashing them here, in parallel when
 /// `par_opts` and the total size allow it, keeps that first scan from reading files one by one.
 ///
-/// Returns one slot per index entry: `Some(matches)` for scanned entries that `include` admits
-/// and [`refresh_needs_content_check`] selects, `None` elsewhere. Read and filter failures count
-/// as a mismatch, so those entries stay unverified.
+/// Returns one slot per index entry: `Some` for scanned entries that `include` (given the entry
+/// index) admits and [`refresh_needs_content_check`] selects, `None` elsewhere. Read and filter
+/// failures are [`RefreshContent::Failed`], so those entries stay unverified.
 #[allow(clippy::too_many_arguments)]
 fn refresh_content_checks(
     odb: &Odb,
@@ -6102,10 +6135,10 @@ fn refresh_content_checks(
     batches: &[Vec<(usize, crate::worktree_scan::BlobDiskLookup)>],
     index_mtime: Option<(u32, u32)>,
     stat_policy: crate::index::StatMatchPolicy,
-    include: &dyn Fn(&IndexEntry, &crate::worktree_scan::BlobDiskStat) -> bool,
+    include: &dyn Fn(usize, &IndexEntry, &crate::worktree_scan::BlobDiskStat) -> bool,
     ctx: &WorktreeHashContext<'_>,
     par_opts: crate::parallel::ParallelOptions,
-) -> Vec<Option<bool>> {
+) -> Vec<Option<RefreshContent>> {
     use crate::worktree_scan::BlobDiskLookup;
 
     /// Attributes are resolved on the calling thread: the shared rules are not `Sync`.
@@ -6122,7 +6155,9 @@ fn refresh_content_checks(
             continue;
         };
         let ie = &index.entries[*entry_index];
-        if !refresh_needs_content_check(ie, stat, index_mtime, stat_policy) || !include(ie, stat) {
+        if !refresh_needs_content_check(ie, stat, index_mtime, stat_policy)
+            || !include(*entry_index, ie, stat)
+        {
             continue;
         }
         total_bytes = total_bytes.saturating_add(ie.size as usize);
@@ -6152,7 +6187,7 @@ fn refresh_content_checks(
                     precompose_unicode,
                     ignorecase,
                 );
-                Ok(hash_worktree_file_with_mode(
+                Ok(RefreshContent::from(hash_worktree_file_with_mode(
                     odb,
                     &file_path,
                     job.worktree_mode,
@@ -6161,8 +6196,7 @@ fn refresh_content_checks(
                     &crate::repo_relpath::storage_string(&ie.path),
                     Some(ie),
                     filter_process,
-                )
-                .is_ok_and(|oid| oid == ie.oid))
+                )))
             },
         )
         .unwrap_or_else(|e| match e {
@@ -6178,7 +6212,7 @@ fn refresh_content_checks(
                     precompose_unicode,
                     ignorecase,
                 );
-                hash_worktree_file_with_mode(
+                RefreshContent::from(hash_worktree_file_with_mode(
                     odb,
                     &file_path,
                     job.worktree_mode,
@@ -6187,15 +6221,41 @@ fn refresh_content_checks(
                     &crate::repo_relpath::storage_string(&ie.path),
                     Some(ie),
                     filter_process,
-                )
-                .is_ok_and(|oid| oid == ie.oid)
+                ))
             })
             .collect()
     };
-    for (job, matched) in jobs.iter().zip(matches) {
-        checks[job.entry_index] = Some(matched);
+    for (job, content) in jobs.iter().zip(matches) {
+        checks[job.entry_index] = Some(content);
     }
     checks
+}
+
+/// What the stat refresh learned by hashing one entry's worktree file.
+#[derive(Clone, Copy)]
+enum RefreshContent {
+    /// The file could not be read or clean-converted.
+    Failed,
+    /// The cleaned file hashes to this blob id.
+    Hashed(ObjectId),
+}
+
+impl From<Result<ObjectId>> for RefreshContent {
+    fn from(hashed: Result<ObjectId>) -> Self {
+        hashed.map_or(Self::Failed, Self::Hashed)
+    }
+}
+
+impl RefreshContent {
+    /// Whether `check` proved the worktree still holds `oid`.
+    fn matches(check: Option<Self>, oid: &ObjectId) -> bool {
+        matches!(check, Some(Self::Hashed(hashed)) if hashed == *oid)
+    }
+
+    /// Whether `check` proved the worktree holds other content than `oid`.
+    fn differs(check: Option<Self>, oid: &ObjectId) -> bool {
+        matches!(check, Some(Self::Hashed(hashed)) if hashed != *oid)
+    }
 }
 
 /// Adopt the scanned `stat` for `ie` where that cannot hide a worktree change.
@@ -13019,6 +13079,58 @@ mod smudge_racily_clean_tests {
                 assert!(index_changed, "verified entry adopts the new stat");
                 assert_eq!(index.entries[0].size, 8);
             }
+        }
+    }
+
+    #[test]
+    fn status_diff_reads_size_changed_converted_file_once() {
+        for refresh_index_stat_in_pass in [false, true] {
+            let td = tempfile::tempdir().expect("tempdir");
+            let wt = td.path();
+            let (git_dir, odb) = minimal_repo(wt, "[core]\n");
+            fs::write(wt.join(".gitattributes"), "*.txt text eol=crlf\n").expect("attrs");
+            let rel = "n.txt";
+            let blob = odb
+                .write(ObjectKind::Blob, b"one\ntwo\n")
+                .expect("write blob");
+            let mut index = Index::new();
+            index.entries.push(staged_entry_with_oid(
+                wt,
+                rel,
+                b"one\r\ntwo\r\n",
+                blob,
+                (100, 0),
+            ));
+            fs::write(wt.join(rel), b"one\ntwo\nthree\n").expect("real edit");
+            let metrics = odb.hot_path_metrics();
+            metrics.reset_blob_content_reads();
+            metrics.set_blob_counting(true);
+            let (entries, _) = super::diff_index_to_worktree_with_options(
+                &odb,
+                &mut index,
+                wt,
+                super::DiffIndexToWorktreeOptions {
+                    index_mtime: Some((200, 0)),
+                    repository_git_dir: Some(git_dir),
+                    refresh_index_stat_in_pass,
+                    for_status: true,
+                    ..Default::default()
+                },
+            )
+            .expect("diff");
+            metrics.set_blob_counting(false);
+            assert_eq!(entries.len(), 1, "refresh={refresh_index_stat_in_pass}");
+            assert_eq!(entries[0].status, super::DiffStatus::Modified);
+            assert_eq!(entries[0].new_oid, zero_oid());
+            assert_eq!(
+                index.entries[0].size, 10,
+                "a modified file keeps its stale stat"
+            );
+            assert_eq!(
+                metrics.blob_content_reads(),
+                1,
+                "refresh={refresh_index_stat_in_pass}: read once, not again after the refresh"
+            );
         }
     }
 
