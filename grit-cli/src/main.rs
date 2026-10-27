@@ -2342,7 +2342,7 @@ fn run() -> Result<ExitStatus, anyhow::Error> {
         output::emit_error(&err, &opts);
         return Ok(ExitStatus::for_error(&err));
     }
-    let env = context::environment();
+    let env = context::freeze_environment();
     let render_ctx = RenderContext {
         now: context::wall_clock_now(&env),
     };
