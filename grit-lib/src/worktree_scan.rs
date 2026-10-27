@@ -35,6 +35,9 @@ static WORKTREE_METADATA_PROBE: AtomicUsize = AtomicUsize::new(0);
 /// Test hook: `read_dir` calls during directory-grouped blob scans.
 static WORKTREE_READ_DIR_PROBE: AtomicUsize = AtomicUsize::new(0);
 
+/// Test hook: `core.ignorecase` worktree path resolutions that probe the filesystem.
+static WORKTREE_PATH_RESOLVE_PROBE: AtomicUsize = AtomicUsize::new(0);
+
 /// Only syscalls under this root are counted, so tests scanning other worktrees in
 /// parallel do not inflate a probing test's counts.
 static WORKTREE_PROBE_ACTIVE: AtomicUsize = AtomicUsize::new(0);
@@ -71,6 +74,7 @@ pub fn reset_worktree_metadata_probe(root: &Path) -> WorktreeProbeScope {
         .unwrap_or_else(|e| e.into_inner()) = Some(root.to_path_buf());
     WORKTREE_METADATA_PROBE.store(0, Ordering::Relaxed);
     WORKTREE_READ_DIR_PROBE.store(0, Ordering::Relaxed);
+    WORKTREE_PATH_RESOLVE_PROBE.store(0, Ordering::Relaxed);
     WORKTREE_PROBE_ACTIVE.store(1, Ordering::Release);
     WorktreeProbeScope { _serial: serial }
 }
@@ -96,6 +100,19 @@ pub fn worktree_metadata_probe_count() -> usize {
 #[cfg(test)]
 pub(crate) fn worktree_read_dir_probe_count() -> usize {
     WORKTREE_READ_DIR_PROBE.load(Ordering::Relaxed)
+}
+
+/// Returns `core.ignorecase` path resolutions recorded since [`reset_worktree_metadata_probe`].
+#[doc(hidden)]
+pub fn worktree_path_resolve_probe_count() -> usize {
+    WORKTREE_PATH_RESOLVE_PROBE.load(Ordering::Relaxed)
+}
+
+/// Counts one filesystem-probing `core.ignorecase` path resolution for `path`.
+pub(crate) fn probe_worktree_path_resolution(path: &Path) {
+    if probe_counts(path) {
+        WORKTREE_PATH_RESOLVE_PROBE.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 /// Minimum tracked blob entries before parallel stat preload is considered.
@@ -182,12 +199,15 @@ fn sparse_stat_policy(sparse: BlobScanSparseMode) -> crate::index::StatMatchPoli
 
 /// When a directory scan stat disagrees with the index but path `symlink_metadata` agrees,
 /// prefer the path probe (Git `mingw_stat` / post-close semantics on Windows).
+///
+/// `target_abs` is only called for that fallback probe: resolving the indexed path can cost
+/// its own probe under `core.ignorecase`, which clean entries must not pay (#2167).
 #[cfg(windows)]
 fn align_lookup_stat_with_index_path_windows(
     index: &Index,
     entry_index: usize,
     lookup: BlobDiskLookup,
-    target_abs: &Path,
+    target_abs: impl FnOnce() -> PathBuf,
     stat_policy: crate::index::StatMatchPolicy,
 ) -> BlobDiskLookup {
     let BlobDiskLookup::Present(stat) = lookup else {
@@ -202,7 +222,7 @@ fn align_lookup_stat_with_index_path_windows(
     if stat.fields.mtime_and_size_match_index(ie) {
         return BlobDiskLookup::Present(stat);
     }
-    match symlink_metadata_path(target_abs) {
+    match symlink_metadata_path(&target_abs()) {
         Ok(meta) => {
             let path_stat = BlobDiskStat::from_metadata(&meta);
             if crate::diff::stat_matches_blob_stat(ie, &path_stat, stat_policy) {
@@ -698,17 +718,13 @@ fn collect_blob_lookups_in_directory(
             #[cfg(not(windows))]
             let _ = rel_path;
             #[cfg(windows)]
-            let lookup = {
-                let stat_policy = sparse_stat_policy(sparse);
-                let target = file_abs(rel_path);
-                align_lookup_stat_with_index_path_windows(
-                    index,
-                    entry_index,
-                    lookup,
-                    &target,
-                    stat_policy,
-                )
-            };
+            let lookup = align_lookup_stat_with_index_path_windows(
+                index,
+                entry_index,
+                lookup,
+                || file_abs(rel_path),
+                sparse_stat_policy(sparse),
+            );
             sink.push(index, entry_index, lookup)
         },
     )?;
@@ -766,16 +782,28 @@ where
     }
 
     if !LIST_PARENT_DIRECTORIES {
+        // `dir_abs` already resolved the parent's case/Unicode spelling, so the indexed name
+        // under it is the path `file_abs` would pick whenever it exists. Only a miss pays for
+        // `file_abs`, which may probe and list the directory to find another spelling.
+        let abs_dir = dir_abs(dir);
         for &entry_index in entry_indices {
             let rel_path = entry_rel_path(index, entry_index)?;
-            let target = file_abs(rel_path);
-            let lookup = match symlink_metadata_path(&target) {
-                Ok(meta) => BlobDiskLookup::Present(BlobDiskStat::from_metadata(&meta)),
-                Err(e) if e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(20) => {
-                    BlobDiskLookup::Missing
+            let file_name = entry_file_name(index, entry_index)?;
+            let direct = crate::index::worktree_path_from_index_rel(&abs_dir, file_name);
+            let lookup = match symlink_metadata_blob_lookup(&direct) {
+                BlobDiskLookup::Missing => {
+                    let target = file_abs(rel_path);
+                    if target == direct {
+                        BlobDiskLookup::Missing
+                    } else {
+                        symlink_metadata_blob_lookup(&target)
+                    }
                 }
-                Err(e) => return Err(Error::Io(e)),
+                lookup => lookup,
             };
+            if let BlobDiskLookup::Io(e) = lookup {
+                return Err(Error::Io(e));
+            }
             visit(entry_index, rel_path, lookup)?;
         }
         return Ok(());
@@ -787,8 +815,7 @@ where
         let entry_index = entry_indices[0];
         let rel_path = entry_rel_path(index, entry_index)?;
         let file_name = entry_file_name(index, entry_index)?;
-        let target = file_abs(rel_path);
-        let lookup = lookup_lone_blob_in_directory(&abs_dir, file_name, &target);
+        let lookup = lookup_lone_blob_in_directory(&abs_dir, file_name, || file_abs(rel_path));
         visit(entry_index, rel_path, lookup)?;
         return Ok(());
     }
@@ -932,7 +959,7 @@ where
 fn lookup_lone_blob_in_directory(
     abs_dir: &Path,
     index_file_name: &[u8],
-    target_abs: &Path,
+    target_abs: impl FnOnce() -> PathBuf,
 ) -> BlobDiskLookup {
     if probe_counts(abs_dir) {
         WORKTREE_READ_DIR_PROBE.fetch_add(1, Ordering::Relaxed);
@@ -955,22 +982,10 @@ fn lookup_lone_blob_in_directory(
             continue;
         }
         if dir_entry_name_matches(index_file_name, &entry) {
-            #[cfg(windows)]
-            return blob_lookup_from_dir_entry_or_path(Some(&entry), || target_abs.to_path_buf());
-            #[cfg(not(windows))]
-            return match dir_entry_metadata(&entry) {
-                Ok(m) => BlobDiskLookup::Present(BlobDiskStat::from_metadata(&m)),
-                Err(e) => BlobDiskLookup::Io(e),
-            };
+            return blob_lookup_from_dir_entry_or_path(Some(&entry), target_abs);
         }
     }
-    match symlink_metadata_path(target_abs) {
-        Ok(meta) => BlobDiskLookup::Present(BlobDiskStat::from_metadata(&meta)),
-        Err(e) if e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(20) => {
-            BlobDiskLookup::Missing
-        }
-        Err(e) => BlobDiskLookup::Io(e),
-    }
+    symlink_metadata_blob_lookup(&target_abs())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1252,7 +1267,6 @@ fn matching_dir_entry<'a>(
         .find(|entry| dir_entry_name_matches(index_file_name, entry))
 }
 
-#[cfg(windows)]
 fn symlink_metadata_blob_lookup(target_abs: &Path) -> BlobDiskLookup {
     match symlink_metadata_path(target_abs) {
         Ok(meta) => BlobDiskLookup::Present(BlobDiskStat::from_metadata(&meta)),
@@ -1310,13 +1324,7 @@ fn lookup_blob_in_directory(
             };
         }
     }
-    match symlink_metadata_path(&target_abs()) {
-        Ok(meta) => BlobDiskLookup::Present(BlobDiskStat::from_metadata(&meta)),
-        Err(e) if e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(20) => {
-            BlobDiskLookup::Missing
-        }
-        Err(e) => BlobDiskLookup::Io(e),
-    }
+    symlink_metadata_blob_lookup(&target_abs())
 }
 
 /// One directory listing keyed by raw file name (`.git` excluded).
@@ -1984,7 +1992,7 @@ mod tests {
             &index,
             0,
             BlobDiskLookup::Present(dir_stat),
-            Path::new("Z:\\no-such-path-for-align-probe\\missing.txt"),
+            || PathBuf::from("Z:\\no-such-path-for-align-probe\\missing.txt"),
             policy,
         );
         assert!(

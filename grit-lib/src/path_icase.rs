@@ -402,7 +402,11 @@ pub fn worktree_path_for_index_entry(
     ignorecase: bool,
 ) -> PathBuf {
     let direct = work_tree.join(index_rel);
-    if !ignorecase || direct.exists() {
+    if !ignorecase {
+        return direct;
+    }
+    crate::worktree_scan::probe_worktree_path_resolution(&direct);
+    if direct.exists() {
         return direct;
     }
     if let Some(spelling) = worktree_dentry_spelling(work_tree, index_rel) {

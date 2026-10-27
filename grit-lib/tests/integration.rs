@@ -1878,6 +1878,9 @@ mod worktree_remove_1232_regression;
 #[path = "worktree_scan_50k_probe_git_compat.rs"]
 mod worktree_scan_50k_probe_git_compat;
 #[cfg(feature = "full-tests")]
+#[path = "worktree_scan_ignorecase_git_compat.rs"]
+mod worktree_scan_ignorecase_git_compat;
+#[cfg(feature = "full-tests")]
 #[path = "worktree_scan_nested_49k_probe_git_compat.rs"]
 mod worktree_scan_nested_49k_probe_git_compat;
 #[cfg(feature = "full-tests")]
