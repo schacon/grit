@@ -51,7 +51,7 @@ On a case-insensitive filesystem (`core.ignorecase`), when the repository contai
 When an HTTP(S) server offers a prebuilt bundle through Git's `bundle-uri` protocol command (as [`grit serve`](../serve/) does), clone downloads that bundle first, unpacks it, and then fetches only what is newer than it. A bundle is a plain file, so the download resumes instead of starting over:
 
 - a connection that drops is picked up again from where it stopped, a few times, in the same run;
-- an interrupted clone (Ctrl-C, a lost network, a closed laptop) keeps what it downloaded in `$XDG_CACHE_HOME/grit/bundles` (`~/.cache/grit/bundles` by default). Run the same `grit clone` again and the download carries on from there. The partial clone directory is removed on Ctrl-C, so the command can simply be repeated.
+- an interrupted clone (Ctrl-C, a lost network, a closed laptop) keeps what it downloaded in `$XDG_CACHE_HOME/grit/bundles` (`~/.cache/grit/bundles` by default). Run the same `grit clone` again and the download carries on from there.
 
 The bundle download has its own display: an arrow and the bundle's URL, then a bar. A resumed download says where it picked up, and its bar shows the bytes from the earlier run in grey:
 
@@ -327,8 +327,34 @@ Markdown uses headings, bullet lists, and fenced blocks; pipe characters inside 
 | `1` | Destination not empty, checkout failure, or other error. Missing or refused credentials are `kind` `auth_required` / `auth_rejected` with a `hint` in `--json` and on the human `hint:` line. HTTPS credentials come from your credential helper, then an askpass program (`GIT_ASKPASS`, `core.askPass`, `SSH_ASKPASS`); see [Credentials](../agents/#credentials-https). |
 | `2` | Invalid flags ([`usage`](../exit-codes/)). |
 | `128` | Could not reach or read the source: missing path, DNS or connection failure, HTTP error status ([`remote_unreadable`](../exit-codes/)); a `404` adds a hint to check the URL. |
+| `130` | Interrupted with Ctrl-C ([`interrupted`](../exit-codes/)). The error is `operation cancelled` (`{"error":"operation cancelled"}` with `--json`). |
 
 See [Exit codes](../exit-codes/).
+
+### Interrupting a clone
+
+Ctrl-C stops a clone at any point: while it downloads, copies objects or checks out files. The first Ctrl-C asks the clone to stop; grit then rolls back the checkout, removes the destination directory it created (or empties one that already existed empty) and exits `130`. Nothing is left in the way, so the same `grit clone` command can simply be run again, and a bundle download carries on where it stopped. A duplicate signal that arrives with the first (`timeout -s INT` signals both the process and its group) is ignored; pressing Ctrl-C again later ends grit at once, without the cleanup.
+
+```console
+$ grit clone ../git git
+Cloning into 'git' ...
+^C
+error: operation cancelled
+$ echo $?
+130
+$ ls git
+ls: cannot access 'git': No such file or directory
+$ grit clone ../git git
+Cloning into 'git' ...
+✓ Cloned into git on master in 602ms
+
+  time      ·█·············▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  602ms
+            █ copying 3ms  · other 194ms  ▓ checkout 387ms
+  data      311 MiB received
+  objects   422,423
+  refs      1 branch · 1,012 tags
+  files     4,856 files · 48.0 MiB in the work tree
+```
 
 
 ## See also

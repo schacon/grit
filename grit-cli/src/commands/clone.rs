@@ -20,7 +20,7 @@ use crate::progress::summary::{
     join, plural, row_label, stdout_color, ObjectTypes, TransferSummary,
 };
 use crate::progress::{format_bytes, format_duration, paint, TerminalProgress, BOLD, DIM};
-use grit_lib::progress::{NeverCancel, ProgressPhase, ProgressUnit};
+use grit_lib::progress::{Cancel, ProgressPhase, ProgressUnit};
 
 /// Timing for one step of the clone.
 #[derive(Serialize, JsonSchema)]
@@ -535,17 +535,9 @@ pub fn run(mut opts: CloneRunOptions) -> Result<CloneOutcome> {
     let path = PathBuf::from(&dir);
     let dest_preexisted_empty = dest_preexisted_empty(&path);
     let started = Instant::now();
-
-    // Ctrl-C would leave a half-made clone in the way of running the same
-    // command again, which resumes an interrupted bundle download.
-    {
-        let path = path.clone();
-        let _ = ctrlc::set_handler(move || {
-            eprintln!();
-            cleanup_failed_clone(&path, dest_preexisted_empty);
-            std::process::exit(130);
-        });
-    }
+    // Cleanup must wait until the library has stopped writing, so Ctrl+C only
+    // cancels; the error arm below then removes the half-made clone.
+    let interrupt = crate::interrupt::InterruptCancel::install();
 
     // A clone always ends with a checkout, so the overall bar can size it.
     let mut term_progress = opts.quiet.progress(mode).with_overall(true);
@@ -568,6 +560,7 @@ pub fn run(mut opts: CloneRunOptions) -> Result<CloneOutcome> {
         &dir,
         started,
         &mut term_progress,
+        &interrupt,
     ) {
         Ok(outcome) => Ok(outcome),
         Err(err) => {
@@ -591,6 +584,7 @@ fn clone_into(
     dir: &str,
     started: Instant,
     term_progress: &mut TerminalProgress,
+    cancel: &dyn Cancel,
 ) -> Result<CloneOutcome> {
     let factory = crate::context::http_client_factory();
     let remote_name = run
@@ -620,12 +614,7 @@ fn clone_into(
         bundle_cache: bundle_cache_dir(),
     };
     let single_branch = clone_effective_single_branch(&clone_opts);
-    let outcome = clone_repo(
-        clone_opts,
-        &mut *term_progress,
-        &NeverCancel,
-        Some(&factory),
-    )?;
+    let outcome = clone_repo(clone_opts, &mut *term_progress, cancel, Some(&factory))?;
     let bundle = match &outcome.bundle {
         BundleSeed::Seeded(seeded) => Some(CloneBundleJson {
             uri: seeded.uri.clone(),

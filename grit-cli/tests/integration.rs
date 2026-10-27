@@ -104,6 +104,8 @@ mod clone_depth_branch;
 #[cfg(feature = "full-tests")]
 #[path = "clone_empty_remote.rs"]
 mod clone_empty_remote;
+#[path = "clone_interrupt.rs"]
+mod clone_interrupt;
 #[cfg(feature = "full-tests")]
 #[path = "clone_invalid_origin.rs"]
 mod clone_invalid_origin;

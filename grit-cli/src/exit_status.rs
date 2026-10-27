@@ -31,6 +31,8 @@ pub enum ExitStatus {
     RefusedNotFf,
     /// Invalid commit filter / pickaxe pattern (129).
     InvalidCommitFilter,
+    /// `grit clone` stopped by Ctrl+C after removing what it had created (130).
+    Interrupted,
     /// Passthrough from hooks or `rebase --exec` (any code).
     Custom(i32),
 }
@@ -45,6 +47,7 @@ impl ExitStatus {
             Self::Usage => 2,
             Self::RemoteUnreadable | Self::MissingPrerequisite | Self::RefusedNotFf => 128,
             Self::InvalidCommitFilter => 129,
+            Self::Interrupted => 130,
             Self::Custom(code) => code,
         }
     }
@@ -91,6 +94,13 @@ impl ExitStatus {
                 .is_some()
         }) {
             return Self::Usage;
+        }
+        if err.chain().any(|cause| {
+            cause
+                .downcast_ref::<grit_lib::remote::clone::CloneError>()
+                .is_some_and(grit_lib::remote::clone::CloneError::is_cancelled)
+        }) {
+            return Self::Interrupted;
         }
         if commands::remote::is_remote_usage_error(err) {
             return Self::Usage;
@@ -383,6 +393,17 @@ mod tests {
             },
         ));
         assert_eq!(ExitStatus::for_error(&auth), ExitStatus::Failure);
+
+        let cancelled = anyhow::Error::new(grit_lib::remote::clone::CloneError::Library(
+            grit_lib::error::Error::Cancelled,
+        ));
+        assert_eq!(ExitStatus::for_error(&cancelled), ExitStatus::Interrupted);
+        assert_eq!(ExitStatus::Interrupted.code(), 130);
+        assert_eq!(
+            ExitStatus::for_error(&anyhow::Error::new(grit_lib::error::Error::Cancelled)),
+            ExitStatus::Failure,
+            "only clone maps cancellation to 130"
+        );
 
         let pickaxe_err = grit_lib::diff::PickaxeError::InvalidPattern {
             pattern: "x".into(),
