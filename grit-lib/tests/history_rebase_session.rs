@@ -66,6 +66,38 @@ fn start_opts(upstream: ObjectId, onto: Option<ObjectId>, tip: ObjectId) -> Star
     }
 }
 
+/// Assert the finished rebase is the newest `HEAD` reflog entry, moving from `orig_tip` to the
+/// current `HEAD`, and that every `HEAD` log entry starts where the previous one ended.
+fn assert_head_reflog_records_rebase_finish(wt: &std::path::Path, orig_tip: ObjectId) {
+    let head = git_oid(wt, "HEAD");
+    assert_eq!(git_oid(wt, "HEAD@{0}"), head, "HEAD@{{0}} must be HEAD");
+    assert_eq!(
+        git_oid(wt, "HEAD@{1}"),
+        orig_tip,
+        "HEAD@{{1}} must be the pre-rebase tip"
+    );
+    let log = std::fs::read_to_string(wt.join(".git/logs/HEAD")).expect("HEAD log");
+    let entries: Vec<(&str, &str, &str)> = log
+        .lines()
+        .map(|line| {
+            let (header, message) = line.split_once('\t').expect("reflog message");
+            let mut oids = header.split(' ');
+            (
+                oids.next().expect("old"),
+                oids.next().expect("new"),
+                message,
+            )
+        })
+        .collect();
+    let &(old, new, message) = entries.last().expect("entries");
+    assert_eq!(old, orig_tip.to_hex());
+    assert_eq!(new, head.to_hex());
+    assert_eq!(message, "rebase");
+    for pair in entries.windows(2) {
+        assert_eq!(pair[1].0, pair[0].1, "HEAD reflog chain broken: {log}");
+    }
+}
+
 fn commit_file(wt: &std::path::Path, path: &str, contents: &str, msg: &str) {
     std::fs::write(wt.join(path), contents).expect("write");
     git(wt, &["add", path]);
@@ -224,6 +256,7 @@ fn rebase_session_conflict_stop_continue_and_abort() {
     assert!(!grit.git_dir().join("rebase-merge").exists());
     assert_ne!(git_oid(wt, "topic"), orig_tip);
     assert_eq!(git(wt, &["show", "HEAD:f.txt"]), "resolved\n");
+    assert_head_reflog_records_rebase_finish(wt, orig_tip);
     assert_git_fsck_strict(wt);
 
     // Abort path on a fresh conflict stop.
@@ -303,6 +336,7 @@ fn skip_drops_conflicting_commit() {
     assert_eq!(git(wt, &["show", "HEAD:f.txt"]), "main change\n");
     assert!(git(wt, &["status", "--porcelain"]).trim().is_empty());
     assert!(!grit.git_dir().join("rebase-merge").exists());
+    assert_head_reflog_records_rebase_finish(wt, tip);
     assert_git_fsck_strict(wt);
 }
 
@@ -1543,6 +1577,114 @@ fn multiple_conflict_stops_report_the_last_invocation_head_change() {
     assert_eq!(git(wt, &["show", "HEAD:g.txt"]), "resolved g\n");
     assert!(git(wt, &["status", "--porcelain"]).trim().is_empty());
     assert!(!grit.git_dir().join("rebase-merge").exists());
+    assert_head_reflog_records_rebase_finish(wt, tip);
+    assert_git_fsck_strict(wt);
+}
+
+#[test]
+fn rewrite_after_continue_extends_the_head_reflog_chain() {
+    let (repo, upstream, onto, tip, orig_tip) = conflict_rebase_fixture();
+    let wt = repo.worktree();
+    git(wt, &["switch", "topic"]);
+    let grit = open_grit(wt);
+    let opts = start_opts(upstream, Some(onto), tip);
+    assert!(matches!(
+        start_rebase(
+            &grit,
+            &opts,
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
+        .expect("start"),
+        RebaseOutcome::Stopped(_)
+    ));
+    std::fs::write(wt.join("f.txt"), "resolved\n").expect("resolve");
+    git(wt, &["add", "f.txt"]);
+    continue_rebase(
+        &grit,
+        &opts,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("continue");
+    let rebased = git_oid(wt, "HEAD");
+
+    let plan = grit_lib::revwalk::history::reword(
+        &grit,
+        rebased,
+        "reworded\n".into(),
+        &rebase_opts().rewrite,
+    )
+    .expect("plan reword");
+    grit_lib::revwalk::history::apply_rewrite(
+        &grit,
+        &plan,
+        &opts.apply,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("apply reword");
+
+    let reworded = git_oid(wt, "HEAD");
+    assert_ne!(reworded, rebased);
+    assert_eq!(git_oid(wt, "HEAD@{1}"), rebased);
+    assert_eq!(git_oid(wt, "HEAD@{2}"), orig_tip);
+    let log = std::fs::read_to_string(wt.join(".git/logs/HEAD")).expect("HEAD log");
+    let last = log.lines().last().expect("entry");
+    assert!(last.starts_with(&format!("{} {} ", rebased.to_hex(), reworded.to_hex())));
+    assert_git_fsck_strict(wt);
+}
+
+#[test]
+fn failed_head_reflog_append_keeps_rebase_detached_and_abortable() {
+    let (repo, upstream, onto, tip, orig_tip) = conflict_rebase_fixture();
+    let wt = repo.worktree();
+    git(wt, &["switch", "topic"]);
+    let grit = open_grit(wt);
+    let opts = start_opts(upstream, Some(onto), tip);
+    assert!(matches!(
+        start_rebase(
+            &grit,
+            &opts,
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel,
+        )
+        .expect("start"),
+        RebaseOutcome::Stopped(_)
+    ));
+    std::fs::write(wt.join("f.txt"), "resolved\n").expect("resolve");
+    git(wt, &["add", "f.txt"]);
+
+    let head_log = wt.join(".git/logs/HEAD");
+    let saved_log = std::fs::read(&head_log).expect("HEAD log");
+    std::fs::remove_file(&head_log).expect("remove HEAD log");
+    std::fs::create_dir(&head_log).expect("block HEAD log");
+    continue_rebase(
+        &grit,
+        &opts,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect_err("HEAD reflog append must fail");
+
+    assert!(
+        matches!(
+            resolve_head(grit.git_dir()).unwrap(),
+            HeadState::Detached { .. }
+        ),
+        "HEAD must stay detached until the finish is logged"
+    );
+    assert!(grit.git_dir().join("rebase-merge").is_dir());
+
+    std::fs::remove_dir(&head_log).expect("unblock HEAD log");
+    std::fs::write(&head_log, saved_log).expect("restore HEAD log");
+    abort_rebase(&grit, &test_ident()).expect("abort");
+    assert_eq!(git_oid(wt, "topic"), orig_tip);
+    assert_eq!(
+        resolve_head(grit.git_dir()).unwrap().branch_name(),
+        Some("topic")
+    );
+    assert!(!grit.git_dir().join("rebase-merge").exists());
     assert_git_fsck_strict(wt);
 }
 
@@ -1598,6 +1740,7 @@ fn skip_with_remaining_replay_reports_head_change() {
         Some("topic")
     );
     assert!(!grit.git_dir().join("rebase-merge").exists());
+    assert_head_reflog_records_rebase_finish(wt, tip);
     assert_git_fsck_strict(wt);
 }
 

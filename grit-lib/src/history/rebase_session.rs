@@ -24,7 +24,7 @@ use crate::repo::Repository;
 use crate::state::{resolve_head_for_repository, HeadState};
 use crate::write_tree::{write_tree_update_index, WriteTreeFlags};
 
-use super::apply::apply_rewrite;
+use super::apply::{apply_rewrite, log_head_move};
 use super::error::HistoryError;
 use super::plan::{plan_rewrite_with_order_resumable_seeded, ResumablePlanOutcome};
 use super::rebase::{plan_rebase_resumable, RebaseOntoOptions, RebasePlan, RebaseRequest};
@@ -884,6 +884,16 @@ fn advance_after_plan(
                 ..apply.clone()
             };
             let mut applied = apply_rewrite(repo, &plan, &apply_without_hooks, progress, cancel)?;
+            // The branch moved while HEAD was detached for the replay, so apply_rewrite only
+            // logged it on the branch; HEAD's log still ends at the pre-rebase tip. Log before
+            // reattaching so a failure leaves a detached, abortable rebase.
+            if let Some(branch) = plan
+                .ref_updates
+                .iter()
+                .find(|u| u.name == prev.head_ref && u.old != u.new)
+            {
+                log_head_move(repo, branch, apply)?;
+            }
             refs::write_symbolic_ref_on_store(repo.refs(), repo.git_dir(), "HEAD", &prev.head_ref)
                 .map_err(map_lib)?;
             let branch_tip = repo.resolve_ref_oid(&prev.head_ref).map_err(map_lib)?;
