@@ -390,24 +390,34 @@ fn history_drop_matches_git_history_when_available() {
     }
     let grit_dir = tempfile::tempdir().expect("grit dir");
     let git_dir = tempfile::tempdir().expect("git dir");
-    for dir in [grit_dir.path(), git_dir.path()] {
-        git(dir, &["init", "-b", "main"]);
-        commit_file(dir, "first.t", "1\n", "first");
-        commit_file(dir, "second.t", "2\n", "second");
-        commit_file(dir, "third.t", "3\n", "third");
-    }
+    // Build the history once and clone it: the harness clock advances on every
+    // commit, so two separately built fixtures would not share commit ids.
+    git(grit_dir.path(), &["init", "-b", "main"]);
+    commit_file(grit_dir.path(), "first.t", "1\n", "first");
+    commit_file(grit_dir.path(), "second.t", "2\n", "second");
+    commit_file(grit_dir.path(), "third.t", "3\n", "third");
+    git(
+        grit_dir.path(),
+        &[
+            "clone",
+            grit_dir.path().to_str().expect("path"),
+            git_dir.path().to_str().expect("git path"),
+        ],
+    );
     let b = git(grit_dir.path(), &["rev-parse", "HEAD~"])
         .trim()
         .to_string();
     let grit = open_grit(grit_dir.path());
     git(grit_dir.path(), &["config", "grit.changeIds", "false"]);
+    // The same committer `git history drop` records from the environment below.
+    let replay_committer = "Test User <test@example.com> 1700000002 +0000".to_string();
     let plan = history_drop(
         &grit,
         b.parse().expect("oid"),
         &RewriteOptions {
             scope: RefScope::Head,
             empty: EmptyPolicy::Drop,
-            committer: committer(8).parse().expect("signature"),
+            committer: replay_committer.parse().expect("signature"),
             preserve_committer: false,
             sign: true,
         },

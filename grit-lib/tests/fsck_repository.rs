@@ -180,6 +180,13 @@ fn has_msg_id(report: &fsck::FsckReport, id: &str) -> bool {
     report.issues.iter().any(|i| fsck::issue_msg_id(i) == id)
 }
 
+/// Whether `git fsck` reported a present object it could not parse. Git 2.56
+/// words this "object corrupt or missing"; earlier versions "could not be parsed".
+fn git_reports_unparseable_object(git_text: &str) -> bool {
+    let lower = git_text.to_lowercase();
+    lower.contains("could not be parsed") || lower.contains("object corrupt or missing")
+}
+
 /// Git fsck wording for a commit whose `tree` line points at a non-tree object varies by version.
 fn git_reports_wrong_commit_tree_kind(git_text: &str) -> bool {
     let lower = git_text.to_lowercase();
@@ -1016,7 +1023,7 @@ fn malformed_reachable_commit_is_bad_object_not_error() {
     write_ref_loose(dir.path(), "refs/heads/main", bad);
     let git_text = git(dir.path(), &["fsck"]);
     assert!(
-        git_text.to_lowercase().contains("could not be parsed")
+        git_reports_unparseable_object(&git_text)
             || git_text.contains("bogus")
             || git_text.contains("badObject"),
         "{git_text}"
@@ -1055,7 +1062,7 @@ fn malformed_reachable_tree_is_bad_object_not_error() {
     );
     let git_text = git(dir.path(), &["fsck"]);
     assert!(
-        git_text.to_lowercase().contains("could not be parsed")
+        git_reports_unparseable_object(&git_text)
             || git_text.contains("badTree")
             || git_text.contains("bogus"),
         "{git_text}"
@@ -1120,7 +1127,7 @@ fn malformed_reachable_tag_is_bad_object_not_error() {
     write_ref_loose(dir.path(), "refs/tags/bad-tag", bad_tag);
     let git_text = git(dir.path(), &["fsck"]);
     assert!(
-        git_text.to_lowercase().contains("could not be parsed")
+        git_reports_unparseable_object(&git_text)
             || git_text.contains("badTag")
             || git_text.contains("bogus"),
         "{git_text}"
@@ -1161,7 +1168,7 @@ fn malformed_unreachable_commit_in_pack_is_bad_object() {
     );
     let git_text = git(dir.path(), &["fsck"]);
     assert!(
-        git_text.to_lowercase().contains("could not be parsed")
+        git_reports_unparseable_object(&git_text)
             || git_text.contains("bogus")
             || git_text.contains("badObject"),
         "{git_text}"

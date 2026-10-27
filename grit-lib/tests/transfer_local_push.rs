@@ -177,19 +177,37 @@ fn push_local_full_lifecycle() {
     fsck_clean(remote_git);
 
     // --- (d) delete the ref. ---
+    let delete_main = [PushRefSpec {
+        src: None,
+        src_ref: None,
+        dst: "refs/heads/main".to_owned(),
+        force: false,
+        delete: true,
+        expected_old: None,
+        expect_absent: false,
+        ..Default::default()
+    }];
+    // The remote's HEAD names main, and Git refuses to delete the current
+    // branch (bare or not) while receive.denyDeleteCurrent is unset.
     let outcome = push_local(
         &local_git,
         remote_git,
-        &[PushRefSpec {
-            src: None,
-            src_ref: None,
-            dst: "refs/heads/main".to_owned(),
-            force: false,
-            delete: true,
-            expected_old: None,
-            expect_absent: false,
-            ..Default::default()
-        }],
+        &delete_main,
+        &PushOptions::default(),
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("delete current branch push call");
+    assert_eq!(outcome.results[0].status, PushRefStatus::RemoteRejected);
+    assert_eq!(remote_ref(remote_git, "refs/heads/main"), Some(c2_prime));
+
+    git(
+        remote_git,
+        &["config", "receive.denyDeleteCurrent", "ignore"],
+    );
+    let outcome = push_local(
+        &local_git,
+        remote_git,
+        &delete_main,
         &PushOptions::default(),
         &grit_lib::progress::NeverCancel,
     )
