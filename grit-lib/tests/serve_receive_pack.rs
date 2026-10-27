@@ -12,7 +12,7 @@ use grit_lib::objects::ObjectId;
 use grit_lib::refs::resolve_ref;
 use grit_lib::remote::serve::{
     receive_pack, receive_pack_with_hook, ProtocolVersion, ReceiveHook, ReceiveOutcome,
-    ReceivePolicy, RefCommand, RefUpdateRefusal, ServeOptions, UnpackError,
+    ReceivePolicy, RefCommand, RefUpdateRefusal, ServeError, ServeOptions, UnpackError,
 };
 use grit_lib::repo::Repository;
 
@@ -590,4 +590,191 @@ fn large_blob_push_under_unpack_limit_materializes_loose() {
     );
     fsck(&bare);
     assert_eq!(resolve_ref(&bare, "refs/heads/main").expect("main"), tip);
+}
+
+/// A `--depth 1` clone of `src` with one new commit on top, as a CI checkout
+/// that pushes back. Returns the clone, its shallow boundary and the new tip.
+fn shallow_client(tmp: &Path, src: &Path) -> (std::path::PathBuf, ObjectId, ObjectId) {
+    let client = tmp.join("shallow-client");
+    let url = format!("file://{}", src.display());
+    git(
+        tmp,
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            &url,
+            client.to_str().expect("utf8 path"),
+        ],
+    );
+    let boundary = rev_parse(&client, "HEAD");
+    std::fs::write(client.join("pushed"), "from a shallow clone\n").expect("write");
+    git(&client, &["add", "pushed"]);
+    git(&client, &["commit", "-q", "-m", "pushed from shallow"]);
+    let tip = rev_parse(&client, "HEAD");
+    (client, boundary, tip)
+}
+
+/// A push body that announces `shallow` boundaries before the commands, as
+/// `git send-pack` does from a shallow repository.
+fn shallow_push_body(
+    shallow: &[ObjectId],
+    commands: &[(Option<ObjectId>, Option<ObjectId>, &str)],
+    pack: &[u8],
+) -> Vec<u8> {
+    let mut body: Vec<u8> = shallow
+        .iter()
+        .flat_map(|oid| pkt_line(&format!("shallow {}\n", oid.to_hex())))
+        .collect();
+    body.extend(push_body(commands, pack));
+    body
+}
+
+/// Issue #2136: the server has the full history, the client is a depth-1
+/// clone. Its `shallow` line must not be a protocol error, and the push needs
+/// no shallow update, so the ref moves and the server stays complete.
+#[test]
+fn shallow_client_push_onto_full_history_is_applied() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    source_repo(&src, 3);
+    let bare = tmp.path().join("bare.git");
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            src.to_str().expect("utf8"),
+            bare.to_str().expect("utf8"),
+        ],
+    );
+    let (client, boundary, tip) = shallow_client(tmp.path(), &src);
+    let pack = pack_for(&client, &[tip.to_hex(), format!("^{}", boundary.to_hex())]);
+
+    let repo = open(&bare);
+    let body = shallow_push_body(&[boundary], &[(None, Some(tip), "refs/heads/t1")], &pack);
+    let (outcome, report) = serve(&repo, &body, &ReceivePolicy::default(), &());
+
+    assert!(outcome.unpack_error.is_none(), "{report}");
+    assert_eq!(outcome.updates[0].error, None, "{report}");
+    assert!(report.contains("ok refs/heads/t1"), "{report}");
+    assert_eq!(resolve_ref(&bare, "refs/heads/t1").expect("t1"), tip);
+    assert!(
+        !bare.join("shallow").exists(),
+        "no shallow update was needed"
+    );
+    fsck(&bare);
+    assert_eq!(git(&bare, &["rev-list", "--count", "t1"]).trim(), "4");
+}
+
+#[test]
+fn malformed_shallow_line_is_a_protocol_error() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let tip = source_repo(&tmp.path().join("src"), 1);
+    let bare = tmp.path().join("bare.git");
+    let repo = bare_repo(&bare);
+
+    let mut body = pkt_line("shallow not-a-hex-object-id\n");
+    body.extend(push_body(&[(None, Some(tip), "refs/heads/main")], &[]));
+    let result = receive_pack(
+        &repo,
+        &mut std::io::Cursor::new(body),
+        &mut Vec::new(),
+        &serve_opts(),
+        &ReceivePolicy::default(),
+    );
+    assert!(matches!(result, Err(ServeError::Protocol(_))), "{result:?}");
+    assert!(resolve_ref(&bare, "refs/heads/main").is_err());
+}
+
+/// Into an empty repository, a shallow client's history would make the server
+/// shallow: refused by default, with Git's reason, and nothing changes.
+#[test]
+fn shallow_push_that_needs_a_shallow_update_is_refused_by_default() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    source_repo(&src, 3);
+    let (client, boundary, tip) = shallow_client(tmp.path(), &src);
+    let bare = tmp.path().join("bare.git");
+    let repo = bare_repo(&bare);
+
+    let pack = pack_for(&client, &[tip.to_hex()]);
+    let body = shallow_push_body(&[boundary], &[(None, Some(tip), "refs/heads/t")], &pack);
+    let (outcome, report) = serve(&repo, &body, &ReceivePolicy::default(), &());
+
+    assert!(outcome.unpack_error.is_none(), "{:?}", outcome.unpack_error);
+    assert_eq!(
+        outcome.updates[0].error,
+        Some(RefUpdateRefusal::ShallowUpdateNotAllowed)
+    );
+    assert!(
+        report.contains("ng refs/heads/t shallow update not allowed"),
+        "{report}"
+    );
+    assert!(resolve_ref(&bare, "refs/heads/t").is_err());
+    assert!(!bare.join("shallow").exists());
+    assert!(!has_quarantine_leftovers(&bare.join("objects")));
+}
+
+/// `receive.shallowUpdate`: the client's boundary is recorded in the server's
+/// `shallow` file, so `git fsck` accepts the missing parents, on both storage
+/// paths. Hook scripts see the boundary through `GIT_SHALLOW_FILE`.
+#[cfg(unix)]
+#[test]
+fn shallow_update_records_the_new_boundary_on_both_storage_paths() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    source_repo(&src, 3);
+    let (client, boundary, tip) = shallow_client(tmp.path(), &src);
+    let pack = pack_for(&client, &[tip.to_hex()]);
+
+    for unpack_limit in ["100", "1"] {
+        let bare = tmp.path().join(format!("bare-{unpack_limit}.git"));
+        bare_repo(&bare);
+        git(&bare, &["config", "receive.unpackLimit", unpack_limit]);
+        git(&bare, &["config", "receive.shallowUpdate", "true"]);
+        let log = bare.join("hook-shallow-file");
+        let hook = bare.join("hooks").join("pre-receive");
+        std::fs::write(
+            &hook,
+            format!(
+                "#!/bin/sh\ncat >/dev/null\ncat \"$GIT_SHALLOW_FILE\" >'{}'\n",
+                log.display()
+            ),
+        )
+        .expect("hook");
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let repo = open(&bare);
+        let policy = ReceivePolicy::from_config(&repo.config().expect("config"));
+        assert!(policy.shallow_update);
+
+        let body = shallow_push_body(&[boundary], &[(None, Some(tip), "refs/heads/t")], &pack);
+        let (outcome, report) = serve(&repo, &body, &policy, &());
+
+        assert!(outcome.unpack_error.is_none(), "{report}");
+        assert_eq!(outcome.updates[0].error, None, "{report}");
+        assert_eq!(resolve_ref(&bare, "refs/heads/t").expect("t"), tip);
+        assert_eq!(
+            std::fs::read_to_string(bare.join("shallow")).expect("shallow file"),
+            format!("{}\n", boundary.to_hex()),
+            "unpackLimit={unpack_limit}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&log).expect("hook log"),
+            format!("{}\n", boundary.to_hex())
+        );
+        fsck(&bare);
+        assert_eq!(git(&bare, &["rev-list", "--count", "t"]).trim(), "2");
+        let leftovers: Vec<_> = std::fs::read_dir(&bare)
+            .expect("read bare")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("shallow_"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
 }

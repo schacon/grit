@@ -136,3 +136,72 @@ fn git_push_shows_grit_refusal_reason() -> TestResult {
     );
     Ok(())
 }
+
+/// Issue #2136: `git push` from a `--depth 1` clone sends `shallow <oid>`
+/// before its commands. Onto a server with the full history the push applies
+/// and the server stays complete; into an empty server it would need a shallow
+/// update, which is refused unless `receive.shallowUpdate` is set.
+#[test]
+fn git_push_from_shallow_clone_through_grit_receive_pack() -> TestResult {
+    let tmp = tempfile::tempdir()?;
+    let source = tmp.path().join("src");
+    std::fs::create_dir_all(&source)?;
+    git(&source, &["init", "-q", "-b", "main", "."])?;
+    for batch in 0..3 {
+        commit_files(&source, batch * 2, batch * 2 + 2)?;
+    }
+    let full = tmp.path().join("full.git");
+    let empty = tmp.path().join("empty.git");
+    let src = source.to_str().ok_or("non-utf8 path")?;
+    git(
+        tmp.path(),
+        &["clone", "-q", "--bare", src, full.to_str().ok_or("path")?],
+    )?;
+    std::fs::create_dir_all(&empty)?;
+    git(&empty, &["init", "-q", "--bare", "."])?;
+
+    let client = tmp.path().join("sh1");
+    let url = format!("file://{src}");
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            &url,
+            client.to_str().ok_or("path")?,
+        ],
+    )?;
+    git(&client, &["commit", "-q", "--allow-empty", "-m", "x"])?;
+    let tip = git(&client, &["rev-parse", "HEAD"])?;
+
+    push(&client, &full, &["HEAD:refs/heads/t1"])?;
+    assert_eq!(git(&full, &["rev-parse", "t1"])?, tip);
+    assert!(!full.join("shallow").exists());
+    git(&full, &["fsck", "--strict", "--no-progress"])?;
+
+    let receive_pack = format!("--receive-pack={GRIT} receive-pack");
+    let out = Command::new("git")
+        .args(["push", receive_pack.as_str()])
+        .arg(&empty)
+        .arg("HEAD:refs/heads/t2")
+        .current_dir(&client)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(stderr.contains("shallow update not allowed"), "{stderr}");
+    assert!(git(&empty, &["rev-parse", "--verify", "-q", "t2"]).is_err());
+
+    git(&empty, &["config", "receive.shallowUpdate", "true"])?;
+    push(&client, &empty, &["HEAD:refs/heads/t2"])?;
+    assert_eq!(git(&empty, &["rev-parse", "t2"])?, tip);
+    assert_eq!(
+        std::fs::read_to_string(empty.join("shallow"))?,
+        std::fs::read_to_string(client.join(".git/shallow"))?
+    );
+    git(&empty, &["fsck", "--strict", "--no-progress"])?;
+    Ok(())
+}
