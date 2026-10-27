@@ -1502,27 +1502,6 @@ impl Odb {
         }))
     }
 
-    /// [`Self::try_exists_local`] for every id in `oids`, one answer per id in input order.
-    ///
-    /// A custom primary store is asked once for the whole batch through
-    /// [`ObjectStore::contains_many`].
-    pub(crate) fn try_exists_local_many(&self, oids: &[ObjectId]) -> Result<Vec<bool>> {
-        let mut present: Vec<bool> = oids.iter().map(|oid| self.is_empty_tree(oid)).collect();
-        let mut pending: Vec<usize> = (0..oids.len()).filter(|&i| !present[i]).collect();
-        if let Some(primary) = &self.custom_primary {
-            store::resolve_pending(oids, &mut present, &mut pending, |batch| {
-                primary.contains_many(batch)
-            })?;
-            return Ok(present);
-        }
-        self.with_pack_store_for(&self.objects_dir, || {
-            for i in pending {
-                present[i] = exists_materialized_in_objects_dir(&self.objects_dir, &oids[i]);
-            }
-        });
-        Ok(present)
-    }
-
     /// Whether `oid` is stored locally in loose storage or any pack (including promisor).
     ///
     /// Unlike [`Self::exists_local`], objects present only in promisor-marked packs count
@@ -4419,12 +4398,6 @@ mod tests {
                 .unwrap(),
             vec![true, false, true, true]
         );
-        assert_eq!(
-            odb.try_exists_local_many(&[present, absent, alt_oid, empty_tree])
-                .unwrap(),
-            vec![true, false, false, true],
-            "local ignores alternates"
-        );
         assert!(odb.contains_many(&[]).unwrap().is_empty());
         assert_eq!(
             odb.present_oids([present, absent, alt_oid]).unwrap(),
@@ -4446,13 +4419,10 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let (odb, flaky) = flaky_odb(dir.path());
         let oid = odb.write(ObjectKind::Blob, b"x").unwrap();
-        assert_eq!(odb.try_exists_local_many(&[oid]).unwrap(), vec![true]);
+        assert_eq!(odb.contains_many(&[oid]).unwrap(), vec![true]);
         flaky.fail_contains(true);
         assert!(store::flaky::is_injected(
             &odb.contains_many(&[oid]).unwrap_err()
-        ));
-        assert!(store::flaky::is_injected(
-            &odb.try_exists_local_many(&[oid]).unwrap_err()
         ));
         assert!(store::flaky::is_injected(
             &odb.present_oids([oid]).unwrap_err()
