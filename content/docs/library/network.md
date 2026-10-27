@@ -102,11 +102,28 @@ A pushed pack is streamed into a temp file in a quarantine object directory, so 
 
 What a push may change is decided in three layers, in this order for each push:
 
-1. [`ReceivePolicy`](rustdoc:grit_lib::remote::serve::ReceivePolicy), usually [`ReceivePolicy::from_config`](rustdoc:grit_lib::remote::serve::ReceivePolicy::from_config) (`receive.denyNonFastForwards`, `receive.denyDeletes`, `receive.denyCurrentBranch`), plus the checks every server makes: valid ref names, hidden refs, the expected old value, and that the new objects exist.
+1. [`ReceivePolicy`](rustdoc:grit_lib::remote::serve::ReceivePolicy), usually [`ReceivePolicy::from_config`](rustdoc:grit_lib::remote::serve::ReceivePolicy::from_config) (`receive.denyNonFastForwards`, `receive.denyDeletes`, `receive.denyCurrentBranch`, `receive.fsckObjects`), plus the checks every server makes: valid ref names, hidden refs, the expected old value, and that the new objects exist.
 2. An in-process [`ReceiveHook`](rustdoc:grit_lib::remote::serve::ReceiveHook) passed to [`receive_pack_with_hook`](rustdoc:grit_lib::remote::serve::receive_pack_with_hook). Its `pre_receive` method sees every accepted update and an object database that includes the still-quarantined pushed objects; refusing there refuses the whole push and nothing is moved into the repository. Its `update` method checks one ref at a time after the objects are moved in. A closure `Fn(&RefCommand, &Odb) -> Result<(), RefUpdateRefusal>` is a `ReceiveHook` that implements `update`.
 3. The repository's hook scripts (`pre-receive`, `update`, `post-receive`, `post-update`), run through the repository's `CommandRunner` with Git's environment (`GIT_DIR=.`, the quarantine variables and `GIT_PUSH_OPTION_*`). Each in-process check runs just before the matching script.
 
-The [`ReceiveOutcome`](rustdoc:grit_lib::remote::serve::ReceiveOutcome) is typed: each [`RefUpdateResult`](rustdoc:grit_lib::remote::serve::RefUpdateResult) carries an `Option<RefUpdateRefusal>` ([`RefUpdateRefusal`](rustdoc:grit_lib::remote::serve::RefUpdateRefusal): `NonFastForward`, `StaleInfo`, `DeletionProhibited`, `PreReceiveHookDeclined`, `Policy(reason)` from your hook, ...), and `unpack_error` is an [`UnpackError`](rustdoc:grit_lib::remote::serve::UnpackError) (`Truncated`, `TooLarge`, `Malformed`, `Ingest`, `Io`). Match on the variants; their `Display` text is what the client is sent on its `ng <ref> <reason>` and `unpack <reason>` status lines. Neither is an `Err`: `receive_pack` returns [`ServeError`](rustdoc:grit_lib::remote::serve::ServeError) only when the session itself fails (a malformed command list, a broken stream, or a repository error while applying the push).
+The [`ReceiveOutcome`](rustdoc:grit_lib::remote::serve::ReceiveOutcome) is typed: each [`RefUpdateResult`](rustdoc:grit_lib::remote::serve::RefUpdateResult) carries an `Option<RefUpdateRefusal>` ([`RefUpdateRefusal`](rustdoc:grit_lib::remote::serve::RefUpdateRefusal): `NonFastForward`, `StaleInfo`, `DeletionProhibited`, `PreReceiveHookDeclined`, `Policy(reason)` from your hook, ...), and `unpack_error` is an [`UnpackError`](rustdoc:grit_lib::remote::serve::UnpackError) (`Truncated`, `TooLarge`, `Malformed`, `Ingest`, `Rejected`, `FsckSkipList`, `Io`). Match on the variants; their `Display` text is what the client is sent on its `ng <ref> <reason>` and `unpack <reason>` status lines. Neither is an `Err`: `receive_pack` returns [`ServeError`](rustdoc:grit_lib::remote::serve::ServeError) only when the session itself fails (a malformed command list, a broken stream, or a repository error while applying the push).
+
+Setting [`ReceivePolicy::fsck_objects`](rustdoc:grit_lib::remote::serve::ReceivePolicy::fsck_objects) to an [`ObjectFsckPolicy`](rustdoc:grit_lib::maintenance::fsck::ObjectFsckPolicy) (what `receive.fsckObjects` does) checks every pushed commit, tree and tag while it is still in quarantine. A malformed object refuses the whole push with [`UnpackError::Rejected`](rustdoc:grit_lib::remote::serve::UnpackError::Rejected), whose [`RejectedObject`](rustdoc:grit_lib::remote::serve::RejectedObject) names the object and its fsck message id; every update fails with `unpacker error` and the quarantine is deleted. Transfer checks are strict like Git's (warnings are errors); [`ObjectFsckPolicy::set_level`](rustdoc:grit_lib::maintenance::fsck::ObjectFsckPolicy::set_level) changes single messages, as `receive.fsck.<msg-id>` does in config.
+
+```rust
+use grit_lib::maintenance::fsck::{FsckMsgLevel, ObjectFsckPolicy};
+use grit_lib::remote::serve::ReceivePolicy;
+
+let mut fsck = ObjectFsckPolicy::default();
+fsck.set_level("missingEmail", FsckMsgLevel::Warn);
+let policy = ReceivePolicy {
+    fsck_objects: Some(fsck),
+    ..ReceivePolicy::default()
+};
+assert!(policy.fsck_objects.is_some());
+```
+
+To check objects from some other source with the same rules, call [`ObjectFsckPolicy::checker`](rustdoc:grit_lib::maintenance::fsck::ObjectFsckPolicy::checker) once and [`ObjectFsckChecker::check`](rustdoc:grit_lib::maintenance::fsck::ObjectFsckChecker::check) per object.
 
 This server serves fetches, and refuses pushes to `refs/heads/protected/*` with a closure. Git runs it as `git push --receive-pack='guide_serve receive-pack' <path>` (and `--upload-pack='guide_serve upload-pack'` for clone and fetch):
 

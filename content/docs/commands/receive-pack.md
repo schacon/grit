@@ -28,6 +28,10 @@ Every ref update is checked before it's applied, and the client is told which up
 | `receive.hideRefs`, `transfer.hideRefs` | Hide refs from pushing clients and refuse updates to them. |
 | `receive.maxInputSize` | Refuse pushes whose pack is larger than this many bytes. Unlimited by default. |
 | `receive.unpackLimit`, `transfer.unpackLimit` | Store pushes with fewer objects than this as loose objects; keep larger ones as a pack with an index. 100 by default. |
+| `receive.fsckObjects` | Check every pushed commit, tree and tag before any of them is stored. One malformed object refuses the whole push: the client sees `[remote rejected] ... (unpacker error)`, no ref changes, and nothing from the push enters the repository. Off by default. |
+| `transfer.fsckObjects` | Used when `receive.fsckObjects` is unset. |
+| `receive.fsck.<msg-id>` | Set one check to `error`, `warn` or `ignore`, for example `receive.fsck.missingEmail=warn`. The check after an accepted problem still runs, so ignoring one problem doesn't let another through. `nulInHeader` and `unterminatedHeader` are always errors. |
+| `receive.fsck.skipList` | A file of object ids, one per line (`#` starts a comment), that are never checked. A relative path is relative to the repository's git directory. If the file can't be read, every push is refused. |
 
 The pushed pack is streamed to a temp file in a quarantine directory inside the repository's object store, so memory use stays flat however large the push is. Its objects become visible in the repository only after the `pre-receive` hook accepts the push.
 
@@ -36,6 +40,8 @@ There is no other limit on push size. `grit-http-server` streams a push body str
 In a repository with [snapshot checkouts](../checkout/) (once [`grit serve`](../serve/#snapshot-checkouts) has made one), pushes that create, update or delete the target branch, the one `HEAD` names, are refused whatever these settings say, as `grit serve` refuses them: that branch changes only through [`grit integrate`](../integrate/) and [`grit slice`](../slice/). The refused client is told to push another branch and integrate it.
 
 Pushes that ask for an atomic update are applied all or nothing. The served repository's `pre-receive`, `update`, `post-receive` and `post-update` hooks run as they do under Git: from the repository directory with `GIT_DIR=.`, with the quarantine variables during `pre-receive`, and with push options in `GIT_PUSH_OPTION_*`.
+
+Pushed objects are checked as strictly as `git receive-pack` checks them: problems a local `git fsck` only warns about, such as zero-padded file modes or `.git` tree entries, refuse the push unless `receive.fsck.<msg-id>` says otherwise. Problems that are only informational, such as `badFilemode`, are accepted.
 
 ## Options
 

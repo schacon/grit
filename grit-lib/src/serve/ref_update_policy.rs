@@ -181,6 +181,7 @@ mod tests {
             deny_deletes: false,
             deny_current_branch: false,
             deny_delete_current: false,
+            ..ReceivePolicy::default()
         };
         let cmd = RefCommand {
             refname: "refs/heads/main".to_owned(),

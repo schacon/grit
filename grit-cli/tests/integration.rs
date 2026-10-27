@@ -441,6 +441,9 @@ mod rebase_conflicts_cli;
 #[path = "receive_pack_deny_non_ff.rs"]
 mod receive_pack_deny_non_ff;
 #[cfg(feature = "full-tests")]
+#[path = "receive_pack_fsck_objects.rs"]
+mod receive_pack_fsck_objects;
+#[cfg(feature = "full-tests")]
 #[path = "receive_pack_git_push.rs"]
 mod receive_pack_git_push;
 #[cfg(feature = "full-tests")]

@@ -1522,6 +1522,9 @@ mod serve_ls_refs_prefix;
 #[path = "serve_receive_deny_non_ff.rs"]
 mod serve_receive_deny_non_ff;
 #[cfg(feature = "full-tests")]
+#[path = "serve_receive_fsck_objects.rs"]
+mod serve_receive_fsck_objects;
+#[cfg(feature = "full-tests")]
 #[path = "serve_receive_hooks.rs"]
 mod serve_receive_hooks;
 #[cfg(feature = "full-tests")]
