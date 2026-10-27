@@ -323,6 +323,18 @@ fn non_utf8_tracked_status_diff_add_clone_and_restore() {
         porcelain.lines().count() >= 2,
         "both paths should be staged: {porcelain}"
     );
+    let staged = r1b_repo.index_handle().load().expect("index");
+    assert!(
+        staged.get(BAD_NAME, 0).is_some(),
+        "non-UTF-8 filename must stage under its raw bytes, not the hex-encoded spelling"
+    );
+    assert!(
+        staged
+            .entries()
+            .iter()
+            .all(|e| !e.path.starts_with(b"grit+pathhex:")),
+        "no index path may carry the internal hex encoding"
+    );
 
     std::fs::write(r1b.join(RESERVED_LITERAL), b"z\n").expect("reserved name file");
     stage(
@@ -344,5 +356,10 @@ fn non_utf8_tracked_status_diff_add_clone_and_restore() {
             .get(RESERVED_LITERAL.as_bytes(), 0)
             .is_some(),
         "literal grit+pathhex:* filename must stage under its UTF-8 spelling"
+    );
+    let ls = git(&r1b, &["ls-files", "-z"]);
+    assert!(
+        ls.split('\0').any(|p| p == RESERVED_LITERAL),
+        "git must see the literal filename in the index: {ls:?}"
     );
 }

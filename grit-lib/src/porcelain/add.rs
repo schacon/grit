@@ -45,6 +45,7 @@ use crate::porcelain::status::{
 };
 use crate::progress::ProgressSink;
 use crate::repo::Repository;
+use crate::repo_relpath::{as_utf8_for_matching, storage_bytes};
 use crate::unicode_normalization::resolve_worktree_path_for_staging;
 use crate::worktree_batch::{prepare_and_store_worktree_blobs_parallel, WorktreeBlobReadInput};
 use crate::worktree_rules::WorktreeRules;
@@ -1085,7 +1086,7 @@ fn stage_untracked_paths_parallel(
         if !matches(path) {
             continue;
         }
-        if indexed_any_stage.contains(path.as_bytes()) {
+        if indexed_any_stage.contains(storage_bytes(path).as_ref()) {
             continue;
         }
         let resolved = resolve_worktree_path_for_staging(work_tree, path, precompose_unicode);
@@ -1097,7 +1098,7 @@ fn stage_untracked_paths_parallel(
             deferred.push(resolved.index_relpath.trim_end_matches('/').to_owned());
             continue;
         }
-        let file_attrs = rules.file_attrs(&resolved.index_relpath, false);
+        let file_attrs = rules.file_attrs(&as_utf8_for_matching(&resolved.index_relpath), false);
         batch_inputs.push(WorktreeBlobReadInput {
             abs: resolved.abs,
             index_relpath: resolved.index_relpath,
@@ -1136,7 +1137,7 @@ fn stage_untracked_paths_parallel(
         index.cache_tree.is_none() && index.untracked_cache.is_none();
     let mut batch_entries: Vec<IndexEntry> = Vec::with_capacity(prepared.len());
     for prep in prepared {
-        let abs = work_tree.join(&prep.index_relpath);
+        let abs = crate::repo_relpath::worktree_abs(work_tree, &prep.index_relpath);
         if prep.meta.is_dir()
             && !prep.meta.file_type().is_symlink()
             && read_submodule_head_oid(&abs).is_some()
@@ -1144,14 +1145,14 @@ fn stage_untracked_paths_parallel(
             deferred.push(prep.index_relpath);
             continue;
         }
-        icase_map.remove_alias_of(index, prep.index_relpath.as_bytes());
+        let index_path = storage_bytes(&prep.index_relpath);
+        icase_map.remove_alias_of(index, &index_path);
         let mode =
             mode_with_executable_hint(prep.mode, &prep.index_relpath, executable_hint, matches);
-        let mut entry =
-            entry_from_metadata(&prep.meta, prep.index_relpath.as_bytes(), prep.oid, mode);
+        let mut entry = entry_from_metadata(&prep.meta, &index_path, prep.oid, mode);
         entry.mode = mode;
         if !dry_run && !skip_per_path_cache_invalidate {
-            index.invalidate_untracked_cache_for_path(&prep.index_relpath);
+            index.invalidate_untracked_cache_for_path(&as_utf8_for_matching(&prep.index_relpath));
             index.invalidate_cache_tree_for_path(&entry.path);
         }
         batch_entries.push(entry);
@@ -1182,7 +1183,7 @@ fn stage_untracked_paths_parallel(
             outcome.added.push(path);
             continue;
         }
-        icase_map.remove_alias_of(index, path.as_bytes());
+        icase_map.remove_alias_of(index, &storage_bytes(&path));
         stage_untracked_path(
             repo,
             work_tree,
@@ -1239,7 +1240,7 @@ fn stage_untracked_path(
         return stage_gitlink_at(&index_relpath, &meta, head_oid, index);
     }
 
-    let file_attrs = rules.file_attrs(&index_relpath, false);
+    let file_attrs = rules.file_attrs(&as_utf8_for_matching(&index_relpath), false);
     let mode = mode_with_executable_hint(
         mode_from_metadata(&meta),
         &index_relpath,
@@ -1272,10 +1273,11 @@ fn stage_untracked_path(
         .map_err(|e| Error::Message(format!("could not store {index_relpath}: {e}")))?
     };
 
-    let mut entry = entry_from_metadata(&meta, index_relpath.as_bytes(), oid, mode);
+    let index_path = storage_bytes(&index_relpath);
+    let mut entry = entry_from_metadata(&meta, &index_path, oid, mode);
     entry.mode = mode;
     index.stage_file(entry);
-    index.mark_content_verified(index_relpath.as_bytes(), oid);
+    index.mark_content_verified(&index_path, oid);
     mark_fsmonitor_staged(index, &index_relpath);
     Ok(())
 }
@@ -1632,7 +1634,7 @@ fn stage_intent_to_add_paths(
     }
 
     for rel in file_paths {
-        if index.get(rel.as_bytes(), 0).is_some() {
+        if index.get(&storage_bytes(&rel), 0).is_some() {
             continue;
         }
         let resolved = resolve_worktree_path_for_staging(work_tree, &rel, precompose);
@@ -1642,7 +1644,8 @@ fn stage_intent_to_add_paths(
             continue;
         }
         let mode = mode_from_metadata(&meta);
-        let mut entry = entry_from_metadata(&meta, resolved.index_relpath.as_bytes(), empty, mode);
+        let mut entry =
+            entry_from_metadata(&meta, &storage_bytes(&resolved.index_relpath), empty, mode);
         entry.oid = empty;
         entry.size = 0;
         entry.set_intent_to_add(true);
@@ -1661,22 +1664,24 @@ fn pathspec_sources(opts: &StageOptions) -> Vec<String> {
     }
 }
 
+/// Stage a gitlink for the stored path `rel_path` (see [`crate::repo_relpath`]).
 fn stage_gitlink_at(
     rel_path: &str,
     meta: &fs::Metadata,
     head_oid: ObjectId,
     index: &mut Index,
 ) -> Result<()> {
-    let mut entry = entry_from_metadata(meta, rel_path.as_bytes(), head_oid, MODE_GITLINK);
+    let mut entry = entry_from_metadata(meta, &storage_bytes(rel_path), head_oid, MODE_GITLINK);
     entry.size = 0;
     index.stage_file(entry);
     mark_fsmonitor_staged(index, rel_path);
     Ok(())
 }
 
+/// Mark the stage-0 entry for the stored path `rel_path` fsmonitor-valid.
 fn mark_fsmonitor_staged(index: &mut Index, rel_path: &str) {
     if index.fsmonitor_last_update.is_some() {
-        if let Some(staged) = index.get_mut(rel_path.as_bytes(), 0) {
+        if let Some(staged) = index.get_mut(&storage_bytes(rel_path), 0) {
             staged.set_fsmonitor_valid(true);
         }
     }
