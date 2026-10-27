@@ -333,6 +333,16 @@ pub(crate) fn positive_specs_for_walk(
     Ok((parsed, positive, all_refs))
 }
 
+fn single_symmetric_range(
+    tokens: &[&str],
+    parsed: &RevWalkParsedSpecs,
+) -> Result<(ObjectId, ObjectId)> {
+    match (tokens, parsed.symmetric_left, parsed.symmetric_right) {
+        ([_], Some(left), Some(right)) => Ok((left, right)),
+        _ => Err(Error::RevList(RevListError::SymmetricRangeRequired)),
+    }
+}
+
 fn commit_count_from_result(result: RevListResult) -> Result<usize> {
     Ok(result.commit_count())
 }
@@ -422,17 +432,14 @@ impl<'repo> RevWalk<'repo> {
     ) -> Result<crate::rev_list::RevListResult> {
         let repo = self.repository();
         let sides = options.left_right || options.cherry_mark;
-        if sides && tokens.len() != 1 {
-            return Err(Error::RevList(RevListError::SymmetricRangeRequired));
-        }
         if !sides {
             if let Some(result) = try_single_positive_bounded_page(repo, tokens, options)? {
                 return Ok(result);
             }
         }
         let (parsed, positive, all_refs) = positive_specs_for_walk(repo, tokens, options)?;
-        if sides && parsed.symmetric_left.is_none() {
-            return Err(Error::RevList(RevListError::SymmetricRangeRequired));
+        if sides {
+            single_symmetric_range(tokens, &parsed)?;
         }
         let opts = rev_list_options_from_walk(repo, options, &parsed, all_refs, false)?;
         rev_list(repo, &positive, &parsed.negative, &opts)
@@ -507,6 +514,24 @@ impl<'repo> RevWalk<'repo> {
         commit_count_from_result(result)
     }
 
+    /// Left and right tips of `tokens` when it is exactly one symmetric range (`A...B`).
+    ///
+    /// The same check [`Self::left_right_counts`] and [`Self::rev_list_result`] (with
+    /// [`RevWalkListOptions::left_right`] or [`RevWalkListOptions::cherry_mark`]) apply, for
+    /// callers that must validate a range without walking it (for example a zero limit).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RevListError::SymmetricRangeRequired`] when `tokens` is not exactly one `A...B`
+    /// range, or rev-parse / merge-base errors from resolving the tips.
+    pub fn symmetric_range_tips(&self, tokens: &[&str]) -> Result<(ObjectId, ObjectId)> {
+        if tokens.len() != 1 {
+            return Err(Error::RevList(RevListError::SymmetricRangeRequired));
+        }
+        let parsed = parse_rev_walk_tokens(self.repository(), tokens)?;
+        single_symmetric_range(tokens, &parsed)
+    }
+
     /// Left/right commit counts for a single symmetric range token (`A...B`).
     ///
     /// Matches `git rev-list --left-right --count` for the same range.
@@ -520,14 +545,9 @@ impl<'repo> RevWalk<'repo> {
         tokens: &[&str],
         options: &RevWalkListOptions,
     ) -> Result<LeftRightCounts> {
-        if tokens.len() != 1 {
-            return Err(Error::RevList(RevListError::SymmetricRangeRequired));
-        }
         let repo = self.repository();
         let (parsed, positive, all_refs) = positive_specs_for_walk(repo, tokens, options)?;
-        let (Some(left), Some(right)) = (parsed.symmetric_left, parsed.symmetric_right) else {
-            return Err(Error::RevList(RevListError::SymmetricRangeRequired));
-        };
+        let (left, right) = single_symmetric_range(tokens, &parsed)?;
 
         if options.paths.is_empty()
             && options.refs.is_empty()

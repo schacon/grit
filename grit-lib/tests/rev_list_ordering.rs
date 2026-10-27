@@ -788,8 +788,23 @@ fn cherry_mark_and_left_right_require_one_symmetric_range() {
                 ),
                 "{tokens:?}: {err:?}"
             );
+            let err = walk.symmetric_range_tips(tokens).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    grit_lib::error::Error::RevList(RevListError::SymmetricRangeRequired)
+                ),
+                "symmetric_range_tips {tokens:?}: {err:?}"
+            );
         }
     }
+    assert_eq!(
+        walk.symmetric_range_tips(&["old-feat...feat"]).unwrap(),
+        (
+            git_rev_parse(wt, "old-feat").unwrap(),
+            git_rev_parse(wt, "feat").unwrap()
+        )
+    );
 
     let opts = RevWalkListOptions {
         left_right: true,

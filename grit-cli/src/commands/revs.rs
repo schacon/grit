@@ -229,6 +229,9 @@ pub fn run(
     let opts = rev.to_rev_walk_options(&repo, env, &[], &walk_paths)?;
     let walk = repo.rev_walk();
     let token_refs = rev.rev_tokens(&[]);
+    if (left_right || mode.cherry_mark) && rev.max_count() == Some(0) {
+        walk.symmetric_range_tips(&token_refs)?;
+    }
     if count {
         if rev.max_count() == Some(0) {
             return Ok(RevsOutcome {

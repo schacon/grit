@@ -429,10 +429,16 @@ fn revs_cherry_mark_pairs_rewritten_branch_like_git() -> TestResult {
     for args in [
         &["revs", "--cherry-mark", "feat"][..],
         &["revs", "--left-right", "main..feat"],
+        &["revs", "--cherry-mark", "-n", "0", "feat"],
+        &["revs", "--left-right", "-n", "0", "main..feat"],
+        &["revs", "--count", "--left-right", "-n", "0", "feat"],
     ] {
         let out = grit_run(&dir, args);
         assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(!out.stderr.is_empty(), "{args:?} explains the error");
     }
+    let empty = grit_json(&dir, &["revs", "--cherry-mark", "-n", "0", range]);
+    assert_eq!(empty["commits"].as_array().map(Vec::len), Some(0));
     let _ = fs::remove_dir_all(&dir);
     Ok(())
 }
