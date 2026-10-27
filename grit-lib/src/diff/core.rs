@@ -7896,6 +7896,17 @@ pub fn detect_copies_with_policy(
         }
     }
 
+    // Modes of every source, for the old side of copy and rename entries: the deleted and
+    // modified entries carry their own, and `source_tree_entries` the rest.
+    let mut source_modes: Vec<(String, String, ObjectId)> = source_tree_entries.to_vec();
+    for entry in deleted.iter().chain(&others) {
+        if let Some(ref path) = entry.old_path {
+            if !source_modes.iter().any(|(p, _, _)| p == path) {
+                source_modes.push((path.clone(), entry.old_mode.clone(), entry.old_oid));
+            }
+        }
+    }
+
     if sources.is_empty() {
         let mut result = others;
         result.extend(deleted);
@@ -8030,7 +8041,7 @@ pub fn detect_copies_with_policy(
             &exact_scores,
             &sources,
             &added,
-            source_tree_entries,
+            &source_modes,
             &mut used_added2,
             &mut renamed_deleted,
             &mut result_entries,
@@ -8127,7 +8138,7 @@ pub fn detect_copies_with_policy(
                 &inexact_scores,
                 &sources,
                 &added,
-                source_tree_entries,
+                &source_modes,
                 &mut used_added2,
                 &mut renamed_deleted,
                 &mut result_entries,
@@ -8166,7 +8177,7 @@ pub fn detect_copies_with_policy(
             threshold,
             &sources,
             &source_contents,
-            source_tree_entries,
+            &source_modes,
         )? {
             final_result.push(c);
         } else {
@@ -13592,6 +13603,37 @@ mod line_coverage_tests {
         let old_tree = write_tree(&odb, &[("old.txt", old_blob)]);
         let new_tree = write_tree(&odb, &[("new.txt", new_blob), ("kept.txt", old_blob)]);
         (temp, odb, old_tree, new_tree)
+    }
+
+    #[test]
+    fn detect_copies_reports_source_modes_without_tree_entries() {
+        let temp = TempDir::new().expect("tempdir");
+        let odb = Odb::new(temp.path());
+        let content = odb
+            .write(ObjectKind::Blob, b"shared content\n")
+            .expect("blob");
+        let changed = odb.write(ObjectKind::Blob, b"changed\n").expect("blob");
+        let old_tree = write_tree(&odb, &[("gone.txt", content), ("mod.txt", content)]);
+        let new_tree = write_tree(
+            &odb,
+            &[
+                ("copy.txt", content),
+                ("mod.txt", changed),
+                ("moved.txt", content),
+            ],
+        );
+        let entries = diff_trees(&odb, Some(&old_tree), Some(&new_tree), "").expect("diff");
+        let result = detect_copies(&odb, None, entries, 50, false, &[]).expect("copies");
+        let pairs: Vec<_> = result
+            .iter()
+            .filter(|e| matches!(e.status, DiffStatus::Renamed | DiffStatus::Copied))
+            .map(|e| (e.old_mode.as_str(), e.new_mode.as_str()))
+            .collect();
+        assert_eq!(pairs.len(), 2, "{result:?}");
+        assert!(
+            pairs.iter().all(|p| *p == ("100644", "100644")),
+            "{pairs:?}"
+        );
     }
 
     #[test]
