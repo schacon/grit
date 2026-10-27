@@ -275,6 +275,37 @@ cargo test -p grit-lib --test stash_git_compat --test stash_apply_git_compat \
 cargo bench -p grit-lib --bench hot_paths -- stash/pop_sparse_wide --test
 ```
 
+
+### Raw filename identity recheck
+
+The sparse plan now keeps raw Git path bytes through validation, overwrite
+preflight, tree lookup, filesystem access and index reconciliation. This prevents
+literal `grit+pathhex:` filenames from being mistaken for encoded diff paths.
+The shared index-merge and rename helpers also decode diff paths before lookup.
+Eight Git round-trip regressions cover overwrite rejection with stash retention,
+clean apply/pop, deletion, moved HEAD, conflicts, attributes, staged changes and
+staged renames, including non-UTF-8 filenames on Unix.
+
+A fresh `release` comparison on the same VM uses current main `ea7901dc43cc`,
+the reviewed optimization `e16af2a43`, and the path correction. The fixture follows
+the original reproduction (120k unique loose blobs, 3k appended edits). Builds
+and tests are paused during measurement. Each tool/output receives one warmup
+and three recorded runs; wall time is the median and RSS is the largest warm
+peak. Every run compares diffs, index stages, status and stash state with Git;
+strict fsck passes. Git uses its normal human output in each control.
+
+| Output | Git ms | Main ms | Reviewed ms | Revised ms | Git RSS KiB | Main RSS KiB | Reviewed RSS KiB | Revised RSS KiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Human | 606.54 | 488.70 | 249.70 | 242.31 | 37,736 | 84,500 | 46,316 | 46,088 |
+| JSON | 606.19 | 468.34 | 251.11 | 240.33 | 37,712 | 84,268 | 46,004 | 45,940 |
+| Markdown | 594.70 | 476.74 | 235.87 | 248.84 | 37,740 | 84,320 | 46,164 | 46,300 |
+
+The correction retains the memory reduction and fast warm runtime. One human
+run took 1.81 seconds; it remains in the raw samples and median calculation.
+Raw GNU time records, binary/source hashes, scripts and the exact overwrite
+reproduction in human/JSON/Markdown are in
+[`stash-pop-2082-path-revision.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/stash-pop-2082-path-revision.json).
+
 ## Inexact rename detection (2026-10-27)
 
 Issue [#1683](https://github.com/gitbutlerapp/grit/issues/1683) reproduced on

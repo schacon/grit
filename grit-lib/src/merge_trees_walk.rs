@@ -105,10 +105,10 @@ pub(crate) fn paths_from_tree_diff(
             continue;
         }
         if let Some(p) = e.old_path {
-            out.insert(p.into_bytes());
+            out.insert(crate::repo_relpath::storage_bytes(&p).into_owned());
         }
         if let Some(p) = e.new_path {
-            out.insert(p.into_bytes());
+            out.insert(crate::repo_relpath::storage_bytes(&p).into_owned());
         }
     }
     Ok(out)
