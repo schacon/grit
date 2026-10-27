@@ -683,7 +683,11 @@ fn rename_pairs_base_to_other(
             continue;
         };
         let score = e.score.unwrap_or(0);
-        out.push((old.into_bytes(), new.into_bytes(), score));
+        out.push((
+            crate::repo_relpath::storage_bytes(&old).into_owned(),
+            crate::repo_relpath::storage_bytes(&new).into_owned(),
+            score,
+        ));
     }
     Ok(out)
 }

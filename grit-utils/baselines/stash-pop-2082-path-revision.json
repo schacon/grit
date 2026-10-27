@@ -1,0 +1,611 @@
+{
+  "schema": "grit-stash-memory-path-revision/1",
+  "date": "2026-10-27",
+  "issue": 2082,
+  "main_commit": "ea7901dc43cc23fbf5675c222aee017ea8b623f4",
+  "reviewed_commit": "e16af2a43039c2e383d7112c78a718c3379374ab",
+  "fixed_branch": "factory/stash-pop-memory",
+  "environment": {
+    "os": "Ubuntu 24.04.5 LTS / Linux 6.17.0-1022-azure x86_64",
+    "cpu": "4 vCPU AMD EPYC 7763",
+    "memory_kib": 16373452,
+    "rust": "1.99.0",
+    "git": "2.55.0",
+    "profile": "release"
+  },
+  "methodology": {
+    "files": 120000,
+    "directories": 400,
+    "lines_per_file": 20,
+    "edited_paths": 3000,
+    "fixture": "Original issue fixture: unique loose blobs; sorted first 3000 paths receive an appended line.",
+    "runs_per_tool_and_output": 4,
+    "warmup_runs": 1,
+    "summary": "Median wall time and maximum RSS over the three warm runs. No samples removed.",
+    "order": [
+      "git",
+      "main",
+      "reviewed",
+      "fixed"
+    ],
+    "outputs": [
+      "human",
+      "json",
+      "markdown"
+    ],
+    "measurement": "Python perf_counter surrounding /usr/bin/time -v; stdout discarded.",
+    "builds_and_tests_paused": true,
+    "validation": "Byte-equal worktree/cached diffs, index stages, status, stash state, and git fsck --strict.",
+    "outliers": "Fixed human warm run 3 took 1809.549 ms; retained in samples and median calculation."
+  },
+  "source_sha256": {
+    "grit-lib/src/porcelain/stash.rs": "b928e5d7270ca02408bbfacb17bef18231a46eb061ec5efcd553812831e98360",
+    "grit-lib/src/merge_trees.rs": "4cdb13a6622dc4acb901294d2487e1fb756b74212fae506563e060b1bd41fc9b",
+    "grit-lib/src/merge_trees_walk.rs": "da0ba2e3e75f1cced8ca46db8fd25f750a032853bf0d7582b6059b38ef9d2fa8"
+  },
+  "binary_sha256": {
+    "main": "c2f7da5cb01f8253a4b83e31c621b10abe4407a2d3d3815b0a6bb8143d5e0f8f",
+    "reviewed": "4f03508f2038cc275f9949d0aa08c8e19a78863aab4ecf54a0fce5f5df290c39",
+    "fixed": "79230b0f2da89d7472d5c32ccb93a3f247d9dae5ecf145928028a659cd27ea65"
+  },
+  "summary": [
+    {
+      "output": "human",
+      "tool": "git",
+      "median_ms": 606.538,
+      "max_rss_kib": 37736
+    },
+    {
+      "output": "human",
+      "tool": "main",
+      "median_ms": 488.7,
+      "max_rss_kib": 84500
+    },
+    {
+      "output": "human",
+      "tool": "reviewed",
+      "median_ms": 249.701,
+      "max_rss_kib": 46316
+    },
+    {
+      "output": "human",
+      "tool": "fixed",
+      "median_ms": 242.31,
+      "max_rss_kib": 46088
+    },
+    {
+      "output": "json",
+      "tool": "git",
+      "median_ms": 606.186,
+      "max_rss_kib": 37712
+    },
+    {
+      "output": "json",
+      "tool": "main",
+      "median_ms": 468.344,
+      "max_rss_kib": 84268
+    },
+    {
+      "output": "json",
+      "tool": "reviewed",
+      "median_ms": 251.112,
+      "max_rss_kib": 46004
+    },
+    {
+      "output": "json",
+      "tool": "fixed",
+      "median_ms": 240.33,
+      "max_rss_kib": 45940
+    },
+    {
+      "output": "markdown",
+      "tool": "git",
+      "median_ms": 594.702,
+      "max_rss_kib": 37740
+    },
+    {
+      "output": "markdown",
+      "tool": "main",
+      "median_ms": 476.739,
+      "max_rss_kib": 84320
+    },
+    {
+      "output": "markdown",
+      "tool": "reviewed",
+      "median_ms": 235.868,
+      "max_rss_kib": 46164
+    },
+    {
+      "output": "markdown",
+      "tool": "fixed",
+      "median_ms": 248.843,
+      "max_rss_kib": 46300
+    }
+  ],
+  "samples": [
+    {
+      "tool": "git",
+      "output": "human",
+      "repeat": 0,
+      "ms": 2307.284,
+      "rss_kib": 37560,
+      "time_v": "\tCommand being timed: \"git stash pop\"\n\tUser time (seconds): 0.24\n\tSystem time (seconds): 0.99\n\tPercent of CPU this job got: 53%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:02.30\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 37560\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 3012\n\tMinor (reclaiming a frame) page faults: 13721\n\tVoluntary context switches: 7809\n\tInvoluntary context switches: 223\n\tSwaps: 0\n\tFile system inputs: 39320\n\tFile system outputs: 80336\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "main",
+      "output": "human",
+      "repeat": 0,
+      "ms": 593.467,
+      "rss_kib": 83772,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-main-bin stash pop\"\n\tUser time (seconds): 0.31\n\tSystem time (seconds): 0.31\n\tPercent of CPU this job got: 106%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.59\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 83772\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 197\n\tMinor (reclaiming a frame) page faults: 25318\n\tVoluntary context switches: 2353\n\tInvoluntary context switches: 412\n\tSwaps: 0\n\tFile system inputs: 30792\n\tFile system outputs: 42776\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "reviewed",
+      "output": "human",
+      "repeat": 0,
+      "ms": 324.858,
+      "rss_kib": 45316,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-reviewed-bin stash pop\"\n\tUser time (seconds): 0.10\n\tSystem time (seconds): 0.27\n\tPercent of CPU this job got: 115%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.32\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45316\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 188\n\tMinor (reclaiming a frame) page faults: 8983\n\tVoluntary context switches: 2374\n\tInvoluntary context switches: 519\n\tSwaps: 0\n\tFile system inputs: 31416\n\tFile system outputs: 42776\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "fixed",
+      "output": "human",
+      "repeat": 0,
+      "ms": 282.729,
+      "rss_kib": 45148,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-fixed-bin stash pop\"\n\tUser time (seconds): 0.10\n\tSystem time (seconds): 0.24\n\tPercent of CPU this job got: 124%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.28\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45148\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 197\n\tMinor (reclaiming a frame) page faults: 8970\n\tVoluntary context switches: 2191\n\tInvoluntary context switches: 633\n\tSwaps: 0\n\tFile system inputs: 30896\n\tFile system outputs: 42776\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "git",
+      "output": "human",
+      "repeat": 1,
+      "ms": 712.142,
+      "rss_kib": 37612,
+      "time_v": "\tCommand being timed: \"git stash pop\"\n\tUser time (seconds): 0.26\n\tSystem time (seconds): 0.82\n\tPercent of CPU this job got: 152%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.71\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 37612\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 17252\n\tVoluntary context switches: 47\n\tInvoluntary context switches: 260\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 99152\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "main",
+      "output": "human",
+      "repeat": 1,
+      "ms": 498.31,
+      "rss_kib": 84196,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-main-bin stash pop\"\n\tUser time (seconds): 0.31\n\tSystem time (seconds): 0.31\n\tPercent of CPU this job got: 126%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.49\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 84196\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 2\n\tMinor (reclaiming a frame) page faults: 25391\n\tVoluntary context switches: 1993\n\tInvoluntary context switches: 454\n\tSwaps: 0\n\tFile system inputs: 40\n\tFile system outputs: 42816\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "reviewed",
+      "output": "human",
+      "repeat": 1,
+      "ms": 245.501,
+      "rss_kib": 45520,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-reviewed-bin stash pop\"\n\tUser time (seconds): 0.10\n\tSystem time (seconds): 0.25\n\tPercent of CPU this job got: 150%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.24\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45520\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 2\n\tMinor (reclaiming a frame) page faults: 8596\n\tVoluntary context switches: 2169\n\tInvoluntary context switches: 577\n\tSwaps: 0\n\tFile system inputs: 32\n\tFile system outputs: 42816\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "fixed",
+      "output": "human",
+      "repeat": 1,
+      "ms": 220.337,
+      "rss_kib": 46088,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-fixed-bin stash pop\"\n\tUser time (seconds): 0.10\n\tSystem time (seconds): 0.25\n\tPercent of CPU this job got: 165%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.21\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 46088\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 1\n\tMinor (reclaiming a frame) page faults: 8605\n\tVoluntary context switches: 2125\n\tInvoluntary context switches: 526\n\tSwaps: 0\n\tFile system inputs: 32\n\tFile system outputs: 42816\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "git",
+      "output": "human",
+      "repeat": 2,
+      "ms": 606.538,
+      "rss_kib": 37704,
+      "time_v": "\tCommand being timed: \"git stash pop\"\n\tUser time (seconds): 0.22\n\tSystem time (seconds): 0.75\n\tPercent of CPU this job got: 161%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.60\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 37704\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 15265\n\tVoluntary context switches: 74\n\tInvoluntary context switches: 268\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 80440\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "main",
+      "output": "human",
+      "repeat": 2,
+      "ms": 469.05,
+      "rss_kib": 84176,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-main-bin stash pop\"\n\tUser time (seconds): 0.30\n\tSystem time (seconds): 0.28\n\tPercent of CPU this job got: 126%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.46\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 84176\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 24363\n\tVoluntary context switches: 1928\n\tInvoluntary context switches: 524\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "reviewed",
+      "output": "human",
+      "repeat": 2,
+      "ms": 255.114,
+      "rss_kib": 45464,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-reviewed-bin stash pop\"\n\tUser time (seconds): 0.09\n\tSystem time (seconds): 0.27\n\tPercent of CPU this job got: 147%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.25\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45464\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 7065\n\tVoluntary context switches: 2077\n\tInvoluntary context switches: 609\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "fixed",
+      "output": "human",
+      "repeat": 2,
+      "ms": 242.31,
+      "rss_kib": 45436,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-fixed-bin stash pop\"\n\tUser time (seconds): 0.10\n\tSystem time (seconds): 0.26\n\tPercent of CPU this job got: 150%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.24\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45436\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 8593\n\tVoluntary context switches: 1908\n\tInvoluntary context switches: 425\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "git",
+      "output": "human",
+      "repeat": 3,
+      "ms": 587.639,
+      "rss_kib": 37736,
+      "time_v": "\tCommand being timed: \"git stash pop\"\n\tUser time (seconds): 0.22\n\tSystem time (seconds): 0.73\n\tPercent of CPU this job got: 163%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.58\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 37736\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 16285\n\tVoluntary context switches: 67\n\tInvoluntary context switches: 246\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 80432\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "main",
+      "output": "human",
+      "repeat": 3,
+      "ms": 488.7,
+      "rss_kib": 84500,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-main-bin stash pop\"\n\tUser time (seconds): 0.30\n\tSystem time (seconds): 0.30\n\tPercent of CPU this job got: 126%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.48\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 84500\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 24394\n\tVoluntary context switches: 2057\n\tInvoluntary context switches: 591\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "reviewed",
+      "output": "human",
+      "repeat": 3,
+      "ms": 249.701,
+      "rss_kib": 46316,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-reviewed-bin stash pop\"\n\tUser time (seconds): 0.11\n\tSystem time (seconds): 0.25\n\tPercent of CPU this job got: 150%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.24\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 46316\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 8593\n\tVoluntary context switches: 1890\n\tInvoluntary context switches: 608\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "fixed",
+      "output": "human",
+      "repeat": 3,
+      "ms": 1809.549,
+      "rss_kib": 45240,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-fixed-bin stash pop\"\n\tUser time (seconds): 0.10\n\tSystem time (seconds): 0.26\n\tPercent of CPU this job got: 20%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:01.80\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45240\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 8094\n\tVoluntary context switches: 3201\n\tInvoluntary context switches: 541\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "git",
+      "output": "json",
+      "repeat": 0,
+      "ms": 601.462,
+      "rss_kib": 37676,
+      "time_v": "\tCommand being timed: \"git stash pop\"\n\tUser time (seconds): 0.21\n\tSystem time (seconds): 0.76\n\tPercent of CPU this job got: 162%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.60\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 37676\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 17309\n\tVoluntary context switches: 47\n\tInvoluntary context switches: 265\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 80432\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "main",
+      "output": "json",
+      "repeat": 0,
+      "ms": 513.764,
+      "rss_kib": 83956,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-main-bin stash pop --json\"\n\tUser time (seconds): 0.31\n\tSystem time (seconds): 0.30\n\tPercent of CPU this job got: 120%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.51\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 83956\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 1\n\tMinor (reclaiming a frame) page faults: 25396\n\tVoluntary context switches: 2275\n\tInvoluntary context switches: 506\n\tSwaps: 0\n\tFile system inputs: 24\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "reviewed",
+      "output": "json",
+      "repeat": 0,
+      "ms": 220.957,
+      "rss_kib": 45732,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-reviewed-bin stash pop --json\"\n\tUser time (seconds): 0.10\n\tSystem time (seconds): 0.24\n\tPercent of CPU this job got: 156%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.21\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45732\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 4\n\tMinor (reclaiming a frame) page faults: 9109\n\tVoluntary context switches: 2035\n\tInvoluntary context switches: 662\n\tSwaps: 0\n\tFile system inputs: 608\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "fixed",
+      "output": "json",
+      "repeat": 0,
+      "ms": 273.532,
+      "rss_kib": 45292,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-fixed-bin stash pop --json\"\n\tUser time (seconds): 0.10\n\tSystem time (seconds): 0.27\n\tPercent of CPU this job got: 136%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.27\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45292\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 4\n\tMinor (reclaiming a frame) page faults: 9119\n\tVoluntary context switches: 2442\n\tInvoluntary context switches: 686\n\tSwaps: 0\n\tFile system inputs: 600\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "git",
+      "output": "json",
+      "repeat": 1,
+      "ms": 606.186,
+      "rss_kib": 37712,
+      "time_v": "\tCommand being timed: \"git stash pop\"\n\tUser time (seconds): 0.22\n\tSystem time (seconds): 0.75\n\tPercent of CPU this job got: 162%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.60\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 37712\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 17310\n\tVoluntary context switches: 66\n\tInvoluntary context switches: 266\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 80432\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "main",
+      "output": "json",
+      "repeat": 1,
+      "ms": 465.131,
+      "rss_kib": 84268,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-main-bin stash pop --json\"\n\tUser time (seconds): 0.31\n\tSystem time (seconds): 0.27\n\tPercent of CPU this job got: 126%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.46\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 84268\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 25405\n\tVoluntary context switches: 2033\n\tInvoluntary context switches: 326\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "reviewed",
+      "output": "json",
+      "repeat": 1,
+      "ms": 251.112,
+      "rss_kib": 46004,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-reviewed-bin stash pop --json\"\n\tUser time (seconds): 0.09\n\tSystem time (seconds): 0.27\n\tPercent of CPU this job got: 148%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.25\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 46004\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 9105\n\tVoluntary context switches: 2173\n\tInvoluntary context switches: 517\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "fixed",
+      "output": "json",
+      "repeat": 1,
+      "ms": 240.33,
+      "rss_kib": 45940,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-fixed-bin stash pop --json\"\n\tUser time (seconds): 0.09\n\tSystem time (seconds): 0.26\n\tPercent of CPU this job got: 150%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.23\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45940\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 9118\n\tVoluntary context switches: 1999\n\tInvoluntary context switches: 716\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "git",
+      "output": "json",
+      "repeat": 2,
+      "ms": 599.887,
+      "rss_kib": 37676,
+      "time_v": "\tCommand being timed: \"git stash pop\"\n\tUser time (seconds): 0.20\n\tSystem time (seconds): 0.76\n\tPercent of CPU this job got: 162%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.59\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 37676\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 17816\n\tVoluntary context switches: 65\n\tInvoluntary context switches: 267\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 80432\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "main",
+      "output": "json",
+      "repeat": 2,
+      "ms": 492.419,
+      "rss_kib": 84216,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-main-bin stash pop --json\"\n\tUser time (seconds): 0.31\n\tSystem time (seconds): 0.30\n\tPercent of CPU this job got: 126%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.49\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 84216\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 25366\n\tVoluntary context switches: 2097\n\tInvoluntary context switches: 827\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "reviewed",
+      "output": "json",
+      "repeat": 2,
+      "ms": 260.757,
+      "rss_kib": 45620,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-reviewed-bin stash pop --json\"\n\tUser time (seconds): 0.10\n\tSystem time (seconds): 0.26\n\tPercent of CPU this job got: 140%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.25\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45620\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 9128\n\tVoluntary context switches: 2032\n\tInvoluntary context switches: 489\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "fixed",
+      "output": "json",
+      "repeat": 2,
+      "ms": 223.216,
+      "rss_kib": 45584,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-fixed-bin stash pop --json\"\n\tUser time (seconds): 0.08\n\tSystem time (seconds): 0.25\n\tPercent of CPU this job got: 151%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.22\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45584\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 9107\n\tVoluntary context switches: 1926\n\tInvoluntary context switches: 399\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "git",
+      "output": "json",
+      "repeat": 3,
+      "ms": 607.871,
+      "rss_kib": 37676,
+      "time_v": "\tCommand being timed: \"git stash pop\"\n\tUser time (seconds): 0.20\n\tSystem time (seconds): 0.77\n\tPercent of CPU this job got: 161%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.60\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 37676\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 17302\n\tVoluntary context switches: 59\n\tInvoluntary context switches: 255\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 80432\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "main",
+      "output": "json",
+      "repeat": 3,
+      "ms": 468.344,
+      "rss_kib": 84064,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-main-bin stash pop --json\"\n\tUser time (seconds): 0.29\n\tSystem time (seconds): 0.32\n\tPercent of CPU this job got: 132%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.46\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 84064\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 25383\n\tVoluntary context switches: 2115\n\tInvoluntary context switches: 829\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "reviewed",
+      "output": "json",
+      "repeat": 3,
+      "ms": 219.484,
+      "rss_kib": 45704,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-reviewed-bin stash pop --json\"\n\tUser time (seconds): 0.10\n\tSystem time (seconds): 0.24\n\tPercent of CPU this job got: 158%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.21\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45704\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 9126\n\tVoluntary context switches: 2065\n\tInvoluntary context switches: 553\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "fixed",
+      "output": "json",
+      "repeat": 3,
+      "ms": 266.679,
+      "rss_kib": 45104,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-fixed-bin stash pop --json\"\n\tUser time (seconds): 0.10\n\tSystem time (seconds): 0.26\n\tPercent of CPU this job got: 138%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.26\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45104\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 9104\n\tVoluntary context switches: 2199\n\tInvoluntary context switches: 477\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "git",
+      "output": "markdown",
+      "repeat": 0,
+      "ms": 595.772,
+      "rss_kib": 37608,
+      "time_v": "\tCommand being timed: \"git stash pop\"\n\tUser time (seconds): 0.21\n\tSystem time (seconds): 0.75\n\tPercent of CPU this job got: 162%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.59\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 37608\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 17311\n\tVoluntary context switches: 64\n\tInvoluntary context switches: 228\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 80432\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "main",
+      "output": "markdown",
+      "repeat": 0,
+      "ms": 476.164,
+      "rss_kib": 84312,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-main-bin stash pop --markdown\"\n\tUser time (seconds): 0.32\n\tSystem time (seconds): 0.27\n\tPercent of CPU this job got: 124%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.47\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 84312\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 25400\n\tVoluntary context switches: 2166\n\tInvoluntary context switches: 604\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "reviewed",
+      "output": "markdown",
+      "repeat": 0,
+      "ms": 238.317,
+      "rss_kib": 45728,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-reviewed-bin stash pop --markdown\"\n\tUser time (seconds): 0.11\n\tSystem time (seconds): 0.25\n\tPercent of CPU this job got: 154%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.23\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45728\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 1\n\tMinor (reclaiming a frame) page faults: 9102\n\tVoluntary context switches: 1947\n\tInvoluntary context switches: 557\n\tSwaps: 0\n\tFile system inputs: 64\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "fixed",
+      "output": "markdown",
+      "repeat": 0,
+      "ms": 213.399,
+      "rss_kib": 45480,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-fixed-bin stash pop --markdown\"\n\tUser time (seconds): 0.08\n\tSystem time (seconds): 0.26\n\tPercent of CPU this job got: 167%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.21\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45480\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 1\n\tMinor (reclaiming a frame) page faults: 9095\n\tVoluntary context switches: 2038\n\tInvoluntary context switches: 616\n\tSwaps: 0\n\tFile system inputs: 64\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "git",
+      "output": "markdown",
+      "repeat": 1,
+      "ms": 607.584,
+      "rss_kib": 37548,
+      "time_v": "\tCommand being timed: \"git stash pop\"\n\tUser time (seconds): 0.21\n\tSystem time (seconds): 0.76\n\tPercent of CPU this job got: 162%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.60\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 37548\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 17298\n\tVoluntary context switches: 69\n\tInvoluntary context switches: 243\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 80432\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "main",
+      "output": "markdown",
+      "repeat": 1,
+      "ms": 476.739,
+      "rss_kib": 84188,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-main-bin stash pop --markdown\"\n\tUser time (seconds): 0.31\n\tSystem time (seconds): 0.30\n\tPercent of CPU this job got: 130%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.47\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 84188\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 25386\n\tVoluntary context switches: 2056\n\tInvoluntary context switches: 495\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "reviewed",
+      "output": "markdown",
+      "repeat": 1,
+      "ms": 254.911,
+      "rss_kib": 45940,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-reviewed-bin stash pop --markdown\"\n\tUser time (seconds): 0.09\n\tSystem time (seconds): 0.26\n\tPercent of CPU this job got: 140%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.25\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45940\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 9109\n\tVoluntary context switches: 2033\n\tInvoluntary context switches: 624\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "fixed",
+      "output": "markdown",
+      "repeat": 1,
+      "ms": 257.926,
+      "rss_kib": 46300,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-fixed-bin stash pop --markdown\"\n\tUser time (seconds): 0.11\n\tSystem time (seconds): 0.25\n\tPercent of CPU this job got: 141%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.25\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 46300\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 9117\n\tVoluntary context switches: 1992\n\tInvoluntary context switches: 500\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "git",
+      "output": "markdown",
+      "repeat": 2,
+      "ms": 594.702,
+      "rss_kib": 37740,
+      "time_v": "\tCommand being timed: \"git stash pop\"\n\tUser time (seconds): 0.21\n\tSystem time (seconds): 0.74\n\tPercent of CPU this job got: 162%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.59\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 37740\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 17307\n\tVoluntary context switches: 49\n\tInvoluntary context switches: 218\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 80432\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "main",
+      "output": "markdown",
+      "repeat": 2,
+      "ms": 470.122,
+      "rss_kib": 84320,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-main-bin stash pop --markdown\"\n\tUser time (seconds): 0.31\n\tSystem time (seconds): 0.31\n\tPercent of CPU this job got: 132%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.46\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 84320\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 25442\n\tVoluntary context switches: 2214\n\tInvoluntary context switches: 764\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "reviewed",
+      "output": "markdown",
+      "repeat": 2,
+      "ms": 233.105,
+      "rss_kib": 45772,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-reviewed-bin stash pop --markdown\"\n\tUser time (seconds): 0.10\n\tSystem time (seconds): 0.23\n\tPercent of CPU this job got: 143%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.23\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45772\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 9118\n\tVoluntary context switches: 2049\n\tInvoluntary context switches: 377\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "fixed",
+      "output": "markdown",
+      "repeat": 2,
+      "ms": 248.843,
+      "rss_kib": 45124,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-fixed-bin stash pop --markdown\"\n\tUser time (seconds): 0.10\n\tSystem time (seconds): 0.26\n\tPercent of CPU this job got: 150%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.24\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45124\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 9127\n\tVoluntary context switches: 2163\n\tInvoluntary context switches: 766\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "git",
+      "output": "markdown",
+      "repeat": 3,
+      "ms": 583.084,
+      "rss_kib": 37520,
+      "time_v": "\tCommand being timed: \"git stash pop\"\n\tUser time (seconds): 0.23\n\tSystem time (seconds): 0.72\n\tPercent of CPU this job got: 164%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.58\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 37520\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 17313\n\tVoluntary context switches: 58\n\tInvoluntary context switches: 268\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 80432\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "main",
+      "output": "markdown",
+      "repeat": 3,
+      "ms": 500.055,
+      "rss_kib": 84176,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-main-bin stash pop --markdown\"\n\tUser time (seconds): 0.30\n\tSystem time (seconds): 0.31\n\tPercent of CPU this job got: 123%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.49\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 84176\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 25387\n\tVoluntary context switches: 2018\n\tInvoluntary context switches: 498\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "reviewed",
+      "output": "markdown",
+      "repeat": 3,
+      "ms": 235.868,
+      "rss_kib": 46164,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-reviewed-bin stash pop --markdown\"\n\tUser time (seconds): 0.10\n\tSystem time (seconds): 0.25\n\tPercent of CPU this job got: 153%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.23\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 46164\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 9115\n\tVoluntary context switches: 2056\n\tInvoluntary context switches: 450\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "tool": "fixed",
+      "output": "markdown",
+      "repeat": 3,
+      "ms": 211.679,
+      "rss_kib": 45732,
+      "time_v": "\tCommand being timed: \"/tmp/grit-stash-fixed-bin stash pop --markdown\"\n\tUser time (seconds): 0.08\n\tSystem time (seconds): 0.26\n\tPercent of CPU this job got: 162%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.21\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 45732\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 9124\n\tVoluntary context switches: 2030\n\tInvoluntary context switches: 423\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 42808\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    }
+  ],
+  "literal_prefix_overwrite_reproduction": [
+    {
+      "tool": "main",
+      "output": "human",
+      "exit_code": 1,
+      "precious_local_kept": true,
+      "stash_kept": true,
+      "index_unchanged": true
+    },
+    {
+      "tool": "reviewed",
+      "output": "human",
+      "exit_code": 0,
+      "precious_local_kept": false,
+      "stash_kept": false,
+      "index_unchanged": false
+    },
+    {
+      "tool": "fixed",
+      "output": "human",
+      "exit_code": 1,
+      "precious_local_kept": true,
+      "stash_kept": true,
+      "index_unchanged": true
+    },
+    {
+      "tool": "git",
+      "output": "human",
+      "exit_code": 1,
+      "precious_local_kept": true,
+      "stash_kept": true,
+      "index_unchanged": true
+    },
+    {
+      "tool": "main",
+      "output": "json",
+      "exit_code": 1,
+      "precious_local_kept": true,
+      "stash_kept": true,
+      "index_unchanged": true
+    },
+    {
+      "tool": "reviewed",
+      "output": "json",
+      "exit_code": 0,
+      "precious_local_kept": false,
+      "stash_kept": false,
+      "index_unchanged": false
+    },
+    {
+      "tool": "fixed",
+      "output": "json",
+      "exit_code": 1,
+      "precious_local_kept": true,
+      "stash_kept": true,
+      "index_unchanged": true
+    },
+    {
+      "tool": "git",
+      "output": "json",
+      "exit_code": 1,
+      "precious_local_kept": true,
+      "stash_kept": true,
+      "index_unchanged": true
+    },
+    {
+      "tool": "main",
+      "output": "markdown",
+      "exit_code": 1,
+      "precious_local_kept": true,
+      "stash_kept": true,
+      "index_unchanged": true
+    },
+    {
+      "tool": "reviewed",
+      "output": "markdown",
+      "exit_code": 0,
+      "precious_local_kept": false,
+      "stash_kept": false,
+      "index_unchanged": false
+    },
+    {
+      "tool": "fixed",
+      "output": "markdown",
+      "exit_code": 1,
+      "precious_local_kept": true,
+      "stash_kept": true,
+      "index_unchanged": true
+    },
+    {
+      "tool": "git",
+      "output": "markdown",
+      "exit_code": 1,
+      "precious_local_kept": true,
+      "stash_kept": true,
+      "index_unchanged": true
+    }
+  ],
+  "reproduction_python": "import pathlib, subprocess, tempfile, time, json, statistics, os\nroot=pathlib.Path('/tmp/stash-review-benchmark')\np=root/'repo'\ndef git(*args):\n    return subprocess.check_output(['git',*args],cwd=p,stderr=subprocess.DEVNULL)\nif not p.exists():\n    p.mkdir(parents=True)\n    git('init','-q','-b','main')\n    for k,v in [('user.name','Mono Dev'),('user.email','mono@example.com'),('gc.auto','0')]:git('config',k,v)\n    paths=[]\n    for i in range(120000):\n        d=p/f'd{i%400:03}'; d.mkdir(exist_ok=True)\n        f=d/f'f{i:06}.txt'; f.write_text(''.join(f'line {j} of {i}\\n' for j in range(20))); paths.append(f.relative_to(p))\n    git('add','.');git('commit','-qm','base')\n    for f in sorted(paths)[:3000]:\n        with (p/f).open('a') as out:out.write('stash repeat\\n')\n    git('stash','push','-qm','repeat')\n    (root/'stash').write_bytes(git('rev-parse','refs/stash'))\n    git('stash','drop')\n    print('fixture ready',flush=True)\nif os.environ.get('PREPARE_ONLY'):raise SystemExit()\nstash=(root/'stash').read_text().strip()\nbins={'main':'/tmp/grit-stash-main-bin','reviewed':'/tmp/grit-stash-reviewed-bin','fixed':'/tmp/grit-stash-fixed-bin','git':'git'}\nresults=[]; expected=None\nfor output in ['human','json','markdown']:\n    for repeat in range(4):\n        for tool in ['git','main','reviewed','fixed']:\n            git('reset','--hard','HEAD');git('stash','store','-m','repeat',stash)\n            args=['stash','pop']\n            if tool!='git' and output!='human': args.append('--'+output)\n            report=root/'time.txt'\n            start=time.perf_counter()\n            cp=subprocess.run(['/usr/bin/time','-v','-o',str(report),bins[tool],*args],cwd=p,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)\n            elapsed=(time.perf_counter()-start)*1000\n            assert cp.returncode==0,(tool,cp.stderr)\n            raw=report.read_text()\n            rss=int(next(l for l in raw.splitlines() if 'Maximum resident set size' in l).split(':')[-1])\n            state=[git('diff','--binary'),git('diff','--cached','--binary'),git('ls-files','--stage'),git('stash','list'),git('status','--porcelain=v1','-uno')]\n            if expected is None:expected=state\n            assert state==expected,(tool,output,'state mismatch')\n            row=dict(tool=tool,output=output,repeat=repeat,ms=round(elapsed,3),rss_kib=rss,time_v=raw)\n            results.append(row)\n            print(tool,output,repeat,round(elapsed,2),rss,flush=True)\n    git('fsck','--strict')\n(root/'results.json').write_text(json.dumps(results,indent=2))\nfor output in ['human','json','markdown']:\n    for tool in bins:\n        rows=[r for r in results if r['tool']==tool and r['output']==output and r['repeat']>0]\n        print('SUMMARY',output,tool,'median ms',statistics.median(r['ms'] for r in rows),'max rss KiB',max(r['rss_kib'] for r in rows))\n",
+  "overwrite_reproduction_python": "import pathlib,tempfile,subprocess,shutil,json\nroot=pathlib.Path(tempfile.mkdtemp(prefix='stash-path-review-'))\nbase=root/'base';base.mkdir()\ndef git(p,*args):return subprocess.check_output(['git',*args],cwd=p,stderr=subprocess.DEVNULL)\ngit(base,'init','-q','-b','main');git(base,'config','user.name','T');git(base,'config','user.email','t@example.com')\nname='grit+pathhex:plain.txt'\n(base/name).write_text('base\\n');git(base,'add','.');git(base,'commit','-qm','base')\n(base/name).write_text('stash\\n');git(base,'stash','push','-qm','stash')\n(base/name).write_text('precious local\\n')\nresults=[]\nfor mode in ['human','json','markdown']:\n    for tool in ['main','reviewed','fixed','git']:\n        p=root/(tool+'-'+mode);shutil.copytree(base,p)\n        index=(p/'.git/index').read_bytes()\n        binary='git' if tool=='git' else '/tmp/grit-stash-'+tool+'-bin'\n        args=[binary,'stash','pop']\n        if tool!='git' and mode!='human':args+=['--'+mode]\n        cp=subprocess.run(args,cwd=p,capture_output=True)\n        precious=(p/name).read_text()=='precious local\\n'\n        stash_kept=bool(git(p,'stash','list'))\n        unchanged_index=(p/'.git/index').read_bytes()==index\n        if tool=='reviewed':assert cp.returncode==0 and not precious and not stash_kept\n        else:assert cp.returncode!=0 and precious and stash_kept\n        if tool=='fixed':assert unchanged_index\n        git(p,'fsck','--strict')\n        row=dict(tool=tool,output=mode,exit_code=cp.returncode,precious_local_kept=precious,stash_kept=stash_kept,index_unchanged=unchanged_index)\n        results.append(row); print(row,flush=True)\npathlib.Path('/tmp/stash-cli-repro-results.json').write_text(json.dumps(results,indent=2))\nshutil.rmtree(root)\n"
+}

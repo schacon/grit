@@ -31,6 +31,8 @@ Stash indices follow Git: `0` is the newest entry. You can pass an integer or `s
 
 `grit stash pop` applies the entry and removes it when there are no conflicts. When applying would leave merge conflicts, the stash entry is kept and the command exits non-zero; conflicting paths are listed. There is no merge to continue: edit the files, mark them resolved with `grit add <file>`, then remove the kept entry with `grit stash drop` (or pick a side with `grit restore --ours|--theirs <file>`). `grit stash apply` stops the same way but never drops the entry.
 
+`apply` and `pop` preserve the exact tracked filename bytes, including literal names beginning with `grit+pathhex:` and non-UTF-8 names on Unix. If a stashed change would overwrite local edits to that file, the operation fails before changing files and keeps the stash. Conflict paths use reversible `grit+pathhex:` encoding when needed; Rust callers can recover the original bytes with `repo_relpath::storage_bytes`.
+
 When a stash was created with `-u` / `--include-untracked`, `apply` and `pop` refuse to write stashed untracked files onto a path that already exists on disk (visible untracked, ignored, or tracked content you added after stashing). The command exits non-zero, the stash entry is kept, and your existing file bytes are unchanged.
 
 ## Options
