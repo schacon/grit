@@ -94,6 +94,13 @@ pub struct RevWalkListOptions {
     /// Return the commits the walk parses in [`RevListResult::commit_data`] (see
     /// [`RevListOptions::retain_commit_data`]), for callers that render the listed commits.
     pub retain_commit_data: bool,
+    /// Classify each listed commit as left or right of the symmetric range (`--left-right`)
+    /// in [`RevListResult::left_right_map`]. Requires exactly one `A...B` token.
+    pub left_right: bool,
+    /// Match the two sides of the symmetric range by patch-id (`--cherry-mark`), filling
+    /// [`RevListResult::left_right_map`], [`RevListResult::cherry_equivalent`] and
+    /// [`RevListResult::cherry_matches`]. Requires exactly one `A...B` token.
+    pub cherry_mark: bool,
 }
 
 /// Positive and negative revision specs produced by [`parse_rev_walk_tokens`].
@@ -255,6 +262,8 @@ pub(crate) fn rev_list_options_from_walk(
         commit_filter: walk.commit_filter.clone(),
         pickaxe: walk.pickaxe.clone(),
         retain_commit_data: walk.retain_commit_data,
+        left_right: walk.left_right || walk.cherry_mark,
+        cherry_mark: walk.cherry_mark,
         ..RevListOptions::default()
     })
 }
@@ -397,21 +406,34 @@ impl<'repo> RevWalk<'repo> {
         Ok(self.rev_list_result(tokens, options)?.commits)
     }
 
-    /// Like [`Self::commits`], but retains bounded `--graph` linkage when available.
+    /// Like [`Self::commits`], but retains bounded `--graph` linkage when available, and the
+    /// side and patch-id pairing of each commit with [`RevWalkListOptions::left_right`] or
+    /// [`RevWalkListOptions::cherry_mark`].
     ///
     /// # Errors
     ///
-    /// Propagates rev-parse and rev-list errors.
+    /// Returns [`RevListError::SymmetricRangeRequired`] when `left_right` or `cherry_mark`
+    /// is set and `tokens` is not exactly one `A...B` range. Propagates rev-parse and
+    /// rev-list errors.
     pub fn rev_list_result(
         &self,
         tokens: &[&str],
         options: &RevWalkListOptions,
     ) -> Result<crate::rev_list::RevListResult> {
         let repo = self.repository();
-        if let Some(result) = try_single_positive_bounded_page(repo, tokens, options)? {
-            return Ok(result);
+        let sides = options.left_right || options.cherry_mark;
+        if sides && tokens.len() != 1 {
+            return Err(Error::RevList(RevListError::SymmetricRangeRequired));
+        }
+        if !sides {
+            if let Some(result) = try_single_positive_bounded_page(repo, tokens, options)? {
+                return Ok(result);
+            }
         }
         let (parsed, positive, all_refs) = positive_specs_for_walk(repo, tokens, options)?;
+        if sides && parsed.symmetric_left.is_none() {
+            return Err(Error::RevList(RevListError::SymmetricRangeRequired));
+        }
         let opts = rev_list_options_from_walk(repo, options, &parsed, all_refs, false)?;
         rev_list(repo, &positive, &parsed.negative, &opts)
     }

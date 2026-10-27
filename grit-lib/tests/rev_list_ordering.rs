@@ -9,13 +9,15 @@ use std::process::Command;
 
 use grit_lib::objects::ObjectId;
 use grit_lib::revwalk::rev_list::{
-    split_revision_token, ObjectFilter, OrderingMode, OutputMode, RevListOptions,
+    split_revision_token, ObjectFilter, OrderingMode, OutputMode, RevListOptions, RevListResult,
 };
+use grit_lib::revwalk::rev_list_error::RevListError;
+use grit_lib::revwalk::RevWalkListOptions;
 use support::{
     assert_rev_list_commits_match_git, build_commit_dag, commit_file, commit_labeled_with_dates,
     expand_token_for_rev_list, git, git_commit_graph_write, git_merge_base_is_ancestor,
     git_rev_list, git_rev_list_lines, git_rev_parse, grit_rev_list_commits_in_repo, open_grit_repo,
-    HistoryRepo,
+    rewritten_branch_fixture, HistoryRepo,
 };
 
 fn topo_skew_dag(worktree: &Path) -> (ObjectId, HashMap<String, ObjectId>) {
@@ -644,6 +646,171 @@ fn symmetric_diff_left_right_cherry_mark_match_git() {
             );
         }
     }
+}
+
+fn cherry_mark_walk(repo: &grit_lib::repo::Repository, token: &str) -> RevListResult {
+    let opts = RevWalkListOptions {
+        cherry_mark: true,
+        ..RevWalkListOptions::default()
+    };
+    repo.rev_walk()
+        .rev_list_result(&[token], &opts)
+        .expect("cherry-mark walk")
+}
+
+/// `(marker, oid)` from `git rev-list --left-right --cherry-mark` (`<`, `>` or `=`).
+fn git_cherry_marks(worktree: &Path, token: &str) -> Vec<(char, ObjectId)> {
+    git_rev_list_lines(worktree, &["--left-right", "--cherry-mark", token])
+        .iter()
+        .map(|line| {
+            let marker = line.chars().next().expect("marker");
+            (marker, line[1..].trim().parse().expect("oid"))
+        })
+        .collect()
+}
+
+fn grit_cherry_marks(result: &RevListResult) -> Vec<(char, ObjectId)> {
+    result
+        .commits
+        .iter()
+        .map(|oid| {
+            let marker = if result.cherry_equivalent.contains(oid) {
+                '='
+            } else if result.left_right_map[oid] {
+                '<'
+            } else {
+                '>'
+            };
+            (marker, *oid)
+        })
+        .collect()
+}
+
+#[test]
+fn cherry_mark_pairs_rebased_and_reworded_branch_like_git() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    rewritten_branch_fixture(wt);
+    commit_file(wt, "f1", "edited\n", "c4 edits f1");
+    let grit = open_grit_repo(wt);
+    let token = "old-feat...feat";
+
+    let result = cherry_mark_walk(&grit, token);
+    assert_eq!(
+        grit_cherry_marks(&result),
+        git_cherry_marks(wt, token),
+        "order and </>/= marks match git rev-list --left-right --cherry-mark"
+    );
+
+    let rev = |spec: &str| git_rev_parse(wt, spec).expect(spec);
+    let old: Vec<ObjectId> = (0..3).map(|n| rev(&format!("old-feat~{n}"))).collect();
+    let new: Vec<ObjectId> = (1..4).map(|n| rev(&format!("feat~{n}"))).collect();
+    assert_eq!(result.cherry_matches.len(), 3, "c1, c2 and c3 pair up");
+    let index = result.cherry_match_index();
+    for (old_oid, new_oid) in old.iter().zip(&new) {
+        let group = index[old_oid];
+        assert_eq!(group.left, vec![*old_oid]);
+        assert_eq!(group.right, vec![*new_oid]);
+        assert_eq!(group.counterpart(old_oid), Some(*new_oid));
+        assert_eq!(group.counterpart(new_oid), Some(*old_oid));
+        assert_eq!(
+            Some(group.patch_id),
+            grit.patch_id(old_oid, grit_lib::diff::patch_ids::PatchIdMode::Stable)
+                .unwrap()
+        );
+        let reworded = *old_oid == old[0];
+        assert_eq!(
+            group.message_changed,
+            Some(reworded),
+            "only c3's message changed"
+        );
+    }
+    let c4 = rev("feat");
+    let m = rev("main");
+    for unmatched in [c4, m] {
+        assert!(!index.contains_key(&unmatched));
+        assert!(!result.cherry_equivalent.contains(&unmatched));
+        assert!(!result.left_right_map[&unmatched], "right side");
+    }
+}
+
+#[test]
+fn cherry_mark_keeps_duplicate_patch_ids_many_to_many() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "base", "base\n", "base");
+    git(wt, &["branch", "-M", "main"]);
+    git(wt, &["switch", "-q", "-c", "side"]);
+    commit_file(wt, "x", "x\n", "add x");
+    git(wt, &["rm", "-q", "x"]);
+    git(wt, &["commit", "-q", "-m", "drop x"]);
+    commit_file(wt, "x", "x\n", "add x again");
+    git(wt, &["switch", "-q", "main"]);
+    commit_file(wt, "x", "x\n", "add x upstream");
+    let grit = open_grit_repo(wt);
+    let token = "side...main";
+
+    let result = cherry_mark_walk(&grit, token);
+    assert_eq!(grit_cherry_marks(&result), git_cherry_marks(wt, token));
+    assert_eq!(result.cherry_matches.len(), 1);
+    let group = &result.cherry_matches[0];
+    let rev = |spec: &str| git_rev_parse(wt, spec).expect(spec);
+    assert_eq!(group.left, vec![rev("side"), rev("side~2")]);
+    assert_eq!(group.right, vec![rev("main")]);
+    assert_eq!(group.message_changed, None, "not one-to-one");
+    assert_eq!(group.counterpart(&rev("main")), None);
+}
+
+#[test]
+fn cherry_mark_and_left_right_require_one_symmetric_range() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    rewritten_branch_fixture(wt);
+    let grit = open_grit_repo(wt);
+    let walk = grit.rev_walk();
+    for opts in [
+        RevWalkListOptions {
+            cherry_mark: true,
+            ..RevWalkListOptions::default()
+        },
+        RevWalkListOptions {
+            left_right: true,
+            limit: Some(1),
+            ..RevWalkListOptions::default()
+        },
+    ] {
+        for tokens in [&["feat"][..], &["main..feat"], &["old-feat...feat", "main"]] {
+            let err = walk.rev_list_result(tokens, &opts).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    grit_lib::error::Error::RevList(RevListError::SymmetricRangeRequired)
+                ),
+                "{tokens:?}: {err:?}"
+            );
+        }
+    }
+
+    let opts = RevWalkListOptions {
+        left_right: true,
+        ..RevWalkListOptions::default()
+    };
+    let result = walk.rev_list_result(&["old-feat...feat"], &opts).unwrap();
+    let git_marks: Vec<(char, ObjectId)> =
+        git_rev_list_lines(wt, &["--left-right", "old-feat...feat"])
+            .iter()
+            .map(|l| (l.chars().next().unwrap(), l[1..].trim().parse().unwrap()))
+            .collect();
+    let grit_marks: Vec<(char, ObjectId)> = result
+        .commits
+        .iter()
+        .map(|o| (if result.left_right_map[o] { '<' } else { '>' }, *o))
+        .collect();
+    assert_eq!(grit_marks, git_marks, "--left-right listing matches git");
+    assert!(
+        result.cherry_matches.is_empty(),
+        "no pairing without cherry_mark"
+    );
 }
 
 #[test]
