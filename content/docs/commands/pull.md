@@ -66,7 +66,7 @@ side still builds on an older snapshot; run `grit switch side`, then `grit pull`
 $ grit pull
 main moved e8d5aa5 → f3dbd6f; new snapshot 552fbc6 at origin/main
   1 file changed, 1 insertion(+), 1 deletion(-) in this checkout's paths
-CONFLICT (content): src/a.rs
+CONFLICT (both_modified): src/a.rs
 Rebasing onto origin/main stopped on a conflict; the rebase is in progress.
 Resolve the conflicts, `grit add` the files, then run `grit rebase --continue`; or run `grit rebase --abort` to put the branch back where it was.
 $ grit add src/a.rs && grit rebase --continue
@@ -157,7 +157,7 @@ When a rebase pull conflicts:
 
 ```console
 $ grit pull --rebase
-CONFLICT (content): f
+CONFLICT (both_modified): f
 
 Rebase stopped on conflicts; fix them and run `grit rebase --continue`, or `grit rebase --abort` / `grit rebase --skip`.
 $ grit status
@@ -196,7 +196,7 @@ Exit codes (also apply to default human output): **0** on success (`up_to_date`,
 | `change_id` | string or null | Stored `change-id` on `oid` when present. |
 | `upstream` | string or null | For `set_upstream`, the remote-tracking branch that was adopted. |
 | `conflicts` | array of strings or null | Path names when `result` is `conflicts` or `rebase_stopped` (legacy list). |
-| `conflict_details` | array or null | Structured conflict items when `result` is `conflicts` or `rebase_stopped`: `path`, `kind` (`content`, `add_add`, `modify_delete`), and for merges a `summary`. |
+| `conflict_details` | array or null | Structured conflict items when `result` is `conflicts` or `rebase_stopped`: `path`, a [conflict `kind`](../status/#conflict-kinds) (the same names `grit status` uses, plus `rename_rename`), and for merges a `summary`. |
 | `operation` | string or null | When `result` is `conflicts` or `rebase_stopped`: the operation left in progress, `merge` or `rebase`. |
 | `commit` | string or null | When `operation` is `rebase`: the local commit that could not be replayed. |
 | `next_steps` | array of strings or null | When `result` is `conflicts`: ordered `grit` commands to finish (for a rebase, ending in `grit rebase --continue`). |
@@ -249,7 +249,7 @@ A rebase pull that stopped on conflicts:
   "result": "conflicts",
   "branch": "origin/main",
   "conflicts": ["f"],
-  "conflict_details": [{ "path": "f", "kind": "content" }],
+  "conflict_details": [{ "path": "f", "kind": "both_modified" }],
   "operation": "rebase",
   "commit": "1e644589243fb885b773ec4d697b779000495741",
   "next_steps": ["grit diff", "grit add .", "grit rebase --continue"],

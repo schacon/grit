@@ -70,7 +70,7 @@ When the revert conflicts:
 
 ```console
 $ grit revert feature
-CONFLICT (content): f.txt
+CONFLICT (both_modified): f.txt
 
 Revert stopped on conflicts; fix them and run `grit revert --continue`, or `grit revert --abort` / `grit revert --skip`.
 ```
@@ -90,7 +90,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `change_id` | string or null | Stored `change-id` on the last revert commit, or `null`. |
 | `commits` | array | Each revert commit created in this invocation (newest first). |
 | `dropped` | array | Source commits skipped as empty per `--empty drop`. |
-| `conflicts` | array or null | Conflicted paths when `result` is `conflicts`. |
+| `conflicts` | array or null | Conflicted paths when `result` is `conflicts`, each `{path, kind}` with a [conflict kind](../status/#conflict-kinds). |
 | `next_steps` | array or null | Suggested follow-up commands when paused. |
 | `alternatives` | array or null | `--abort` / `--skip` when paused. |
 | `dry_run` | boolean or null | True when `--dry-run` was used. |

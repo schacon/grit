@@ -71,7 +71,7 @@ Conflict, then continue:
 
 ```console
 $ grit pick topic~1..topic
-CONFLICT (content): shared.txt
+CONFLICT (both_modified): shared.txt
 → grit restore --ours shared.txt (or edit markers)
 → grit add shared.txt
 → grit pick --continue
@@ -91,7 +91,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `check` | boolean | True when `--check` was used (nothing was picked). |
 | `commits` | array | Each picked or attempted step: `source`, `oid`, `change_id`, `subject`. |
 | `dropped` | array | Source commit oids skipped as empty (`--empty drop`). |
-| `conflicts` | array or null | Conflicted paths when `result` is `conflicts`. |
+| `conflicts` | array or null | Conflicted paths when `result` is `conflicts`, each `{path, kind}` with a [conflict kind](../status/#conflict-kinds). |
 | `next_steps` | array or null | Suggested commands when stopped (`conflicts` or `empty`). |
 | `alternatives` | array or null | `grit pick --abort` / `--skip` when a sequence is paused. |
 | `dry_run` | boolean or null | `true` when `--dry-run` was set (no refs or objects were updated). |
