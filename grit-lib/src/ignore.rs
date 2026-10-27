@@ -636,7 +636,9 @@ fn parse_gitignore_content(
     _warnings: &mut Vec<String>,
 ) -> Result<Vec<IgnoreRule>> {
     let mut rules = Vec::new();
-    for (idx, line) in content.lines().enumerate() {
+    // Split on LF only: like Git's `add_patterns_from_buffer`, a line loses at most one
+    // trailing CR (in `parse_rule_line`), so `a\r\r` names the file `a\r`.
+    for (idx, line) in content.split('\n').enumerate() {
         let line = if idx == 0 {
             line.strip_prefix('\u{feff}').unwrap_or(line)
         } else {
@@ -720,7 +722,7 @@ fn parse_rule_line(
     source: IgnoreSource,
     base_dir: &str,
 ) -> Option<IgnoreRule> {
-    let mut raw_line = line.trim_end_matches('\r').to_owned();
+    let mut raw_line = line.strip_suffix('\r').unwrap_or(line).to_owned();
     trim_trailing_spaces_git(&mut raw_line);
     if raw_line.is_empty() || raw_line.starts_with('#') {
         return None;
@@ -1139,7 +1141,7 @@ struct SparsePattern {
 
 impl SparsePattern {
     fn from_line(line: &str) -> Option<Self> {
-        let mut raw_line = line.trim_end_matches('\r').to_owned();
+        let mut raw_line = line.strip_suffix('\r').unwrap_or(line).to_owned();
         trim_trailing_spaces_git(&mut raw_line);
         if raw_line.is_empty() || raw_line.starts_with('#') {
             return None;
@@ -1501,6 +1503,22 @@ mod gitignore_glob_tests {
 
     fn rule(line: &str, base_dir: &str) -> IgnoreRule {
         parse_rule_line(line, 1, IgnoreSource::InfoExclude, base_dir).unwrap()
+    }
+
+    #[test]
+    fn lines_lose_at_most_one_trailing_cr() {
+        let rules = |content: &str| {
+            parse_gitignore_content(content, IgnoreSource::InfoExclude, "", &mut Vec::new())
+                .unwrap()
+        };
+        let [crlf] = rules("a\r\n").try_into().unwrap();
+        assert!(rule_matches(&crlf, "a", false, false));
+        let [double_cr] = rules("a\r\r\n").try_into().unwrap();
+        assert!(rule_matches(&double_cr, "a\r", false, false));
+        assert!(!rule_matches(&double_cr, "a", false, false));
+        let [leading_cr] = rules("\ra\n").try_into().unwrap();
+        assert!(rule_matches(&leading_cr, "\ra", false, false));
+        assert!(rules("a\nb").len() == 2);
     }
 
     #[test]
