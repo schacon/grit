@@ -122,7 +122,7 @@ baseline = [
   "grit-utils/baselines/filtered-revision-count-range.json",
   "grit-utils/baselines/ignore-normalization-dist.json",
   "grit-utils/baselines/ignore-normalization-release.json",
-  "grit-utils/baselines/startup-relocations-dist.json",
+  "grit-utils/baselines/startup-relocations-shipping-dist.json",
   "grit-utils/baselines/startup-relocations-release.json",
   "grit-utils/baselines/daily-ignore-normalization-dist-before.json",
   "grit-utils/baselines/daily-ignore-normalization-dist-after.json",

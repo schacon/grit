@@ -759,7 +759,23 @@ The x86_64 GNU v0.5.21 artifact runs on glibc 2.34 (Rocky Linux 9). Its
 `GLIBC_2.39` version requirement is **weak**, so treating the highest version
 string as its minimum would overstate the loader baseline. RELR introduces the
 strong `GLIBC_ABI_DT_RELR` requirement and requires glibc 2.36; it cannot be
-silently enabled for a binary that works on 2.34.
+silently enabled for a binary that works on 2.34. The existing
+`grit-x86_64-unknown-linux-gnu.tar.gz` stays on its original build path as the
+default/fallback. Only `grit-x86_64-unknown-linux-gnu-relr.tar.gz` adds a CLI-only
+`cargo rustc` final link with `-C link-arg=-Wl,-z,pack-relative-relocs` in
+`.github/workflows/release.yml`; workspace profiles and dependency builds are
+unchanged. Both assets contain the same commands and completions.
+
+Stable and nightly installers use `getconf GNU_LIBC_VERSION`, then `ldd --version`
+if inconclusive. Only a confidently recognized glibc version >= 2.36 selects the
+optional x86_64 GNU RELR asset. Other versions and failed optional downloads use
+the existing GNU asset. aarch64, musl, Apple and Windows are unchanged. Exercise
+the actual shell installers with isolated platform and download fixtures:
+
+```bash
+cargo test -p grit-utils --test install_relr
+python3 -m unittest scripts/tests/test_install.py
+```
 
 Check the actual artifact, including PIE, interpreter, allowed dependencies,
 GNU_RELRO/BIND_NOW, non-executable stack, symbol versions, RELR ABI marking,
@@ -785,5 +801,14 @@ waiting for input and inspects four actual process mappings.
 
 See [startup comparison methodology](content/docs/benchmarking.md#startup-relocation-comparison)
 for both profiles, 60 warm measured runs per tool, realistic fixtures and RSS
-cross-checks. RELR probes are CLI-only; no workspace profile is changed. Apple,
+cross-checks. RELR links are CLI-only; no workspace profile is changed. Apple,
 Windows, static musl and GNU aarch64 need their own portability validation.
+
+The release workflow checks the baseline artifact on pinned Rocky Linux 9
+(glibc 2.34) and the RELR artifact on pinned Debian bookworm (glibc 2.36).
+Each runs help, branch, status and resolve in a one-commit repository and
+asserts the loader version. Both assets also run the ELF/runtime guard above
+on the build host: PIE, interpreter/dependencies, GNU_RELRO/BIND_NOW, RELR ABI
+present only in the optional artifact, startup smoke, and four distinct runtime
+load addresses. ASLR settings are never modified. The baseline is packaged and
+uploaded before the optional CLI relink, preserving its original build path.

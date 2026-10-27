@@ -1,6 +1,6 @@
 # PIE startup relocation investigation (#2028)
 
-Base: `f0e7cddd530a27366b74a4901b778395e404b458` (origin/main at checkout). Both variants use that exact source. Candidate changes only the CLI final link with `-Wl,-z,pack-relative-relocs`; the map option is diagnostic. No codegen units, LTO, panic policy, PIE, ASLR, features, library algorithms or CLI behavior change. RELR is not enabled for shipping pending a loader-baseline decision.
+Base: `f0e7cddd530a27366b74a4901b778395e404b458` (origin/main at checkout). Both variants use that exact source. Candidate changes only the CLI final link with `-Wl,-z,pack-relative-relocs`; the map option is diagnostic. No codegen units, LTO, panic policy, PIE, ASLR, features, library algorithms or CLI behavior change. The initial probe predates the shipping decision implemented in the addendum below.
 
 ## Environment and method
 
@@ -64,7 +64,7 @@ Loader-only relocation cycles are mostly unchanged on dist. The end-to-end impro
 
 ## Portability decision
 
-Both the published v0.5.21 x86_64 GNU artifact and current stock dist pass help, branch, status and resolve on glibc 2.34 (Rocky Linux 9). Their `GLIBC_2.39` requirement is weak, and the highest strong GNU symbol requirement is 2.34. The RELR artifacts pass those commands on glibc 2.36 (Debian bookworm) and fail on 2.34 with missing `GLIBC_ABI_DT_RELR`. Enabling RELR on the existing GNU artifact would raise its working minimum. The release workflow currently enforces the verified 2.34 contract; packing awaits an explicit decision on a newer minimum or a separate artifact. Apple, Windows, static musl and GNU aarch64 are not changed or claimed verified for RELR.
+Both the published v0.5.21 x86_64 GNU artifact and current stock dist pass help, branch, status and resolve on glibc 2.34 (Rocky Linux 9). Their `GLIBC_2.39` requirement is weak, and the highest strong GNU symbol requirement is 2.34. The RELR artifacts pass those commands on glibc 2.36 (Debian bookworm) and fail on 2.34 with missing `GLIBC_ABI_DT_RELR`. Enabling RELR on the existing GNU artifact would raise its working minimum. The initial workflow enforces the verified 2.34 contract; the shipping addendum below implements a separate artifact. Apple, Windows, static musl and GNU aarch64 are not changed or claimed verified for RELR.
 
 glibc documents the new format in its [2.36 release notes](https://raw.githubusercontent.com/bminor/glibc/glibc-2.36/NEWS); GNU ld documents [the flag and ABI dependency](https://sourceware.org/binutils/docs/ld/Options.html). Container digests and runtime results are in the ELF report. Four actual upload-pack process mappings per artifact had distinct base addresses with `randomize_va_space=2`, unchanged.
 
@@ -80,12 +80,112 @@ glibc documents the new format in its [2.36 release notes](https://raw.githubuse
 
 Reproduction commands are in `content/docs/benchmarking.md` and `TESTING.md`. Run the oldest-loader Docker checks from the release workflow before enabling any packing; inspecting only the highest GLIBC version string is insufficient.
 
-## Remaining decision and follow-ups
+## Separate shipping artifact (2026-10-27)
 
-Choose whether to preserve the existing GNU glibc 2.34 artifact and add a separate
-RELR artifact for 2.36+, explicitly raise the GNU minimum to 2.36, or retain the
-current release and leave RELR as an opt-in source build. No packing will be
-silently enabled. A final enablement commit should close #2028 only after this
-choice is implemented and verified. The source compilation blocker and baseline
-JSON/reset failures are separate work; a clean full gate must be repeated once
-those are resolved, with enough disk or test debug-info size reduced locally.
+The maintainer chose to retain the glibc 2.34 baseline and add an optional
+x86_64 GNU RELR asset for glibc 2.36+. The release workflow packages and uploads
+`grit-x86_64-unknown-linux-gnu.tar.gz` on its unchanged build path before running
+a CLI-only `cargo rustc` link for `grit-x86_64-unknown-linux-gnu-relr.tar.gz`.
+No workspace profile, dependency feature or other target changes. Both archives
+include the same completions. The original GNU asset remains the default and
+fallback; stable/nightly installers choose RELR only after confident detection
+with `getconf GNU_LIBC_VERSION`, or `ldd --version` when inconclusive. Unknown,
+malformed and older versions use the baseline, as do failed optional downloads.
+
+Fresh paired measurement on `aa1964221` CLI/library source, Linux x86_64,
+4-vCPU Intel Xeon Platinum 8573C, 16 GiB RAM, Rust 1.99.0 / LLD 23.1.1,
+glibc 2.39 and system Git 2.55.0. Both frozen binaries use exactly that source;
+only the candidate CLI link flag differs. The original release/dist reports
+above remain historical measurements on the earlier EPYC host. This follow-up
+repeats shipping dist with five warmups and **60 rotated measured runs per tool**
+on all 20 tiny/many-ref/wide/deep cases, with builds and tests stopped. Full
+fork/exec/wait medians ± sample standard deviations and maximum per-child RSS:
+
+| Shipping dist / command | Git ms | Stock ms | RELR ms | Git / stock / RELR peak KiB |
+| --- | ---: | ---: | ---: | ---: |
+| tiny / branch | 1.166 ± 0.043 | 1.968 ± 0.062 | 1.871 ± 0.050 | 4788 / 9952 / 9504 |
+| tiny / status | 1.402 ± 0.049 | 2.359 ± 0.078 | 2.254 ± 0.063 | 5448 / 11804 / 11364 |
+| tiny / resolve | 1.078 ± 0.043 | 2.051 ± 0.063 | 1.945 ± 0.065 | 4676 / 9764 / 9376 |
+| tiny / help | 0.966 ± 0.035 | 2.911 ± 0.095 | 2.880 ± 0.119 | 4100 / 9172 / 8740 |
+| tiny / log | 1.256 ± 0.058 | 2.134 ± 0.076 | 2.058 ± 0.127 | 5276 / 10720 / 10212 |
+| many-refs / branch | 45.161 ± 1.332 | 11.632 ± 0.378 | 11.496 ± 0.403 | 19748 / 15456 / 14952 |
+| wide / status | 12.261 ± 1.052 | 13.589 ± 0.514 | 13.367 ± 0.536 | 9384 / 15136 / 14692 |
+| deep / log | 6.755 ± 0.148 | 9.768 ± 0.332 | 9.650 ± 0.173 | 10120 / 17072 / 16632 |
+
+Tiny branch/status/resolve improve **4.4–5.1%**. Help's 1.1% difference is within
+the sample spread. All 20 candidate medians are lower in this sitting; larger
+many-ref branch, wide status and deep log improve 1.2–1.6%, with identical
+stdout/stderr. Git branch still lists all branches while grit limits to 20.
+Do not extrapolate one host's gain to every workload or claim a general RSS win.
+Here the native-helper RSS peaks fall about 0.4–0.5 MiB; ten independent
+`/usr/bin/time -v` samples put tiny branch/status/resolve/help median peak RSS at
+9676/11380/9572/8984 KiB stock versus 9190/10874/9064/8548 KiB RELR
+(Git: 4366/5020/4128/3576 KiB). The earlier dist layout did not consistently
+reduce RSS.
+
+Stock/RELR binaries are **24,451,840 / 23,997,288 bytes**. Relative relocation
+metadata is **464,592 / 9,872 bytes**, with **19,185 identical pointer slots on
+91 pages**. Text, rodata and data.rel.ro sizes are unchanged. No major faults
+occurred. Loader-only median relocation cycles (30 runs) are 39,274.5 → 46,564.5
+for branch, 39,276.5 → 47,533.5 for status, 38,932.5 → 46,489.5 for resolve,
+and 40,331.5 → 50,534 for help. These increased while wall time fell: metadata
+compression and layout change do not prove a faster relocation loop. The exact
+300-invocation `perf record -g -F 999` attempt is again denied by
+`perf_event_paranoid=4`; no task-clock attribution is inferred.
+
+Raw wall/fault samples, variance, binary hashes/sections, independent GNU-time
+RSS, loader observations, runtime mappings, image smokes and profiler refusal:
+[`startup-relocations-shipping-dist.json`](startup-relocations-shipping-dist.json).
+
+### Portability and validation
+
+- Baseline passes the release guard (PIE, standard interpreter/dependencies,
+  GNU_RELRO/BIND_NOW, non-executable stack, no RELR ABI) and help/branch/status/
+  resolve on pinned Rocky Linux 9 / **glibc 2.34**.
+- RELR passes the same hardening/runtime guard with `GLIBC_ABI_DT_RELR`, and
+  those commands on pinned Debian bookworm / **glibc 2.36**. It is explicitly
+  rejected by 2.34 with the expected missing ABI. Both old-loader runs emit
+  existing weak `GLIBC_2.39` warnings but exit successfully on supported loaders.
+- Four actual load addresses per artifact are distinct with ASLR setting `2`,
+  unchanged. Both builds preserve Unicode literal JSON regex filtering and
+  `GRIT_TRACE=1` output. Their text/rodata/table sizes remain identical.
+- Rust installer regressions fail against the original scripts (0 passed,
+  2 failed), and pass against both new scripts across supported/old/unknown/
+  malformed versions, ldd fallback, absent optional assets, musl and aarch64.
+  Final installer/ELF run: **4 passed**, 1 opt-in artifact test normally ignored;
+  that artifact test is also explicitly run and passes for RELR. Existing
+  Python installer tests: **3 passed**.
+- `cargo test -p grit-lib -p grit-cli` before and after both stop at unchanged
+  `grit-lib/tests/history_injected_ref_store.rs:45`: `Signature: From<&str>` is
+  not implemented. No aggregate pass count is claimed for this command.
+- `cargo test -p grit-lib --lib`: before **2634 passed / 4 failed / 3 ignored**;
+  after **2638 passed / 0 failed / 3 ignored**. The baseline failures are the
+  held-index-lock commit object count assertion and three reset/fsck missing-
+  object cases; no library source or tests change.
+- Actual stock and RELR dist each pass **220 CLI tests** (help descriptions,
+  all 125 output snapshots, 75 JSON, 19 Markdown), with the same pre-existing
+  `bad_filter_and_missing_revision_errors_are_clean` failure on unborn log.
+- Pack ingestion/repack/smart-HTTP system-Git round trips: **46 passed**,
+  5 existing ignored. The HTTP server was built and no test printed `SKIP`.
+- After rebasing on current main, **`make gate` passes fmt, workspace Clippy,
+  warnings-denied rustdoc and public-module doctests**, then stops at the same
+  `history_injected_ref_store` compilation error (about 17 GiB remained).
+  Main then advanced by one unrelated rebase-exec change. A second clean rebase
+  onto **`3c1a41ef2`** repeats the gate: fmt, Clippy, rustdoc and public-module
+  doctests pass again; workspace test linking fills the 145 GiB disk (267 MiB
+  free) and fails with LLD bus errors. The unchanged Signature conversion error
+  remains in that base. After this failed run, 24.1 GiB of disposable test
+  executables are removed to save the report; no gate rerun, profile change,
+  test weakening or compile workaround is applied. Measurements and focused
+  tests above retain their exact `aa1964221` revision.
+- Docs check: **93 pages / 50 commands / 7 blog posts pass**.
+
+The implementation is ready for review, but **integration still requires a
+passing make gate** after the unrelated compile blocker is fixed on main.
+Do not land with a failing gate. The existing JSON error-ordering failure and
+intermittent baseline commit/reset failures are separate follow-ups.
+
+An additional filter smoke found that jaq Unicode property classes (`\p{L}`)
+are unsupported in both stock and RELR, with identical errors. Unicode literal
+regex filtering passes in both; this existing filter limitation is unchanged
+and outside the relocation work.

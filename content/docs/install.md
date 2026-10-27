@@ -21,11 +21,27 @@ The script downloads the latest release from GitHub, installs the `grit` binary 
 
 ## Linux GNU loader compatibility
 
-The published x86_64 GNU v0.5.21 binary is verified on glibc 2.34 (Rocky Linux 9).
-Its weak glibc 2.39 references do not require that newer loader. RELR relocation
-packing needs glibc 2.36 or newer, so a local RELR build has a different loader
-requirement even when compiled on the same host. The x86_64 GNU release uses standard relocations to retain that compatibility.
-Static musl artifacts and source builds remain alternatives for other systems.
+Linux x86_64 releases provide two GNU assets. Both preserve PIE and ASLR:
+
+| Asset | Loader support |
+| --- | --- |
+| `grit-x86_64-unknown-linux-gnu.tar.gz` | Default and fallback; glibc 2.34 or newer, standard relocations |
+| `grit-x86_64-unknown-linux-gnu-relr.tar.gz` | Optional faster startup; glibc 2.36 or newer, packed relative relocations (RELR) |
+
+The stable and nightly installers select RELR only when `getconf GNU_LIBC_VERSION`
+(or, if inconclusive, the first line of `ldd --version`) confidently identifies
+glibc 2.36 or newer. Older, unknown or malformed versions use the default asset.
+If the optional asset is unavailable, the installer retries the default asset;
+this also supports releases from before RELR was added. Manual downloads keep
+the existing GNU asset as the default. Its weak glibc 2.39 references do not
+require a newer loader.
+
+The RELR link improved small-command startup by **5–8%** in the initial
+shipping `dist` measurement, with **4–5%** for branch/status/resolve in a fresh
+Xeon check; see [benchmarks](benchmarks.md#pie-startup-relocation-probe)
+for timings and memory limits. GNU aarch64, static musl, macOS and Windows keep
+their existing artifacts and selection. Static musl artifacts and source builds
+remain alternatives for other systems.
 
 ## Shell completions
 

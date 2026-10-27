@@ -255,3 +255,18 @@ compresses relative relocation metadata; it still writes the same pointer slots.
 Dependency tables, including regex Unicode tables, contribute relocations even
 when their code executes lazily. Preserve Unicode matching, filtering, schemas
 and tracing when considering source changes.
+
+The release workflow packages the original glibc 2.34 x86_64 GNU asset before
+performing this CLI-only RELR link for a separate `-gnu-relr` asset. The latter
+requires glibc 2.36+. Stable/nightly installers select it only after confident
+version detection with `getconf GNU_LIBC_VERSION`, falling back to
+`ldd --version`; otherwise they use the original asset. Failed optional downloads
+also fall back. This preserves the existing loader minimum and leaves other
+targets unchanged. Run both ELF/runtime checks and the pinned 2.34/2.36 container
+smokes in `.github/workflows/release.yml`; see [TESTING.md](https://github.com/gitbutlerapp/grit/blob/main/TESTING.md#linux-gnu-startup-and-loader-contract).
+The initial measured dist gain is 5–8% for tiny commands. The fresh Xeon
+shipping follow-up measures 4–5% for branch/status/resolve, with help within
+its sample spread. Both reports retain variance and independent RSS; layout
+changes mean metadata compression is not a general memory reduction. The
+shipping JSON also records 30 loader-only observations and ten GNU-time peak
+RSS samples per tiny command/tool.

@@ -997,11 +997,33 @@ same 147 / 91 pages. Loader-only relocation cycles are mostly unchanged on dist;
 binary layout shifts too, so the wall-time gain is not proof of a faster loader
 relocation loop. No Unicode regex, filter, schema or tracing feature is removed.
 
-**The probe is not enabled for shipping.** Published and current stock x86_64
-GNU artifacts work on glibc 2.34; the probe requires `GLIBC_ABI_DT_RELR` from
-glibc 2.36 and fails on 2.34. The release check protects the verified older
-loader baseline while that shipping trade-off is decided. Other targets are
-unchanged.
+The x86_64 GNU release now provides a separate `grit-x86_64-unknown-linux-gnu-relr.tar.gz`
+asset for glibc 2.36+. The existing glibc 2.34 GNU artifact retains its build path
+and remains the default and fallback. Stable and nightly installers choose RELR
+only after confidently detecting glibc 2.36 or newer, falling back to the default
+when detection or the optional download is unavailable. Both assets pass ELF
+hardening, startup and address randomization checks; release CI runs them on
+2.34 and 2.36 respectively. Other targets are unchanged. These measurements
+predate the shipping selection change and retain their original source revision.
+
+A fresh shipping-dist check on current-main CLI/library source `aa1964221`
+(4-vCPU Intel Xeon Platinum 8573C, 60 rotated warm runs per tool) measured:
+
+| Tiny command | Git ms | Stock dist ms | RELR dist ms |
+| --- | ---: | ---: | ---: |
+| branch | 1.166 | 1.968 | 1.871 |
+| status | 1.402 | 2.359 | 2.254 |
+| resolve | 1.078 | 2.051 | 1.945 |
+| help | 0.966 | 2.911 | 2.880 |
+
+Branch/status/resolve improve **4.4–5.1%** here; help's 1.1% difference is within
+the sample spread. Larger many-ref branch, wide status and deep log medians
+improve 1.2–1.6%. Native peak RSS falls about 0.4–0.5 MiB in this layout;
+the earlier dist memory caveat still applies. Loader-only cycles increase in
+this run, so the wall-time result cannot be attributed solely to relocation
+processing. The [shipping follow-up data](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/startup-relocations-shipping-dist.json)
+retain all 20 scenarios, variance, RSS, faults, loader statistics and runtime
+checks. Builds and tests were stopped throughout measurement.
 
 The [complete report](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/startup-relocations.md)
 links the methodology, ELF attribution and portability checks. Raw

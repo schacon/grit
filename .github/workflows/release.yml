@@ -88,7 +88,7 @@ jobs:
             -v "$artifact:/usr/local/bin/grit:ro" -v "$fixture:/fixture:ro" \
             -w /fixture \
             rockylinux@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 \
-            /bin/sh -ec 'grit --help >/dev/null; grit branch >/dev/null; grit status >/dev/null; grit resolve HEAD >/dev/null'
+            /bin/sh -ec 'test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.34"; grit --help >/dev/null; grit branch >/dev/null; grit status >/dev/null; grit resolve HEAD >/dev/null'
 
       # Completion scripts depend only on the CLI shape, not the target CPU. Generate
       # them with a host-native binary so cross-compiled artifacts (e.g. aarch64
@@ -113,6 +113,37 @@ jobs:
           name: grit-${{ matrix.target }}
           path: |
             grit-${{ matrix.target }}.tar.gz
+
+      # The baseline has already been packaged and uploaded above. Only this
+      # extra CLI link uses RELR; dependency/profile flags and other targets stay
+      # on their original build paths.
+      - name: Build and check x86_64 GNU RELR variant
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          cargo rustc --locked --profile dist --target x86_64-unknown-linux-gnu \
+            -p grit-cli --bin grit -- -C link-arg=-Wl,-z,pack-relative-relocs
+          artifact="$PWD/target/x86_64-unknown-linux-gnu/dist/grit"
+          python3 scripts/check-linux-release.py "$artifact" \
+            --max-glibc 2.36 --relr required --run
+          fixture=$(mktemp -d)
+          git -C "$fixture" init -q -b main
+          git -C "$fixture" -c user.name=Release -c user.email=release@example.com \
+            -c maintenance.auto=false commit --allow-empty -qm init
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$artifact:/usr/local/bin/grit:ro" -v "$fixture:/fixture:ro" \
+            -w /fixture \
+            debian@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 \
+            /bin/sh -ec 'test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.36"; grit --help >/dev/null; grit branch >/dev/null; grit status >/dev/null; grit resolve HEAD >/dev/null'
+          tar czf grit-x86_64-unknown-linux-gnu-relr.tar.gz \
+            -C target/x86_64-unknown-linux-gnu/dist grit completions
+
+      - name: Upload x86_64 GNU RELR artifact
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        uses: actions/upload-artifact@v4
+        with:
+          name: grit-x86_64-unknown-linux-gnu-relr
+          path: grit-x86_64-unknown-linux-gnu-relr.tar.gz
 
   # Windows ships the `grit` CLI (the `grit-cli` crate), installed via
   # `irm grit-scm.com/install.ps1 | iex` (see site/public/install.ps1).

@@ -205,7 +205,7 @@ fn main() -> Result<()> {
     let report = json!({"schema_version": grit_utils::schema::SCHEMA_VERSION,
         "schema": "grit-startup-comparison-v1",
         "tools": {"git": grit_utils::binary::tool_version(&args.git),
-            "grit": format!("{} RELR probe (not shipped)", grit_utils::binary::tool_version(&args.candidate)),
+            "grit": format!("{} RELR optional x86_64 GNU asset", grit_utils::binary::tool_version(&args.candidate)),
             "grit_commit": null}, "profile": args.profile,
         "timestamp": grit_utils::machine::format_timestamp(time::OffsetDateTime::now_utc()),
         "machine": machine, "git_version": grit_utils::binary::tool_version(&args.git),
