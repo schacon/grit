@@ -76,6 +76,9 @@ mod parallel_checkout_prepare;
 #[path = "parallel_scenario_e2e.rs"]
 mod parallel_scenario_e2e;
 #[cfg(feature = "full-tests")]
+#[path = "push_http_cargo_shape_budget.rs"]
+mod push_http_cargo_shape_budget;
+#[cfg(feature = "full-tests")]
 #[path = "refs_driver_git_compat.rs"]
 mod refs_driver_git_compat;
 #[cfg(feature = "full-tests")]

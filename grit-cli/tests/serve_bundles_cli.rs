@@ -437,4 +437,23 @@ fn large_pushes_upload_a_resumable_bundle_and_refresh_the_server_bundle() {
     ok(&f.home, &work, &["config", "push.bundleThreshold", "16m"]);
     ok(&f.home, &work, &["push"]);
     assert_eq!(head_of(&f.demo), head_of(&work));
+    let sessions = work.join(".git/grit/push-bundles");
+    assert!(
+        std::fs::read_dir(&sessions)
+            .map(|mut d| d.next().is_none())
+            .unwrap_or(true),
+        "a pack under the threshold is spooled and removed, not kept as a session"
+    );
+    let fsck = Command::new("git")
+        .args(["fsck", "--strict", "--no-dangling"])
+        .current_dir(&f.demo)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git fsck");
+    assert!(
+        fsck.status.success(),
+        "git fsck: {}",
+        String::from_utf8_lossy(&fsck.stderr)
+    );
 }

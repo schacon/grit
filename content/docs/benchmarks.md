@@ -1646,6 +1646,22 @@ The dashboard's `push/incremental`, `push/incremental-http` and `push/force-with
 
 One known gap remains: `grit push` lists the remote's refs over a separate upload-pack connection before it connects to receive-pack. Git uses one connection. On git:// that second connection accounts for most of the remaining difference.
 
+## Whole-repository push over smart HTTP
+
+Pushing all of a repository to an empty remote is where a client holds the most pack data. `grit push` used to build the whole pack in memory, copy it into the HTTP request body, and map and index every source pack twice (once for the object walk and again for the delta reuse scan). Now the pack streams into the request while it is written: a receive-pack body larger than 1 MiB goes out with chunked transfer encoding after a small probe request, as Git does. The whole build shares one mapping of each source pack, and reused objects and deltas are written straight from that mapping.
+
+Factory VM, 4 vCPU, Linux 6.12, Rust 1.99, `release` profile, system Git 2.43.0. `grit push` and `git push` of `master` from a clone of rust-lang/cargo (23.6k commits, 195k objects, 80 MB pack) to fresh bare repositories served by one `grit-http-server` on localhost. Five interleaved runs per client, `/usr/bin/time` wall time and peak RSS:
+
+| Client | Wall time | Peak RSS |
+| --- | --- | --- |
+| `git push` | 2.38–2.61 s | 163 MB |
+| `grit push`, before | 3.58–3.92 s | 427 MB |
+| `grit push`, after | 3.34–3.53 s | 268 MB |
+
+A pack of four incompressible 16 MiB blobs shows what still grows with the pack: git peaks at 71 MB, grit at 213 MB before and 84 MB after, the rest being the mapped pack both tools read. Every pushed repository passes `git fsck --strict`. Most of the remaining time difference is the object walk (about 1.0 s against 0.41 s for `git rev-list --objects`).
+
+The gate keeps this from regressing: `grit-utils/tests/push_http_cargo_shape_budget.rs` pushes a `CargoShape::SMOKE` history and the four-blob repository with both clients to one stock `git http-backend` server, and requires grit's peak memory above its `log -n 1` baseline to stay within 2× of git's (1.5× for the blobs), and within 2× of git's time in optimized builds.
+
 ## grit-lib: pack write (100k reuse vs fresh)
 
 Criterion group **`pack`** (`cargo bench -p grit-lib --bench pack_write`) rebuilds the full closure of the repacked **`pack_100k`** fixture (~100 000 objects) via [`build_pack_with_parallel_threads`](rustdoc:grit_lib::objects::pack_objects::build_pack_with_parallel_threads):
