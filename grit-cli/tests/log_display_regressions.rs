@@ -129,3 +129,36 @@ fn log_empty_json_includes_commits_array() {
         "commits key must be present: {out}"
     );
 }
+
+#[test]
+fn log_graph_unicode_implies_graph_and_uses_unicode_lanes() {
+    let fixture = CliFixture::empty();
+    fixture.write_repo_file("a.txt", "one\n");
+    fixture.run_ok(&["commit", "-m", "one"]);
+    fixture.write_repo_file("a.txt", "two\n");
+    fixture.run_ok(&["commit", "-m", "two"]);
+    let out = fixture
+        .run_ok(&["log", "--graph-unicode", "-n", "5"])
+        .stdout;
+    assert!(
+        out.contains('●'),
+        "expected Unicode graph lanes with --graph-unicode alone: {out}"
+    );
+}
+
+#[test]
+fn log_graph_ascii_uses_star_lanes() {
+    let fixture = CliFixture::empty();
+    fixture.write_repo_file("a.txt", "one\n");
+    fixture.run_ok(&["commit", "-m", "one"]);
+    fixture.write_repo_file("a.txt", "two\n");
+    fixture.run_ok(&["commit", "-m", "two"]);
+    let out = fixture
+        .run_ok(&["log", "--graph", "--graph-ascii", "-n", "5"])
+        .stdout;
+    assert!(out.contains('*'), "expected ASCII graph lanes: {out}");
+    assert!(
+        !out.contains('●'),
+        "ASCII graph must not use Unicode bullets: {out}"
+    );
+}

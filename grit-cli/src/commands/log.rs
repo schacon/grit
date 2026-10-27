@@ -117,6 +117,23 @@ struct LogPatchTextParams {
     pathspecs: Vec<String>,
 }
 
+/// Persist a short cursor only when the token is exposed (`--json` or `--cursor` with no value).
+fn encode_next_cursor_if_exposed(
+    repo: &grit_lib::repo::Repository,
+    cursor: LogWalkCursor,
+    output_mode: OutputMode,
+    show_in_human_hint: bool,
+) -> Result<Option<String>> {
+    if output_mode == OutputMode::Json || show_in_human_hint {
+        cursor
+            .encode_short(repo)
+            .map(Some)
+            .context("could not store log continuation cursor")
+    } else {
+        Ok(None)
+    }
+}
+
 fn format_log_more_command(rev_args: Option<&str>) -> String {
     match rev_args.filter(|s| !s.is_empty()) {
         Some(revs) => format!("grit log {revs}"),
@@ -205,15 +222,17 @@ impl HumanRender for LogOutcome {
 
 impl LogOutcome {
     fn render_continuation(&self, w: &mut dyn Write) -> Result<()> {
-        if let Some(next) = &self.next {
-            outln!(w);
-            let cmd = if self.show_continuation_cursor {
-                format_log_cursor_command(self.continuation_args.as_deref(), next)
-            } else {
-                format_log_more_command(self.continuation_args.as_deref())
-            };
-            outln!(w, "→ more: {cmd}");
+        if !self.truncated {
+            return Ok(());
         }
+        outln!(w);
+        let cmd = match (&self.next, self.show_continuation_cursor) {
+            (Some(next), true) => {
+                format_log_cursor_command(self.continuation_args.as_deref(), next)
+            }
+            _ => format_log_more_command(self.continuation_args.as_deref()),
+        };
+        outln!(w, "→ more: {cmd}");
         Ok(())
     }
 }
@@ -275,12 +294,13 @@ impl MarkdownRender for LogOutcome {
         if self.format.any_format_flag() {
             render_commit_diffs_markdown(w, &self.commit_rows, &self.commit_diffs, ctx)?;
         }
-        if let Some(next) = &self.next {
+        if self.truncated {
             outln!(w);
-            let cmd = if self.show_continuation_cursor {
-                format_log_cursor_command(self.continuation_args.as_deref(), next)
-            } else {
-                format_log_more_command(self.continuation_args.as_deref())
+            let cmd = match (&self.next, self.show_continuation_cursor) {
+                (Some(next), true) => {
+                    format_log_cursor_command(self.continuation_args.as_deref(), next)
+                }
+                _ => format_log_more_command(self.continuation_args.as_deref()),
             };
             outln!(w, "More history: run `{cmd}`");
         }
@@ -362,7 +382,12 @@ pub fn run(
         let page = LogWalkCursor::step(&repo, &query, Some(&resume), page_size)
             .context("could not list commits")?;
         let truncated = page.next.is_some();
-        let next = page.next.map(|c| c.encode_short(&repo)).transpose()?;
+        let next = match page.next {
+            None => None,
+            Some(c) => {
+                encode_next_cursor_if_exposed(&repo, c, output_mode, show_continuation_cursor)?
+            }
+        };
         return build_commit_outcome(
             &repo,
             &page.commits,
@@ -479,7 +504,12 @@ pub fn run(
     let next = if rev.max_count().is_some() {
         None
     } else {
-        page.next.map(|c| c.encode_short(&repo)).transpose()?
+        match page.next {
+            None => None,
+            Some(c) => {
+                encode_next_cursor_if_exposed(&repo, c, output_mode, show_continuation_cursor)?
+            }
+        }
     };
     build_commit_outcome(
         &repo,

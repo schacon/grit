@@ -498,6 +498,93 @@ fn merges_conflicts_with_no_merges() -> TestResult {
     Ok(())
 }
 
+fn log_walk_snapshot_count(git_dir: &Path) -> usize {
+    let dir = git_dir.join("grit/log-walk");
+    match fs::read_dir(&dir) {
+        Ok(rd) => rd.filter_map(Result::ok).count(),
+        Err(_) => 0,
+    }
+}
+
+#[cfg(unix)]
+fn chmod_readonly_recursive(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if path.is_dir() {
+        for entry in fs::read_dir(path).expect("read_dir") {
+            chmod_readonly_recursive(&entry.expect("entry").path());
+        }
+    }
+    let meta = fs::metadata(path).expect("metadata");
+    let mut perms = meta.permissions();
+    perms.set_mode(meta.permissions().mode() & !0o222);
+    fs::set_permissions(path, perms).expect("chmod");
+}
+
+#[test]
+fn log_default_human_does_not_write_cursor_snapshots() -> TestResult {
+    let dir = std::env::temp_dir().join(format!("grit-log-cursor-no-write-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    seed_linear_repo(&dir, 12);
+    let git_dir = dir.join(".git");
+    assert_eq!(log_walk_snapshot_count(&git_dir), 0);
+    let out = grit_run(&dir, &["log"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        log_walk_snapshot_count(&git_dir),
+        0,
+        "plain log must not persist cursor files"
+    );
+    let out2 = grit_run(&dir, &["log"]);
+    assert!(out2.status.success());
+    assert_eq!(log_walk_snapshot_count(&git_dir), 0);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("→ more: grit log") && !stdout.contains("--cursor="),
+        "{stdout}"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn log_default_human_succeeds_with_read_only_git_dir() -> TestResult {
+    let dir = std::env::temp_dir().join(format!("grit-log-readonly-git-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    seed_linear_repo(&dir, 12);
+    chmod_readonly_recursive(&dir.join(".git"));
+    let out = grit_run(&dir, &["log"]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+fn log_cursor_flag_persists_snapshot_for_hint() -> TestResult {
+    let dir =
+        std::env::temp_dir().join(format!("grit-log-cursor-hint-write-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    seed_linear_repo(&dir, 12);
+    let git_dir = dir.join(".git");
+    assert_eq!(log_walk_snapshot_count(&git_dir), 0);
+    let out = grit_run(&dir, &["log", "--cursor"]);
+    assert!(out.status.success());
+    assert_eq!(
+        log_walk_snapshot_count(&git_dir),
+        1,
+        "hint cursor should persist one snapshot"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("→ more: grit log --cursor=lw1.s."));
+    Ok(())
+}
+
 fn git_rev_list_oids(dir: &Path, extra: &[&str]) -> Vec<String> {
     let mut argv = vec!["-C", dir.to_str().expect("utf8"), "rev-list"];
     argv.extend(extra);

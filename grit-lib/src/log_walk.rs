@@ -316,8 +316,7 @@ fn log_walk_store_dir(git_dir: &Path) -> PathBuf {
 fn random_short_cursor_id() -> Result<String> {
     const ALPHABET: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
     let mut buf = [0u8; SHORT_CURSOR_ID_LEN];
-    getrandom::getrandom(&mut buf)
-        .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
+    getrandom::getrandom(&mut buf).map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
     Ok(buf
         .iter()
         .map(|&b| ALPHABET[(b as usize) % ALPHABET.len()] as char)
