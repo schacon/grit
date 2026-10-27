@@ -291,3 +291,106 @@ fn t2401_remove_linked_worktree_matches_git() {
     git_cmd(&main, &["worktree", "remove", git_wt.to_str().unwrap()]);
     assert_fsck_strict(&main);
 }
+
+fn grit_ref_listing(repo: &Repository) -> Vec<String> {
+    use grit_lib::refs::listing::{query_refs, RefNamespace, RefQuery, RefQueryOptions};
+    query_refs(
+        repo,
+        &RefQuery {
+            namespaces: vec![RefNamespace::Custom("refs/".into())],
+            ..RefQuery::default()
+        },
+        &RefQueryOptions::default(),
+    )
+    .expect("query refs")
+    .into_iter()
+    .map(|r| r.full_name)
+    .collect()
+}
+
+fn git_ref_listing(root: &Path) -> Vec<String> {
+    git_cmd(root, &["for-each-ref", "--format=%(refname)", "refs/"])
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+fn grit_reflog_refs(repo: &Repository) -> Vec<String> {
+    let mut names = Vec::new();
+    repo.refs()
+        .for_each_reflog_ref(&mut |name| {
+            names.push(name.to_owned());
+            std::ops::ControlFlow::Continue(())
+        })
+        .expect("reflog refs");
+    names
+}
+
+/// Loose and packed shared refs plus per-worktree refs list like `git for-each-ref`
+/// from both the main and a linked worktree, each name exactly once.
+#[test]
+fn ref_listing_from_main_and_linked_worktrees_matches_git() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let main = tmp.path().join("main");
+    fs::create_dir_all(&main).expect("mkdir");
+    init_repo(&main);
+    fs::write(main.join("f"), "f\n").unwrap();
+    git_cmd(&main, &["add", "f"]);
+    git_cmd(&main, &["commit", "-qm", "init"]);
+    for i in 0..5 {
+        git_cmd(&main, &["branch", &format!("packed-{i}")]);
+    }
+    git_cmd(&main, &["pack-refs", "--all"]);
+    for i in 0..5 {
+        git_cmd(&main, &["branch", &format!("loose-{i}")]);
+    }
+    git_cmd(&main, &["tag", "v1"]);
+    git_cmd(&main, &["update-ref", "refs/bisect/main-only", "HEAD"]);
+
+    let linked = tmp.path().join("linked");
+    git_cmd(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            linked.to_str().unwrap(),
+            "-b",
+            "wt",
+        ],
+    );
+    git_cmd(
+        &linked,
+        &["update-ref", "refs/worktree/linked-only", "HEAD"],
+    );
+    git_cmd(&linked, &["update-ref", "refs/bisect/linked-only", "HEAD"]);
+
+    for root in [&main, &linked] {
+        let repo = open_grit(root);
+        let grit = grit_ref_listing(&repo);
+        assert_eq!(
+            grit,
+            git_ref_listing(root),
+            "listing from {}",
+            root.display()
+        );
+        let mut unique = grit.clone();
+        unique.dedup();
+        assert_eq!(unique.len(), grit.len(), "duplicate names: {grit:?}");
+
+        let reflogs = grit_reflog_refs(&repo);
+        assert!(
+            reflogs.iter().any(|r| r == "refs/heads/loose-0"),
+            "shared reflogs visible from {}: {reflogs:?}",
+            root.display()
+        );
+        let mut sorted = reflogs.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), reflogs.len(), "duplicate reflog names");
+    }
+    let linked_refs = grit_ref_listing(&open_grit(&linked));
+    assert!(linked_refs.contains(&"refs/worktree/linked-only".to_owned()));
+    assert!(linked_refs.contains(&"refs/bisect/linked-only".to_owned()));
+    assert!(!linked_refs.contains(&"refs/bisect/main-only".to_owned()));
+}
