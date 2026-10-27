@@ -175,11 +175,22 @@ fn guide_lib(err: &LibError) -> Option<Error> {
                 ErrorKind::UnmergedPaths,
                 err.to_string(),
                 Some(format!(
-                    "take one side with `grit restore --ours {words}` or `grit restore --theirs {words}`, or bring the conflict markers back with `grit restore --merge {words}`"
+                    "take one side with `grit restore --ours {words}` or `grit restore --theirs {words}`, bring the conflict markers back with `grit restore --merge {words}`, or edit out the markers and run `grit add {words}`"
                 )),
                 Some(paths.clone()),
             ))
         }
+        LibError::UnmergedConflictMarkers { paths } => Some(Error::new(StructuredCliError {
+            human: format!("{err}{}", indented_paths(paths)),
+            payload: StructuredJsonError {
+                hint: Some(format!(
+                    "edit out the conflict markers in {}, then try again",
+                    listed_paths(paths)
+                )),
+                paths: Some(paths.clone()),
+                ..StructuredJsonError::new(err.to_string(), ErrorKind::UnmergedPaths)
+            },
+        })),
         LibError::WorktreePathIo { path, .. } => Some(guided(
             ErrorKind::WorktreePathIo,
             err.to_string(),
@@ -561,6 +572,18 @@ mod tests {
                 "{hint}"
             );
         }
+        assert!(hint.contains("grit add 'a b'"), "{hint}");
+    }
+
+    #[test]
+    fn conflict_markers_refusal_names_paths() {
+        let p = payload(Error::new(LibError::UnmergedConflictMarkers {
+            paths: strings(&["f"]),
+        }));
+        assert_eq!(p.kind, ErrorKind::UnmergedPaths);
+        assert_eq!(p.paths, Some(strings(&["f"])));
+        assert_eq!(p.error, "unmerged paths still have conflict markers");
+        assert!(p.hint.expect("hint").contains("conflict markers in f"));
     }
 
     #[test]
