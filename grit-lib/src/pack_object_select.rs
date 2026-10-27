@@ -57,12 +57,12 @@ impl fmt::Debug for PackObjectSelection {
 /// How client `haves` bound the want-side object walk.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum HaveBoundary {
-    /// Pre-walk all commits reachable from every `have` (upload-pack negotiation).
+    /// Pre-walk all commits reachable from every `have` before the want walk.
     #[default]
     CommitClosure,
-    /// Send-pack: `--revs` / `^have` negotiation — peel have tips, mark them
-    /// uninteresting, and interleave a commit-date walk with wants until the queue
-    /// is only uninteresting commits (no full have closure pre-walk).
+    /// Git's `--revs` / `^have` walk, used by send-pack and upload-pack: peel have
+    /// tips, mark them uninteresting, and interleave a commit-date walk with wants
+    /// until the queue is only uninteresting commits (no full have closure pre-walk).
     TipsOnly,
 }
 

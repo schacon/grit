@@ -576,20 +576,7 @@ fn write_upload_pack_stream_in_context(
     progress: &mut dyn FnMut(PackProgress),
     w: &mut dyn Write,
 ) -> Result<PackStats> {
-    if filter.is_some() {
-        return write_pack_with_shallow_and_filter(
-            repo.odb(),
-            wants,
-            haves,
-            have_shallow,
-            source_shallow,
-            filter,
-            opts,
-            HaveBoundary::CommitClosure,
-            w,
-        );
-    }
-    if opts.use_bitmaps {
+    if opts.use_bitmaps && filter.is_none() {
         if let Some(stats) = crate::pack_reuse::try_write_streaming_pack(
             repo,
             wants,
@@ -604,13 +591,19 @@ fn write_upload_pack_stream_in_context(
             return Ok(stats);
         }
     }
-    let _ = progress;
-    PackObjects::new(repo.odb(), PackObjectsOptions::from(*opts))
-        .wants(wants)
-        .haves(haves)
-        .source_shallow_grafts(source_shallow)
-        .have_shallow_grafts(have_shallow)
-        .write_to(w)
+    // The client's history only has to be painted down to where the want walk meets
+    // it, not pre-walked to its roots.
+    write_pack_with_shallow_and_filter(
+        repo.odb(),
+        wants,
+        haves,
+        have_shallow,
+        source_shallow,
+        filter,
+        opts,
+        HaveBoundary::TipsOnly,
+        w,
+    )
 }
 
 fn write_pack_header(w: &mut dyn Write, count: u32) -> Result<()> {
