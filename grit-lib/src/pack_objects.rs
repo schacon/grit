@@ -1884,4 +1884,155 @@ pub(crate) mod tests {
         );
         assert!(defaults.reuse_deltas && defaults.reuse_objects && !defaults.thin);
     }
+
+    /// A merge being sent whose two receiver-held parents hold an old and the new
+    /// `f.txt`; the new blob is also sent, so a held tree names a sent object at the
+    /// path being changed.
+    struct PeerHoldsSentBlob {
+        dir: tempfile::TempDir,
+        repo: Repository,
+        old: ObjectId,
+        new: ObjectId,
+        /// The parents and everything they reach, in write order.
+        peer_objects: Vec<ObjectId>,
+        peer_commits: HashSet<ObjectId>,
+        send: Vec<ObjectId>,
+        name_hashes: HashMap<ObjectId, u32>,
+    }
+
+    impl PeerHoldsSentBlob {
+        fn new() -> Self {
+            use crate::objects::{serialize_tree, TreeEntry};
+            use crate::pack_name_hash::pack_name_hash;
+            let dir = tempfile::TempDir::new().unwrap();
+            let repo =
+                Repository::init(dir.path(), &crate::repo::InitOptions::default()).expect("init");
+            let odb = repo.odb();
+            let tree = |entries: &[(&str, ObjectId)]| {
+                let entries: Vec<TreeEntry> = entries
+                    .iter()
+                    .map(|&(name, oid)| TreeEntry {
+                        mode: 0o100644,
+                        name: name.as_bytes().to_vec(),
+                        oid,
+                    })
+                    .collect();
+                odb.write(ObjectKind::Tree, &serialize_tree(&entries))
+                    .unwrap()
+            };
+            let commit = |tree: ObjectId, parents: &[ObjectId]| {
+                let parents: String = parents
+                    .iter()
+                    .map(|p| format!("parent {}\n", p.to_hex()))
+                    .collect();
+                let body = format!(
+                    "tree {}\n{parents}author A <a@example.com> 0 +0000\ncommitter A <a@example.com> 0 +0000\n\nc\n",
+                    tree.to_hex()
+                );
+                odb.write(ObjectKind::Commit, body.as_bytes()).unwrap()
+            };
+            let lines: Vec<String> = (0..200).map(|i| format!("line {i} of f.txt")).collect();
+            let old = odb
+                .write(ObjectKind::Blob, lines.join("\n").as_bytes())
+                .unwrap();
+            let new = odb
+                .write(
+                    ObjectKind::Blob,
+                    format!("{}\nmore\n", lines.join("\n")).as_bytes(),
+                )
+                .unwrap();
+            let old_tree = tree(&[("f.txt", old)]);
+            let new_tree = tree(&[("f.txt", new)]);
+            let first = commit(old_tree, &[]);
+            let second = commit(new_tree, &[]);
+            let extra = odb.write(ObjectKind::Blob, b"extra\n").unwrap();
+            let merge_tree = tree(&[("extra.txt", extra), ("f.txt", new)]);
+            let merge = commit(merge_tree, &[first, second]);
+            Self {
+                dir,
+                old,
+                new,
+                peer_objects: vec![old, new, old_tree, new_tree, first, second],
+                peer_commits: HashSet::from([first, second]),
+                send: vec![merge, merge_tree, new, extra],
+                name_hashes: HashMap::from([
+                    (new, pack_name_hash("f.txt")),
+                    (extra, pack_name_hash("extra.txt")),
+                ]),
+                repo,
+            }
+        }
+
+        fn thin_plan(&self) -> DeltaPlan {
+            plan_deltas(
+                self.repo.odb(),
+                &self.send,
+                &self.peer_commits,
+                None,
+                &PackBuildOptions::for_serve(None, true, true),
+                &self.name_hashes,
+                Some(1),
+            )
+            .unwrap()
+        }
+    }
+
+    #[test]
+    fn thin_pack_never_deltas_a_sent_blob_against_itself() {
+        let fx = PeerHoldsSentBlob::new();
+        let plan = fx.thin_plan();
+        assert_eq!(plan.entries.len(), fx.send.len());
+        for entry in &plan.entries {
+            assert_ne!(
+                entry.base,
+                Some(entry.oid),
+                "a delta against itself never resolves"
+            );
+        }
+        let new = plan.entries.iter().find(|e| e.oid == fx.new).unwrap();
+        assert_eq!(new.base, Some(fx.old), "the other held version is the base");
+    }
+
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
+    #[test]
+    fn thin_pack_with_held_sent_blob_completes_in_git() {
+        let fx = PeerHoldsSentBlob::new();
+        let plan = fx.thin_plan();
+        let opts = PackBuildOptions::for_serve(None, true, true);
+        let pack = crate::pack_delta::serialize_pack_with_deltas(
+            fx.repo.odb(),
+            &plan.entries,
+            &opts,
+            Some(1),
+        )
+        .unwrap();
+
+        let root = fx.dir.path();
+        grit_test_support::git(root, &["init", "-q", "--bare", "peer"]);
+        let peer = root.join("peer");
+        for oid in &fx.peer_objects {
+            let obj = fx.repo.odb().read(oid).unwrap();
+            let written = grit_test_support::git_cmd(&[
+                "hash-object",
+                "-w",
+                "--stdin",
+                "-t",
+                obj.kind.as_str(),
+            ])
+            .in_dir(&peer)
+            .stdin(obj.data)
+            .suc();
+            assert_eq!(written.stdout.trim(), oid.to_hex());
+        }
+        grit_test_support::git_cmd(&["index-pack", "--strict", "--fix-thin", "--stdin"])
+            .in_dir(&peer)
+            .stdin(pack.bytes)
+            .suc();
+        let merge = fx.send[0].to_hex();
+        grit_test_support::git(&peer, &["update-ref", "refs/heads/main", &merge]);
+        grit_test_support::git(&peer, &["fsck", "--strict", "--no-dangling"]);
+    }
 }
