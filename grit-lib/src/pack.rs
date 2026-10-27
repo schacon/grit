@@ -5178,6 +5178,16 @@ const VERIFY_RESIDENT_PACK_BYTES: usize = 4 * 1024 * 1024;
 /// Returns [`Error::Io`] when pack files cannot be read; a malformed candidate entry is skipped
 /// rather than reported so another pack (or the recompression path) can serve the object.
 pub fn packed_full_object_slice(objects_dir: &Path, oid: &ObjectId) -> Result<Option<Vec<u8>>> {
+    Ok(packed_full_object_range(objects_dir, oid)?
+        .map(|(bytes, start, end)| bytes[start..end].to_vec()))
+}
+
+/// [`packed_full_object_slice`] without the copy: the pack's bytes and the entry's range in
+/// them, so a pack writer can copy straight from the mapping.
+pub(crate) fn packed_full_object_range(
+    objects_dir: &Path,
+    oid: &ObjectId,
+) -> Result<Option<(Arc<PackData>, usize, usize)>> {
     let mut indexes = read_local_pack_indexes_cached(objects_dir)?;
     sort_pack_indexes_newest_first(&mut indexes);
     for idx in &indexes {
@@ -5224,7 +5234,7 @@ pub fn packed_full_object_slice(objects_dir: &Path, oid: &ObjectId) -> Result<Op
             }
             _ => {}
         }
-        return Ok(Some(slice.to_vec()));
+        return Ok(Some((pack_bytes, start, end)));
     }
     Ok(None)
 }

@@ -32,12 +32,37 @@ pub(crate) fn pack_delta_search_parallel_options(
     Ok(policy.try_resolve(ParallelOp::PackDeltaSearch, &cfg)?)
 }
 
+/// Bytes of a local pack, written to the new pack straight from the shared mapping.
+struct PackSlice {
+    bytes: std::sync::Arc<crate::pack::PackData>,
+    start: usize,
+    end: usize,
+}
+
+impl PackSlice {
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes[self.start..self.end]
+    }
+}
+
 /// Per-entry compressed payload produced by the parallel stage.
 enum PreparedBody {
     /// Entire pack object encoding copied verbatim (reused on-disk whole object).
-    Raw(Vec<u8>),
+    Raw(PackSlice),
     /// zlib-compressed bytes only (header written in the serial stage).
     Zlib(Vec<u8>),
+    /// zlib-compressed delta copied verbatim from a local pack (header written in the
+    /// serial stage).
+    ReusedZlib(PackSlice),
+}
+
+impl PreparedBody {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Raw(slice) | Self::ReusedZlib(slice) => slice.as_slice(),
+            Self::Zlib(bytes) => bytes,
+        }
+    }
 }
 
 struct PreparedEntry {
@@ -161,7 +186,7 @@ fn write_pack_in_batches(
         header.clear();
         match (entry.base, &prep.body) {
             (None, PreparedBody::Raw(_)) => {}
-            (None, PreparedBody::Zlib(_)) => {
+            (None, PreparedBody::Zlib(_) | PreparedBody::ReusedZlib(_)) => {
                 let kind = prep.whole_kind.unwrap_or(entry.kind);
                 encode_pack_object_header(&mut header, pack_type_code(kind), prep.payload_len);
             }
@@ -184,9 +209,7 @@ fn write_pack_in_batches(
                 }
             }
         }
-        let body = match &prep.body {
-            PreparedBody::Raw(bytes) | PreparedBody::Zlib(bytes) => bytes,
-        };
+        let body = prep.body.as_slice();
         out.write_all(&header).map_err(Error::Io)?;
         out.write_all(body).map_err(Error::Io)?;
         if let Some(rows) = index_rows.as_deref_mut() {
@@ -283,9 +306,11 @@ fn prepare_whole(
     compression: Compression,
 ) -> Result<PreparedEntry> {
     if opts.reuse_objects && odb.hash_algo() == HashAlgo::Sha1 {
-        if let Some(raw) = crate::pack::packed_full_object_slice(odb.objects_dir(), &entry.oid)? {
+        if let Some((bytes, start, end)) =
+            crate::pack::packed_full_object_range(odb.objects_dir(), &entry.oid)?
+        {
             return Ok(PreparedEntry {
-                body: PreparedBody::Raw(raw),
+                body: PreparedBody::Raw(PackSlice { bytes, start, end }),
                 payload_len: 0,
                 whole_kind: None,
                 reused: true,
@@ -312,9 +337,12 @@ fn prepare_delta(
     if let Some((delta_size, pack_bytes, zlib_start, zlib_end)) = &entry.reused_delta_zlib {
         let delta_len = usize::try_from(*delta_size)
             .map_err(|_| Error::CorruptObject("reused delta size exceeds usize".to_owned()))?;
-        let zlib = pack_bytes[*zlib_start..*zlib_end].to_vec();
         return Ok(PreparedEntry {
-            body: PreparedBody::Zlib(zlib),
+            body: PreparedBody::ReusedZlib(PackSlice {
+                bytes: std::sync::Arc::clone(pack_bytes),
+                start: *zlib_start,
+                end: *zlib_end,
+            }),
             payload_len: delta_len,
             whole_kind: None,
             reused: true,
