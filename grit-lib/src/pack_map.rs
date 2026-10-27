@@ -19,6 +19,25 @@ const HEADER_LEN: usize = 12;
 /// Files at or below this size are read into an owned `Vec` (tiny packs, tests,
 /// platforms or filesystems where mapping fails).
 const OWNED_READ_THRESHOLD: u64 = 8192;
+const RANDOM_WINDOW_BYTES: usize = 16 * 1024;
+const RANDOM_WINDOW_COUNT: usize = 8;
+
+#[derive(Default)]
+struct ReadWindow {
+    start: Option<usize>,
+    bytes: Vec<u8>,
+}
+
+#[derive(Default)]
+struct ReadWindows {
+    entries: [ReadWindow; RANDOM_WINDOW_COUNT],
+    next: usize,
+}
+
+struct PositionedPack {
+    file: File,
+    windows: Mutex<ReadWindows>,
+}
 
 /// Header plus trailing pack checksum — enough to detect on-disk replacement when
 /// mtime/size are unchanged (same-second repack) without re-reading the whole file.
@@ -79,6 +98,9 @@ enum Storage {
 /// descriptor and `fstat`s that handle before mapping so length and inode stay paired.
 pub struct PackData {
     storage: Storage,
+    /// A descriptor paired with the mapping. Bounded catalogs limit retained readers;
+    /// active readers keep this exact file alive even after eviction or path replacement.
+    random_file: Option<Box<PositionedPack>>,
 }
 
 impl std::fmt::Debug for PackData {
@@ -121,7 +143,7 @@ impl PackData {
     /// Map or read `path`, requiring at least `min_len` bytes (pack header vs index fanout).
     pub(crate) fn open_with_min_len(path: &Path, min_len: u64) -> Result<Arc<Self>> {
         let file = File::open(path).map_err(Error::Io)?;
-        Self::open_from_file(file, min_len, None)
+        Self::open_from_file(file, min_len, None, false)
     }
 
     /// Retain the pack's descriptor in a bounded pool for positioned reads.
@@ -138,13 +160,19 @@ impl PackData {
             }
             Err(err) => return Err(err.into()),
         };
-        Self::open_from_file(file, HEADER_LEN as u64, Some(files))
+        Self::open_from_file(file, HEADER_LEN as u64, Some(files), false)
+    }
+
+    /// Keep a descriptor for positioned entry reads instead of faulting scattered pack pages.
+    pub(crate) fn open_random_access(path: &Path) -> Result<Arc<Self>> {
+        Self::open_from_file(File::open(path)?, HEADER_LEN as u64, None, true)
     }
 
     fn open_from_file(
         file: File,
         min_len: u64,
         sparse_reads: Option<&SparseReadFiles>,
+        random: bool,
     ) -> Result<Arc<Self>> {
         let len = file.metadata().map_err(Error::Io)?.len();
         if len < min_len {
@@ -163,17 +191,32 @@ impl PackData {
             reader.read_to_end(&mut data).map_err(Error::Io)?;
             return Ok(Arc::new(Self {
                 storage: Storage::Owned(data),
+                random_file: None,
             }));
         }
         match map_read_only(&file, len_usize) {
-            Ok(mmap) => Ok(Arc::new(Self {
-                storage: Storage::Mapped {
-                    map: mmap,
-                    file: sparse_reads
-                        .map(|files| files.retain(file))
-                        .unwrap_or_default(),
-                },
-            })),
+            Ok(mmap) => {
+                let (file, random_file) = if random {
+                    (
+                        Weak::new(),
+                        Some(Box::new(PositionedPack {
+                            file,
+                            windows: Mutex::new(ReadWindows::default()),
+                        })),
+                    )
+                } else {
+                    (
+                        sparse_reads
+                            .map(|files| files.retain(file))
+                            .unwrap_or_default(),
+                        None,
+                    )
+                };
+                Ok(Arc::new(Self {
+                    storage: Storage::Mapped { map: mmap, file },
+                    random_file,
+                }))
+            }
             Err(_) => {
                 let mut data = Vec::with_capacity(len_usize);
                 let mut reader = file;
@@ -181,6 +224,7 @@ impl PackData {
                 reader.read_to_end(&mut data).map_err(Error::Io)?;
                 Ok(Arc::new(Self {
                     storage: Storage::Owned(data),
+                    random_file: None,
                 }))
             }
         }
@@ -191,6 +235,7 @@ impl PackData {
     pub(crate) fn from_owned(data: Vec<u8>) -> Arc<Self> {
         Arc::new(Self {
             storage: Storage::Owned(data),
+            random_file: None,
         })
     }
 
@@ -236,6 +281,59 @@ impl PackData {
             Storage::Owned(bytes) => out.copy_from_slice(&bytes[start..start + len]),
         }
         Some(len)
+    }
+
+    /// Read exactly one indexed entry through the retained file descriptor when enabled.
+    /// Nearby small entries share eight 16 KiB compressed windows; larger entries read
+    /// directly into the caller's reusable `buf`. The mapping stays untouched, and bounds
+    /// are checked before IO.
+    pub(crate) fn read_range<'a>(
+        &'a self,
+        start: usize,
+        end: usize,
+        buf: &'a mut Vec<u8>,
+    ) -> Result<&'a [u8]> {
+        if start > end || end > self.len() {
+            return Err(Error::CorruptObject("pack entry out of range".to_owned()));
+        }
+        if let Some(reader) = &self.random_file {
+            buf.clear();
+            let len = end - start;
+            if len == 0 {
+                return Ok(buf);
+            }
+            if len > RANDOM_WINDOW_BYTES {
+                buf.resize(len, 0);
+                crate::pack_delta_walk::read_exact_at(&reader.file, buf, start as u64)?;
+                return Ok(buf);
+            }
+            // Separate small windows retain nearby commit/tree entries across interleaved
+            // reads without keeping pack mappings resident. Large entries bypass the cache.
+            let mut windows = reader.windows.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(bytes) = windows.entries.iter().find_map(|window| {
+                let offset = start.checked_sub(window.start?)?;
+                window.bytes.get(offset..offset + len)
+            }) {
+                buf.extend_from_slice(bytes);
+                return Ok(buf);
+            }
+            let slot = windows.next;
+            windows.next = (slot + 1) % RANDOM_WINDOW_COUNT;
+            let window = &mut windows.entries[slot];
+            window.start = None;
+            window
+                .bytes
+                .resize(RANDOM_WINDOW_BYTES.min(self.len() - start), 0);
+            crate::pack_delta_walk::read_exact_at(&reader.file, &mut window.bytes, start as u64)?;
+            window.start = Some(start);
+            buf.extend_from_slice(&window.bytes[..len]);
+            return Ok(buf);
+        }
+        Ok(&self[start..end])
+    }
+
+    pub(crate) fn uses_positioned_reads(&self) -> bool {
+        self.random_file.is_some()
     }
 
     /// Drop this mapping's pages from the process's resident set.
@@ -427,6 +525,58 @@ mod tests {
     use super::*;
     use std::fs;
     use std::io::Write;
+
+    #[test]
+    fn positioned_ranges_reuse_buffer_and_preserve_open_file_identity() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("random.pack");
+        let bytes: Vec<u8> = (0..131072).map(|i| (i % 251) as u8).collect();
+        fs::write(&path, &bytes).expect("write");
+        let pack = PackData::open_random_access(&path).expect("open");
+        assert!(pack.uses_positioned_reads());
+        let mut buf = Vec::with_capacity(8192);
+        let ptr = buf.as_ptr();
+        for (start, end) in [(20000, 24000), (100, 200), (bytes.len(), bytes.len())] {
+            assert_eq!(
+                pack.read_range(start, end, &mut buf).expect("range"),
+                &bytes[start..end]
+            );
+            assert_eq!(buf.as_ptr(), ptr);
+        }
+        assert_eq!(
+            pack.read_range(70000, 100000, &mut buf)
+                .expect("large entry"),
+            &bytes[70000..100000]
+        );
+        assert!(pack.read_range(50, 40, &mut buf).is_err());
+        assert!(pack.read_range(0, bytes.len() + 1, &mut buf).is_err());
+        // A replacement at the path cannot pair the old mapping with a new descriptor.
+        fs::rename(&path, path.with_extension("old")).expect("rename");
+        fs::write(&path, vec![0; bytes.len()]).expect("replace");
+        assert_eq!(
+            pack.read_range(123, 456, &mut buf).expect("old inode"),
+            &bytes[123..456]
+        );
+    }
+
+    #[test]
+    fn positioned_read_rejects_truncated_file() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("truncated.pack");
+        fs::write(&path, vec![0; 32768]).expect("write");
+        let pack = PackData::open_random_access(&path).expect("open");
+        // Only positioned IO is used after truncation; never dereference the mapping.
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("file")
+            .set_len(0)
+            .expect("truncate");
+        assert!(matches!(
+            pack.read_range(100, 200, &mut Vec::new()),
+            Err(Error::Io(_))
+        ));
+    }
 
     #[test]
     fn owned_open_roundtrip() {
@@ -654,6 +804,35 @@ mod tests {
         assert_eq!(data.read_sparse(10, &mut buf), Some(0));
         assert_eq!(data.read_sparse(11, &mut buf), None);
         assert_eq!(data.read_sparse(u64::MAX, &mut buf), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn positioned_random_reads_leave_pack_mapping_nonresident() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (_, bytes, _files) = mapped_test_pack(dir.path(), 24 << 20);
+        let pack = PackData::open_random_access(&dir.path().join("resident.pack"))
+            .expect("positioned pack");
+        let mut buf = Vec::new();
+        for start in (HEADER_LEN..bytes.len() - 200).step_by(16381) {
+            assert_eq!(
+                pack.read_range(start, start + 200, &mut buf).expect("read"),
+                &bytes[start..start + 200]
+            );
+        }
+        let rss = mapping_rss_kib(pack.as_ptr());
+        assert!(rss < 1024, "random reads left {rss} KiB mapped");
+        let windows = pack
+            .random_file
+            .as_ref()
+            .expect("reader")
+            .windows
+            .lock()
+            .expect("windows");
+        assert!(windows
+            .entries
+            .iter()
+            .all(|w| w.bytes.len() <= RANDOM_WINDOW_BYTES));
     }
 
     #[cfg(target_os = "linux")]

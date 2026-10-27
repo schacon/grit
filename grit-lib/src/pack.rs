@@ -82,18 +82,35 @@ pub fn read_local_pack_indexes(objects_dir: &Path) -> Result<Vec<PackIndex>> {
 pub(crate) mod pack_cache {
     use super::{read_pack_index_no_verify, Error, ObjectKind, PackIndex, Result};
     use crate::pack_map::{fingerprint_from_file, PackData, PackFingerprint};
-    use std::collections::{HashMap, HashSet};
+    use std::collections::{HashMap, HashSet, VecDeque};
     use std::fs;
     use std::hash::{Hash, Hasher};
     use std::io;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, Weak};
     use std::time::SystemTime;
 
     const DELTA_LRU_SHARD_COUNT: usize = 32;
+    // A bounded operation must release descriptors and compressed windows together.
+    // Active readers can keep their own Arc alive across a catalog eviction.
+    const BOUNDED_PACK_READERS: usize = 32;
 
     type ThreadLocalDirListing = Option<(PathBuf, SystemTime, Vec<Arc<PackIndex>>)>;
+
+    enum CachedPackBytes {
+        Retained(Arc<PackData>),
+        Positioned(Weak<PackData>),
+    }
+
+    impl CachedPackBytes {
+        fn get(&self) -> Option<Arc<PackData>> {
+            match self {
+                Self::Retained(bytes) => Some(Arc::clone(bytes)),
+                Self::Positioned(bytes) => bytes.upgrade(),
+            }
+        }
+    }
 
     // hygiene: per-thread pack read hot cache (indexes, bytes, dir listing); cleared on invalidate
     thread_local! {
@@ -101,7 +118,7 @@ pub(crate) mod pack_cache {
             const { std::cell::RefCell::new(None) };
         static PACK_HIT_INDEX: std::cell::RefCell<Option<(PathBuf, Arc<PackIndex>)>> =
             const { std::cell::RefCell::new(None) };
-        static PACK_BYTES: std::cell::RefCell<HashMap<PathBuf, Arc<PackData>>> =
+        static PACK_BYTES: std::cell::RefCell<HashMap<PathBuf, CachedPackBytes>> =
             std::cell::RefCell::new(HashMap::new());
         static PACK_INDEXES: std::cell::RefCell<HashMap<PathBuf, Arc<PackIndex>>> =
             std::cell::RefCell::new(HashMap::new());
@@ -394,16 +411,22 @@ pub(crate) mod pack_cache {
         if !crate::pack_store::PackStore::has_context() {
             return None;
         }
-        PACK_BYTES.with(|cell| cell.borrow().get(pack_path).map(Arc::clone))
+        PACK_BYTES.with(|cell| cell.borrow().get(pack_path).and_then(CachedPackBytes::get))
     }
 
     fn remember_pack_bytes(pack_path: &Path, bytes: &Arc<PackData>) {
+        // The operation-local catalog owns positioned readers. A second strong cache
+        // would keep their descriptors alive after eviction from that catalog.
         if !crate::pack_store::PackStore::has_context() {
             return;
         }
+        let cached = if bytes.uses_positioned_reads() {
+            CachedPackBytes::Positioned(Arc::downgrade(bytes))
+        } else {
+            CachedPackBytes::Retained(Arc::clone(bytes))
+        };
         PACK_BYTES.with(|cell| {
-            cell.borrow_mut()
-                .insert(pack_path.to_path_buf(), Arc::clone(bytes));
+            cell.borrow_mut().insert(pack_path.to_path_buf(), cached);
         });
         forget_single_reader_memo();
     }
@@ -841,6 +864,7 @@ pub(crate) mod pack_cache {
         by_dir: HashMap<PathBuf, CachedDir>,
         by_idx: HashMap<PathBuf, CachedIdx>,
         by_pack: HashMap<PathBuf, CachedPack>,
+        bounded_pack_order: VecDeque<PathBuf>,
         /// Small id assigned when a pack file is first registered in this process.
         pack_ids: HashMap<PathBuf, u32>,
         next_pack_id: u32,
@@ -849,6 +873,20 @@ pub(crate) mod pack_cache {
         /// Per `objects/pack` directory rescan count (parallel-safe; tests only).
         #[cfg(test)]
         test_dir_rescan_counts: HashMap<PathBuf, u64>,
+    }
+
+    impl CatalogState {
+        fn retain_bounded_pack(&mut self, pack_path: &Path) {
+            if let Some(pos) = self.bounded_pack_order.iter().position(|p| p == pack_path) {
+                self.bounded_pack_order.remove(pos);
+            }
+            while self.bounded_pack_order.len() >= BOUNDED_PACK_READERS {
+                if let Some(path) = self.bounded_pack_order.pop_front() {
+                    self.by_pack.remove(&path);
+                }
+            }
+            self.bounded_pack_order.push_back(pack_path.to_path_buf());
+        }
     }
 
     pub(crate) fn with_current<R>(f: impl FnOnce(&mut CatalogState) -> R) -> R {
@@ -1223,11 +1261,18 @@ pub(crate) mod pack_cache {
     ) -> Result<Arc<PackData>> {
         invalidate_thread_local_for_pack_path_change(pack_path);
         let store = crate::pack_store::PackStore::active_for_reads();
-        let bytes = PackData::open_for_sparse_reads(pack_path, &store.sparse_read_files)?;
+        let bytes = if store.bounded_reads() {
+            PackData::open_random_access(pack_path)?
+        } else {
+            PackData::open_for_sparse_reads(pack_path, &store.sparse_read_files)?
+        };
         store.with_catalog(|g| {
             drop_delta_entries_locked(g, pack_path, store.delta_bases());
             g.by_idx.remove(&pack_path.with_extension("idx"));
             g.validated_pack_counts.remove(pack_path);
+            if store.bounded_reads() {
+                g.retain_bounded_pack(pack_path);
+            }
             g.by_pack.insert(
                 pack_path.to_path_buf(),
                 CachedPack {
@@ -1250,9 +1295,16 @@ pub(crate) mod pack_cache {
             return Ok(hit);
         }
         let store = crate::pack_store::PackStore::active_for_reads();
-        if let Some(hit) =
+        let hit = if store.bounded_reads() {
+            store.with_catalog(|g| {
+                let bytes = Arc::clone(&g.by_pack.get(pack_path)?.bytes);
+                g.retain_bounded_pack(pack_path);
+                Some(bytes)
+            })
+        } else {
             store.with_catalog_read(|g| g.by_pack.get(pack_path).map(|c| Arc::clone(&c.bytes)))
-        {
+        };
+        if let Some(hit) = hit {
             remember_pack_bytes(pack_path, &hit);
             return Ok(hit);
         }
@@ -1426,6 +1478,7 @@ pub(crate) mod pack_cache {
         g.by_dir.clear();
         g.by_idx.clear();
         g.by_pack.clear();
+        g.bounded_pack_order.clear();
         g.pack_ids.clear();
     }
 
@@ -1544,6 +1597,45 @@ pub(crate) mod pack_cache {
             if let Some(c) = g.by_pack.get_mut(pack_path) {
                 c.mtime = touched_at;
             }
+        });
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn bounded_pack_cache_releases_inactive_readers() {
+        let dir = tempfile::tempdir().expect("dir");
+        let store = Arc::new(crate::pack_store::PackStore::for_bounded_reads(
+            dir.path().to_path_buf(),
+        ));
+        crate::pack_store::PackStore::with_context(Arc::clone(&store), || {
+            let mut previous = Vec::new();
+            let hot_path = dir.path().join("0.pack");
+            let mut hot = None;
+            for i in 0..70 {
+                let path = dir.path().join(format!("{i}.pack"));
+                let mut bytes = vec![i as u8; 32768];
+                bytes[..12].copy_from_slice(b"PACK\x00\x00\x00\x02\x00\x00\x00\x00");
+                fs::write(&path, bytes).expect("write");
+                let pack = get_pack_bytes(&path).expect("pack");
+                assert!(pack.uses_positioned_reads());
+                previous.push(Arc::downgrade(&pack));
+                hot.get_or_insert_with(|| Arc::clone(&pack));
+                assert!(Arc::ptr_eq(
+                    &get_pack_bytes(&hot_path).expect("hot pack"),
+                    hot.as_ref().expect("hot")
+                ));
+            }
+            warm_thread_local_from_store(&store);
+            assert!(store.with_catalog_read(|g| g.by_pack.len()) <= 32);
+            assert!(previous[1..32].iter().all(|pack| pack.upgrade().is_none()));
+            assert!(previous[69].upgrade().is_some());
+            let reloaded = get_pack_bytes(&dir.path().join("1.pack")).expect("reopen");
+            assert_eq!(
+                reloaded
+                    .read_range(100, 200, &mut Vec::new())
+                    .expect("read"),
+                &[1; 100]
+            );
         });
     }
 }
@@ -2958,6 +3050,7 @@ fn resolve_pack_object_at_body(
         None => PackBytesSource::Cached(read_pack_bytes_cached(&cur_pack_path)?),
     };
 
+    let mut compressed = Vec::new();
     loop {
         let idx_ref = cur_idx.get();
         if idx_ref.pack_path != cur_pack_path {
@@ -2969,18 +3062,21 @@ fn resolve_pack_object_at_body(
         let pack_id = cur_pack_id;
         state.visit(pack_id, cur_offset)?;
 
-        let bytes: &[u8] = match &pack_bytes {
-            PackBytesSource::Borrowed(b) => b,
-            PackBytesSource::Cached(c) => c.as_ref(),
-        };
-
         if !validated_pack_count {
-            validate_pack_index_object_count(bytes, idx_ref)?;
+            let header: &[u8] = match &pack_bytes {
+                PackBytesSource::Borrowed(b) => b,
+                PackBytesSource::Cached(c) => c,
+            };
+            validate_pack_index_object_count(header, idx_ref)?;
             validated_pack_count = true;
         }
-
+        let (bytes, mut pos) = match &pack_bytes {
+            PackBytesSource::Borrowed(b) => (*b, cur_offset as usize),
+            PackBytesSource::Cached(c) => {
+                pack_entry_bytes(idx_ref, cur_offset, c, &mut compressed)?
+            }
+        };
         let object_start = cur_offset;
-        let mut pos = cur_offset as usize;
         let (packed_type, size) = match parse_pack_object_header(bytes, &mut pos) {
             Ok(v) => v,
             Err(err) => {
@@ -3517,6 +3613,26 @@ thread_local! {
 /// Max uncompressed bytes to inflate when only commit headers (e.g. author) are needed.
 pub(crate) const COMMIT_HEADER_READ_PREFIX: usize = 512;
 
+/// Select one entry for random reads; ordinary readers keep their zero-copy fast path.
+fn pack_entry_bytes<'a>(
+    idx: &PackIndex,
+    offset: u64,
+    pack: &'a PackData,
+    buf: &'a mut Vec<u8>,
+) -> Result<(&'a [u8], usize)> {
+    let start = usize::try_from(offset)
+        .map_err(|_| Error::CorruptObject("pack offset out of range".to_owned()))?;
+    if !pack.uses_positioned_reads() {
+        return Ok((pack, start));
+    }
+    let pack_end = pack
+        .len()
+        .checked_sub(idx.hash_bytes())
+        .ok_or_else(|| Error::CorruptObject("truncated pack trailer".to_owned()))?;
+    let end = idx.next_pack_offset_after(offset, pack_end as u64)? as usize;
+    Ok((pack.read_range(start, end, buf)?, 0))
+}
+
 fn read_whole_pack_entry_object_fast(
     idx: &PackIndex,
     offset: u64,
@@ -3551,7 +3667,9 @@ fn read_whole_pack_entry_object_into(
             }
         }
     }
-    inflate_whole_pack_entry_into(pack_bytes, offset, out)
+    let mut compressed = Vec::new();
+    let (pack_bytes, pos) = pack_entry_bytes(idx, offset, pack_bytes, &mut compressed).ok()?;
+    inflate_whole_pack_entry_into(pack_bytes, pos as u64, out)
 }
 
 fn inflate_whole_pack_entry_into(
@@ -3691,7 +3809,7 @@ fn read_object_at_depth_into(
                 Err(e) => return Err(e),
             }
         }
-        if depth == 0 {
+        if depth == 0 && !pack_bytes.uses_positioned_reads() {
             if let Some(kind) = read_whole_pack_entry_object_into(idx, offset, &pack_bytes, out) {
                 return Ok(kind);
             }
@@ -4059,8 +4177,9 @@ impl SingleLocalPackReader {
     }
 
     fn read_commit_author_prefix_at_pack_offset(&mut self, offset: u64) -> Result<Option<&[u8]>> {
-        let pack_bytes = self.pack_bytes.as_ref();
-        let mut pos = offset as usize;
+        let mut compressed = Vec::new();
+        let (pack_bytes, mut pos) =
+            pack_entry_bytes(&self.idx, offset, &self.pack_bytes, &mut compressed)?;
         if pos >= pack_bytes.len() {
             return Ok(None);
         }
@@ -4203,10 +4322,12 @@ impl SingleLocalPackReader {
         let Some(offset) = self.idx.find_offset_monotonic(oid, &mut self.cursor)? else {
             return Err(Error::ObjectNotFound(oid.to_hex()));
         };
-        if let Some(obj) =
-            read_whole_pack_entry_object_fast(&self.idx, offset, self.pack_bytes.as_ref())
-        {
-            return Ok(obj);
+        if !self.pack_bytes.uses_positioned_reads() {
+            if let Some(obj) =
+                read_whole_pack_entry_object_fast(&self.idx, offset, &self.pack_bytes)
+            {
+                return Ok(obj);
+            }
         }
         read_object_from_pack_at_offset(&self.idx, offset)
     }
@@ -4261,10 +4382,12 @@ impl SingleLocalPackReader {
         let Some(offset) = self.idx.find_offset_monotonic(oid, &mut self.cursor)? else {
             return Err(Error::ObjectNotFound(oid.to_hex()));
         };
-        if let Some(kind) =
-            read_whole_pack_entry_object_into(&self.idx, offset, self.pack_bytes.as_ref(), out)
-        {
-            return Ok(kind);
+        if !self.pack_bytes.uses_positioned_reads() {
+            if let Some(kind) =
+                read_whole_pack_entry_object_into(&self.idx, offset, &self.pack_bytes, out)
+            {
+                return Ok(kind);
+            }
         }
         read_object_at_depth_into(&self.idx, offset, 0, populate_delta_lru, out)
     }
@@ -5932,6 +6055,35 @@ mod tests {
     }
 
     #[test]
+    fn bounded_pack_cache_resolves_deltas_without_changing_shared_cache() {
+        let _guard = pack_cache_test_guard();
+        let (_tmp, idx, tip, odb) = build_ofs_delta_chain_pack(800).expect("chain");
+        let normal = odb.read(&tip).expect("normal");
+        let shared_bytes = odb.pack_store().expect("store").delta_bases().bytes_used();
+        let bounded = odb.with_bounded_pack_cache();
+        assert!(!Arc::ptr_eq(
+            odb.pack_store().expect("store"),
+            bounded.pack_store().expect("store")
+        ));
+        bounded.with_pack_read_context(|| {
+            let got = bounded.read(&tip).expect("bounded");
+            assert_eq!(got.data, normal.data);
+            let pack = read_pack_bytes_cached(&idx.pack_path).expect("pack");
+            assert!(pack.uses_positioned_reads());
+            let cached = bounded
+                .pack_store()
+                .expect("store")
+                .delta_bases()
+                .bytes_used();
+            assert!(cached > 0 && cached <= crate::pack_store::BOUNDED_DELTA_BASE_BYTES);
+        });
+        assert_eq!(
+            odb.pack_store().expect("store").delta_bases().bytes_used(),
+            shared_bytes
+        );
+    }
+
+    #[test]
     fn ofs_delta_chain_depth_4096_resolves() {
         let _guard = pack_cache_test_guard();
         clear_pack_cache();
@@ -6311,17 +6463,26 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let objects = tmp.path().join("objects");
         let odb = Odb::new(&objects);
-        let base = b"common prefix base";
-        let target = b"common prefix target";
-        let oid_base = odb.hash(ObjectKind::Blob, base).expect("hash");
-        let delta = encode_lcp_delta(base, target).expect("delta");
-        let oid_target = odb.hash(ObjectKind::Blob, target).expect("hash");
+        let mut random = 17u64;
+        let base: Vec<u8> = (0..20000)
+            .map(|_| {
+                random ^= random << 13;
+                random ^= random >> 7;
+                random ^= random << 17;
+                random as u8
+            })
+            .collect();
+        let mut target = base.clone();
+        target.extend_from_slice(b"target suffix");
+        let oid_base = odb.hash(ObjectKind::Blob, &base).expect("hash");
+        let delta = encode_lcp_delta(&base, &target).expect("delta");
+        let oid_target = odb.hash(ObjectKind::Blob, &target).expect("hash");
 
         let mut pack_base = Vec::new();
         pack_base.extend_from_slice(b"PACK");
         pack_base.extend_from_slice(&2u32.to_be_bytes());
         pack_base.extend_from_slice(&1u32.to_be_bytes());
-        let off_base = append_whole_blob(&mut pack_base, base);
+        let off_base = append_whole_blob(&mut pack_base, &base);
         append_sha1_pack_trailer(&mut pack_base);
 
         let mut pack_tip = Vec::new();
@@ -6335,12 +6496,12 @@ mod tests {
         install_synthetic_pack(&objects, "base", &pack_base, &[(oid_base, off_base)]);
         install_synthetic_pack(&objects, "tip", &pack_tip, &[(oid_target, off_tip)]);
 
-        let got = odb
-            .read(&oid_target)
-            .expect("Odb::read cross-pack ref-delta");
-        assert_eq!(got.kind, ObjectKind::Blob);
-        assert_eq!(got.data.as_slice(), target);
-        assert_eq!(odb.hash(got.kind, &got.data).expect("hash"), oid_target);
+        for reader in [&odb, &odb.with_bounded_pack_cache()] {
+            let got = reader.read(&oid_target).expect("cross-pack ref-delta");
+            assert_eq!(got.kind, ObjectKind::Blob);
+            assert_eq!(got.data, target);
+            assert_eq!(reader.hash(got.kind, &got.data).expect("hash"), oid_target);
+        }
     }
 
     #[test]
