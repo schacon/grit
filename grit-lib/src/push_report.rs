@@ -15,6 +15,8 @@ use std::fmt::Write as _;
 
 /// The resolved outcome of a single reference update during a push.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde-models", serde(rename_all = "snake_case"))]
 pub enum PushRefStatus {
     /// The reference was already at the requested value (`=`, `[up to date]`).
     UpToDate,
@@ -51,6 +53,7 @@ impl PushRefStatus {
 
 /// One reference's resolved push result, ready for display.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct PushRefResult {
     /// The local ref name (source side), e.g. `refs/heads/next`. `None` for deletions.
     pub local_ref: Option<String>,

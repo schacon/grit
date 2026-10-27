@@ -118,6 +118,7 @@ impl RewriteOptions {
 
 /// One original commit and its replacement (if any).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct RewrittenCommit {
     /// Commit OID before rewrite.
     pub old: ObjectId,
@@ -135,6 +136,7 @@ pub struct RewrittenCommit {
 
 /// Planned movement of one ref (refs, index, and worktree are not updated by [`super::plan_rewrite`](crate::history::plan_rewrite)).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct PlannedRefUpdate {
     /// Full ref name (for example `refs/heads/main`).
     pub name: String,
@@ -146,6 +148,7 @@ pub struct PlannedRefUpdate {
 
 /// Effect on `HEAD` from the rewrite (commit pointer and trees).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct HeadEffect {
     /// Whether `HEAD`'s commit OID changes.
     pub commit_changes: bool,
@@ -165,6 +168,7 @@ pub struct HeadEffect {
 
 /// Result of [`super::plan_rewrite`](crate::history::plan_rewrite): new objects are already in the ODB.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct RewritePlan {
     /// Every original commit in rewrite order and its replacement.
     pub commits: Vec<RewrittenCommit>,
@@ -287,6 +291,7 @@ pub struct UndoOutcome {
 
 /// Result of [`super::apply_rewrite`](crate::history::apply_rewrite).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct AppliedRewrite {
     /// Ref updates that were committed.
     pub ref_updates: Vec<PlannedRefUpdate>,

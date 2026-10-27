@@ -21,6 +21,8 @@ pub use crate::porcelain::orphans::{OrphanedCommitSummary, DEFAULT_ORPHAN_LIMIT}
 
 /// Which parts of the repository [`reset_to_commit`] updates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde-models", serde(rename_all = "snake_case"))]
 pub enum ResetMode {
     /// Move the branch tip (or detached `HEAD`) only; leave index and worktree unchanged.
     Soft,
@@ -95,6 +97,7 @@ impl ResetOptions {
 
 /// Non-mutating preview of [`reset_to_commit`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct ResetPreview {
     /// Tracked paths whose staged or unstaged edits a hard reset would discard.
     pub would_overwrite: Vec<String>,
@@ -112,6 +115,7 @@ pub struct ResetPreview {
 
 /// Result of [`reset_to_commit`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct ResetOutcome {
     /// `soft`, `mixed`, `hard`, or `keep`.
     pub mode: ResetMode,

@@ -1539,6 +1539,9 @@ mod s7_pick_revert_merge_differential;
 #[path = "serde_models.rs"]
 mod serde_models;
 #[cfg(feature = "full-tests")]
+#[path = "serde_models_git_compat.rs"]
+mod serde_models_git_compat;
+#[cfg(feature = "full-tests")]
 #[path = "serve_ls_refs_prefix.rs"]
 mod serve_ls_refs_prefix;
 #[cfg(feature = "full-tests")]

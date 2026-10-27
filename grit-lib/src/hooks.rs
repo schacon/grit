@@ -636,6 +636,8 @@ impl HookSpawnContext<'_> {
 /// Well-known lifecycle hooks that porcelain operations run and report in their outcomes
 /// (for example [`crate::porcelain::commit::CommitOutcome::hooks_run`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde-models", serde(rename_all = "kebab-case"))]
 pub enum HookName {
     /// `.git/hooks/pre-commit` or `hook.pre-commit.*`.
     PreCommit,

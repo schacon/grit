@@ -77,6 +77,27 @@ Library APIs return `grit_lib::error::Result`. Match on `Error` variants (`RevPa
 
 Common conditions use dedicated variants rather than `Error::Message`: bare or missing work tree → [`Error::RequiresWorkTree`](rustdoc:grit_lib::error::Error::RequiresWorkTree); empty commit body → [`Error::EmptyCommitMessage`](rustdoc:grit_lib::error::Error::EmptyCommitMessage); path missing from a revision tree → [`RevParseError::PathNotInRevision`](rustdoc:grit_lib::revwalk::rev_parse_error::RevParseError::PathNotInRevision); parent navigation past root → [`RevParseError::RevisionOutOfRange`](rustdoc:grit_lib::revwalk::rev_parse_error::RevParseError::RevisionOutOfRange); pack deltas whose bases are in neither the pack nor the object database (a thin pack received without its bases) → [`Error::UnresolvedDeltas`](rustdoc:grit_lib::error::Error::UnresolvedDeltas); a `.idx` whose trailing checksum is wrong, on reads that verify it → [`Error::PackIndexChecksumMismatch`](rustdoc:grit_lib::error::Error::PackIndexChecksumMismatch).
 
+## Serializable results
+
+Enable the `serde-models` feature to get `serde::Serialize` on the results a front end renders, so you don't write your own JSON types for them:
+
+```toml
+[dependencies]
+grit-lib = { version = "0.5", features = ["serde-models"] }
+```
+
+The feature covers [`StatusModel`](rustdoc:grit_lib::porcelain::status::StatusModel) (including its paused [`Operation`](rustdoc:grit_lib::operation::Operation), state flags and conflict kinds; the loaded index is not serialized), [`DiffEntry`](rustdoc:grit_lib::diff::DiffEntry), [`LoadedCommit`](rustdoc:grit_lib::porcelain::log::LoadedCommit), and the outcomes of commit, switch, reset, branch listing, stash, fetch, push, history rewrites and rebase ([`CommitOutcome`](rustdoc:grit_lib::porcelain::commit::CommitOutcome), [`SwitchOutcome`](rustdoc:grit_lib::porcelain::switch::SwitchOutcome), [`ResetOutcome`](rustdoc:grit_lib::porcelain::reset::ResetOutcome), [`BranchList`](rustdoc:grit_lib::porcelain::branch::BranchList), [`StashEntry`](rustdoc:grit_lib::porcelain::stash::StashEntry), [`StashApplyOutcome`](rustdoc:grit_lib::porcelain::stash::StashApplyOutcome), [`FetchOutcome`](rustdoc:grit_lib::remote::transfer::FetchOutcome), [`PushOutcome`](rustdoc:grit_lib::remote::transfer::PushOutcome), [`RewritePlan`](rustdoc:grit_lib::revwalk::history::RewritePlan), [`RebaseOutcome`](rustdoc:grit_lib::revwalk::history::RebaseOutcome)). The shapes:
+
+| Type | JSON |
+| --- | --- |
+| [`ObjectId`](rustdoc:grit_lib::objects::ObjectId), [`ChangeId`](rustdoc:grit_lib::change_id::ChangeId) | hex string |
+| [`FileMode`](rustdoc:grit_lib::objects::FileMode) | octal string such as `"100644"`; `"000000"` for the missing side of an add or delete |
+| [`Signature`](rustdoc:grit_lib::ident::Signature) | `{"name", "email", "date"}`, with `date` in RFC 3339 keeping the recorded offset |
+| [`Error`](rustdoc:grit_lib::error::Error) | `{"kind", "message"}`, where `kind` is [`Error::kind_name`](rustdoc:grit_lib::error::Error::kind_name) |
+| enums | snake_case variant names (`"type_changed"`, `"merge"`); hook names use Git's spelling (`"pre-commit"`) |
+
+`LoadedCommit` holds typed author and committer signatures. A commit whose identity line has a malformed date still loads, with the Unix epoch as its date, the way `git log` shows it ([`Signature::from_header_lossy`](rustdoc:grit_lib::ident::Signature::from_header_lossy)).
+
 ## Concurrency
 
 Two or more `Repository` handles may be used from different threads in one process when each handle is opened with its **own** `Environment`, `RepositoryOptions`, diagnostics sink, and command runner. Repository-scoped caches (config, attributes, pack read caches) do not leak between handles.

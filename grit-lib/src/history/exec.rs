@@ -34,6 +34,7 @@ pub struct ExecSpec {
 
 /// One `--exec` invocation at a specific commit.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct ExecRunRecord {
     /// Commit checked out when the command ran.
     pub commit: ObjectId,
@@ -41,14 +42,31 @@ pub struct ExecRunRecord {
     pub command: String,
     /// Subprocess exit code (`1` when the OS provides no code).
     pub exit_code: i32,
-    /// Captured stdout bytes.
+    /// Captured stdout bytes (serialized as lossy UTF-8 text).
+    #[cfg_attr(
+        feature = "serde-models",
+        serde(serialize_with = "serialize_lossy_utf8")
+    )]
     pub stdout: Vec<u8>,
-    /// Captured stderr bytes.
+    /// Captured stderr bytes (serialized as lossy UTF-8 text).
+    #[cfg_attr(
+        feature = "serde-models",
+        serde(serialize_with = "serialize_lossy_utf8")
+    )]
     pub stderr: Vec<u8>,
+}
+
+#[cfg(feature = "serde-models")]
+fn serialize_lossy_utf8<S: serde::Serializer>(
+    bytes: &[u8],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&String::from_utf8_lossy(bytes))
 }
 
 /// Successful exec invocations captured during one verification or recovery call.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct ExecReport {
     /// One row per command invocation, in execution order.
     pub runs: Vec<ExecRunRecord>,

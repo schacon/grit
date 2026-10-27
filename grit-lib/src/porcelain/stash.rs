@@ -458,6 +458,7 @@ pub struct StashBranchOutcome {
 /// One entry from [`RepositoryStash::list`](crate::repo_handles::RepositoryStash::list)
 /// (`stash@{{index}}` in newest-first order).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct StashEntry {
     /// Index matching `stash@{{index}}` (0 is newest).
     pub index: usize,
@@ -2229,6 +2230,7 @@ pub(crate) fn apply_stash_oid(
 /// [`RepositoryStash::apply_commit`](crate::repo_handles::RepositoryStash::apply_commit), and
 /// [`RepositoryStash::pop`](crate::repo_handles::RepositoryStash::pop).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct StashApplyOutcome {
     /// Paths left with conflict stages (1–3) in the index, sorted and de-duplicated.
     ///

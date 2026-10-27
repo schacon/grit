@@ -55,6 +55,7 @@ fn record_resolved_ingest_threads(threads: usize) {
 
 /// Per-type object counts for a pack, tallied while it is indexed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct ObjectKindCounts {
     /// Commit objects.
     pub commits: u64,

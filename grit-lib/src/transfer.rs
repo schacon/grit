@@ -36,6 +36,8 @@ use std::num::NonZeroU32;
 /// Mirrors the shapes of `gix::remote::fetch::refs::update::Mode` that `jj`
 /// already consumes, so the embedder's translation layer stays a thin adapter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde-models", serde(rename_all = "snake_case"))]
 pub enum UpdateMode {
     /// The local tracking ref did not exist and was created.
     New,
@@ -99,6 +101,7 @@ impl UpdateMode {
 
 /// The resolved outcome of one reference during a fetch.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct RefUpdate {
     /// The remote-side ref name (e.g. `refs/heads/main`).
     pub remote_ref: String,
@@ -471,6 +474,7 @@ fn optional_config_bool(config: &crate::config::ConfigSet, key: &str) -> Result<
 
 /// Object and byte counts for objects received during a fetch or clone.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct TransferStats {
     /// Objects installed from the received pack (zero when nothing was transferred).
     pub objects: u64,
@@ -516,6 +520,7 @@ impl std::ops::AddAssign for TransferStats {
 
 /// The structured result of a fetch, ready for the embedder's ref-store apply.
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct FetchOutcome {
     /// Per-ref resolved updates.
     pub updates: Vec<RefUpdate>,
@@ -890,6 +895,7 @@ impl PrePushGate<'_> {
 
 /// The structured result of a push. Reuses [`PushRefResult`] for per-ref status.
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct PushOutcome {
     /// Per-ref resolved results (status, old/new oid, reason).
     pub results: Vec<PushRefResult>,

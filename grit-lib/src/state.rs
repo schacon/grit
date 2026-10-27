@@ -38,6 +38,7 @@ use crate::repo::Repository;
 /// The current state of HEAD.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde-models", serde(rename_all = "snake_case"))]
 pub enum HeadState {
     /// HEAD points to a branch via a symbolic ref (e.g. `ref: refs/heads/main`).
     Branch {
@@ -93,6 +94,8 @@ impl HeadState {
 
 /// An in-progress operation that the repository is in the middle of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde-models", serde(rename_all = "snake_case"))]
 pub enum InProgressOperation {
     /// A merge is in progress (`MERGE_HEAD` exists).
     Merge,
@@ -132,6 +135,8 @@ impl InProgressOperation {
 
 /// A suggested follow-up action while an operation is paused.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde-models", serde(rename_all = "snake_case"))]
 pub enum NextStep {
     /// Edit conflicted files in the worktree (inspect with `grit diff`).
     ResolveConflicts,
@@ -227,6 +232,7 @@ impl NextStep {
 
 /// In-progress operation plus the steps grit can suggest today.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct Operation {
     /// Which operation is paused.
     pub kind: InProgressOperation,
@@ -681,6 +687,7 @@ pub fn operation_blocking_switch(git_dir: &Path) -> Result<Option<InProgressOper
 /// This mirrors Git's `struct wt_status_state` closely enough for advice lines and
 /// branch headers (merge, rebase, cherry-pick, revert, bisect, am, detached HEAD).
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct WtStatusState {
     /// `MERGE_HEAD` exists (merge or merge+rebase).
     pub merge_in_progress: bool,

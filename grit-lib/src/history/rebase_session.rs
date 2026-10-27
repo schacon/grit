@@ -44,6 +44,7 @@ pub struct StartRebaseOptions {
 
 /// Snapshot when a resumable rebase stops on conflicts.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct RebaseStop {
     /// Original commit that could not be replayed cleanly.
     pub commit: ObjectId,
@@ -57,6 +58,8 @@ pub struct RebaseStop {
 
 /// Result of starting or advancing a rebase session.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde-models", serde(rename_all = "snake_case"))]
 pub enum RebaseOutcome {
     /// Every commit was replayed and ref updates were applied.
     Done {

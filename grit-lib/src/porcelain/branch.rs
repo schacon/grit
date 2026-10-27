@@ -204,6 +204,7 @@ pub fn resolve_create_tracking(
 
 /// One local branch in a [`BranchList`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct LocalBranch {
     /// Short branch name (without `refs/heads/`).
     pub name: String,
@@ -215,6 +216,7 @@ pub struct LocalBranch {
 
 /// Result of [`list_branches`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct BranchList {
     /// Branch `HEAD` is attached to, or `None` when `HEAD` is detached or invalid.
     pub current: Option<String>,

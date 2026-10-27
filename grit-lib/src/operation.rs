@@ -25,6 +25,8 @@ pub use crate::state::{
 
 /// How a tree-merge conflict should be presented (content, add/add, modify/delete, …).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde-models", serde(rename_all = "snake_case"))]
 pub enum ConflictKind {
     /// Both sides edited the same tracked file (textual or binary).
     Content,
@@ -63,6 +65,7 @@ impl ConflictKind {
 
 /// One conflicted path from a tree merge or unmerged index stages 1–3.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct Conflict {
     /// Repository-relative path.
     pub path: String,

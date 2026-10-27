@@ -79,6 +79,7 @@ pub enum HookPolicy {
 
 /// Author name, email, and date suffix from a written commit header line.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct CommitAuthorInfo {
     /// Author display name.
     pub name: String,
@@ -161,6 +162,7 @@ pub struct CommitRequest {
 
 /// One path-level change that would be recorded in a commit.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct CommitFile {
     /// Primary path (`git diff --name-status` path column).
     pub path: String,
@@ -731,6 +733,7 @@ fn enrich_commit_message(
 
 /// Result of [`create_commit`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct CommitOutcome {
     /// OID of the new commit object written to the object database.
     pub oid: ObjectId,

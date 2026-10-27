@@ -164,6 +164,8 @@ impl Default for StatusOptions {
 
 /// Unmerged index conflict category (matches `git status --porcelain=v2` `u` XY codes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde-models", serde(rename_all = "snake_case"))]
 pub enum ConflictKind {
     /// `UU` — both sides modified the same file.
     BothModified,
@@ -199,6 +201,7 @@ impl ConflictKind {
 
 /// One unmerged path reported by status.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
 pub struct Conflict {
     /// Repository-relative path.
     pub path: String,
@@ -330,10 +333,10 @@ pub struct StatusModel {
     /// Tree OID of the HEAD commit, or `None` on an unborn branch.
     pub head_tree: Option<ObjectId>,
     /// In-progress operation state (merge, rebase, cherry-pick, bisect, …).
-    #[cfg_attr(feature = "serde-models", serde(skip))]
     pub state: WtStatusState,
     /// The loaded index, with sparse-directory placeholders expanded — the same
-    /// index the renderers query for per-stage entries.
+    /// index the renderers query for per-stage entries. Not serialized: the
+    /// per-path results are in the other fields.
     #[cfg_attr(feature = "serde-models", serde(skip))]
     pub index: Index,
     /// Staged changes: the index-vs-HEAD-tree diff.
@@ -347,10 +350,8 @@ pub struct StatusModel {
     /// Paths with unmerged index stages (1–3), sorted and deduplicated.
     pub conflicts: Vec<String>,
     /// Unmerged paths with a [`ConflictKind`] derived from index stages 1–3.
-    #[cfg_attr(feature = "serde-models", serde(skip))]
     pub conflict_details: Vec<Conflict>,
     /// Paused operation and suggested follow-up steps, when any apply.
-    #[cfg_attr(feature = "serde-models", serde(skip))]
     pub operation: Option<Operation>,
     /// Number of stash entries (for the optional stash footer / `--show-stash`).
     pub stash_count: usize,
