@@ -377,6 +377,9 @@ mod commit_scope_git_compat;
 #[path = "commit_scope_hook_index.rs"]
 mod commit_scope_hook_index;
 #[cfg(feature = "full-tests")]
+#[path = "commit_trailers_git_compat.rs"]
+mod commit_trailers_git_compat;
+#[cfg(feature = "full-tests")]
 #[path = "compare_with_target_git_compat.rs"]
 mod compare_with_target_git_compat;
 #[cfg(feature = "full-tests")]
