@@ -124,8 +124,10 @@ pub(crate) mod pack_cache {
             std::cell::RefCell::new(HashMap::new());
         static PACK_INDEXES: std::cell::RefCell<HashMap<PathBuf, Arc<PackIndex>>> =
             std::cell::RefCell::new(HashMap::new());
-        static PACK_IDS: std::cell::RefCell<HashMap<PathBuf, u32>> =
-            std::cell::RefCell::new(HashMap::new());
+        /// Looked up for every object read, so keyed by the path's bytes with a fast
+        /// hasher rather than by [`Path`] components; a miss falls back to the catalog.
+        static PACK_IDS: std::cell::RefCell<hashbrown::HashMap<std::ffi::OsString, u32>> =
+            std::cell::RefCell::new(hashbrown::HashMap::new());
         static PACK_COUNT_VALIDATED: std::cell::RefCell<HashSet<PathBuf>> =
             std::cell::RefCell::new(HashSet::new());
         static PACK_DIR_LISTING_TRUSTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -340,7 +342,7 @@ pub(crate) mod pack_cache {
             cell.borrow_mut().remove(&idx_path);
         });
         PACK_IDS.with(|cell| {
-            cell.borrow_mut().remove(pack_path);
+            cell.borrow_mut().remove(pack_path.as_os_str());
         });
         PACK_COUNT_VALIDATED.with(|cell| {
             cell.borrow_mut().remove(pack_path);
@@ -396,8 +398,11 @@ pub(crate) mod pack_cache {
                 remember_index(path, &entry.idx);
             }
             PACK_IDS.with(|cell| {
-                cell.borrow_mut()
-                    .extend(g.pack_ids.iter().map(|(k, v)| (k.clone(), *v)));
+                cell.borrow_mut().extend(
+                    g.pack_ids
+                        .iter()
+                        .map(|(k, v)| (k.as_os_str().to_owned(), *v)),
+                );
             });
             PACK_COUNT_VALIDATED.with(|cell| {
                 cell.borrow_mut()
@@ -1513,13 +1518,14 @@ pub(crate) mod pack_cache {
     }
 
     fn pack_id_for_in_context(pack_path: &Path) -> u32 {
-        let store = crate::pack_store::PackStore::active_for_reads();
-        if let Some(id) = PACK_IDS.with(|cell| cell.borrow().get(pack_path).copied()) {
+        if let Some(id) = PACK_IDS.with(|cell| cell.borrow().get(pack_path.as_os_str()).copied()) {
             return id;
         }
+        let store = crate::pack_store::PackStore::active_for_reads();
         if let Some(id) = store.with_catalog_read(|g| g.pack_ids.get(pack_path).copied()) {
             PACK_IDS.with(|cell| {
-                cell.borrow_mut().insert(pack_path.to_path_buf(), id);
+                cell.borrow_mut()
+                    .insert(pack_path.as_os_str().to_owned(), id);
             });
             return id;
         }
@@ -1531,7 +1537,8 @@ pub(crate) mod pack_cache {
             g.next_pack_id = g.next_pack_id.saturating_add(1);
             g.pack_ids.insert(pack_path.to_path_buf(), id);
             PACK_IDS.with(|cell| {
-                cell.borrow_mut().insert(pack_path.to_path_buf(), id);
+                cell.borrow_mut()
+                    .insert(pack_path.as_os_str().to_owned(), id);
             });
             id
         })
@@ -4801,34 +4808,6 @@ fn reuse_delta_matches_pack_resolution(
         .is_some_and(|applied| applied == target_obj.data)
 }
 
-fn on_disk_delta_chain_in_send_map(
-    oid: ObjectId,
-    immediate_base: &HashMap<ObjectId, ObjectId>,
-    reusable_base: &dyn Fn(&ObjectId) -> bool,
-    memo: &mut HashMap<ObjectId, bool>,
-) -> bool {
-    if let Some(&ok) = memo.get(&oid) {
-        return ok;
-    }
-    let mut cur = oid;
-    let mut seen = HashSet::new();
-    loop {
-        if !seen.insert(cur) {
-            memo.insert(oid, true);
-            return true;
-        }
-        if !reusable_base(&cur) {
-            memo.insert(oid, false);
-            return false;
-        }
-        let Some(&base) = immediate_base.get(&cur) else {
-            memo.insert(oid, true);
-            return true;
-        };
-        cur = base;
-    }
-}
-
 /// The `(id, pack offset)` of every object of `wanted` that `idx` lists.
 ///
 /// A set much smaller than the index is looked up id by id, so packing a few objects
@@ -4910,9 +4889,12 @@ pub(crate) type OnDiskReuseZlibEntry = (ObjectId, u64, Arc<PackData>, usize, usi
 
 /// Scan local packs once and collect on-disk delta reuse candidates for objects in `send`.
 ///
-/// A stored delta is kept when `reusable_base` accepts its base and every object further
-/// down its stored chain. Zlib delta bytes are copied from the source pack (CRC-checked
-/// when the index provides CRC32).
+/// An object of `send` that some local pack (oldest first) stores as `REF_DELTA` or
+/// `OFS_DELTA` is kept when `reusable_base` accepts both it and its base; the result maps it
+/// to its base id, uncompressed delta size, the pack bytes and the zlib stream's start and end
+/// offsets in them, so the delta can be copied from the source pack verbatim. Every base down
+/// a stored chain is itself such a target or was accepted when its target was parsed. Entries
+/// are CRC-checked when the index provides CRC32.
 ///
 /// # Errors
 ///
@@ -4925,69 +4907,25 @@ pub(crate) fn collect_packed_delta_reuse_for_send(
     let mut indexes = read_local_pack_indexes_cached(objects_dir)?;
     sort_pack_indexes_oldest_first(&mut indexes);
 
-    let pack_bytes_by_index: Vec<(Arc<PackIndex>, Arc<PackData>)> = indexes
-        .iter()
-        .filter(|idx| idx.hash_bytes() == 20)
-        .map(|idx| read_pack_bytes_cached(&idx.pack_path).map(|bytes| (Arc::clone(idx), bytes)))
-        .collect::<Result<Vec<_>>>()?;
-
-    struct OnDiskDelta {
-        base: ObjectId,
-        size: u64,
-        pack_bytes: Arc<PackData>,
-        zlib_start: usize,
-        zlib_end: usize,
-    }
-
-    let mut on_disk: HashMap<ObjectId, OnDiskDelta> = HashMap::new();
-    for (idx, pack_bytes) in &pack_bytes_by_index {
+    let mut found: HashMap<ObjectId, OnDiskReuseZlibEntry> = HashMap::new();
+    for idx in indexes.iter().filter(|idx| idx.hash_bytes() == 20) {
+        let pack_bytes = read_pack_bytes_cached(&idx.pack_path)?;
         for (oid, offset) in wanted_index_entries(idx, send.iter(), |oid| send.contains(oid))? {
-            if on_disk.contains_key(&oid) {
+            if found.contains_key(&oid) || !reusable_base(&oid) {
                 continue;
             }
             let Some((base, size, zlib_start, zlib_end)) =
-                parse_in_pack_delta_reuse_zlib(idx, pack_bytes, offset, reusable_base)?
+                parse_in_pack_delta_reuse_zlib(idx, &pack_bytes, offset, reusable_base)?
             else {
                 continue;
             };
-            on_disk.insert(
+            found.insert(
                 oid,
-                OnDiskDelta {
-                    base,
-                    size,
-                    pack_bytes: Arc::clone(pack_bytes),
-                    zlib_start,
-                    zlib_end,
-                },
+                (base, size, Arc::clone(&pack_bytes), zlib_start, zlib_end),
             );
         }
     }
-
-    let immediate_base: HashMap<ObjectId, ObjectId> =
-        on_disk.iter().map(|(&oid, d)| (oid, d.base)).collect();
-
-    let mut chain_ok: HashMap<ObjectId, bool> = HashMap::new();
-    for &oid in on_disk.keys() {
-        on_disk_delta_chain_in_send_map(oid, &immediate_base, reusable_base, &mut chain_ok);
-    }
-
-    let mut results = HashMap::new();
-    for (oid, slot) in on_disk {
-        if !chain_ok.get(&oid).copied().unwrap_or(false) {
-            continue;
-        }
-        results.insert(
-            oid,
-            (
-                slot.base,
-                slot.size,
-                slot.pack_bytes,
-                slot.zlib_start,
-                slot.zlib_end,
-            ),
-        );
-    }
-    Ok(results)
+    Ok(found)
 }
 
 /// If `oid` is stored as `REF_DELTA` or `OFS_DELTA` in a local pack and its base OID is in

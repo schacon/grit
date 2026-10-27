@@ -401,7 +401,8 @@ pub fn build_pack(
 /// Like [`build_pack`], but uses [`HaveBoundary::TipsOnly`] for send-pack pushes.
 ///
 /// Negotiated have tips bound the want-side walk lazily instead of pre-walking
-/// their full commit closure before enumeration.
+/// their full commit closure before enumeration. Collects
+/// [`write_pack_for_push`] into memory; pushes stream with that instead.
 ///
 /// # Errors
 ///
@@ -412,16 +413,55 @@ pub fn build_pack_for_push(
     haves: &[ObjectId],
     opts: &PackBuildOptions,
 ) -> Result<Vec<u8>> {
-    build_pack_with_shallow_filter_and_boundary(
-        odb,
-        wants,
-        haves,
-        empty_object_id_hash_set(),
-        empty_object_id_hash_set(),
-        None,
-        opts,
-        HaveBoundary::TipsOnly,
-    )
+    let mut pack = Vec::new();
+    write_pack_for_push(odb, wants, haves, opts, &mut pack)?;
+    Ok(pack)
+}
+
+/// Stream the pack a push sends to `w`: the objects reachable from `wants` but not
+/// from `haves`, bounded by the have tips as in [`build_pack_for_push`].
+///
+/// Memory stays bounded by the object list rather than the pack size: on-disk
+/// deltas and whole objects are copied from the source packs batch by batch, and
+/// every phase shares one mapping of each source pack.
+///
+/// # Parameters
+///
+/// - `odb`: the object database the objects are read from.
+/// - `wants`: the new tips the remote should end up with.
+/// - `haves`: objects the remote already holds (its tips and `.have`s), all present in `odb`.
+/// - `opts`: delta, thin-pack and offset-delta settings for the remote.
+/// - `w`: where the PACK v2 stream, trailer included, is written.
+///
+/// # Returns
+///
+/// Object and byte counts of the pack written.
+///
+/// # Errors
+///
+/// Missing wants, corrupt objects, or [`Error::Io`] when writing to `w` fails.
+pub fn write_pack_for_push(
+    odb: &Odb,
+    wants: &[ObjectId],
+    haves: &[ObjectId],
+    opts: &PackBuildOptions,
+    w: &mut dyn Write,
+) -> Result<PackStats> {
+    // One pack read context for the walk, the reuse scan and the write, so the
+    // source packs are mapped and indexed once rather than once per phase.
+    odb.with_pack_read_context(|| {
+        write_pack_with_shallow_and_filter(
+            odb,
+            wants,
+            haves,
+            empty_object_id_hash_set(),
+            empty_object_id_hash_set(),
+            None,
+            opts,
+            HaveBoundary::TipsOnly,
+            w,
+        )
+    })
 }
 
 /// Build a pack for upload-pack with optional shallow grafts and object filter.
@@ -1359,10 +1399,7 @@ pub(crate) fn plan_deltas(
     // target oid -> base oid (the object `target` deltas against).
     let mut delta_to_base: OidHashMap<ObjectId> = oid_hash_map();
     // Deltas whose instruction stream is reused verbatim from an existing pack.
-    let mut reused_zlib: HashMap<
-        ObjectId,
-        (u64, std::sync::Arc<crate::pack::PackData>, usize, usize),
-    > = HashMap::new();
+    let mut reused_zlib: HashMap<ObjectId, crate::pack::OnDiskReuseZlibEntry> = HashMap::new();
 
     // On-disk delta reuse runs even with `--window=0` (no new deltas), matching Git pack-objects.
     if reuse_on_disk {
@@ -1371,23 +1408,20 @@ pub(crate) fn plan_deltas(
         let reusable_base = |oid: &ObjectId| {
             in_pack.contains(oid) || (opts.thin && (thin_bases.oids.contains(oid) || peer_has(oid)))
         };
-        let candidates = crate::pack::collect_packed_delta_reuse_for_send(
+        reused_zlib = crate::pack::collect_packed_delta_reuse_for_send(
             odb.objects_dir(),
             &in_pack,
             &reusable_base,
         )?;
-        for (t, (base, size, pack_bytes, zlib_start, zlib_end)) in candidates {
+        reused_zlib.retain(|t, (base, ..)| {
             // A stored delta against some other object the receiver holds is kept only
             // when the search has no base at the object's own path to do better with.
-            let far_peer_base = !in_pack.contains(&base) && !thin_bases.oids.contains(&base);
-            if far_peer_base && search && thin_bases.targets.contains(&t) {
-                continue;
-            }
-            if base != t && islands.in_same_island(&t, &base) {
-                delta_to_base.insert(t, base);
-                reused_zlib.insert(t, (size, pack_bytes, zlib_start, zlib_end));
-            }
-        }
+            let far_peer_base = !in_pack.contains(base) && !thin_bases.oids.contains(base);
+            !(far_peer_base && search && thin_bases.targets.contains(t))
+                && *base != *t
+                && islands.in_same_island(t, base)
+        });
+        delta_to_base.extend(reused_zlib.iter().map(|(t, (base, ..))| (*t, *base)));
         // An empty blob is always stored whole.
         for (oid, info) in send.iter().zip(&infos) {
             if info.kind == ObjectKind::Blob && info.size == 0 && reused_zlib.remove(oid).is_some()
@@ -1460,7 +1494,12 @@ pub(crate) fn plan_deltas(
         .map(|(&oid, info)| {
             let base = delta_to_base.remove(&oid);
             let (searched_delta, reused_delta_zlib) = match base {
-                Some(_) => (searched.remove(&oid), reused_zlib.remove(&oid)),
+                Some(_) => (
+                    searched.remove(&oid),
+                    reused_zlib
+                        .remove(&oid)
+                        .map(|(_, size, bytes, start, end)| (size, bytes, start, end)),
+                ),
                 None => (None, None),
             };
             PlannedEntry {
