@@ -49,6 +49,8 @@ Local edits are allowed when they only touch paths the merge does not change, or
 
 **`--allow-unrelated-histories`** — Merge branches that share no commits, using the empty tree as the merge base (Git-compatible). Without this flag, grit refuses unrelated histories.
 
+On an interactive terminal (human output, not `--json` or `--markdown`), a live **Checkout** line on stderr counts the files the merge writes, and `--continue` shows a **Staging** line while it auto-stages; nothing is drawn when stderr is not a TTY.
+
 ## Options
 
 | Option | Description |

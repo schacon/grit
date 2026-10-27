@@ -27,6 +27,8 @@ On filesystems where Grit sets `core.filemode=false` (typical on Windows), every
 
 On Unix, explicit path operands must be valid UTF-8. An operand containing invalid UTF-8 bytes is rejected before the command runs, with exit status **2** and no changes to the repository. Human output reports the usage error on stderr; `--json` writes an error object with `kind: "usage"` on stdout, and `--markdown` writes `**Error:**` on stdout. The argument is never replaced with a similar Unicode filename.
 
+On an interactive terminal (human output, not `--json` or `--markdown`), a live **Staging** line on stderr counts the files hashed into the index; nothing is drawn when stderr is not a TTY.
+
 ## Options
 
 | Option | Description |
