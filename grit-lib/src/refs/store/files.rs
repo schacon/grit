@@ -336,6 +336,9 @@ impl FilesRefStore {
         verify_name_available_for_create(name, &blocking, extras)
     }
 
+    /// Directories holding loose refs and logs: the common dir, then the per-worktree
+    /// git dir when it differs (a linked worktree). The main worktree yields one entry,
+    /// so its loose refs are not walked twice.
     fn store_bases(&self) -> impl Iterator<Item = &Path> {
         let common = self.common_dir.as_path();
         let git = self.git_dir.as_path();
@@ -528,17 +531,7 @@ impl FilesRefStore {
             }
             drop(cache);
         } else {
-            let common = self.common_dir.as_path();
-            let git = self.git_dir.as_path();
-            let bases: [&Path; 2] = if common == git {
-                [common, common]
-            } else {
-                [common, git]
-            };
-            for (i, base) in bases.iter().enumerate() {
-                if i == 1 && *base == bases[0] {
-                    continue;
-                }
+            for (i, base) in self.store_bases().enumerate() {
                 let packed_prefix = self.packed_refs_scan_prefix(logical_prefix);
                 let packed = if i == 0 {
                     self.packed_map_for_prefix_filtered(&packed_prefix, keep)?
@@ -555,7 +548,7 @@ impl FilesRefStore {
             }
         }
 
-        for base in [self.common_dir.as_path(), self.git_dir.as_path()] {
+        for base in self.store_bases() {
             let storage_prefix = self.namespace_prefix.as_deref().unwrap_or("refs/");
             if self.namespace_prefix.is_some() {
                 let root = base.join(storage_prefix.trim_end_matches('/'));
@@ -1628,7 +1621,7 @@ impl RefStore for FilesRefStore {
 
     fn for_each_reflog_ref(&self, f: &mut dyn FnMut(&str) -> ControlFlow<()>) -> Result<()> {
         let mut names = BTreeSet::new();
-        for base in [self.common_dir.as_path(), self.git_dir.as_path()] {
+        for base in self.store_bases() {
             let logs = base.join("logs");
             if logs.is_dir() {
                 collect_reflog_ref_names(&logs, "", self, &mut names)?;

@@ -2656,6 +2656,7 @@ impl<'r> CommitGraphCache<'r> {
     ///
     /// Uses commit-graph generations to stop the walk below the minimum generation among
     /// `tips`, matching Git's `tips_reachable_from_bases` / `--merged` batch filter.
+    /// `bases` and `tips` must already be commit ids; they are not peeled again.
     fn tips_merged_from_bases(
         &mut self,
         bases: &[ObjectId],
@@ -2666,22 +2667,17 @@ impl<'r> CommitGraphCache<'r> {
             return Ok(merged);
         }
 
-        let mut tip_gens: Vec<(ObjectId, u64)> = Vec::with_capacity(tips.len());
-        for &tip in tips {
-            let peeled = peel_to_commit_for_merge_base(self.repo, tip).unwrap_or(tip);
-            tip_gens.push((peeled, commit_rank_for_walk(self, peeled)));
-        }
+        let mut tip_gens: Vec<(ObjectId, u64)> = tips
+            .iter()
+            .map(|&tip| (tip, commit_rank_for_walk(self, tip)))
+            .collect();
         tip_gens.sort_by_key(|(_, gen)| *gen);
         let mut min_gen_index = 0usize;
         let mut min_generation = tip_gens[0].1;
 
-        let tip_set: OidHashSet = tip_gens.iter().map(|(tip, _)| *tip).collect();
+        let tip_set: OidHashSet = tips.iter().copied().collect();
 
-        let mut stack: Vec<ObjectId> = Vec::new();
-        for &base in bases {
-            let peeled = peel_to_commit_for_merge_base(self.repo, base).unwrap_or(base);
-            stack.push(peeled);
-        }
+        let mut stack: Vec<ObjectId> = bases.to_vec();
 
         let mut seen: OidHashSet = oid_hash_set();
         while let Some(oid) = stack.pop() {
@@ -3035,19 +3031,19 @@ impl<'repo> RefContainsBatch<'repo> {
         }
     }
 
-    /// Register a peeled commit tip; returns its index (deduplicated by commit oid).
-    pub(crate) fn register_tip(&mut self, repo: &'repo Repository, tip: ObjectId) -> usize {
-        let peeled = peel_to_commit_for_merge_base(repo, tip).unwrap_or(tip);
-        if let Some(&idx) = self.tip_index.get(&peeled) {
+    /// Register a commit tip (already peeled; not re-read); returns its index
+    /// (deduplicated by commit oid).
+    pub(crate) fn register_tip(&mut self, tip: ObjectId) -> usize {
+        if let Some(&idx) = self.tip_index.get(&tip) {
             return idx;
         }
         let idx = self.tips.len();
-        self.tips.push(peeled);
+        self.tips.push(tip);
         self.tip_state.push(RefContainsTipState {
             contains_match: false,
             no_contains_match: false,
         });
-        self.tip_index.insert(peeled, idx);
+        self.tip_index.insert(tip, idx);
         idx
     }
 
@@ -3142,12 +3138,6 @@ impl<'repo> RefContainsBatch<'repo> {
     pub(crate) fn tip_state(&self, index: usize) -> &RefContainsTipState {
         &self.tip_state[index]
     }
-
-    /// Peeled commit oid for a tip index from [`Self::register_tip`].
-    #[must_use]
-    pub(crate) fn tip_commit(&self, index: usize) -> ObjectId {
-        self.tips[index]
-    }
 }
 
 fn min_ranked_generation(graph: &CommitGraphCache<'_>, targets: &[ObjectId]) -> Option<u64> {
@@ -3174,6 +3164,8 @@ fn should_prune_ref_filter_parent(
 }
 
 /// Branch tips that are merged into any of `bases` (ancestors of a base commit).
+///
+/// Both `bases` and `tips` must be commit ids (peel refs and tags first).
 ///
 /// # Errors
 ///
@@ -3279,7 +3271,7 @@ mod tests {
             let repo = Repository::open(dir.path(), &RepositoryOptions::empty())?;
             assert!(RefContainsMemo::new(&repo, &[target])?.is_none());
             let mut batch = RefContainsBatch::new(&repo);
-            let index = batch.register_tip(&repo, old);
+            let index = batch.register_tip(old);
             batch.run(&[target], &[])?;
             assert!(batch.graph.graph.is_none());
             assert!(batch.tip_state(index).contains_match);

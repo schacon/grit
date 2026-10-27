@@ -564,6 +564,122 @@ fn bounded_contains_does_not_load_irrelevant_trailing_tips() {
     );
 }
 
+/// Many refs share few tips (the `branch --merged` shape): each distinct tip is resolved
+/// once, not once per ref and per filter stage.
+#[test]
+fn merged_filter_reads_each_shared_tip_once() {
+    let root = tempfile::tempdir().unwrap();
+    let objects = std::sync::Arc::new(CountingObjects::new());
+    let repo = counted_repo(root.path(), objects.clone());
+    let mut trunk = Vec::new();
+    for i in 0..20 {
+        trunk.push(counted_commit(&repo, trunk.last().copied(), i));
+    }
+    let side = counted_commit(&repo, Some(trunk[5]), 100);
+    let base = trunk[14];
+    let tips = [trunk[3], trunk[9], trunk[14], trunk[19], side];
+    let mut packed = String::from("# pack-refs with: peeled fully-peeled sorted\n");
+    let mut names = Vec::new();
+    for (t, tip) in tips.iter().enumerate() {
+        for alias in 0..40 {
+            names.push((format!("refs/heads/t{t}/a{alias:02}"), *tip));
+        }
+    }
+    names.sort();
+    for (name, tip) in &names {
+        packed.push_str(&format!("{tip} {name}\n"));
+    }
+    std::fs::write(repo.git_dir().join("packed-refs"), packed).unwrap();
+
+    for (merged, expect_tips) in [(true, vec![0, 1, 2]), (false, vec![3, 4])] {
+        objects.reads.lock().unwrap().clear();
+        objects.info.lock().unwrap().clear();
+        let query = if merged {
+            RefQuery {
+                merged: vec![base],
+                ..RefQuery::default()
+            }
+        } else {
+            RefQuery {
+                no_merged: vec![base],
+                ..RefQuery::default()
+            }
+        };
+        let got = grit_refnames(&repo, query);
+        let expected: Vec<String> = names
+            .iter()
+            .filter(|(_, tip)| expect_tips.iter().any(|&t| tips[t] == *tip))
+            .map(|(name, _)| name.clone())
+            .collect();
+        assert_eq!(got, expected, "merged={merged}");
+        let info = objects.info.lock().unwrap();
+        for tip in tips {
+            let n = info.get(&tip).copied().unwrap_or(0);
+            assert!(
+                n <= 2,
+                "tip {tip} header read {n} times for 40 refs (merged={merged})"
+            );
+        }
+    }
+}
+
+/// `--merged` / `--no-merged` with many branches per tip, annotated tags, and a ref to a
+/// tree, with loose and packed refs, match `git for-each-ref`.
+#[test]
+fn merged_with_shared_tips_matches_git() {
+    if !git_interop_available(Backend::Files) {
+        return;
+    }
+    let root = tempfile::tempdir().expect("tempdir");
+    let worktree = root.path();
+    let repo = init_repo(worktree, Backend::Files);
+    let (merge_tip, side_tip) = seed_merge(worktree);
+    for i in 0..30 {
+        git(worktree, &["branch", &format!("alias/side-{i:02}"), "side"]);
+        git(
+            worktree,
+            &["branch", &format!("alias/open-{i:02}"), "open-tip"],
+        );
+    }
+    git(worktree, &["tag", "-a", "annot-side", "-m", "m", "side"]);
+    let tree = git(worktree, &["rev-parse", "HEAD^{tree}"])
+        .trim()
+        .to_owned();
+    git(worktree, &["update-ref", "refs/tags/tree-ref", &tree]);
+    for pack in [false, true] {
+        if pack {
+            git(worktree, &["pack-refs", "--all"]);
+        }
+        for (namespaces, prefix) in [
+            (vec![RefNamespace::Heads], "refs/heads/"),
+            (vec![RefNamespace::Tags], "refs/tags/"),
+        ] {
+            for target in [merge_tip, side_tip] {
+                assert_same(
+                    worktree,
+                    &repo,
+                    &[prefix, &format!("--merged={target}")],
+                    RefQuery {
+                        namespaces: namespaces.clone(),
+                        merged: vec![target],
+                        ..RefQuery::default()
+                    },
+                );
+                assert_same(
+                    worktree,
+                    &repo,
+                    &[prefix, &format!("--no-merged={target}")],
+                    RefQuery {
+                        namespaces: namespaces.clone(),
+                        no_merged: vec![target],
+                        ..RefQuery::default()
+                    },
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn bounded_contains_memoizes_shared_negative_history() {
     let root = tempfile::tempdir().unwrap();

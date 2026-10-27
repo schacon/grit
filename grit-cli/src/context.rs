@@ -42,8 +42,29 @@ pub fn hook_stdio_for_repo() -> HookStdio {
 
 use crate::diagnostics;
 
-/// Build the process [`Environment`] for repository discovery and config loading.
+static PROCESS_ENVIRONMENT: OnceLock<Environment> = OnceLock::new();
+
+/// The process [`Environment`] for repository discovery and config loading.
+///
+/// Reuses the snapshot taken by [`freeze_environment`] when there is one; otherwise reads
+/// the variables and working directory now.
 pub fn environment() -> Environment {
+    PROCESS_ENVIRONMENT
+        .get()
+        .cloned()
+        .unwrap_or_else(read_environment)
+}
+
+/// Snapshot the process environment for the rest of this run and return it.
+///
+/// Call only after the global `-C` / `--git-dir` / `-c` arguments have changed the working
+/// directory and variables; nothing changes them afterwards, so every later
+/// [`environment`] call can share this snapshot instead of re-reading all variables.
+pub fn freeze_environment() -> Environment {
+    PROCESS_ENVIRONMENT.get_or_init(read_environment).clone()
+}
+
+fn read_environment() -> Environment {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     Environment::from_vars(std::env::vars_os(), cwd)
 }

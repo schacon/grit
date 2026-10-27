@@ -128,16 +128,17 @@ struct ReachabilityFilterCtx<'a> {
     no_merged_tips: &'a OidHashSet,
 }
 
-fn row_passes_reachability<'repo>(
-    repo: &'repo Repository,
+/// `tip` is the commit `row` peels to ([`peel_row_tips`]); `None` fails every commit filter.
+fn row_passes_reachability(
     query: &RefQuery,
     odb: &Odb,
     row: &(String, ObjectId, Option<ObjectId>),
+    tip: Option<ObjectId>,
     ctx: &ReachabilityFilterCtx<'_>,
     tip_idx: Option<usize>,
-    batch: Option<&RefContainsBatch<'repo>>,
+    batch: Option<&RefContainsBatch<'_>>,
 ) -> std::result::Result<bool, RefQueryError> {
-    let (_, ref_oid, peeled) = row;
+    let (_, ref_oid, _) = row;
     let needs_commit = !ctx.contains.is_empty()
         || !ctx.no_contains.is_empty()
         || !ctx.merged.is_empty()
@@ -147,12 +148,8 @@ fn row_passes_reachability<'repo>(
         return ref_points_at_any(odb, *ref_oid, &query.points_at).map_err(RefQueryError::Store);
     }
 
-    let tip = match (tip_idx, batch) {
-        (Some(idx), Some(batch)) => batch.tip_commit(idx),
-        _ => match peel_ref_tip_commit(repo, *ref_oid, *peeled)? {
-            Some(t) => t,
-            None => return Ok(false),
-        },
+    let Some(tip) = tip else {
+        return Ok(false);
     };
 
     if !ctx.contains.is_empty() {
@@ -272,30 +269,18 @@ pub(super) fn filter_listings_by_reachability(
     }
     let odb = repo.odb();
 
-    let mut peel_cache: OidHashMap<ObjectId> = oid_hash_map();
-    for (_, oid, peeled) in rows.iter_mut() {
-        if peeled.is_some() {
-            continue;
-        }
-        if let Some(&commit) = peel_cache.get(oid) {
-            *peeled = Some(commit);
-            continue;
-        }
-        if let Ok(Some(commit)) = peel_ref_tip_commit(repo, *oid, None) {
-            peel_cache.insert(*oid, commit);
-            *peeled = Some(commit);
-        }
-    }
+    let row_tips = if needs_commit {
+        peel_row_tips(repo, rows)?
+    } else {
+        vec![None; rows.len()]
+    };
 
-    let mut tips_for_merged_set = oid_hash_set();
-    if !merged.is_empty() || !no_merged.is_empty() {
-        for (_, oid, peeled) in rows.iter() {
-            if let Some(t) = peel_ref_tip_commit(repo, *oid, *peeled)? {
-                tips_for_merged_set.insert(t);
-            }
-        }
-    }
-    let tips_for_merged: Vec<ObjectId> = tips_for_merged_set.into_iter().collect();
+    let tips_for_merged: Vec<ObjectId> = if merged.is_empty() && no_merged.is_empty() {
+        Vec::new()
+    } else {
+        let set: OidHashSet = row_tips.iter().flatten().copied().collect();
+        set.into_iter().collect()
+    };
     let empty_merged = oid_hash_set();
     let merged_owned = if merged.is_empty() {
         None
@@ -325,26 +310,47 @@ pub(super) fn filter_listings_by_reachability(
     };
 
     let needs_contains = !contains.is_empty() || !no_contains.is_empty();
-    let mut batch = RefContainsBatch::new(repo);
-    let mut row_tip_idx: Vec<Option<usize>> = Vec::with_capacity(rows.len());
-    if needs_contains {
-        for (_, oid, peeled) in rows.iter() {
-            row_tip_idx.push(
-                peel_ref_tip_commit(repo, *oid, *peeled)?.map(|t| batch.register_tip(repo, t)),
-            );
-        }
+    let mut batch = None;
+    let row_tip_idx: Vec<Option<usize>> = if needs_contains {
+        let batch = batch.insert(RefContainsBatch::new(repo));
+        let idx = row_tips
+            .iter()
+            .map(|tip| tip.map(|t| batch.register_tip(t)))
+            .collect();
         batch.run(&contains, &no_contains)?;
+        idx
     } else {
-        row_tip_idx = vec![None; rows.len()];
-    }
-    let batch_ref = needs_contains.then_some(&batch);
+        vec![None; rows.len()]
+    };
+    let batch_ref = batch.as_ref();
 
     let mut kept = Vec::with_capacity(rows.len());
-    for (row, tip_idx) in rows.drain(..).zip(row_tip_idx.drain(..)) {
-        if row_passes_reachability(repo, query, odb, &row, &ctx, tip_idx, batch_ref)? {
+    for ((row, tip), tip_idx) in rows.drain(..).zip(row_tips).zip(row_tip_idx) {
+        if row_passes_reachability(query, odb, &row, tip, &ctx, tip_idx, batch_ref)? {
             kept.push(row);
         }
     }
     *rows = kept;
     Ok(())
+}
+
+/// Commit each row's ref peels to, resolving every distinct ref oid once.
+///
+/// Many refs often share a tip, and each resolution reads object headers, so rows
+/// pointing at an already-resolved oid reuse its answer.
+fn peel_row_tips(
+    repo: &Repository,
+    rows: &[(String, ObjectId, Option<ObjectId>)],
+) -> std::result::Result<Vec<Option<ObjectId>>, RefQueryError> {
+    let mut resolved: OidHashMap<Option<ObjectId>> = oid_hash_map();
+    rows.iter()
+        .map(|(_, oid, peeled)| {
+            if let Some(&tip) = resolved.get(oid) {
+                return Ok(tip);
+            }
+            let tip = peel_ref_tip_commit(repo, *oid, *peeled)?;
+            resolved.insert(*oid, tip);
+            Ok(tip)
+        })
+        .collect()
 }
