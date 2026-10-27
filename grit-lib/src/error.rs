@@ -1993,6 +1993,7 @@ impl Error {
             Self::NothingToCommit => "nothing_to_commit",
             Self::UnrelatedHistories { .. } => "unrelated_histories",
             Self::ObjectFormatMismatch { .. } => "object_format_mismatch",
+            Self::CheckoutRollbackIncomplete { .. } => "checkout_rollback_incomplete",
             Self::NothingStagedToCommit { .. } => "nothing_staged_to_commit",
             Self::DetachedHead => "detached_head",
             Self::UnbornHead => "unborn_head",

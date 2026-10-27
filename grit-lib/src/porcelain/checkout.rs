@@ -1040,7 +1040,7 @@ fn hard_reset_unrecorded_tree_diff_paths(
     let mut unrecorded = Vec::new();
     let mut probes: Vec<(usize, &str)> = Vec::new();
     for change in changes {
-        if change.status == DiffStatus::Added || parse_git_mode(&change.old_mode) == MODE_GITLINK {
+        if change.status == DiffStatus::Added || change.old_mode.bits() == MODE_GITLINK {
             continue;
         }
         let Some(path) = change.old_path.as_deref() else {

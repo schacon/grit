@@ -23,9 +23,8 @@ use crate::worktree::{io_with_path, WorktreePathOperation};
 use crate::worktree_rules::WorktreeRules;
 
 use super::{
-    materialize_gitlink_worktree, parse_git_mode, path_under_wholesale_directory,
-    remove_empty_parent_dirs_batch, remove_uninitialized_gitlink_worktree, write_blob_to_worktree,
-    LeadingDirCache,
+    materialize_gitlink_worktree, path_under_wholesale_directory, remove_empty_parent_dirs_batch,
+    remove_uninitialized_gitlink_worktree, write_blob_to_worktree, LeadingDirCache,
 };
 
 static SPOOL_NAME_SEQ: AtomicUsize = AtomicUsize::new(0);
@@ -224,7 +223,7 @@ impl CheckoutJournal {
             self.replaced.push(ReplacedPath {
                 path: path.to_owned(),
                 oid: change.old_oid,
-                mode: parse_git_mode(&change.old_mode),
+                mode: change.old_mode.bits(),
             });
         }
     }
