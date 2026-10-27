@@ -37,9 +37,9 @@ use crate::diff_rename_parallel::{
 use crate::error::{Error, Result};
 use crate::index::{CacheTreeNode, Index, IndexEntry, MODE_SYMLINK};
 use crate::objects::{
-    parse_commit, CommitData, FileMode, ObjectId, ObjectKind, TreeEntry, TreeRefIter,
+    parse_commit, CommitData, FileMode, ObjectId, ObjectKind, TreeEntry, TreeEntryRef, TreeRefIter,
 };
-use crate::odb::Odb;
+use crate::odb::{Odb, SessionTree};
 use crate::parallel::ThreadPolicy;
 use crate::repo::Repository;
 use crate::userdiff::FuncnameMatcher;
@@ -2652,29 +2652,53 @@ fn diff_subtrees_in_place(
             }
         }
     }
-    // The ODB already budgets parsed trees. Keep only active recursion frames
-    // here so completing siblings can release entries evicted from that cache.
-    let old_entries = old_tree_oid
-        .map(|oid| odb.cached_tree_entries(oid))
+    // The ODB already budgets cached trees. Keep only active recursion frames
+    // here so completing siblings can release trees evicted from that cache.
+    let old_tree = old_tree_oid
+        .map(|oid| odb.cached_tree_for_walk(oid))
         .transpose()?;
-    let new_entries = new_tree_oid
-        .map(|oid| odb.cached_tree_entries(oid))
+    let new_tree = new_tree_oid
+        .map(|oid| odb.cached_tree_for_walk(oid))
         .transpose()?;
+    let oid_len = odb.hash_algo().len();
     diff_tree_entries_opts(
         odb,
-        old_entries
-            .as_deref()
-            .map(Vec::as_slice)
-            .unwrap_or_default(),
-        new_entries
-            .as_deref()
-            .map(Vec::as_slice)
-            .unwrap_or_default(),
+        WalkEntries::new(old_tree.as_ref(), oid_len),
+        WalkEntries::new(new_tree.as_ref(), oid_len),
         prefix,
         show_trees,
         index_hint,
         result,
     )
+}
+
+/// Entries of a tree from [`Odb::cached_tree_for_walk`] in stored order, borrowing names
+/// from it.
+enum WalkEntries<'a> {
+    Parsed(std::slice::Iter<'a, TreeEntry>),
+    Raw(TreeRefIter<'a>),
+}
+
+impl<'a> WalkEntries<'a> {
+    /// Iterate `tree`, or nothing when the side is absent.
+    fn new(tree: Option<&'a SessionTree>, oid_len: usize) -> Self {
+        match tree {
+            Some(SessionTree::Parsed(entries)) => Self::Parsed(entries.iter()),
+            Some(SessionTree::Raw(data)) => Self::Raw(TreeRefIter::with_oid_len(data, oid_len)),
+            None => Self::Parsed([].iter()),
+        }
+    }
+
+    fn next_entry(&mut self) -> Result<Option<TreeEntryRef<'a>>> {
+        match self {
+            Self::Parsed(entries) => Ok(entries.next().map(|entry| TreeEntryRef {
+                mode: entry.mode,
+                name: &entry.name,
+                oid: entry.oid,
+            })),
+            Self::Raw(entries) => entries.next().transpose(),
+        }
+    }
 }
 
 fn diff_trees_opts(
@@ -2837,43 +2861,43 @@ fn emit_added_count(
     Ok(())
 }
 
-/// Compare two sorted lists of tree entries, recursing into subtrees.
+/// Compare two sorted streams of tree entries, recursing into subtrees.
 fn diff_tree_entries_opts(
     odb: &Odb,
-    old: &[TreeEntry],
-    new: &[TreeEntry],
+    mut old: WalkEntries<'_>,
+    mut new: WalkEntries<'_>,
     prefix: &str,
     show_trees: bool,
     index_hint: Option<&DiffTreesIndexHint<'_>>,
     result: &mut Vec<DiffEntry>,
 ) -> Result<()> {
-    let mut oi = 0;
-    let mut ni = 0;
+    let mut old_entry = old.next_entry()?;
+    let mut new_entry = new.next_entry()?;
 
-    while oi < old.len() || ni < new.len() {
-        match (old.get(oi), new.get(ni)) {
+    loop {
+        match (&old_entry, &new_entry) {
             (Some(o), Some(n)) => {
                 let cmp = crate::objects::tree_entry_cmp(
-                    &o.name,
+                    o.name,
                     is_tree_mode(o.mode),
-                    &n.name,
+                    n.name,
                     is_tree_mode(n.mode),
                 );
                 match cmp {
                     std::cmp::Ordering::Less => {
                         // Old entry not in new → deleted
                         emit_deleted_opts(odb, o, prefix, show_trees, index_hint, result)?;
-                        oi += 1;
+                        old_entry = old.next_entry()?;
                     }
                     std::cmp::Ordering::Greater => {
                         // New entry not in old → added
                         emit_added_opts(odb, n, prefix, show_trees, result)?;
-                        ni += 1;
+                        new_entry = new.next_entry()?;
                     }
                     std::cmp::Ordering::Equal => {
                         // Both present — check for changes
                         if o.oid != n.oid || o.mode != n.mode {
-                            let path = crate::repo_relpath::format_path_stored(prefix, &o.name);
+                            let path = crate::repo_relpath::format_path_stored(prefix, o.name);
                             if is_tree_mode(o.mode) && is_tree_mode(n.mode) {
                                 // Both are trees
                                 if show_trees {
@@ -2918,18 +2942,18 @@ fn diff_tree_entries_opts(
                                 });
                             }
                         }
-                        oi += 1;
-                        ni += 1;
+                        old_entry = old.next_entry()?;
+                        new_entry = new.next_entry()?;
                     }
                 }
             }
             (Some(o), None) => {
                 emit_deleted_opts(odb, o, prefix, show_trees, index_hint, result)?;
-                oi += 1;
+                old_entry = old.next_entry()?;
             }
             (None, Some(n)) => {
                 emit_added_opts(odb, n, prefix, show_trees, result)?;
-                ni += 1;
+                new_entry = new.next_entry()?;
             }
             (None, None) => break,
         }
@@ -3009,13 +3033,13 @@ fn emit_deleted_tree_from_index(index: &Index, dir_prefix: &str, result: &mut Ve
 
 fn emit_deleted_opts(
     odb: &Odb,
-    entry: &TreeEntry,
+    entry: &TreeEntryRef<'_>,
     prefix: &str,
     show_trees: bool,
     index_hint: Option<&DiffTreesIndexHint<'_>>,
     result: &mut Vec<DiffEntry>,
 ) -> Result<()> {
-    let path = crate::repo_relpath::format_path_stored(prefix, &entry.name);
+    let path = crate::repo_relpath::format_path_stored(prefix, entry.name);
     if is_tree_mode(entry.mode) {
         if show_trees {
             result.push(DiffEntry {
@@ -3053,12 +3077,12 @@ fn emit_deleted_opts(
 
 fn emit_added_opts(
     odb: &Odb,
-    entry: &TreeEntry,
+    entry: &TreeEntryRef<'_>,
     prefix: &str,
     show_trees: bool,
     result: &mut Vec<DiffEntry>,
 ) -> Result<()> {
-    let path = crate::repo_relpath::format_path_stored(prefix, &entry.name);
+    let path = crate::repo_relpath::format_path_stored(prefix, entry.name);
     if is_tree_mode(entry.mode) {
         if show_trees {
             result.push(DiffEntry {
@@ -12287,6 +12311,88 @@ mod diff_index_to_tree_cache_tree_tests {
             diff_tree_path_change_count(&odb, Some(&old_tree), Some(&new_tree), "").expect("count");
         assert_eq!(count, entries.len());
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn diff_trees_matches_whether_trees_were_cached_parsed_or_raw() {
+        let temp = TempDir::new().expect("tempdir");
+        let a = Odb::new(temp.path())
+            .write(ObjectKind::Blob, b"a")
+            .expect("blob");
+        let b = Odb::new(temp.path())
+            .write(ObjectKind::Blob, b"b")
+            .expect("blob");
+        let mut left = Index::new();
+        let mut right = Index::new();
+        for i in 0..50 {
+            left.add_or_replace(index_entry(&format!("same{i:02}.txt"), MODE_REGULAR, a));
+            right.add_or_replace(index_entry(&format!("same{i:02}.txt"), MODE_REGULAR, a));
+        }
+        left.add_or_replace(index_entry("dir/changed.txt", MODE_REGULAR, a));
+        left.add_or_replace(index_entry("dir/kept.txt", MODE_REGULAR, a));
+        left.add_or_replace(index_entry("gone/x.txt", MODE_REGULAR, a));
+        left.add_or_replace(index_entry("mode.sh", MODE_REGULAR, a));
+        left.add_or_replace(index_entry("swap", MODE_REGULAR, a));
+        right.add_or_replace(index_entry("dir/changed.txt", MODE_REGULAR, b));
+        right.add_or_replace(index_entry("dir/kept.txt", MODE_REGULAR, a));
+        right.add_or_replace(index_entry("mode.sh", MODE_EXECUTABLE, a));
+        right.add_or_replace(index_entry("new/y.txt", MODE_REGULAR, b));
+        right.add_or_replace(index_entry("swap/inner.txt", MODE_REGULAR, b));
+        let setup = Odb::new(temp.path());
+        let old_tree = write_tree_from_index(&setup, &left, "").expect("old");
+        let new_tree = write_tree_from_index(&setup, &right, "").expect("new");
+
+        let raw = diff_trees(&Odb::new(temp.path()), Some(&old_tree), Some(&new_tree), "")
+            .expect("raw diff");
+        let changed: Vec<(DiffStatus, &str)> = raw.iter().map(|e| (e.status, e.path())).collect();
+        assert_eq!(
+            changed,
+            vec![
+                (DiffStatus::Modified, "dir/changed.txt"),
+                (DiffStatus::Deleted, "gone/x.txt"),
+                (DiffStatus::Modified, "mode.sh"),
+                (DiffStatus::Added, "new/y.txt"),
+                (DiffStatus::Deleted, "swap"),
+                (DiffStatus::Added, "swap/inner.txt"),
+            ]
+        );
+
+        let parsed = Odb::new(temp.path());
+        parsed.cached_tree_entries(&old_tree).expect("parse old");
+        parsed.cached_tree_entries(&new_tree).expect("parse new");
+        assert_eq!(
+            diff_trees(&parsed, Some(&old_tree), Some(&new_tree), "").expect("parsed diff"),
+            raw
+        );
+
+        let mixed = Odb::new(temp.path());
+        mixed.cached_tree_entries(&new_tree).expect("parse new");
+        assert_eq!(
+            diff_trees(&mixed, Some(&old_tree), Some(&new_tree), "").expect("mixed diff"),
+            raw
+        );
+        let reparsed = mixed
+            .cached_tree_entries(&old_tree)
+            .expect("parse cached raw");
+        assert_eq!(
+            reparsed.as_slice(),
+            crate::objects::parse_tree(&mixed.read(&old_tree).expect("read").data)
+                .expect("parse")
+                .as_slice(),
+            "a tree cached raw by a diff parses to the same entries"
+        );
+    }
+
+    #[test]
+    fn diff_trees_reports_a_corrupt_tree() {
+        let temp = TempDir::new().expect("tempdir");
+        let odb = Odb::new(temp.path());
+        let good = write_tree_from_index(&odb, &Index::new(), "").expect("empty tree");
+        let corrupt = odb
+            .write(ObjectKind::Tree, b"100644 name-without-oid")
+            .expect("tree");
+        let err = diff_trees(&odb, Some(&good), Some(&corrupt), "").expect_err("corrupt");
+        assert!(matches!(err, Error::CorruptObject(_)), "{err:?}");
     }
 }
 

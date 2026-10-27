@@ -258,7 +258,7 @@ pub struct Odb {
     alternates_enabled: bool,
     /// Avoid re-reading the same loose object repeatedly during one repository session.
     session_loose_reads: Arc<std::sync::Mutex<SessionLooseReads>>,
-    /// Parsed tree entries reused for the lifetime of this [`Odb`] handle (Git object cache).
+    /// Parsed or raw trees reused for the lifetime of this [`Odb`] handle (Git object cache).
     session_tree_entries: Arc<Mutex<SessionTreeEntries>>,
 }
 
@@ -315,29 +315,55 @@ impl SessionLooseReads {
     }
 }
 
-/// Recently parsed trees for [`Odb::cached_tree_entries`], bounded by total entry count.
+/// A tree held by [`SessionTreeEntries`]: parsed for callers that keep owned entries, or the
+/// raw payload for read-only walks that borrow names straight from it.
+#[derive(Clone)]
+pub(crate) enum SessionTree {
+    /// Entries parsed by [`Odb::cached_tree_entries`].
+    Parsed(Arc<Vec<crate::objects::TreeEntry>>),
+    /// The tree object's payload, as read by [`Odb::cached_tree_for_walk`].
+    Raw(Arc<Vec<u8>>),
+}
+
+impl SessionTree {
+    /// Approximate heap bytes a parsed entry costs (struct plus its name allocation).
+    const PARSED_ENTRY_BYTES: usize = 80;
+
+    fn cost(&self) -> usize {
+        match self {
+            Self::Parsed(entries) => entries.len().saturating_mul(Self::PARSED_ENTRY_BYTES),
+            Self::Raw(data) => data.len(),
+        }
+    }
+}
+
+/// Recently read trees for [`Odb::cached_tree_entries`] and [`Odb::cached_tree_for_walk`],
+/// bounded by their approximate size.
 #[derive(Default)]
 struct SessionTreeEntries {
-    trees: OidHashMap<Arc<Vec<crate::objects::TreeEntry>>>,
-    entries: usize,
+    trees: OidHashMap<SessionTree>,
+    bytes: usize,
 }
 
 impl SessionTreeEntries {
-    /// Total tree entries kept before the cache starts over; a bigger tree is never
-    /// kept. A parsed entry costs roughly 80 bytes, so this holds a few MiB: enough
-    /// for the trees a diff of neighbouring commits revisits, without growing with
-    /// history size.
-    const ENTRY_BUDGET: usize = 1 << 16;
+    /// Approximate bytes kept before the cache starts over; a bigger tree is never kept. A few
+    /// MiB is enough for the trees a diff of neighbouring commits revisits, without growing
+    /// with history size.
+    const BYTE_BUDGET: usize = (1 << 16) * SessionTree::PARSED_ENTRY_BYTES;
 
-    fn insert(&mut self, oid: ObjectId, tree: Arc<Vec<crate::objects::TreeEntry>>) {
-        if tree.len() > Self::ENTRY_BUDGET {
+    fn insert(&mut self, oid: ObjectId, tree: SessionTree) {
+        let cost = tree.cost();
+        if cost > Self::BYTE_BUDGET {
             return;
         }
-        if self.entries + tree.len() > Self::ENTRY_BUDGET {
-            self.trees.clear();
-            self.entries = 0;
+        if let Some(old) = self.trees.remove(&oid) {
+            self.bytes -= old.cost();
         }
-        self.entries += tree.len();
+        if self.bytes + cost > Self::BYTE_BUDGET {
+            self.trees.clear();
+            self.bytes = 0;
+        }
+        self.bytes += cost;
         self.trees.insert(oid, tree);
     }
 }
@@ -347,40 +373,74 @@ mod session_tree_entries_tests {
     use super::*;
     use crate::objects::TreeEntry;
 
-    fn tree(entries: usize) -> Arc<Vec<TreeEntry>> {
+    fn tree(entries: usize) -> SessionTree {
         let entry = TreeEntry {
             mode: 0o100644,
             name: b"f".to_vec(),
             oid: ObjectId::zero(),
         };
-        Arc::new(vec![entry; entries])
+        SessionTree::Parsed(Arc::new(vec![entry; entries]))
+    }
+
+    fn raw(bytes: usize) -> SessionTree {
+        SessionTree::Raw(Arc::new(vec![0u8; bytes]))
     }
 
     fn oid(n: u8) -> ObjectId {
         ObjectId::from_bytes(&[n; 20]).expect("oid")
     }
 
+    const ENTRY_BUDGET: usize = SessionTreeEntries::BYTE_BUDGET / SessionTree::PARSED_ENTRY_BYTES;
+
     #[test]
-    fn cache_starts_over_when_the_entry_budget_is_exceeded() {
+    fn cache_starts_over_when_the_budget_is_exceeded() {
         let mut cache = SessionTreeEntries::default();
-        let half = SessionTreeEntries::ENTRY_BUDGET / 2;
+        let half = ENTRY_BUDGET / 2;
         cache.insert(oid(1), tree(half));
         cache.insert(oid(2), tree(half));
-        assert_eq!(cache.entries, SessionTreeEntries::ENTRY_BUDGET);
+        assert_eq!(cache.bytes, SessionTreeEntries::BYTE_BUDGET);
         assert_eq!(cache.trees.len(), 2);
 
         cache.insert(oid(3), tree(1));
         assert_eq!(cache.trees.len(), 1);
         assert!(cache.trees.contains_key(&oid(3)));
-        assert_eq!(cache.entries, 1);
+        assert_eq!(cache.bytes, SessionTree::PARSED_ENTRY_BYTES);
 
-        cache.insert(oid(4), tree(SessionTreeEntries::ENTRY_BUDGET + 1));
+        cache.insert(oid(4), tree(ENTRY_BUDGET + 1));
         assert!(
             !cache.trees.contains_key(&oid(4)),
             "an oversized tree is not cached"
         );
         assert!(cache.trees.contains_key(&oid(3)));
-        assert!(cache.entries <= SessionTreeEntries::ENTRY_BUDGET);
+        assert!(cache.bytes <= SessionTreeEntries::BYTE_BUDGET);
+    }
+
+    #[test]
+    fn raw_trees_count_their_payload_bytes() {
+        let mut cache = SessionTreeEntries::default();
+        cache.insert(oid(1), raw(1000));
+        cache.insert(oid(2), tree(10));
+        assert_eq!(cache.bytes, 1000 + 10 * SessionTree::PARSED_ENTRY_BYTES);
+
+        cache.insert(oid(3), raw(SessionTreeEntries::BYTE_BUDGET + 1));
+        assert!(
+            !cache.trees.contains_key(&oid(3)),
+            "an oversized payload is not cached"
+        );
+        assert_eq!(cache.trees.len(), 2);
+    }
+
+    #[test]
+    fn replacing_a_tree_releases_its_old_cost() {
+        let mut cache = SessionTreeEntries::default();
+        cache.insert(oid(1), raw(4000));
+        cache.insert(oid(1), tree(2));
+        assert_eq!(cache.trees.len(), 1);
+        assert_eq!(cache.bytes, 2 * SessionTree::PARSED_ENTRY_BYTES);
+        assert!(matches!(
+            cache.trees.get(&oid(1)),
+            Some(SessionTree::Parsed(_))
+        ));
     }
 }
 
@@ -534,16 +594,22 @@ impl Odb {
         }
     }
 
-    /// Parsed tree entries for `oid`, cached on this [`Odb`] handle.
-    pub(crate) fn cached_tree_entries(
-        &self,
-        oid: &ObjectId,
-    ) -> Result<Arc<Vec<crate::objects::TreeEntry>>> {
-        if let Ok(guard) = self.session_tree_entries.lock() {
-            if let Some(entries) = guard.trees.get(oid) {
-                return Ok(Arc::clone(entries));
-            }
+    fn session_tree(&self, oid: &ObjectId) -> Option<SessionTree> {
+        self.session_tree_entries
+            .lock()
+            .ok()?
+            .trees
+            .get(oid)
+            .cloned()
+    }
+
+    fn remember_session_tree(&self, oid: &ObjectId, tree: SessionTree) {
+        if let Ok(mut guard) = self.session_tree_entries.lock() {
+            guard.insert(*oid, tree);
         }
+    }
+
+    fn read_tree_payload(&self, oid: &ObjectId) -> Result<Vec<u8>> {
         let obj = self.read_impl(oid, false)?;
         if obj.kind != ObjectKind::Tree {
             return Err(Error::CorruptObject(format!(
@@ -551,12 +617,40 @@ impl Odb {
                 obj.kind.as_str()
             )));
         }
-        let parsed = crate::objects::parse_tree_with_oid_len(&obj.data, self.hash_algo().len())?;
+        Ok(obj.data)
+    }
+
+    /// Parsed tree entries for `oid`, cached on this [`Odb`] handle.
+    pub(crate) fn cached_tree_entries(
+        &self,
+        oid: &ObjectId,
+    ) -> Result<Arc<Vec<crate::objects::TreeEntry>>> {
+        let parsed = match self.session_tree(oid) {
+            Some(SessionTree::Parsed(entries)) => return Ok(entries),
+            Some(SessionTree::Raw(data)) => {
+                crate::objects::parse_tree_with_oid_len(&data, self.hash_algo().len())?
+            }
+            None => crate::objects::parse_tree_with_oid_len(
+                &self.read_tree_payload(oid)?,
+                self.hash_algo().len(),
+            )?,
+        };
         let arc = Arc::new(parsed);
-        if let Ok(mut guard) = self.session_tree_entries.lock() {
-            guard.insert(*oid, Arc::clone(&arc));
-        }
+        self.remember_session_tree(oid, SessionTree::Parsed(Arc::clone(&arc)));
         Ok(arc)
+    }
+
+    /// The tree `oid` for a read-only walk, cached on this [`Odb`] handle.
+    ///
+    /// Returns the parsed entries when another caller already cached them, otherwise the raw
+    /// payload, so a walk that only compares entries never allocates one per entry.
+    pub(crate) fn cached_tree_for_walk(&self, oid: &ObjectId) -> Result<SessionTree> {
+        if let Some(tree) = self.session_tree(oid) {
+            return Ok(tree);
+        }
+        let tree = SessionTree::Raw(Arc::new(self.read_tree_payload(oid)?));
+        self.remember_session_tree(oid, tree.clone());
+        Ok(tree)
     }
 
     fn session_cached_loose_read(&self, oid: &ObjectId) -> Option<Object> {
