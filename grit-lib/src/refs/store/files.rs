@@ -656,7 +656,8 @@ impl FilesRefStore {
         )
     }
 
-    fn reflog_path(&self, logical: &str) -> PathBuf {
+    /// Path of the loose reflog file for the logical ref name `logical`.
+    pub(crate) fn reflog_path(&self, logical: &str) -> PathBuf {
         let route = self.route(logical);
         route.storage_dir.join("logs").join(&route.storage_name)
     }
@@ -1563,18 +1564,27 @@ impl RefStore for FilesRefStore {
         reverse: bool,
         f: &mut dyn FnMut(&ReflogEntry) -> ControlFlow<()>,
     ) -> Result<()> {
-        let entries = read_reflog_at_path(&self.reflog_path(name))?;
+        let path = self.reflog_path(name);
         if reverse {
-            for entry in entries.iter().rev() {
-                if f(entry).is_break() {
+            // Newest-first readers usually stop early, so read the log backwards in chunks.
+            let Some(mut reader) = reflog::ReverseReflogLineReader::open(&path)? else {
+                return Ok(());
+            };
+            while let Some(line) = reader.next_nonempty_line()? {
+                let Some(entry) =
+                    reflog::parse_reflog_line_for_store(&String::from_utf8_lossy(&line))
+                else {
+                    continue;
+                };
+                if f(&entry).is_break() {
                     break;
                 }
             }
-        } else {
-            for entry in &entries {
-                if f(entry).is_break() {
-                    break;
-                }
+            return Ok(());
+        }
+        for entry in &read_reflog_at_path(&path)? {
+            if f(entry).is_break() {
+                break;
             }
         }
         Ok(())
