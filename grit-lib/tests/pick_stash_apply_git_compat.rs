@@ -83,6 +83,7 @@ fn grit_pick(repo: &Repository, source_hex: &str) -> grit_lib::error::Result<()>
         WhitespaceMergeOptions::default(),
         None,
         TreeMergeConflictPresentation::default(),
+        grit_lib::diff::merge_trees::DirectoryRenameMode::default(),
     )?;
     let new_tree = merged.result_tree;
     let index_handle = repo.index_handle();

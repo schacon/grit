@@ -243,6 +243,7 @@ pub fn assert_merge_commits_match_git_with_favor(
         WhitespaceMergeOptions::default(),
         None,
         presentation,
+        grit_lib::diff::merge_trees::DirectoryRenameMode::default(),
     )
     .expect("merge_trees_three_way");
     assert_merge_output_matches_oracle(grit_repo, &merged, &oracle, context);

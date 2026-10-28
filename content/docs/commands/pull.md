@@ -196,7 +196,7 @@ Exit codes (also apply to default human output): **0** on success (`up_to_date`,
 | `change_id` | string or null | Stored `change-id` on `oid` when present. |
 | `upstream` | string or null | For `set_upstream`, the remote-tracking branch that was adopted. |
 | `conflicts` | array of strings or null | Path names when `result` is `conflicts` or `rebase_stopped` (legacy list). |
-| `conflict_details` | array or null | Structured conflict items when `result` is `conflicts` or `rebase_stopped`: `path`, a [conflict `kind`](../status/#conflict-kinds) (the same names `grit status` uses, plus `rename_rename`), and for merges a `summary`. |
+| `conflict_details` | array or null | Structured conflict items when `result` is `conflicts` or `rebase_stopped`: `path`, a [conflict `kind`](../status/#conflict-kinds) (the same names `grit status` uses, plus `rename_rename` and the `directory_rename_*` kinds), and for merges a `summary`. |
 | `operation` | string or null | When `result` is `conflicts` or `rebase_stopped`: the operation left in progress, `merge` or `rebase`. |
 | `commit` | string or null | When `operation` is `rebase`: the local commit that could not be replayed. |
 | `next_steps` | array of strings or null | When `result` is `conflicts`: ordered `grit` commands to finish (for a rebase, ending in `grit rebase --continue`). |

@@ -42,7 +42,8 @@ use crate::merge_base::{
 };
 use crate::merge_file::MergeFavor;
 use crate::merge_trees::{
-    merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+    merge_trees_three_way, DirectoryRenameMode, TreeMergeConflictPresentation,
+    WhitespaceMergeOptions,
 };
 use crate::objects::{parse_commit, remove_header_lines, serialize_commit, ObjectId, ObjectKind};
 use crate::odb::Odb;
@@ -355,14 +356,12 @@ fn merge_parents(repo: &Repository, commits: &[ObjectId]) -> Result<(ObjectId, V
             WhitespaceMergeOptions::default(),
             None,
             TreeMergeConflictPresentation::default(),
+            DirectoryRenameMode::from_repo(repo)?,
         )?;
         conflicts.extend(
-            merged
-                .index
-                .entries()
-                .iter()
-                .filter(|e| e.stage() != 0)
-                .map(|e| String::from_utf8_lossy(&e.path).into_owned()),
+            crate::operation::conflicts_from_tree_merge(&merged)
+                .into_iter()
+                .map(|c| c.path),
         );
         tree = merged.result_tree;
     }

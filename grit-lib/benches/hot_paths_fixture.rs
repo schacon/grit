@@ -524,6 +524,7 @@ pub fn bench_pick_path(fx: &HotPathsFixture, path_count: usize) {
         WhitespaceMergeOptions::default(),
         None,
         TreeMergeConflictPresentation::default(),
+        grit_lib::diff::merge_trees::DirectoryRenameMode::default(),
     )
     .expect("merge");
     let new_tree = merged.result_tree;
@@ -545,6 +546,7 @@ pub fn bench_tree_merge_100k(fx: &HotPathsFixture, path_count: usize) {
         WhitespaceMergeOptions::default(),
         None,
         TreeMergeConflictPresentation::default(),
+        grit_lib::diff::merge_trees::DirectoryRenameMode::default(),
     )
     .expect("merge");
 }

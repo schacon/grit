@@ -24,6 +24,20 @@ The tree id in [`MergePrediction::Clean`](rustdoc:grit_lib::porcelain::merge::Me
 
 `write_merge_tree` always merges (the fast-forward option is ignored), uses the first merge base when there are several, and refuses commits with no common ancestor with `Error::UnrelatedHistories` unless `allow_unrelated_histories` is set.
 
+## Directory renames
+
+When one side moves every file out of a directory and the other side adds a file inside it, the new file most likely belongs in the directory's new home. Tree merges detect this the way Git's `ort` merge does, controlled by [`DirectoryRenameMode`](rustdoc:grit_lib::diff::merge_trees::DirectoryRenameMode):
+
+| Mode | `merge.directoryRenames` | Result |
+| --- | --- | --- |
+| [`Conflict`](rustdoc:grit_lib::diff::merge_trees::DirectoryRenameMode::Conflict) (default) | `conflict` or unset | The file moves to the new directory and stays unmerged at the adding side's stage (stage 3 when theirs added it), so the merge stops for confirmation. |
+| [`Apply`](rustdoc:grit_lib::diff::merge_trees::DirectoryRenameMode::Apply) | `true` | The file moves and the merge is clean. |
+| [`Off`](rustdoc:grit_lib::diff::merge_trees::DirectoryRenameMode::Off) | `false` | The file stays in the old directory. |
+
+A directory counts as renamed only when the side removed it entirely; the destination is the directory that received the most of its files, and a tie is a split that moves nothing. A destination path the adding side already uses, or that several new files would share, blocks the move; a file the base or the renaming side has at the destination is instead three-way merged with the moved file there. Splits and blocked moves are conflicts in `Conflict` and `Apply` mode even though no index entry is unmerged. All of them are listed in [`TreeMergeOutput::directory_rename_conflicts`](rustdoc:grit_lib::diff::merge_trees::TreeMergeOutput::directory_rename_conflicts) and reported by [`conflicts_from_tree_merge`](rustdoc:grit_lib::operation::conflicts_from_tree_merge) as the `directory_rename_*` [`ConflictKind`](rustdoc:grit_lib::operation::ConflictKind)s.
+
+[`merge_trees_three_way`](rustdoc:grit_lib::diff::merge_trees::merge_trees_three_way) takes the mode as an argument; read the configured one with [`DirectoryRenameMode::from_repo`](rustdoc:grit_lib::diff::merge_trees::DirectoryRenameMode::from_repo), which fails with [`ConfigError::InvalidDirectoryRenames`](rustdoc:grit_lib::error::ConfigError::InvalidDirectoryRenames) for an unknown value. [`MergePredictionOptions::directory_renames`](rustdoc:grit_lib::porcelain::merge::MergePredictionOptions::directory_renames) and [`MergeOptions::directory_renames`](rustdoc:grit_lib::porcelain::merge::MergeOptions::directory_renames) override the config for one merge; pick, revert, rebase and history edits always use the config.
+
 ## Example
 
 The program resolves `ours` and `theirs` refs, stores the merge with `write_merge_tree`, prints the merged tree oid (compare with `git merge-tree --write-tree`) and, when the merge is clean, commits it with both parents:

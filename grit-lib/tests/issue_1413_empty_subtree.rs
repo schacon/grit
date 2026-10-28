@@ -181,6 +181,7 @@ fn merge_branch_that_empties_subdirectory_fsck_clean() {
         Default::default(),
         None,
         TreeMergeConflictPresentation::default(),
+        grit_lib::diff::merge_trees::DirectoryRenameMode::default(),
     )
     .expect("merge trees");
     assert!(

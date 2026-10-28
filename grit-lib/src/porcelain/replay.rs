@@ -14,7 +14,8 @@ use crate::error::{Error, Result};
 use crate::ident::Signature;
 use crate::merge_file::MergeFavor;
 use crate::merge_trees::{
-    merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+    merge_trees_three_way, DirectoryRenameMode, TreeMergeConflictPresentation,
+    WhitespaceMergeOptions,
 };
 use crate::objects::{parse_commit, CommitData, ObjectId, ObjectKind};
 use crate::porcelain::checkout::checkout_between_trees;
@@ -150,6 +151,7 @@ pub fn replay_commit(
         WhitespaceMergeOptions::default(),
         None,
         presentation,
+        DirectoryRenameMode::from_repo(repo)?,
     )?;
 
     if crate::operation::tree_merge_has_conflicts(&merged) {

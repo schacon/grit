@@ -287,6 +287,8 @@ fn write_merge_tree_stores_renamed_directory_merge_for_commit() {
     }
     let (tmp, ours, theirs) = renamed_dir_repo();
     let root = tmp.path();
+    // `dir/z` follows `dir` to `newdir` without a conflict only when directory renames apply.
+    git(root, &["config", "merge.directoryRenames", "true"]);
     let repo = grit_repo(root);
 
     let MergePrediction::Clean { tree: predicted } =
@@ -310,6 +312,12 @@ fn write_merge_tree_stores_renamed_directory_merge_for_commit() {
         git_object_type(root, &written.tree).as_deref(),
         Some("tree"),
         "git must read the stored tree before merge-tree writes its own copy"
+    );
+    let oracle = git_merge_tree_oracle(root, None, &ours, &theirs, MergeFavor::None);
+    assert!(oracle.unmerged.is_empty(), "git: {}", oracle.stdout);
+    assert_eq!(
+        written.tree, oracle.result_tree,
+        "stored tree must match git merge-tree"
     );
 
     let sig = signature();

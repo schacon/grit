@@ -382,6 +382,15 @@ pub enum ConfigError {
         /// Raw config value that could not be parsed.
         value: String,
     },
+
+    /// `merge.directoryRenames` must be `conflict` or a Git boolean.
+    #[error(
+        "invalid value '{value}' for 'merge.directoryRenames' (expected true, false or conflict)"
+    )]
+    InvalidDirectoryRenames {
+        /// Raw config value that could not be parsed.
+        value: String,
+    },
 }
 
 impl From<String> for ConfigError {

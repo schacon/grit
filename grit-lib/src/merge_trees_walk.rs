@@ -906,6 +906,7 @@ pub(crate) fn three_way_on_touched_paths(
         result_tree: ObjectId::zero(),
         touched_paths: touched.clone(),
         rename_conflicts,
+        directory_rename_conflicts: Vec::new(),
     })
 }
 

@@ -84,6 +84,7 @@ fn merge_trees_rename_on_theirs_edit_on_ours_matches_git() {
         Default::default(),
         None,
         labels.presentation(),
+        grit_lib::diff::merge_trees::DirectoryRenameMode::default(),
     )
     .expect("merge_trees_three_way");
 
@@ -202,6 +203,7 @@ fn merge_trees_rename_on_theirs_delete_on_ours_matches_git() {
         Default::default(),
         None,
         labels.presentation(),
+        grit_lib::diff::merge_trees::DirectoryRenameMode::default(),
     )
     .expect("merge_trees_three_way");
 

@@ -62,6 +62,7 @@ fn content_merge_child() {
             WhitespaceMergeOptions::default(),
             None,
             TreeMergeConflictPresentation::default(),
+            grit_lib::diff::merge_trees::DirectoryRenameMode::default(),
         )
         .expect("merge trees");
         assert_eq!(output.index.entries().len(), FILES);

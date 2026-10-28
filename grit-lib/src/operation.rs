@@ -5,7 +5,9 @@
 //! path has (the same classification as the `u` lines of `git status --porcelain=v2`), so a
 //! conflict looks the same whether it comes from an operation's outcome or from
 //! [`status`](crate::porcelain::status::status) afterwards. Only a tree-merge result can add
-//! [`ConflictKind::RenameRename`], which needs the rename pairing the index does not keep.
+//! [`ConflictKind::RenameRename`] and the directory rename kinds
+//! ([`ConflictKind::DirectoryRenameMoved`], [`ConflictKind::DirectoryRenameSplit`] and
+//! [`ConflictKind::DirectoryRenameBlocked`]), which need information the index does not keep.
 //!
 //! ```rust
 //! use grit_lib::operation::{conflict_kind_from_stagemask, ConflictKind};
@@ -20,7 +22,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::diff::merge_trees::TreeMergeOutput;
+use crate::diff::merge_trees::{DirectoryRenameConflict, TreeMergeOutput};
 use crate::index::Index;
 
 pub use crate::state::{
@@ -61,6 +63,39 @@ pub enum ConflictKind {
     /// as [`Self::BothDeleted`], [`Self::AddedByUs`] and [`Self::AddedByThem`]. The paths are
     /// boxed so every other kind stays small in the long conflict lists `status` builds.
     RenameRename(Box<RenamedPaths>),
+    /// A file one side added inside a directory the other side renamed was moved into the new
+    /// directory, and left unmerged at the adding side's stage so the user confirms the move.
+    ///
+    /// [`Conflict::path`] is the new location. Only [`conflicts_from_tree_merge`] produces it;
+    /// the index shows the path as [`Self::AddedByUs`] or [`Self::AddedByThem`] (or by its
+    /// stages, when the file also has content conflicts).
+    DirectoryRenameMoved(Box<MovedPath>),
+    /// One side spread a directory's files over several directories with no clear winner, so
+    /// files the other side added to it were left in place. [`Conflict::path`] is the directory;
+    /// no index entry is unmerged.
+    DirectoryRenameSplit,
+    /// Files were not moved into a renamed directory because their destination is taken.
+    /// [`Conflict::path`] is the destination; no index entry is unmerged.
+    DirectoryRenameBlocked(Box<BlockedMove>),
+}
+
+/// Where a [`ConflictKind::DirectoryRenameMoved`] file came from.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+pub struct MovedPath {
+    /// Path the adding side gave the file, inside the renamed directory's old name.
+    pub original_path: String,
+}
+
+/// The files a [`ConflictKind::DirectoryRenameBlocked`] directory rename did not move.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+pub struct BlockedMove {
+    /// New files that would have moved to the destination; they stay where they were added.
+    pub sources: Vec<String>,
+    /// `true` when the adding side already has a file or directory at the destination; `false`
+    /// when several new files would land on it.
+    pub existing: bool,
 }
 
 /// The three names in a [`ConflictKind::RenameRename`] conflict.
@@ -79,7 +114,8 @@ impl ConflictKind {
     /// Stable snake_case name for JSON and scripting.
     ///
     /// One of `both_modified`, `both_added`, `both_deleted`, `added_by_us`, `added_by_them`,
-    /// `deleted_by_us`, `deleted_by_them` or `rename_rename`.
+    /// `deleted_by_us`, `deleted_by_them`, `rename_rename`, `directory_rename_moved`,
+    /// `directory_rename_split` or `directory_rename_blocked`.
     #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -91,6 +127,9 @@ impl ConflictKind {
             Self::DeletedByUs => "deleted_by_us",
             Self::DeletedByThem => "deleted_by_them",
             Self::RenameRename(_) => "rename_rename",
+            Self::DirectoryRenameMoved(_) => "directory_rename_moved",
+            Self::DirectoryRenameSplit => "directory_rename_split",
+            Self::DirectoryRenameBlocked(_) => "directory_rename_blocked",
         }
     }
 }
@@ -159,48 +198,79 @@ pub fn conflicts_from_index(index: &Index) -> Vec<Conflict> {
 /// Collect conflicted paths and kinds from a three-way tree merge result.
 ///
 /// Paths of a [`TreeMergeOutput::rename_conflicts`] entry are reported as
-/// [`ConflictKind::RenameRename`]; every other path is classified by its unmerged stages,
-/// like [`conflicts_from_index`]. A path that only has conflict-marker content and no
-/// unmerged stages is [`ConflictKind::BothModified`].
+/// [`ConflictKind::RenameRename`], and each [`TreeMergeOutput::directory_rename_conflicts`]
+/// entry as the matching directory rename kind at its [`DirectoryRenameConflict::path`]; every
+/// other path is classified by its unmerged stages, like [`conflicts_from_index`]. A path that
+/// only has conflict-marker content and no unmerged stages is [`ConflictKind::BothModified`].
+/// The result is sorted by path bytes, and paths use [`crate::repo_relpath::storage_string`]
+/// (as [`conflicts_from_index`] does), so non-UTF-8 paths round-trip.
 #[must_use]
 pub fn conflicts_from_tree_merge(merged: &TreeMergeOutput) -> Vec<Conflict> {
-    let mut rename_kinds: HashMap<&[u8], ConflictKind> = HashMap::new();
-    for rr in &merged.rename_conflicts {
-        let kind = ConflictKind::RenameRename(Box::new(RenamedPaths {
-            base_path: String::from_utf8_lossy(&rr.base_path).into_owned(),
-            ours_path: String::from_utf8_lossy(&rr.ours_path).into_owned(),
-            theirs_path: String::from_utf8_lossy(&rr.theirs_path).into_owned(),
-        }));
-        for path in [&rr.base_path, &rr.ours_path, &rr.theirs_path] {
-            rename_kinds.insert(path.as_slice(), kind.clone());
+    use crate::repo_relpath::storage_string;
+
+    let mut known_kinds: HashMap<&[u8], ConflictKind> = HashMap::new();
+    let mut conflicts: Vec<(&[u8], ConflictKind)> = Vec::new();
+    for conflict in &merged.directory_rename_conflicts {
+        let path = conflict.path();
+        match conflict {
+            DirectoryRenameConflict::Moved { from, .. } => {
+                known_kinds.insert(
+                    path,
+                    ConflictKind::DirectoryRenameMoved(Box::new(MovedPath {
+                        original_path: storage_string(from),
+                    })),
+                );
+            }
+            DirectoryRenameConflict::Split { .. } => {
+                conflicts.push((path, ConflictKind::DirectoryRenameSplit));
+            }
+            DirectoryRenameConflict::Blocked {
+                sources, existing, ..
+            } => conflicts.push((
+                path,
+                ConflictKind::DirectoryRenameBlocked(Box::new(BlockedMove {
+                    sources: sources.iter().map(|s| storage_string(s)).collect(),
+                    existing: *existing,
+                })),
+            )),
         }
     }
-    let paths = tree_merge_conflict_path_strings(merged);
-    paths
-        .into_iter()
-        .map(|path| {
-            let path_bytes = path.as_bytes();
-            if let Some(kind) = rename_kinds.get(path_bytes) {
-                return Conflict {
-                    kind: kind.clone(),
-                    path,
-                };
-            }
+    for rr in &merged.rename_conflicts {
+        let kind = ConflictKind::RenameRename(Box::new(RenamedPaths {
+            base_path: storage_string(&rr.base_path),
+            ours_path: storage_string(&rr.ours_path),
+            theirs_path: storage_string(&rr.theirs_path),
+        }));
+        for path in [&rr.base_path, &rr.ours_path, &rr.theirs_path] {
+            known_kinds.insert(path.as_slice(), kind.clone());
+        }
+    }
+    for path in tree_merge_conflict_paths(merged) {
+        let kind = known_kinds.get(path).cloned().unwrap_or_else(|| {
             let mask = (1..=3u8)
-                .filter(|&stage| merged.index.get(path_bytes, stage).is_some())
+                .filter(|&stage| merged.index.get(path, stage).is_some())
                 .fold(0u8, |mask, stage| mask | 1 << (stage - 1));
-            Conflict {
-                path,
-                kind: conflict_kind_from_stagemask(mask).unwrap_or(ConflictKind::BothModified),
-            }
+            conflict_kind_from_stagemask(mask).unwrap_or(ConflictKind::BothModified)
+        });
+        conflicts.push((path, kind));
+    }
+    conflicts.sort_by(|a, b| a.0.cmp(b.0));
+    conflicts
+        .into_iter()
+        .map(|(path, kind)| Conflict {
+            path: storage_string(path),
+            kind,
         })
         .collect()
 }
 
-/// Whether `merged` has textual conflict blobs or unmerged index stages.
+/// Whether `merged` has textual conflict blobs, unmerged index stages or directory renames
+/// that need the user's attention.
 #[must_use]
 pub fn tree_merge_has_conflicts(merged: &TreeMergeOutput) -> bool {
-    !merged.conflict_content.is_empty() || merged.index.entries().iter().any(|e| e.stage() != 0)
+    !merged.conflict_content.is_empty()
+        || !merged.directory_rename_conflicts.is_empty()
+        || merged.index.entries().iter().any(|e| e.stage() != 0)
 }
 
 /// Render [`NextStep`] values as `grit` command lines (skips steps with no CLI yet).
@@ -210,21 +280,21 @@ pub fn next_step_grit_commands(steps: &[NextStep]) -> Vec<String> {
 }
 
 /// Conflicted paths of a tree merge (marker blobs and unmerged stages), sorted and deduplicated.
-fn tree_merge_conflict_path_strings(merged: &TreeMergeOutput) -> Vec<String> {
-    let mut paths: Vec<String> = merged
+fn tree_merge_conflict_paths(merged: &TreeMergeOutput) -> Vec<&[u8]> {
+    let mut paths: Vec<&[u8]> = merged
         .conflict_content
         .keys()
-        .map(|k| String::from_utf8_lossy(k).into_owned())
+        .map(Vec::as_slice)
+        .chain(
+            merged
+                .index
+                .entries()
+                .iter()
+                .filter(|e| e.stage() != 0)
+                .map(|e| e.path.as_slice()),
+        )
         .collect();
-    paths.extend(
-        merged
-            .index
-            .entries()
-            .iter()
-            .filter(|e| e.stage() != 0)
-            .map(|e| String::from_utf8_lossy(&e.path).into_owned()),
-    );
-    paths.sort();
+    paths.sort_unstable();
     paths.dedup();
     paths
 }
@@ -371,6 +441,7 @@ mod tests {
                 ours_path: b"b".to_vec(),
                 theirs_path: b"c".to_vec(),
             }],
+            directory_rename_conflicts: Vec::new(),
         };
         let kind = ConflictKind::RenameRename(Box::new(RenamedPaths {
             base_path: "a".into(),
@@ -394,6 +465,52 @@ mod tests {
     }
 
     #[test]
+    fn conflicts_from_tree_merge_keeps_non_utf8_directory_rename_paths() {
+        use crate::merge_trees::{DirectoryRenameConflict, MergeSide};
+        use crate::repo_relpath::storage_string;
+
+        let from = b"a/n\xff".to_vec();
+        let to = b"b/n\xff".to_vec();
+        let mut row = index_entry("x", 3);
+        row.path = to.clone();
+        let mut index = Index::new();
+        index.add_or_replace(row);
+        let merged = TreeMergeOutput {
+            index,
+            conflict_content: BTreeMap::new(),
+            result_tree: crate::diff::zero_oid(),
+            touched_paths: HashSet::new(),
+            rename_conflicts: Vec::new(),
+            directory_rename_conflicts: vec![
+                DirectoryRenameConflict::Moved {
+                    from: from.clone(),
+                    to: to.clone(),
+                    added_by: MergeSide::Theirs,
+                },
+                DirectoryRenameConflict::Split {
+                    dir: b"c\xfe".to_vec(),
+                    renamed_by: MergeSide::Ours,
+                },
+            ],
+        };
+        assert_eq!(
+            conflicts_from_tree_merge(&merged),
+            vec![
+                Conflict {
+                    path: storage_string(&to),
+                    kind: ConflictKind::DirectoryRenameMoved(Box::new(MovedPath {
+                        original_path: storage_string(&from),
+                    })),
+                },
+                Conflict {
+                    path: storage_string(b"c\xfe"),
+                    kind: ConflictKind::DirectoryRenameSplit,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn conflicts_from_tree_merge_unions_markers_and_unmerged_index() {
         let mut index = Index::new();
         index.add_or_replace(index_entry("b.txt", 1));
@@ -406,6 +523,7 @@ mod tests {
             result_tree: crate::diff::zero_oid(),
             touched_paths: HashSet::new(),
             rename_conflicts: Vec::new(),
+            directory_rename_conflicts: Vec::new(),
         };
         let conflicts = conflicts_from_tree_merge(&merged);
         assert_eq!(conflicts.len(), 2);

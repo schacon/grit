@@ -10,7 +10,8 @@ use crate::command_runner::{
 use crate::error::Error;
 use crate::merge_file::MergeFavor;
 use crate::merge_trees::{
-    merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+    merge_trees_three_way, DirectoryRenameMode, TreeMergeConflictPresentation,
+    WhitespaceMergeOptions,
 };
 use crate::objects::ObjectId;
 use crate::porcelain::checkout::checkout_hard_to_tree_from_head_tree;
@@ -606,6 +607,7 @@ fn stop_on_replay_conflict(
             WhitespaceMergeOptions::default(),
             None,
             TreeMergeConflictPresentation::default(),
+            DirectoryRenameMode::from_repo(repo)?,
         )?;
         apply_conflict_merge_worktree(
             repo,

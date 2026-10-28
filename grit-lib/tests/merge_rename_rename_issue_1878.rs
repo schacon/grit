@@ -129,6 +129,7 @@ fn assert_tree_merge_matches_git(fx: &Fixture, context: &str) {
         Default::default(),
         None,
         labels.presentation(),
+        grit_lib::diff::merge_trees::DirectoryRenameMode::default(),
     )
     .expect("merge trees");
     assert_eq!(
