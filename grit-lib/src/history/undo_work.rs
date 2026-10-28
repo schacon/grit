@@ -10,7 +10,7 @@
 //! The sidecar lives at `.git/grit/history-last-work` and is written or removed together with
 //! `.git/grit/history-last`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -19,6 +19,7 @@ use crate::index::{entry_from_metadata, IndexEntry, MODE_GITLINK, MODE_TREE};
 use crate::lockfile::{LockFile, LockWait};
 use crate::objects::HashAlgo;
 use crate::objects::{ObjectId, ObjectKind};
+use crate::porcelain::index_from_tree::refresh_stage0_index_stats_for_paths;
 use crate::repo::Repository;
 
 use super::apply::{
@@ -152,6 +153,12 @@ pub(crate) fn tree_path_states(
 }
 
 /// Write each state's index entry and work tree file.
+///
+/// An entry whose file was written with exactly the blob's bytes takes the file's stat data.
+/// Any other file (CRLF from `core.autocrlf`, smudge filters, or a genuinely different
+/// unstaged layer) is checked through the repository's clean conversion: when it cleans to the
+/// restored blob the entry takes its stat data, otherwise the entry keeps an unset stat cache
+/// (size and mtime zero) so Git and grit both rehash the file instead of trusting the stat.
 pub(crate) fn install_path_states(
     repo: &Repository,
     states: &[PathState],
@@ -160,6 +167,7 @@ pub(crate) fn install_path_states(
         return Ok(());
     };
     let mut index = repo.load_index().map_err(apply_err)?;
+    let mut unstatted = BTreeSet::new();
     for state in states {
         let abs = work_tree.join(&state.path);
         install_worktree(&abs, &state.worktree).map_err(io_err)?;
@@ -179,11 +187,14 @@ pub(crate) fn install_path_states(
             let meta = fs::symlink_metadata(&abs).map_err(io_err)?;
             entry_from_metadata(&meta, key, oid, blob.mode)
         } else {
-            unstatted_entry(key, oid, blob)
+            unstatted.insert(state.path.as_str());
+            unstatted_entry(key, oid, blob.mode)
         };
         index.stage_file(entry);
     }
     index.sort();
+    refresh_stage0_index_stats_for_paths(repo, work_tree, &mut index, &unstatted)
+        .map_err(apply_err)?;
     repo.write_index(&mut index).map_err(apply_err)
 }
 
@@ -370,7 +381,8 @@ fn install_worktree(abs: &Path, state: &WorktreePathSnapshot) -> std::io::Result
     }
 }
 
-fn unstatted_entry(key: &[u8], oid: ObjectId, blob: &IndexBlob) -> IndexEntry {
+/// Entry with an unset stat cache ([`IndexEntry::stat_cache_unset`]), which forces a rehash.
+fn unstatted_entry(key: &[u8], oid: ObjectId, mode: u32) -> IndexEntry {
     IndexEntry {
         ctime_sec: 0,
         ctime_nsec: 0,
@@ -378,10 +390,10 @@ fn unstatted_entry(key: &[u8], oid: ObjectId, blob: &IndexBlob) -> IndexEntry {
         mtime_nsec: 0,
         dev: 0,
         ino: 0,
-        mode: blob.mode,
+        mode,
         uid: 0,
         gid: 0,
-        size: u32::try_from(blob.data.len()).unwrap_or(u32::MAX),
+        size: 0,
         oid,
         flags: key.len().min(0xfff) as u16,
         flags_extended: None,
