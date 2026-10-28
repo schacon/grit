@@ -226,8 +226,13 @@ impl InitOptions {
 /// - A [`Self::ref_store`]: no `HEAD` file (the store holds `HEAD`), and `refs/` is never read.
 /// - A custom [`OdbBuilder::primary`](crate::odb::OdbBuilder::primary): no `objects/`.
 /// - Both: nothing at all. The git directory may be empty or missing; it is still where the
-///   repository config (`config`) is read from and where the index lives once something
-///   stages files, so create it before using index-based operations.
+///   repository config (`config`) is read from and where the index lives. Staging creates
+///   the directory when it is missing.
+///
+/// Hooks run with `GIT_DIR` exported only when the [`Environment`] in the options sets
+/// [`Environment::git_dir`]; `open` does not set it from its path. Objects and refs held in
+/// injected stores are not on disk, so a hook that runs the system `git` against such a
+/// repository finds no repository.
 ///
 /// ```
 /// use std::sync::Arc;

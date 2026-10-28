@@ -17,6 +17,7 @@ use grit_lib::objects::{HashAlgo, ObjectId, ObjectKind};
 use grit_lib::porcelain::add::{stage, stage_for_commit, StageOptions};
 use grit_lib::porcelain::commit::{commit_worktree, CommitRequest};
 use grit_lib::progress::{NeverCancel, NullProgress};
+use grit_lib::refs::store::MemoryRefStore;
 use grit_lib::repo::{InitOptions, Repository, RepositoryBuilder};
 
 const IDENT: &str = "A U Thor <author@example.com> 1700000000 +0000";
@@ -232,6 +233,50 @@ fn commit_worktree_with_untracked_files_on_custom_primary() {
         "custom primary must not write loose objects"
     );
     export_store_and_git_fsck(&store, &root);
+}
+
+/// With both stores injected the git directory may be missing: staging creates it (the
+/// index lock creates its parent), and commit then records its files there.
+#[test]
+fn stage_and_commit_create_a_missing_git_dir_when_every_store_is_injected() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().canonicalize().expect("canonical root");
+    let git_dir = root.join(".git");
+    let store = Arc::new(MemoryStore::new(HashAlgo::Sha1));
+    let repo = RepositoryBuilder::new(RepositoryOptions::empty())
+        .odb_builder(
+            OdbBuilder::files(git_dir.join("objects"))
+                .primary(store.clone())
+                .alternates(false),
+        )
+        .ref_store(Arc::new(MemoryRefStore::new()))
+        .initial_branch("main")
+        .open(&git_dir, Some(&root))
+        .expect("open");
+    assert!(!git_dir.exists());
+
+    fs::write(root.join("a.txt"), "hello\n").expect("write");
+    stage(
+        &repo,
+        &StageOptions {
+            pathspecs: vec!["a.txt".into()],
+            ..Default::default()
+        },
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("stage");
+    assert!(git_dir.join("index").is_file());
+
+    let commit = commit_worktree(
+        &repo,
+        &commit_request("first"),
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("commit");
+    assert!(store.contains(&commit.oid).expect("commit in store"));
+    assert_eq!(files_under(&git_dir), ["COMMIT_EDITMSG", "index"]);
 }
 
 #[test]

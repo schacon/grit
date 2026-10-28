@@ -23,6 +23,33 @@ For a given [`Odb`](rustdoc:grit_lib::objects::odb::Odb) handle:
 3. Extra read sources from `OdbBuilder::push_read_source`
 4. Alternate object directories when `OdbBuilder::alternates` is true (`info/alternates`, environment alternates, submodule object dirs)
 
+[`Odb::read_store`](rustdoc:grit_lib::objects::odb::Odb::read_store) returns that whole chain as one `Arc<dyn ObjectStore>`, whatever the primary is. Hand it to another repository's `push_read_source` to layer one repository under another (a read-through cache or a mirror), or pass it as the `bases` of `ingest_pack_into`. A missing object is `Ok(None)` and never starts a promisor fetch. Its `open_stream` buffers the payload; for a large blob call [`Odb::with_stream`](rustdoc:grit_lib::objects::odb::Odb::with_stream) on the `Odb` itself.
+
+The narrower accessors keep their meaning: [`Odb::sources`](rustdoc:grit_lib::objects::odb::Odb::sources) is the alternates alone (step 4), and [`Odb::primary`](rustdoc:grit_lib::objects::odb::Odb::primary) returns the files-backed primary and fails with `UnsupportedObjectStore` on a custom one. Use [`Odb::primary_writable`](rustdoc:grit_lib::objects::odb::Odb::primary_writable) for the primary of any kind.
+
+```rust
+use std::sync::Arc;
+
+use grit_lib::objects::odb::store::MemoryStore;
+use grit_lib::objects::odb::OdbBuilder;
+use grit_lib::objects::{HashAlgo, ObjectKind};
+
+let upstream = OdbBuilder::files("/nowhere/upstream/objects")
+    .primary(Arc::new(MemoryStore::new(HashAlgo::Sha1)))
+    .alternates(false)
+    .build();
+let mirror = OdbBuilder::files("/nowhere/mirror/objects")
+    .primary(Arc::new(MemoryStore::new(HashAlgo::Sha1)))
+    .push_read_source(upstream.read_store())
+    .alternates(false)
+    .build();
+let oid = upstream.write(ObjectKind::Blob, b"shared")?;
+assert!(mirror.contains(&oid)?);
+# Ok::<(), grit_lib::error::Error>(())
+```
+
+`Arc<T>`, `Box<T>` and `&T` implement `ObjectStore` (and `WritableObjectStore`) whenever `T` does, `dyn` included, by forwarding every method. A decorator written as `struct Counted<S: ObjectStore>(S)` can therefore wrap a shared `Arc<dyn ObjectStore>` and still be passed on as `Arc<dyn ObjectStore>`, with no hand-written forwarding newtype.
+
 ## Where the primary store lives
 
 A files-backed primary is `<git_dir>/objects` (the common directory's `objects/` for a linked worktree). When the [`Environment`](rustdoc:grit_lib::config::environment::Environment) passed in [`RepositoryOptions`](rustdoc:grit_lib::config::environment::RepositoryOptions) sets [`git_object_directory`](rustdoc:grit_lib::config::environment::Environment::git_object_directory) (`GIT_OBJECT_DIRECTORY`), that directory is the primary instead: reads and writes go there, and a relative path resolves against the environment's current directory. The directory must exist, and an empty value fails to open, as in Git. Also as in Git, `<git_dir>/objects` is then reachable only as an alternate, through [`git_alternate_object_directories`](rustdoc:grit_lib::config::environment::Environment::git_alternate_object_directories) or the new directory's `info/alternates`. This is how hooks and quarantines keep new objects out of the shared store. Fetch, pull and push through [`Repository::remotes`](rustdoc:grit_lib::repo::Repository::remotes) read and write through the repository's own store, and the git-dir based fetch functions open the repository with `FetchOptions::environment`.
@@ -47,7 +74,7 @@ cargo run -p grit-examples --bin memory_primary
 
 ## No git directory at all
 
-When both the object store and the ref store are injected, [`RepositoryBuilder::open`](rustdoc:grit_lib::repo::RepositoryBuilder::open) reads nothing from the git directory's layout: it may be empty or missing. Repository config is still read from `<git_dir>/config` when that file exists, and the index lives at `<git_dir>/index`, so create the directory before staging files. Seed `HEAD` with [`initial_branch`](rustdoc:grit_lib::repo::RepositoryBuilder::initial_branch):
+When both the object store and the ref store are injected, [`RepositoryBuilder::open`](rustdoc:grit_lib::repo::RepositoryBuilder::open) reads nothing from the git directory's layout: it may be empty or missing. Repository config is still read from `<git_dir>/config` when that file exists. The index lives at `<git_dir>/index`: staging creates the git directory when it is missing, and a commit then writes `COMMIT_EDITMSG` and the index there. Seed `HEAD` with [`initial_branch`](rustdoc:grit_lib::repo::RepositoryBuilder::initial_branch):
 
 ```rust
 use std::sync::Arc;
@@ -71,6 +98,8 @@ let repo = RepositoryBuilder::new(RepositoryOptions::empty())
     .open(git_dir, None)?;
 # Ok::<(), grit_lib::error::Error>(())
 ```
+
+Hooks still run, but there is nothing on disk for another program to open. They start in the work tree (the git directory when there is none), and `GIT_DIR` is exported only when the [`Environment`](rustdoc:grit_lib::config::environment::Environment) you passed sets [`git_dir`](rustdoc:grit_lib::config::environment::Environment::git_dir); opening a path through `RepositoryBuilder::open` does not set it. Even when it is set, objects and refs held in memory are invisible to the system `git`, so a `pre-commit` hook that runs `git status` or `git rev-parse` fails with "not a git repository". Keep hooks for such repositories to work that only needs the work tree and the hook's arguments.
 
 ## What works with a custom primary
 
