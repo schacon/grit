@@ -4,10 +4,10 @@ use std::ops::ControlFlow;
 
 use crate::error::{Error, Result};
 use crate::reflog::{
-    delete_reflog_entries_on_store, delete_reflog_entries_rechain_on_store, expire_reflog_git,
-    load_gc_reflog_expire_config, parse_reflog_expire_spec, read_reflog_on_store,
-    reflog_identity_timestamp, reflog_refs_on_store, MessageMatcher, ReflogEntry,
-    ReflogExpireParams, ReflogExpireResult,
+    delete_reflog_entries_on_store, delete_reflog_entries_rechain_on_store,
+    expire_reflog_git_with_cache, load_gc_reflog_expire_config, parse_reflog_expire_spec,
+    read_reflog_on_store, reflog_identity_timestamp, reflog_refs_on_store, MessageMatcher,
+    ReflogEntry, ReflogExpireParams, ReflogExpireResult, ReflogExpiryCache,
 };
 use crate::refs::store::{RefName, RefStore};
 use crate::repo::Repository;
@@ -231,8 +231,9 @@ impl<'repo> RepositoryReflogs<'repo> {
         let refnames = expire_target_refs(self.store(), options.all)?;
         let mut total = 0usize;
         let mut refs = Vec::with_capacity(refnames.len());
+        let cache = ReflogExpiryCache::default();
         for refname in refnames {
-            let ReflogExpireResult { pruned, .. } = expire_reflog_git(
+            let ReflogExpireResult { pruned, .. } = expire_reflog_git_with_cache(
                 self.repo,
                 &refname,
                 &params,
@@ -242,6 +243,7 @@ impl<'repo> RepositoryReflogs<'repo> {
                 gc.global_total,
                 gc.global_unreachable,
                 options.now,
+                &cache,
             )?;
             total += pruned;
             refs.push(RefExpireResult {

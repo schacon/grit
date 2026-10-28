@@ -9,6 +9,7 @@
 //! ```
 
 use std::cell::{OnceCell, RefCell};
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::File;
@@ -997,12 +998,14 @@ fn resolve_expire_for_ref(
 
 /// Lazily computed state shared by the reflog expiry of several refs in one pass.
 ///
-/// Both members are only filled when an expiry needs them: the promise boundary when a tip
-/// has to be classified or `--stale-fix` runs, the completeness answers only for
-/// `--stale-fix`.
+/// Every member is only filled when an expiry needs it: the promise boundary when a tip has
+/// to be classified or `--stale-fix` runs, commit linkage when old entries are judged by
+/// reachability, and the completeness answers only for `--stale-fix`.
 #[derive(Debug, Default)]
 pub(crate) struct ReflogExpiryCache {
     promised: OnceCell<HashSet<ObjectId>>,
+    /// Parents and committer time of every commit a reachability walk has read.
+    linkage: RefCell<HashMap<ObjectId, (Vec<ObjectId>, i64)>>,
     complete: RefCell<HashMap<ObjectId, bool>>,
 }
 
@@ -1168,10 +1171,12 @@ fn head_reflog_tips(repo: &Repository, promised: &HashSet<ObjectId>) -> Vec<Obje
 /// The first walk stops below commits older than a cutoff (the total-expiry cutoff, which
 /// old reflog entries rarely reach past); only a lookup that misses walks the rest of
 /// history, once. Answers never depend on the cutoff, only the amount of history read.
-/// Shallow boundaries are not walked through, and parents come from the commit-graph when
-/// it covers a commit.
+/// Shallow boundaries are not walked through. Parents come from the commit-graph when it
+/// covers a commit, and are kept in the [`ReflogExpiryCache`] so the walks of later refs in
+/// the same pass do not read them again.
 struct ReachableCommits<'r> {
     repo: &'r Repository,
+    cache: &'r ReflogExpiryCache,
     graph: Option<Arc<CommitGraphChain>>,
     shallow: HashSet<ObjectId>,
     seen: HashSet<ObjectId>,
@@ -1182,9 +1187,15 @@ struct ReachableCommits<'r> {
 
 impl<'r> ReachableCommits<'r> {
     /// Walk from `tips` down to commits older than `cutoff` (`0` walks everything).
-    fn new(repo: &'r Repository, tips: Vec<ObjectId>, cutoff: i64) -> Self {
+    fn new(
+        repo: &'r Repository,
+        cache: &'r ReflogExpiryCache,
+        tips: Vec<ObjectId>,
+        cutoff: i64,
+    ) -> Self {
         let mut reachable = Self {
             repo,
+            cache,
             graph: if tips.is_empty() {
                 None
             } else {
@@ -1204,24 +1215,30 @@ impl<'r> ReachableCommits<'r> {
     }
 
     fn walk(&mut self, cutoff: i64) {
+        let cache = self.cache;
+        let mut memo = cache.linkage.borrow_mut();
         while let Some(oid) = self.pending.pop() {
             if !self.seen.insert(oid) || self.shallow.contains(&oid) {
                 continue;
             }
-            let Some((parents, time)) = self.linkage(oid) else {
-                continue;
+            let (parents, time) = match memo.entry(oid) {
+                Entry::Occupied(known) => known.into_mut(),
+                Entry::Vacant(slot) => match self.read_linkage(oid) {
+                    Some(linkage) => slot.insert(linkage),
+                    None => continue,
+                },
             };
-            if cutoff > 0 && time < cutoff {
-                self.deferred.extend(parents);
+            if cutoff > 0 && *time < cutoff {
+                self.deferred.extend_from_slice(parents);
             } else {
-                self.pending.extend(parents);
+                self.pending.extend_from_slice(parents);
             }
         }
     }
 
     /// Parents and committer time of commit `oid`, or `None` when it is missing or not a
     /// commit.
-    fn linkage(&self, oid: ObjectId) -> Option<(Vec<ObjectId>, i64)> {
+    fn read_linkage(&self, oid: ObjectId) -> Option<(Vec<ObjectId>, i64)> {
         if let Some(linkage) = self.graph.as_ref().and_then(|g| g.graph_commit(&oid)) {
             return Some(linkage);
         }
@@ -1433,7 +1450,7 @@ pub(crate) fn expire_reflog_git_with_cache(
             .and_then(|tip| peel_tip_to_commit(repo, promised, tip))
             .map(|tip| vec![tip])
     };
-    let mut reachable = tips.map(|tips| ReachableCommits::new(repo, tips, expire_total));
+    let mut reachable = tips.map(|tips| ReachableCommits::new(repo, cache, tips, expire_total));
     let mut kept_entries = Vec::new();
     let mut pruned = 0usize;
     let mut actions = Vec::with_capacity(entries.len());
@@ -2117,7 +2134,8 @@ mod completeness_tests {
         }
         let unrelated = commit_at(&repo, tree, &[], 5);
 
-        let mut reachable = ReachableCommits::new(&repo, vec![chain[9]], 8);
+        let cache = ReflogExpiryCache::default();
+        let mut reachable = ReachableCommits::new(&repo, &cache, vec![chain[9]], 8);
         assert_eq!(
             reachable.seen.len(),
             4,
@@ -2129,9 +2147,21 @@ mod completeness_tests {
         assert_eq!(reachable.seen.len(), 10, "a miss walks the rest once");
         assert!(!reachable.contains(&unrelated));
 
-        let mut everything = ReachableCommits::new(&repo, vec![chain[9]], 0);
+        let mut everything = ReachableCommits::new(&repo, &cache, vec![chain[9]], 0);
         assert_eq!(everything.seen.len(), 10);
         assert!(!everything.contains(&unrelated));
-        assert!(ReachableCommits::new(&repo, Vec::new(), 0).seen.is_empty());
+
+        cache
+            .linkage
+            .borrow_mut()
+            .insert(chain[9], (vec![unrelated], 10));
+        let mut reused = ReachableCommits::new(&repo, &cache, vec![chain[9]], 0);
+        assert!(
+            reused.contains(&unrelated),
+            "a later walk in the same pass takes linkage from the cache"
+        );
+        assert!(ReachableCommits::new(&repo, &cache, Vec::new(), 0)
+            .seen
+            .is_empty());
     }
 }
