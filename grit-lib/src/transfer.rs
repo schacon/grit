@@ -2021,7 +2021,12 @@ pub(crate) fn fetch_local_into(
 ///    LOCAL odb into the REMOTE odb via [`build_pack`] and
 ///    [`crate::index_pack::ingest_received_pack`], excluding objects already
 ///    reachable from the remote's existing ref tips.
-/// 4. Applies the ref change on the remote (unless `opts.dry_run`).
+/// 4. Applies the ref change on the remote (unless `opts.dry_run`) as a
+///    compare-and-swap against the value read in step 1, like receive-pack: an
+///    update or delete needs the ref to still hold that oid, and a create needs
+///    it to still be absent, even with `force`. A ref that another writer created
+///    in between is reported as [`PushRefStatus::RejectAlreadyExists`]; one that
+///    moved is [`PushRefStatus::RejectStale`].
 ///
 /// When `opts.atomic` is set and any ref is rejected, no ref or object is
 /// written and every otherwise-accepted ref is reported as
@@ -2121,6 +2126,8 @@ pub(crate) fn push_local_from(
         )?;
     }
 
+    #[cfg(test)]
+    tests::run_push_hook(tests::PushHookPoint::BeforeReceivePolicy);
     apply_remote_receive_policy(remote_git_dir, local_git_dir, opts.dry_run, &mut decisions)?;
 
     // Atomic: if any update would be rejected, apply none and demote the
@@ -2138,6 +2145,9 @@ pub(crate) fn push_local_from(
             remote_messages: Vec::new(),
         });
     }
+
+    #[cfg(test)]
+    tests::run_push_hook(tests::PushHookPoint::BeforeRefCommit);
 
     // Second pass: apply ref updates (one transaction per ref unless `atomic`).
     let mut ref_batch: Vec<crate::refs::store::RefUpdate> = Vec::new();
@@ -2254,8 +2264,17 @@ fn apply_remote_receive_policy(
             Err(e) => return Err(Error::Message(e.to_string())),
         };
         if let Some(reason) = refusal {
-            d.result.status = PushRefStatus::RemoteRejected;
-            d.result.message = Some(reason.to_string());
+            d.result.status = match (&reason, cmd.old) {
+                (crate::serve::RefUpdateRefusal::StaleInfo, None) => {
+                    PushRefStatus::RejectAlreadyExists
+                }
+                (crate::serve::RefUpdateRefusal::StaleInfo, Some(_)) => PushRefStatus::RejectStale,
+                _ => PushRefStatus::RemoteRejected,
+            };
+            d.result.message = Some(match d.result.status {
+                PushRefStatus::RejectAlreadyExists => "already exists".to_owned(),
+                _ => reason.to_string(),
+            });
             d.apply = false;
             d.action = PushAction::None;
         }
@@ -2263,17 +2282,21 @@ fn apply_remote_receive_policy(
     Ok(())
 }
 
+/// The remote ref update for a decided push, compare-and-swapped against `observed_old`.
+///
+/// Like a receive-pack command, an update applies only if the ref still holds the value the
+/// decision saw: `Some(oid)` must still be `oid`, and `None` (a create) must still be absent.
 fn push_store_ref_update(
     refname: &str,
     new_oid: Option<ObjectId>,
-    expected_old: Option<ObjectId>,
+    observed_old: Option<ObjectId>,
 ) -> crate::refs::store::RefUpdate {
     crate::refs::store::RefUpdate {
         name: refname.to_owned(),
         new_value: new_oid.map(crate::refs::store::RawRef::Direct),
-        expected: match expected_old {
+        expected: match observed_old {
             Some(oid) => crate::refs::store::Expected::Oid(oid),
-            None => crate::refs::store::Expected::Any,
+            None => crate::refs::store::Expected::Missing,
         },
         reflog: None,
         flags: Default::default(),
@@ -2282,10 +2305,22 @@ fn push_store_ref_update(
 
 fn push_status_for_ref_store_error(err: &Error) -> PushRefStatus {
     match err {
+        Error::RefStore(crate::refs::store::RefStoreError::ExpectedMismatch {
+            expected: crate::refs::store::Expected::Missing,
+            ..
+        }) => PushRefStatus::RejectAlreadyExists,
         Error::RefStore(crate::refs::store::RefStoreError::ExpectedMismatch { .. }) => {
             PushRefStatus::RejectStale
         }
         _ => PushRefStatus::RemoteRejected,
+    }
+}
+
+/// The per-ref message for a ref store failure while applying a push update.
+fn push_message_for_ref_store_error(err: &Error) -> String {
+    match push_status_for_ref_store_error(err) {
+        PushRefStatus::RejectAlreadyExists => "already exists".to_owned(),
+        _ => err.to_string(),
     }
 }
 
@@ -2319,7 +2354,7 @@ fn ref_store_error_refname(err: &Error) -> Option<String> {
 
 fn apply_ref_store_error_to_push_decision(d: &mut PushDecision, err: &Error, _atomic: bool) {
     d.result.status = push_status_for_ref_store_error(err);
-    d.result.message = Some(err.to_string());
+    d.result.message = Some(push_message_for_ref_store_error(err));
     d.apply = false;
 }
 
@@ -2329,7 +2364,7 @@ fn apply_atomic_batch_ref_store_error(
     err: Error,
 ) {
     let fail_ref = ref_store_error_refname(&err);
-    let message = err.to_string();
+    let message = push_message_for_ref_store_error(&err);
     let batch_names: HashSet<&str> = batch.iter().map(|u| u.name.as_str()).collect();
     let in_batch = decisions
         .iter_mut()
@@ -3374,6 +3409,200 @@ mod tests {
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
+    }
+
+    /// Where in [`push_local_from`] a test hook interleaves another writer.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub(super) enum PushHookPoint {
+        /// After every update is decided and its objects copied, before the remote's
+        /// `receive.*` policy rechecks each update against the remote refs.
+        BeforeReceivePolicy,
+        /// After the policy check, before any remote ref is written.
+        BeforeRefCommit,
+    }
+
+    type PushHook = (PushHookPoint, Box<dyn FnOnce()>);
+
+    // hygiene: test-only push interleaving hook
+    thread_local! {
+        static PUSH_HOOK: std::cell::RefCell<Option<PushHook>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    /// Runs (once) the hook installed by [`on_next_push`] when the push reaches `point`.
+    pub(super) fn run_push_hook(point: PushHookPoint) {
+        let hook = PUSH_HOOK.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            match slot.as_ref() {
+                Some((at, _)) if *at == point => slot.take().map(|(_, hook)| hook),
+                _ => None,
+            }
+        });
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
+    /// Run `hook` inside the next local push on this thread when it reaches `point`.
+    fn on_next_push(point: PushHookPoint, hook: impl FnOnce() + 'static) {
+        PUSH_HOOK.with(|slot| *slot.borrow_mut() = Some((point, Box::new(hook))));
+    }
+
+    fn git_stdout(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git") // hygiene: git fixture comparison in cfg(test) module
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(out.status.success(), "git {args:?} failed");
+        String::from_utf8(out.stdout)
+            .expect("utf8")
+            .trim()
+            .to_owned()
+    }
+
+    /// Fixture: a bare remote with `main`, plus a clone holding one more commit on `main` and
+    /// a second, diverging commit already stored in the remote as `refs/heads/other`.
+    /// Returns `(remote, local_git_dir, local_tip, other_tip)`.
+    fn racing_create_fixture(tmp: &Path) -> (PathBuf, PathBuf, ObjectId, ObjectId) {
+        let remote = tmp.join("remote.git");
+        let local = tmp.join("local");
+        std::fs::create_dir_all(&remote).unwrap();
+        std::fs::create_dir_all(&local).unwrap();
+        assert!(git_ok(&remote, &["init", "-q", "--bare", "-b", "main"]));
+        assert!(git_ok(&local, &["init", "-q", "-b", "main"]));
+        assert!(git_ok(&local, &["commit", "--allow-empty", "-qm", "base"]));
+        assert!(git_ok(
+            &local,
+            &["push", "-q", remote.to_str().unwrap(), "main"]
+        ));
+        assert!(git_ok(&local, &["checkout", "-q", "-b", "other"]));
+        assert!(git_ok(&local, &["commit", "--allow-empty", "-qm", "other"]));
+        assert!(git_ok(
+            &local,
+            &["push", "-q", remote.to_str().unwrap(), "other"]
+        ));
+        let other = ObjectId::from_hex(&git_stdout(&local, &["rev-parse", "HEAD"])).unwrap();
+        assert!(git_ok(&local, &["checkout", "-q", "main"]));
+        assert!(git_ok(&local, &["commit", "--allow-empty", "-qm", "mine"]));
+        let tip = ObjectId::from_hex(&git_stdout(&local, &["rev-parse", "HEAD"])).unwrap();
+        (remote, local.join(".git"), tip, other)
+    }
+
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
+    #[test]
+    fn push_local_create_rejects_ref_created_after_decision() {
+        let points = [
+            PushHookPoint::BeforeReceivePolicy,
+            PushHookPoint::BeforeRefCommit,
+        ];
+        let modes = [(false, false), (true, false), (false, true)];
+        for (point, (force, atomic)) in points
+            .into_iter()
+            .flat_map(|p| modes.into_iter().map(move |m| (p, m)))
+        {
+            let tmp = tempfile::tempdir().unwrap();
+            let (remote, local_git, tip, other) = racing_create_fixture(tmp.path());
+
+            let racer_remote = remote.clone();
+            on_next_push(point, move || {
+                assert!(git_ok(
+                    &racer_remote,
+                    &["update-ref", "refs/heads/shared", &other.to_hex(), ""]
+                ));
+            });
+            let outcome = push_local(
+                &local_git,
+                &remote,
+                &[PushRefSpec {
+                    src: Some(tip),
+                    dst: "refs/heads/shared".to_owned(),
+                    force,
+                    ..Default::default()
+                }],
+                &PushOptions {
+                    atomic,
+                    ..Default::default()
+                },
+                &crate::progress::NeverCancel,
+            )
+            .expect("push call");
+
+            let result = &outcome.results[0];
+            let case = format!("{point:?} force={force} atomic={atomic}");
+            assert_eq!(result.status, PushRefStatus::RejectAlreadyExists, "{case}");
+            assert!(result.status.is_error(), "{case}");
+            assert_eq!(result.message.as_deref(), Some("already exists"), "{case}");
+            assert_eq!(
+                git_stdout(&remote, &["rev-parse", "refs/heads/shared"]),
+                other.to_hex(),
+                "{case}: the racing creator's value must survive"
+            );
+            assert!(!git_ok(
+                &remote,
+                &[
+                    "merge-base",
+                    "--is-ancestor",
+                    &tip.to_hex(),
+                    &other.to_hex()
+                ]
+            ));
+        }
+    }
+
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
+    #[test]
+    fn push_local_update_rejects_ref_moved_after_decision() {
+        for point in [
+            PushHookPoint::BeforeReceivePolicy,
+            PushHookPoint::BeforeRefCommit,
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let (remote, local_git, tip, other) = racing_create_fixture(tmp.path());
+
+            let racer_remote = remote.clone();
+            on_next_push(point, move || {
+                assert!(git_ok(
+                    &racer_remote,
+                    &["update-ref", "refs/heads/main", &other.to_hex()]
+                ));
+            });
+            let outcome = push_local(
+                &local_git,
+                &remote,
+                &[PushRefSpec {
+                    src: Some(tip),
+                    dst: "refs/heads/main".to_owned(),
+                    ..Default::default()
+                }],
+                &PushOptions::default(),
+                &crate::progress::NeverCancel,
+            )
+            .expect("push call");
+
+            assert_eq!(
+                outcome.results[0].status,
+                PushRefStatus::RejectStale,
+                "{point:?}"
+            );
+            assert_eq!(
+                git_stdout(&remote, &["rev-parse", "refs/heads/main"]),
+                other.to_hex(),
+                "{point:?}"
+            );
+        }
     }
 
     fn assert_monotonic(counts: &[u64]) {
