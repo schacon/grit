@@ -194,7 +194,8 @@ fn guide_lib(err: &LibError) -> Option<Error> {
         LibError::WorktreePathIo { path, .. } => Some(guided(
             ErrorKind::WorktreePathIo,
             err.to_string(),
-            Some("close programs that may have the file open, then try again".to_owned()),
+            err.is_worktree_file_in_use()
+                .then(|| "close programs that may have the file open, then try again".to_owned()),
             Some(vec![path.clone()]),
         )),
         LibError::CheckoutRollbackIncomplete { unrestored, .. } => Some(Error::new(
@@ -447,6 +448,24 @@ mod tests {
             .expect("hint")
             .contains("grit remote set-url half <url>"));
         assert!(guided_error(&Error::new(RemoteError::NoUrl { remote: None })).is_none());
+    }
+
+    #[test]
+    fn worktree_path_io_suggests_closing_programs_only_when_in_use() {
+        let in_use = payload(Error::new(LibError::WorktreePathIo {
+            path: "a.txt".into(),
+            operation: grit_lib::error::WorktreePathOperation::Replace,
+            source: std::io::Error::from_raw_os_error(libc::EBUSY),
+        }));
+        assert_eq!(in_use.kind, ErrorKind::WorktreePathIo);
+        assert!(in_use.hint.expect("hint").contains("close programs"));
+        let denied = payload(Error::new(LibError::WorktreePathIo {
+            path: "a.txt".into(),
+            operation: grit_lib::error::WorktreePathOperation::Metadata,
+            source: std::io::Error::from_raw_os_error(libc::EACCES),
+        }));
+        assert_eq!(denied.paths, Some(vec!["a.txt".to_owned()]));
+        assert!(denied.hint.is_none());
     }
 
     #[test]

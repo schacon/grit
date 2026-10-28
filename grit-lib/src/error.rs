@@ -2166,6 +2166,14 @@ impl Error {
         matches!(self, Self::RemoteUnreadable { .. })
     }
 
+    /// Whether this is [`Error::WorktreePathIo`] caused by another process holding the file
+    /// open (a Windows sharing or lock violation, `EBUSY`, or would-block), so retrying after
+    /// closing that program can succeed.
+    #[must_use]
+    pub fn is_worktree_file_in_use(&self) -> bool {
+        matches!(self, Self::WorktreePathIo { source, .. } if crate::worktree::io_error::is_file_in_use(source))
+    }
+
     /// Whether this is [`Error::Cancelled`] or a nested history failure that was cancelled.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {

@@ -126,4 +126,21 @@ mod tests {
         assert!(msg.contains("cannot remove 'x'"));
         assert!(msg.contains("gone"));
     }
+
+    #[test]
+    fn error_reports_file_in_use_only_for_worktree_lock_failures() {
+        let busy = map_worktree_io(
+            "a.txt",
+            WorktreePathOperation::Read,
+            io::Error::from_raw_os_error(libc::EBUSY),
+        );
+        assert!(busy.is_worktree_file_in_use());
+        let not_dir = map_worktree_io(
+            "d/x",
+            WorktreePathOperation::Metadata,
+            io::Error::from(io::ErrorKind::NotADirectory),
+        );
+        assert!(!not_dir.is_worktree_file_in_use());
+        assert!(!Error::Io(io::Error::from_raw_os_error(libc::EBUSY)).is_worktree_file_in_use());
+    }
 }

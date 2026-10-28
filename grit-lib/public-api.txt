@@ -5790,6 +5790,7 @@ pub fn grit_lib::error::Error::git_stderr_message(&self) -> alloc::string::Strin
 pub fn grit_lib::error::Error::invalid_path_component(impl core::convert::Into<alloc::string::String>, grit_lib::path_validate::PathComponentError) -> Self
 pub fn grit_lib::error::Error::is_cancelled(&self) -> bool
 pub fn grit_lib::error::Error::is_remote_unreadable(&self) -> bool
+pub fn grit_lib::error::Error::is_worktree_file_in_use(&self) -> bool
 pub fn grit_lib::error::Error::kind_name(&self) -> &'static str
 pub fn grit_lib::error::Error::remote_unreadable(impl core::convert::Into<alloc::string::String>, grit_lib::error::RemoteUnreadableReason) -> Self
 pub fn grit_lib::error::Error::wants_fatal_prefix(&self) -> bool
@@ -16108,6 +16109,7 @@ pub fn grit_lib::error::Error::git_stderr_message(&self) -> alloc::string::Strin
 pub fn grit_lib::error::Error::invalid_path_component(impl core::convert::Into<alloc::string::String>, grit_lib::path_validate::PathComponentError) -> Self
 pub fn grit_lib::error::Error::is_cancelled(&self) -> bool
 pub fn grit_lib::error::Error::is_remote_unreadable(&self) -> bool
+pub fn grit_lib::error::Error::is_worktree_file_in_use(&self) -> bool
 pub fn grit_lib::error::Error::kind_name(&self) -> &'static str
 pub fn grit_lib::error::Error::remote_unreadable(impl core::convert::Into<alloc::string::String>, grit_lib::error::RemoteUnreadableReason) -> Self
 pub fn grit_lib::error::Error::wants_fatal_prefix(&self) -> bool
