@@ -855,6 +855,118 @@ has already reserved 48 descriptors. The CLI RSS fixture's loose-versus-packed
 increase is **628 KiB**, within its 12 MiB allowance. Raw samples and controls:
 [`log-loose-tags-2080-descriptors.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/log-loose-tags-2080-descriptors.json).
 
+## Daily regression audit and deep-tree ancestor checks (2026-10-28, #5019)
+
+The October 27 daily report flagged seven scenarios whose grit/git ratio rose
+against October 26. Grit's own medians mostly *fell* between those days; the
+ratios rose because the October 26 sitting ran Git 1.5–2.6× slower than both
+neighbouring days (`diff/worktree@deep-tree` Git: 100.8 → 244.8 → 92.4 ms on
+October 25, 26 and 27). The two reported revisions (`c7cf2c4436`, `8dbc58e772`)
+and main (`307186978`) were built in `release` and run with `grit-bench daily`
+against stock Git 2.43.0 in one sitting on a 4-vCPU Intel Xeon VM with 16 GiB RAM.
+None of the seven reproduces as a code regression:
+
+| Scenario | Git ms (new run) | c7cf2c ms | 8dbc58 ms | main ms | Grit RSS c7cf2c → 8dbc58 (KiB) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `commit/staged@synth-100k` | 86.83 | 79.70 | 83.57 | 82.20 | 44,804 → 44,920 |
+| `diff/staged@deep-tree` | 46.43 | 48.89 | 49.45 | 44.42 | 49,044 → 48,856 |
+| `diff/worktree@deep-tree` | 118.98 | 278.18 | 259.95 | 256.55 | 71,740 → 71,568 |
+| `reset/hard@synth-10k` | 21.35 | 28.76 | 31.18 | 28.28 | 24,864 → 24,512 |
+| `switch/branch@synth-100k` | 184.19 | 119.58 | 100.90 | 91.30 | 42,940 → 43,300 |
+| `switch/delete-heavy@wide-48k` | 142.97 | 162.16 | 146.66 | 144.01 | 33,352 → 34,044 |
+| `switch/large-blob@big-asset` | 949.32 | 641.14 | 631.06 | 795.69 | 18,312 → 18,952 |
+
+`switch/large-blob@big-asset` writes a 300 MB file twice per sample and swings
+between roughly 480 and 840 ms from one sitting to the next. A ten-run
+`hyperfine` on one copied fixture put all three builds within noise
+(c7cf2c 858 ± 49 ms, 8dbc58 822 ± 24 ms, main 845 ± 17 ms; Git 1,510 ms).
+
+The standing gap was `diff/worktree@deep-tree`, about 2.2× Git. `strace -c`
+showed grit and Git making the same 182,000 `stat` calls: 5,000 files 31–40
+levels deep have 175,000 distinct ancestor directories, and both tools check
+every ancestor for a symlink before trusting a file's stat. Grit spent another
+250 ms of CPU in the cache that remembered those answers, a single
+mutex-guarded map shared by the four stat workers. Each entry needed around 35
+contended lock round-trips and an allocated key per ancestor.
+
+Two library changes remove that cost:
+
+1. Each scan worker owns its ancestor cache. It remembers the last chain of
+   ancestors verified to be real directories and the first one that is not, so
+   sorted index paths only probe the components that differ from the previous
+   path. There is no locking and no per-directory allocation. Staging no longer
+   repeats the same check against a second locked cache unless case folding or
+   Unicode precomposition can make the two spellings differ.
+2. On 64-bit Linux, when two or more components are still unverified, one
+   `openat2(..., RESOLVE_NO_SYMLINKS)` call relative to a handle on the work tree
+   confirms the whole directory chain in a single path walk. Separate `lstat`
+   calls re-walk the path from the root, which is quadratic in depth. Any failure,
+   whether a symlink, a missing path, a file, or a kernel without `openat2`, falls
+   back to the per-component probe, which finds and caches the exact ancestor.
+
+On the copied deep-tree fixture (20 runs, one prepare per run), `grit diff` went
+from 240.7 ± 23.8 ms to 85.3 ± 5.2 ms against Git's 121.8 ± 8.2 ms. User CPU fell
+from 269 to 45 ms, system CPU from 359 to 130 ms, and syscalls from 182,000 `statx`
+to 5,000 `openat2` plus 7,000 `statx`. Output is byte-identical. The same
+binaries on related daily scenarios, main then fixed in one sitting:
+
+| Scenario | Git ms | Grit main ms | Grit fixed ms | Main RSS KiB | Fixed RSS KiB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `add/all-ignorecase@synth-100k` | 169.51 | 239.44 | 223.91 | 66,712 | 66,608 |
+| `add/all@synth-100k` | 171.91 | 161.20 | 163.17 | 48,436 | 49,000 |
+| `add/modified@synth-10k` | 21.55 | 13.05 | 16.57 | 26,300 | 26,288 |
+| `add/update@synth-100k` | 103.89 | 112.41 | 100.05 | 44,516 | 44,148 |
+| `commit/small@synth-100k` | 1005.22 | 166.57 | 169.77 | 48,876 | 48,832 |
+| `commit/small@synth-10k` | 33.63 | 22.07 | 25.93 | 25,500 | 25,596 |
+| `commit/staged@synth-100k` | 80.10 | 91.47 | 83.25 | 45,816 | 45,924 |
+| `diff/staged@deep-tree` | 44.15 | 46.13 | 45.73 | 49,940 | 50,148 |
+| `diff/staged@synth-100k` | 73.13 | 45.52 | 43.60 | 69,032 | 69,412 |
+| `diff/stat@synth-100k` | 110.34 | 78.27 | 73.49 | 58,852 | 59,124 |
+| `diff/worktree@deep-tree` | 119.75 | 256.94 | 78.87 | 72,704 | 47,364 |
+| `diff/worktree@synth-100k` | 122.03 | 83.90 | 77.78 | 68,828 | 69,260 |
+| `diff/worktree@synth-10k` | 7.39 | 7.83 | 8.40 | 28,348 | 28,548 |
+| `reset/hard-delete-heavy@wide-48k` | 234.45 | 281.33 | 250.40 | 52,596 | 53,368 |
+| `reset/hard@synth-10k` | 15.53 | 30.97 | 26.27 | 25,560 | 26,024 |
+| `reset/mixed@synth-10k` | 8.20 | 12.05 | 11.05 | 20,944 | 24,028 |
+| `reset/sparse@sparse-120k` | 28.60 | 26.98 | 25.63 | 20,964 | 21,444 |
+| `restore/paths@synth-10k` | 11.92 | 15.36 | 13.11 | 23,652 | 23,936 |
+| `stash/push-pop@synth-10k` | 252.14 | 155.67 | 163.65 | 26,080 | 26,688 |
+| `status/clean@deep-tree` | 1300.18 | 747.81 | 612.02 | 72,216 | 45,632 |
+| `status/clean@synth-100k` | 79.59 | 72.37 | 72.42 | 37,676 | 38,252 |
+| `status/dirty@deep-tree` | 1400.01 | 769.86 | 693.88 | 79,148 | 56,616 |
+| `status/dirty@synth-100k` | 121.12 | 66.03 | 80.54 | 42,796 | 43,232 |
+| `status/dirty@synth-10k` | 12.81 | 10.61 | 11.92 | 20,556 | 21,292 |
+| `switch/branch@synth-100k` | 155.51 | 102.50 | 89.20 | 44,180 | 44,312 |
+| `switch/delete-heavy@wide-48k` | 125.65 | 158.45 | 132.89 | 34,888 | 34,884 |
+| `switch/large-blob@big-asset` | 860.87 | 608.82 | 774.67 | 19,504 | 19,696 |
+| `switch/sparse@sparse-120k` | 42.51 | 25.95 | 25.30 | 21,016 | 21,560 |
+
+`diff/worktree@deep-tree` is **69% faster** and now beats Git, with peak RSS down
+from 71 to 46 MiB. Deep-tree status gains 10–18% and 22–31 MiB. The shallow
+fixtures have one or two directory levels, so the change barely touches them.
+Their slower-looking rows were re-run in four alternating batches (fixed, main,
+fixed, main). `status/dirty@synth-100k` came out at 68.9 / 65.9 / 61.8 / 64.6 ms,
+`add/modified@synth-10k` at 13.0 / 11.9 / 12.3 / 11.8 ms,
+`commit/small@synth-10k` at 21.2 / 21.7 / 20.3 / 20.4 ms, and `switch/large-blob`
+at 634 / 842 / 798 / 795 ms. A 150-run order-swapped `hyperfine` of `grit status`
+on synth-10k measured 10.0 and 9.6 ms fixed against 9.5 and 10.4 ms main.
+These rows are noise.
+
+Raw reports: [c7cf2c](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/daily-perf-5019-old.json),
+[8dbc58](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/daily-perf-5019-new.json),
+[main, reported scenarios](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/daily-perf-5019-main.json),
+[main](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/daily-perf-5019-before.json),
+[fixed](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/daily-perf-5019-after.json),
+and the alternating confirmation batches
+([1](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/daily-perf-5019-confirm-1-after.json),
+[2](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/daily-perf-5019-confirm-2-before.json),
+[3](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/daily-perf-5019-confirm-3-after.json),
+[4](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/daily-perf-5019-confirm-4-before.json)).
+Library tests compare the per-worker cache with an uncached probe for every
+query order, including a symlink at the top, in the middle, and as the last
+directory, as well as missing ancestors and file ancestors. They also cover a work
+tree reached through a symlink and the `openat2` check on its own.
+
 ## Daily regression audit (2026-10-27, #4744)
 
 The original daily reports used different hardware and Git versions: October 25
