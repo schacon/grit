@@ -324,7 +324,9 @@ pub enum ConfigError {
         key: String,
     },
 
-    /// `includeIf.hasconfig:remote.*.url` cannot pull remote URLs from included files.
+    /// A `remote.<name>.url` is set in a file reached through a conditional include while
+    /// `includeIf.hasconfig:remote.*.url` conditions are evaluated (such URLs could change
+    /// which conditions hold).
     #[error(
         "remote URLs cannot be configured in file directly or indirectly included by includeIf.hasconfig:remote.*.url"
     )]

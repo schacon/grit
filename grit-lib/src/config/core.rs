@@ -26,8 +26,17 @@
 //! `[include] path = <path>` and `[includeIf "<condition>"] path = <path>`
 //! are supported. Conditions: `gitdir:`, `gitdir/i:`, `onbranch:`,
 //! and `hasconfig:remote.*.url:`.
+//!
+//! An included file is merged in place, at the position of its directive, so
+//! later entries still override it. `hasconfig:remote.*.url:<glob>` matches
+//! against every `remote.<name>.url` value of the whole load, not just the
+//! files read so far: a global include can select a work identity from a
+//! remote defined in the repository `config`. As in Git, remote URLs may not
+//! be set in a file reached through a conditional include once such a
+//! condition is evaluated ([`ConfigError::RemoteUrlInHasconfigInclude`]).
 
 use crate::git_path::CanonicalizeExt;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::environment::Environment;
@@ -2474,7 +2483,6 @@ impl ConfigSet {
         opts: &LoadConfigOptions,
         included_files: &mut Vec<PathBuf>,
     ) -> Result<Self> {
-        let mut set = Self::new();
         let proc = opts.process_includes;
         let mut ctx = opts.include_ctx.clone();
         if ctx.cwd.as_os_str().is_empty() {
@@ -2482,27 +2490,19 @@ impl ConfigSet {
         }
         ctx.pwd = env.pwd.clone();
         ctx.env = std::sync::Arc::new(env.clone());
+        let mut layers = Vec::new();
 
-        // System config
         if opts.include_system && !git_config_nosystem_enabled(env) {
             let system_path = system_config_path(env);
-            match ConfigFile::from_path(&system_path, ConfigScope::System) {
-                Ok(Some(f)) => {
-                    Self::merge_with_includes_collect(&mut set, &f, proc, 0, &ctx, included_files)?
-                }
-                Ok(None) => {}
-                Err(e) => return Err(e),
+            if let Some(f) = ConfigFile::from_path(&system_path, ConfigScope::System)? {
+                layers.push(ConfigLayer::file(f));
             }
         }
 
         // Global config (Git merges every existing file: XDG then ~/.gitconfig).
         for path in global_config_paths(env) {
-            match ConfigFile::from_path(&path, ConfigScope::Global) {
-                Ok(Some(f)) => {
-                    Self::merge_with_includes_collect(&mut set, &f, proc, 0, &ctx, included_files)?
-                }
-                Ok(None) => {}
-                Err(e) => return Err(e),
+            if let Some(f) = ConfigFile::from_path(&path, ConfigScope::Global)? {
+                layers.push(ConfigLayer::file(f));
             }
         }
 
@@ -2523,79 +2523,45 @@ impl ConfigSet {
                 }
             } else if let Some(text) = local_text.as_deref() {
                 let f = ConfigFile::parse(&local_path, text, ConfigScope::Local)?;
-                Self::merge_with_includes_collect(&mut set, &f, proc, 0, &ctx, included_files)?;
+                layers.push(ConfigLayer::file(f));
             }
 
             // Worktree config — Git only reads `config.worktree` when
             // `extensions.worktreeConfig` is enabled in the common repository `config`.
             let wt_path = gd.join("config.worktree");
             if crate::repo::worktree_config_enabled_for_text(local_text.as_deref()) {
-                match ConfigFile::from_path(&wt_path, ConfigScope::Worktree) {
-                    Ok(Some(f)) => Self::merge_with_includes_collect(
-                        &mut set,
-                        &f,
-                        proc,
-                        0,
-                        &ctx,
-                        included_files,
-                    )?,
-                    Ok(None) => {}
-                    Err(e) => return Err(e),
+                if let Some(f) = ConfigFile::from_path(&wt_path, ConfigScope::Worktree)? {
+                    layers.push(ConfigLayer::file(f));
                 }
             }
         }
 
-        // Environment overrides: optional file
         if let Some(path) = env.git_config.as_deref() {
             let path = resolve_config_override_path(env, path);
-            match ConfigFile::from_path(&path, ConfigScope::Command) {
-                Ok(Some(f)) => {
-                    if proc {
-                        Self::merge_with_includes_collect(
-                            &mut set,
-                            &f,
-                            proc,
-                            0,
-                            &ctx,
-                            included_files,
-                        )?;
-                    } else {
-                        set.merge(&f);
-                    }
-                }
-                Ok(None) => {}
-                Err(e) => return Err(e),
+            if let Some(f) = ConfigFile::from_path(&path, ConfigScope::Command)? {
+                layers.push(ConfigLayer::file(f));
             }
         }
 
-        add_environment_config_pairs(&mut set, env)?;
+        layers.push(ConfigLayer::Entries(environment_config_pair_entries(env)?));
 
         // GIT_CONFIG_PARAMETERS — used by `git -c key=value`.
-        if let Some(params) = env.git_config_parameters.as_deref() {
-            if proc && opts.command_includes && !params.trim().is_empty() {
+        if let Some(params) = env
+            .git_config_parameters
+            .as_deref()
+            .filter(|p| !p.trim().is_empty())
+        {
+            if proc && opts.command_includes {
                 let pseudo = Path::new(":GIT_CONFIG_PARAMETERS");
                 let cmd_file = ConfigFile::from_git_config_parameters(pseudo, params)?;
-                Self::merge_with_includes_collect(
-                    &mut set,
-                    &cmd_file,
-                    proc,
-                    0,
-                    &ctx,
-                    included_files,
-                )?;
-            } else if !params.trim().is_empty() {
-                for entry in parse_config_parameters(params) {
-                    if let Some((key, val)) =
-                        entry.split_once('\u{1}').or_else(|| entry.split_once('='))
-                    {
-                        let _ = set.add_command_override(key.trim(), val);
-                    } else {
-                        let _ = set.add_command_override(entry.trim(), "true");
-                    }
-                }
+                layers.push(ConfigLayer::file(cmd_file));
+            } else {
+                layers.push(ConfigLayer::Entries(command_override_entries(params)));
             }
         }
 
+        let mut set = Self::new();
+        set.merge_layers(&layers, proc, &ctx, included_files)?;
         Ok(set)
     }
 
@@ -2615,7 +2581,6 @@ impl ConfigSet {
         git_dir: Option<&Path>,
         key: &str,
     ) -> Result<Vec<String>> {
-        let mut set = Self::new();
         let ctx = IncludeContext {
             git_dir: git_dir.map(PathBuf::from),
             command_line_relative_include_is_error: false,
@@ -2623,19 +2588,19 @@ impl ConfigSet {
             pwd: env.pwd.clone(),
             env: std::sync::Arc::new(env.clone()),
         };
+        let mut layers = Vec::new();
 
-        // System
         if !git_config_nosystem_enabled(env) {
             let system_path = system_config_path(env);
             if let Ok(Some(f)) = ConfigFile::from_path(&system_path, ConfigScope::System) {
-                Self::merge_with_includes(&mut set, &f, true, 0, &ctx)?;
+                layers.push(ConfigLayer::file(f));
             }
         }
 
         // Global: all existing candidates (Git merges every readable file).
         for path in global_config_paths(env) {
             if let Ok(Some(f)) = ConfigFile::from_path(&path, ConfigScope::Global) {
-                Self::merge_with_includes(&mut set, &f, true, 0, &ctx)?;
+                layers.push(ConfigLayer::file(f));
             }
         }
 
@@ -2646,27 +2611,31 @@ impl ConfigSet {
             if crate::repo::early_config_ignore_repo_reason(&common_dir).is_some() {
                 // Local config skipped for unsupported repository format (see `Warning::IgnoredGitDir`).
             } else if let Ok(Some(f)) = ConfigFile::from_path(&local_path, ConfigScope::Local) {
-                set.merge_file_with_includes(&f, true, &ctx)?;
+                layers.push(ConfigLayer::file(f));
             }
 
             // Worktree-specific config (when enabled for this repo).
             let wt_path = gd.join("config.worktree");
             if crate::repo::worktree_config_enabled(&common_dir) {
                 if let Ok(Some(f)) = ConfigFile::from_path(&wt_path, ConfigScope::Worktree) {
-                    Self::merge_with_includes(&mut set, &f, true, 0, &ctx)?;
+                    layers.push(ConfigLayer::file(f));
                 }
             }
         }
 
         // GIT_CONFIG_PARAMETERS — same as full load (`load_with_options` default).
-        if let Some(params) = env.git_config_parameters.as_deref() {
-            if !params.trim().is_empty() {
-                let pseudo = Path::new(":GIT_CONFIG_PARAMETERS");
-                let cmd_file = ConfigFile::from_git_config_parameters(pseudo, params)?;
-                Self::merge_with_includes(&mut set, &cmd_file, true, 0, &ctx)?;
-            }
+        if let Some(params) = env
+            .git_config_parameters
+            .as_deref()
+            .filter(|p| !p.trim().is_empty())
+        {
+            let pseudo = Path::new(":GIT_CONFIG_PARAMETERS");
+            let cmd_file = ConfigFile::from_git_config_parameters(pseudo, params)?;
+            layers.push(ConfigLayer::file(cmd_file));
         }
 
+        let mut set = Self::new();
+        set.merge_layers(&layers, true, &ctx, &mut Vec::new())?;
         Ok(set.get_all(key))
     }
 
@@ -2674,13 +2643,26 @@ impl ConfigSet {
     ///
     /// Used by `grit config -f` and scoped reads; [`ConfigSet::load_with_options`] uses the same
     /// internal routine for the standard cascade.
+    ///
+    /// `hasconfig:remote.*.url:` conditions match only remote URLs reachable from `file`
+    /// itself (like `git config -f <file> --includes`), not URLs already in `self`.
+    ///
+    /// # Errors
+    ///
+    /// Unreadable or unparsable include targets, include recursion past Git's depth limit,
+    /// and [`ConfigError::RemoteUrlInHasconfigInclude`].
     pub fn merge_file_with_includes(
         &mut self,
         file: &ConfigFile,
         process_includes: bool,
         ctx: &IncludeContext,
     ) -> Result<()> {
-        Self::merge_with_includes(self, file, process_includes, 0, ctx)
+        self.merge_layers(
+            &[ConfigLayer::File(Cow::Borrowed(file))],
+            process_includes,
+            ctx,
+            &mut Vec::new(),
+        )
     }
 
     /// Load only the repository's own `config` file (plus any `[include]` targets).
@@ -2689,7 +2671,6 @@ impl ConfigSet {
     /// overrides. Used for receive-side options (e.g. `transfer.fsckObjects`) so a
     /// pusher's global configuration cannot weaken the remote repository's policy.
     pub fn load_repo_local_only(git_dir: &Path) -> Result<Self> {
-        let mut set = Self::new();
         let local_path = git_dir.join("config");
         let ctx = IncludeContext {
             git_dir: Some(git_dir.to_path_buf()),
@@ -2698,8 +2679,9 @@ impl ConfigSet {
             pwd: None,
             env: std::sync::Arc::new(Environment::empty()),
         };
+        let mut set = Self::new();
         if let Ok(Some(f)) = ConfigFile::from_path(&local_path, ConfigScope::Local) {
-            Self::merge_with_includes(&mut set, &f, true, 0, &ctx)?;
+            set.merge_layers(&[ConfigLayer::file(f)], true, &ctx, &mut Vec::new())?;
         }
         Ok(set)
     }
@@ -2715,7 +2697,6 @@ impl ConfigSet {
     /// unless `GIT_CONFIG_GLOBAL` is set (single file). When both global files exist, both are
     /// merged so later entries win for duplicate keys.
     pub fn load_protected(env: &Environment, include_system: bool) -> Result<Self> {
-        let mut set = Self::new();
         let ctx = IncludeContext {
             git_dir: None,
             command_line_relative_include_is_error: false,
@@ -2723,76 +2704,73 @@ impl ConfigSet {
             pwd: env.pwd.clone(),
             env: std::sync::Arc::new(env.clone()),
         };
+        let mut layers = Vec::new();
 
         if include_system && !git_config_nosystem_enabled(env) {
             let system_path = system_config_path(env);
             if let Ok(Some(f)) = ConfigFile::from_path(&system_path, ConfigScope::System) {
-                Self::merge_with_includes(&mut set, &f, true, 0, &ctx)?;
+                layers.push(ConfigLayer::file(f));
             }
         }
 
         for path in global_config_paths(env) {
             if let Ok(Some(f)) = ConfigFile::from_path(&path, ConfigScope::Global) {
-                Self::merge_with_includes(&mut set, &f, true, 0, &ctx)?;
+                layers.push(ConfigLayer::file(f));
             }
         }
 
-        add_environment_config_pairs(&mut set, env)?;
-
+        layers.push(ConfigLayer::Entries(environment_config_pair_entries(env)?));
         if let Some(params) = env.git_config_parameters.as_deref() {
-            for entry in parse_config_parameters(params) {
-                if let Some((key, val)) =
-                    entry.split_once('\u{1}').or_else(|| entry.split_once('='))
-                {
-                    let _ = set.add_command_override(key.trim(), val);
-                } else {
-                    let _ = set.add_command_override(entry.trim(), "true");
-                }
-            }
+            layers.push(ConfigLayer::Entries(command_override_entries(params)));
         }
 
+        let mut set = Self::new();
+        set.merge_layers(&layers, true, &ctx, &mut Vec::new())?;
         Ok(set)
     }
 
-    /// Merge a file, processing `[include]` and `[includeIf]` directives.
+    /// Merge `layers` in order, expanding includes in file layers when `process_includes`.
+    ///
+    /// `hasconfig:remote.*.url:` conditions anywhere in the load match against the remote
+    /// URLs of *all* layers (Git evaluates them against the complete configuration), so a
+    /// global include can depend on a remote defined in the repository `config`. Every
+    /// include target opened is recorded in `included_files` so the cascade cache can stamp it.
+    fn merge_layers(
+        &mut self,
+        layers: &[ConfigLayer<'_>],
+        process_includes: bool,
+        ctx: &IncludeContext,
+        included_files: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        let mut remote_urls = RemoteUrls::new(layers);
+        for layer in layers {
+            match layer {
+                ConfigLayer::File(file) => Self::merge_with_includes(
+                    self,
+                    file,
+                    process_includes,
+                    0,
+                    ctx,
+                    &mut remote_urls,
+                    included_files,
+                )?,
+                ConfigLayer::Entries(entries) => self.entries.extend(entries.iter().cloned()),
+            }
+        }
+        Ok(())
+    }
+
+    /// Merge `file`, expanding `[include]` / `[includeIf]` targets in place.
     fn merge_with_includes(
         set: &mut Self,
         file: &ConfigFile,
         process_includes: bool,
         depth: usize,
         ctx: &IncludeContext,
-    ) -> Result<()> {
-        let mut included_files = Vec::new();
-        Self::merge_with_includes_collect(
-            set,
-            file,
-            process_includes,
-            depth,
-            ctx,
-            &mut included_files,
-        )
-    }
-
-    /// [`Self::merge_with_includes`], additionally recording every resolved
-    /// include target path in `included_files` (whether or not the target
-    /// exists) so the cascade cache can stamp them.
-    fn merge_with_includes_collect(
-        set: &mut Self,
-        file: &ConfigFile,
-        process_includes: bool,
-        depth: usize,
-        ctx: &IncludeContext,
+        remote_urls: &mut RemoteUrls<'_>,
         included_files: &mut Vec<PathBuf>,
     ) -> Result<()> {
-        // Mirror Git behavior and stop runaway include recursion.
-        const MAX_INCLUDE_DEPTH: usize = 10;
-        if depth > MAX_INCLUDE_DEPTH {
-            return Err(ConfigError::IncludeDepthExceeded {
-                depth,
-                limit: MAX_INCLUDE_DEPTH,
-            }
-            .into());
-        }
+        check_include_depth(depth)?;
         if !process_includes {
             set.merge(file);
             return Ok(());
@@ -2804,47 +2782,176 @@ impl ConfigSet {
             let Some((inc_path, condition)) = include_directive_for_entry(entry) else {
                 continue;
             };
-            let included_by_hasconfig = condition.as_deref().is_some_and(is_hasconfig_remote_url);
-            if condition.is_some() && !included_by_hasconfig {
-                let cond = condition.as_deref().unwrap_or_default();
-                if !evaluate_include_condition(cond, set, file, ctx) {
+            if let Some(cond) = condition.as_deref() {
+                let holds = match hasconfig_remote_url_pattern(cond) {
+                    Some(pattern) => remote_urls.any_matches(pattern, ctx, included_files)?,
+                    None => evaluate_include_condition(cond, file, ctx),
+                };
+                if !holds {
                     continue;
                 }
             }
-
-            let resolved = match resolve_include_file_path(&inc_path, file, ctx) {
-                Ok(p) => p,
-                Err(Error::Config(ConfigError::Other(msg))) if msg.is_empty() => continue,
-                Err(e) => return Err(e),
-            };
-            included_files.push(resolved.clone());
-            // Git's `git_config_from_file` surfaces parse errors in an included file as a
-            // fatal error (t0001 #102 `re-init reads matching includeIf.onbranch`). A missing
-            // include target is silently skipped (`from_path` -> `Ok(None)`).
-            let Some(inc_file) = ConfigFile::from_path(&resolved, file.scope)? else {
+            let Some(inc_file) = open_include_target(&inc_path, file, ctx, included_files)? else {
                 continue;
             };
-
-            if included_by_hasconfig {
-                validate_hasconfig_remote_url_include(&inc_file, process_includes, depth + 1, ctx)?;
-                let cond = condition.as_deref().unwrap_or_default();
-                if !evaluate_include_condition(cond, set, file, ctx) {
-                    continue;
-                }
-            }
-
-            Self::merge_with_includes_collect(
+            Self::merge_with_includes(
                 set,
                 &inc_file,
                 process_includes,
                 depth + 1,
                 ctx,
+                remote_urls,
                 included_files,
             )?;
         }
 
         Ok(())
     }
+}
+
+/// One step of a configuration load, merged in order by [`ConfigSet::merge_layers`].
+enum ConfigLayer<'a> {
+    /// A config file whose includes are expanded when the load processes includes.
+    File(Cow<'a, ConfigFile>),
+    /// Entries appended verbatim (`GIT_CONFIG_COUNT` pairs, `-c` overrides read without includes).
+    Entries(Vec<ConfigEntry>),
+}
+
+impl ConfigLayer<'_> {
+    fn file(file: ConfigFile) -> Self {
+        Self::File(Cow::Owned(file))
+    }
+}
+
+/// Remote URLs that `hasconfig:remote.*.url:` conditions match against, collected from every
+/// layer of the current load on the first such condition and reused for the rest of it.
+struct RemoteUrls<'a> {
+    layers: &'a [ConfigLayer<'a>],
+    urls: Option<Vec<String>>,
+}
+
+impl<'a> RemoteUrls<'a> {
+    fn new(layers: &'a [ConfigLayer<'a>]) -> Self {
+        Self { layers, urls: None }
+    }
+
+    /// Whether any `remote.<name>.url` value in the load matches `pattern` (`WM_PATHNAME`).
+    fn any_matches(
+        &mut self,
+        pattern: &str,
+        ctx: &IncludeContext,
+        included_files: &mut Vec<PathBuf>,
+    ) -> Result<bool> {
+        let urls = match self.urls.take() {
+            Some(urls) => urls,
+            None => self.collect(ctx, included_files)?,
+        };
+        let hit = urls
+            .iter()
+            .any(|url| wildmatch(pattern.as_bytes(), url.as_bytes(), WM_PATHNAME));
+        self.urls = Some(urls);
+        Ok(hit)
+    }
+
+    fn collect(
+        &self,
+        ctx: &IncludeContext,
+        included_files: &mut Vec<PathBuf>,
+    ) -> Result<Vec<String>> {
+        let mut urls = Vec::new();
+        for layer in self.layers {
+            match layer {
+                ConfigLayer::File(file) => {
+                    collect_remote_urls(file, false, 0, ctx, &mut urls, included_files)?;
+                }
+                ConfigLayer::Entries(entries) => urls.extend(
+                    entries
+                        .iter()
+                        .filter(|entry| is_remote_url_entry(entry))
+                        .filter_map(|entry| entry.value.clone()),
+                ),
+            }
+        }
+        Ok(urls)
+    }
+}
+
+/// Collect `remote.<name>.url` values from `file` and everything it includes.
+///
+/// As in Git, this pass opens every `[includeIf]` target whose condition holds, treating every
+/// `hasconfig:remote.*.url:` condition as holding. Remote URLs may not come from a conditional
+/// include (directly or through nested includes), since they could change which conditions hold:
+/// finding one there is [`ConfigError::RemoteUrlInHasconfigInclude`].
+fn collect_remote_urls(
+    file: &ConfigFile,
+    in_conditional_include: bool,
+    depth: usize,
+    ctx: &IncludeContext,
+    urls: &mut Vec<String>,
+    included_files: &mut Vec<PathBuf>,
+) -> Result<()> {
+    check_include_depth(depth)?;
+    for entry in &file.entries {
+        if is_remote_url_entry(entry) {
+            if in_conditional_include {
+                return Err(ConfigError::RemoteUrlInHasconfigInclude.into());
+            }
+            urls.extend(entry.value.clone());
+            continue;
+        }
+        let Some((inc_path, condition)) = include_directive_for_entry(entry) else {
+            continue;
+        };
+        let conditional = match condition.as_deref() {
+            None => in_conditional_include,
+            Some(cond) => {
+                if hasconfig_remote_url_pattern(cond).is_none()
+                    && !evaluate_include_condition(cond, file, ctx)
+                {
+                    continue;
+                }
+                true
+            }
+        };
+        let Some(inc_file) = open_include_target(&inc_path, file, ctx, included_files)? else {
+            continue;
+        };
+        collect_remote_urls(&inc_file, conditional, depth + 1, ctx, urls, included_files)?;
+    }
+    Ok(())
+}
+
+/// Fail once include nesting exceeds Git's limit, which stops runaway recursion.
+fn check_include_depth(depth: usize) -> Result<()> {
+    const MAX_INCLUDE_DEPTH: usize = 10;
+    if depth > MAX_INCLUDE_DEPTH {
+        return Err(ConfigError::IncludeDepthExceeded {
+            depth,
+            limit: MAX_INCLUDE_DEPTH,
+        }
+        .into());
+    }
+    Ok(())
+}
+
+/// Resolve and parse the target of an include directive in `file`, recording the resolved path
+/// in `included_files` (even when missing) so the cascade cache stamps it.
+///
+/// Returns `None` for a missing target or a path Git skips. Parse errors in the target are
+/// fatal, as in Git (t0001 `re-init reads matching includeIf.onbranch`).
+fn open_include_target(
+    inc_path: &str,
+    file: &ConfigFile,
+    ctx: &IncludeContext,
+    included_files: &mut Vec<PathBuf>,
+) -> Result<Option<ConfigFile>> {
+    let resolved = match resolve_include_file_path(inc_path, file, ctx) {
+        Ok(p) => p,
+        Err(Error::Config(ConfigError::Other(msg))) if msg.is_empty() => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    included_files.push(resolved.clone());
+    ConfigFile::from_path(&resolved, file.scope)
 }
 
 fn include_directive_for_entry(entry: &ConfigEntry) -> Option<(String, Option<String>)> {
@@ -2875,7 +2982,9 @@ fn include_directive_for_entry(entry: &ConfigEntry) -> Option<(String, Option<St
 //
 // The remaining `includeIf` condition inputs are covered transitively:
 // `gitdir:` depends only on the cache key and environment, and
-// `hasconfig:remote.*.url:` depends only on the (stamped) file contents.
+// `hasconfig:remote.*.url:` depends only on the (stamped) file contents —
+// every file its URL scan opens is recorded as an include target — plus the
+// command-line config already in the environment fingerprint.
 //
 // In-process writers ([`ConfigFile::write`]) additionally evict every entry
 // whose cascade contains the written path, closing the window where a
@@ -3028,12 +3137,13 @@ fn git_config_nosystem_enabled(env: &Environment) -> bool {
         .unwrap_or(false)
 }
 
-fn add_environment_config_pairs(set: &mut ConfigSet, env: &Environment) -> Result<()> {
+/// Entries from `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>`.
+fn environment_config_pair_entries(env: &Environment) -> Result<Vec<ConfigEntry>> {
     let Some(count_str) = env.git_config_count.as_deref() else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     if count_str.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     let count = count_str
@@ -3045,14 +3155,28 @@ fn add_environment_config_pairs(set: &mut ConfigSet, env: &Environment) -> Resul
         ));
     }
 
+    let mut set = ConfigSet::new();
     for i in 0..count {
         let (key, value) = env.git_config_pairs.get(i).ok_or_else(|| {
             Error::Config(format!("missing config key GIT_CONFIG_KEY_{i}").into())
         })?;
         set.add_command_override(key, value)?;
     }
+    Ok(set.entries)
+}
 
-    Ok(())
+/// `GIT_CONFIG_PARAMETERS` as plain command-scope entries (no include processing); entries
+/// with an invalid key are skipped.
+fn command_override_entries(params: &str) -> Vec<ConfigEntry> {
+    let mut set = ConfigSet::new();
+    for entry in parse_config_parameters(params) {
+        let (key, val) = entry
+            .split_once('\u{1}')
+            .or_else(|| entry.split_once('='))
+            .unwrap_or((entry.as_str(), "true"));
+        let _ = set.add_command_override(key.trim(), val);
+    }
+    set.entries
 }
 
 // ── Type coercion helpers ───────────────────────────────────────────
@@ -4383,75 +4507,17 @@ fn is_remote_url_entry(entry: &ConfigEntry) -> bool {
     section == "remote" && subsection.is_some() && variable == "url"
 }
 
-fn is_hasconfig_remote_url(condition: &str) -> bool {
-    condition
-        .strip_prefix("hasconfig:")
-        .is_some_and(|rest| rest.starts_with("remote.*.url:"))
-}
-
-fn include_by_hasconfig_remote_url(condition: &str, set: &ConfigSet, file: &ConfigFile) -> bool {
-    let Some(pattern) = condition.strip_prefix("remote.*.url:") else {
-        return false;
-    };
-    set.entries
-        .iter()
-        .chain(file.entries.iter())
-        .filter(|entry| is_remote_url_entry(entry))
-        .filter_map(|entry| entry.value.as_deref())
-        .any(|value| wildmatch(pattern.as_bytes(), value.as_bytes(), WM_PATHNAME))
-}
-
-fn validate_hasconfig_remote_url_include(
-    file: &ConfigFile,
-    process_includes: bool,
-    depth: usize,
-    ctx: &IncludeContext,
-) -> Result<()> {
-    const MAX_INCLUDE_DEPTH: usize = 10;
-    if depth > MAX_INCLUDE_DEPTH {
-        return Err(ConfigError::IncludeDepthExceeded {
-            depth,
-            limit: MAX_INCLUDE_DEPTH,
-        }
-        .into());
-    }
-    if file.entries.iter().any(is_remote_url_entry) {
-        return Err(ConfigError::RemoteUrlInHasconfigInclude.into());
-    }
-    if !process_includes {
-        return Ok(());
-    }
-    for entry in &file.entries {
-        let Some((inc_path, condition)) = include_directive_for_entry(entry) else {
-            continue;
-        };
-        if let Some(ref cond) = condition {
-            if !evaluate_include_condition(cond, &ConfigSet::new(), file, ctx) {
-                continue;
-            }
-        }
-        let resolved = match resolve_include_file_path(&inc_path, file, ctx) {
-            Ok(p) => p,
-            Err(Error::Config(ConfigError::Other(msg))) if msg.is_empty() => continue,
-            Err(e) => return Err(e),
-        };
-        if let Some(inc_file) = ConfigFile::from_path(&resolved, file.scope)? {
-            validate_hasconfig_remote_url_include(&inc_file, process_includes, depth + 1, ctx)?;
-        }
-    }
-    Ok(())
+/// The URL glob of a `hasconfig:remote.*.url:<glob>` include condition.
+fn hasconfig_remote_url_pattern(condition: &str) -> Option<&str> {
+    condition.strip_prefix("hasconfig:remote.*.url:")
 }
 
 /// Evaluate an `[includeIf]` condition.
 ///
-/// Supports `gitdir:`, `gitdir/i:`, `onbranch:`, and `hasconfig:remote.*.url:` like Git.
-/// Unknown prefixes are false.
-fn evaluate_include_condition(
-    condition: &str,
-    set: &ConfigSet,
-    file: &ConfigFile,
-    ctx: &IncludeContext,
-) -> bool {
+/// Supports `gitdir:`, `gitdir/i:` and `onbranch:` like Git. `hasconfig:remote.*.url:` needs
+/// the whole load's remote URLs and is evaluated by [`RemoteUrls::any_matches`]. Unknown
+/// prefixes are false.
+fn evaluate_include_condition(condition: &str, file: &ConfigFile, ctx: &IncludeContext) -> bool {
     if let Some(rest) = condition.strip_prefix("gitdir/i:") {
         return include_by_gitdir(rest, file, ctx, true);
     }
@@ -4460,9 +4526,6 @@ fn evaluate_include_condition(
     }
     if let Some(rest) = condition.strip_prefix("onbranch:") {
         return include_by_onbranch(rest, ctx);
-    }
-    if let Some(rest) = condition.strip_prefix("hasconfig:") {
-        return include_by_hasconfig_remote_url(rest, set, file);
     }
     false
 }
