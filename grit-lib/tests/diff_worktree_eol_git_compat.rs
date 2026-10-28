@@ -1,4 +1,5 @@
-//! Worktree↔index diffs normalize `eol=crlf` worktree bytes before line diffs (issue #990).
+//! Worktree↔index diffs normalize `eol=crlf` worktree bytes before line diffs (issue #990), and
+//! a worktree whose size changed only by line endings that clean away is not modified (#2164).
 
 use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::config::ConfigSet;
@@ -6,6 +7,8 @@ use grit_lib::diff::{
     diff_index_to_worktree_with_options, read_worktree_side_bytes_for_diff,
     DiffIndexToWorktreeOptions, DiffStatus,
 };
+use grit_lib::porcelain::status::{status, StatusOptions, UntrackedMode};
+use grit_lib::progress::{NeverCancel, NullProgress};
 use grit_lib::repo::Repository;
 use grit_lib::worktree::worktree_rules::WorktreeRules;
 use std::fs;
@@ -128,4 +131,168 @@ fn diff_index_to_worktree_eol_crlf_single_line_change() {
         }
     }
     assert_eq!(changes, 1, "normalized sides differ on one line only");
+}
+
+fn git_ok(repo: &std::path::Path, args: &[&str]) -> std::process::Output {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .expect("spawn git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out
+}
+
+/// Commit `committed` under `attributes` with system git, then rewrite the worktree file as
+/// `rewritten`, which differs in size but cleans to the same blob. `fillers` extra tracked
+/// files push the status scan onto its parallel path.
+fn eol_only_rewrite_repo(
+    root: &TempDir,
+    attributes: &str,
+    committed: &[u8],
+    rewritten: &[u8],
+    fillers: usize,
+) -> std::path::PathBuf {
+    let repo = init_git_repo(root);
+    fs::write(repo.join(".gitattributes"), attributes).expect("attrs");
+    fs::write(repo.join("n.txt"), committed).expect("write");
+    for i in 0..fillers {
+        fs::write(repo.join(format!("fill{i:05}.dat")), format!("{i}\n")).expect("filler");
+    }
+    git_ok(&repo, &["add", "-A"]);
+    git_ok(&repo, &["commit", "-qm", "c"]);
+    fs::write(repo.join("n.txt"), rewritten).expect("rewrite");
+    assert_ne!(
+        committed.len(),
+        rewritten.len(),
+        "fixture must change the size"
+    );
+    assert!(
+        Command::new("git")
+            .args(["diff", "--quiet", "--exit-code"])
+            .current_dir(&repo)
+            .status()
+            .expect("git diff")
+            .success(),
+        "system git sees no change"
+    );
+    repo
+}
+
+fn open(repo: &std::path::Path) -> Repository {
+    Repository::open(
+        &repo.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(repo),
+    )
+    .expect("open")
+}
+
+fn assert_eol_only_rewrite_is_clean(
+    attributes: &str,
+    committed: &[u8],
+    rewritten: &[u8],
+    fillers: usize,
+    threads: usize,
+) {
+    let root = TempDir::new().expect("tempdir");
+    let repo = eol_only_rewrite_repo(&root, attributes, committed, rewritten, fillers);
+    let case = format!("{attributes:?} {committed:?} -> {rewritten:?} threads={threads}");
+
+    let grit_repo = open(&repo);
+    let mut index = grit_repo.index_handle().load().expect("index");
+    let (entries, _) = diff_index_to_worktree_with_options(
+        grit_repo.odb(),
+        &mut index,
+        &repo,
+        DiffIndexToWorktreeOptions {
+            repository_git_dir: Some(grit_repo.git_dir().to_path_buf()),
+            for_status: true,
+            stat_parallel_threads: Some(threads),
+            ..DiffIndexToWorktreeOptions::default()
+        },
+    )
+    .expect("diff");
+    assert!(entries.is_empty(), "{case}: phantom change {entries:?}");
+
+    let options = StatusOptions {
+        untracked: UntrackedMode::No,
+        stat_parallel_threads: Some(threads),
+        ..StatusOptions::default()
+    };
+    for run in 0..2 {
+        let model = status(&grit_repo, &options, &mut NullProgress, &NeverCancel).expect("status");
+        assert!(model.is_clean(), "{case} run {run}: {:?}", model.unstaged);
+    }
+
+    // The index grit refreshed stays readable and clean for system git.
+    git_ok(&repo, &["fsck", "--no-progress"]);
+    let porcelain = git_ok(&repo, &["status", "--porcelain"]);
+    assert!(
+        porcelain.stdout.is_empty(),
+        "{case}: git status {porcelain:?}"
+    );
+}
+
+#[test]
+fn eol_crlf_lf_rewrite_is_not_modified_issue_2164() {
+    for (fillers, threads) in [(0, 1), (grit_lib::PARALLEL_STAT_MIN_ENTRIES, 4)] {
+        assert_eol_only_rewrite_is_clean(
+            "*.txt text eol=crlf\n",
+            b"one\r\ntwo\r\n",
+            b"one\ntwo\n",
+            fillers,
+            threads,
+        );
+    }
+}
+
+#[test]
+fn text_auto_line_ending_rewrite_is_not_modified_issue_2164() {
+    for (fillers, threads) in [(0, 1), (grit_lib::PARALLEL_STAT_MIN_ENTRIES, 4)] {
+        assert_eol_only_rewrite_is_clean(
+            "* text=auto\n",
+            b"one\ntwo\n",
+            b"one\r\ntwo\r\n",
+            fillers,
+            threads,
+        );
+        assert_eol_only_rewrite_is_clean(
+            "* text=auto\n",
+            b"one\r\ntwo\r\n",
+            b"one\ntwo\n",
+            fillers,
+            threads,
+        );
+    }
+}
+
+#[test]
+fn eol_crlf_real_size_change_is_still_modified() {
+    let root = TempDir::new().expect("tempdir");
+    let repo = init_git_repo(&root);
+    fs::write(repo.join(".gitattributes"), "*.txt text eol=crlf\n").expect("attrs");
+    fs::write(repo.join("n.txt"), "one\r\ntwo\r\n").expect("write");
+    git_ok(&repo, &["add", "-A"]);
+    git_ok(&repo, &["commit", "-qm", "c"]);
+    fs::write(repo.join("n.txt"), "one\ntwo\nthree\n").expect("rewrite");
+
+    let grit_repo = open(&repo);
+    let model = status(
+        &grit_repo,
+        &StatusOptions {
+            untracked: UntrackedMode::No,
+            ..StatusOptions::default()
+        },
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("status");
+    let unstaged: Vec<_> = model.unstaged.iter().map(|e| e.path().to_owned()).collect();
+    assert_eq!(unstaged, ["n.txt"]);
+    let porcelain = git_ok(&repo, &["status", "--porcelain"]);
+    assert_eq!(String::from_utf8_lossy(&porcelain.stdout), " M n.txt\n");
 }

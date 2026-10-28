@@ -569,6 +569,9 @@ fn retain_status_diff_lookup(
                     index_mtime,
                     stat_policy,
                     for_status,
+                    // Attributes are not resolved during the scan; a changed size is kept
+                    // either way, so assume a conversion and let the visit pass decide.
+                    || false,
                 )
             {
                 return true;
