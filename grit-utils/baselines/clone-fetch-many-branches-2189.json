@@ -1,0 +1,312 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-10-28T06:52:54.924522+00:00",
+  "machine": {
+    "cpu_model": "Intel(R) Xeon(R) Processor",
+    "physical_cores": 4,
+    "logical_cores": 4,
+    "ram_bytes": 16780574720,
+    "os": "linux",
+    "kernel": "Linux 6.12.94+",
+    "scratch_filesystem": "ext4",
+    "rustc_version": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "cargo_profile": "release"
+  },
+  "tools": {
+    "git": "git version 2.43.0",
+    "grit": "grit 0.5.23",
+    "grit_commit": "73c172765dfbb4cc87a9bf19cd13addaffaf6115",
+    "grit_main_commit": "dc92089048c497cf973c83a6504e73d410b4d44b"
+  },
+  "scenarios": [
+    {
+      "id": "clone-many-branches-25k-before",
+      "group": "network-fetch",
+      "fixture": "one commit + 25,000 branches, packed (issue #2189)",
+      "description": "grit clone --bare file://<fixture> vs git clone -q --bare; grit before (main dc9208904 / this branch); release profile; 5 alternating runs",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 194.0,
+        "median_ms": 190.0,
+        "stddev_ms": 8.94427190999916,
+        "min_ms": 190.0,
+        "max_ms": 210.0,
+        "runs_ms": [
+          210.0,
+          190.0,
+          190.0,
+          190.0,
+          190.0
+        ],
+        "peak_rss_bytes": 32010240
+      },
+      "grit": {
+        "mean_ms": 2864.0,
+        "median_ms": 2840.0,
+        "stddev_ms": 97.62171889492625,
+        "min_ms": 2780.0,
+        "max_ms": 3030.0,
+        "runs_ms": [
+          3030.0,
+          2810.0,
+          2860.0,
+          2840.0,
+          2780.0
+        ],
+        "peak_rss_bytes": 64745472
+      },
+      "ratio": 14.762886597938145
+    },
+    {
+      "id": "clone-many-branches-25k-after",
+      "group": "network-fetch",
+      "fixture": "one commit + 25,000 branches, packed (issue #2189)",
+      "description": "grit clone --bare file://<fixture> vs git clone -q --bare; grit after (main dc9208904 / this branch); release profile; 5 alternating runs",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 194.0,
+        "median_ms": 190.0,
+        "stddev_ms": 8.94427190999916,
+        "min_ms": 190.0,
+        "max_ms": 210.0,
+        "runs_ms": [
+          210.0,
+          190.0,
+          190.0,
+          190.0,
+          190.0
+        ],
+        "peak_rss_bytes": 32010240
+      },
+      "grit": {
+        "mean_ms": 158.0,
+        "median_ms": 150.0,
+        "stddev_ms": 13.038404810405298,
+        "min_ms": 150.0,
+        "max_ms": 180.0,
+        "runs_ms": [
+          180.0,
+          150.0,
+          150.0,
+          160.0,
+          150.0
+        ],
+        "peak_rss_bytes": 47271936
+      },
+      "ratio": 0.8144329896907216
+    },
+    {
+      "id": "fetch-many-branches-25k-before",
+      "group": "network-fetch",
+      "fixture": "one commit + 25,000 branches, packed (issue #2189)",
+      "description": "Fetch every branch into an empty bare repository (+refs/heads/*:refs/remotes/origin/*) vs git fetch; grit before (main dc9208904 / this branch); release profile; 5 alternating runs",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 1142.0,
+        "median_ms": 1120.0,
+        "stddev_ms": 31.937438845342623,
+        "min_ms": 1120.0,
+        "max_ms": 1190.0,
+        "runs_ms": [
+          1160.0,
+          1120.0,
+          1120.0,
+          1120.0,
+          1190.0
+        ],
+        "peak_rss_bytes": 28778496
+      },
+      "grit": {
+        "mean_ms": 2758.0,
+        "median_ms": 2720.0,
+        "stddev_ms": 90.38805230781334,
+        "min_ms": 2670.0,
+        "max_ms": 2860.0,
+        "runs_ms": [
+          2850.0,
+          2670.0,
+          2690.0,
+          2720.0,
+          2860.0
+        ],
+        "peak_rss_bytes": 69877760
+      },
+      "ratio": 2.415061295971979
+    },
+    {
+      "id": "fetch-many-branches-25k-after",
+      "group": "network-fetch",
+      "fixture": "one commit + 25,000 branches, packed (issue #2189)",
+      "description": "Fetch every branch into an empty bare repository (+refs/heads/*:refs/remotes/origin/*) vs git fetch; grit after (main dc9208904 / this branch); release profile; 5 alternating runs",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 1142.0,
+        "median_ms": 1120.0,
+        "stddev_ms": 31.937438845342623,
+        "min_ms": 1120.0,
+        "max_ms": 1190.0,
+        "runs_ms": [
+          1160.0,
+          1120.0,
+          1120.0,
+          1120.0,
+          1190.0
+        ],
+        "peak_rss_bytes": 28778496
+      },
+      "grit": {
+        "mean_ms": 1478.0,
+        "median_ms": 1480.0,
+        "stddev_ms": 51.18593556827891,
+        "min_ms": 1430.0,
+        "max_ms": 1560.0,
+        "runs_ms": [
+          1480.0,
+          1430.0,
+          1440.0,
+          1560.0,
+          1480.0
+        ],
+        "peak_rss_bytes": 57872384
+      },
+      "ratio": 1.2942206654991244
+    },
+    {
+      "id": "clone-many-branches-200k-before",
+      "group": "network-fetch",
+      "fixture": "one commit + 200,000 branches, packed (issue #2189)",
+      "description": "grit clone --bare file://<fixture> vs git clone -q --bare; grit before (main dc9208904 / this branch); release profile; 3 alternating runs",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 1583.3333333333333,
+        "median_ms": 1570.0,
+        "stddev_ms": 51.316014394468844,
+        "min_ms": 1540.0,
+        "max_ms": 1640.0,
+        "runs_ms": [
+          1640.0,
+          1540.0,
+          1570.0
+        ],
+        "peak_rss_bytes": 213622784
+      },
+      "grit": {
+        "mean_ms": 43646.666666666664,
+        "median_ms": 43630.0,
+        "stddev_ms": 155.6705923844749,
+        "min_ms": 43500.0,
+        "max_ms": 43810.0,
+        "runs_ms": [
+          43810.0,
+          43500.0,
+          43630.0
+        ],
+        "peak_rss_bytes": 406069248
+      },
+      "ratio": 27.566315789473684
+    },
+    {
+      "id": "clone-many-branches-200k-after",
+      "group": "network-fetch",
+      "fixture": "one commit + 200,000 branches, packed (issue #2189)",
+      "description": "grit clone --bare file://<fixture> vs git clone -q --bare; grit after (main dc9208904 / this branch); release profile; 3 alternating runs",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 1583.3333333333333,
+        "median_ms": 1570.0,
+        "stddev_ms": 51.316014394468844,
+        "min_ms": 1540.0,
+        "max_ms": 1640.0,
+        "runs_ms": [
+          1640.0,
+          1540.0,
+          1570.0
+        ],
+        "peak_rss_bytes": 213622784
+      },
+      "grit": {
+        "mean_ms": 1430.0,
+        "median_ms": 1420.0,
+        "stddev_ms": 26.457513110645905,
+        "min_ms": 1410.0,
+        "max_ms": 1460.0,
+        "runs_ms": [
+          1420.0,
+          1410.0,
+          1460.0
+        ],
+        "peak_rss_bytes": 266657792
+      },
+      "ratio": 0.9031578947368422
+    },
+    {
+      "id": "fetch-many-branches-200k-before",
+      "group": "network-fetch",
+      "fixture": "one commit + 200,000 branches, packed (issue #2189)",
+      "description": "Fetch every branch into an empty bare repository (+refs/heads/*:refs/remotes/origin/*) vs git fetch; grit before (main dc9208904 / this branch); release profile; 3 alternating runs",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 10560.0,
+        "median_ms": 10450.0,
+        "stddev_ms": 377.2267222772003,
+        "min_ms": 10250.0,
+        "max_ms": 10980.0,
+        "runs_ms": [
+          10450.0,
+          10250.0,
+          10980.0
+        ],
+        "peak_rss_bytes": 189001728
+      },
+      "grit": {
+        "mean_ms": 42353.333333333336,
+        "median_ms": 42490.0,
+        "stddev_ms": 685.2979887124529,
+        "min_ms": 41610.0,
+        "max_ms": 42960.0,
+        "runs_ms": [
+          41610.0,
+          42960.0,
+          42490.0
+        ],
+        "peak_rss_bytes": 442814464
+      },
+      "ratio": 4.0107323232323235
+    },
+    {
+      "id": "fetch-many-branches-200k-after",
+      "group": "network-fetch",
+      "fixture": "one commit + 200,000 branches, packed (issue #2189)",
+      "description": "Fetch every branch into an empty bare repository (+refs/heads/*:refs/remotes/origin/*) vs git fetch; grit after (main dc9208904 / this branch); release profile; 3 alternating runs",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 10560.0,
+        "median_ms": 10450.0,
+        "stddev_ms": 377.2267222772003,
+        "min_ms": 10250.0,
+        "max_ms": 10980.0,
+        "runs_ms": [
+          10450.0,
+          10250.0,
+          10980.0
+        ],
+        "peak_rss_bytes": 189001728
+      },
+      "grit": {
+        "mean_ms": 12560.0,
+        "median_ms": 12430.0,
+        "stddev_ms": 306.4310689208912,
+        "min_ms": 12340.0,
+        "max_ms": 12910.0,
+        "runs_ms": [
+          12430.0,
+          12910.0,
+          12340.0
+        ],
+        "peak_rss_bytes": 345354240
+      },
+      "ratio": 1.1893939393939394
+    }
+  ],
+  "methodology": "Fixture from issue #2189: a bare repository with one empty-tree commit and N branches (refs/heads/b/n<i> plus main), all in packed-refs. Each run starts from a fresh destination over file://. Tools alternate within each round; wall time and peak RSS come from /usr/bin/time -f '%e %M'. Every result is checked for the full ref count and git fsck --strict."
+}

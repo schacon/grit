@@ -1627,6 +1627,21 @@ Criterion mean library times (20 samples, one-second warmup, three-second measur
 
 The Criterion suite exercises the public `fetch_local` API with `Following`, `None`, and `All` tags on a system-Git-created 5,000-ref fixture. Compatibility tests also cover changed remote tips, loose overrides, symbolic refs, pruning followed by a no-op fetch, linked worktrees, reftable, and explicit `FETCH_HEAD` maintenance. CI checks behavior rather than elapsed-time thresholds.
 
+## Clone and fetch of 200,000 branches (2026-10-28, #2189)
+
+Writing many new refs used to be quadratic. The directory/file name check compared every pair of names in a batch. A clone wrote each imported ref as a loose file, with its own lock, then packed most of them in a second pass, and a bare clone's `refs/heads/*` were never packed. Now the batch check probes a sorted set, so it costs `O(n log n)`. A clone commits its imported refs as an initial transaction ([`RefTransaction::initial`](rustdoc:grit_lib::refs::store::RefTransaction::initial)): one `packed-refs` write, the same layout Git produces. An ordinary fetch still writes loose refs, as Git does, but makes far fewer system calls per ref. It takes each ref's lock once, revalidates `packed-refs` once per check, looks up shared ancestors once per batch and probes a missing ref with a single `lstat`. It also passes the batch to the store without copying it.
+
+The fixture is the issue's bare repository: one commit and N branches (`refs/heads/b/n<i>` plus `main`) in `packed-refs`. Each run starts from a fresh destination over `file://`. Fetch goes into an empty bare repository with `+refs/heads/*:refs/remotes/origin/*`. Measured on 2026-10-28: 4 vCPU Intel Xeon, 16 GiB RAM, ext4, Rust 1.99, `release` profile, system Git 2.43.0. Main is `dc9208904`. Git, main and the fix alternate within each round (five rounds at 25k, three at 200k). Medians come from `/usr/bin/time`, and peak RSS is the largest across runs. Every result has the full ref count and passes `git fsck --strict`.
+
+| Command / branches | Git ms / KiB | Grit main ms / KiB | Grit after ms / KiB |
+| --- | ---: | ---: | ---: |
+| `clone --bare`, 25,000 | 190 / 31,260 | 2,840 / 63,228 | 150 / 46,164 |
+| `fetch` into a bare repo, 25,000 | 1,120 / 28,104 | 2,720 / 68,240 | 1,480 / 56,516 |
+| `clone --bare`, 200,000 | 1,570 / 208,616 | 43,630 / 396,552 | 1,420 / 260,408 |
+| `fetch` into a bare repo, 200,000 | 10,450 / 184,572 | 42,490 / 432,436 | 12,430 / 337,260 |
+
+Fetch user time is now linear in the ref count: about 0.4 s at 25,000 refs and 3 s at 200,000, where main took 0.9 s and 25.6 s. What remains of the fetch gap is creating 200,000 loose files in one directory. Git pays that too: about 80% of its time is system time. Per ref, grit now makes 20 system calls, down from 62 on main. Git makes 42. Raw samples are in [`clone-fetch-many-branches-2189.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/clone-fetch-many-branches-2189.json). To reproduce, build the fixture with the commands in the issue, then time `grit clone --bare file://$PWD/tiny g1` against `git clone -q --bare`, and `grit -C f1 fetch origin` against `git -C f2 fetch -q origin`.
+
 ## Bounded branch containment on 10,000 unique tips
 
 Issue #2035 is measured on a full clone of git.git at `7e34d8174dcda3435d1404c9a30bef46afe6c13e` (82,563 reachable commits). Create 10,000 distinct `refs/heads/dogfood/NNNNN` tips from `git rev-list -n 10000 HEAD`, then run `git pack-refs --all`. This fixture has no commit-graph. The review correction was measured on 2026-10-26 against stock Git 2.55.0: Ubuntu 24.04.5, four vCPUs (AMD EPYC 7763), 16 GiB RAM, Rust 1.99.0, `release` profile. Main is `a61c6cf784d65`, reviewed is `9d66d522369c`, and corrected is `da77132c09dd`. No compiler or test suite runs during measurement.
