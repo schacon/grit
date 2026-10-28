@@ -268,7 +268,7 @@ pub fn continue_rebase(
     cancel: &dyn Cancel,
 ) -> Result<RebaseOutcome, RebaseSessionError> {
     if matches!(active_rebase(repo.git_dir()), Some(ActiveRebase::Exec)) {
-        return super::exec::resume_exec_rebase(repo, &opts.apply, false);
+        return super::exec::resume_exec_rebase(repo, &opts.apply, false, progress, cancel);
     }
     super::ensure_rewrite_apply_ready(repo)?;
     let state = load_persisted_state(repo.git_dir())?;
@@ -343,7 +343,7 @@ pub fn skip_rebase(
     cancel: &dyn Cancel,
 ) -> Result<RebaseOutcome, RebaseSessionError> {
     if matches!(active_rebase(repo.git_dir()), Some(ActiveRebase::Exec)) {
-        return super::exec::resume_exec_rebase(repo, &opts.apply, true);
+        return super::exec::resume_exec_rebase(repo, &opts.apply, true, progress, cancel);
     }
     let state = load_persisted_state(repo.git_dir())?;
     let current = state

@@ -804,7 +804,14 @@ fn continue_after_stop_chains_past_a_commit_already_upstream() {
     let mut opts = start_opts(upstream, Some(onto), tip);
     opts.rebase.skip_applied = true;
     let grit = open_grit(wt);
-    let stop = match start_rebase(&grit, &opts).expect("start") {
+    let stop = match start_rebase(
+        &grit,
+        &opts,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("start")
+    {
         RebaseOutcome::Stopped(stop) => stop,
         other => panic!("expected a stop on the conflicting commit, got {other:?}"),
     };
@@ -813,7 +820,14 @@ fn continue_after_stop_chains_past_a_commit_already_upstream() {
     std::fs::write(wt.join("f.txt"), "resolved\n").expect("resolve");
     git(wt, &["add", "f.txt"]);
     let grit = open_grit(wt);
-    match continue_rebase(&grit, &opts).expect("continue") {
+    match continue_rebase(
+        &grit,
+        &opts,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("continue")
+    {
         RebaseOutcome::Done { .. } => {}
         other => panic!("expected done, got {other:?}"),
     }
@@ -2462,9 +2476,13 @@ fn exec_amend_with_leftover_edits_stops_at_the_amended_commit() {
     assert_eq!(git_oid(wt, "HEAD"), commit);
     assert_eq!(git(wt, &["show", "HEAD:one"]), "one\nfmt\n");
     git(wt, &["stash", "push", "-m", "dirt"]);
-    let RebaseOutcome::ExecDone { plan: done, .. } =
-        continue_rebase(&open_grit(wt), &opts).expect("continue after saving the edits")
-    else {
+    let RebaseOutcome::ExecDone { plan: done, .. } = continue_rebase(
+        &open_grit(wt),
+        &opts,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("continue after saving the edits") else {
         panic!("done")
     };
     assert_eq!(done.commits[0].new, Some(commit));
@@ -2537,14 +2555,23 @@ fn exec_amend_conflicting_with_next_commit_stops_resumably_and_matches_git() {
 
     let repo = open_grit(wt);
     assert!(matches!(
-        continue_rebase(&repo, &opts),
+        continue_rebase(
+            &repo,
+            &opts,
+            &mut grit_lib::progress::NullProgress,
+            &grit_lib::progress::NeverCancel
+        ),
         Err(RebaseSessionError::UnmergedPaths)
     ));
     std::fs::write(wt.join("two"), "resolved\n").unwrap();
     git(wt, &["add", "two"]);
-    let RebaseOutcome::ExecDone { exec, plan, .. } =
-        continue_rebase(&open_grit(wt), &opts).expect("continue")
-    else {
+    let RebaseOutcome::ExecDone { exec, plan, .. } = continue_rebase(
+        &open_grit(wt),
+        &opts,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("continue") else {
         panic!("done")
     };
     assert_eq!(exec.runs.len(), 2, "commands run at the resolved commit");
@@ -2584,9 +2611,13 @@ fn exec_conflict_stop_skip_drops_the_commit_and_abort_restores() {
         assert!(matches!(err, HistoryError::ExecConflict { .. }), "{err:?}");
         let amended = git_oid(wt, "HEAD");
         if skip {
-            let RebaseOutcome::ExecDone { plan, .. } =
-                skip_rebase(&open_grit(wt), &opts).expect("skip")
-            else {
+            let RebaseOutcome::ExecDone { plan, .. } = skip_rebase(
+                &open_grit(wt),
+                &opts,
+                &mut grit_lib::progress::NullProgress,
+                &grit_lib::progress::NeverCancel,
+            )
+            .expect("skip") else {
                 panic!("done")
             };
             assert_eq!(plan.commits[1].new, None);
@@ -2646,9 +2677,13 @@ fn exec_resume_keeps_the_rewrite_options_the_rebase_started_with() {
     std::fs::write(wt.join("two"), "C\n").unwrap();
     git(wt, &["add", "two"]);
     assert_eq!(resume_opts.rebase.rewrite.empty, EmptyPolicy::Drop);
-    let RebaseOutcome::ExecDone { .. } =
-        continue_rebase(&open_grit(wt), &resume_opts).expect("continue")
-    else {
+    let RebaseOutcome::ExecDone { .. } = continue_rebase(
+        &open_grit(wt),
+        &resume_opts,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("continue") else {
         panic!("done")
     };
     assert_eq!(
@@ -2680,9 +2715,13 @@ fn exec_conflict_skip_runs_the_pending_command_like_git() {
     assert!(matches!(err, HistoryError::ExecConflict { .. }), "{err:?}");
     assert_eq!(count(&grit_log), 1);
     let amended = git_oid(wt, "HEAD");
-    let RebaseOutcome::ExecDone { exec, plan, .. } =
-        skip_rebase(&open_grit(wt), &opts).expect("skip")
-    else {
+    let RebaseOutcome::ExecDone { exec, plan, .. } = skip_rebase(
+        &open_grit(wt),
+        &opts,
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("skip") else {
         panic!("done")
     };
     assert_eq!(count(&grit_log), 2, "the skipped pick's command still runs");

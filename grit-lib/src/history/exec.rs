@@ -607,7 +607,13 @@ fn stop_on_replay_conflict(
             None,
             TreeMergeConflictPresentation::default(),
         )?;
-        apply_conflict_merge_worktree(repo, &parent_tree, &merge)?;
+        apply_conflict_merge_worktree(
+            repo,
+            &parent_tree,
+            &merge,
+            &mut crate::progress::NullProgress,
+            &crate::progress::NeverCancel,
+        )?;
         Ok(parent)
     };
     let parent = match checkout() {
@@ -968,6 +974,8 @@ pub(super) fn resume_exec_rebase(
     repo: &Repository,
     apply: &super::ApplyOptions,
     skip: bool,
+    progress: &mut dyn crate::progress::ProgressSink,
+    cancel: &dyn crate::progress::Cancel,
 ) -> Result<super::RebaseOutcome, super::RebaseSessionError> {
     let state = load_exec_stop(repo)?;
     let rewrite = &state.rewrite;
@@ -987,13 +995,7 @@ pub(super) fn resume_exec_rebase(
         let planned = rewrites.planned[row].ok_or_else(|| exec_io("invalid exec replay row"))?;
         if skip {
             let tree = commit_tree_for_apply(repo, expected)?;
-            checkout_hard_to_tree_from_head_tree(
-                repo,
-                &tree,
-                &tree,
-                &mut crate::progress::NullProgress,
-                &crate::progress::NeverCancel,
-            )?;
+            checkout_hard_to_tree_from_head_tree(repo, &tree, &tree, progress, cancel)?;
             let entry = &mut plan.commits[row];
             entry.new = None;
             entry.change_id = None;
@@ -1097,13 +1099,7 @@ pub(super) fn resume_exec_rebase(
     };
     // Restore the exact pre-exec HEAD/index before applying the updated atomic plan.
     // Keep the stop state until apply succeeds, so ref failures remain recoverable.
-    let applied = super::apply_rewrite(
-        repo,
-        &plan,
-        apply,
-        &mut crate::progress::NullProgress,
-        &crate::progress::NeverCancel,
-    )?;
+    let applied = super::apply_rewrite(repo, &plan, apply, progress, cancel)?;
     super::rebase_session::clear_rebase_state(repo.git_dir())?;
     Ok(super::RebaseOutcome::ExecDone {
         applied,
@@ -1720,7 +1716,13 @@ mod tests {
         let root = commit_file(&repo, "main", "a.txt", b"1\n", "root\n", None);
         let tip = commit_file(&repo, "main", "b.txt", b"2\n", "tip\n", Some(root));
         let mut edits = HistoryEdits::new();
-        edits.insert(tip, CommitEdit::Reuse(tip));
+        edits.insert(
+            tip,
+            CommitEdit::Reuse {
+                existing: tip,
+                parent: tip,
+            },
+        );
         let mut plan = plan_rewrite(&repo, &edits, &test_rewrite()).expect("plan");
         assert!(plan.ref_updates.is_empty(), "reusing the tip moves no ref");
         let spec = ExecSpec {
