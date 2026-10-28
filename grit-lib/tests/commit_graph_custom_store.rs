@@ -503,3 +503,50 @@ fn attached_graph_of_another_object_format_is_refused_on_open() {
         })
     ));
 }
+
+#[test]
+fn octopus_graph_without_its_edge_chunk_is_rejected_like_git() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    let mut stream = String::new();
+    for (mark, branch) in [(1, "a"), (2, "b"), (3, "c")] {
+        stream.push_str(&format!(
+            "commit refs/heads/{branch}\nmark :{mark}\ncommitter T <t@example.com> {} +0000\ndata 2\n{branch}\n\n",
+            1_600_000_000 + mark
+        ));
+    }
+    stream.push_str(
+        "commit refs/heads/main\nmark :4\ncommitter T <t@example.com> 1600000010 +0000\ndata 8\noctopus\nfrom :1\nmerge :2\nmerge :3\n\n",
+    );
+    git_cmd(&["fast-import", "--quiet"])
+        .in_dir(dir.path())
+        .stdin(stream)
+        .suc();
+    git(dir.path(), &["commit-graph", "write", "--reachable"]);
+    let graph_path = dir.path().join(".git/objects/info/commit-graph");
+    let bytes = std::fs::read(&graph_path).expect("graph");
+    let chain = CommitGraphChain::from_bytes(bytes.clone()).expect("git octopus graph");
+    assert_eq!(chain.total_commits(), 4);
+
+    let mut mutated = bytes;
+    let edge_entry = (0..mutated[6] as usize)
+        .map(|i| 8 + i * 12)
+        .find(|&e| &mutated[e..e + 4] == b"EDGE")
+        .expect("octopus graph has an EDGE chunk");
+    mutated[edge_entry..edge_entry + 4].copy_from_slice(b"EDGX");
+    let body_len = mutated.len() - HashAlgo::Sha1.len();
+    let trailer = HashAlgo::Sha1.checksum_digest(&mutated[..body_len]);
+    mutated[body_len..].copy_from_slice(&trailer);
+
+    std::fs::remove_file(&graph_path).expect("git writes the graph read-only");
+    std::fs::write(&graph_path, &mutated).expect("install mutated graph");
+    let verify = git_cmd(&["commit-graph", "verify"])
+        .in_dir(dir.path())
+        .exec();
+    assert!(!verify.ok(), "git must reject the graph");
+    assert!(verify.stderr.contains("extra-edges"), "{}", verify.stderr);
+    assert!(matches!(
+        CommitGraphChain::from_bytes(mutated),
+        Err(Error::CorruptObject(_))
+    ));
+}

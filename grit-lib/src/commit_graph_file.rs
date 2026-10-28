@@ -189,44 +189,47 @@ fn validate_single_layer_parent_indices(
         if p2 != GRAPH_PARENT_NONE {
             if p2 & GRAPH_EXTRA_EDGES_NEEDED != 0 {
                 let start = (p2 & !GRAPH_EXTRA_EDGES_NEEDED) as usize;
-                if let Some(edge_off) = extra_edges_off {
-                    let edge_end = chunk_byte_range(edge_off, toc_entries, file_end)?;
-                    let edge_len = edge_end.saturating_sub(edge_off);
-                    if start * 4 >= edge_len {
+                let Some(edge_off) = extra_edges_off else {
+                    return Err(Error::CorruptObject(
+                        "commit-graph extra edge list out of range".to_owned(),
+                    ));
+                };
+                let edge_end = chunk_byte_range(edge_off, toc_entries, file_end)?;
+                let edge_len = edge_end.saturating_sub(edge_off);
+                if start * 4 >= edge_len {
+                    return Err(Error::CorruptObject(
+                        "commit-graph extra edge list out of range".to_owned(),
+                    ));
+                }
+                let mut idx = start;
+                loop {
+                    if idx * 4 + 4 > edge_len {
                         return Err(Error::CorruptObject(
-                            "commit-graph extra edge list out of range".to_owned(),
+                            "commit-graph extra edge list corrupt".to_owned(),
                         ));
                     }
-                    let mut idx = start;
-                    loop {
-                        if idx * 4 + 4 > edge_len {
-                            return Err(Error::CorruptObject(
-                                "commit-graph extra edge list corrupt".to_owned(),
-                            ));
-                        }
-                        let ev = u32::from_be_bytes(
-                            body[edge_off + idx * 4..edge_off + idx * 4 + 4]
-                                .try_into()
-                                .map_err(|_| {
-                                    Error::CorruptObject(
-                                        "commit-graph extra edge list corrupt".to_owned(),
-                                    )
-                                })?,
-                        );
-                        let parent = ev & !GRAPH_LAST_EDGE;
-                        if parent != GRAPH_PARENT_NONE
-                            && parent & GRAPH_EXTRA_EDGES_NEEDED == 0
-                            && parent as usize >= num_commits as usize
-                        {
-                            return Err(Error::CorruptObject(
-                                "commit-graph invalid parent index".to_owned(),
-                            ));
-                        }
-                        if ev & GRAPH_LAST_EDGE != 0 {
-                            break;
-                        }
-                        idx += 1;
+                    let ev = u32::from_be_bytes(
+                        body[edge_off + idx * 4..edge_off + idx * 4 + 4]
+                            .try_into()
+                            .map_err(|_| {
+                                Error::CorruptObject(
+                                    "commit-graph extra edge list corrupt".to_owned(),
+                                )
+                            })?,
+                    );
+                    let parent = ev & !GRAPH_LAST_EDGE;
+                    if parent != GRAPH_PARENT_NONE
+                        && parent & GRAPH_EXTRA_EDGES_NEEDED == 0
+                        && parent as usize >= num_commits as usize
+                    {
+                        return Err(Error::CorruptObject(
+                            "commit-graph invalid parent index".to_owned(),
+                        ));
                     }
+                    if ev & GRAPH_LAST_EDGE != 0 {
+                        break;
+                    }
+                    idx += 1;
                 }
             } else if p2 as usize >= num_commits as usize {
                 return Err(Error::CorruptObject(
@@ -2020,6 +2023,55 @@ mod tests {
         reseal_graph(&mut split_layer, crate::objects::HashAlgo::Sha1);
         assert!(matches!(
             super::CommitGraphChain::from_bytes(split_layer),
+            Err(crate::error::Error::CorruptObject(_))
+        ));
+    }
+
+    #[test]
+    fn from_bytes_rejects_octopus_parents_without_an_edge_chunk() {
+        let (_dir, repo, root) = one_commit_repo();
+        let tree = repo.odb().read_commit(&root).expect("root commit").tree;
+        let commit = |parents: Vec<ObjectId>, message: &str| {
+            let raw = serialize_commit(&CommitData {
+                tree,
+                parents,
+                author: "T <t@example.com> 200 +0000".into(),
+                committer: "T <t@example.com> 200 +0000".into(),
+                author_raw: Vec::new(),
+                committer_raw: Vec::new(),
+                encoding: None,
+                message: message.into(),
+                raw_message: None,
+                extra_headers: Vec::new(),
+            });
+            repo.odb().write(ObjectKind::Commit, &raw).expect("commit")
+        };
+        let side_a = commit(vec![], "a\n");
+        let side_b = commit(vec![], "b\n");
+        let octopus = commit(vec![root, side_a, side_b], "octopus\n");
+        crate::refs::write_ref(&repo.git_dir(), "refs/heads/main", &octopus).expect("ref");
+        repo.write_commit_graph(&crate::maintenance::CommitGraphOptions::default())
+            .expect("write graph");
+        let bytes =
+            std::fs::read(repo.odb().objects_dir().join("info/commit-graph")).expect("graph file");
+        let chain = super::CommitGraphChain::from_bytes(bytes.clone()).expect("valid graph");
+        assert_eq!(chain.total_commits(), 4);
+        assert_eq!(
+            chain
+                .graph_commit(&octopus)
+                .map(|(parents, _)| parents.len()),
+            Some(3)
+        );
+
+        let mut no_edge_chunk = bytes;
+        let edge_entry = (0..no_edge_chunk[6] as usize)
+            .map(|i| 8 + i * 12)
+            .find(|&e| no_edge_chunk[e..e + 4] == super::CHUNK_EXTRA_EDGES.to_be_bytes())
+            .expect("octopus graph has an EDGE chunk");
+        no_edge_chunk[edge_entry..edge_entry + 4].copy_from_slice(b"EDGX");
+        reseal_graph(&mut no_edge_chunk, crate::objects::HashAlgo::Sha1);
+        assert!(matches!(
+            super::CommitGraphChain::from_bytes(no_edge_chunk),
             Err(crate::error::Error::CorruptObject(_))
         ));
     }
