@@ -1491,6 +1491,7 @@ fn head_log_update(
         flags: RefUpdateFlags {
             log_only: true,
             no_deref: true,
+            ..Default::default()
         },
     })
 }

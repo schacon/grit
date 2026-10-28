@@ -721,7 +721,22 @@ mod tests {
             Err(Error::CorruptObject(_))
         ));
         let missing = ObjectId::from_hex("1111111111111111111111111111111111111111").expect("oid");
-        crate::refs::write_ref(repo.git_dir(), "refs/tags/missing", &missing).expect("tag ref");
+        let dangling = crate::refs::store::RefTransaction::new()
+            .update(crate::refs::store::RefUpdate {
+                name: "refs/tags/missing".to_owned(),
+                new_value: Some(RawRef::Direct(missing)),
+                expected: crate::refs::store::Expected::Any,
+                reflog: None,
+                flags: crate::refs::store::RefUpdateFlags {
+                    skip_oid_verification: true,
+                    ..Default::default()
+                },
+            })
+            .expect("txn");
+        repo.refs()
+            .prepare(dangling)
+            .and_then(|prepared| prepared.commit())
+            .expect("dangling tag ref");
         assert!(matches!(
             repo.revision_label("missing"),
             Err(Error::ObjectNotFound(_))

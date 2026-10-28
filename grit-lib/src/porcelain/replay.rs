@@ -206,6 +206,7 @@ pub fn replay_commit(
     let index_snapshot = fs::read(repo.index_path()).ok();
 
     if let Some(files) = repo.refs().as_files() {
+        crate::refs::verify_new_tip(repo.refs(), &refname, new_oid)?;
         let git_dir = files.git_dir();
         let mut branch_ref_lock = BranchCommitRefLock::acquire(git_dir, &refname, Some(head_oid))?;
         branch_ref_lock.write_reflogs(git_dir, &ref_update, &head_oid, config.as_ref())?;

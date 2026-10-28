@@ -1588,7 +1588,7 @@ mod default_expire_tests {
     fn parse_and_dwim_read_reflog_lines() {
         let (tmp, repo) = seed_repo();
         let git_dir = &repo.git_dir();
-        let oid = ObjectId::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").expect("oid");
+        let oid = crate::refs::test_commit(git_dir, "aaaaaaaa");
         write_ref(git_dir, "refs/heads/dwim", &oid).expect("write ref");
         let line = format!(
             "0000000000000000000000000000000000000000 {oid} Tester <t@e.com> 100 +0000\tmsg\n"
@@ -1609,7 +1609,7 @@ mod default_expire_tests {
         let git_dir = &repo.git_dir();
         let refname = "refs/heads/main";
         let o1 = ObjectId::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").expect("o1");
-        let o2 = ObjectId::from_hex("cccccccccccccccccccccccccccccccccccccccc").expect("o2");
+        let o2 = crate::refs::test_commit(git_dir, "cccccccc");
         write_ref(git_dir, refname, &o2).expect("tip");
         append_reflog(
             git_dir,
@@ -1659,7 +1659,7 @@ mod default_expire_tests {
         let git_dir = &repo.git_dir();
         let now = 1_700_000_000_i64;
         let refname = "refs/stash";
-        let oid = ObjectId::from_hex("dddddddddddddddddddddddddddddddddddddddd").expect("oid");
+        let oid = crate::refs::test_commit(git_dir, "dddddddd");
         write_ref(git_dir, refname, &oid).expect("stash ref");
         append_reflog(
             git_dir,
@@ -1718,7 +1718,7 @@ mod default_expire_tests {
     fn mark_stalefix_reachable_walks_reflog_mentions() {
         let (tmp, repo) = seed_repo();
         let git_dir = &repo.git_dir();
-        let oid = ObjectId::from_hex("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee").expect("oid");
+        let oid = crate::refs::test_commit(git_dir, "eeeeeeee");
         write_ref(git_dir, "refs/heads/main", &oid).expect("write");
         append_reflog(
             git_dir,
@@ -1739,7 +1739,7 @@ mod default_expire_tests {
     fn all_reflog_oids_and_list_includes_head() {
         let (tmp, repo) = seed_repo();
         let git_dir = &repo.git_dir();
-        let oid = ObjectId::from_hex("1212121212121212121212121212121212121212").expect("oid");
+        let oid = crate::refs::test_commit(git_dir, "12121212");
         write_ref(git_dir, "refs/heads/main", &oid).expect("write");
         append_reflog(
             git_dir,
@@ -1765,7 +1765,7 @@ mod default_expire_tests {
         let (tmp, repo) = seed_repo();
         let git_dir = &repo.git_dir();
         let branch = "refs/heads/main";
-        let oid = ObjectId::from_hex("1313131313131313131313131313131313131313").expect("oid");
+        let oid = crate::refs::test_commit(git_dir, "13131313");
         write_ref(git_dir, branch, &oid).expect("write");
         append_reflog(
             git_dir,
@@ -1837,7 +1837,7 @@ mod default_expire_tests {
         let (tmp, repo) = seed_repo();
         let git_dir = &repo.git_dir();
         let refname = "refs/heads/main";
-        let oid = ObjectId::from_hex("ffffffffffffffffffffffffffffffffffffffff").expect("oid");
+        let oid = crate::refs::test_commit(git_dir, "ffffffff");
         write_ref(git_dir, refname, &oid).expect("write");
         append_reflog(
             git_dir,

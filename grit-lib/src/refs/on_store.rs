@@ -43,6 +43,19 @@ fn expected_tip(expected_old: Option<ObjectId>) -> Expected {
     expected_old.map_or(Expected::Missing, Expected::Oid)
 }
 
+/// Run `store`'s object check ([`RefStore::verify_update_targets`]) for pointing `refname` at
+/// `new_oid`, for the files-backend paths that write without a transaction.
+pub(crate) fn verify_new_tip(store: &dyn RefStore, refname: &str, new_oid: ObjectId) -> Result<()> {
+    store.verify_update_targets(&[RefUpdate {
+        name: refname.to_owned(),
+        new_value: Some(RawRef::Direct(new_oid)),
+        expected: Expected::Any,
+        reflog: None,
+        flags: RefUpdateFlags::default(),
+    }])?;
+    Ok(())
+}
+
 /// Move the branch `HEAD` points at to a new commit and append the branch and `HEAD` reflogs,
 /// all through `store`.
 ///
@@ -58,6 +71,10 @@ fn expected_tip(expected_old: Option<ObjectId>) -> Expected {
 /// - [`Error::Message`] when `HEAD` is not a symbolic ref to `update.branch_ref`.
 /// - [`Error::RefStore`] with [`crate::refs::store::RefStoreError::ExpectedMismatch`] when the branch no
 ///   longer has `update.expected_old`.
+/// - [`Error::RefStore`] with [`crate::refs::store::RefStoreError::MissingObject`] or
+///   [`crate::refs::store::RefStoreError::NotACommit`] when `store` is the store of
+///   [`crate::repo::Repository::refs`] and `update.new_oid` is not a commit the repository
+///   stores (checked before any lock, on every backend).
 /// - Ref, reflog and I/O failures from the backend; the branch is not advanced when they occur.
 pub fn update_branch_for_commit_on_store(
     store: &dyn RefStore,
@@ -75,6 +92,7 @@ pub fn update_branch_for_commit_on_store(
     }
     let reflog_old = update.expected_old.unwrap_or_else(zero_oid);
     if let Some(files) = store.as_files() {
+        verify_new_tip(store, update.branch_ref, update.new_oid)?;
         return super::update_branch_for_commit_files(files.git_dir(), update, &reflog_old, config);
     }
 
@@ -97,6 +115,7 @@ pub fn update_branch_for_commit_on_store(
             flags: RefUpdateFlags {
                 no_deref: true,
                 log_only: true,
+                ..Default::default()
             },
         });
     }
@@ -132,6 +151,7 @@ pub(crate) fn update_detached_head_for_commit_on_store(
         ));
     }
     if let Some(files) = store.as_files() {
+        verify_new_tip(store, "HEAD", new_oid)?;
         return super::update_detached_head_for_commit_files(
             files.git_dir(),
             expected_old,
@@ -154,6 +174,7 @@ pub(crate) fn update_detached_head_for_commit_on_store(
             flags: RefUpdateFlags {
                 no_deref: true,
                 log_only: false,
+                ..Default::default()
             },
         },
     )
@@ -205,6 +226,7 @@ pub(crate) fn append_reflog_on_store(
             flags: RefUpdateFlags {
                 no_deref: true,
                 log_only: true,
+                ..Default::default()
             },
         },
     )
@@ -253,6 +275,7 @@ pub(crate) fn delete_ref_on_store(store: &dyn RefStore, refname: &str) -> Result
             flags: RefUpdateFlags {
                 no_deref: true,
                 log_only: false,
+                ..Default::default()
             },
         },
     )?;
@@ -404,6 +427,98 @@ mod tests {
         .expect("update");
         assert_eq!(log(&store, "HEAD").len(), 1);
         assert!(!store.reflog_exists("refs/heads/main").expect("exists"));
+    }
+
+    #[test]
+    fn files_fast_paths_check_the_new_tip_against_the_repository_objects() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = crate::repo::init_repository(
+            dir.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let git_dir = repo.git_dir().to_path_buf();
+        let base = crate::refs::test_commit(&git_dir, "base");
+        let tree = repo
+            .odb()
+            .write(
+                crate::objects::ObjectKind::Tree,
+                b"100644 f\0aaaaaaaaaaaaaaaaaaaa",
+            )
+            .expect("tree");
+        crate::refs::write_ref(&git_dir, "refs/heads/main", &base).expect("main");
+        assert!(
+            repo.refs().as_files().is_some(),
+            "exercises the files fast path"
+        );
+
+        let branch = |new_oid| BranchCommitRefUpdate {
+            branch_ref: "refs/heads/main",
+            expected_old: Some(base),
+            new_oid,
+            identity: IDENT,
+            reflog_message: "commit: x",
+        };
+        let err = update_branch_for_commit_on_store(repo.refs(), &branch(oid(9)), &config(None))
+            .expect_err("missing tip");
+        assert!(
+            matches!(&err, Error::RefStore(RefStoreError::MissingObject { name, oid: o })
+                if name == "refs/heads/main" && *o == oid(9)),
+            "{err:?}"
+        );
+        let err = update_branch_for_commit_on_store(repo.refs(), &branch(tree), &config(None))
+            .expect_err("tree tip");
+        assert!(
+            matches!(&err, Error::RefStore(RefStoreError::NotACommit { name, .. })
+                if name == "refs/heads/main"),
+            "{err:?}"
+        );
+        assert_eq!(
+            crate::refs::resolve_ref(&git_dir, "HEAD").expect("HEAD"),
+            base
+        );
+        assert!(!git_dir.join("refs/heads/main.lock").exists());
+
+        crate::refs::write_ref(&git_dir, "HEAD", &base).expect("detach");
+        for (new_oid, missing) in [(oid(9), true), (tree, false)] {
+            let err = update_detached_head_for_commit_on_store(
+                repo.refs(),
+                Some(base),
+                new_oid,
+                IDENT,
+                "commit: x",
+                &config(None),
+            )
+            .expect_err("bad detached tip");
+            let expected = if missing {
+                matches!(&err, Error::RefStore(RefStoreError::MissingObject { name, .. }) if name == "HEAD")
+            } else {
+                matches!(&err, Error::RefStore(RefStoreError::NotACommit { name, .. }) if name == "HEAD")
+            };
+            assert!(expected, "{err:?}");
+        }
+        assert_eq!(
+            repo.refs().read_raw("HEAD").expect("HEAD"),
+            Some(RawRef::Direct(base))
+        );
+
+        let next = crate::refs::test_commit(&git_dir, "next");
+        update_detached_head_for_commit_on_store(
+            repo.refs(),
+            Some(base),
+            next,
+            IDENT,
+            "commit: next",
+            &config(None),
+        )
+        .expect("stored commit");
+        assert_eq!(
+            crate::refs::resolve_ref(&git_dir, "HEAD").expect("HEAD"),
+            next
+        );
     }
 
     #[test]

@@ -4,6 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::git_dir::GitDirPathOperation;
+use crate::objects::{ObjectId, ObjectKind};
 use crate::refs::RefnameUnavailable;
 
 use super::{Expected, RawRef};
@@ -89,6 +90,46 @@ pub enum RefStoreError {
     NullOid {
         /// The ref the update targeted.
         name: String,
+    },
+
+    /// An update would point a ref at an object the repository does not store.
+    ///
+    /// Raised by the stores a [`crate::repo::Repository`] hands out (see
+    /// [`super::RefStore::prepare`]); the bare backends do not look at objects. Set
+    /// [`super::RefUpdateFlags::skip_oid_verification`] to write such a ref on purpose.
+    #[error("refusing to point ref '{name}' at {oid}: no such object in the repository")]
+    MissingObject {
+        /// The ref the update targeted.
+        name: String,
+        /// The object id the update would store.
+        oid: ObjectId,
+    },
+
+    /// An update would point a branch (`refs/heads/…`) or `HEAD` at something other than a
+    /// commit.
+    ///
+    /// Checked alongside [`Self::MissingObject`]. Tags, remote-tracking and other refs may
+    /// name any object.
+    #[error("refusing to point '{name}' at {kind} {oid}: branches and HEAD must name a commit")]
+    NotACommit {
+        /// The branch or `HEAD` the update targeted.
+        name: String,
+        /// The object id the update would store.
+        oid: ObjectId,
+        /// What `oid` actually is.
+        kind: ObjectKind,
+    },
+
+    /// Looking up the object an update would store failed (unreadable pack, I/O, a failing
+    /// custom object store), so the update could not be checked.
+    #[error("cannot check object {oid} for ref '{name}': {source}")]
+    ObjectLookup {
+        /// The ref the update targeted.
+        name: String,
+        /// The object id the update would store.
+        oid: ObjectId,
+        /// The object database error, downcastable to [`crate::error::Error`].
+        source: BackendError,
     },
 
     /// Reflog identity or message would forge or corrupt a log line.

@@ -855,7 +855,8 @@ fn setup_clone_head(
     match requested {
         CloneRequestedRef::Tag { name, peel } => {
             if !peel.is_zero() {
-                refs::write_ref(repo.git_dir(), "HEAD", peel).map_err(CloneError::Library)?;
+                refs::update_direct_ref_on_store(repo.refs(), repo.git_dir(), "HEAD", peel)
+                    .map_err(CloneError::Library)?;
                 refs::append_reflog_with_signature(
                     repo.git_dir(),
                     "HEAD",
@@ -883,8 +884,13 @@ fn setup_clone_head(
                 let tracking = format!("refs/remotes/{}/{}", opts.remote_name, branch);
                 let oid = refs::resolve_ref(repo.git_dir(), &tracking).unwrap_or(ObjectId::zero());
                 if !oid.is_zero() {
-                    refs::write_ref(repo.git_dir(), &branch_ref, &oid)
-                        .map_err(CloneError::Library)?;
+                    refs::update_direct_ref_on_store(
+                        repo.refs(),
+                        repo.git_dir(),
+                        &branch_ref,
+                        &oid,
+                    )
+                    .map_err(CloneError::Library)?;
                     refs::append_reflog_with_signature(
                         repo.git_dir(),
                         &branch_ref,
@@ -942,8 +948,13 @@ fn setup_clone_head(
                 let tracking = format!("refs/remotes/{}/{default}", opts.remote_name);
                 let oid = refs::resolve_ref(repo.git_dir(), &tracking).unwrap_or(ObjectId::zero());
                 if !oid.is_zero() {
-                    refs::write_ref(repo.git_dir(), &branch_ref, &oid)
-                        .map_err(CloneError::Library)?;
+                    refs::update_direct_ref_on_store(
+                        repo.refs(),
+                        repo.git_dir(),
+                        &branch_ref,
+                        &oid,
+                    )
+                    .map_err(CloneError::Library)?;
                     refs::append_reflog_with_signature(
                         repo.git_dir(),
                         &branch_ref,

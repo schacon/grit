@@ -994,7 +994,7 @@ fn apply_commands_with_hooks(
 
     if atomic {
         let batch: Vec<_> = pending.iter().map(|(_, u)| u.clone()).collect();
-        if let Err(e) = crate::refs::commit_ref_store_batch(repo.git_dir(), &batch) {
+        if let Err(e) = crate::refs::commit_ref_updates_on_store(repo.refs(), &batch, &[]) {
             let refusal = RefUpdateRefusal::RefStore(e.to_string());
             for (idx, _) in pending {
                 if results[idx].error.is_none() {
@@ -1004,7 +1004,7 @@ fn apply_commands_with_hooks(
         }
     } else {
         for (idx, update) in pending {
-            if let Err(e) = crate::refs::commit_store_update(repo.git_dir(), update) {
+            if let Err(e) = crate::refs::commit_ref_update_on_store(repo.refs(), update) {
                 results[idx].error = Some(RefUpdateRefusal::RefStore(e.to_string()));
             }
         }

@@ -4416,7 +4416,6 @@ mod tests {
     #[test]
     fn update_refs_reftable_symref_ancestor_blocks_child_create() {
         use crate::error::Error;
-        use crate::objects::ObjectId;
         use crate::refs::gc::{update_refs, RefTransactionItem};
         use crate::refs::store::RefStoreError;
         use crate::refs::RefnameUnavailable;
@@ -4441,7 +4440,7 @@ mod tests {
         )
         .expect("symref parent");
 
-        let child_oid = ObjectId::from_bytes(&[0x55; 20]).expect("oid");
+        let child_oid = crate::refs::test_commit(&git_dir, "child");
         let err = update_refs(
             &git_dir,
             &[RefTransactionItem {

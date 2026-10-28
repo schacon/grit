@@ -12,7 +12,7 @@ use crate::odb::Odb;
 use crate::pack_write::{install_pack_stream, whole_pack_uncompressed_size, InstallPackOptions};
 use crate::porcelain::checkout::checkout_between_trees;
 use crate::prune_packed::{prune_packed_objects, PrunePackedOptions};
-use crate::refs::{write_packed_refs_file, write_ref, PackedRefRecord};
+use crate::refs::{write_packed_refs_file, PackedRefRecord};
 use crate::repo::{InitOptions, Repository};
 use crate::transfer::{build_pack, PackBuildOptions};
 use crate::write_tree::{write_tree_from_index, write_tree_update_index, WriteTreeFlags};
@@ -509,7 +509,12 @@ fn install_refs(repo: &Repository, records: &[PackedRefRecord], storage: RefStor
         RefStorage::Packed => write_packed_refs_file(repo.git_dir(), records),
         RefStorage::Loose => {
             for record in records {
-                write_ref(repo.git_dir(), &record.refname, &record.oid)?;
+                crate::refs::update_direct_ref_on_store(
+                    repo.refs(),
+                    repo.git_dir(),
+                    &record.refname,
+                    &record.oid,
+                )?;
             }
             Ok(())
         }

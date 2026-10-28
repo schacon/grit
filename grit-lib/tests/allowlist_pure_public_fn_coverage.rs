@@ -2,6 +2,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use crate::support;
+
 use grit_lib::objects::FileMode;
 use std::io::{Cursor, Write};
 use std::num::NonZeroUsize;
@@ -403,7 +405,7 @@ fn porcelain_log_revert_and_submodule_diff_helpers() {
     let dir = tempdir().expect("tempdir");
     let repo = init_repo(dir.path());
     let git_dir = dir.path().join(".git");
-    let seed = ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904").expect("tree");
+    let seed = support::stored_commit(&git_dir, 1);
     grit_lib::refs::write_ref(git_dir.as_path(), "refs/heads/main", &seed).expect("seed main");
     let _ = collect_decorations(&repo, false);
     let _ = collect_decorations_inner(&repo, true, true, &DecorationFilter::default());

@@ -94,6 +94,7 @@ fn linked_worktree(root: &Path) -> (PathBuf, PathBuf) {
             flags: RefUpdateFlags {
                 no_deref: true,
                 log_only: false,
+                ..Default::default()
             },
         },
     );

@@ -16,7 +16,7 @@ use grit_lib::objects::odb::store::{MemoryStore, ObjectStore, WritableObjectStor
 use grit_lib::objects::odb::{OdbBuilder, WriteOptions};
 use grit_lib::objects::{HashAlgo, Object, ObjectId, ObjectInfo, ObjectKind};
 use grit_lib::refs::refs_fsck::refs_fsck;
-use grit_lib::refs::write_ref;
+use grit_lib::refs::store::RefName;
 use grit_lib::repo::{InitOptions, Repository, RepositoryBuilder};
 use grit_lib::revwalk::rev_parse::abbreviate_object_id;
 
@@ -114,7 +114,13 @@ fn flaky_repo(dir: &Path) -> (Repository, Arc<Flaky>, ObjectId) {
             .as_bytes(),
         )
         .expect("commit");
-    write_ref(&git_dir, "refs/heads/main", &commit).expect("ref");
+    // The commit lives only in the custom store, so the ref goes through the repository.
+    repo.references()
+        .update(
+            &RefName::try_from("refs/heads/main").expect("name"),
+            &commit,
+        )
+        .expect("ref");
     (repo, flaky, commit)
 }
 

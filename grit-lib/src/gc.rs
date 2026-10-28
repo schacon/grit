@@ -519,8 +519,8 @@ mod update_refs_tests {
         )
         .expect("init");
         let git_dir = repo.git_dir();
-        let c1 = sample_oid("67bf698f3ab735e92fb011a99cff3497c44d30c1");
-        let c2 = sample_oid("1111111111111111111111111111111111111111");
+        let c1 = refs::test_commit(&git_dir, "c1");
+        let c2 = refs::test_commit(&git_dir, "c2");
         refs::write_ref(&git_dir, "refs/heads/cas", &c2).expect("seed");
 
         let err = update_refs(
@@ -552,8 +552,8 @@ mod update_refs_tests {
         )
         .expect("init");
         let git_dir = repo.git_dir();
-        let c1 = sample_oid("67bf698f3ab735e92fb011a99cff3497c44d30c1");
-        let c2 = sample_oid("1111111111111111111111111111111111111111");
+        let c1 = refs::test_commit(&git_dir, "c1");
+        let c2 = refs::test_commit(&git_dir, "c2");
         crate::refs::write_ref(&git_dir, "refs/heads/locked-cas", &c1).expect("seed");
         crate::refs::write_ref(&git_dir, "refs/heads/locked-cas", &c2).expect("advance");
         let err = update_refs(

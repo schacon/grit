@@ -23,7 +23,7 @@ use grit_lib::porcelain::add::{stage, StageMode, StageOptions};
 use grit_lib::porcelain::commit::{commit_with_scope, CommitRequest, CommitScope};
 use grit_lib::porcelain::stage_tracked::IndexStagingThresholds;
 use grit_lib::progress::{NeverCancel, NullProgress};
-use grit_lib::refs::{resolve_ref, write_ref};
+use grit_lib::refs::resolve_ref;
 use grit_lib::remote::fetch::NoProgress;
 use grit_lib::remote::transfer::{FetchOptions, PushOptions, PushRefSpec};
 use grit_lib::remote::{Remote, RemoteError};
@@ -129,7 +129,13 @@ fn commit_into(repo: &Repository, content: &[u8]) -> ObjectId {
         .odb()
         .write(ObjectKind::Commit, body.as_bytes())
         .expect("commit");
-    write_ref(repo.git_dir(), "refs/heads/main", &commit).expect("ref");
+    grit_lib::refs::update_direct_ref_on_store(
+        repo.refs(),
+        repo.git_dir(),
+        "refs/heads/main",
+        &commit,
+    )
+    .expect("ref");
     commit
 }
 

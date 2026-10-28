@@ -421,7 +421,23 @@ fn plan_rewrite_non_commit_tip_returns_planning_error() {
         .odb()
         .write(ObjectKind::Blob, b"not a commit")
         .expect("blob");
-    grit_lib::refs::write_ref(grit.git_dir(), "refs/heads/main", &blob).expect("ref");
+    // A corrupt branch on purpose: ref writes refuse a branch at a blob unless told not to check.
+    let corrupt = grit_lib::refs::store::RefTransaction::new()
+        .update(grit_lib::refs::store::RefUpdate {
+            name: "refs/heads/main".to_owned(),
+            new_value: Some(grit_lib::refs::store::RawRef::Direct(blob)),
+            expected: grit_lib::refs::store::Expected::Any,
+            reflog: None,
+            flags: grit_lib::refs::store::RefUpdateFlags {
+                skip_oid_verification: true,
+                ..Default::default()
+            },
+        })
+        .expect("txn");
+    grit.refs()
+        .prepare(corrupt)
+        .and_then(|prepared| prepared.commit())
+        .expect("ref");
     let mut edits = HistoryEdits::new();
     edits.insert(
         blob,

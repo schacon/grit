@@ -278,7 +278,7 @@ fn references_update_uses_injected_ref_store() {
         .expect("blob");
     let store = Arc::new(MemoryRefStore::new());
     let repo = repo.with_ref_store(store);
-    let name = RefName::try_from("refs/heads/probe").expect("valid ref");
+    let name = RefName::try_from("refs/tags/probe").expect("valid ref");
     repo.references().update(&name, &oid).expect("update");
     assert_eq!(repo.references().resolve(&name).expect("resolve"), oid);
     assert!(
@@ -286,7 +286,7 @@ fn references_update_uses_injected_ref_store() {
         "update must not fall back to on-disk files store"
     );
     assert!(
-        !test.worktree().join(".git/refs/heads/probe").exists(),
+        !test.worktree().join(".git/refs/tags/probe").exists(),
         "injected store update must not write loose ref under git_dir"
     );
 }

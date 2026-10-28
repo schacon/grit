@@ -10,6 +10,7 @@
 
 mod apply;
 pub mod backend;
+mod checked;
 mod error;
 mod files;
 mod linked_worktree;
@@ -23,6 +24,7 @@ mod transaction;
 mod types;
 mod validation;
 
+pub(crate) use checked::{open_checked_ref_store, ObjectCheckedRefStore};
 pub use error::{BackendError, RefStoreError};
 pub use files::{FilesRefStore, FilesRefStoreConfig};
 pub(crate) use linked_worktree::LinkedWorktreeRefStore;
@@ -152,10 +154,40 @@ pub trait RefStore: Send + Sync + Debug {
     /// [`backend::check_transaction`] performs steps 1 and 3–5 and
     /// [`backend::apply_transaction`] defines what [`PreparedRefTransaction::commit`] stores,
     /// including reflog lines.
+    ///
+    /// A backend does not look at objects. The store
+    /// [`Repository::refs`](crate::repo::Repository::refs) returns (whatever backend it
+    /// wraps, including one injected with
+    /// [`RepositoryBuilder::ref_store`](crate::repo::RepositoryBuilder::ref_store)) adds one
+    /// more check before calling the backend. Each direct value must name an object the
+    /// repository stores ([`RefStoreError::MissingObject`]). A branch (`refs/heads/…`) or
+    /// `HEAD` must name a commit ([`RefStoreError::NotACommit`]). An object that cannot be
+    /// read fails with [`RefStoreError::ObjectLookup`]. Deletes, symbolic values,
+    /// reflog-only updates and updates flagged [`RefUpdateFlags::skip_oid_verification`] are
+    /// not looked up.
     fn prepare(
         &self,
         txn: RefTransaction,
     ) -> StoreResult<Box<dyn PreparedRefTransaction + Send + '_>>;
+
+    /// Check the objects `updates` would point refs at, without taking any lock or writing.
+    ///
+    /// This is the object check [`Self::prepare`] makes on the store
+    /// [`Repository::refs`](crate::repo::Repository::refs) returns. Writers that update a ref
+    /// without a transaction (the files-backend fast path behind
+    /// [`update_branch_for_commit_on_store`](crate::refs::update_branch_for_commit_on_store))
+    /// call it before locking. Backends do not look at objects, so the default accepts
+    /// everything; there is no need to override it.
+    ///
+    /// # Errors
+    ///
+    /// On the repository's store: [`RefStoreError::MissingObject`],
+    /// [`RefStoreError::NotACommit`] or [`RefStoreError::ObjectLookup`] for the first
+    /// offending update.
+    fn verify_update_targets(&self, updates: &[RefUpdate]) -> StoreResult<()> {
+        let _ = updates;
+        Ok(())
+    }
 
     /// Whether a reflog is present for `name`.
     fn reflog_exists(&self, name: &str) -> Result<bool>;

@@ -161,9 +161,20 @@ impl<'repo> References<'repo> {
     /// Uses the [`RefStore`](crate::refs::store::RefStore) installed on this repository (including
     /// injected in-memory stores), not a fresh open from `git_dir` alone.
     ///
+    /// `oid` must be stored in this repository, and must be a commit when `name` is a branch
+    /// (`refs/heads/…`) or `HEAD`. This catches a commit that a concurrent prune deleted after
+    /// you wrote it, instead of leaving the ref pointing at a missing object.
+    ///
     /// # Errors
     ///
-    /// Propagates validation, locking, and I/O errors from the ref backend.
+    /// - [`RefStoreError::MissingObject`](crate::refs::store::RefStoreError::MissingObject)
+    ///   when the repository does not store `oid`.
+    /// - [`RefStoreError::NotACommit`](crate::refs::store::RefStoreError::NotACommit) when
+    ///   `name` is a branch or `HEAD` and `oid` is not a commit.
+    /// - Validation, locking, and I/O errors from the ref backend.
+    ///
+    /// The two object errors are returned as [`crate::error::Error::RefStore`]. The ref is
+    /// unchanged on error.
     ///
     /// # Examples
     ///

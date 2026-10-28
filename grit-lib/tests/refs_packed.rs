@@ -367,6 +367,11 @@ fn pack_remote_tracking_refs_for_clone_matches_git() {
     let clone = files_repo();
     let clone_git = git_dir(&clone);
     fs::create_dir_all(clone_git.join("objects")).unwrap();
+    // A clone holds the objects its remote-tracking refs name.
+    git(
+        wt_path(&clone),
+        &["fetch", "-q", up_wt.to_str().unwrap(), "refs/heads/main"],
+    );
     for name in ["refs/remotes/origin/main", "refs/remotes/origin/feature"] {
         let oid: ObjectId = git(up_wt, &["rev-parse", name]).trim().parse().unwrap();
         write_ref(&clone_git, name, &oid).unwrap();

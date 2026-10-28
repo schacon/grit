@@ -21,13 +21,13 @@
 
 use std::collections::BTreeMap;
 
-use crate::objects::ObjectId;
+use crate::objects::{ObjectId, ObjectKind};
 use crate::refs::SYMREF_MAXDEPTH;
 
 use super::apply::{
     apply_case_only_ref_rename, apply_reflog_rename, apply_update, simulate_batch_apply,
 };
-use super::error::RefStoreError;
+use super::error::{BackendError, RefStoreError};
 use super::transaction::RefTransaction;
 use super::validation::validate_storable_refname as validate_name;
 use super::{RawRef, RefUpdate};
@@ -90,6 +90,62 @@ pub fn check_transaction(state: &RefBatchState, txn: &RefTransaction) -> Result<
         txn.reflog_renames(),
         txn.case_only_renames(),
     )
+}
+
+/// Check that each direct value in `updates` names an object, and that a branch or `HEAD`
+/// names a commit.
+///
+/// `kind_of` reports the stored kind of an object, or `None` when it is absent. Deletes,
+/// symbolic values, reflog-only updates, the null id (rejected as
+/// [`RefStoreError::NullOid`] by [`validate_transaction`]) and updates flagged
+/// [`RefUpdateFlags::skip_oid_verification`](super::RefUpdateFlags::skip_oid_verification)
+/// are not looked up. The branch rule applies to the name the update gives, before any
+/// symbolic dereference.
+///
+/// # Errors
+///
+/// [`RefStoreError::MissingObject`], [`RefStoreError::NotACommit`], or
+/// [`RefStoreError::ObjectLookup`] wrapping a `kind_of` failure, for the first offending
+/// update.
+pub(crate) fn verify_direct_targets(
+    updates: &[RefUpdate],
+    mut kind_of: impl FnMut(&ObjectId) -> crate::error::Result<Option<ObjectKind>>,
+) -> Result<(), RefStoreError> {
+    for update in updates {
+        let Some(RawRef::Direct(oid)) = &update.new_value else {
+            continue;
+        };
+        if update.flags.log_only || update.flags.skip_oid_verification || oid.is_zero() {
+            continue;
+        }
+        let kind = kind_of(oid).map_err(|err| RefStoreError::ObjectLookup {
+            name: update.name.clone(),
+            oid: *oid,
+            source: BackendError::new(err),
+        })?;
+        match kind {
+            None => {
+                return Err(RefStoreError::MissingObject {
+                    name: update.name.clone(),
+                    oid: *oid,
+                })
+            }
+            Some(kind) if kind != ObjectKind::Commit && names_branch(&update.name) => {
+                return Err(RefStoreError::NotACommit {
+                    name: update.name.clone(),
+                    oid: *oid,
+                    kind,
+                })
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Whether Git requires `name` to point at a commit.
+fn names_branch(name: &str) -> bool {
+    name == "HEAD" || name.starts_with("refs/heads/")
 }
 
 /// Directory/file, compare-and-swap and duplicate-write checks for `updates` alone (names
@@ -289,6 +345,128 @@ mod tests {
             assert_eq!((log[0].old_oid, log[0].new_oid), (oid(1), oid(2)), "{name}");
             assert_eq!(log[0].identity, "T <t@example.com> 0 +0000", "{name}");
         }
+    }
+
+    #[test]
+    fn verify_direct_targets_checks_presence_and_branch_kind() {
+        let kinds = |oid: &ObjectId| {
+            Ok(match oid.as_bytes()[19] {
+                1 => Some(ObjectKind::Commit),
+                2 => Some(ObjectKind::Tree),
+                3 => Some(ObjectKind::Tag),
+                _ => None,
+            })
+        };
+        let at = |name: &str, byte: u8| put(name, RawRef::Direct(oid(byte)), Expected::Any);
+
+        for name in ["HEAD", "refs/heads/a", "refs/tags/a", "refs/remotes/o/a"] {
+            assert_eq!(
+                verify_direct_targets(&[at(name, 1)], kinds),
+                Ok(()),
+                "{name}"
+            );
+            assert_eq!(
+                verify_direct_targets(&[at(name, 9)], kinds),
+                Err(RefStoreError::MissingObject {
+                    name: name.to_owned(),
+                    oid: oid(9)
+                }),
+                "{name}"
+            );
+        }
+        for name in ["HEAD", "refs/heads/a"] {
+            assert_eq!(
+                verify_direct_targets(&[at(name, 2)], kinds),
+                Err(RefStoreError::NotACommit {
+                    name: name.to_owned(),
+                    oid: oid(2),
+                    kind: ObjectKind::Tree
+                })
+            );
+        }
+        for name in [
+            "refs/tags/a",
+            "refs/remotes/o/a",
+            "refs/notes/commits",
+            "ORIG_HEAD",
+        ] {
+            assert_eq!(
+                verify_direct_targets(&[at(name, 2)], kinds),
+                Ok(()),
+                "{name}"
+            );
+            assert_eq!(
+                verify_direct_targets(&[at(name, 3)], kinds),
+                Ok(()),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn verify_direct_targets_skips_values_it_cannot_or_must_not_check() {
+        let mut probes = 0;
+        let mut log_only = put("refs/heads/a", RawRef::Direct(oid(9)), Expected::Any);
+        log_only.flags.log_only = true;
+        let mut skipped = put("refs/heads/b", RawRef::Direct(oid(9)), Expected::Any);
+        skipped.flags.skip_oid_verification = true;
+        let delete = RefUpdate {
+            new_value: None,
+            ..put("refs/heads/c", RawRef::Direct(oid(9)), Expected::Any)
+        };
+        let updates = [
+            log_only,
+            skipped,
+            delete,
+            put(
+                "HEAD",
+                RawRef::Symbolic("refs/heads/x".to_owned()),
+                Expected::Any,
+            ),
+            put(
+                "refs/heads/z",
+                RawRef::Direct(ObjectId::zero()),
+                Expected::Any,
+            ),
+        ];
+        let result = verify_direct_targets(&updates, |_| {
+            probes += 1;
+            Ok(None)
+        });
+        assert_eq!(result, Ok(()));
+        assert_eq!(probes, 0);
+    }
+
+    #[test]
+    fn verify_direct_targets_reports_lookup_failures_and_stops_at_the_first_bad_update() {
+        let updates = [
+            put("refs/heads/a", RawRef::Direct(oid(1)), Expected::Any),
+            put("refs/heads/b", RawRef::Direct(oid(2)), Expected::Any),
+            put("refs/heads/c", RawRef::Direct(oid(3)), Expected::Any),
+        ];
+        let mut seen = Vec::new();
+        let err = verify_direct_targets(&updates, |id| {
+            seen.push(*id);
+            match id.as_bytes()[19] {
+                1 => Ok(Some(ObjectKind::Commit)),
+                _ => Err(crate::error::Error::CorruptObject("bad header".to_owned())),
+            }
+        })
+        .expect_err("lookup failure");
+        let RefStoreError::ObjectLookup {
+            name,
+            oid: id,
+            source,
+        } = err
+        else {
+            panic!("expected ObjectLookup, got {err:?}");
+        };
+        assert_eq!((name.as_str(), id), ("refs/heads/b", oid(2)));
+        assert!(matches!(
+            source.downcast_ref::<crate::error::Error>(),
+            Some(crate::error::Error::CorruptObject(_))
+        ));
+        assert_eq!(seen, vec![oid(1), oid(2)]);
     }
 
     #[test]

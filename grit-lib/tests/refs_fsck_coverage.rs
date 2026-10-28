@@ -2,17 +2,16 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use crate::support;
+
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::ConfigSet;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::refs_fsck::{format_refs_fsck_line, refs_fsck, RefsFsckIssue};
+use grit_lib::refs::store::{Expected, RawRef, RefTransaction, RefUpdate, RefUpdateFlags};
 use grit_lib::refs::write_ref;
 use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;
-
-fn oid(byte: u8) -> ObjectId {
-    ObjectId::from_bytes(&[byte; 20]).expect("oid")
-}
 
 #[test]
 fn refs_fsck_reports_bad_symref_and_formats_line() {
@@ -25,6 +24,7 @@ fn refs_fsck_reports_bad_symref_and_formats_line() {
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
+    let oid = |n: u8| support::stored_commit(&git_dir, n);
     let repo = Repository::open(
         &git_dir,
         &RepositoryOptions::empty().with_work_tree(dir.path()),
@@ -40,13 +40,33 @@ fn refs_fsck_reports_bad_symref_and_formats_line() {
     .expect("symref");
 
     write_ref(&git_dir, "refs/heads/good", &oid(1)).expect("good ref");
+    let dangling = RefTransaction::new()
+        .update(RefUpdate {
+            name: "refs/heads/dangling".to_owned(),
+            new_value: Some(RawRef::Direct(ObjectId::from_bytes(&[1; 20]).expect("oid"))),
+            expected: Expected::Missing,
+            reflog: None,
+            flags: RefUpdateFlags {
+                skip_oid_verification: true,
+                ..RefUpdateFlags::default()
+            },
+        })
+        .expect("txn");
+    repo.refs()
+        .prepare(dangling)
+        .and_then(|prepared| prepared.commit())
+        .expect("deliberately dangling ref");
 
     let issues = refs_fsck(&repo, &odb, &config, false).expect("fsck");
     assert!(
         issues
             .iter()
-            .any(|i| i.path.contains("bad-sym") || !i.detail.is_empty()),
-        "expected symref issue, got {issues:?}"
+            .any(|i| i.path.contains("dangling") && i.msg_id == "missingObject"),
+        "expected a missing-object issue for the dangling ref, got {issues:?}"
+    );
+    assert!(
+        issues.iter().all(|i| !i.path.contains("good")),
+        "{issues:?}"
     );
 
     let sample = RefsFsckIssue {

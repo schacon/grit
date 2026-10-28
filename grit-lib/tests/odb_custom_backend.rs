@@ -270,7 +270,13 @@ fn memory_primary_revwalk_diff_without_loose_objects() {
         .odb()
         .write(ObjectKind::Commit, commit_body.as_bytes())
         .expect("commit");
-    write_ref(repo.git_dir(), "refs/heads/main", &commit).expect("ref");
+    grit_lib::refs::update_direct_ref_on_store(
+        repo.refs(),
+        repo.git_dir(),
+        "refs/heads/main",
+        &commit,
+    )
+    .expect("ref");
 
     let tip = commit.to_hex();
     let listed =
@@ -379,7 +385,13 @@ fn files_primary_gc_prunes_unreachable_loose() {
         .odb()
         .write(ObjectKind::Commit, commit_body.as_bytes())
         .expect("commit");
-    write_ref(repo.git_dir(), "refs/heads/main", &commit).expect("ref");
+    grit_lib::refs::update_direct_ref_on_store(
+        repo.refs(),
+        repo.git_dir(),
+        "refs/heads/main",
+        &commit,
+    )
+    .expect("ref");
 
     let orphan_payload = b"orphan\n";
     let orphan_oid = grit_lib::objects::hash::hash_object(

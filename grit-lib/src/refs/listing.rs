@@ -911,7 +911,7 @@ mod tests {
             )
             .unwrap();
         crate::refs::write_ref(repo.git_dir(), "refs/heads/main", &commit).unwrap();
-        crate::refs::write_ref(repo.git_dir(), "refs/heads/tagged", &tag).unwrap();
+        crate::refs::write_ref(repo.git_dir(), "refs/tags/tagged", &tag).unwrap();
 
         let options = RefQueryOptions::default();
         let peeled = |query: &RefQuery, peel: PeelTips| -> Vec<(String, Option<ObjectId>)> {
@@ -921,7 +921,10 @@ mod tests {
                 .map(|l| (l.short_name, l.peeled))
                 .collect()
         };
-        let all = RefQuery::default();
+        let all = RefQuery {
+            namespaces: vec![RefNamespace::Heads, RefNamespace::Tags],
+            ..RefQuery::default()
+        };
         let both_peeled = vec![
             ("main".to_owned(), None),
             ("tagged".to_owned(), Some(commit)),
@@ -942,12 +945,12 @@ mod tests {
 
         let points_at = RefQuery {
             points_at: vec![commit],
-            ..RefQuery::default()
+            ..all.clone()
         };
         assert_eq!(peeled(&points_at, PeelTips::WhenFiltering), both_peeled);
         let contains = RefQuery {
             contains: vec![commit],
-            ..RefQuery::default()
+            ..all.clone()
         };
         assert_eq!(peeled(&contains, PeelTips::WhenFiltering), both_peeled);
     }

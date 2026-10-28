@@ -2,6 +2,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use crate::support;
+
 use grit_lib::error::Result;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::gc::{update_refs, RefTransactionItem};
@@ -11,10 +13,6 @@ use grit_lib::refs::reftable::{
 use grit_lib::refs::{verify_ref_transaction_batch, write_ref, RefBatchItem, RefnameUnavailable};
 use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;
-
-fn oid(byte: u8) -> ObjectId {
-    ObjectId::from_bytes(&[byte; 20]).expect("oid")
-}
 
 fn reftable_git_dir() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempdir().expect("tempdir");
@@ -42,6 +40,7 @@ fn write_with_autocompact_off(
 #[test]
 fn reftable_verify_batch_rejects_existing_ancestor_with_unrelated_sibling() {
     let (_dir, git_dir) = reftable_git_dir();
+    let oid = |n: u8| support::stored_commit(&git_dir, n);
     write_ref(&git_dir, "refs/heads/parent", &oid(1)).expect("parent");
 
     let items = vec![
@@ -64,6 +63,7 @@ fn reftable_verify_batch_rejects_existing_ancestor_with_unrelated_sibling() {
 #[test]
 fn reftable_cas_rejects_stale_oid_after_deletion_in_newer_table() {
     let (_dir, git_dir) = reftable_git_dir();
+    let oid = |n: u8| support::stored_commit(&git_dir, n);
     let before = oid(0x11);
     let after = oid(0x22);
     write_with_autocompact_off(&git_dir, "refs/heads/cas-target", &before).expect("create");
@@ -110,6 +110,7 @@ fn reftable_cas_rejects_stale_oid_after_deletion_in_newer_table() {
 #[test]
 fn reftable_cas_rejects_stale_oid_when_newest_table_is_symref() {
     let (_dir, git_dir) = reftable_git_dir();
+    let oid = |n: u8| support::stored_commit(&git_dir, n);
     let before = oid(0x41);
     write_with_autocompact_off(&git_dir, "refs/heads/sym-cas", &before).expect("create");
     write_with_autocompact_off(&git_dir, "refs/heads/stack-pad", &oid(0x99)).expect("pad table");
@@ -148,6 +149,7 @@ fn reftable_cas_rejects_stale_oid_when_newest_table_is_symref() {
 #[test]
 fn reftable_verify_batch_allows_parent_after_deleted_descendant() {
     let (_dir, git_dir) = reftable_git_dir();
+    let oid = |n: u8| support::stored_commit(&git_dir, n);
     write_with_autocompact_off(&git_dir, "refs/heads/topic/child", &oid(0x31)).expect("child");
     update_refs(
         &git_dir,
