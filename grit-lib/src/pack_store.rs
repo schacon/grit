@@ -52,6 +52,9 @@ pub mod test_hooks {
 /// Alternate object directories get separate stores retained on the parent [`Odb`](crate::odb::Odb).
 pub struct PackStore {
     objects_dir: PathBuf,
+    /// Unique for the life of the process, so thread-local pack caches can tell stores apart:
+    /// a dropped store's address can be reused by a later store for the same directory.
+    id: u64,
     pub(crate) sparse_read_files: crate::pack_map::SparseReadFiles,
     bounded_reads: bool,
     /// Bumped on every invalidation so other threads drop trusted thread-local pack caches.
@@ -84,8 +87,10 @@ impl PackStore {
     /// Create a fresh store for `objects_dir` (not shared with other independent [`Odb`](crate::odb::Odb) opens).
     #[must_use]
     pub fn new(objects_dir: PathBuf) -> Self {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         Self {
             objects_dir,
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             sparse_read_files: crate::pack_map::SparseReadFiles::default(),
             bounded_reads: false,
             cache_epoch: AtomicU64::new(0),
@@ -147,6 +152,11 @@ impl PackStore {
     ) -> Option<Arc<crate::repo_caches::RepoCaches>> {
         let git_dir = config_path.parent()?;
         Self::repo_caches_for_objects_dir(&git_dir.join("objects"))
+    }
+
+    /// Process-unique id of this store (never 0).
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 
     /// Generation counter incremented when pack caches are invalidated.

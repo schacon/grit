@@ -133,8 +133,8 @@ pub(crate) mod pack_cache {
         static PACK_DIR_LISTING_TRUSTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         /// [`PackStore::cache_epoch`] last seen on this thread (cross-thread invalidation).
         static THREAD_WARM_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-        /// [`PackStore`] address last warmed on this thread (distinct stores can share epoch 0).
-        static THREAD_WARM_STORE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        /// [`PackStore::id`] last warmed on this thread (distinct stores can share an epoch).
+        static THREAD_WARM_STORE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
         static PACK_MONOTONIC_CURSOR: std::cell::RefCell<Option<(PathBuf, usize)>> =
             const { std::cell::RefCell::new(None) };
         static SINGLE_READER_MEMO: std::cell::RefCell<Option<SingleReaderMemo>> =
@@ -218,8 +218,8 @@ pub(crate) mod pack_cache {
         })
     }
 
-    fn store_thread_local_key(store: &crate::pack_store::PackStore) -> usize {
-        store as *const crate::pack_store::PackStore as usize
+    fn store_thread_local_key(store: &crate::pack_store::PackStore) -> u64 {
+        store.id()
     }
 
     pub(crate) fn clear_thread_local_dir_indexes() {
@@ -385,12 +385,13 @@ pub(crate) mod pack_cache {
         let objects_dir = store.objects_dir();
         let pack_dir = objects_dir.join("pack");
         store.with_catalog_read(|g| {
-            if let Some(cached) = g.by_dir.get(&pack_dir) {
-                PACK_DIR_INDEXES.with(|cell| {
-                    *cell.borrow_mut() =
-                        Some((pack_dir.clone(), cached.dir_mtime, cached.indexes.clone()));
-                });
-            }
+            // Replace the listing even when this store has none yet: one left by another store
+            // on this thread may predate a repack, and the listing is trusted from here on.
+            let listing = g
+                .by_dir
+                .get(&pack_dir)
+                .map(|cached| (pack_dir.clone(), cached.dir_mtime, cached.indexes.clone()));
+            PACK_DIR_INDEXES.with(|cell| *cell.borrow_mut() = listing);
             for (path, entry) in &g.by_pack {
                 remember_pack_bytes(path, &entry.bytes);
             }
@@ -6986,6 +6987,41 @@ mod tests {
         // B's store is unchanged by A's invalidation; a miss on the new oid rescans pack/.
         let got = odb_b.read(&oid_new).expect("b reprepares after miss");
         assert_eq!(got.data.as_slice(), b"after");
+    }
+
+    #[test]
+    fn fresh_store_does_not_trust_a_listing_left_by_another_store() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = dir.path();
+        git(dir, &["init", "-q"]);
+        git(dir, &["commit", "-q", "--allow-empty", "-m", "a"]);
+        git(dir, &["repack", "-adq"]);
+        let objects = dir.join(".git/objects");
+        let pack_names = |indexes: Vec<Arc<PackIndex>>| -> Vec<PathBuf> {
+            indexes
+                .into_iter()
+                .map(|idx| idx.pack_path.clone())
+                .collect()
+        };
+
+        let first = Arc::new(crate::pack_store::PackStore::new(objects.clone()));
+        let before = crate::pack_store::PackStore::with_context(first, || {
+            read_local_pack_indexes_cached(&objects)
+        })
+        .expect("first listing");
+
+        // Another process replaces the pack.
+        git(dir, &["commit", "-q", "--allow-empty", "-m", "b"]);
+        git(dir, &["repack", "-adq"]);
+
+        let second = Arc::new(crate::pack_store::PackStore::new(objects.clone()));
+        let after = crate::pack_store::PackStore::with_context(second, || {
+            read_local_pack_indexes_cached(&objects)
+        })
+        .expect("second listing");
+        let (before, after) = (pack_names(before), pack_names(after));
+        assert_ne!(before, after);
+        assert!(after.iter().all(|p| p.is_file()), "{after:?}");
     }
 }
 #[cfg(test)]
