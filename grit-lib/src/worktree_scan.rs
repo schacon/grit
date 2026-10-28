@@ -160,31 +160,53 @@ fn symlink_metadata_path(path: &Path) -> io::Result<fs::Metadata> {
     fs::symlink_metadata(path)
 }
 
-/// Whether `path` itself is a symlink, without following it. Missing or unreadable paths
-/// report `false`.
+/// What a worktree path is on disk, without following a final symlink.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AncestorKind {
+    /// A real directory.
+    Directory,
+    /// A symlink (or, on Windows, a reparse point classified as one).
+    Symlink,
+    /// Missing, unreadable, or not a directory.
+    Other,
+}
+
+/// Classify `path` with one metadata query, without following a final symlink.
 ///
 /// On Windows, `symlink_metadata` opens a handle per call, which dominates status on large
-/// trees. A single attribute query proves the common case (no reparse point) instead; only
-/// reparse points fall back to `symlink_metadata` to classify the reparse tag.
+/// trees. A single attribute query classifies the common case (no reparse point) instead;
+/// only reparse points fall back to `symlink_metadata` to classify the reparse tag.
 #[must_use]
-pub(crate) fn path_is_symlink(path: &Path) -> bool {
+pub(crate) fn ancestor_kind(path: &Path) -> AncestorKind {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
         use windows_sys::Win32::Storage::FileSystem::{
-            GetFileAttributesW, FILE_ATTRIBUTE_REPARSE_POINT, INVALID_FILE_ATTRIBUTES,
+            GetFileAttributesW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+            INVALID_FILE_ATTRIBUTES,
         };
         let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
         if !wide.contains(&0) {
             wide.push(0);
             // SAFETY: `wide` is a NUL-terminated UTF-16 path that outlives the call.
             let attrs = unsafe { GetFileAttributesW(wide.as_ptr()) };
-            if attrs != INVALID_FILE_ATTRIBUTES && attrs & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
-                return false;
+            if attrs == INVALID_FILE_ATTRIBUTES {
+                return AncestorKind::Other;
+            }
+            if attrs & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+                return if attrs & FILE_ATTRIBUTE_DIRECTORY != 0 {
+                    AncestorKind::Directory
+                } else {
+                    AncestorKind::Other
+                };
             }
         }
     }
-    fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => AncestorKind::Symlink,
+        Ok(meta) if meta.is_dir() => AncestorKind::Directory,
+        _ => AncestorKind::Other,
+    }
 }
 
 #[cfg(windows)]
@@ -994,16 +1016,20 @@ fn lookup_lone_blob_in_directory(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn preload_blob_lookups_parallel(
+fn preload_blob_lookups_parallel<S, P>(
     index: &Index,
     plan: &BlobScanPlan,
     threads: usize,
-    has_symlink_ancestor: &(dyn Fn(&[u8]) -> bool + Sync),
+    symlink_probe: &S,
     dir_abs: Arc<DirAbsFn>,
     file_abs: Arc<DirAbsFn>,
     literal_paths: bool,
     sparse: BlobScanSparseMode,
-) -> Result<Vec<Vec<(usize, BlobDiskLookup)>>> {
+) -> Result<Vec<Vec<(usize, BlobDiskLookup)>>>
+where
+    S: Fn() -> P + Sync,
+    P: FnMut(&[u8]) -> bool,
+{
     let blob_count = plan.len();
     if plan.dirs.is_empty() {
         return Ok(Vec::new());
@@ -1022,16 +1048,18 @@ fn preload_blob_lookups_parallel(
                 scope.spawn(move || -> Result<(Vec<(usize, BlobDiskLookup)>, usize)> {
                     let mut local = Vec::new();
                     let mut scanned = 0usize;
+                    let mut has_symlink_ancestor = symlink_probe();
                     for dir_idx in chunk_start..chunk_end {
                         let dir = &plan.dirs[dir_idx];
                         let Some(range) = plan.dir_ranges.get(dir_idx) else {
                             continue;
                         };
                         let entry_indices = &plan.indices[range.clone()];
-                        let under_symlink =
-                            dir_has_symlink_ancestor(index, entry_indices, &mut |rel| {
-                                has_symlink_ancestor(rel)
-                            });
+                        let under_symlink = dir_has_symlink_ancestor(
+                            index,
+                            entry_indices,
+                            &mut has_symlink_ancestor,
+                        );
                         collect_blob_lookups_in_directory(
                             index,
                             dir,
@@ -1114,10 +1142,12 @@ where
 /// consume batches with [`visit_blob_lookup_batches`] so index mutations are not blocked
 /// by an active immutable borrow on [`Index`].
 ///
-/// `has_symlink_ancestor(rel_path)` is asked once per plan directory, from the scan workers,
-/// so it must be shareable across threads; pass `|_| false` to skip the check.
+/// `symlink_probe()` runs once per scan worker and returns that worker's
+/// `has_symlink_ancestor(rel_path)` check, which is then asked once per plan directory in
+/// index order. Workers own their probe, so it may keep state without locking; pass
+/// [`no_symlink_probe`] to skip the check.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn collect_blob_lookup_batches(
+pub(crate) fn collect_blob_lookup_batches<S, P>(
     index: &Index,
     plan: &BlobScanPlan,
     scan_options: WorktreeBlobScanOptions,
@@ -1125,9 +1155,13 @@ pub(crate) fn collect_blob_lookup_batches(
     config: &crate::config::ConfigSet,
     dir_abs: impl Fn(&[u8]) -> PathBuf + Send + Sync + 'static,
     file_abs: impl Fn(&[u8]) -> PathBuf + Send + Sync + 'static,
-    has_symlink_ancestor: impl Fn(&[u8]) -> bool + Sync,
+    symlink_probe: S,
     sparse: BlobScanSparseMode,
-) -> Result<Vec<Vec<(usize, BlobDiskLookup)>>> {
+) -> Result<Vec<Vec<(usize, BlobDiskLookup)>>>
+where
+    S: Fn() -> P + Sync,
+    P: FnMut(&[u8]) -> bool,
+{
     collect_blob_lookup_batches_with_literal_paths(
         index,
         plan,
@@ -1137,18 +1171,24 @@ pub(crate) fn collect_blob_lookup_batches(
         dir_abs,
         file_abs,
         false,
-        has_symlink_ancestor,
+        symlink_probe,
         sparse,
     )
+}
+
+/// Symlink probe factory for scans that skip the ancestor-symlink check.
+pub(crate) fn no_symlink_probe() -> impl FnMut(&[u8]) -> bool {
+    |_| false
 }
 
 /// Collect lookups with directory-relative stats when `literal_paths` is true.
 ///
 /// Only enable this when `file_abs` joins the raw index path without case or Unicode
 /// resolution. On 64-bit Linux multi-file directories then share one parent handle;
-/// other directories and platforms use `file_abs` as usual.
+/// other directories and platforms use `file_abs` as usual. `symlink_probe` is as in
+/// [`collect_blob_lookup_batches`].
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn collect_blob_lookup_batches_with_literal_paths(
+pub(crate) fn collect_blob_lookup_batches_with_literal_paths<S, P>(
     index: &Index,
     plan: &BlobScanPlan,
     scan_options: WorktreeBlobScanOptions,
@@ -1157,9 +1197,13 @@ pub(crate) fn collect_blob_lookup_batches_with_literal_paths(
     dir_abs: impl Fn(&[u8]) -> PathBuf + Send + Sync + 'static,
     file_abs: impl Fn(&[u8]) -> PathBuf + Send + Sync + 'static,
     literal_paths: bool,
-    has_symlink_ancestor: impl Fn(&[u8]) -> bool + Sync,
+    symlink_probe: S,
     sparse: BlobScanSparseMode,
-) -> Result<Vec<Vec<(usize, BlobDiskLookup)>>> {
+) -> Result<Vec<Vec<(usize, BlobDiskLookup)>>>
+where
+    S: Fn() -> P + Sync,
+    P: FnMut(&[u8]) -> bool,
+{
     let blob_count = plan.len();
     // Keep small scans on the existing metadata path: setting up descriptor-relative
     // probes pays off on the larger indexes that also justify stat preload.
@@ -1174,7 +1218,7 @@ pub(crate) fn collect_blob_lookup_batches_with_literal_paths(
             index,
             plan,
             threads,
-            &has_symlink_ancestor,
+            &symlink_probe,
             Arc::clone(&dir_abs_arc),
             Arc::clone(&file_abs_arc),
             literal_paths,
@@ -1184,7 +1228,7 @@ pub(crate) fn collect_blob_lookup_batches_with_literal_paths(
         let (batch, scanned) = collect_blob_lookups_serial(
             index,
             plan,
-            &mut |rel| has_symlink_ancestor(rel),
+            &mut symlink_probe(),
             dir_abs_arc.as_ref(),
             file_abs_arc.as_ref(),
             literal_paths,
@@ -1203,7 +1247,7 @@ pub(crate) fn collect_blob_lookup_batches_with_literal_paths(
 /// Like [`for_each_blob_by_directory`], optionally preloading disk lookups in parallel.
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn for_each_blob_by_directory_parallel<F>(
+pub(crate) fn for_each_blob_by_directory_parallel<F, S, P>(
     index: &Index,
     plan: &BlobScanPlan,
     scan_options: WorktreeBlobScanOptions,
@@ -1211,11 +1255,13 @@ pub(crate) fn for_each_blob_by_directory_parallel<F>(
     config: &crate::config::ConfigSet,
     dir_abs: impl Fn(&[u8]) -> PathBuf + Send + Sync + 'static,
     file_abs: impl Fn(&[u8]) -> PathBuf + Send + Sync + 'static,
-    has_symlink_ancestor: impl Fn(&[u8]) -> bool + Sync,
+    symlink_probe: S,
     visit: F,
 ) -> Result<()>
 where
     F: FnMut(usize, BlobDiskLookup) -> Result<()>,
+    S: Fn() -> P + Sync,
+    P: FnMut(&[u8]) -> bool,
 {
     let batches = collect_blob_lookup_batches(
         index,
@@ -1225,7 +1271,7 @@ where
         config,
         dir_abs,
         file_abs,
-        has_symlink_ancestor,
+        symlink_probe,
         BlobScanSparseMode::Dense,
     )?;
     visit_blob_lookup_batches(batches, visit)
@@ -1671,7 +1717,7 @@ mod tests {
             &config,
             dir_abs,
             file_abs,
-            |_| false,
+            no_symlink_probe,
             |_, lookup| {
                 assert!(matches!(lookup, BlobDiskLookup::Present(_)));
                 seen += 1;
@@ -1811,7 +1857,7 @@ mod tests {
             &config,
             dir_abs,
             file_abs,
-            |_| false,
+            no_symlink_probe,
             |_, lookup| {
                 assert!(matches!(lookup, BlobDiskLookup::Present(_)));
                 seen += 1;

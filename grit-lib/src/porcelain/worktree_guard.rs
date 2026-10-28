@@ -400,7 +400,7 @@ fn switch_worktree_clean_for_paths(
             config.as_deref().unwrap_or(&ConfigSet::new()),
             dir_abs,
             file_abs,
-            |_| false,
+            crate::worktree_scan::no_symlink_probe,
             BlobScanSparseMode::WorktreeGuard {
                 stat_policy,
                 index_mtime,

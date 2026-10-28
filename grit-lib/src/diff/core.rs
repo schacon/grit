@@ -4746,11 +4746,6 @@ fn diff_index_to_worktree_inner(
     let mut unmerged_base: std::collections::BTreeMap<String, (u8, IndexEntry)> =
         std::collections::BTreeMap::new();
 
-    // Cache of ancestor-directory symlink-ness so we stat each directory at most
-    // once, rather than re-lstat'ing every ancestor of every index entry
-    // (O(unique dirs) instead of O(files × depth)).
-    let dir_symlinks = SymlinkDirCache::default();
-
     let error_on_broken_gitlinks = options.error_on_broken_gitlinks;
     if options.restrict_to_paths.is_none() {
         for ie in &index.entries {
@@ -4892,13 +4887,16 @@ fn diff_index_to_worktree_inner(
         dir_abs,
         file_abs,
         !precompose_unicode && !ignorecase,
-        |rel_path| {
-            dir_symlinks.has_symlink_in_path_bytes(
-                work_tree,
-                rel_path,
-                precompose_unicode,
-                ignorecase,
-            )
+        || {
+            let mut dir_symlinks = SymlinkDirCache::default();
+            move |rel_path: &[u8]| {
+                dir_symlinks.has_symlink_in_path_bytes(
+                    work_tree,
+                    rel_path,
+                    precompose_unicode,
+                    ignorecase,
+                )
+            }
         },
         sparse,
     )?;
@@ -5208,12 +5206,35 @@ fn diff_index_to_worktree_inner(
     Ok((result, index_stat_refresh_changed, staging_stat_cache))
 }
 
-/// Memoized cache of which ancestor directories are symlinks, so each directory
-/// is probed at most once per worktree scan. Shared by parallel stat workers.
+/// Per-worker cache answering "is any ancestor directory of this index path a symlink?".
+///
+/// It remembers the last chain of ancestors verified to be real directories, plus the first
+/// ancestor found not to be one. Index paths arrive in sorted order, so consecutive queries
+/// share most of their leading directories and only the differing components are probed.
+/// Each scan worker owns its own cache: there is no locking and no per-directory allocation.
 #[derive(Default)]
 pub(crate) struct SymlinkDirCache {
-    /// Repository-relative directory (raw index bytes) to whether it is a symlink.
-    dirs: std::sync::Mutex<hashbrown::HashMap<Vec<u8>, bool>>,
+    /// Leading directory (raw index bytes, no trailing `/`) whose every component is a real
+    /// directory on disk.
+    real_dirs: Vec<u8>,
+    /// First ancestor found not to be a real directory, and whether it is a symlink. Every
+    /// path under it shares that answer.
+    blocked: Option<(Vec<u8>, bool)>,
+}
+
+/// Whether `path` is `dir` itself or lies under it (`dir` has no trailing `/`).
+fn path_within_dir(path: &[u8], dir: &[u8]) -> bool {
+    path.starts_with(dir) && path.get(dir.len()).is_none_or(|&b| b == b'/')
+}
+
+/// Length of the longest leading run of whole components shared by two directory paths.
+fn common_dir_prefix_len(a: &[u8], b: &[u8]) -> usize {
+    let same = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let ends_component = |p: &[u8]| p.get(same).is_none_or(|&c| c == b'/');
+    if ends_component(a) && ends_component(b) {
+        return same;
+    }
+    a[..same].iter().rposition(|&c| c == b'/').unwrap_or(0)
 }
 
 pub(crate) fn index_entry_worktree_abs(
@@ -5262,51 +5283,56 @@ pub fn index_mtime_for_diff(index: &Index, explicit: Option<(u32, u32)>) -> Opti
 impl SymlinkDirCache {
     /// Whether any parent directory of `rel_path` (raw index path bytes) is a symlink.
     ///
-    /// Probes each ancestor at most once across all callers; the filesystem query runs
-    /// outside the lock so parallel workers do not serialize on it.
+    /// Assumes the worktree does not change during the scan this cache serves. A missing
+    /// ancestor, or one that is a file, is not a symlink and hides everything below it.
     pub(crate) fn has_symlink_in_path_bytes(
-        &self,
+        &mut self,
         work_tree: &Path,
         rel_path: &[u8],
         precompose_unicode: bool,
         ignorecase: bool,
     ) -> bool {
+        use crate::worktree_scan::{ancestor_kind, AncestorKind};
+
         let Some(dir_len) = rel_path.iter().rposition(|&b| b == b'/') else {
             return false;
         };
-        let prefix_ends = rel_path[..dir_len]
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &b)| (b == b'/').then_some(i))
-            .chain(std::iter::once(dir_len));
-        for end in prefix_ends {
-            let prefix = &rel_path[..end];
-            if prefix.is_empty() || prefix.ends_with(b"/") {
+        let dir = &rel_path[..dir_len];
+        if let Some((blocked, is_symlink)) = &self.blocked {
+            if path_within_dir(dir, blocked) {
+                return *is_symlink;
+            }
+        }
+        let verified = common_dir_prefix_len(dir, &self.real_dirs);
+        self.real_dirs.truncate(verified);
+        let mut start = verified;
+        while start < dir.len() {
+            if dir[start] == b'/' {
+                start += 1;
                 continue;
             }
-            let cached = self
-                .dirs
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get(prefix)
-                .copied();
-            let is_symlink = cached.unwrap_or_else(|| {
-                let abs = index_entry_worktree_abs_bytes(
-                    work_tree,
-                    prefix,
-                    precompose_unicode,
-                    ignorecase,
-                );
-                let probed = crate::worktree_scan::path_is_symlink(&abs);
-                self.dirs
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert(prefix.to_vec(), probed);
-                probed
-            });
-            if is_symlink {
-                return true;
+            let end = dir[start..]
+                .iter()
+                .position(|&b| b == b'/')
+                .map_or(dir.len(), |i| start + i);
+            let prefix = &dir[..end];
+            let abs =
+                index_entry_worktree_abs_bytes(work_tree, prefix, precompose_unicode, ignorecase);
+            match ancestor_kind(&abs) {
+                AncestorKind::Directory => {
+                    let known = self.real_dirs.len();
+                    self.real_dirs.extend_from_slice(&prefix[known..]);
+                }
+                AncestorKind::Symlink => {
+                    self.blocked = Some((prefix.to_vec(), true));
+                    return true;
+                }
+                AncestorKind::Other => {
+                    self.blocked = Some((prefix.to_vec(), false));
+                    return false;
+                }
             }
+            start = end;
         }
         false
     }
@@ -5981,7 +6007,6 @@ pub fn refresh_index_stat_content_verified_with_rules(
     let file_abs = move |rel: &[u8]| {
         index_entry_worktree_abs_bytes(&work_tree_for_files, rel, precompose_unicode, ignorecase)
     };
-    let dir_symlinks = SymlinkDirCache::default();
     let mut changed = false;
     let filter_fp = rules_lock.as_ref().map(|r| r.filter_process());
     let thread_policy = crate::parallel::ThreadPolicy::default();
@@ -5994,13 +6019,16 @@ pub fn refresh_index_stat_content_verified_with_rules(
         &config,
         dir_abs,
         file_abs,
-        |rel_path| {
-            dir_symlinks.has_symlink_in_path_bytes(
-                work_tree,
-                rel_path,
-                precompose_unicode,
-                ignorecase,
-            )
+        || {
+            let mut dir_symlinks = SymlinkDirCache::default();
+            move |rel_path: &[u8]| {
+                dir_symlinks.has_symlink_in_path_bytes(
+                    work_tree,
+                    rel_path,
+                    precompose_unicode,
+                    ignorecase,
+                )
+            }
         },
         BlobScanSparseMode::StatRefresh {
             stat_policy,
@@ -12878,10 +12906,10 @@ mod smudge_racily_clean_tests {
         fs::create_dir_all(wt.join("real/deep")).expect("mkdir");
         fs::create_dir_all(wt.join("target/deep")).expect("mkdir");
         std::os::unix::fs::symlink(wt.join("target"), wt.join("linked")).expect("symlink");
-        let cache = super::SymlinkDirCache::default();
         std::thread::scope(|scope| {
             for _ in 0..4 {
                 scope.spawn(|| {
+                    let mut cache = super::SymlinkDirCache::default();
                     assert!(!cache.has_symlink_in_path_bytes(wt, b"top.txt", false, false));
                     assert!(!cache.has_symlink_in_path_bytes(wt, b"linked", false, false));
                     assert!(!cache.has_symlink_in_path_bytes(wt, b"real/deep/f", false, false));
@@ -12891,6 +12919,95 @@ mod smudge_racily_clean_tests {
                 });
             }
         });
+    }
+
+    #[test]
+    fn common_dir_prefix_len_stops_at_whole_components() {
+        use super::{common_dir_prefix_len, path_within_dir};
+        assert_eq!(common_dir_prefix_len(b"a/b/c", b"a/b/c"), 5);
+        assert_eq!(common_dir_prefix_len(b"a/b/c", b"a/b"), 3);
+        assert_eq!(common_dir_prefix_len(b"a/b", b"a/b/c"), 3);
+        assert_eq!(common_dir_prefix_len(b"a/bc/d", b"a/b"), 1);
+        assert_eq!(common_dir_prefix_len(b"a/b", b"a/bc/d"), 1);
+        assert_eq!(common_dir_prefix_len(b"ab", b"a"), 0);
+        assert_eq!(common_dir_prefix_len(b"a/b", b""), 0);
+        assert!(path_within_dir(b"a/b", b"a/b"));
+        assert!(path_within_dir(b"a/b/c", b"a/b"));
+        assert!(!path_within_dir(b"a/bc", b"a/b"));
+        assert!(!path_within_dir(b"a", b"a/b"));
+    }
+
+    /// Answer the ancestor-symlink question without any caching, one probe per ancestor.
+    #[cfg(unix)]
+    fn naive_has_symlink_ancestor(wt: &Path, rel: &str) -> bool {
+        let Some((dir, _)) = rel.rsplit_once('/') else {
+            return false;
+        };
+        let mut prefix = wt.to_path_buf();
+        dir.split('/').any(|component| {
+            prefix.push(component);
+            fs::symlink_metadata(&prefix).is_ok_and(|m| m.file_type().is_symlink())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_dir_cache_matches_uncached_probe_in_any_query_order() {
+        let td = tempfile::tempdir().expect("tempdir");
+        let wt = td.path();
+        fs::create_dir_all(wt.join("a/b/c/d")).expect("mkdir");
+        fs::create_dir_all(wt.join("a/bb/c")).expect("mkdir");
+        fs::create_dir_all(wt.join("a/b2")).expect("mkdir");
+        fs::create_dir_all(wt.join("t/c/d")).expect("mkdir");
+        fs::create_dir_all(wt.join("x/y")).expect("mkdir");
+        fs::write(wt.join("a/file"), b"f").expect("write");
+        fs::write(wt.join("x/y/plain"), b"f").expect("write");
+        std::os::unix::fs::symlink(wt.join("t"), wt.join("a/b/link")).expect("symlink");
+        std::os::unix::fs::symlink(wt.join("t"), wt.join("x/l")).expect("symlink");
+        std::os::unix::fs::symlink(wt.join("t"), wt.join("top")).expect("symlink");
+
+        let paths = [
+            "a/b/c/d/f",
+            "a/b/c/f",
+            "a/b/f",
+            "a/b/link/f",
+            "a/b/link/c/d/f",
+            "a/b/linker/f",
+            "a/b2/f",
+            "a/bb/c/f",
+            "a/file/under/f",
+            "a/missing/deeper/f",
+            "a/missing/f",
+            "a/f",
+            "f",
+            "top/c/f",
+            "top/f",
+            "topper/f",
+            "x/l/c/d/f",
+            "x/y/f",
+            "x/y/plain/f",
+        ];
+        let mut orders: Vec<Vec<&str>> = vec![paths.to_vec()];
+        orders.push(paths.iter().rev().copied().collect());
+        orders.push(
+            paths
+                .iter()
+                .step_by(2)
+                .chain(paths.iter().skip(1).step_by(2))
+                .copied()
+                .collect(),
+        );
+        orders.push(paths.iter().flat_map(|p| [*p, *p]).collect());
+        for order in orders {
+            let mut cache = super::SymlinkDirCache::default();
+            for rel in order {
+                assert_eq!(
+                    cache.has_symlink_in_path_bytes(wt, rel.as_bytes(), false, false),
+                    naive_has_symlink_ancestor(wt, rel),
+                    "ancestor symlink answer for {rel}"
+                );
+            }
+        }
     }
 
     #[test]

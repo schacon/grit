@@ -318,8 +318,6 @@ fn stage_tracked_modifications_in_index_body(
     } else {
         None
     };
-    let dir_symlinks = SymlinkDirCache::default();
-
     for raw_path in &unmerged_paths {
         if !tracked_scan_includes_path(restrict_to_paths, raw_path) {
             continue;
@@ -440,15 +438,25 @@ fn stage_tracked_modifications_in_index_body(
         &rules_config,
         dir_abs,
         file_abs,
-        |rel_path| {
-            dir_symlinks.has_symlink_in_path_bytes(
-                work_tree,
-                rel_path,
-                precompose_unicode,
-                ignorecase,
-            ) || {
+        || {
+            let mut dir_symlinks = SymlinkDirCache::default();
+            let work_tree_for_symlink = &work_tree_for_symlink;
+            let symlink_parent_cache = &symlink_parent_cache;
+            move |rel_path: &[u8]| {
+                if dir_symlinks.has_symlink_in_path_bytes(
+                    work_tree,
+                    rel_path,
+                    precompose_unicode,
+                    ignorecase,
+                ) {
+                    return true;
+                }
+                // Without case or Unicode resolution both checks probe the same paths.
+                if !precompose_unicode && !ignorecase {
+                    return false;
+                }
                 let abs = crate::diff::index_entry_worktree_abs_bytes(
-                    &work_tree_for_symlink,
+                    work_tree_for_symlink,
                     rel_path,
                     precompose_unicode,
                     ignorecase,

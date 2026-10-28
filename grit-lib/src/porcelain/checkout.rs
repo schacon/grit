@@ -765,7 +765,7 @@ fn checkout_hard_to_tree_journaled(
         )?;
     }
 
-    let sparse_parent_symlinks = crate::diff::SymlinkDirCache::default();
+    let mut sparse_parent_symlinks = crate::diff::SymlinkDirCache::default();
     for (path, mode) in sparse_removals {
         crate::progress::poll_cancel(progress, cancel)?;
         if sparse_parent_symlinks.has_symlink_in_path_bytes(work_tree, &path, false, false) {
@@ -1219,7 +1219,7 @@ fn scan_index_blob_stats_at(
         config,
         move |dir: &[u8]| crate::index::worktree_path_from_index_rel(&dir_root, dir),
         move |rel: &[u8]| crate::index::worktree_path_from_index_rel(&file_root, rel),
-        |_| false,
+        crate::worktree_scan::no_symlink_probe,
         BlobScanSparseMode::Dense,
     )?;
     for (entry_index, lookup) in batches.into_iter().flatten() {
