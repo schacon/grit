@@ -148,7 +148,7 @@ impl IgnorePatternList {
         self.rules
             .iter()
             .rev()
-            .find(|rule| rule_matches_path_exact(rule, path, is_dir, ignore_case))
+            .find(|rule| rule_matches(rule, path, is_dir, ignore_case))
             .map(|rule| IgnorePatternMatch {
                 line_number: rule.line_number,
                 pattern_text: rule.pattern_text.clone(),
@@ -162,26 +162,6 @@ impl IgnorePatternList {
     pub fn is_ignored(&self, path: &str, is_dir: bool, ignore_case: bool) -> Option<bool> {
         self.last_match(path, is_dir, ignore_case)
             .map(|m| !m.negative)
-    }
-}
-
-/// Git's single-path pattern test (`dir.c` `last_matching_pattern_from_list`), without the
-/// parent-directory probing [`rule_matches`] adds for [`IgnoreMatcher`].
-fn rule_matches_path_exact(rule: &IgnoreRule, path: &str, is_dir: bool, ignore_case: bool) -> bool {
-    if rule.directory_only && !is_dir {
-        return false;
-    }
-    let Some(rel_to_base) = strip_base(&rule.base_dir, path, ignore_case) else {
-        return false;
-    };
-    if rel_to_base.is_empty() {
-        return false;
-    }
-    if rule.has_slash || rule.anchored {
-        rule_body_matches(rule, rel_to_base, true, ignore_case)
-    } else {
-        let basename = rel_to_base.rsplit('/').next().unwrap_or(rel_to_base);
-        rule_body_matches(rule, basename, false, ignore_case)
     }
 }
 
@@ -987,48 +967,33 @@ fn rule_matches(rule: &IgnoreRule, repo_rel_path: &str, is_dir: bool, ignore_cas
 
 /// [`rule_matches`] specialized on case folding so the default case-sensitive path carries
 /// no per-comparison `core.ignorecase` checks.
+///
+/// Only the queried path itself is tested: slash-free patterns match its basename, patterns
+/// with a slash match the whole path relative to the rule's directory. A path under an
+/// excluded directory inherits that exclusion from [`IgnoreMatcher::first_excluded_ancestor`],
+/// which probes each ancestor with the same test, so `tags` followed by `!tags/` leaves
+/// `tags/a.txt` unignored while `tags` alone ignores it through its parent.
 fn rule_matches_with<const FOLD: bool>(
     rule: &IgnoreRule,
     repo_rel_path: &str,
     is_dir: bool,
 ) -> bool {
-    // Directory-only patterns (`foo/`) participate only when the query path is a directory,
-    // mirroring Git's `PATTERN_FLAG_MUSTBEDIR` / `sparse_pattern_matches` dtype gate. Ancestor
-    // probes use `is_dir=true` (`first_excluded_ancestor`); matching `!pkg/` against files under
-    // `pkg/` would wrongly re-include them when `*` still applies (issue #1650).
+    // Directory-only patterns (`foo/`) never match files, so `!pkg/` cannot re-include files
+    // under `pkg/` that `*` still ignores (issue #1650).
     if rule.directory_only && !is_dir {
         return false;
     }
-
     let Some(rel_to_base) = strip_base(&rule.base_dir, repo_rel_path, FOLD) else {
         return false;
     };
-
-    if rule.directory_only {
-        if rule.has_slash || rule.anchored {
-            for ancestor in ancestor_dirs(rel_to_base, is_dir) {
-                if rule_body_matches(rule, &ancestor, true, FOLD) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        for ancestor in ancestor_dir_basenames(rel_to_base, is_dir) {
-            if rule_body_matches(rule, ancestor, false, FOLD) {
-                return true;
-            }
-        }
+    if rel_to_base.is_empty() {
         return false;
     }
-
     if rule.has_slash || rule.anchored {
         return rule_body_matches(rule, rel_to_base, true, FOLD);
     }
-
-    !rel_to_base.is_empty()
-        && rel_to_base
-            .split('/')
-            .any(|name| rule_body_matches(rule, name, false, FOLD))
+    let basename = rel_to_base.rsplit('/').next().unwrap_or(rel_to_base);
+    rule_body_matches(rule, basename, false, FOLD)
 }
 
 fn is_tracked(index: Option<&Index>, repo_rel_path: &str) -> bool {
@@ -1190,41 +1155,6 @@ fn parent_dir(path: &str) -> &str {
         Some((parent, _)) => parent,
         None => "",
     }
-}
-
-fn ancestor_dirs(path: &str, is_dir: bool) -> Vec<String> {
-    let mut out = Vec::new();
-    if path.is_empty() {
-        return out;
-    }
-    let parts: Vec<&str> = path.split('/').collect();
-    let max = if is_dir {
-        parts.len()
-    } else {
-        parts.len().saturating_sub(1)
-    };
-    for idx in 1..=max {
-        out.push(parts[..idx].join("/"));
-    }
-    out
-}
-
-fn ancestor_dir_basenames(path: &str, is_dir: bool) -> Vec<&str> {
-    let mut out = Vec::new();
-    let parts: Vec<&str> = if path.is_empty() {
-        Vec::new()
-    } else {
-        path.split('/').collect()
-    };
-    let max = if is_dir {
-        parts.len()
-    } else {
-        parts.len().saturating_sub(1)
-    };
-    for item in parts.iter().take(max) {
-        out.push(*item);
-    }
-    out
 }
 
 fn pattern_matches_kind(
