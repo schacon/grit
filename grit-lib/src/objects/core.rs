@@ -890,16 +890,6 @@ impl Object {
             data: self.data.as_slice(),
         }
     }
-
-    /// Serialize to the canonical Git object format: `"<kind> <size>\0<data>"`.
-    #[must_use]
-    pub fn to_store_bytes(&self) -> Vec<u8> {
-        let header = format!("{} {}\0", self.kind, self.data.len());
-        let mut out = Vec::with_capacity(header.len() + self.data.len());
-        out.extend_from_slice(header.as_bytes());
-        out.extend_from_slice(&self.data);
-        out
-    }
 }
 
 /// A single entry in a Git tree object.

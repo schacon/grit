@@ -124,7 +124,7 @@ pub fn enumerate_whole_pack_entries(
 /// # Errors
 ///
 /// Returns [`Error::Io`] or [`Error::CorruptObject`] on failure.
-pub fn write_pack_index_v2(
+fn write_pack_index_v2(
     idx_path: &Path,
     pack_path: &Path,
     entries: &[PackIndexWriteEntry],

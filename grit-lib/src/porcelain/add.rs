@@ -168,24 +168,9 @@ pub fn stage_for_commit(
     stage_with_tracked_scan(repo, &opts, progress, cancel)
 }
 
-/// Like [`stage_for_commit`], but updates only an in-memory index (no `.git/index` write).
+/// Like [`stage_for_commit`], but updates a caller-owned index and does not write it to disk.
 ///
 /// When `dry_run` is true, blob objects are hashed but not written to the object database.
-///
-/// # Errors
-///
-/// Same as [`stage_for_commit`].
-pub fn stage_for_commit_in_memory(
-    repo: &Repository,
-    progress: &mut dyn ProgressSink,
-    cancel: &dyn Cancel,
-    dry_run: bool,
-) -> Result<StageOutcome> {
-    let mut index = repo.load_index()?;
-    stage_for_commit_on_index(repo, &mut index, progress, cancel, dry_run)
-}
-
-/// Like [`stage_for_commit`], but updates a caller-owned index and does not write it to disk.
 ///
 /// Used by [`crate::porcelain::commit::commit_worktree`] to avoid reloading the index.
 pub(crate) fn stage_for_commit_on_index(

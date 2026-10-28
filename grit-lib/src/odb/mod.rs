@@ -845,15 +845,6 @@ impl Odb {
         hasher.finish()
     }
 
-    /// Drop the cached `info/alternates` chain so the next lookup re-reads the file.
-    pub fn invalidate_alternates_cache(&self) {
-        if let Ok(mut guard) = self.file_alternate_dirs_cache.write() {
-            guard.generation = guard.generation.wrapping_add(1);
-            guard.snapshot = None;
-        }
-        self.clear_alternate_sources_cache();
-    }
-
     /// Reload `info/alternates` from disk into this [`Odb`]'s cache (used after external writes).
     ///
     /// # Errors

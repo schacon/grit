@@ -102,27 +102,6 @@ enum ListPrefixMatch {
 }
 
 impl ConfigSet {
-    /// Read the winning value for `key`, parsed as `ty`.
-    ///
-    /// Bare boolean keys are treated as `true`. Missing keys return `Ok(None)`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Config`] when `key` is invalid or the stored value does not match `ty`.
-    pub fn get_typed(
-        &self,
-        key: &str,
-        ty: ConfigValueType,
-        env: &Environment,
-    ) -> Result<Option<TypedConfigValue>> {
-        let _canon = canonical_key(key)?;
-        let Some(entry) = self.get_last_entry(key) else {
-            return Ok(None);
-        };
-        let raw = entry.value.as_deref().unwrap_or("true");
-        parse_typed_value(key, ty, raw, env).map(Some)
-    }
-
     /// Read the winning value for `key` as a Git integer (with optional `k`/`m`/`g` suffix).
     ///
     /// Missing keys return `Ok(None)`.
