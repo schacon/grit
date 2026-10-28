@@ -2,7 +2,9 @@
 //!
 //! Linux CI cannot reproduce the Windows autocrlf stale-stat bug from `create_commit`
 //! alone, so this module uses a deterministic stale-stat fixture (wrong cached size with
-//! matching OID) to assert remove and `git diff-files` fail until index stat refresh runs.
+//! matching OID). `git diff-files` reports such an entry until the index stat is refreshed.
+//! Grit decides by content under `core.autocrlf` (issue #2164): a stale size whose cleaned
+//! file is still the indexed blob does not block remove, while a real change does.
 //! On Windows, an additional test exercises the real post-commit path.
 
 use std::fs;
@@ -196,9 +198,9 @@ fn index_entry(repo: &Repository, rel_path: &str) -> IndexEntry {
         .unwrap_or_else(|| panic!("no index entry for {rel_path}"))
 }
 
-#[test]
-fn stale_index_stat_fixture_blocks_worktree_remove_until_refresh() {
-    let (_tmp, _main, linked, main_repo) = linked_worktree_fixture();
+/// Linked worktree whose committed `new.txt` has a stale cached size (same blob, `mtime` 0).
+fn stale_index_stat_fixture() -> (tempfile::TempDir, PathBuf, Repository, Repository) {
+    let (tmp, _main, linked, main_repo) = linked_worktree_fixture();
     let linked_repo =
         Repository::discover(Some(linked.as_path()), &RepositoryOptions::empty()).expect("linked");
     fs::write(linked.join("new.txt"), "new\n").expect("new file");
@@ -214,22 +216,48 @@ fn stale_index_stat_fixture_blocks_worktree_remove_until_refresh() {
     let entry = index_entry(&linked_repo, "new.txt");
     let wrong_size = entry.size.saturating_add(1);
     apply_stale_index_stat_size_mismatch(&linked_repo, "new.txt", wrong_size);
-
     assert!(
         !git_diff_files_quiet(&linked),
         "git diff-files must detect stale cached stat size"
     );
-    assert!(
-        remove_linked_worktree(&main_repo, &linked, false).is_err(),
-        "remove must refuse a worktree when git sees index/worktree stat mismatch"
-    );
+    (tmp, linked, linked_repo, main_repo)
+}
 
+#[test]
+fn stale_index_stat_with_identical_content_allows_worktree_remove() {
+    let (_tmp, linked, _linked_repo, main_repo) = stale_index_stat_fixture();
+    remove_linked_worktree(&main_repo, &linked, false)
+        .expect("a stale size whose cleaned content is the indexed blob loses no data");
+    assert!(!linked.exists(), "linked worktree directory removed");
+}
+
+#[test]
+fn stale_index_stat_refresh_clears_git_diff_files_before_remove() {
+    let (_tmp, linked, linked_repo, main_repo) = stale_index_stat_fixture();
     refresh_index_stat_on_disk(&linked_repo);
     assert!(
         git_diff_files_quiet(&linked),
         "refresh must align index stat with worktree for git diff-files"
     );
     remove_linked_worktree(&main_repo, &linked, false).expect("remove after refresh");
+}
+
+#[test]
+fn stale_index_stat_with_changed_content_blocks_worktree_remove() {
+    let (_tmp, linked, _linked_repo, main_repo) = stale_index_stat_fixture();
+    fs::write(linked.join("new.txt"), "changed\n").expect("real edit");
+    assert!(
+        !git_diff_files_quiet(&linked),
+        "git diff-files must report the edit"
+    );
+    assert!(
+        remove_linked_worktree(&main_repo, &linked, false).is_err(),
+        "remove must refuse a worktree whose content changed under core.autocrlf"
+    );
+    assert!(
+        linked.join("new.txt").exists(),
+        "refused remove keeps the edit"
+    );
 }
 
 #[test]
