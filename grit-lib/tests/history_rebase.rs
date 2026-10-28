@@ -1335,3 +1335,72 @@ fn rebase_skipping_duplicate_after_merge_keeps_stacked_refs_and_tree_like_git() 
     assert_git_fsck_strict(wt);
     assert_git_fsck_strict(git_wt.path());
 }
+
+/// The fixture from issue #2182: `feature` (X, Y) with `mid` at X and `backup` at Y, while
+/// `main` gained M. `feature` is checked out.
+fn init_backup_fixture(wt: &std::path::Path) {
+    commit_file(wt, "base.txt", "base\n", "base");
+    git(wt, &["switch", "-qc", "feature"]);
+    commit_file(wt, "x.txt", "x\n", "X");
+    commit_file(wt, "y.txt", "y\n", "Y");
+    git(wt, &["branch", "backup"]);
+    git(wt, &["branch", "mid", "HEAD~1"]);
+    git(wt, &["switch", "-q", "main"]);
+    commit_file(wt, "m.txt", "m\n", "M");
+    git(wt, &["switch", "-q", "feature"]);
+}
+
+#[test]
+fn rebase_leaves_backup_branch_at_checked_out_tip() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    init_backup_fixture(wt);
+    let old_tip = git_rev_parse(wt, "feature");
+    let old_mid = git_rev_parse(wt, "mid");
+    let grit = open_grit(wt);
+    let request = rebase_request(git_rev_parse(wt, "main"), None, old_tip);
+    let opts = rebase_opts(RefScope::Branches, EmptyPolicy::Drop, true);
+    let plan = match plan_rebase(&grit, &request, &opts).expect("plan_rebase") {
+        RebasePlan::Plan(plan) => plan,
+        other => panic!("expected a plan, got {other:?}"),
+    };
+    let moved: Vec<&str> = plan.ref_updates.iter().map(|u| u.name.as_str()).collect();
+    assert!(moved.contains(&"refs/heads/feature"), "{moved:?}");
+    assert!(moved.contains(&"refs/heads/mid"), "{moved:?}");
+    assert!(!moved.contains(&"refs/heads/backup"), "{moved:?}");
+
+    apply_plan(&grit, &plan);
+    assert_eq!(git_rev_parse(wt, "backup"), old_tip);
+    assert_ne!(git_rev_parse(wt, "feature"), old_tip);
+    assert_ne!(git_rev_parse(wt, "mid"), old_mid);
+    assert_eq!(git_rev_parse(wt, "feature~1"), git_rev_parse(wt, "mid"));
+    assert_eq!(git_rev_parse(wt, "feature~2"), git_rev_parse(wt, "main"));
+    assert_eq!(git(wt, &["log", "--format=%s", "backup"]), "Y\nX\nbase\n");
+    assert_git_fsck_strict(wt);
+}
+
+#[test]
+fn fast_forward_rebase_leaves_backup_branch_at_checked_out_tip() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "base.txt", "base\n", "base");
+    git(wt, &["switch", "-qc", "feature"]);
+    git(wt, &["branch", "backup"]);
+    let old_tip = git_rev_parse(wt, "feature");
+    git(wt, &["switch", "-q", "main"]);
+    let main = commit_file(wt, "m.txt", "m\n", "M");
+    git(wt, &["switch", "-q", "feature"]);
+    let grit = open_grit(wt);
+    let request = rebase_request(main, None, old_tip);
+    let opts = rebase_opts(RefScope::Branches, EmptyPolicy::Drop, true);
+    let plan = match plan_rebase(&grit, &request, &opts).expect("plan_rebase") {
+        RebasePlan::Plan(plan) => plan,
+        other => panic!("expected a plan, got {other:?}"),
+    };
+    let moved: Vec<&str> = plan.ref_updates.iter().map(|u| u.name.as_str()).collect();
+    assert_eq!(moved, ["refs/heads/feature"]);
+    apply_plan(&grit, &plan);
+    assert_eq!(git_rev_parse(wt, "feature"), main);
+    assert_eq!(git_rev_parse(wt, "backup"), old_tip);
+    assert_git_fsck_strict(wt);
+}

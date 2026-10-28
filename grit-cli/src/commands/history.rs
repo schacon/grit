@@ -43,7 +43,8 @@ use crate::pathspec_args::TrailingPathspecArgs;
 /// Which local refs a history rewrite may move.
 #[derive(Debug, Clone, Copy, ValueEnum, Default, PartialEq, Eq)]
 pub enum UpdateRefs {
-    /// Every local branch descending from the edited commit, plus `HEAD` when applicable.
+    /// Every local branch descending from the edited commit, plus `HEAD` when applicable,
+    /// except other branches at the `HEAD` commit (backups keep the old history).
     #[default]
     Branches,
     /// Only the commit `HEAD` currently points at.

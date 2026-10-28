@@ -460,3 +460,82 @@ fn reword_root_replays_merge_with_merge_only_tree_content() {
     );
     git_fsck_strict(wt);
 }
+
+fn apply_reword(grit: &Repository, plan: &grit_lib::revwalk::history::RewritePlan) {
+    apply_rewrite(
+        grit,
+        plan,
+        &ApplyOptions {
+            identity: support::reflog_signature("Rewriter <r@grit.test>"),
+            reflog_message: "history reword".into(),
+            record_operation: None,
+            hooks: grit_lib::PostOperationHooks::Run,
+        },
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("apply");
+}
+
+#[test]
+fn reword_head_leaves_backup_branch_at_old_tip() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let oids = build_commit_dag(
+        wt,
+        &[("b", "a"), ("c", "b")],
+        &[("c", "refs/heads/main"), ("c", "refs/heads/backup")],
+    );
+    let grit = open_grit(wt);
+    let plan = reword(&grit, oids["c"], "c reworded\n".into(), &rewrite_opts(1)).expect("reword");
+    let moved: Vec<&str> = plan.ref_updates.iter().map(|u| u.name.as_str()).collect();
+    assert_eq!(moved, ["refs/heads/main"]);
+    apply_reword(&grit, &plan);
+    assert_eq!(git_rev_parse(wt, "backup"), Some(oids["c"]));
+    assert_ne!(git_rev_parse(wt, "main"), Some(oids["c"]));
+    git_fsck_strict(wt);
+}
+
+#[test]
+fn reword_keeps_moving_stacked_branches_but_not_same_tip_backup() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let oids = build_commit_dag(
+        wt,
+        &[("b", "a"), ("c", "b"), ("d", "c")],
+        &[
+            ("c", "refs/heads/main"),
+            ("c", "refs/heads/backup"),
+            ("d", "refs/heads/stacked"),
+        ],
+    );
+    let grit = open_grit(wt);
+    let plan = reword(&grit, oids["b"], "b reworded\n".into(), &rewrite_opts(1)).expect("reword");
+    let mut moved: Vec<&str> = plan.ref_updates.iter().map(|u| u.name.as_str()).collect();
+    moved.sort_unstable();
+    assert_eq!(moved, ["refs/heads/main", "refs/heads/stacked"]);
+    apply_reword(&grit, &plan);
+    assert_eq!(git_rev_parse(wt, "backup"), Some(oids["c"]));
+    assert_eq!(
+        git_rev_parse(wt, "stacked~1"),
+        git_rev_parse(wt, "main"),
+        "stacked branch stays on top of the rewritten main"
+    );
+    git_fsck_strict(wt);
+}
+
+#[test]
+fn reword_on_detached_head_leaves_branch_at_head_commit() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let oids = build_commit_dag(wt, &[("b", "a"), ("c", "b")], &[("c", "refs/heads/main")]);
+    git(wt, &["switch", "-q", "--detach", &oids["c"].to_hex()]);
+    let grit = open_grit(wt);
+    let plan = reword(&grit, oids["b"], "b reworded\n".into(), &rewrite_opts(1)).expect("reword");
+    let moved: Vec<&str> = plan.ref_updates.iter().map(|u| u.name.as_str()).collect();
+    assert_eq!(moved, ["HEAD"]);
+    apply_reword(&grit, &plan);
+    assert_eq!(git_rev_parse(wt, "main"), Some(oids["c"]));
+    assert_ne!(git_rev_parse(wt, "HEAD"), Some(oids["c"]));
+    git_fsck_strict(wt);
+}

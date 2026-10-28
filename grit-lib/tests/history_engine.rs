@@ -904,9 +904,11 @@ fn plan_rewrite_empty_policy_drop_keep_abort() {
 fn plan_rewrite_rejects_branch_checked_out_in_other_worktree() {
     let repo = HistoryRepo::init();
     let wt = repo.worktree();
-    let oids = build_commit_dag(wt, &[("b", "a")], &[("b", "refs/heads/main")]);
-    git(wt, &["branch", "feature"]);
-    let feature_tip = git_rev_parse(wt, "feature").expect("feature");
+    let oids = build_commit_dag(
+        wt,
+        &[("b", "a"), ("c", "b")],
+        &[("b", "refs/heads/main"), ("c", "refs/heads/feature")],
+    );
     let linked = tempfile::tempdir().expect("linked wt dir");
     git(
         wt,
@@ -945,7 +947,50 @@ fn plan_rewrite_rejects_branch_checked_out_in_other_worktree() {
         err,
         grit_lib::revwalk::history::HistoryError::BranchCheckedOutElsewhere { .. }
     ));
-    let _ = feature_tip;
+}
+
+#[test]
+fn plan_rewrite_skips_same_tip_branch_checked_out_in_other_worktree() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let oids = build_commit_dag(wt, &[("b", "a")], &[("b", "refs/heads/main")]);
+    git(wt, &["branch", "feature"]);
+    let linked = tempfile::tempdir().expect("linked wt dir");
+    git(
+        wt,
+        &[
+            "worktree",
+            "add",
+            linked.path().to_str().expect("utf8"),
+            "feature",
+        ],
+    );
+
+    let grit = open_grit(wt);
+    let mut edits = HistoryEdits::new();
+    edits.insert(
+        oids["a"],
+        CommitEdit::Rewrite {
+            tree: None,
+            message: Some("reword\n".into()),
+            author: None,
+            parents: None,
+        },
+    );
+    let plan = plan_rewrite(
+        &grit,
+        &edits,
+        &RewriteOptions {
+            scope: RefScope::Branches,
+            empty: EmptyPolicy::Drop,
+            committer: committer(11).parse().expect("signature"),
+            preserve_committer: false,
+            sign: true,
+        },
+    )
+    .expect("same-tip branch is out of scope");
+    let moved: Vec<&str> = plan.ref_updates.iter().map(|u| u.name.as_str()).collect();
+    assert_eq!(moved, ["refs/heads/main"]);
 }
 
 #[test]

@@ -405,6 +405,45 @@ fn rebase_updates_stacked_branches() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn rebase_keeps_backup_branch_at_old_tip() -> TestResult {
+    let scratch = Scratch::new("backup")?;
+    let dir = scratch.path();
+    init_repo(dir)?;
+    git(dir, &["switch", "-q", "-c", "feature"])?;
+    fs::write(dir.join("x.txt"), "x\n")?;
+    git(dir, &["add", "x.txt"])?;
+    git(dir, &["commit", "-m", "X"])?;
+    fs::write(dir.join("y.txt"), "y\n")?;
+    git(dir, &["add", "y.txt"])?;
+    git(dir, &["commit", "-m", "Y"])?;
+    git(dir, &["branch", "backup"])?;
+    let old_tip = git(dir, &["rev-parse", "HEAD"])?.trim().to_string();
+    git(dir, &["switch", "-q", "main"])?;
+    fs::write(dir.join("m.txt"), "m\n")?;
+    git(dir, &["add", "m.txt"])?;
+    git(dir, &["commit", "-m", "M"])?;
+    git(dir, &["switch", "-q", "feature"])?;
+    gs(dir, ["config", "grit.changeIds", "false"])?;
+    let out = gs(dir, ["rebase", "main", "--json"])?;
+    assert!(out.success(), "{}\n{}", out.stdout, out.stderr);
+    let json = parse_json(&out.stdout)?;
+    let refs: Vec<&str> = json["refs"]
+        .as_array()
+        .ok_or("refs")?
+        .iter()
+        .filter_map(|r| r["ref"].as_str())
+        .collect();
+    assert_eq!(refs, ["refs/heads/feature"], "{json}");
+    assert_eq!(git(dir, &["rev-parse", "backup"])?.trim(), old_tip);
+    assert_eq!(
+        git(dir, &["rev-parse", "feature~2"])?,
+        git(dir, &["rev-parse", "main"])?
+    );
+    git_fsck_strict(dir)?;
+    Ok(())
+}
+
 fn init_rebase_conflict_fixture(dir: &Path) -> Result<(String, String), Box<dyn Error>> {
     init_repo(dir)?;
     git(dir, &["checkout", "-b", "topic"])?;

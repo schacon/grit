@@ -43,6 +43,21 @@ When there is nothing to replay, human output is `Already up to date` and `--jso
 
 Shared rewrite flags match [`grit history`](history.md): `--dry-run`, `--update-refs`, `--empty`, and `--keep-committer`.
 
+With the default `--update-refs branches`, stacked branches move with the rebase: a branch on one of the replayed commits, or on a commit built on top of them, ends up on its replayed copy. Another branch at the same commit as the checked-out branch is not moved, so a `backup` branch created right before the rebase still points at the original commits:
+
+```console
+$ grit branch backup
+$ grit rebase main
+Rebased 2 commit(s)
+  commit cc10d19 → 931f74a (X)
+  commit 874d334 → 8489106 (Y)
+  refs/heads/feature 874d334 → 8489106
+$ grit log --oneline backup
+874d334 Y
+cc10d19 X
+70709d8 base
+```
+
 ### Exec commands that amend or add commits
 
 An `--exec` command may rewrite the commit it runs at, the way it can with `git rebase
@@ -110,7 +125,7 @@ exit code.
 | `--abort` | Cancel the rebase and restore the branch to `orig-head`. Also cancels a rebase that `git` started. |
 | `--skip` | Skip a conflicted commit, or remaining exec commands at an exec stop (save edits first). |
 | `--dry-run` | List ref updates without moving refs (no session). |
-| `--update-refs` | `branches` (default) or `head`. |
+| `--update-refs` | `branches` (default: the checked-out branch and every stacked branch on or above the replayed commits, but not other branches at the `HEAD` commit) or `head`. |
 | `--empty` | `drop` (default), `keep`, or `abort` when a replay would become empty. |
 | `--keep-committer` | Preserve committer ident and timestamp on replayed commits. |
 | `--exec` | After each replayed commit is checked out, run `CMD` via `sh -c` in the worktree (repeatable; runs in order at every commit). Requires a clean index and worktree. Incompatible with `--dry-run`, `--check`, and `-X`. Command output goes to stderr. On nonzero command exit, grit restores `HEAD`, the index, and the worktree without moving refs; exit code is the command's exit code. A successful command may amend the replayed commit or add commits on top of it; later commits are replayed onto the result. A successful command that leaves tracked edits stops with `exec_dirty` and preserves them for recovery. |
