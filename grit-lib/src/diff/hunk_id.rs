@@ -40,6 +40,17 @@ impl DiffSide {
     }
 }
 
+/// Lowercase side name: `unstaged`, `staged` or `other`.
+impl fmt::Display for DiffSide {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Unstaged => "unstaged",
+            Self::Staged => "staged",
+            Self::Other => "other",
+        })
+    }
+}
+
 /// Twelve lowercase hex characters identifying one structured hunk within a side and path.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HunkId([u8; HUNK_ID_HEX_LEN / 2]);
@@ -436,6 +447,13 @@ pub(crate) fn hunk_ids_for_unified_slices(
 mod tests {
     use super::*;
     use crate::diff::structured::{StructuredLineKind, StructuredSegment};
+
+    #[test]
+    fn diff_side_displays_lowercase_name() {
+        assert_eq!(DiffSide::Unstaged.to_string(), "unstaged");
+        assert_eq!(DiffSide::Staged.to_string(), "staged");
+        assert_eq!(DiffSide::Other.to_string(), "other");
+    }
 
     fn line(kind: StructuredLineKind, text: &str) -> StructuredLine {
         StructuredLine {
