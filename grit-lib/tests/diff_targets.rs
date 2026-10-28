@@ -406,3 +406,65 @@ fn resolve_diff_arguments_against_with_commits() {
 fn octal_mode(text: String) -> FileMode {
     FileMode::new(u32::from_str_radix(&text, 8).expect("octal mode"))
 }
+
+#[test]
+fn worktree_binary_size_change_is_a_content_change_like_git() {
+    let dir = TempDir::new().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("bin.dat"), b"\0\x01\x02\0\xff\xfe\0").expect("write");
+    std::fs::write(dir.path().join("text.txt"), "short\n").expect("write");
+    commit_all(dir.path(), "c1");
+    std::fs::write(dir.path().join("bin.dat"), b"\0\x01\x02\0\xff\xfe\0\t").expect("write");
+    std::fs::write(dir.path().join("text.txt"), "a longer line\n").expect("write");
+
+    let repo = open_repo(dir.path());
+    for (target, git_args) in [
+        (DiffTarget::WorktreeVsIndex, &["diff", "--raw"][..]),
+        (DiffTarget::WorktreeVsHead, &["diff", "--raw", "HEAD"][..]),
+    ] {
+        let files = grit_files(&repo, target.clone(), &[]);
+        let bin = files
+            .iter()
+            .find(|f| f.path == "bin.dat")
+            .expect("bin.dat row");
+        assert!(bin.binary, "{target:?}: {bin:?}");
+        assert!(bin.content_changed, "{target:?}: {bin:?}");
+        assert!(bin.new_oid.is_zero(), "{target:?}: {bin:?}");
+        assert!(bin.hunks.is_empty(), "{target:?}: {bin:?}");
+        let text = files
+            .iter()
+            .find(|f| f.path == "text.txt")
+            .expect("text.txt row");
+        assert!(text.content_changed, "{target:?}: {text:?}");
+        assert!(!text.hunks.is_empty(), "{target:?}: {text:?}");
+        assert_eq!(
+            grit_raw(&repo, target.clone()),
+            git_raw(dir.path(), git_args),
+            "{target:?}"
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn worktree_binary_mode_only_change_is_not_a_content_change() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("bin.dat"), b"a\0b\n").expect("write");
+    commit_all(dir.path(), "c1");
+    let path = dir.path().join("bin.dat");
+    let mut perms = std::fs::metadata(&path).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&path, perms).expect("chmod");
+
+    let repo = open_repo(dir.path());
+    for target in [DiffTarget::WorktreeVsIndex, DiffTarget::WorktreeVsHead] {
+        let files = grit_files(&repo, target.clone(), &[]);
+        assert_eq!(files.len(), 1, "{target:?}: {files:?}");
+        let bin = &files[0];
+        assert!(bin.binary, "{target:?}: {bin:?}");
+        assert!(!bin.content_changed, "{target:?}: {bin:?}");
+        assert_eq!(bin.new_mode.as_deref(), Some("100755"), "{target:?}");
+    }
+}
