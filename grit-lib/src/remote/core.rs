@@ -577,9 +577,18 @@ impl Remote {
 
     /// Push `refs` to this remote from `repo`.
     ///
+    /// `cancel` is polled throughout: while the objects to send are walked, while the
+    /// pack is built and streamed, while a local (`file://` or path) remote indexes
+    /// it, and while a smart-HTTP push waits for the server's report. A cancel
+    /// before the objects are stored updates no remote ref and leaves no temporary
+    /// files; a cancel after a wire push sent its whole request stops waiting, but
+    /// the server may still apply the update. Remote-tracking refs are not updated
+    /// either way.
+    ///
     /// # Errors
     ///
-    /// Returns [`RemoteError`] or transport errors on failure, and
+    /// Returns [`Error::Cancelled`] (see [`RemoteError::is_cancelled`]) once `cancel`
+    /// fires, [`RemoteError`] or transport errors on failure, and
     /// [`Error::UnsupportedObjectStore`] (operation `"push"`) before contacting the remote
     /// when `repo` uses a custom [`OdbBuilder::primary`](crate::odb::OdbBuilder::primary)
     /// store: the pack is built from the on-disk `objects/` directory.
