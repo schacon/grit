@@ -3491,52 +3491,6 @@ pub fn grit_lib::diff::combined_tree_diff::combined_parent_status_char(grit_lib:
 pub fn grit_lib::diff::combined_tree_diff::combined_raw_meta(&grit_lib::diff::combined_tree_diff::CombinedDiffPath, core::option::Option<usize>) -> alloc::string::String
 pub fn grit_lib::diff::combined_tree_diff::format_combined_raw_line(&grit_lib::diff::combined_tree_diff::CombinedDiffPath, core::option::Option<usize>) -> alloc::string::String
 pub fn grit_lib::diff::combined_tree_diff::format_combined_raw_line_all_paths(&grit_lib::diff::combined_tree_diff::CombinedDiffPath, core::option::Option<usize>, bool, bool) -> alloc::string::String
-pub mod grit_lib::diff::diffstat
-pub struct grit_lib::diff::diffstat::DiffstatOptions<'a>
-pub grit_lib::diff::diffstat::DiffstatOptions::color_add: &'a str
-pub grit_lib::diff::diffstat::DiffstatOptions::color_del: &'a str
-pub grit_lib::diff::diffstat::DiffstatOptions::color_reset: &'a str
-pub grit_lib::diff::diffstat::DiffstatOptions::graph_bar_slack: usize
-pub grit_lib::diff::diffstat::DiffstatOptions::graph_prefix_budget_slack: usize
-pub grit_lib::diff::diffstat::DiffstatOptions::line_prefix: &'a str
-pub grit_lib::diff::diffstat::DiffstatOptions::stat_count: core::option::Option<usize>
-pub grit_lib::diff::diffstat::DiffstatOptions::stat_graph_width: core::option::Option<usize>
-pub grit_lib::diff::diffstat::DiffstatOptions::stat_name_width: core::option::Option<usize>
-pub grit_lib::diff::diffstat::DiffstatOptions::subtract_prefix_from_terminal: bool
-pub grit_lib::diff::diffstat::DiffstatOptions::terminal_width: usize
-pub grit_lib::diff::diffstat::DiffstatOptions::total_width: usize
-pub grit_lib::diff::diffstat::DiffstatOptions::width_prefix: &'a str
-impl<'a> core::clone::Clone for grit_lib::diff::diffstat::DiffstatOptions<'a>
-pub fn grit_lib::diff::diffstat::DiffstatOptions<'a>::clone(&self) -> Self
-impl<'a> core::fmt::Debug for grit_lib::diff::diffstat::DiffstatOptions<'a>
-pub fn grit_lib::diff::diffstat::DiffstatOptions<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'a> core::marker::Freeze for grit_lib::diff::diffstat::DiffstatOptions<'a>
-impl<'a> core::marker::Send for grit_lib::diff::diffstat::DiffstatOptions<'a>
-impl<'a> core::marker::Sync for grit_lib::diff::diffstat::DiffstatOptions<'a>
-impl<'a> core::marker::Unpin for grit_lib::diff::diffstat::DiffstatOptions<'a>
-impl<'a> core::marker::UnsafeUnpin for grit_lib::diff::diffstat::DiffstatOptions<'a>
-impl<'a> core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::diffstat::DiffstatOptions<'a>
-impl<'a> core::panic::unwind_safe::UnwindSafe for grit_lib::diff::diffstat::DiffstatOptions<'a>
-pub struct grit_lib::diff::diffstat::FileStatInput
-pub grit_lib::diff::diffstat::FileStatInput::deletions: usize
-pub grit_lib::diff::diffstat::FileStatInput::insertions: usize
-pub grit_lib::diff::diffstat::FileStatInput::is_binary: bool
-pub grit_lib::diff::diffstat::FileStatInput::is_unmerged: bool
-pub grit_lib::diff::diffstat::FileStatInput::path_display: alloc::string::String
-impl core::clone::Clone for grit_lib::diff::diffstat::FileStatInput
-pub fn grit_lib::diff::diffstat::FileStatInput::clone(&self) -> Self
-impl core::fmt::Debug for grit_lib::diff::diffstat::FileStatInput
-pub fn grit_lib::diff::diffstat::FileStatInput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for grit_lib::diff::diffstat::FileStatInput
-impl core::marker::Send for grit_lib::diff::diffstat::FileStatInput
-impl core::marker::Sync for grit_lib::diff::diffstat::FileStatInput
-impl core::marker::Unpin for grit_lib::diff::diffstat::FileStatInput
-impl core::marker::UnsafeUnpin for grit_lib::diff::diffstat::FileStatInput
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::diffstat::FileStatInput
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::diffstat::FileStatInput
-pub fn grit_lib::diff::diffstat::display_width_minus_ansi(&str) -> usize
-pub fn grit_lib::diff::diffstat::format_single_stat_line(&str, usize, usize, usize) -> core::io::error::Result<alloc::string::String>
-pub fn grit_lib::diff::diffstat::write_diffstat_block(&mut impl core::io::write::Write, &[grit_lib::diff::diffstat::FileStatInput], &grit_lib::diff::diffstat::DiffstatOptions<'_>) -> core::io::error::Result<()>
 pub mod grit_lib::diff::fmt_merge_msg
 pub struct grit_lib::diff::fmt_merge_msg::FmtMergeMsgOptions
 pub grit_lib::diff::fmt_merge_msg::FmtMergeMsgOptions::into_name: core::option::Option<alloc::string::String>
@@ -5250,8 +5204,6 @@ pub fn grit_lib::diff::format_mode(u32) -> alloc::string::String
 pub fn grit_lib::diff::format_raw(&grit_lib::diff::DiffEntry) -> alloc::string::String
 pub fn grit_lib::diff::format_raw_abbrev(&grit_lib::diff::DiffEntry, usize) -> alloc::string::String
 pub fn grit_lib::diff::format_rename_path(&str, &str) -> alloc::string::String
-pub fn grit_lib::diff::format_stat_line(&str, usize, usize, usize) -> alloc::string::String
-pub fn grit_lib::diff::format_stat_line_width(&str, usize, usize, usize, usize) -> alloc::string::String
 pub fn grit_lib::diff::hash_worktree_file(&grit_lib::objects::odb::Odb, &std::path::Path, &std::fs::Metadata, &grit_lib::worktree::crlf::ConversionConfig, &grit_lib::worktree::crlf::FileAttrs, &str, core::option::Option<&grit_lib::index::IndexEntry>, core::option::Option<&grit_lib::filter_process::FilterProcessState>) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::diff::head_path_states(&grit_lib::objects::odb::Odb, core::option::Option<&grit_lib::objects::ObjectId>) -> grit_lib::error::Result<alloc::collections::btree::map::BTreeMap<alloc::string::String, (u32, grit_lib::objects::ObjectId)>>
 pub fn grit_lib::diff::hunk_diff_bundle(&grit_lib::repo::Repository, &[alloc::string::String], grit_lib::diff::DiffOptions) -> grit_lib::error::Result<grit_lib::diff::HunkDiffBundle>

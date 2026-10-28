@@ -5,7 +5,6 @@
 use crate::support;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::diff::diffstat::{write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::diff::merge_diff::{
     all_blob_paths_in_tree_order, blob_oid_at_path, combined_diff_paths,
     combined_merge_parent_blob_paths, enrich_combined_path_renames, read_blob_at_path,
@@ -216,37 +215,6 @@ fn history_repo_revwalk_merge_base_and_diff_sweep() -> grit_lib::error::Result<(
         &policy,
         &opts,
     )?;
-    let mut stat_buf = Vec::new();
-    let stat_inputs: Vec<FileStatInput> = raw
-        .iter()
-        .map(|e| FileStatInput {
-            path_display: e
-                .new_path
-                .clone()
-                .or_else(|| e.old_path.clone())
-                .unwrap_or_else(|| "file".to_owned()),
-            insertions: 1,
-            deletions: 1,
-            is_binary: false,
-            is_unmerged: false,
-        })
-        .collect();
-    let stat_opts = DiffstatOptions {
-        total_width: 80,
-        line_prefix: "",
-        width_prefix: "",
-        subtract_prefix_from_terminal: false,
-        terminal_width: 80,
-        stat_name_width: None,
-        stat_graph_width: None,
-        stat_count: None,
-        color_add: "",
-        color_del: "",
-        color_reset: "",
-        graph_bar_slack: 0,
-        graph_prefix_budget_slack: 0,
-    };
-    write_diffstat_block(&mut stat_buf, &stat_inputs, &stat_opts)?;
 
     let commit_obj = repo.odb().read(&tip)?;
     let parsed = parse_commit(&commit_obj.data)?;

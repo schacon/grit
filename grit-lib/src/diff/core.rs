@@ -10313,43 +10313,6 @@ fn extract_function_context(
     None
 }
 
-/// Generate diff stat output (file name + insertions/deletions).
-///
-/// Returns a single line like: ` file.txt | 5 ++---`
-pub fn format_stat_line(
-    path: &str,
-    insertions: usize,
-    deletions: usize,
-    max_path_len: usize,
-) -> String {
-    format_stat_line_width(path, insertions, deletions, max_path_len, 0)
-}
-
-/// Format one `--stat` line with explicit path and count column widths.
-pub fn format_stat_line_width(
-    path: &str,
-    insertions: usize,
-    deletions: usize,
-    max_path_len: usize,
-    count_width: usize,
-) -> String {
-    let mut line =
-        crate::diffstat::format_single_stat_line(path, insertions, deletions, max_path_len)
-            .unwrap_or_else(|_| String::new());
-    if count_width > 0 && line.contains(" | ") {
-        let total = insertions + deletions;
-        let cw = count_width;
-        if let Some((left, rest)) = line.split_once(" | ") {
-            if let Some((_, bar)) = rest.split_once(' ') {
-                line = format!(" {left} | {total:>cw$} {bar}", cw = cw);
-            } else {
-                line = format!(" {left} | {total:>cw$}", cw = cw);
-            }
-        }
-    }
-    line
-}
-
 fn last_line_index_without_trailing_newline(text: &str) -> Option<usize> {
     LineSide::from_text(text).incomplete_last_line_index()
 }
@@ -13962,8 +13925,6 @@ mod line_coverage_tests {
             7,
         );
         assert!(raw.contains('M') || raw.contains('x'));
-        let stat = format_stat_line_width("path", 10, 20, 40, 8);
-        assert!(stat.contains("path"));
     }
 
     #[test]

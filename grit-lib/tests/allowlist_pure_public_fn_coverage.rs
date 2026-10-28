@@ -18,8 +18,8 @@ use grit_lib::config::dotfile::is_ntfs_dot_gitignore;
 use grit_lib::config::ident::SignatureTimestamp;
 use grit_lib::config::ident::{fsck_commit_idents, timestamp_for_at_ct};
 use grit_lib::diff::{
-    detect_copies, format_stat_line, read_submodule_head_for_checkout,
-    submodule_commit_subject_line, unified_diff, unified_diff_with_prefix,
+    detect_copies, read_submodule_head_for_checkout, submodule_commit_subject_line, unified_diff,
+    unified_diff_with_prefix,
 };
 use grit_lib::lockfile::{LockFile, LockWait, SystemLockJitter};
 use grit_lib::objects::hash::try_par_hash_with_force;
@@ -101,8 +101,6 @@ fn blame_diff_dotfile_ident_and_hash_helpers() {
 
     let _ = unified_diff("a\n", "b\n", "f", "f", 3, false, false);
     let _ = unified_diff_with_prefix("a\n", "b\n", "f", "f", 3, 0, "a/", "b/", false, false);
-    let _ = format_stat_line("path", 1, 2, 80);
-
     let empty_tree = ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904").expect("tree");
     let odb_dir = tempdir().expect("t").path().join("objects");
     let odb = grit_lib::objects::odb::Odb::new(&odb_dir);

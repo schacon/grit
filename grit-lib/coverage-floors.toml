@@ -44,7 +44,6 @@ minimum = 82.9
 files = [
     "diff.rs",
     "diff_indent_heuristic.rs",
-    "diffstat.rs",
     "structured_diff.rs",
     "combined_tree_diff.rs",
     "combined_diff_patch.rs",
@@ -281,9 +280,6 @@ minimum = 95.9
 minimum = 85.0
 
 [file."diff_indent_heuristic.rs"]
-minimum = 85.0
-
-[file."diffstat.rs"]
 minimum = 85.0
 
 [file."diff/core.rs"]

@@ -8,10 +8,7 @@ use grit_lib::diff::{
     unified_diff_with_prefix_and_funcname_and_algorithm,
 };
 use similar::Algorithm;
-use support::{
-    blob_pairs, grit_blob_patch, grit_diffstat_block, grit_numstat, grit_stat_line,
-    GritBlobPatchOpts, LineDiffAlgo,
-};
+use support::{blob_pairs, grit_blob_patch, grit_numstat, GritBlobPatchOpts, LineDiffAlgo};
 
 #[test]
 fn all_blob_pairs_exercise_diff_printers() {
@@ -25,9 +22,6 @@ fn all_blob_pairs_exercise_diff_printers() {
             LineDiffAlgo::Minimal,
         ] {
             let _ = grit_numstat(old_s, new_s, algo);
-            let _ = grit_diffstat_block(pair.name, pair.old, pair.new, algo);
-            let (ins, del) = grit_numstat(old_s, new_s, algo);
-            let _ = grit_stat_line(pair.name, ins, del, 80);
             let opts = GritBlobPatchOpts {
                 algo,
                 ..GritBlobPatchOpts::default()

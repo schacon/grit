@@ -477,7 +477,7 @@ Shared harness: [`grit-lib/tests/support/diff_harness.rs`](grit-lib/tests/suppor
 | t4061-diff-indent.sh | `--indent-heuristic` / `diff.indentHeuristic` | `diff_blob_algorithms.rs` (`t4061_indent_heuristic_matches_git`) | covered (spaces.txt subset) |
 | t4015-diff-whitespace.sh | trailing whitespace blob diffs; `-b`/`-w` oracle notes | `diff_blob_algorithms.rs` (`t4015_whitespace_modes_match_git`) | partial (default ws; `--ignore-space-at-eol` equivalence checked via git oracle) |
 | t4012-diff-binary.sh | binary detection / parse git binary patch | `diff_blob_algorithms.rs` (`t4012_binary_patch_applies_with_git`) | partial (text patch parity; binary marker + apply parse) |
-| t4052-stat-output.sh | `--numstat` / `--stat` width layout | `diff_blob_algorithms.rs` (`t4052_numstat_and_stat_width_match_git`) | partial (numstat + grit stat line; `--stat=width` UX skipped on older git) |
+| t4052-stat-output.sh | `--numstat` counts and `--stat` change column | `diff_blob_algorithms.rs` (`t4052_numstat_matches_git`, `t4052_numstat_total_matches_git_stat_column`) | partial (counts only; `--stat` width layout is CLI presentation) |
 | t4032-diff-inter-hunk-context.sh | `-U0` + `--inter-hunk-context` hunk count | `diff_blob_algorithms.rs` (`t4032_inter_hunk_context_matches_git`) | covered |
 | t4029-diff-trailing-space.sh | trailing space line diff | `diff_blob_algorithms.rs` (`t4015_whitespace_modes_match_git`) | covered |
 | t4074-diff-shifted-matched-group.sh | histogram shifted groups | `diff_blob_algorithms.rs` (`t4074_shifted_matched_group_histogram_applies_with_git`) | partial (patch applies; hunk body may differ from git histogram) |
@@ -485,7 +485,7 @@ Shared harness: [`grit-lib/tests/support/diff_harness.rs`](grit-lib/tests/suppor
 | t4051-diff-function-context.sh | `-W` function context | `diff_blob_algorithms.rs` (`t4051_function_context_applies_with_git`) | partial (apply parity; hunk extent may differ from git `-W`) |
 | t4055-diff-context.sh | `diff.context` config | — | not ported |
 | t4024-diff-optimize-common.sh | optimize common subexpression | — | not ported |
-| t4049-diff-stat-count.sh | stat count limits | `diffstat.rs` (`write_diffstat_stat_count_hides_lines_but_sums_summary`) | covered (library stat block) |
+| t4049-diff-stat-count.sh | stat count limits | — | skipped (`--stat-count` is display UX) |
 | t4047-diff-dirstat.sh | `--dirstat` | — | not ported |
 | — | no newline at EOF markers | `diff_blob_algorithms.rs` (`no_newline_at_eof_pairs_match_git_or_apply`) | covered |
 | — | random apply `--check` all algorithms | `diff_blob_algorithms.rs` (`random_patches_apply_with_git_all_algorithms`) | covered |
