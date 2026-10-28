@@ -1261,6 +1261,9 @@ mod ref_target_verification_git_compat;
 #[cfg(feature = "full-tests")]
 #[path = "reflog_expire_dry_run.rs"]
 mod reflog_expire_dry_run;
+#[cfg(feature = "full-tests")]
+#[path = "reflog_expire_history.rs"]
+mod reflog_expire_history;
 #[path = "reflog_handle_coverage.rs"]
 mod reflog_handle_coverage;
 #[path = "reflog_injected_ref_store.rs"]

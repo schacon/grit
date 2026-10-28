@@ -8,6 +8,8 @@
 //! <old-sha> <new-sha> <name> <<email>> <timestamp> <timezone>\t<message>
 //! ```
 
+use std::cell::{OnceCell, RefCell};
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::File;
@@ -15,12 +17,15 @@ use std::io;
 use std::io::{Read, Seek, SeekFrom};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use crate::commit_graph_file::CommitGraphChain;
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::ident::Signature;
+use crate::index::MODE_TREE;
 use crate::merge_base;
-use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use crate::objects::{parse_commit, parse_tree, CommitRef, ObjectId, ObjectKind};
 use crate::refs::store::RefStore as _;
 use crate::refs::{self, reflog_file_path};
 use crate::repo::Repository;
@@ -810,7 +815,8 @@ fn collect_reflog_refs(
 /// Options for [`expire_reflog_git`].
 #[derive(Debug, Clone)]
 pub struct ReflogExpireParams {
-    /// Prune entries whose commits fail a completeness walk (missing objects).
+    /// Also prune entries whose commits, or any commit, tree or blob reachable from them, are
+    /// missing. This walks full history once per expiry; ordinary expiry never does.
     pub stale_fix: bool,
     /// `dry_run` field.
     pub dry_run: bool,
@@ -990,194 +996,342 @@ fn resolve_expire_for_ref(
     (expire_total, expire_unreachable)
 }
 
-fn tree_fully_complete(
-    repo: &Repository,
-    oid: ObjectId,
-    depth: usize,
-    promised: &HashSet<ObjectId>,
-) -> bool {
-    if promised.contains(&oid) {
-        return true;
+/// Lazily computed state shared by the reflog expiry of several refs in one pass.
+///
+/// Every member is only filled when an expiry needs it: the promise boundary when a tip has
+/// to be classified or `--stale-fix` runs, commit linkage when old entries are judged by
+/// reachability, and the completeness answers only for `--stale-fix`.
+#[derive(Debug, Default)]
+pub(crate) struct ReflogExpiryCache {
+    promised: OnceCell<HashSet<ObjectId>>,
+    /// Parents and committer time of every commit a reachability walk has read.
+    linkage: RefCell<HashMap<ObjectId, (Vec<ObjectId>, i64)>>,
+    complete: RefCell<HashMap<ObjectId, bool>>,
+}
+
+impl ReflogExpiryCache {
+    /// Partial-clone promises, read without fetching; missing promised objects count as
+    /// present everywhere expiry looks at objects.
+    fn promised(&self, repo: &Repository) -> Result<&HashSet<ObjectId>> {
+        if let Some(promised) = self.promised.get() {
+            return Ok(promised);
+        }
+        let promised = crate::promisor::maintenance_promise_boundary(repo.odb())?;
+        Ok(self.promised.get_or_init(|| promised))
     }
-    if depth > 65536 {
-        return false;
-    }
-    let Ok(Some(obj)) = repo.odb().try_read_once(&oid) else {
-        return false;
-    };
-    match obj.kind {
-        ObjectKind::Blob => true,
-        ObjectKind::Tree => {
-            let Ok(entries) = parse_tree(&obj.data) else {
-                return false;
-            };
-            for e in entries {
-                if !tree_fully_complete(repo, e.oid, depth + 1, promised) {
-                    return false;
+
+    /// Whether `root` and every commit, tree and blob reachable from it is present (or
+    /// promised).
+    ///
+    /// One iterative walk memoises every commit and tree it finishes, so history shared
+    /// between reflog entries and refs is read once per expiry pass, merge diamonds are not
+    /// re-walked, and deep history cannot overflow the stack.
+    fn commit_complete(
+        &self,
+        repo: &Repository,
+        promised: &HashSet<ObjectId>,
+        root: ObjectId,
+    ) -> bool {
+        enum Step {
+            Enter(ObjectId, ObjectKind),
+            Finish(ObjectId, Vec<ObjectId>),
+        }
+        let is_boundary = |oid: &ObjectId| oid.is_zero() || promised.contains(oid);
+        if is_boundary(&root) {
+            return true;
+        }
+        let mut memo = self.complete.borrow_mut();
+        let mut stack = vec![Step::Enter(root, ObjectKind::Commit)];
+        while let Some(step) = stack.pop() {
+            match step {
+                Step::Enter(oid, kind) => {
+                    if is_boundary(&oid) || memo.contains_key(&oid) {
+                        continue;
+                    }
+                    // Provisionally incomplete: an object reached again before it finishes
+                    // would be its own ancestor, which only a corrupt store can serve.
+                    memo.insert(oid, false);
+                    let Some(children) = object_children(repo, promised, oid, kind) else {
+                        continue;
+                    };
+                    let next = children
+                        .iter()
+                        .map(|&(child, kind)| Step::Enter(child, kind))
+                        .collect::<Vec<_>>();
+                    stack.push(Step::Finish(
+                        oid,
+                        children.into_iter().map(|(child, _)| child).collect(),
+                    ));
+                    stack.extend(next);
+                }
+                Step::Finish(oid, children) => {
+                    let complete = children
+                        .iter()
+                        .all(|child| is_boundary(child) || memo.get(child) == Some(&true));
+                    memo.insert(oid, complete);
                 }
             }
-            true
         }
-        _ => false,
+        memo.get(&root) == Some(&true)
     }
 }
 
-fn commit_chain_complete(
+/// The commits and trees `oid` (expected to be a `kind`) points to, or `None` when `oid` is
+/// missing, of another kind, unparsable, or a tree naming a missing non-tree entry.
+///
+/// Non-tree entries are only checked for existence, so blobs are never inflated.
+fn object_children(
     repo: &Repository,
-    oid: ObjectId,
-    depth: usize,
     promised: &HashSet<ObjectId>,
-) -> bool {
-    if oid.is_zero() || promised.contains(&oid) {
-        return true;
+    oid: ObjectId,
+    kind: ObjectKind,
+) -> Option<Vec<(ObjectId, ObjectKind)>> {
+    let obj = repo.odb().try_read_once(&oid).ok()??;
+    if obj.kind != kind {
+        return None;
     }
-    if depth > 65536 {
-        return false;
-    }
-    let Ok(Some(obj)) = repo.odb().try_read_once(&oid) else {
-        return false;
-    };
-    if obj.kind != ObjectKind::Commit {
-        return false;
-    }
-    let Ok(c) = parse_commit(&obj.data) else {
-        return false;
-    };
-    if !tree_fully_complete(repo, c.tree, depth + 1, promised) {
-        return false;
-    }
-    for p in &c.parents {
-        if !commit_chain_complete(repo, *p, depth + 1, promised) {
-            return false;
+    match kind {
+        ObjectKind::Commit => {
+            let commit = parse_commit(&obj.data).ok()?;
+            Some(
+                std::iter::once((commit.tree, ObjectKind::Tree))
+                    .chain(commit.parents.into_iter().map(|p| (p, ObjectKind::Commit)))
+                    .collect(),
+            )
         }
+        ObjectKind::Tree => {
+            let mut subtrees = Vec::new();
+            for entry in parse_tree(&obj.data).ok()? {
+                if entry.mode == MODE_TREE {
+                    subtrees.push((entry.oid, ObjectKind::Tree));
+                } else if !promised.contains(&entry.oid) && !repo.odb().exists(&entry.oid) {
+                    return None;
+                }
+            }
+            Some(subtrees)
+        }
+        ObjectKind::Blob | ObjectKind::Tag => None,
     }
-    true
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UnreachableKind {
-    Always,
-    Normal,
-    Head,
+/// The commit a ref tip names after peeling annotated tags, read without lazy fetching.
+///
+/// Returns `None` for a zero id, a missing object or a tip that is not a commit; promised
+/// objects count as present commits so partial clones stay offline.
+fn peel_tip_to_commit(
+    repo: &Repository,
+    promised: &HashSet<ObjectId>,
+    oid: ObjectId,
+) -> Option<ObjectId> {
+    if oid.is_zero() {
+        return None;
+    }
+    if promised.contains(&oid) {
+        return Some(oid);
+    }
+    let target = repo
+        .odb()
+        .peel_stored_tag_target(oid)
+        .ok()
+        .flatten()
+        .unwrap_or(oid);
+    if promised.contains(&target) {
+        return Some(target);
+    }
+    match repo.odb().try_read_once(&target) {
+        Ok(Some(obj)) if obj.kind == ObjectKind::Commit => Some(target),
+        _ => None,
+    }
 }
 
 fn is_head_ref(refname: &str) -> bool {
     refname == "HEAD" || refname.ends_with("/HEAD")
 }
 
-fn tip_commits_for_reflog(
-    repo: &Repository,
-    refname: &str,
-    promised: &HashSet<ObjectId>,
-) -> Vec<ObjectId> {
+/// Every ref tip that peels to a commit: the starting points for the reachability check of
+/// a `HEAD` reflog.
+fn head_reflog_tips(repo: &Repository, promised: &HashSet<ObjectId>) -> Vec<ObjectId> {
     let store = repo.refs();
     let mut tips = Vec::new();
-    if is_head_ref(refname) {
-        if let Ok(oid) = store.resolve("HEAD") {
-            tips.push(oid);
-        }
-        if let Ok(refs) = refs::collect_resolved_refs(store, "refs/") {
-            tips.extend(refs.into_iter().map(|(_, oid)| oid));
-        }
-    } else if let Ok(oid) = store.resolve(refname) {
+    if let Ok(oid) = store.resolve("HEAD") {
         tips.push(oid);
+    }
+    if let Ok(refs) = refs::collect_resolved_refs(store, "refs/") {
+        tips.extend(refs.into_iter().map(|(_, oid)| oid));
     }
     tips.sort();
     tips.dedup();
-    tips.retain(|o| commit_chain_complete(repo, *o, 0, promised));
-    tips
+    tips.into_iter()
+        .filter_map(|oid| peel_tip_to_commit(repo, promised, oid))
+        .collect()
 }
 
-fn reachable_commit_set(repo: &Repository, tips: &[ObjectId]) -> HashSet<ObjectId> {
-    let shallow = crate::shallow::load_shallow_boundaries(repo.git_dir());
-    let mut seen = HashSet::new();
-    let mut pending = tips.to_vec();
-    while let Some(oid) = pending.pop() {
-        if !seen.insert(oid) || shallow.contains(&oid) {
-            continue;
-        }
-        let Ok(Some(obj)) = repo.odb().try_read_once(&oid) else {
-            continue;
+/// Commits reachable from a set of tips, discovered lazily.
+///
+/// The first walk stops below commits older than a cutoff (the total-expiry cutoff, which
+/// old reflog entries rarely reach past); only a lookup that misses walks the rest of
+/// history, once. Answers never depend on the cutoff, only the amount of history read.
+/// Shallow boundaries are not walked through. Parents come from the commit-graph when it
+/// covers a commit, and are kept in the [`ReflogExpiryCache`] so the walks of later refs in
+/// the same pass do not read them again.
+struct ReachableCommits<'r> {
+    repo: &'r Repository,
+    cache: &'r ReflogExpiryCache,
+    graph: Option<Arc<CommitGraphChain>>,
+    shallow: HashSet<ObjectId>,
+    seen: HashSet<ObjectId>,
+    pending: Vec<ObjectId>,
+    /// Parents of commits older than the cutoff, walked on the first miss.
+    deferred: Vec<ObjectId>,
+}
+
+impl<'r> ReachableCommits<'r> {
+    /// Walk from `tips` down to commits older than `cutoff` (`0` walks everything).
+    fn new(
+        repo: &'r Repository,
+        cache: &'r ReflogExpiryCache,
+        tips: Vec<ObjectId>,
+        cutoff: i64,
+    ) -> Self {
+        let mut reachable = Self {
+            repo,
+            cache,
+            graph: if tips.is_empty() {
+                None
+            } else {
+                repo.caches().commit_graph_chain(repo.odb().objects_dir())
+            },
+            shallow: if tips.is_empty() {
+                HashSet::new()
+            } else {
+                crate::shallow::load_shallow_boundaries(repo.git_dir())
+            },
+            seen: HashSet::new(),
+            pending: tips,
+            deferred: Vec::new(),
         };
-        if obj.kind != ObjectKind::Commit {
-            continue;
-        }
-        if let Ok(commit) = parse_commit(&obj.data) {
-            pending.extend(commit.parents);
+        reachable.walk(cutoff);
+        reachable
+    }
+
+    fn walk(&mut self, cutoff: i64) {
+        let cache = self.cache;
+        let mut memo = cache.linkage.borrow_mut();
+        while let Some(oid) = self.pending.pop() {
+            if !self.seen.insert(oid) || self.shallow.contains(&oid) {
+                continue;
+            }
+            let (parents, time) = match memo.entry(oid) {
+                Entry::Occupied(known) => known.into_mut(),
+                Entry::Vacant(slot) => match self.read_linkage(oid) {
+                    Some(linkage) => slot.insert(linkage),
+                    None => continue,
+                },
+            };
+            if cutoff > 0 && *time < cutoff {
+                self.deferred.extend_from_slice(parents);
+            } else {
+                self.pending.extend_from_slice(parents);
+            }
         }
     }
-    seen
+
+    /// Parents and committer time of commit `oid`, or `None` when it is missing or not a
+    /// commit.
+    fn read_linkage(&self, oid: ObjectId) -> Option<(Vec<ObjectId>, i64)> {
+        if let Some(linkage) = self.graph.as_ref().and_then(|g| g.graph_commit(&oid)) {
+            return Some(linkage);
+        }
+        let obj = self.repo.odb().try_read_once(&oid).ok()??;
+        if obj.kind != ObjectKind::Commit {
+            return None;
+        }
+        let commit = CommitRef::parse(&obj.data).ok()?;
+        Some((commit.parents().to_vec(), commit.committer_timestamp()))
+    }
+
+    fn contains(&mut self, oid: &ObjectId) -> bool {
+        if !self.seen.contains(oid) && !self.deferred.is_empty() {
+            self.pending.append(&mut self.deferred);
+            self.walk(0);
+        }
+        self.seen.contains(oid)
+    }
 }
 
+/// Whether a reflog entry side names a commit that is not reachable. Missing objects count
+/// as unreachable, and objects that are not commits as reachable.
 fn is_unreachable_oid(
     repo: &Repository,
-    reachable: &HashSet<ObjectId>,
-    kind: UnreachableKind,
+    reachable: &mut ReachableCommits<'_>,
     oid: ObjectId,
 ) -> bool {
-    if oid.is_zero() {
+    if oid.is_zero() || reachable.seen.contains(&oid) {
         return false;
     }
-    if reachable.contains(&oid) {
-        return false;
+    match repo.odb().try_read_once(&oid) {
+        Ok(Some(obj)) if obj.kind == ObjectKind::Commit => !reachable.contains(&oid),
+        Ok(Some(_)) => false,
+        _ => true,
     }
-    if kind == UnreachableKind::Always {
-        return true;
-    }
-    let Ok(Some(obj)) = repo.odb().try_read_once(&oid) else {
-        return true;
-    };
-    obj.kind == ObjectKind::Commit
 }
 
 fn reflog_entry_timestamp(entry: &ReflogEntry) -> i64 {
     parse_timestamp_from_identity(&entry.identity).unwrap_or(i64::MAX)
 }
 
-fn reflog_entry_needs_stale_fix(
-    repo: &Repository,
-    entry: &ReflogEntry,
-    promised: &HashSet<ObjectId>,
-) -> bool {
-    !commit_chain_complete(repo, entry.old_oid, 0, promised)
-        || !commit_chain_complete(repo, entry.new_oid, 0, promised)
+/// The `--stale-fix` completeness check, present only when `--stale-fix` was requested.
+struct StaleFix<'a> {
+    cache: &'a ReflogExpiryCache,
+    promised: &'a HashSet<ObjectId>,
 }
 
-#[expect(clippy::too_many_arguments)]
+impl StaleFix<'_> {
+    fn entry_is_stale(&self, repo: &Repository, entry: &ReflogEntry) -> bool {
+        !self
+            .cache
+            .commit_complete(repo, self.promised, entry.old_oid)
+            || !self
+                .cache
+                .commit_complete(repo, self.promised, entry.new_oid)
+    }
+}
+
 fn should_drop_reflog_entry(
     repo: &Repository,
     entry: &ReflogEntry,
     expire_total: i64,
     expire_unreachable: i64,
-    unreachable_kind: UnreachableKind,
-    reachable: &HashSet<ObjectId>,
-    stale_fix: bool,
-    promised: &HashSet<ObjectId>,
+    reachable: Option<&mut ReachableCommits<'_>>,
+    stale_fix: Option<&StaleFix<'_>>,
 ) -> bool {
     let ts = reflog_entry_timestamp(entry);
     if expire_total > 0 && ts < expire_total {
         return true;
     }
-    if stale_fix && reflog_entry_needs_stale_fix(repo, entry, promised) {
+    if stale_fix.is_some_and(|fix| fix.entry_is_stale(repo, entry)) {
         return true;
     }
-    if expire_unreachable > 0 && ts < expire_unreachable {
-        match unreachable_kind {
-            UnreachableKind::Always => return true,
-            UnreachableKind::Normal | UnreachableKind::Head => {
-                if is_unreachable_oid(repo, reachable, unreachable_kind, entry.old_oid)
-                    || is_unreachable_oid(repo, reachable, unreachable_kind, entry.new_oid)
-                {
-                    return true;
-                }
-            }
-        }
+    if expire_unreachable == 0 || ts >= expire_unreachable {
+        return false;
     }
-    false
+    // Without a reachability set (no commit tip to judge by) every old entry expires.
+    let Some(reachable) = reachable else {
+        return true;
+    };
+    is_unreachable_oid(repo, reachable, entry.old_oid)
+        || is_unreachable_oid(repo, reachable, entry.new_oid)
 }
 
-/// Reflog expiry for one ref. Completeness and reachability checks never fetch
-/// missing objects; known promises form a completeness boundary in partial clones.
+/// Reflog expiry for one ref.
+///
+/// Entries older than the total cutoff are dropped. Entries older than the unreachable
+/// cutoff are dropped when their old or new commit is not reachable from the ref's tip (from
+/// any ref for a `HEAD` reflog); that check is one commit-only walk per ref, and when the tip
+/// does not peel to a commit every such entry is dropped, as in Git. Only
+/// [`ReflogExpireParams::stale_fix`] additionally checks that the full history and trees of
+/// each entry are present, in one memoised walk. Neither check fetches missing objects:
+/// partial-clone promises count as present.
 ///
 /// The reflog is read from and rewritten through [`Repository::refs`], and ref tips for the
 /// reachability check are resolved there too, so an injected ref store is expired like the
@@ -1199,7 +1353,7 @@ pub fn expire_reflog_git(
     gc_global_unreachable: Option<i64>,
     now: i64,
 ) -> Result<ReflogExpireResult> {
-    expire_reflog_git_with_promises(
+    expire_reflog_git_with_cache(
         repo,
         refname,
         params,
@@ -1209,13 +1363,14 @@ pub fn expire_reflog_git(
         gc_global_total,
         gc_global_unreachable,
         now,
-        &std::cell::OnceCell::new(),
+        &ReflogExpiryCache::default(),
     )
 }
 
-/// Share lazy promise classification across all refs in a GC reflog-expiry phase.
+/// [`expire_reflog_git`] sharing promise classification and stale-fix completeness answers
+/// across all refs of one expiry pass.
 #[expect(clippy::too_many_arguments)]
-pub(crate) fn expire_reflog_git_with_promises(
+pub(crate) fn expire_reflog_git_with_cache(
     repo: &Repository,
     refname: &str,
     params: &ReflogExpireParams,
@@ -1225,7 +1380,7 @@ pub(crate) fn expire_reflog_git_with_promises(
     gc_global_total: Option<i64>,
     gc_global_unreachable: Option<i64>,
     now: i64,
-    promise_cache: &std::cell::OnceCell<HashSet<ObjectId>>,
+    cache: &ReflogExpiryCache,
 ) -> Result<ReflogExpireResult> {
     let store = repo.refs();
     let base_total = gc_global_total.unwrap_or_else(|| default_expire_total(now));
@@ -1255,21 +1410,17 @@ pub(crate) fn expire_reflog_git_with_promises(
         && entries
             .iter()
             .any(|e| reflog_entry_timestamp(e) < expire_unreachable);
-    let empty = HashSet::new();
-    let promised = if params.stale_fix || may_drop_unreachable {
-        if let Some(promised) = promise_cache.get() {
-            promised
-        } else {
-            let promised = crate::promisor::maintenance_promise_boundary(repo.odb())?;
-            promise_cache.get_or_init(|| promised)
-        }
+    let stale_fix = if params.stale_fix {
+        Some(StaleFix {
+            cache,
+            promised: cache.promised(repo)?,
+        })
     } else {
-        &empty
+        None
     };
-    let may_drop_stale = params.stale_fix
-        && entries
-            .iter()
-            .any(|e| reflog_entry_needs_stale_fix(repo, e, promised));
+    let may_drop_stale = stale_fix
+        .as_ref()
+        .is_some_and(|fix| entries.iter().any(|e| fix.entry_is_stale(repo, e)));
 
     if !may_drop_total && !may_drop_stale && !may_drop_unreachable {
         return Ok(ReflogExpireResult {
@@ -1285,25 +1436,21 @@ pub(crate) fn expire_reflog_git_with_promises(
         });
     }
 
-    let unreachable_kind = if expire_unreachable <= expire_total {
-        UnreachableKind::Always
-    } else if expire_unreachable == 0 || is_head_ref(refname) {
-        UnreachableKind::Head
+    // Old entries are judged against the commits reachable from the ref's own tip (every ref
+    // for HEAD), as Git does; a tip that does not name a commit expires them all.
+    let tips = if !may_drop_unreachable || expire_unreachable <= expire_total {
+        None
+    } else if is_head_ref(refname) {
+        Some(head_reflog_tips(repo, cache.promised(repo)?))
     } else {
-        match store.resolve(refname) {
-            Ok(t) if commit_chain_complete(repo, t, 0, promised) => UnreachableKind::Normal,
-            _ => UnreachableKind::Always,
-        }
+        let promised = cache.promised(repo)?;
+        store
+            .resolve(refname)
+            .ok()
+            .and_then(|tip| peel_tip_to_commit(repo, promised, tip))
+            .map(|tip| vec![tip])
     };
-
-    let need_reachable =
-        may_drop_unreachable && !matches!(unreachable_kind, UnreachableKind::Always);
-    let reachable = if need_reachable {
-        let tips = tip_commits_for_reflog(repo, refname, promised);
-        reachable_commit_set(repo, &tips)
-    } else {
-        HashSet::new()
-    };
+    let mut reachable = tips.map(|tips| ReachableCommits::new(repo, cache, tips, expire_total));
     let mut kept_entries = Vec::new();
     let mut pruned = 0usize;
     let mut actions = Vec::with_capacity(entries.len());
@@ -1314,10 +1461,8 @@ pub(crate) fn expire_reflog_git_with_promises(
             entry,
             expire_total,
             expire_unreachable,
-            unreachable_kind,
-            &reachable,
-            params.stale_fix,
-            promised,
+            reachable.as_mut(),
+            stale_fix.as_ref(),
         );
         let action = if drop {
             pruned += 1;
@@ -1875,5 +2020,148 @@ mod default_expire_tests {
             .any(|a| a.action == ReflogExpireActionKind::Prune && a.entry.message == "prune-me"));
         assert!(read_reflog(git_dir, refname).expect("empty").is_empty());
         let _ = tmp;
+    }
+}
+
+#[cfg(test)]
+mod completeness_tests {
+    use std::collections::HashSet;
+
+    use tempfile::TempDir;
+
+    use crate::objects::{serialize_tree, ObjectId, ObjectKind, TreeEntry};
+    use crate::repo::{init_repository, Repository};
+
+    use super::{ReachableCommits, ReflogExpiryCache};
+
+    fn seed_repo() -> (TempDir, Repository) {
+        let tmp = TempDir::new().expect("tempdir");
+        let repo = init_repository(
+            tmp.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        (tmp, repo)
+    }
+
+    fn tree(repo: &Repository, entries: &[(u32, &str, ObjectId)]) -> ObjectId {
+        let entries = entries
+            .iter()
+            .map(|&(mode, name, oid)| TreeEntry {
+                mode,
+                name: name.as_bytes().to_vec(),
+                oid,
+            })
+            .collect::<Vec<_>>();
+        repo.odb()
+            .write(ObjectKind::Tree, &serialize_tree(&entries))
+            .expect("write tree")
+    }
+
+    fn commit(repo: &Repository, tree: ObjectId, parents: &[ObjectId]) -> ObjectId {
+        commit_at(repo, tree, parents, 1)
+    }
+
+    fn commit_at(repo: &Repository, tree: ObjectId, parents: &[ObjectId], when: i64) -> ObjectId {
+        let mut body = format!("tree {tree}\n");
+        for p in parents {
+            body.push_str(&format!("parent {p}\n"));
+        }
+        body.push_str(&format!(
+            "author A <a@example.com> {when} +0000\ncommitter A <a@example.com> {when} +0000\n\nc\n"
+        ));
+        repo.odb()
+            .write(ObjectKind::Commit, body.as_bytes())
+            .expect("write commit")
+    }
+
+    #[test]
+    fn completeness_walk_is_memoised_and_stops_at_missing_objects_and_promises() {
+        let (_tmp, repo) = seed_repo();
+        let blob = repo.odb().write(ObjectKind::Blob, b"a\n").expect("blob");
+        let sub = tree(&repo, &[(0o100644, "b", blob)]);
+        let root = tree(&repo, &[(0o100644, "a", blob), (0o040000, "sub", sub)]);
+        let base = commit(&repo, root, &[]);
+        let left = commit(&repo, root, &[base]);
+        let right = commit(&repo, sub, &[base]);
+        let merge = commit(&repo, root, &[left, right]);
+
+        let none = HashSet::new();
+        let cache = ReflogExpiryCache::default();
+        assert!(cache.commit_complete(&repo, &none, ObjectId::zero()));
+        let probes = repo.odb().exists_probe_count();
+        assert!(cache.commit_complete(&repo, &none, merge));
+        assert_eq!(
+            repo.odb().exists_probe_count() - probes,
+            2,
+            "each blob entry of each distinct tree is probed once"
+        );
+        let probes = repo.odb().exists_probe_count();
+        assert!(cache.commit_complete(&repo, &none, left));
+        assert!(cache.commit_complete(&repo, &none, merge));
+        assert_eq!(
+            repo.odb().exists_probe_count(),
+            probes,
+            "answers are reused"
+        );
+
+        let missing = ObjectId::from_hex("1111111111111111111111111111111111111111").expect("oid");
+        let broken_tree = tree(&repo, &[(0o100644, "gone", missing)]);
+        let broken = commit(&repo, broken_tree, &[merge]);
+        let child = commit(&repo, root, &[broken]);
+        assert!(!cache.commit_complete(&repo, &none, broken));
+        assert!(!cache.commit_complete(&repo, &none, child));
+        assert!(!cache.commit_complete(&repo, &none, missing));
+        assert!(!cache.commit_complete(&repo, &none, blob), "not a commit");
+
+        let promised = HashSet::from([missing]);
+        let fresh = ReflogExpiryCache::default();
+        assert!(fresh.commit_complete(&repo, &promised, child));
+        assert!(fresh.commit_complete(&repo, &promised, missing));
+    }
+
+    #[test]
+    fn reachability_walk_stops_at_the_cutoff_until_a_lookup_misses() {
+        let (_tmp, repo) = seed_repo();
+        let tree = tree(&repo, &[]);
+        let mut chain = Vec::new();
+        for when in 1..=10 {
+            let parents = chain.last().copied().into_iter().collect::<Vec<_>>();
+            chain.push(commit_at(&repo, tree, &parents, when));
+        }
+        let unrelated = commit_at(&repo, tree, &[], 5);
+
+        let cache = ReflogExpiryCache::default();
+        let mut reachable = ReachableCommits::new(&repo, &cache, vec![chain[9]], 8);
+        assert_eq!(
+            reachable.seen.len(),
+            4,
+            "commits from time 10 down to the first one older than the cutoff"
+        );
+        assert!(reachable.contains(&chain[7]));
+        assert_eq!(reachable.seen.len(), 4, "a hit does not walk further");
+        assert!(reachable.contains(&chain[0]));
+        assert_eq!(reachable.seen.len(), 10, "a miss walks the rest once");
+        assert!(!reachable.contains(&unrelated));
+
+        let mut everything = ReachableCommits::new(&repo, &cache, vec![chain[9]], 0);
+        assert_eq!(everything.seen.len(), 10);
+        assert!(!everything.contains(&unrelated));
+
+        cache
+            .linkage
+            .borrow_mut()
+            .insert(chain[9], (vec![unrelated], 10));
+        let mut reused = ReachableCommits::new(&repo, &cache, vec![chain[9]], 0);
+        assert!(
+            reused.contains(&unrelated),
+            "a later walk in the same pass takes linkage from the cache"
+        );
+        assert!(ReachableCommits::new(&repo, &cache, Vec::new(), 0)
+            .seen
+            .is_empty());
     }
 }
