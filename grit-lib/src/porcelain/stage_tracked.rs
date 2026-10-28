@@ -529,12 +529,11 @@ fn stage_tracked_modifications_in_index_body(
         }
         Ok(())
     })?;
-    for raw_path in pending_removals {
-        if index.remove(&raw_path) {
-            summary.removed.push(raw_path);
-            scope.sink().inc(1);
-        }
-    }
+    // Every queued path is a distinct stage-0 row still in the index: removals wait until
+    // the scan is done, so one compaction pass replaces a tail shift per path.
+    index.remove_paths(pending_removals.iter().map(Vec::as_slice));
+    scope.sink().inc(pending_removals.len() as u64);
+    summary.removed.extend(pending_removals);
 
     if !deferred_restage.is_empty() {
         let restage_ctx = DeferredRestageContext {
