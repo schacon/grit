@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::command_runner::{
     CommandEnvironment, CommandRunner, CommandSpec, CommandStdin, CommandStdio, ShellInvocation,
 };
+use crate::environment::Environment;
 use crate::objects::ObjectId;
 use crate::refs;
 use crate::repo::Repository;
@@ -76,9 +77,43 @@ pub(crate) struct RunningFilter {
     caps: u32,
 }
 
+/// Where filter subprocesses run and what they inherit. The environment is snapshotted on
+/// first use: most repository handles never run a filter, and copying every inherited
+/// variable on each open is measurable on short commands.
 struct FilterSubprocessContext {
-    cwd: PathBuf,
-    env: CommandEnvironment,
+    environment: Arc<Environment>,
+    git_dir: PathBuf,
+    work_tree: Option<PathBuf>,
+    env: OnceLock<CommandEnvironment>,
+}
+
+impl FilterSubprocessContext {
+    fn cwd(&self) -> PathBuf {
+        self.work_tree
+            .clone()
+            .unwrap_or_else(|| self.git_dir.clone())
+    }
+
+    fn env(&self) -> &CommandEnvironment {
+        self.env.get_or_init(|| {
+            let mut extra = vec![(
+                "GIT_DIR".to_owned(),
+                self.git_dir.to_string_lossy().into_owned(),
+            )];
+            if let Some(wt) = &self.work_tree {
+                extra.push((
+                    "GIT_WORK_TREE".to_owned(),
+                    wt.to_string_lossy().into_owned(),
+                ));
+            }
+            let mut env =
+                CommandEnvironment::from_repository_environment(&self.environment, &extra);
+            if cfg!(windows) {
+                crate::git_path::strip_verbatim_prefix_from_subprocess_path_vars(&mut env.set);
+            }
+            env
+        })
+    }
 }
 
 /// Per-repository filter-process registry (long-running `filter.*.process` drivers).
@@ -105,17 +140,29 @@ impl FilterProcessState {
         }
     }
 
-    /// Set cwd and environment for filter subprocesses (long-running and one-shot).
-    pub(crate) fn configure_subprocess(&self, cwd: PathBuf, env: CommandEnvironment) {
-        let _ = self.subprocess.set(FilterSubprocessContext { cwd, env });
+    /// Set the repository filter subprocesses (long-running and one-shot) run in: the
+    /// work tree, or `git_dir` when bare, with `GIT_DIR` / `GIT_WORK_TREE` pointing at it
+    /// on top of `environment`.
+    pub(crate) fn configure_subprocess(
+        &self,
+        environment: Arc<Environment>,
+        git_dir: PathBuf,
+        work_tree: Option<PathBuf>,
+    ) {
+        let _ = self.subprocess.set(FilterSubprocessContext {
+            environment,
+            git_dir,
+            work_tree,
+            env: OnceLock::new(),
+        });
     }
 
     pub(crate) fn apply_subprocess_to_spec(&self, spec: &mut CommandSpec) {
         let Some(ctx) = self.subprocess.get() else {
             return;
         };
-        spec.cwd = Some(ctx.cwd.clone());
-        spec.env = ctx.env.clone();
+        spec.cwd = Some(ctx.cwd());
+        spec.env = ctx.env().clone();
     }
 
     pub(crate) fn shutdown_all(&self) {
@@ -384,8 +431,8 @@ fn spawn_running(
         stderr: CommandStdio::Inherit,
     };
     if let Some(ctx) = state.subprocess.get() {
-        spec.cwd = Some(ctx.cwd.clone());
-        spec.env = ctx.env.clone();
+        spec.cwd = Some(ctx.cwd());
+        spec.env = ctx.env().clone();
     } else {
         spec.env.remove.push("GIT_CONFIG_GLOBAL".into());
     }
@@ -854,6 +901,46 @@ mod subprocess_context_tests {
             .status()
             .expect("git")
             .success());
+    }
+
+    fn env_value<'a>(spec: &'a CommandSpec, key: &str) -> Option<&'a std::ffi::OsStr> {
+        spec.env
+            .set
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_os_str())
+    }
+
+    #[test]
+    fn subprocess_environment_is_built_on_first_use_for_the_configured_repository() {
+        let vars = [("PATH", "/opt/bin"), ("GIT_DIR", "/stale/.git")]
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()));
+        let environment = Arc::new(Environment::from_vars(vars, PathBuf::from("/")));
+        let state = FilterProcessState::new(RecordingRunner::always_success());
+        state.configure_subprocess(
+            Arc::clone(&environment),
+            PathBuf::from("/repo/.git"),
+            Some(PathBuf::from("/repo")),
+        );
+        let ctx = state.subprocess.get().expect("configured");
+        assert!(ctx.env.get().is_none(), "built before any filter ran");
+
+        let mut spec = CommandSpec::sh_dash_c_filter("cat");
+        state.apply_subprocess_to_spec(&mut spec);
+        assert_eq!(spec.cwd.as_deref(), Some(Path::new("/repo")));
+        assert!(!spec.env.inherit_process);
+        assert_eq!(env_value(&spec, "GIT_DIR"), Some("/repo/.git".as_ref()));
+        assert_eq!(env_value(&spec, "GIT_WORK_TREE"), Some("/repo".as_ref()));
+        assert_eq!(env_value(&spec, "PATH"), Some("/opt/bin".as_ref()));
+
+        let bare = FilterProcessState::new(RecordingRunner::always_success());
+        bare.configure_subprocess(environment, PathBuf::from("/bare.git"), None);
+        let mut spec = CommandSpec::sh_dash_c_filter("cat");
+        bare.apply_subprocess_to_spec(&mut spec);
+        assert_eq!(spec.cwd.as_deref(), Some(Path::new("/bare.git")));
+        assert_eq!(env_value(&spec, "GIT_DIR"), Some("/bare.git".as_ref()));
+        assert_eq!(env_value(&spec, "GIT_WORK_TREE"), None);
     }
 
     #[cfg_attr(

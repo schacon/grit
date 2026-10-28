@@ -1,6 +1,7 @@
 //! `grit revs` — list or count commits matching revision ranges.
 
 use anyhow::{bail, Result};
+use grit_lib::objects::ObjectId;
 use grit_lib::revwalk::rev_list::RevListResult;
 use grit_lib::revwalk::LeftRightCounts;
 use schemars::JsonSchema;
@@ -9,7 +10,7 @@ use std::io::Write;
 
 use crate::commits_json::{fetch_limit_plus_one, truncate_oid_list, CommitJsonLoader};
 use crate::context;
-use crate::output::{outln, CommitJson, HumanRender, MarkdownRender, RenderContext};
+use crate::output::{outln, CommitJson, HumanRender, MarkdownRender, OutputMode, RenderContext};
 use crate::pathspec_args::TrailingPathspecArgs;
 use crate::rev_select::RevSelectArgs;
 
@@ -58,7 +59,16 @@ pub struct RevsCommit {
     pub message_changed: Option<bool>,
 }
 
-impl RevsCommit {
+/// `--left-right` / `--cherry-mark` annotations of one listed commit.
+#[derive(Debug, Default)]
+struct RevsMarks {
+    side: Option<RevsSide>,
+    equivalent: Option<bool>,
+    equivalent_to: Option<String>,
+    message_changed: Option<bool>,
+}
+
+impl RevsMarks {
     fn marker(&self) -> Option<char> {
         match (self.equivalent, self.side?) {
             (Some(true), _) => Some('='),
@@ -78,11 +88,36 @@ impl RevsCommit {
     }
 }
 
+impl RevsCommit {
+    fn new(commit: CommitJson, marks: RevsMarks) -> Self {
+        Self {
+            commit,
+            side: marks.side,
+            equivalent: marks.equivalent,
+            equivalent_to: marks.equivalent_to,
+            message_changed: marks.message_changed,
+        }
+    }
+}
+
+/// One listed commit as human and Markdown output show it.
+#[derive(Debug)]
+struct RevsLine {
+    oid: ObjectId,
+    subject: String,
+    marks: RevsMarks,
+}
+
 /// Result of `grit revs`.
 #[derive(Serialize, JsonSchema)]
 pub struct RevsOutcome {
     /// Listed commits in `rev-list` order (empty when `--count` is set).
     pub commits: Vec<RevsCommit>,
+    /// The listed commits for human and Markdown output, which need only the id, subject
+    /// and marks; [`Self::commits`] stays empty then.
+    #[serde(skip)]
+    #[schemars(skip)]
+    lines: Vec<RevsLine>,
     /// Total reachable commits when `--count` is set without `--left-right`; otherwise `null`.
     pub count: Option<usize>,
     /// Left/right counts when `--count` and `--left-right` are set; otherwise `null`.
@@ -104,10 +139,10 @@ impl HumanRender for RevsOutcome {
             outln!(w, "{n}");
             return Ok(());
         }
-        for row in &self.commits {
-            let oid = &row.commit.oid;
-            let subject = &row.commit.subject;
-            match (row.marker(), row.note()) {
+        for row in &self.lines {
+            let oid = &row.oid;
+            let subject = &row.subject;
+            match (row.marks.marker(), row.marks.note()) {
                 (Some(m), Some(note)) => outln!(w, "{m} {oid}  {subject}  ({note})"),
                 (Some(m), None) => outln!(w, "{m} {oid}  {subject}"),
                 (None, _) => outln!(w, "{oid}  {subject}"),
@@ -138,21 +173,21 @@ impl MarkdownRender for RevsOutcome {
         }
         outln!(w, "# Commits");
         outln!(w);
-        if self.commits.is_empty() {
+        if self.lines.is_empty() {
             outln!(w, "_No commits._");
             return Ok(());
         }
-        for row in &self.commits {
-            let oid = &row.commit.oid;
-            let subject = &row.commit.subject;
-            let side = match (row.side, row.equivalent) {
+        for row in &self.lines {
+            let oid = &row.oid;
+            let subject = &row.subject;
+            let side = match (row.marks.side, row.marks.equivalent) {
                 (Some(RevsSide::Left), Some(true)) => "**left, equivalent** ",
                 (Some(RevsSide::Right), Some(true)) => "**right, equivalent** ",
                 (Some(RevsSide::Left), _) => "**left** ",
                 (Some(RevsSide::Right), _) => "**right** ",
                 (None, _) => "",
             };
-            match row.note() {
+            match row.marks.note() {
                 Some(note) => outln!(w, "- {side}`{oid}` {subject} _({note})_"),
                 None => outln!(w, "- {side}`{oid}` {subject}"),
             }
@@ -172,18 +207,11 @@ pub struct RevsMode {
     pub cherry_mark: bool,
 }
 
-fn mark_commits(
-    commits: Vec<CommitJson>,
-    oids: &[grit_lib::objects::ObjectId],
-    result: &RevListResult,
-    mode: RevsMode,
-) -> Vec<RevsCommit> {
+fn commit_marks(oids: &[ObjectId], result: &RevListResult, mode: RevsMode) -> Vec<RevsMarks> {
     let sides = mode.left_right || mode.cherry_mark;
     let matches = result.cherry_match_index();
-    commits
-        .into_iter()
-        .zip(oids)
-        .map(|(commit, oid)| {
+    oids.iter()
+        .map(|oid| {
             let side = sides
                 .then(|| result.left_right_map.get(oid))
                 .flatten()
@@ -196,8 +224,7 @@ fn mark_commits(
                 });
             let group = matches.get(oid);
             let counterpart = group.and_then(|g| g.counterpart(oid));
-            RevsCommit {
-                commit,
+            RevsMarks {
                 side,
                 equivalent: mode.cherry_mark.then(|| group.is_some()),
                 equivalent_to: counterpart.map(|o| o.to_hex()),
@@ -211,6 +238,7 @@ pub fn run(
     rev: RevSelectArgs,
     pathspecs: TrailingPathspecArgs,
     mode: RevsMode,
+    output_mode: OutputMode,
 ) -> Result<RevsOutcome> {
     let RevsMode {
         count, left_right, ..
@@ -236,6 +264,7 @@ pub fn run(
         if rev.max_count() == Some(0) {
             return Ok(RevsOutcome {
                 commits: Vec::new(),
+                lines: Vec::new(),
                 count: if left_right { None } else { Some(0) },
                 left_right: left_right.then_some(RevsLeftRightCount { left: 0, right: 0 }),
                 truncated: false,
@@ -246,6 +275,7 @@ pub fn run(
             let lr = walk.left_right_counts(&token_refs, &opts)?;
             return Ok(RevsOutcome {
                 commits: Vec::new(),
+                lines: Vec::new(),
                 count: None,
                 left_right: Some(lr.into()),
                 truncated: false,
@@ -255,6 +285,7 @@ pub fn run(
         let n = walk.count(&token_refs, &opts)?;
         return Ok(RevsOutcome {
             commits: Vec::new(),
+            lines: Vec::new(),
             count: Some(n),
             left_right: None,
             truncated: false,
@@ -265,6 +296,7 @@ pub fn run(
     if rev.max_count() == Some(0) {
         return Ok(RevsOutcome {
             commits: Vec::new(),
+            lines: Vec::new(),
             count: None,
             left_right: None,
             truncated: false,
@@ -279,20 +311,47 @@ pub fn run(
     let mut list_result = walk.rev_list_result(&token_refs, &fetch_opts)?;
     let (oids, truncated) =
         truncate_oid_list(std::mem::take(&mut list_result.commits), rev.max_count());
-    let now = context::wall_clock_now(env).unix_timestamp();
-    let loader = CommitJsonLoader::for_listed_commits();
+    let marks = commit_marks(&oids, &list_result, mode);
     let mut parsed = std::mem::take(&mut list_result.commit_data);
-    let commits = repo
-        .odb()
-        .with_pack_read_context(|| {
-            loader.load_with_summaries_reusing(&repo, &oids, now, &mut parsed)
-        })?
-        .0;
-    Ok(RevsOutcome {
-        commits: mark_commits(commits, &oids, &list_result, mode),
+    let mut outcome = RevsOutcome {
+        commits: Vec::new(),
+        lines: Vec::new(),
         count: None,
         left_right: None,
         truncated,
         next: None,
-    })
+    };
+    if output_mode == OutputMode::Json {
+        let now = context::wall_clock_now(env).unix_timestamp();
+        let commits = repo
+            .odb()
+            .with_pack_read_context(|| {
+                CommitJsonLoader::for_listed_commits().load_with_summaries_reusing(
+                    &repo,
+                    &oids,
+                    now,
+                    &mut parsed,
+                )
+            })?
+            .0;
+        outcome.commits = commits
+            .into_iter()
+            .zip(marks)
+            .map(|(c, m)| RevsCommit::new(c, m))
+            .collect();
+    } else {
+        let summaries = repo.odb().with_pack_read_context(|| {
+            CommitJsonLoader::load_summaries_only(&repo, &oids, &mut parsed)
+        })?;
+        outcome.lines = summaries
+            .into_iter()
+            .zip(marks)
+            .map(|(s, marks)| RevsLine {
+                oid: s.oid,
+                subject: s.subject,
+                marks,
+            })
+            .collect();
+    }
+    Ok(outcome)
 }

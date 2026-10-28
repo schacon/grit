@@ -322,7 +322,23 @@ impl ObjectId {
     /// Lowercase hex representation (40 or 64 characters).
     #[must_use]
     pub fn to_hex(&self) -> String {
-        hex::encode(self.as_bytes())
+        self.hex_digits().as_str().to_owned()
+    }
+
+    /// The lowercase hex digits of this id, without allocating.
+    fn hex_digits(&self) -> HexDigits {
+        const DIGITS: &[u8; 16] = b"0123456789abcdef";
+        let mut buf = [0u8; MAX_OID_LEN * 2];
+        for (pair, &byte) in buf.as_chunks_mut::<2>().0.iter_mut().zip(self.as_bytes()) {
+            *pair = [
+                DIGITS[usize::from(byte >> 4)],
+                DIGITS[usize::from(byte & 0x0f)],
+            ];
+        }
+        HexDigits {
+            buf,
+            len: usize::from(self.len) * 2,
+        }
     }
 
     /// The two-character directory prefix used by the loose object store.
@@ -418,7 +434,19 @@ impl std::hash::Hash for ObjectId {
 
 impl fmt::Display for ObjectId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.to_hex())
+        f.write_str(self.hex_digits().as_str())
+    }
+}
+
+/// Stack buffer holding an [`ObjectId`]'s hex digits.
+struct HexDigits {
+    buf: [u8; MAX_OID_LEN * 2],
+    len: usize,
+}
+
+impl HexDigits {
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.buf[..self.len]).unwrap_or_default()
     }
 }
 
@@ -1933,6 +1961,21 @@ mod commit_parse_tests {
         let mut non_ascii = sha1.as_bytes().to_vec();
         non_ascii[3] = 0xb0;
         assert!(ObjectId::from_hex_ascii(&non_ascii).is_err());
+    }
+
+    #[test]
+    fn hex_and_display_cover_every_byte_for_both_lengths() {
+        let all: Vec<u8> = (0..=255).collect();
+        for width in [20, 32] {
+            for chunk in all.chunks(width).filter(|c| c.len() == width) {
+                let oid = ObjectId::from_bytes(chunk).unwrap();
+                let expected: String = chunk.iter().map(|b| format!("{b:02x}")).collect();
+                assert_eq!(oid.to_hex(), expected);
+                assert_eq!(oid.to_string(), expected);
+                assert_eq!(format!("{oid:?}"), format!("ObjectId({expected})"));
+                assert_eq!(ObjectId::from_hex(&expected).unwrap(), oid);
+            }
+        }
     }
 
     #[test]

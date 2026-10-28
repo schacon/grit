@@ -598,7 +598,6 @@ the standalone resolution controls.
 | `revs/count-author@deep-history` | 99.796 | 127.828 | 127.825 | 25,566 | 25,540 |
 | `revs/author-n50@deep-history-cg` | 2.551 | 4.359 | 4.305 | 19,524 | 19,518 |
 | `revs/count-author@deep-history-cg` | 106.614 | 129.287 | 128.597 | 25,722 | 25,710 |
-| `revs/count-since@deep-history` | 2.234 | 3.576 | 3.488 | 14,724 | 14,612 |
 | `revs/count@git-git` | 424.569 | 575.766 | 579.342 | 125,950 | 125,962 |
 | `revs/count-path-head@git-git` | 320.630 | 343.816 | 344.814 | 270,582 | 270,540 |
 | `resolve/ancestor-500@deep-history` | 2.767 | 4.660 | 4.676 | 14,824 | 14,838 |
@@ -3146,7 +3145,6 @@ Factory VM: AMD EPYC 9V45, 4 vCPUs, Rust 1.99.0, `release` profile, system Git 2
 | `revs/count-author@deep-history-cg` | 89.49 | 169.96 | 124.09 | 56,076 | 26,112 |
 | `revs/author-n50@deep-history-cg` | 2.41 | 3.75 | 3.75 | 19,812 | 19,836 |
 | `log/author-n50@deep-history-cg` | 2.35 | 3.64 | 3.65 | 19,876 | 20,096 |
-| `revs/count-since@deep-history` | 2.09 | 2.89 | 2.92 | 15,312 | 15,276 |
 | `revs/left-right-count@deep-history` | 2.75 | 5.40 | 5.46 | 15,784 | 15,740 |
 | `revs/count@git-git` | 375.99 | 527.63 | 534.70 | 127,520 | 127,332 |
 | `revs/count-author@git-git` | 479.37 | 917.16 | 385.81 | 129,796 | 59,256 |
@@ -3176,7 +3174,6 @@ A second factory VM (Intel Xeon Platinum 8370C, 4 vCPUs, Rust 1.99.0, `release`,
 | `revs/author-n50@deep-history-cg` | 2.86 | 5.24 | 5.24 | 4.61 | 18,612 | 18,516 | 19,268 |
 | `revs/count-grep-range@deep-history-cg` | 4.62 | 79.80 | 201.89 | 28.68 | 40,364 | 27,896 | 20,584 |
 | `revs/count@deep-history-cg` | 23.45 | 6.77 | 6.89 | 6.75 | 15,444 | 15,428 | 16,372 |
-| `revs/count-since@deep-history` | 2.28 | 3.82 | 3.88 | 3.42 | 13,692 | 13,996 | 14,988 |
 | `revs/left-right-count@deep-history` | 3.74 | 8.62 | 8.71 | 8.07 | 14,132 | 14,464 | 15,408 |
 
 The graph-backed author range count improves by 86% against the reviewed branch and 64% against main. Counts agree with Git, including 500 for the review reproduction. Full-history author counts retain the original optimization; graph loading is skipped when there are no exclusions. `perf record -g` remains unavailable (`perf_event_paranoid=4`); `strace -c` records about 1.4 ms in syscalls before the fix, while the deterministic graph-range test reduces object reads from 34 to 2.
@@ -3271,3 +3268,36 @@ Factory VM: Intel Xeon, 4 vCPUs, Rust 1.99.0, `release` profile, stock Git 2.43.
 With the macOS settings, staging and commit are 2.3–3.8× faster than main and use 34–51% less peak memory. Extra paths now cost little: 98 paths take 60.8 ms against 53.5 ms for one, faster than Git's 72.6 ms, though a single path is still 1.9× Git. `add .` and `add -u` remain 1.7–1.9× Git. Default-config rows stay within run-to-run noise, apart from 98 explicit paths (28% faster, from the pathspec pruning). `grit commit` still stats every tracked file and walks the tree for untracked files because it stages everything by default; `git commit` writes the existing index only. Before this change on the earlier main `ad7f51066`, the same `add .` took 1,102 ms and `add -u` 1,026 ms.
 
 On a 48k-file tree, `add_many_pathspec_perf_git_compat` checks that explicit paths, `add .` and `add -u` under these settings stay within 5× of system Git. Daily scenarios `add/all-ignorecase@synth-100k` and `add/update-ignorecase@synth-100k` follow the same path on the standard 100k fixture.
+
+## Short revision listings (2026-10-28)
+
+`grit revs --author=. -n 50 HEAD` on the deep-history fixture spent most of its time on fixed costs, not on walking 50 commits. Peak heap is about 380 KB; the rest of the gap to Git is the binary's own pages: relocation and code page faults, clap setup, repository discovery. The changes remove work from that fixed part:
+
+- Human and Markdown output from `grit revs` print each commit's id, subject and side marks. The command no longer loads ref decorations (every ref, with tags peeled) or full JSON rows (identities, RFC 3339 and relative dates, change ids) for them; `--json` output is unchanged.
+- Opening a repository no longer copies the whole process environment for filter subprocesses. The copy is made the first time a clean or smudge filter runs.
+- `ObjectId::to_hex` and `Display` write hex digits from a lookup table instead of the `hex` crate's per-char iterator; `Display` no longer allocates.
+
+For the target, callgrind records 7.04 → 5.92 million instructions, heaptrack 6,408 → 4,996 allocations, and `perf stat` 581 → 556 page faults.
+
+Factory VM: Intel Xeon, 4 vCPUs, Rust 1.99.0, `release` profile (grit-cli and grit-utils built together), system Git 2.43.0. Baseline `74d8bf801` and changed `1d7ea0491` ran in the same sitting. After three warmups, the three tools ran interleaved with rotating order: 300 rounds, or 15 for the long count rows. Wall time is the median measured from spawn to exit. Peak RSS is the median of seven `/usr/bin/time` runs, in KiB. `revs-json` is the target with `--json`. Raw samples are in `grit-utils/baselines/revs-startup-4992.json`.
+
+| Scenario | Git ms | Grit before ms | Grit after ms | Git RSS | Grit RSS before | Grit RSS after |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `revs/author-n50@deep-history` | 1.48 | 3.08 | 2.88 | 6,656 | 17,444 | 17,008 |
+| `revs/author-n50@deep-history-cg` | 1.76 | 3.16 | 2.95 | 9,944 | 20,060 | 19,492 |
+| `revs/count-author@deep-history` | 113.14 | 123.80 | 124.85 | 19,084 | 26,680 | 26,532 |
+| `revs/count-author@deep-history-cg` | 123.06 | 123.38 | 123.76 | 22,276 | 26,824 | 26,316 |
+| `revs/left-right-count@deep-history` | 2.17 | 3.99 | 3.96 | 6,836 | 16,004 | 15,920 |
+| `revs/count@git-git` | 516.95 | 657.44 | 662.23 | 59,312 | 125,648 | 125,532 |
+| `log/author-n50@deep-history` | 1.50 | 3.08 | 3.06 | 6,704 | 17,592 | 17,436 |
+| `log/author-n50@deep-history-cg` | 1.78 | 3.20 | 3.17 | 10,004 | 19,960 | 19,760 |
+| `log/json-100@git-git` | 2.78 | 4.37 | 4.35 | 12,572 | 21,676 | 21,820 |
+| `log/oneline-100@git-git` | 2.83 | 4.38 | 4.34 | 12,664 | 22,884 | 22,868 |
+| `show/head@git-git` | 1.70 | 2.70 | 2.71 | 6,796 | 16,216 | 16,536 |
+| `revs-json/author-n50@deep-history` | 1.45 | 3.03 | 3.03 | 6,704 | 17,612 | 17,676 |
+
+The target is 6.4% faster with 436 KiB less peak RSS; with a commit-graph it is 6.6% faster with 568 KiB less. Other rows stay within ±1% wall time, the run-to-run noise of these measurements. Peak RSS of the release binary moves by up to ±400 KiB between builds of unrelated code, because code placement decides which pages a short command touches. The `show/head` RSS increase is in that range.
+
+A separate gap turned up while measuring: `revs --count --since=2.weeks HEAD` without `-n`, on this fixture where every commit is older than the cutoff, takes 235 ms against Git's 1.7 ms. grit walks all 50,000 commits, while Git stops after a few. This change does not affect that path.
+
+What remains is mostly outside the walk. Applying the binary's 38,826 relative relocations at startup copies every `.data.rel.ro` page (about 100 page faults). In a separate comparison of two builds of the same code, a non-PIE build ran the target in 2.35 ms instead of 2.63 ms, with 1.3 MiB less RSS, at the cost of ASLR for the executable. Commit reads cost about 27,000 instructions each, of which about 10,000 are inflate (as in Git); most of the rest is pack-cache bookkeeping keyed by pack path. Translating the `.` in `--author=.` produces a long byte-class alternation, and parsing it accounts for most of the 300,000 instructions spent building the filter.
