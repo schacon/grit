@@ -7,7 +7,28 @@ Performance work is measured on the factory VM and in CI against the **system** 
 
 For a map of **grit-lib** modules, **grit** commands, common workflows, and every **`grit-bench daily`** scenario id, see [`grit-utils/MATRIX.md`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/MATRIX.md). The same ids appear with **time and memory ratios** on the [Performance overview (daily matrix)](performance-overview.md) page.
 
-Command-level numbers below come from the committed **grit-bench** JSON baselines listed in `content/docs/site.toml`. Scenario suites use **hyperfine** against the system **`git`** binary and a release **`grit`** build on the same machine; individual studies below document their sampling method. Times are wall-clock milliseconds.
+Command-level numbers below come from the committed **grit-bench** JSON baselines listed in `content/docs/site.toml`. Scenario suites use **hyperfine** against the system **`git`** binary and a release **`grit`** build on the same machine; individual studies below document their sampling method. Times are wall-clock milliseconds. The daily census behind the [Performance overview](performance-overview.md) measures the shipped **`dist`** build since 2026-10-28; see [Benchmarking](benchmarking.md#grit-bench-daily-factory-census) for what that switch did to every baseline.
+
+## `show` HEAD is startup-bound (2026-10-28)
+
+Tree diffs now walk entries borrowed from the raw tree payload instead of parsing each tree into owned entries. The ODB session cache keeps either form under one byte budget, so `show` on a one-file commit in git.git's 530-entry root tree makes 4,232 allocations instead of 5,304, with a 403 KB heap peak instead of 463 KB.
+
+Median of three hyperfine `-N` medians (400 runs each), peak RSS the median of eleven `/usr/bin/time` runs, all in one sitting. The setup was a four-vCPU Intel Xeon VM with system Git 2.43.0 and Rust 1.99.0. "Base" is `f6dc0e06d`.
+
+| `show` HEAD | git ms / MB | release base | release + change | dist base | dist + change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `@git-git` | 1.99 / 6.9 | 3.08 / 16.1 | 3.12 / 16.9 | 2.70 / 13.1 | 2.63 / 12.9 |
+| `@big-blobs` | 1.47 / 5.2 | 2.82 / 15.0 | 2.88 / 16.0 | 2.43 / 11.9 | 2.38 / 11.8 |
+| `@synth-10k` | 1.96 / 6.6 | 3.87 / 16.8 | 3.92 / 18.0 | 3.37 / 13.8 | 3.19 / 13.5 |
+
+On `dist` the change is 2–5% faster with slightly lower RSS. On `release` it reads about 40 µs slower and up to 1 MB larger. That comes from code layout, not work: the release binary takes 176 instruction page faults instead of 166, spread over unrelated code (argument parsing, config, environment setup), because editing `grit-lib` reshuffles its codegen units.
+
+What remains of the gap to Git is process startup. On `dist` it is bounded by the PIE policy ([PIE startup relocation probe](#pie-startup-relocation-probe)), so later speed work should not look for it in `show`'s code:
+
+- Page faults are about 40% of grit's run time: about 420 per run on `dist` (600 on `release`) against Git's 253.
+- Applying PIE relative relocations copy-on-write faults every `.data.rel.ro` page at each start. That costs about 0.4 ms on `release`; linking without PIE would remove it, but release builds stay PIE with ASLR.
+- Most of the remaining faults are instruction fetches across the `.text` segment, each mapping a 64 KB fault-around window. They make up most of the peak RSS gap, and LTO (`dist`) is what shrinks them.
+- Syscall counts match Git (272 against 300), and the work inside the library is about 0.7 ms with no single cost above about 60 µs.
 
 ## Bulk add and first commit of a large new tree (2026-10-28)
 
