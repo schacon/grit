@@ -8,6 +8,7 @@ use grit_lib::objects::ObjectId;
 use grit_lib::remote::push_plan::{
     follow_tag_push_specs, resolve_push, PushPlanContext, PushRequest,
 };
+use grit_lib::remote::push_report::PushRefStatus;
 use grit_lib::remote::transfer::{push_local, PushOptions, PushRefSpec};
 use grit_lib::repo::Repository;
 use grit_test_support::{git, git_cmd};
@@ -399,47 +400,59 @@ fn follow_tags_on_up_to_date_branch_includes_older_annotated_tag() {
     assert!(git_tags.contains("refs/tags/old-tag"));
 }
 
+/// A local push sends push options only to a remote with `receive.advertisePushOptions` on;
+/// otherwise it fails before writing anything, as `git push -o` does.
 #[test]
-fn push_local_rejects_push_options() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let local = tmp.path().join("local");
-    let bare = tmp.path().join("remote.git");
-    std::fs::create_dir_all(&local).unwrap();
-    std::fs::create_dir_all(&bare).unwrap();
-    git(&local, &["init", "-q", "-b", "main"]);
-    std::fs::write(local.join("f"), "1\n").unwrap();
-    git(&local, &["add", "f"]);
-    git(&local, &["commit", "-q", "-m", "c1"]);
-    git(&bare, &["init", "-q", "--bare", "-b", "main", "."]);
+fn push_local_push_options_follow_advertise_push_options() {
+    for setting in [None, Some("false"), Some("true")] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let local = tmp.path().join("local");
+        let bare = tmp.path().join("remote.git");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::create_dir_all(&bare).unwrap();
+        git(&local, &["init", "-q", "-b", "main"]);
+        std::fs::write(local.join("f"), "1\n").unwrap();
+        git(&local, &["add", "f"]);
+        git(&local, &["commit", "-q", "-m", "c1"]);
+        git(&bare, &["init", "-q", "--bare", "-b", "main", "."]);
+        if let Some(value) = setting {
+            git(&bare, &["config", "receive.advertisePushOptions", value]);
+        }
 
-    let main_oid = git_cmd(&["rev-parse", "HEAD"]).in_dir(&local).exec().stdout;
-    let main_oid = ObjectId::from_hex(main_oid.trim()).unwrap();
-    let spec = PushRefSpec {
-        src: Some(main_oid),
-        src_ref: Some("refs/heads/main".into()),
-        dst: "refs/heads/main".into(),
-        ..Default::default()
-    };
-    let err = push_local(
-        local.join(".git").as_path(),
-        &bare,
-        &[spec],
-        &PushOptions {
-            push_options: vec!["ci.skip".into()],
+        let main_oid = git_cmd(&["rev-parse", "HEAD"]).in_dir(&local).exec().stdout;
+        let main_oid = ObjectId::from_hex(main_oid.trim()).unwrap();
+        let spec = PushRefSpec {
+            src: Some(main_oid),
+            src_ref: Some("refs/heads/main".into()),
+            dst: "refs/heads/main".into(),
             ..Default::default()
-        },
-        &grit_lib::progress::NeverCancel,
-    )
-    .expect_err("local push must reject push options");
-    assert!(
-        matches!(err, grit_lib::error::Error::PushOptionsUnsupported),
-        "expected PushOptionsUnsupported, got {err:?}"
-    );
-    assert!(
-        !git_cmd(&["show-ref", "--verify", "refs/heads/main"])
+        };
+        let result = push_local(
+            local.join(".git").as_path(),
+            &bare,
+            &[spec],
+            &PushOptions {
+                push_options: vec!["ci.skip".into()],
+                ..Default::default()
+            },
+            &grit_lib::progress::NeverCancel,
+        );
+        let created = git_cmd(&["show-ref", "--verify", "refs/heads/main"])
             .in_dir(&bare)
             .exec()
-            .ok(),
-        "bare ref must not be created"
-    );
+            .ok();
+        if setting == Some("true") {
+            let outcome = result.expect("advertised push options are accepted");
+            assert_eq!(outcome.results[0].status, PushRefStatus::Ok);
+            assert!(created, "bare ref must be created");
+            git(&bare, &["fsck", "--strict"]);
+        } else {
+            let err = result.expect_err("unadvertised push options must fail");
+            assert!(
+                matches!(err, grit_lib::error::Error::PushOptionsUnsupported),
+                "{setting:?}: expected PushOptionsUnsupported, got {err:?}"
+            );
+            assert!(!created, "{setting:?}: bare ref must not be created");
+        }
+    }
 }

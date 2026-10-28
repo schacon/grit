@@ -30,6 +30,8 @@ Incremental SSH and HTTP pushes stop exploring advertised commit history once th
 
 On the remote, `receive.denyNonFastForwards`, `receive.denyDeletes`, and `receive.denyCurrentBranch` are enforced for every transport, including local-path remotes (not only [`grit receive-pack`](../receive-pack/) over HTTP).
 
+A push to a local path or `file://` URL runs the remote repository's `pre-receive`, `update`, `post-receive` and `post-update` hooks just as [`grit receive-pack`](../receive-pack/) and Git do: the pushed objects wait in a quarantine that `pre-receive` can read, a non-zero `pre-receive` refuses every update (`pre-receive hook declined`) and keeps the objects out of the repository, a non-zero `update` refuses its own ref (`hook declined`), and `post-receive` and `post-update` run after the refs are written. Hook output is reported like any remote's messages. `--dry-run` runs none of these hooks, as with Git.
+
 Explicit refspecs follow Git push rules: any revision on the left (`HEAD`, tags, branches), optional `+` for force, `:dst` to delete, and a bare branch name DWIMs to the matching local ref (then through configured push refspecs when present).
 
 `--dry-run` negotiates with the remote and reports what would change without updating refs or sending objects.
@@ -44,7 +46,7 @@ With `--delete`, every positional after the remote names a remote branch or tag 
 
 `--atomic` requires every ref update in the push to succeed or none are applied, including when a remote update hook rejects one ref. Over SSH, `git://`, and smart HTTP, the server must advertise the `atomic` capability. If it does not, grit fails before sending ref updates or objects; it never falls back to a non-atomic push. This capability check also applies to `--dry-run`.
 
-`-o` / `--push-option` sends server-side push options (for example `ci.skip`) on smart HTTP; `file://` remotes reject non-empty push options.
+`-o` / `--push-option` sends server-side push options (for example `ci.skip`), which the remote's `pre-receive` and `post-receive` hooks see as `GIT_PUSH_OPTION_COUNT` and `GIT_PUSH_OPTION_<n>`. The remote must accept them: a server advertises the `push-options` capability, and a local-path or `file://` remote must set `receive.advertisePushOptions`. Otherwise the push fails before anything is sent, `--dry-run` included.
 
 `--follow-tags` pushes annotated tags that point to commits reachable from the refs being pushed (lightweight tags and unreachable annotated tags are skipped). The config key `push.followTags` enables the same behavior by default.
 
@@ -79,7 +81,7 @@ For GitHub over HTTPS, if a push fails because you aren't signed in, `grit` offe
 | `--force-with-lease=<rev>` | Same check against `<rev>` (exactly one ref must be pushed). |
 | `-u`, `--set-upstream` | Set upstream config for pushed branches. |
 | `--atomic` | All ref updates succeed or none are applied; fails before sending updates if the server does not support atomic pushes. |
-| `-o`, `--push-option` | Server-side push option (repeatable; smart HTTP only). |
+| `-o`, `--push-option` | Server-side push option (repeatable; the remote must accept push options). |
 | `--follow-tags` | Push annotated tags reachable from the commits being pushed. |
 | `-q`, `--quiet` | Suppress remote messages and the human summary of a successful push. |
 | `--no-verify` | Skip the `pre-push` hook. |

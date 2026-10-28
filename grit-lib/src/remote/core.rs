@@ -834,6 +834,7 @@ impl Remote {
                     &remote_git,
                     refs,
                     opts,
+                    progress,
                     cancel,
                     pre_push,
                 )?)

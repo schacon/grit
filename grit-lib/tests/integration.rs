@@ -1758,6 +1758,9 @@ mod transfer_local_mixed_storage;
 #[path = "transfer_local_push.rs"]
 mod transfer_local_push;
 #[cfg(feature = "full-tests")]
+#[path = "transfer_local_push_receive_hooks.rs"]
+mod transfer_local_push_receive_hooks;
+#[cfg(feature = "full-tests")]
 #[path = "transfer_local_push_receive_policy.rs"]
 mod transfer_local_push_receive_policy;
 #[cfg(feature = "full-tests")]

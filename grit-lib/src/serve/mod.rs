@@ -24,6 +24,7 @@ mod shallow_upload;
 mod upload_pack;
 mod upload_pack_policy;
 
+pub(crate) use receive_pack::ReceiveHookScripts;
 pub(crate) use shallow_upload::{compute_shallow_response, ShallowRequest};
 
 pub use receive_pack::{

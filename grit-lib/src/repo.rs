@@ -773,6 +773,29 @@ impl Repository {
         }
     }
 
+    /// [`RepositoryOptions`] for opening another repository on this machine as the far end of
+    /// a local transfer, such as the destination of a local-path or `file://` push.
+    ///
+    /// Keeps the caller's environment (so that repository's hook scripts see the same `PATH`
+    /// and `HOME`, and global config applies), command runner and diagnostics, but drops the
+    /// variables that describe only this repository: its location, index and object
+    /// directories, `GIT_CONFIG`, command-line config overrides, namespace and replace-ref
+    /// settings. Git clears the same set before starting the far end of its local transport.
+    #[must_use]
+    pub(crate) fn peer_repository_options(&self) -> RepositoryOptions {
+        let mut options = self.linked_worktree_discover_options();
+        let env = &mut options.environment;
+        env.git_alternate_object_directories = None;
+        env.git_namespace = None;
+        env.git_replace_ref_base = None;
+        env.git_no_replace_objects = false;
+        env.git_config = None;
+        env.git_config_parameters = None;
+        env.git_config_count = None;
+        env.git_config_pairs.clear();
+        options
+    }
+
     /// Handle for the linked worktree administered at `admin_dir` with its files at
     /// `work_tree`.
     ///
