@@ -9,6 +9,44 @@ For a map of **grit-lib** modules, **grit** commands, common workflows, and ever
 
 Command-level numbers below come from the committed **grit-bench** JSON baselines listed in `content/docs/site.toml`. Scenario suites use **hyperfine** against the system **`git`** binary and a release **`grit`** build on the same machine; individual studies below document their sampling method. Times are wall-clock milliseconds.
 
+## Walk reads and JSON-only log rows (2026-10-28)
+
+Commit walks that parse objects themselves (log pages, merge bases, ahead/behind,
+containment) used to read each commit through `Odb::read`, which allocates a fresh
+object and clones it into the object database's session cache. The walk keeps the
+parsed linkage and, for `log`, its own copy of the payload, so the clone was never
+read again. Walks now inflate every commit into one reused buffer, keeping delta
+bases cached as before. `grit log --json` also stops building the human summary
+rows (and re-formatting every author header) that JSON output never renders.
+
+Measured on a 4-vCPU Intel Xeon VM, system Git 2.43.0, `dist` builds, 15 runs after
+5 warmups per binary in one sitting. Main is `2e65faf26`; output is byte-identical
+for `log` in human, Markdown, `--json` and `--json --filter` modes.
+
+| Scenario | Git ms | Main ms | Fixed ms | Main KiB | Fixed KiB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `log/json-100@git-git` | 2.86 | 4.15 | 3.98 | 21,352 | 21,088 |
+| `log/all@git-git` | 45.27 | 55.68 | 53.03 | 35,272 | 35,036 |
+| `log/author@git-git` | 2.30 | 3.77 | 3.57 | 19,808 | 19,400 |
+| `log/json-filter@git-git` | 2.24 | 4.21 | 4.08 | 20,212 | 20,184 |
+| `log/oneline-100@git-git` | 2.85 | 3.76 | 3.67 | 19,544 | 20,024 |
+| `log/stat-n50@git-git` | 94.90 | 161.12 | 154.20 | 76,760 | 78,148 |
+| `merge-base/branches@git-git` | 15.25 | 3.71 | 3.84 | 19,444 | 19,180 |
+
+The few rows that came out slower by up to 3.5% (`merge-base/branches`,
+`shortlog/behind`, `log/limit-path`, `log/oneline-100@synth-100k`, `revs/count`)
+did not reproduce in separate Hyperfine checks on the same fixtures (60–300 runs;
+2 × 20 interleaved runs for `revs/count`): the fixed binary was level or ahead.
+`revs` walks through `rev_list`, which this change does not touch. Most of what
+remains on `log/json-100` is per-process: the 100
+commits inflate faster than Git's zlib does, while the binary's scattered code
+keeps about 7 MB resident through fault-around (see
+[Tree metadata diff through the CLI](#tree-metadata-diff-through-the-cli-2026-10-27))
+and position-independent relocations cost another 0.2 ms at startup. Raw samples:
+[`daily-log-walk-4978-before.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/daily-log-walk-4978-before.json)
+and
+[`daily-log-walk-4978-after.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/daily-log-walk-4978-after.json).
+
 ## Range counts on merge-heavy history (2026-10-27)
 
 `grit revs --count A..B` (and `RevWalk::count`) used to decide, commit by

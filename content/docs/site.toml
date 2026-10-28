@@ -110,6 +110,8 @@ baseline = [
   "grit-utils/baselines/tree-metadata-cli-2083.json",
   "grit-utils/baselines/daily-revs-navigation-4759-before.json",
   "grit-utils/baselines/daily-revs-navigation-4759-after.json",
+  "grit-utils/baselines/daily-log-walk-4978-before.json",
+  "grit-utils/baselines/daily-log-walk-4978-after.json",
   "grit-utils/baselines/branch-inventory-4184-after.json",
   "grit-utils/baselines/daily-branch-inventory-4184-after.json",
   "grit-utils/baselines/blame-range-memory-2079.json",
