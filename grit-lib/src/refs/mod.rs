@@ -372,7 +372,11 @@ pub fn read_ref_file(path: &Path) -> Result<Ref> {
     if let Ok(target) = fs::read_link(path) {
         return Ok(Ref::Symbolic(target.to_string_lossy().into_owned()));
     }
+    read_regular_ref_file(path)
+}
 
+/// Like [`read_ref_file`] for a path known not to be a symlink.
+pub(crate) fn read_regular_ref_file(path: &Path) -> Result<Ref> {
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
         // `refs/heads/master` can be a directory when a branch named `master/...` exists, and a

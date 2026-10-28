@@ -1800,6 +1800,21 @@ fn collect_loose_raw_refs(
             continue;
         }
         let path = entry.path();
+        // The directory entry's type saves a `stat` and a `readlink` per ref; symlinks and
+        // unknown types still go through `stat`, which follows symlinks.
+        let file_type = entry.file_type().ok();
+        if file_type.is_some_and(|t| t.is_file()) {
+            if wanted {
+                if let Ok(r) = crate::refs::read_regular_ref_file(&path) {
+                    out.insert(refname, ref_to_raw(r));
+                }
+            }
+            continue;
+        }
+        if file_type.is_some_and(|t| t.is_dir()) {
+            collect_loose_raw_refs(&path, &format!("{refname}/"), want, out)?;
+            continue;
+        }
         let meta = match fs::metadata(&path) {
             Ok(m) => m,
             // Concurrent delete or an unreadable entry (e.g. dangling symlink): skip it.
