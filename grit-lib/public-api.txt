@@ -5712,6 +5712,9 @@ pub grit_lib::error::Error::OdbObjectsDirMismatch
 pub grit_lib::error::Error::OdbObjectsDirMismatch::builder: std::path::PathBuf
 pub grit_lib::error::Error::OdbObjectsDirMismatch::repository: std::path::PathBuf
 pub grit_lib::error::Error::OperationInProgress(grit_lib::state::InProgressOperation)
+pub grit_lib::error::Error::PackDeltaBaseNotWritten
+pub grit_lib::error::Error::PackDeltaBaseNotWritten::base: grit_lib::objects::ObjectId
+pub grit_lib::error::Error::PackDeltaBaseNotWritten::target: grit_lib::objects::ObjectId
 pub grit_lib::error::Error::PackIndexChecksumMismatch
 pub grit_lib::error::Error::PackIndexChecksumMismatch::mismatch: grit_lib::objects::hash::TrailerMismatch
 pub grit_lib::error::Error::PackIndexChecksumMismatch::path: std::path::PathBuf
@@ -16044,6 +16047,9 @@ pub grit_lib::prelude::Error::OdbObjectsDirMismatch
 pub grit_lib::prelude::Error::OdbObjectsDirMismatch::builder: std::path::PathBuf
 pub grit_lib::prelude::Error::OdbObjectsDirMismatch::repository: std::path::PathBuf
 pub grit_lib::prelude::Error::OperationInProgress(grit_lib::state::InProgressOperation)
+pub grit_lib::prelude::Error::PackDeltaBaseNotWritten
+pub grit_lib::prelude::Error::PackDeltaBaseNotWritten::base: grit_lib::objects::ObjectId
+pub grit_lib::prelude::Error::PackDeltaBaseNotWritten::target: grit_lib::objects::ObjectId
 pub grit_lib::prelude::Error::PackIndexChecksumMismatch
 pub grit_lib::prelude::Error::PackIndexChecksumMismatch::mismatch: grit_lib::objects::hash::TrailerMismatch
 pub grit_lib::prelude::Error::PackIndexChecksumMismatch::path: std::path::PathBuf

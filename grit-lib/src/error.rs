@@ -905,6 +905,17 @@ pub enum Error {
         count: u64,
     },
 
+    /// A pack being written that is not thin reached a delta before its base: the base
+    /// is missing from the pack, or the planned deltas form a cycle. The receiver could
+    /// not resolve that delta, so the pack was abandoned.
+    #[error("pack delta for {target} comes before its base {base}")]
+    PackDeltaBaseNotWritten {
+        /// The object that would have been stored as a delta.
+        target: crate::objects::ObjectId,
+        /// Its delta base, not written ahead of it.
+        base: crate::objects::ObjectId,
+    },
+
     /// [`crate::objects::Objects::write`] refused a payload that `git fsck` would reject;
     /// nothing was written.
     #[error("refusing to write invalid {kind} object: {}", .check.report_line())]
@@ -1954,6 +1965,7 @@ impl Error {
             Self::CorruptObject(..) => "corrupt_object",
             Self::PackIndexChecksumMismatch { .. } => "pack_index_checksum_mismatch",
             Self::UnresolvedDeltas { .. } => "unresolved_deltas",
+            Self::PackDeltaBaseNotWritten { .. } => "pack_delta_base_not_written",
             Self::InvalidObject { .. } => "invalid_object",
             Self::InvalidTreeEntry(..) => "invalid_tree_entry",
             Self::InvalidSignature(..) => "invalid_signature",

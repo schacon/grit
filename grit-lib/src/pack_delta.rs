@@ -135,7 +135,10 @@ const WRITE_BATCH_ENTRIES: usize = 256;
 ///
 /// # Errors
 ///
-/// Returns object read or encoding errors, and [`Error::Io`] when writing to `w` fails.
+/// Returns object read or encoding errors, [`Error::PackDeltaBaseNotWritten`] when the
+/// pack is not thin (`opts.thin` unset) and a delta comes before its base (a base
+/// missing from `entries`, or a delta cycle), and [`Error::Io`] when writing to `w`
+/// fails.
 pub(crate) fn write_pack_with_deltas(
     odb: &Odb,
     entries: &[PlannedEntry],
@@ -199,6 +202,12 @@ fn write_pack_in_batches(
                     encode_pack_object_header(&mut header, 6, prep.payload_len);
                     encode_ofs_delta_distance(&mut header, dist);
                 } else {
+                    if !opts.thin && in_pack_offset.is_none() {
+                        return Err(Error::PackDeltaBaseNotWritten {
+                            target: entry.oid,
+                            base: base_oid,
+                        });
+                    }
                     if base_oid.as_bytes().len() != algo.len() {
                         return Err(Error::CorruptObject(
                             "ref-delta base oid width mismatch".to_owned(),
@@ -451,6 +460,65 @@ mod tests {
             "recomputed delta is small: {}",
             delta.len()
         );
+    }
+
+    /// Write `entries` as a pack that is thin or not, discarding the bytes.
+    fn write_plan(odb: &Odb, entries: &[PlannedEntry], thin: bool) -> Result<PackStats> {
+        let opts = PackBuildOptions {
+            thin,
+            ..PackBuildOptions::default()
+        };
+        write_pack_with_deltas(odb, entries, &opts, Some(1), &mut Vec::new(), None)
+    }
+
+    /// Two blobs that differ in one byte.
+    fn similar_pair(odb: &Odb, fill: u8) -> (PlannedEntry, PlannedEntry) {
+        let mut data = vec![fill; 4096];
+        let first = whole_entry(odb, &data);
+        data[100] = b'!';
+        (first, whole_entry(odb, &data))
+    }
+
+    #[test]
+    fn full_pack_refuses_a_delta_whose_base_it_does_not_contain() {
+        let (_dir, odb) = scratch_odb();
+        let (absent, mut target) = similar_pair(&odb, b'r');
+        target.base = Some(absent.oid);
+        let entries = [target];
+        match write_plan(&odb, &entries, false) {
+            Err(Error::PackDeltaBaseNotWritten { target, base }) => {
+                assert_eq!((target, base), (entries[0].oid, absent.oid));
+            }
+            other => panic!("expected PackDeltaBaseNotWritten, got {other:?}"),
+        }
+        assert!(
+            write_plan(&odb, &entries, true).is_ok(),
+            "a thin pack leaves the base to the peer"
+        );
+    }
+
+    #[test]
+    fn full_pack_refuses_a_delta_cycle() {
+        let (_dir, odb) = scratch_odb();
+        let (mut a, mut b) = similar_pair(&odb, b's');
+        a.base = Some(b.oid);
+        b.base = Some(a.oid);
+        let (a_oid, b_oid) = (a.oid, b.oid);
+        match write_plan(&odb, &[a, b], false) {
+            Err(Error::PackDeltaBaseNotWritten { target, base }) => {
+                assert_eq!((target, base), (a_oid, b_oid));
+            }
+            other => panic!("expected PackDeltaBaseNotWritten, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn full_pack_writes_a_delta_after_its_base() {
+        let (_dir, odb) = scratch_odb();
+        let (base, mut target) = similar_pair(&odb, b't');
+        target.base = Some(base.oid);
+        let stats = write_plan(&odb, &[base, target], false).expect("base first");
+        assert_eq!((stats.object_count, stats.delta_count), (2, 1));
     }
 
     #[test]
