@@ -29,6 +29,34 @@ Commit-to-commit diffs resolve each commit’s tree with [`Odb::commit_tree`](ru
 
 For a single modified file, read old and new bytes from [`Odb`](rustdoc:grit_lib::objects::odb::Odb) and pass them to [`unified_diff`](rustdoc:grit_lib::diff::unified_diff) or the structured helpers in [`structured`](rustdoc:grit_lib::diff::structured). For tree diffs meant for `git apply`, stream [`write_patch`](rustdoc:grit_lib::diff::write_patch) over a `DiffEntry` slice with [`PatchTextOptions`](rustdoc:grit_lib::diff::PatchTextOptions) (same headers and `GIT binary patch` bodies as `git diff --binary`). For index and work-tree diffs, [`write_patch_resolved`](rustdoc:grit_lib::diff::write_patch_resolved) takes [`PatchResolvedSide`](rustdoc:grit_lib::diff::PatchResolvedSide) values whose sides are a [`PatchSide`](rustdoc:grit_lib::diff::PatchSide): bytes you already hold, a blob in the object database, or the work-tree file (read through clean filters and line-ending rules). Binary files get full ids of the written content on their `index` line, which `git apply` requires. Line-level hunks honor one shared [`DiffOptions`](rustdoc:grit_lib::diff::DiffOptions) value (algorithm, context, indent heuristic, renames, optional word-level inline emphasis) whether you emit unified patch text or structured hunks for the CLI. Defaults match Git (`Myers`, `-U3`, indent heuristic on, rename similarity 50). The CLI builds human, `--json`, and `--markdown` views from `DiffEntry` lists plus structured or unified bodies; [`grit diff --patch-text`](../../commands/diff.md) calls `write_patch` for revisions and `write_patch_resolved` for staged and work-tree changes.
 
+## Diffstat
+
+[`DiffStat`](rustdoc:grit_lib::diff::DiffStat) is the data behind `--stat`, `--numstat` and `--shortstat`. [`DiffStat::from_files`](rustdoc:grit_lib::diff::DiffStat::from_files) takes the rows from `build_file_diffs` at any detail level: each row's counts come from [`FileDiff::line_stat`](rustdoc:grit_lib::diff::ListedFileDiff::line_stat), which uses the stat when one was computed and otherwise counts the structured or combined hunk lines, so a patch-mode listing and a stat-mode listing give the same diffstat. [`totals`](rustdoc:grit_lib::diff::DiffStat::totals) sums the rows. To draw bars, scale each row with [`LineStat::bar`](rustdoc:grit_lib::diff::LineStat::bar) against [`max_changes`](rustdoc:grit_lib::diff::DiffStat::max_changes) and a column budget; the returned [`StatBar`](rustdoc:grit_lib::diff::StatBar) gives `+` and `-` column counts. `grit diff --stat`, `grit show`, `grit log --stat` and `grit stash show` render this model.
+
+```rust
+use grit_lib::diff::{build_file_diffs, DiffDetail, DiffOptions, DiffStat};
+use grit_lib::parallel::ThreadPolicy;
+
+let entries = repo.diff().tree_to_tree(Some(&old_tree), Some(&new_tree))?;
+let config = repo.config()?;
+let files = build_file_diffs(
+    repo.odb(),
+    entries,
+    DiffDetail::Stat,
+    DiffOptions::default(),
+    config.as_ref(),
+    &ThreadPolicy::default(),
+)?
+.files;
+let stat = DiffStat::from_files(&files);
+for file in stat.files() {
+    let bar = file.lines.bar(stat.max_changes(), 40);
+    println!("{} | {}{}", file.path, "+".repeat(bar.plus), "-".repeat(bar.minus));
+}
+let totals = stat.totals();
+println!("{} files, +{} -{}", totals.files_changed, totals.insertions, totals.deletions);
+```
+
 ## Porcelain models
 
 - **Status** — combines index vs HEAD and index vs worktree scans into structured sections (the CLI maps them to default / `--json` / `--markdown` output).

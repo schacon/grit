@@ -132,18 +132,11 @@ impl DiffTotals {
     /// Sum per-file stats into totals (binary files contribute to `files_changed` only).
     #[must_use]
     pub fn from_files(files: &[FileDiff]) -> Self {
-        let mut insertions = 0usize;
-        let mut deletions = 0usize;
-        for file in files {
-            if let Some(stat) = file.stat {
-                insertions += stat.insertions;
-                deletions += stat.deletions;
-            }
-        }
+        let lines: LineStat = files.iter().filter_map(|file| file.stat).sum();
         Self {
             files_changed: files.len(),
-            insertions,
-            deletions,
+            insertions: lines.insertions,
+            deletions: lines.deletions,
         }
     }
 }

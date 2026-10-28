@@ -29,6 +29,7 @@ mod patch_log;
 pub mod pickaxe;
 mod posix_ere;
 mod rename_lines;
+mod stat;
 pub(crate) use core::is_func_line;
 pub(crate) use posix_ere::PosixBre;
 mod targets;
@@ -75,6 +76,7 @@ pub use patch_log::{
     PatchTextOptions,
 };
 pub use pickaxe::{Pickaxe, PickaxeError, PickaxeKind};
+pub use stat::{DiffStat, FileStat, StatBar};
 pub use targets::hunk_diff_bundle;
 pub use targets::HunkDiffBundle;
 pub(crate) use targets::{

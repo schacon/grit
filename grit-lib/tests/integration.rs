@@ -539,6 +539,11 @@ mod diff_request;
 #[cfg(feature = "full-tests")]
 #[path = "diff_staged_renames.rs"]
 mod diff_staged_renames;
+#[path = "diff_stat.rs"]
+mod diff_stat;
+#[cfg(feature = "full-tests")]
+#[path = "diff_stat_git_compat.rs"]
+mod diff_stat_git_compat;
 #[cfg(feature = "full-tests")]
 #[path = "diff_stream_memory.rs"]
 mod diff_stream_memory;

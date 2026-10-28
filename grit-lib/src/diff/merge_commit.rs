@@ -58,25 +58,6 @@ fn combined_ws(_options: &DiffOptions) -> CombinedDiffWsOptions {
     CombinedDiffWsOptions::default()
 }
 
-fn line_stat_from_combined(body: &CombinedStructuredTextDiff) -> LineStat {
-    let mut insertions = 0usize;
-    let mut deletions = 0usize;
-    for hunk in &body.hunks {
-        for line in &hunk.lines {
-            if line.parents.contains(&'+') && !line.text.is_empty() {
-                insertions += 1;
-            }
-            if line.parents.contains(&'-') {
-                deletions += 1;
-            }
-        }
-    }
-    LineStat {
-        insertions,
-        deletions,
-    }
-}
-
 fn combined_status_letters(path: &CombinedDiffPath) -> String {
     path.parents
         .iter()
@@ -397,7 +378,7 @@ fn combined_path_file_diff(
     let result_text = blob_text_for_diff(git_dir, config, &path.path, &result_blob, false);
     let combined = structured_combined_diff_body(&parent_texts, &result_text, context, true, ws);
     let stat = match detail {
-        DiffDetail::Stat => Some(line_stat_from_combined(&combined)),
+        DiffDetail::Stat => Some(combined.line_stat()),
         _ => None,
     };
     Ok((
