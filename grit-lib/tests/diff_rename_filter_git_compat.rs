@@ -100,6 +100,66 @@ fn rename_threshold_matches_git_m() {
     }
 }
 
+/// Delete + add pair that git scores at 44% similarity (between the 40 and 50 thresholds).
+fn low_similarity_pair_repo() -> (DiffRepo, ObjectId, ObjectId) {
+    let dr = DiffRepo::init();
+    let wt = &dr.worktree;
+    let old: String = (1..=100).map(|i| format!("line {i}\n")).collect();
+    fs::write(wt.join("old.txt"), old).unwrap();
+    git_quiet(wt, &["add", "."]);
+    git_quiet(wt, &["commit", "-qm", "one"]);
+    let parent = rev_parse_tree(wt, "HEAD^{tree}");
+
+    fs::remove_file(wt.join("old.txt")).unwrap();
+    let new: String = (1..=45)
+        .map(|i| format!("line {i}\n"))
+        .chain((1..=55).map(|i| format!("new {i}\n")))
+        .collect();
+    fs::write(wt.join("new.txt"), new).unwrap();
+    git_quiet(wt, &["add", "-A"]);
+    git_quiet(wt, &["commit", "-qm", "two"]);
+    let commit = rev_parse_tree(wt, "HEAD^{tree}");
+    (dr, parent, commit)
+}
+
+#[test]
+fn default_rename_threshold_matches_git_default() {
+    use grit_lib::config::ConfigSet;
+    use grit_lib::diff::{renames_from_config, DiffOptions};
+
+    let (dr, parent, commit) = low_similarity_pair_repo();
+    let wt = &dr.worktree;
+    let (p, c) = (parent.to_hex(), commit.to_hex());
+    let grit_at = |threshold: u32| {
+        let entries =
+            diff_trees_with_renames(dr.repo.odb(), Some(&parent), Some(&commit), "", threshold)
+                .expect("diff");
+        grit_name_status(&entries)
+    };
+
+    let git_default = git_name_status(wt, &[&p, &c]);
+    assert_eq!(git_default, ["A\tnew.txt", "D\told.txt"], "git default");
+    for default in [
+        DiffOptions::default().rename_threshold_u32(),
+        DiffOptions::from_config(&ConfigSet::new()).rename_threshold_u32(),
+        renames_from_config(&ConfigSet::new())
+            .threshold_percent()
+            .expect("renames on by default"),
+    ] {
+        assert_eq!(grit_at(default), git_default, "default threshold {default}");
+    }
+
+    for threshold in [40u32, 45, 50] {
+        let git_m = format!("-M{threshold}");
+        assert_eq!(
+            grit_at(threshold),
+            git_name_status(wt, &[&git_m, &p, &c]),
+            "threshold {threshold}"
+        );
+    }
+    assert_eq!(grit_at(40), ["R044\told.txt\tnew.txt"]);
+}
+
 #[test]
 fn no_renames_reports_add_and_delete() {
     let (dr, parent, commit) = t4001_rename_repo();

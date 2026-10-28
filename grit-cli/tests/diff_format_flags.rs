@@ -44,14 +44,15 @@ fn diff_numstat_default_matches_against_head_after_rename() {
     let dir = tempfile::tempdir().expect("tempdir");
     let grit_init = grit(dir.path(), &["init"]);
     assert!(grit_init.ok(), "{}", grit_init.dump("grit init"));
-    std::fs::write(dir.path().join("f.txt"), b"line\n").expect("write");
+    let body: String = (1..=10).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(dir.path().join("f.txt"), &body).expect("write");
     assert!(grit(dir.path(), &["add", "."]).ok(), "grit add");
     assert!(
         grit(dir.path(), &["commit", "-m", "init"]).ok(),
         "grit commit"
     );
     std::fs::rename(dir.path().join("f.txt"), dir.path().join("g.txt")).expect("rename");
-    std::fs::write(dir.path().join("g.txt"), b"line\nextra\n").expect("write");
+    std::fs::write(dir.path().join("g.txt"), format!("{body}extra\n")).expect("write");
     let default = grit(dir.path(), &["diff", "--numstat"]);
     assert!(default.ok(), "{}", default.dump("default numstat"));
     let against = grit(dir.path(), &["diff", "--against", "HEAD", "--numstat"]);
