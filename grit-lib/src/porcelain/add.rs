@@ -23,7 +23,6 @@ use crate::index::{
 };
 use crate::objects::FileMode;
 use crate::objects::ObjectId;
-use crate::odb::BULK_NEW_LOOSE_WRITE;
 use crate::path_icase::{
     paths_equal, DentrySpellingCache, IcaseIndexCollisionGroups, Stage0IcasePathMap,
 };
@@ -1197,6 +1196,7 @@ fn stage_untracked_paths_parallel(
     let mut batch_entries: Vec<IndexEntry> = Vec::with_capacity(untracked.len());
     let mut inputs: Vec<WorktreeBlobReadInput> = Vec::with_capacity(UNTRACKED_STAGE_CHUNK);
     let mut prefix_dirs_ready = dry_run;
+    let write_opts = repo.odb().bulk_stage_write_options();
     let mut paths = untracked.into_iter();
     loop {
         inputs.clear();
@@ -1253,7 +1253,7 @@ fn stage_untracked_paths_parallel(
                 rules.conversion(),
                 parallelism,
                 Some(rules.filter_process()),
-                BULK_NEW_LOOSE_WRITE,
+                write_opts,
                 scope.watch(),
             )?
         };

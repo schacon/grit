@@ -10568,6 +10568,7 @@ pub fn grit_lib::objects::odb::Odb::append_alternate_objects_line(&std::path::Pa
 pub fn grit_lib::objects::odb::Odb::append_file_alternate(&self, &std::path::Path) -> grit_lib::error::Result<()>
 pub fn grit_lib::objects::odb::Odb::approximate_object_count(&self) -> grit_lib::error::Result<usize>
 pub fn grit_lib::objects::odb::Odb::big_file_threshold(&self) -> grit_lib::error::Result<u64>
+pub fn grit_lib::objects::odb::Odb::bulk_stage_write_options(&self) -> grit_lib::objects::odb::WriteOptions
 pub fn grit_lib::objects::odb::Odb::config_git_dir(&self) -> core::option::Option<&std::path::Path>
 pub fn grit_lib::objects::odb::Odb::contains(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
 pub fn grit_lib::objects::odb::Odb::count_loose_objects(&self) -> grit_lib::error::Result<usize>
@@ -10666,6 +10667,7 @@ impl !core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::odb::builde
 impl !core::panic::unwind_safe::UnwindSafe for grit_lib::objects::odb::builder::OdbBuilder
 pub struct grit_lib::objects::odb::WriteOptions
 pub grit_lib::objects::odb::WriteOptions::assume_loose_only_existence: bool
+pub grit_lib::objects::odb::WriteOptions::freshen_existing: bool
 pub grit_lib::objects::odb::WriteOptions::loose_prefix_dirs_ready: bool
 pub grit_lib::objects::odb::WriteOptions::silent: bool
 pub grit_lib::objects::odb::WriteOptions::trust_new_loose: bool
@@ -17186,6 +17188,7 @@ pub fn grit_lib::objects::odb::Odb::append_alternate_objects_line(&std::path::Pa
 pub fn grit_lib::objects::odb::Odb::append_file_alternate(&self, &std::path::Path) -> grit_lib::error::Result<()>
 pub fn grit_lib::objects::odb::Odb::approximate_object_count(&self) -> grit_lib::error::Result<usize>
 pub fn grit_lib::objects::odb::Odb::big_file_threshold(&self) -> grit_lib::error::Result<u64>
+pub fn grit_lib::objects::odb::Odb::bulk_stage_write_options(&self) -> grit_lib::objects::odb::WriteOptions
 pub fn grit_lib::objects::odb::Odb::config_git_dir(&self) -> core::option::Option<&std::path::Path>
 pub fn grit_lib::objects::odb::Odb::contains(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
 pub fn grit_lib::objects::odb::Odb::count_loose_objects(&self) -> grit_lib::error::Result<usize>
