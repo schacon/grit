@@ -26,7 +26,7 @@ export interface MachineInfo {
   kernel: string;
   scratch_filesystem: string;
   rustc_version: string;
-  cargo_profile: string;
+  cargo_profile: string; // "dist" for published reports; "release" or "dev" for local runs
 }
 
 export interface DailyToolVersions {

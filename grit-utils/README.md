@@ -2,17 +2,19 @@
 
 Utility crate for the Grit workspace. The primary binary is **`grit-bench`**, a scenario-based harness that compares **`grit`** and **`git`** using [hyperfine](https://github.com/sharkdp/hyperfine).
 
-Daily performance census reports use the [`grit-daily-bench/1`](DAILY-SCHEMA.md) JSON schema.
+Daily performance census reports use the [`grit-daily-bench/1`](DAILY-SCHEMA.md) JSON schema. Published daily numbers measure the **`dist`** profile (the shipped, fat-LTO build), so build `grit-bench` with `--profile dist`: it then times `target/dist/grit` and records `"cargo_profile": "dist"`. The census moved from `release` to `dist` on 2026-10-28, a one-time baseline step for every scenario (see [Benchmarking](../content/docs/benchmarking.md#grit-bench-daily-factory-census)).
 
 ```bash
+cargo build --profile dist -p grit-cli -p grit-utils
+
 # Headline smoke (13 local scenarios; direct-spawn timing + peak RSS)
-./target/release/grit-bench fixtures prepare --only synth-10k-smoke,many-refs-smoke,git-git-wt
-./target/release/grit-bench daily --smoke --offline --output target/bench/daily-smoke.json
-./target/release/grit-bench daily validate target/bench/daily-smoke.json
+./target/dist/grit-bench fixtures prepare --only synth-10k-smoke,many-refs-smoke,git-git-wt
+./target/dist/grit-bench daily --smoke --offline --output target/bench/daily-smoke.json
+./target/dist/grit-bench daily validate target/bench/daily-smoke.json
 
 # Filters and baseline grit on headline rows
-./target/release/grit-bench daily --only status/clean@synth-10k --area worktree --smoke
-./target/release/grit-bench daily --smoke --baseline-grit /path/to/older/grit --output /tmp/daily.json
+./target/dist/grit-bench daily --only status/clean@synth-10k --area worktree --smoke
+./target/dist/grit-bench daily --smoke --baseline-grit /path/to/older/grit --output /tmp/daily.json
 ```
 
 ## Requirements

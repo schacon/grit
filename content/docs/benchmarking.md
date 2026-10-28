@@ -115,12 +115,18 @@ that Git and grit produce identical new shallow boundaries.
 
 Headline scenarios compare **`grit`** and system **`git`** with the direct-spawn runner (wall time + peak RSS per run). Reports use the [`grit-daily-bench/1`](../grit-utils/DAILY-SCHEMA.md) schema (distinct from hyperfine v1).
 
+Published daily numbers (the [factory dashboard](https://maint.grit-scm.com/cooking/bench) and the [Performance overview](performance-overview.md)) measure the **`dist`** profile, the fat-LTO build that releases ship. Build `grit-bench` in the same profile: it then times `target/dist/grit` by default and records `"cargo_profile": "dist"` in the report.
+
 ```bash
-cargo build --release -p grit-cli -p grit-utils
-./target/release/grit-bench fixtures prepare --only synth-10k-smoke,many-refs-smoke,git-git-wt,git-git
-./target/release/grit-bench daily --smoke --offline --output target/bench/daily-smoke.json
-./target/release/grit-bench daily validate target/bench/daily-smoke.json
+cargo build --profile dist -p grit-cli -p grit-utils
+./target/dist/grit-bench fixtures prepare --only synth-10k-smoke,many-refs-smoke,git-git-wt,git-git
+./target/dist/grit-bench daily --smoke --offline --output target/bench/daily-smoke.json
+./target/dist/grit-bench daily validate target/bench/daily-smoke.json
 ```
+
+The daily census switched from `release` to `dist` on 2026-10-28. That one-time switch moves the baseline of **every** scenario: short commands drop by roughly 10–15% in time and 20% in peak RSS (`show/head@git-git` went from 3.08 to 2.70 ms and from 16.1 to 13.1 MB on the same VM), because LTO packs the code a run touches into fewer pages. Read the step at that date as a build change, not a run of wins, and compare reports only within one profile (check `machine.cargo_profile`).
+
+A `release` build stays fine for iterating on a change (it rebuilds about three times faster), as long as the before and after binaries use the same profile. Code-layout noise is larger in `release`: any change to `grit-lib` reshuffles its 16 codegen units, which can move a 2–3 ms command by ±50 µs and its peak RSS by ±1 MB with no change in the work done. Confirm small differences on `dist`.
 
 | Flag | Meaning |
 | --- | --- |
