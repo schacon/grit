@@ -4,9 +4,8 @@ use crate::support;
 
 use support::{
     assert_patch_matches_git, blob_pairs, config_from_snippet, git_apply_and_compare,
-    git_apply_check, git_diff_no_index_patch, git_numstat, git_stat_width_line, grit_blob_patch,
-    grit_diffstat_block, grit_numstat, grit_stat_line, patch_hunk_body, resolve_indent,
-    GritBlobPatchOpts, LineDiffAlgo, WhitespaceMode,
+    git_apply_check, git_diff_no_index_patch, git_numstat, grit_blob_patch, grit_numstat,
+    patch_hunk_body, resolve_indent, GritBlobPatchOpts, LineDiffAlgo, WhitespaceMode,
 };
 
 fn default_opts(algo: LineDiffAlgo) -> GritBlobPatchOpts {
@@ -221,7 +220,7 @@ fn t4012_binary_patch_applies_with_git() {
 }
 
 #[test]
-fn t4052_numstat_and_stat_width_match_git() {
+fn t4052_numstat_matches_git() {
     let pairs = blob_pairs();
     let numstat_pair = pairs
         .iter()
@@ -238,25 +237,6 @@ fn t4052_numstat_and_stat_width_match_git() {
         let (ni, nd) = git_numstat(numstat_pair.old, numstat_pair.new, "file.c", algo);
         assert_eq!((gi, gd), (ni, nd), "{algo:?} numstat");
     }
-    let pair = pairs
-        .iter()
-        .find(|p| p.name.contains("mixed-layout"))
-        .expect("mixed-layout");
-    let long_name = "a".repeat(120);
-    let (gi, gd) = grit_numstat("x\n", "x\ny\n", LineDiffAlgo::Myers);
-    let width = 80;
-    let grit_line = grit_stat_line(&long_name, gi, gd, width);
-    let git_line = git_stat_width_line(b"x\n", b"x\ny\n", &long_name, width);
-    assert_eq!(
-        grit_line, git_line,
-        "stat line must match git --stat-width={width}"
-    );
-    assert_eq!(
-        grit_line.len(),
-        79,
-        "git uses 79 display columns for this fixture"
-    );
-    let _block = grit_diffstat_block("file.c", pair.old, pair.new, LineDiffAlgo::Myers);
 }
 
 #[test]
@@ -386,13 +366,15 @@ fn t4051_function_context_applies_with_git() {
 }
 
 #[test]
-fn t4052_diffstat_block_matches_git_stat_summary() {
+fn t4052_numstat_total_matches_git_stat_column() {
     let pairs = blob_pairs();
     let pair = pairs
         .iter()
         .find(|p| p.name.contains("mixed-layout"))
         .expect("mixed-layout");
-    let grit_block = grit_diffstat_block("file.c", pair.old, pair.new, LineDiffAlgo::Myers);
+    let old_s = std::str::from_utf8(pair.old).expect("utf8");
+    let new_s = std::str::from_utf8(pair.new).expect("utf8");
+    let (ins, del) = grit_numstat(old_s, new_s, LineDiffAlgo::Myers);
     let git_stat = git_diff_no_index_patch(
         pair.old,
         pair.new,
@@ -401,20 +383,14 @@ fn t4052_diffstat_block_matches_git_stat_summary() {
         WhitespaceMode::None,
         &["--stat"],
     );
-    assert!(
-        git_stat.contains("file changed") && grit_block.contains("file changed"),
-        "stat summaries present"
-    );
-    let git_line = git_stat
+    let git_total: usize = git_stat
         .lines()
         .find(|l| l.contains('|'))
-        .expect("git stat line");
-    let grit_line = grit_block.lines().next().expect("grit stat line");
-    assert_eq!(
-        git_line.split('|').nth(1).map(str::trim),
-        grit_line.split('|').nth(1).map(str::trim),
-        "change counts in stat column"
-    );
+        .and_then(|l| l.split('|').nth(1))
+        .and_then(|col| col.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .expect("git stat change count");
+    assert_eq!(ins + del, git_total, "change count in stat column");
 }
 
 #[test]

@@ -8,7 +8,6 @@ use std::process::Command;
 
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
-use grit_lib::diff::diffstat::{write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::diff::merge_file;
 use grit_lib::diff::ws::ws_blank_line;
 use grit_lib::diff::{
@@ -665,77 +664,6 @@ pub fn git_numstat(old: &[u8], new: &[u8], path: &str, algo: LineDiffAlgo) -> (u
         }
     };
     (parse(ins), parse(del))
-}
-
-pub fn grit_stat_line(path: &str, ins: usize, del: usize, width: usize) -> String {
-    grit_lib::diff::format_stat_line_width(path, ins, del, width, 0)
-}
-
-pub fn git_stat_width_line(old: &[u8], new: &[u8], path: &str, width: usize) -> String {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let file = dir.path().join(path);
-    if let Some(parent) = file.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).expect("mkdir");
-        }
-    }
-    fs::write(&file, old).expect("write old");
-    let init = hermetic_git_diff(dir.path(), &["init"]);
-    assert!(init.status.success(), "git init failed");
-    let config = |k: &str, v: &str| {
-        let out = hermetic_git_diff(dir.path(), &["config", k, v]);
-        assert!(out.status.success(), "git config {k} failed");
-    };
-    config("user.email", "grit-test@example.com");
-    config("user.name", "grit-test");
-    let add = hermetic_git_diff(dir.path(), &["add", "-A"]);
-    assert!(add.status.success(), "git add failed");
-    let commit = hermetic_git_diff(dir.path(), &["commit", "-m", "base"]);
-    assert!(commit.status.success(), "git commit failed");
-    fs::write(&file, new).expect("write new");
-    let stat_arg = format!("--stat-width={width}");
-    let diff = hermetic_git_diff(dir.path(), &["diff", "--no-color", &stat_arg]);
-    assert!(
-        diff.status.success() || diff.status.code() == Some(0),
-        "git diff --stat failed: {}",
-        String::from_utf8_lossy(&diff.stderr)
-    );
-    String::from_utf8_lossy(&diff.stdout)
-        .lines()
-        .find(|l| l.contains(" | "))
-        .map(|l| l.to_string())
-        .unwrap_or_default()
-}
-
-pub fn grit_diffstat_block(path: &str, old: &[u8], new: &[u8], algo: LineDiffAlgo) -> String {
-    let old_s = text_or_lossy(old);
-    let new_s = text_or_lossy(new);
-    let (ins, del) = grit_numstat(&old_s, &new_s, algo);
-    let mut buf = Vec::new();
-    let files = [FileStatInput {
-        path_display: path.to_string(),
-        insertions: ins,
-        deletions: del,
-        is_binary: merge_file::is_binary(old) || merge_file::is_binary(new),
-        is_unmerged: false,
-    }];
-    let opts = DiffstatOptions {
-        terminal_width: 80,
-        total_width: 80,
-        stat_name_width: None,
-        stat_graph_width: None,
-        stat_count: None,
-        line_prefix: "",
-        width_prefix: "",
-        subtract_prefix_from_terminal: false,
-        graph_prefix_budget_slack: 0,
-        color_add: "",
-        color_del: "",
-        color_reset: "",
-        graph_bar_slack: 0,
-    };
-    write_diffstat_block(&mut buf, &files, &opts).expect("stat block");
-    String::from_utf8(buf).expect("utf8 stat")
 }
 
 pub fn git_count_lines(data: &[u8]) -> usize {

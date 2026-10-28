@@ -102,10 +102,6 @@ pub mod combined_tree_diff {
     //! combined_tree_diff API (re-exported at this path).
     pub use crate::combined_tree_diff::*;
 }
-pub mod diffstat {
-    //! diffstat API (re-exported at this path).
-    pub use crate::diffstat::*;
-}
 pub mod patch_ids {
     //! patch_ids API (re-exported at this path).
     pub use crate::patch_ids::*;
