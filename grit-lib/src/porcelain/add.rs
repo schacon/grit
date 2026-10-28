@@ -39,6 +39,7 @@ use crate::porcelain::index_mode::{
 use crate::porcelain::pathspec_match::KnownPathspecChecker;
 use crate::porcelain::stage_tracked::{
     replay_deferred_untracked_invalidations, stage_tracked_modifications_in_index_with_rules,
+    worktree_path_is_missing,
 };
 use crate::porcelain::status::{
     collect_untracked_and_ignored_inner, expand_untracked_for_staging_with_rules, IgnoredMode,
@@ -919,10 +920,6 @@ fn head_tree_oid(repo: &Repository) -> Result<Option<ObjectId>> {
         | crate::state::HeadState::Detached { oid } => Ok(Some(repo.odb().commit_tree(&oid)?)),
         _ => Ok(None),
     }
-}
-
-fn worktree_path_is_missing(err: &std::io::Error) -> bool {
-    matches!(err.kind(), std::io::ErrorKind::NotFound)
 }
 
 struct TrackedStagePlan {
