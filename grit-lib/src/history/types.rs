@@ -80,6 +80,11 @@ pub type HistoryEdits = BTreeMap<ObjectId, CommitEdit>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum RefScope {
     /// Every local branch whose tip descends from the oldest edited commit, plus `HEAD`.
+    ///
+    /// Stacked branches on intermediate or descendant commits move with the rewrite. Other
+    /// branches pointing at the same commit as `HEAD` (the checked-out branch tip, or the
+    /// detached commit) are left alone: they are second names for the pre-rewrite tip, such
+    /// as a backup taken before a rebase.
     #[default]
     Branches,
     /// Only the ref `HEAD` currently points at (symbolic or detached).

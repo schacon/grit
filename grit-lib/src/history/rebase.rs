@@ -223,7 +223,8 @@ pub fn plan_rebase(
 /// Merge commits in the range are replayed with updated parents and trees, unless
 /// [`RebaseOntoOptions::flatten_leaf_merges`] linearizes the replay. Under
 /// [`RefScope::Branches`](super::RefScope::Branches),
-/// every local branch whose tip descends from the rewritten range is moved to its replayed tip.
+/// every local branch whose tip descends from the rewritten range is moved to its replayed tip,
+/// except other branches at the same commit as `HEAD`, which keep the pre-rebase history.
 ///
 /// # Errors
 ///

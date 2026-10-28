@@ -972,8 +972,20 @@ pub(crate) fn collect_scoped_refs(
             }
         },
         RefScope::Branches => {
+            let (checked_out, head_tip) = match &head {
+                crate::state::HeadState::Branch { refname, oid, .. } => {
+                    (Some(refname.as_str()), *oid)
+                }
+                crate::state::HeadState::Detached { oid } => (None, Some(*oid)),
+                crate::state::HeadState::Invalid => (None, None),
+            };
             let branches = repo.references().list("refs/heads/").map_err(library_err)?;
             for (name, oid) in branches {
+                // Another branch at the checked-out tip is a backup of it, not a stacked
+                // branch, so it keeps the pre-rewrite commits.
+                if head_tip == Some(oid) && checked_out != Some(name.as_str()) {
+                    continue;
+                }
                 if is_ancestor(repo, oldest, oid).map_err(library_err)? {
                     out.push((name, oid));
                 }
