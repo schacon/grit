@@ -679,9 +679,13 @@ fn enrich_local_link_transfer_kinds(
 }
 
 /// Per-fetch transfer stats for objects installed during one local copy operation.
+///
+/// `loose_candidates` limits which installed objects are looked for as loose files (each
+/// costs a `stat`); `None` checks all of `installed`.
 fn transfer_stats_for_local_operation(
     local_odb: &Odb,
     installed: &HashSet<ObjectId>,
+    loose_candidates: Option<&HashSet<ObjectId>>,
     pack_dir_before: &HashSet<String>,
 ) -> Result<TransferStats> {
     let objects_dir = local_odb.objects_dir();
@@ -709,7 +713,8 @@ fn transfer_stats_for_local_operation(
             }
         }
     }
-    let (loose_objects, loose_bytes) = loose_transfer_stats(local_odb, installed);
+    let (loose_objects, loose_bytes) =
+        loose_transfer_stats(local_odb, loose_candidates.unwrap_or(installed));
     bytes = bytes.saturating_add(loose_bytes);
     let installed_count = u64::try_from(installed.len()).unwrap_or(u64::MAX);
     let objects = if objects_from_new_packs > 0 {
@@ -1033,8 +1038,12 @@ fn copy_objects_for_local_fetch(
             } else {
                 stats_loose.clone()
             };
-            let mut transfer =
-                transfer_stats_for_local_operation(local_odb, &stats_loose, &pack_dir_before)?;
+            let mut transfer = transfer_stats_for_local_operation(
+                local_odb,
+                &stats_loose,
+                None,
+                &pack_dir_before,
+            )?;
             enrich_local_link_transfer_kinds(
                 local_odb,
                 &pack_dir_before,
@@ -1079,8 +1088,14 @@ fn copy_objects_for_local_fetch(
 
     let mut still_missing = objects_missing_from_peer(local_odb, send);
     if still_missing.is_empty() {
-        let oids = linked_object_set(local_odb, send);
-        let transfer = transfer_stats_for_local_operation(local_odb, &oids, &pack_dir_before)?;
+        // Every object in `send` is stored locally now, and only packs were installed.
+        let oids: HashSet<ObjectId> = send.iter().copied().collect();
+        let transfer = transfer_stats_for_local_operation(
+            local_odb,
+            &oids,
+            Some(&HashSet::new()),
+            &pack_dir_before,
+        )?;
         return Ok((oids, transfer));
     }
 
@@ -1098,14 +1113,21 @@ fn copy_objects_for_local_fetch(
         progress,
         cancel,
     )?;
+    let loose_candidates: HashSet<ObjectId> = still_missing.iter().copied().collect();
     if linked_loose > 0 {
         refresh_local_odb_after_link(local_odb);
         still_missing = local_odb.missing_oids(still_missing)?;
     }
     progress.finish();
     if still_missing.is_empty() {
-        let oids = linked_object_set(local_odb, send);
-        let transfer = transfer_stats_for_local_operation(local_odb, &oids, &pack_dir_before)?;
+        // Every object in `send` is stored locally now; the loose links covered the rest.
+        let oids: HashSet<ObjectId> = send.iter().copied().collect();
+        let transfer = transfer_stats_for_local_operation(
+            local_odb,
+            &oids,
+            Some(&loose_candidates),
+            &pack_dir_before,
+        )?;
         return Ok((oids, transfer));
     }
 
@@ -1115,7 +1137,9 @@ fn copy_objects_for_local_fetch(
         Some(still_missing.len() as u64),
     );
     crate::progress::poll_cancel(progress, cancel)?;
-    let mut pack = Vec::new();
+    // Stream the pack into a spool in `objects/pack` rather than memory, as a local push
+    // does; a cancelled or failed copy removes the spool.
+    let mut spool = crate::pack_receive::TempPackReceive::create_in_pack_dir(local_objects)?;
     write_pack_for_local_transfer(
         remote_odb,
         &send_set,
@@ -1126,23 +1150,29 @@ fn copy_objects_for_local_fetch(
         have_shallow,
         &pack_opts,
         &stop,
-        &mut pack,
+        &mut spool,
     )?;
     crate::progress::poll_cancel(progress, cancel)?;
-    let ingest_opts = ingest_pack_options_for_fetch(local_git_dir, fetch_opts)?;
-    let ingested = crate::index_pack::ingest_received_pack_with_progress(
-        pack,
-        local_odb,
-        &ingest_opts,
-        None,
-        Some(cancel),
-    )?;
+    let ingested = match spool.finish()? {
+        Some(pack_path) => {
+            let ingest_opts = ingest_pack_options_for_fetch(local_git_dir, fetch_opts)?;
+            crate::index_pack::ingest_received_pack_path_with_progress(
+                pack_path,
+                local_odb,
+                &ingest_opts,
+                None,
+                Some(cancel),
+            )?
+        }
+        None => crate::index_pack::IngestedPack::default(),
+    };
     progress.inc(ingested.object_ids.len() as u64);
     progress.finish();
     refresh_local_odb_after_link(local_odb);
-    let mut out = linked_object_set(local_odb, send);
+    // Every object in `send` is stored locally now: linked, or in the new pack.
+    let mut out: HashSet<ObjectId> = send.iter().copied().collect();
     out.extend(ingested.object_ids);
-    let transfer = transfer_stats_for_local_operation(local_odb, &out, &pack_dir_before)?;
+    let transfer = transfer_stats_for_local_operation(local_odb, &out, None, &pack_dir_before)?;
     Ok((out, transfer))
 }
 
@@ -4026,8 +4056,9 @@ mod tests {
         let git_dir = repo.join(".git");
         let pack_dir = git_dir.join("objects/pack");
         let odb = Odb::new(&git_dir.join("objects")).with_config_git_dir(git_dir.clone());
-        let stats = transfer_stats_for_local_operation(&odb, &HashSet::new(), &HashSet::new())
-            .expect("stats");
+        let stats =
+            transfer_stats_for_local_operation(&odb, &HashSet::new(), None, &HashSet::new())
+                .expect("stats");
         assert!(stats.bytes > 0);
         assert!(stats.objects > 0);
 
