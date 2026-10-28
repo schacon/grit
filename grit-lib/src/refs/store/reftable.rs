@@ -123,6 +123,7 @@ impl ReftableRefStore {
                 flags: super::RefUpdateFlags {
                     no_deref: true,
                     log_only: false,
+                    ..Default::default()
                 },
             })
             .map_err(|e| Error::Message(e.to_string()))?;
@@ -228,6 +229,7 @@ impl ReftableRefStore {
                 flags: super::RefUpdateFlags {
                     log_only: true,
                     no_deref: true,
+                    ..Default::default()
                 },
             });
             out.push(RefUpdate {
@@ -238,6 +240,7 @@ impl ReftableRefStore {
                 flags: super::RefUpdateFlags {
                     log_only: update.flags.log_only,
                     no_deref: true,
+                    ..Default::default()
                 },
             });
         }
@@ -822,6 +825,7 @@ mod tests {
                     flags: super::super::RefUpdateFlags {
                         no_deref: true,
                         log_only: false,
+                        ..Default::default()
                     },
                 })
                 .expect("transaction")

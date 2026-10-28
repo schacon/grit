@@ -99,13 +99,21 @@ pub struct ReflogUpdate {
     pub new_oid: Option<crate::objects::ObjectId>,
 }
 
-/// Per-update flags (Git `REF_NO_DEREF` / `REF_LOG_ONLY` semantics).
+/// Per-update flags (Git `REF_NO_DEREF` / `REF_LOG_ONLY` / `REF_SKIP_OID_VERIFICATION`
+/// semantics).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RefUpdateFlags {
     /// Do not dereference symbolic refs when computing reflog old/new oids.
     pub no_deref: bool,
     /// Append reflog only; do not change the ref value.
     pub log_only: bool,
+    /// Store the direct value without checking that the object exists (and, for a branch or
+    /// `HEAD`, that it is a commit).
+    ///
+    /// For deliberately writing a dangling ref, such as a corrupt-repository fixture. Every
+    /// other caller should leave this off so a lost race with a prune fails at the update
+    /// instead of leaving a broken ref.
+    pub skip_oid_verification: bool,
 }
 
 /// Rename a loose ref when only letter case changes (case-insensitive filesystems).

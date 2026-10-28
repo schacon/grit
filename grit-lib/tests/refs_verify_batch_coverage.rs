@@ -2,6 +2,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use crate::support;
+
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 
@@ -56,6 +58,7 @@ fn verify_refname_blocks_loose_directory_and_packed_descendant() {
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
+    let oid = |n: u8| support::stored_commit(&git_dir, n);
     let extras = BTreeSet::new();
     let skip = HashSet::new();
 
@@ -194,6 +197,7 @@ fn update_refs_cas_sees_loose_tag_while_heads_tree_empty() {
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
+    let oid = |n: u8| support::stored_commit(&git_dir, n);
     let old_oid = oid(20);
     let new_oid = oid(21);
     write_ref(&git_dir, "refs/tags/v1", &old_oid).expect("write tag");

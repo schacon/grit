@@ -461,7 +461,7 @@ pub fn run_custom_object_store_demo(repo_root: &Path) -> Result<Vec<String>> {
     use grit_lib::config::environment::RepositoryOptions;
     use grit_lib::objects::odb::OdbBuilder;
     use grit_lib::objects::{serialize_tree, TreeEntry};
-    use grit_lib::refs::write_ref;
+    use grit_lib::refs::store::RefName;
     use grit_lib::repo::{InitOptions, Repository, RepositoryBuilder};
     use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 
@@ -497,7 +497,12 @@ pub fn run_custom_object_store_demo(repo_root: &Path) -> Result<Vec<String>> {
     let commit = repo
         .odb()
         .write(ObjectKind::Commit, commit_body.as_bytes())?;
-    write_ref(&git_dir, "refs/heads/main", &commit)?;
+    // The commit lives in the custom store, which only the repository's own ref store checks.
+    repo.references()
+        .update(
+            &RefName::try_from("refs/heads/main").map_err(|e| Error::InvalidRef(e.to_string()))?,
+            &commit,
+        )?;
 
     let tip = commit.to_hex();
     let listed = rev_list(

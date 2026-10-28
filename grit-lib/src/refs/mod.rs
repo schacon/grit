@@ -121,8 +121,7 @@ fn legacy_ref_update_flags(refname: &str) -> RefUpdateFlags {
 }
 
 pub(crate) fn commit_store_update(git_dir: &Path, update: RefUpdate) -> Result<()> {
-    let store = open_ref_store(git_dir)?;
-    commit_ref_update_on_store(store.as_ref(), update)
+    commit_ref_update_on_store(&store::open_checked_ref_store(git_dir)?, update)
 }
 
 /// Apply one ref update through an already-selected [`RefStore`] (for example the store on
@@ -197,20 +196,27 @@ pub(crate) fn store_write_value_on_store(
 /// Apply several ref updates in one [`RefStore::prepare`] / commit (all-or-nothing).
 ///
 /// Used by batch ref paths (`fetch`, `push`, `receive-pack`, [`crate::gc::update_refs`]).
+/// Like [`crate::repo::Repository::refs`], the batch is checked against `git_dir`'s objects
+/// first.
 ///
 /// # Errors
 ///
 /// Returns [`crate::refs::store::RefStoreError`] for duplicate names, CAS failures,
-/// lock conflicts, and namespace conflicts. Propagates I/O and corrupt-store failures.
+/// lock conflicts, namespace conflicts, and direct values naming a missing object
+/// ([`MissingObject`](store::RefStoreError::MissingObject)) or, on a branch or `HEAD`, a
+/// non-commit ([`NotACommit`](store::RefStoreError::NotACommit)). Propagates I/O and
+/// corrupt-store failures.
 pub fn commit_ref_store_batch(git_dir: &Path, updates: &[RefUpdate]) -> Result<()> {
     if updates.is_empty() {
         return Ok(());
     }
-    let store = open_ref_store(git_dir)?;
-    commit_ref_updates_on_store(store.as_ref(), updates, &[])
+    commit_ref_updates_on_store(&store::open_checked_ref_store(git_dir)?, updates, &[])
 }
 
 /// Apply several ref updates atomically through an existing [`RefStore`].
+///
+/// Object checks are those of `store`: the store from [`crate::repo::Repository::refs`]
+/// verifies direct values against the repository's objects, a bare backend does not.
 ///
 /// # Errors
 ///
@@ -308,9 +314,8 @@ fn store_write_value(
     expected: Expected,
     reflog: Option<ReflogUpdate>,
 ) -> Result<()> {
-    let store = open_ref_store(git_dir)?;
     store_write_value_on_store(
-        store.as_ref(),
+        &store::open_checked_ref_store(git_dir)?,
         git_dir,
         refname,
         new_value,
@@ -1841,6 +1846,21 @@ pub(crate) fn lookup_packed_ref_with_peel(
     view.lookup_entry(&packed_path, refname)
 }
 
+/// Store a root commit labelled `message` in `git_dir`'s objects, so tests can point refs at
+/// an object that exists. Its tree (the empty tree) is not stored.
+#[cfg(test)]
+pub(crate) fn test_commit(git_dir: &Path, message: &str) -> ObjectId {
+    let common = common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
+    let body = format!(
+        "tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n\
+         author T <t@example.com> 0 +0000\n\
+         committer T <t@example.com> 0 +0000\n\n{message}\n"
+    );
+    crate::odb::Odb::new(&common.join("objects"))
+        .write(crate::objects::ObjectKind::Commit, body.as_bytes())
+        .unwrap_or_else(|err| panic!("store test commit {message:?}: {err}"))
+}
+
 /// Write a symbolic ref (e.g. `NOTES_MERGE_REF` → `refs/notes/m`).
 ///
 /// For reftable-backed repositories this dispatches to the reftable writer.
@@ -1891,6 +1911,9 @@ pub(crate) fn ensure_refname_safe_for_storage(refname: &str) -> Result<()> {
 ///
 /// Returns [`Error::InvalidRef`] when `refname` is not safe for ref storage (e.g. path
 /// traversal under `refs/`), on a namespace conflict, or [`Error::Io`] on filesystem errors.
+/// Returns [`store::RefStoreError::MissingObject`] when `git_dir`'s objects do not include
+/// `oid`, and [`store::RefStoreError::NotACommit`] when `refname` is a branch or `HEAD` and
+/// `oid` is not a commit (both as [`Error::RefStore`]).
 pub fn write_ref(git_dir: &Path, refname: &str, oid: &ObjectId) -> Result<()> {
     store_write_value(
         git_dir,
@@ -4550,9 +4573,9 @@ mod update_branch_for_commit_tests {
         )
         .unwrap();
         let git_dir = repo.git_dir().to_path_buf();
-        let oid1 = sample_oid("67bf698f3ab735e92fb011a99cff3497c44d30c1");
-        let oid2 = sample_oid("1111111111111111111111111111111111111111");
-        let oid3 = sample_oid("2222222222222222222222222222222222222222");
+        let oid1 = test_commit(&git_dir, "one");
+        let oid2 = test_commit(&git_dir, "two");
+        let oid3 = test_commit(&git_dir, "three");
         write_ref(&git_dir, "refs/heads/main", &oid1).unwrap();
 
         let gate = Arc::new(branch_ref_pause_inject::PauseGate {
@@ -4968,7 +4991,8 @@ mod ref_storage_traversal_guard_tests {
     #[test]
     fn write_ref_accepts_refs_heads_head() {
         let (_dir, git_dir) = bare_repo_with_config();
-        write_ref(&git_dir, "refs/heads/HEAD", &sample_oid())
+        let commit = test_commit(&git_dir, "head-named branch");
+        write_ref(&git_dir, "refs/heads/HEAD", &commit)
             .expect("refs/heads/HEAD is valid ref syntax");
         assert!(git_dir.join("refs/heads/HEAD").is_file());
     }

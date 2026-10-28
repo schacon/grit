@@ -162,8 +162,7 @@ mod tests {
     fn init_repo() -> (tempfile::TempDir, Repository) {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
-        let oid = crate::objects::ObjectId::from_hex("0000000000000000000000000000000000000001")
-            .expect("oid");
+        let oid = crate::refs::test_commit(repo.git_dir(), "main");
         write_ref(repo.git_dir(), "refs/heads/main", &oid).expect("main");
         write_ref(repo.git_dir(), "HEAD", &oid).expect("head");
         (dir, repo)

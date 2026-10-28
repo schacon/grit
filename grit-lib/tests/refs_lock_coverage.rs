@@ -2,6 +2,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use crate::support;
+
 use std::fs;
 
 use grit_lib::error::Error;
@@ -52,6 +54,7 @@ fn write_ref_fails_when_lock_file_exists() {
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
+    let oid = |n: u8| support::stored_commit(&git_dir, n);
     let ref_path = git_dir.join("refs/heads/locked");
     fs::create_dir_all(ref_path.parent().unwrap()).expect("parent");
     fs::write(&ref_path, format!("{}\n", oid(1).to_hex())).expect("seed");
@@ -110,6 +113,7 @@ fn delete_ref_cas_and_directory_in_the_way() {
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
+    let oid = |n: u8| support::stored_commit(&git_dir, n);
     write_ref(&git_dir, "refs/heads/del", &oid(4)).expect("seed");
     delete_ref_cas(&git_dir, "refs/heads/del", oid(4)).expect("delete");
     write_ref(&git_dir, "refs/heads/parent/leaf", &oid(5)).expect("child");

@@ -133,7 +133,6 @@ pub(crate) fn swap_ref_as(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::objects::ObjectKind;
     use crate::repo::InitOptions;
 
     fn who() -> Signature {
@@ -146,8 +145,8 @@ mod tests {
     fn swaps_are_create_only_or_compare_and_swap_and_logged() {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
-        let a = repo.odb().write(ObjectKind::Blob, b"a").expect("blob");
-        let b = repo.odb().write(ObjectKind::Blob, b"b").expect("blob");
+        let a = crate::refs::test_commit(repo.git_dir(), "a");
+        let b = crate::refs::test_commit(repo.git_dir(), "b");
         let name = "refs/heads/topic";
 
         assert_eq!(

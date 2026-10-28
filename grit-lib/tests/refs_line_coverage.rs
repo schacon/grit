@@ -2,9 +2,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use crate::support;
+
 use std::fs;
 
-use grit_lib::objects::ObjectId;
 use grit_lib::refs::{collect_alternate_ref_oids, list_refs_glob, ref_matches_glob, write_ref};
 use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;
@@ -33,7 +34,7 @@ fn list_refs_glob_prefix_and_pattern() {
     )
     .expect("init");
     let git_dir = root.join(".git");
-    let oid = ObjectId::from_hex("1111111111111111111111111111111111111111").expect("oid");
+    let oid = support::stored_commit(&git_dir, 1);
     write_ref(&git_dir, "refs/heads/topic/one", &oid).expect("write");
     write_ref(&git_dir, "refs/heads/topic/two", &oid).expect("write");
     write_ref(&git_dir, "refs/heads/other", &oid).expect("write");
@@ -64,7 +65,7 @@ fn collect_alternate_ref_oids_reads_linked_object_store() {
     )
     .expect("init alt");
     let alt_git = alt.join(".git");
-    let oid = ObjectId::from_hex("2222222222222222222222222222222222222222").expect("oid");
+    let oid = support::stored_commit(&alt_git, 2);
     write_ref(&alt_git, "refs/heads/from-alt", &oid).expect("alt ref");
 
     let primary_git = primary.join(".git");
@@ -99,7 +100,7 @@ fn collect_alternate_ref_oids_honors_prefix_config() {
     )
     .expect("init alt");
     let alt_git = alt.join(".git");
-    let oid = ObjectId::from_hex("3333333333333333333333333333333333333333").expect("oid");
+    let oid = support::stored_commit(&alt_git, 3);
     write_ref(&alt_git, "refs/heads/picked", &oid).expect("alt ref");
     write_ref(&alt_git, "refs/tags/skipped", &oid).expect("tag");
 

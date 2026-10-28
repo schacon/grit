@@ -443,6 +443,7 @@ fn append_reset_reflogs(
                     flags: RefUpdateFlags {
                         no_deref: true,
                         log_only: true,
+                        ..Default::default()
                     },
                 },
             )?;

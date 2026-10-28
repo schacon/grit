@@ -97,6 +97,7 @@ pub fn update_branch_for_commit_on_store(
             flags: RefUpdateFlags {
                 no_deref: true,
                 log_only: true,
+                ..Default::default()
             },
         });
     }
@@ -154,6 +155,7 @@ pub(crate) fn update_detached_head_for_commit_on_store(
             flags: RefUpdateFlags {
                 no_deref: true,
                 log_only: false,
+                ..Default::default()
             },
         },
     )
@@ -205,6 +207,7 @@ pub(crate) fn append_reflog_on_store(
             flags: RefUpdateFlags {
                 no_deref: true,
                 log_only: true,
+                ..Default::default()
             },
         },
     )
@@ -253,6 +256,7 @@ pub(crate) fn delete_ref_on_store(store: &dyn RefStore, refname: &str) -> Result
             flags: RefUpdateFlags {
                 no_deref: true,
                 log_only: false,
+                ..Default::default()
             },
         },
     )?;

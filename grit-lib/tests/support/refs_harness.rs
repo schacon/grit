@@ -259,6 +259,23 @@ fn grit_empty_commit_with_message(worktree: &Path, message: &str) -> ObjectId {
     outcome.oid
 }
 
+/// Store a root commit labelled `n` in the objects of the repository at `git_dir` and return
+/// its id: the same `n` always gives the same commit, and different `n` different commits.
+///
+/// Refs written through grit must name an object the repository stores (a branch, a
+/// commit), so tests that only need distinct ref values use this instead of synthetic ids.
+pub fn stored_commit(git_dir: &Path, n: u8) -> ObjectId {
+    let body = format!(
+        "tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n\
+         author {AUTHOR_NAME} <{AUTHOR_EMAIL}> {DETERMINISTIC_DATE}\n\
+         committer {AUTHOR_NAME} <{AUTHOR_EMAIL}> {DETERMINISTIC_DATE}\n\ncommit {n}\n"
+    );
+    let common = grit_lib::refs::common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
+    grit_lib::objects::odb::Odb::new(&common.join("objects"))
+        .write(grit_lib::objects::ObjectKind::Commit, body.as_bytes())
+        .expect("store commit")
+}
+
 /// Seed commit for refs tests: system git when interop is available, otherwise grit.
 pub fn empty_commit_oid(repo: &TestRepo) -> ObjectId {
     if git_interop_available(repo.backend()) {

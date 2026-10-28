@@ -445,6 +445,7 @@ pub fn pseudoref_and_log_only_null_oid_accepted(store: Arc<dyn RefStore>) {
     log_only.flags = RefUpdateFlags {
         log_only: true,
         no_deref: true,
+        ..Default::default()
     };
     commit_txn(
         store.as_ref(),

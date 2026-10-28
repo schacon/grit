@@ -52,6 +52,7 @@ pub(crate) fn initialize_head(git_dir: &Path, head: super::RawRef) -> Result<()>
         flags: super::RefUpdateFlags {
             no_deref: true,
             log_only: false,
+            ..Default::default()
         },
     })?;
     store.prepare(txn)?.commit()?;

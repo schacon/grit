@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use grit_lib::objects::ObjectId;
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::ObjectKind;
 use grit_lib::refs::gc::{update_refs, RefTransactionItem};
 use grit_lib::refs::list_refs;
 
@@ -83,15 +84,24 @@ fn bench_transaction_create(c: &mut Criterion) {
     }
     let template = std::fs::read_to_string(&create_stdin).expect("stdin");
     let lines: Vec<_> = template.lines().take(10_000).collect();
-    let oid = ObjectId::from_hex("1111111111111111111111111111111111111111").expect("oid");
+    // Ref updates must name a stored commit, so each fresh repository gets one.
+    let commit = b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n\
+        author B <b@example.com> 0 +0000\ncommitter B <b@example.com> 0 +0000\n\nbench\n";
     let mut group = c.benchmark_group("refs_files/transaction_create_10k");
     group.bench_function("update_refs_create", |b| {
         b.iter_batched(
-            || tempfile::TempDir::new().expect("tempdir"),
-            |tmp| {
+            || {
+                let tmp = tempfile::TempDir::new().expect("tempdir");
                 let git_dir = tmp.path().join(".git");
                 std::fs::create_dir_all(git_dir.join("refs/heads")).expect("refs");
                 std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").expect("head");
+                let oid = Odb::new(&git_dir.join("objects"))
+                    .write(ObjectKind::Commit, commit)
+                    .expect("commit");
+                (tmp, oid)
+            },
+            |(tmp, oid)| {
+                let git_dir = tmp.path().join(".git");
                 let items: Vec<RefTransactionItem> = lines
                     .iter()
                     .filter_map(|line| {

@@ -19257,12 +19257,23 @@ pub grit_lib::refs::store::RefStoreError::InvalidRefName::name: alloc::string::S
 pub grit_lib::refs::store::RefStoreError::InvalidReflog(grit_lib::ident::SignatureError)
 pub grit_lib::refs::store::RefStoreError::LockHeld
 pub grit_lib::refs::store::RefStoreError::LockHeld::name: alloc::string::String
+pub grit_lib::refs::store::RefStoreError::MissingObject
+pub grit_lib::refs::store::RefStoreError::MissingObject::name: alloc::string::String
+pub grit_lib::refs::store::RefStoreError::MissingObject::oid: grit_lib::objects::ObjectId
 pub grit_lib::refs::store::RefStoreError::NameUnavailable
 pub grit_lib::refs::store::RefStoreError::NameUnavailable::reason: grit_lib::refs::RefnameUnavailable
+pub grit_lib::refs::store::RefStoreError::NotACommit
+pub grit_lib::refs::store::RefStoreError::NotACommit::kind: grit_lib::objects::ObjectKind
+pub grit_lib::refs::store::RefStoreError::NotACommit::name: alloc::string::String
+pub grit_lib::refs::store::RefStoreError::NotACommit::oid: grit_lib::objects::ObjectId
 pub grit_lib::refs::store::RefStoreError::NotFound
 pub grit_lib::refs::store::RefStoreError::NotFound::name: alloc::string::String
 pub grit_lib::refs::store::RefStoreError::NullOid
 pub grit_lib::refs::store::RefStoreError::NullOid::name: alloc::string::String
+pub grit_lib::refs::store::RefStoreError::ObjectLookup
+pub grit_lib::refs::store::RefStoreError::ObjectLookup::name: alloc::string::String
+pub grit_lib::refs::store::RefStoreError::ObjectLookup::oid: grit_lib::objects::ObjectId
+pub grit_lib::refs::store::RefStoreError::ObjectLookup::source: grit_lib::refs::store::BackendError
 pub grit_lib::refs::store::RefStoreError::SymrefLoop
 impl grit_lib::refs::store::RefStoreError
 pub fn grit_lib::refs::store::RefStoreError::backend(impl core::error::Error + core::marker::Send + core::marker::Sync + 'static) -> Self
@@ -19525,6 +19536,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::store::RefUpdate
 pub struct grit_lib::refs::store::RefUpdateFlags
 pub grit_lib::refs::store::RefUpdateFlags::log_only: bool
 pub grit_lib::refs::store::RefUpdateFlags::no_deref: bool
+pub grit_lib::refs::store::RefUpdateFlags::skip_oid_verification: bool
 impl core::clone::Clone for grit_lib::refs::store::RefUpdateFlags
 pub fn grit_lib::refs::store::RefUpdateFlags::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::refs::store::RefUpdateFlags

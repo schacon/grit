@@ -107,6 +107,7 @@ impl LinkedWorktreeRefStore {
                 flags: RefUpdateFlags {
                     no_deref: true,
                     log_only,
+                    ..Default::default()
                 },
             };
             return Ok((Some(head_update), None));
@@ -121,6 +122,7 @@ impl LinkedWorktreeRefStore {
             flags: RefUpdateFlags {
                 no_deref: true,
                 log_only: true,
+                ..Default::default()
             },
         });
         let branch_update = RefUpdate {
@@ -131,6 +133,7 @@ impl LinkedWorktreeRefStore {
             flags: RefUpdateFlags {
                 no_deref: true,
                 log_only: false,
+                ..Default::default()
             },
         };
         Ok((head_update, Some(branch_update)))
@@ -375,6 +378,7 @@ mod tests {
         RefUpdateFlags {
             no_deref: true,
             log_only: false,
+            ..Default::default()
         }
     }
 
@@ -448,6 +452,7 @@ mod tests {
                 RefUpdateFlags {
                     no_deref: true,
                     log_only: true,
+                    ..Default::default()
                 },
             );
             head.reflog = Some(ReflogUpdate {

@@ -1245,6 +1245,11 @@ mod read_info_git_compat;
 #[cfg(feature = "full-tests")]
 #[path = "ref_name_validation_git_compat.rs"]
 mod ref_name_validation_git_compat;
+#[path = "ref_target_verification.rs"]
+mod ref_target_verification;
+#[cfg(feature = "full-tests")]
+#[path = "ref_target_verification_git_compat.rs"]
+mod ref_target_verification_git_compat;
 #[cfg(feature = "full-tests")]
 #[path = "reflog_expire_dry_run.rs"]
 mod reflog_expire_dry_run;

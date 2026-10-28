@@ -2,6 +2,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use crate::support;
+
 use std::fs;
 use std::io::Cursor;
 use std::path::Path;
@@ -276,8 +278,8 @@ fn porcelain_checkout_glob_and_branch_tracking() {
     )
     .expect("config");
     repo.reload_config().expect("reload");
-    let empty_tree = ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904").expect("tree");
-    grit_lib::refs::write_ref(git_dir.as_path(), "refs/heads/main", &empty_tree).expect("main");
+    let commit = support::stored_commit(&git_dir, 1);
+    grit_lib::refs::write_ref(git_dir.as_path(), "refs/heads/main", &commit).expect("main");
     assert_eq!(
         upstream_tracking_full_ref(&repo, "main").as_deref(),
         Some("refs/remotes/origin/main")

@@ -2529,6 +2529,9 @@ fn ref_store_error_refname(err: &Error) -> Option<String> {
         | crate::refs::store::RefStoreError::LockHeld { name }
         | crate::refs::store::RefStoreError::InvalidRefName { name }
         | crate::refs::store::RefStoreError::NullOid { name }
+        | crate::refs::store::RefStoreError::MissingObject { name, .. }
+        | crate::refs::store::RefStoreError::NotACommit { name, .. }
+        | crate::refs::store::RefStoreError::ObjectLookup { name, .. }
         | crate::refs::store::RefStoreError::NotFound { name } => name.clone(),
         crate::refs::store::RefStoreError::NameUnavailable { reason } => match reason {
             crate::refs::RefnameUnavailable::SameBatch { refname, .. }

@@ -587,6 +587,7 @@ mod tests {
                 flags: RefUpdateFlags {
                     log_only: true,
                     no_deref: true,
+                    ..Default::default()
                 },
             },
             RefUpdate {

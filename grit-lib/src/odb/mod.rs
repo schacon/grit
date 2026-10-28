@@ -2624,6 +2624,43 @@ impl Odb {
             .ok_or_else(|| Error::ObjectNotFound(oid.to_hex()))
     }
 
+    /// Kind of `oid` when this database stores it, for checks that must not accept an
+    /// object that is only implied.
+    ///
+    /// Header-only like [`Self::read_info_without_fetch`] (no promisor fetch), except that
+    /// the empty tree counts only when a copy is actually stored (the overlay, the primary
+    /// store or an alternate), since `git fsck` reports a ref to an unstored one as missing.
+    ///
+    /// # Errors
+    ///
+    /// Read failures other than a missing object (corrupt headers, I/O, a failing custom
+    /// store).
+    pub(crate) fn stored_object_kind(&self, oid: &ObjectId) -> Result<Option<ObjectKind>> {
+        if oid.is_well_known_empty_tree() && !self.empty_tree_stored(oid) {
+            return Ok(None);
+        }
+        match self.try_read_info_once(oid) {
+            Ok(info) => Ok(info.map(|info| info.kind)),
+            Err(Error::ObjectNotFound(_)) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn empty_tree_stored(&self, oid: &ObjectId) -> bool {
+        if self.overlay_read(oid).is_some() || self.exists_materialized_local(oid) {
+            return true;
+        }
+        if !self.alternates_enabled {
+            return false;
+        }
+        let file_dirs = self.file_alternate_dirs_snapshot();
+        let env_dirs = self.env_alternate_dirs_snapshot();
+        file_dirs
+            .iter()
+            .chain(env_dirs.iter())
+            .any(|dir| self.with_pack_store_for(dir, || store::local_object_materialized(dir, oid)))
+    }
+
     #[cold]
     #[inline(never)]
     fn read_info_after_promisor_miss(&self, oid: &ObjectId) -> Result<ObjectInfo> {

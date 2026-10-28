@@ -35,6 +35,7 @@ fn forged_head_update(tip: ObjectId) -> RefUpdate {
         flags: RefUpdateFlags {
             no_deref: true,
             log_only: true,
+            ..Default::default()
         },
     }
 }
