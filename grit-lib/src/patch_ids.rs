@@ -15,11 +15,9 @@
 //!   output of `git log -p` or `git diff-tree --patch --stdin`), matching the
 //!   behaviour of `git patch-id`.
 
-use similar::{ChangeTag, TextDiff};
-
 use crate::diff::{
-    diff_trees_with_renames, unified_diff_histogram_with_prefix_and_funcname, zero_oid, DiffEntry,
-    DiffStatus,
+    diff_trees_with_renames, unified_diff_with_prefix_and_funcname,
+    unified_hunk_body_for_diff_options, zero_oid, DiffEntry, DiffOptions, DiffStatus,
 };
 use crate::error::Result;
 use crate::hash::ChecksumHasher;
@@ -297,14 +295,13 @@ fn text_flush_one_hunk(
 ///
 /// Returns the number of non-whitespace bytes fed to the hasher.
 fn hash_without_whitespace(ctx: &mut ChecksumHasher, raw: &[u8]) -> usize {
-    let mut count = 0;
-    for &b in raw {
-        if !b.is_ascii_whitespace() {
-            ctx.update(&[b]);
-            count += 1;
-        }
-    }
-    count
+    raw.split(u8::is_ascii_whitespace)
+        .filter(|run| !run.is_empty())
+        .map(|run| {
+            ctx.update(run);
+            run.len()
+        })
+        .sum()
 }
 
 /// Parse a full hex OID at the start of `s` for `algo`.
@@ -404,10 +401,12 @@ fn split_lines_with_nl(input: &[u8]) -> Vec<&[u8]> {
 ///
 /// Returns `None` for merge commits (more than one parent), since those do not
 /// have a well-defined single-parent diff.  Root commits (no parents) are
-/// compared against the empty tree. Text diffs use unified hunks with three
-/// context lines on each side, matching `git show --format= --no-ext-diff -U3`
-/// piped to `git patch-id` in the corresponding mode. Unchanged lines outside
-/// those hunks do not contribute to the ID.
+/// compared against the empty tree. Text diffs use the hunks of Git's default
+/// diff (Myers with change-compact and the indent heuristic, three context
+/// lines on each side), so the ID matches `git show --format= --no-ext-diff`
+/// piped to `git patch-id` in the corresponding mode, including where an
+/// ambiguous insertion or deletion is placed. Unchanged lines outside those
+/// hunks do not contribute to the ID.
 ///
 /// # Parameters
 ///
@@ -722,8 +721,8 @@ fn patch_id_append_git_show_entry(odb: &Odb, entry: &DiffEntry, out: &mut Vec<u8
     } else {
         format!("b/{git_new}")
     };
-    let unified = unified_diff_histogram_with_prefix_and_funcname(
-        old_str, new_str, &old_path, &new_path, 3, 0, "", "", None, false, false,
+    let unified = unified_diff_with_prefix_and_funcname(
+        old_str, new_str, &old_path, &new_path, 3, 0, "", "", None, true, false,
     );
     out.extend_from_slice(unified.as_bytes());
     Ok(())
@@ -879,30 +878,16 @@ fn patch_id_hash_rename_entry_into_ctx(
     Ok(())
 }
 
+/// Hash the context, removed and added lines of the default `git diff` hunks
+/// (Myers, change-compact and indent heuristic, `-U3`), whitespace stripped.
+///
+/// Slidable insertions and deletions have several equally short placements;
+/// the ID only matches Git's when the hunk lines come out in Git's order.
 fn patch_id_hash_text_hunks(ctx: &mut ChecksumHasher, old_str: &str, new_str: &str) {
-    let diff = TextDiff::from_lines(old_str, new_str);
-    // Hash ordinary unified hunks, retaining nearby context without including
-    // unchanged portions of the file outside those hunks.
-    for change in diff
-        .grouped_ops(3)
-        .iter()
-        .flatten()
-        .flat_map(|op| diff.iter_changes(op))
-    {
-        let prefix = match change.tag() {
-            ChangeTag::Equal => b' ',
-            ChangeTag::Delete => b'-',
-            ChangeTag::Insert => b'+',
-        };
-        let text = change.as_str().unwrap_or("");
-        for piece in text.split_inclusive('\n') {
-            let line_body = piece.strip_suffix('\n').unwrap_or(piece);
-            let mut line_buf = Vec::with_capacity(1 + line_body.len() + 1);
-            line_buf.push(prefix);
-            line_buf.extend_from_slice(line_body.as_bytes());
-            line_buf.push(b'\n');
-            let n = remove_space_bytes(&mut line_buf);
-            ctx.update(&line_buf[..n]);
+    let body = unified_hunk_body_for_diff_options(old_str, new_str, &DiffOptions::default());
+    for line in body.split_inclusive('\n') {
+        if matches!(line.as_bytes().first(), Some(b' ' | b'-' | b'+')) {
+            hash_without_whitespace(ctx, line.as_bytes());
         }
     }
 }
@@ -1000,6 +985,27 @@ mod tests {
             ctx.finalize(),
             HashAlgo::Sha1.checksum_digest(b"567-8+first91011-12+second131415")
         );
+    }
+
+    #[test]
+    fn text_hunks_place_slidable_insertion_like_git_diff() {
+        let mut ctx = ChecksumHasher::new(HashAlgo::Sha1);
+        patch_id_hash_text_hunks(
+            &mut ctx,
+            "a\nb\n\n#t\nfn e\nx\ny\n",
+            "a\nb\n\n#t\nfn c\n#t\nfn e\nx\ny\n",
+        );
+        assert_eq!(
+            ctx.finalize(),
+            HashAlgo::Sha1.checksum_digest(b"ab+#t+fnc#tfnex")
+        );
+    }
+
+    #[test]
+    fn hash_without_whitespace_skips_every_ascii_space() {
+        let mut ctx = ChecksumHasher::new(HashAlgo::Sha1);
+        assert_eq!(hash_without_whitespace(&mut ctx, b" \t+a b\r\nc  \n"), 4);
+        assert_eq!(ctx.finalize(), HashAlgo::Sha1.checksum_digest(b"+abc"));
     }
 
     #[cfg_attr(

@@ -14,7 +14,7 @@ grit patch-id --unstable <REV|RANGE>...
 
 ## Description
 
-Prints one line per commit that has a defined patch-ID: `<patch-id> <commit>`, matching `git show --format= --no-ext-diff -U3 <REV> | git patch-id --stable` on the commit's tree diff. Text hunks include three unchanged context lines on each side; nearby context contributes to the ID, while unchanged lines outside the hunks do not. Merge commits and commits with no file changes are omitted.
+Prints one line per commit that has a defined patch-ID: `<patch-id> <commit>`, matching `git show --format= --no-ext-diff -U3 <REV> | git patch-id --stable` on the commit's tree diff. Text hunks include three unchanged context lines on each side; nearby context contributes to the ID, while unchanged lines outside the hunks do not. Hunks come from the same diff as `grit diff` and Git's default (Myers with the indent heuristic), so an insertion or deletion that could slide to several equally short positions is hashed where Git places it. Merge commits and commits with no file changes are omitted.
 
 A range argument expands to one line per commit, in the same order as [`grit revs`](../revs/):
 

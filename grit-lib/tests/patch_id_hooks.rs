@@ -607,6 +607,41 @@ fn patch_id_uses_three_context_lines_for_text_hunks() {
 }
 
 #[test]
+fn patch_id_places_slidable_insertion_like_git_diff() {
+    let dir = TempDir::new().unwrap();
+    git_in(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("f"), "a\nb\n\n#t\nfn e\nx\ny\n").unwrap();
+    git_in(dir.path(), &["add", "f"]);
+    git_in(dir.path(), &["commit", "-qm", "base"]);
+    // `#t\nfn c\n` can slide one block either side of the existing `#t`; Git's
+    // change-compact and indent heuristic place it before.
+    std::fs::write(dir.path().join("f"), "a\nb\n\n#t\nfn c\n#t\nfn e\nx\ny\n").unwrap();
+    git_in(dir.path(), &["commit", "-qam", "t"]);
+    let id = assert_patch_id_matches_normal_patch(dir.path(), &[], "slidable insertion");
+    assert_eq!(id.to_hex(), "0490ffb8ca10b8210d0b8cd748ee0da016bc6130");
+    let commit: ObjectId = git_in(dir.path(), &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .unwrap();
+    let repo = Repository::open(
+        &dir.path().join(".git"),
+        &RepositoryOptions::empty().with_work_tree(dir.path()),
+    )
+    .unwrap();
+    for (mode, flag) in [
+        (PatchIdMode::Stable, "--stable"),
+        (PatchIdMode::Unstable, "--unstable"),
+        (PatchIdMode::Verbatim, "--verbatim"),
+    ] {
+        assert_eq!(
+            repo.patch_id(&commit, mode).unwrap(),
+            Some(git_patch_id_from_show(dir.path(), flag)),
+            "git show | git patch-id {flag}"
+        );
+    }
+}
+
+#[test]
 fn patch_id_equivalence_ignores_distant_context_but_keeps_nearby_context() {
     let mut ids = Vec::new();
     for (distant, nearby) in [
