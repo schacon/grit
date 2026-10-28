@@ -5365,6 +5365,7 @@ pub fn smudge_racily_clean_entries(
 
     let mut changed = false;
     for ie in &mut index.entries {
+        let marked_verified = ie.take_content_verified();
         if ie.stage() != 0 || ie.skip_worktree() || ie.assume_unchanged() || ie.intent_to_add() {
             continue;
         }
@@ -5377,7 +5378,7 @@ pub fn smudge_racily_clean_entries(
         if !entry_is_racy(ie, Some(index_mtime)) {
             continue;
         }
-        if verified.get(&ie.path) == Some(&ie.oid) {
+        if marked_verified || verified.get(&ie.path) == Some(&ie.oid) {
             continue;
         }
         let Ok(path) = std::str::from_utf8(&ie.path) else {
@@ -13299,6 +13300,26 @@ mod smudge_racily_clean_tests {
         assert!(!smudge(&mut index), "a verified entry is trusted");
         assert_ne!(index.entries[0].size, 0);
         assert!(index.content_verified.is_empty());
+        assert!(smudge(&mut index), "without the mark the entry is checked");
+        assert_eq!(index.entries[0].size, 0);
+    }
+
+    #[test]
+    fn content_verified_entry_bit_is_trusted_and_consumed() {
+        let td = tempfile::tempdir().expect("tempdir");
+        let wt = td.path();
+        let (git_dir, odb, mut index, index_mtime, _) = racy_stale_entry(wt);
+        index.entries[0].mark_content_verified();
+
+        let smudge = |index: &mut Index| {
+            smudge_racily_clean_entries(&odb, &git_dir, index, wt, Some(index_mtime), None, None)
+        };
+        assert!(!smudge(&mut index), "a marked entry is trusted");
+        assert_ne!(index.entries[0].size, 0);
+        assert_eq!(
+            index.entries[0].flags_extended, None,
+            "the mark is consumed"
+        );
         assert!(smudge(&mut index), "without the mark the entry is checked");
         assert_eq!(index.entries[0].size, 0);
     }

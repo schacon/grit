@@ -293,6 +293,8 @@ impl IndexEntry {
     const FLAG_EXT_OVERLAY_TREE_SKIP: u16 = 0x8000;
     /// In-memory and on-disk compatibility bit for fsmonitor validity (`git ls-files -f`).
     const FLAG_EXT_FSMONITOR_VALID: u16 = 0x1000;
+    /// In-memory only (Git `CE_UPTODATE`): see [`Self::mark_content_verified`].
+    const FLAG_EXT_CONTENT_VERIFIED: u16 = 0x0800;
     /// Extended flags Git persists in the on-disk index (`CE_EXTENDED_FLAGS` in `read-cache-ll.h`).
     /// `CE_FSMONITOR_VALID` is in-memory only; fsmonitor state lives in the `FSMN` extension.
     const FLAG_EXT_ON_DISK: u16 = 0x2000 | 0x4000;
@@ -339,6 +341,25 @@ impl IndexEntry {
                 self.flags_extended = None;
             }
         }
+    }
+
+    /// Mark this entry's `oid` as just hashed from the worktree file whose stat data it holds
+    /// (in-memory only, like [`Index::mark_content_verified`] without a per-path map entry).
+    pub(crate) fn mark_content_verified(&mut self) {
+        *self.flags_extended.get_or_insert(0) |= Self::FLAG_EXT_CONTENT_VERIFIED;
+    }
+
+    /// Clear the content-verified bit, returning whether it was set.
+    pub(crate) fn take_content_verified(&mut self) -> bool {
+        let Some(fe) = self.flags_extended else {
+            return false;
+        };
+        if fe & Self::FLAG_EXT_CONTENT_VERIFIED == 0 {
+            return false;
+        }
+        let rest = fe & !Self::FLAG_EXT_CONTENT_VERIFIED;
+        self.flags_extended = (rest != 0).then_some(rest);
+        true
     }
 }
 
@@ -396,7 +417,8 @@ pub struct Index {
     /// In-memory only (Git `CE_UPTODATE`): stage-0 paths whose worktree content this process
     /// hashed to the recorded object id after taking the stat data now in the entry. The
     /// pre-write racy smudge skips an entry that still holds that id instead of reading the
-    /// file again; the next index write consumes the map.
+    /// file again; the next index write consumes the map. Bulk staging marks freshly built
+    /// entries with [`IndexEntry::mark_content_verified`] instead, which needs no path copy.
     pub(crate) content_verified: HashMap<Vec<u8>, ObjectId>,
     /// In-memory only: Git `istate->fsmonitor_has_run_once`.
     pub(crate) fsmonitor_refresh_ran: bool,
@@ -1615,7 +1637,10 @@ impl Index {
             entries_per_ieot_block, ieot_block_count_for_write, record_end_of_index_entries,
             write_ieot_payload, IeotEntry, IeotTable, INDEX_EXT_EOIE, INDEX_EXT_IEOT,
         };
-        let has_extended_flags = self.entries.iter().any(|e| e.flags_extended.is_some());
+        let has_extended_flags = self.entries.iter().any(|e| {
+            e.flags_extended
+                .is_some_and(|fe| IndexEntry::disk_flags_extended(fe) != 0)
+        });
         let write_version = if self.version >= 4 {
             4
         } else if has_extended_flags {
@@ -2394,6 +2419,14 @@ impl Index {
         self.content_verified.insert(path.to_vec(), oid);
     }
 
+    /// Drop every just-hashed mark: the [`Self::content_verified`] map and the per-entry bits.
+    pub(crate) fn clear_content_verified(&mut self) {
+        self.content_verified.clear();
+        for entry in &mut self.entries {
+            entry.take_content_verified();
+        }
+    }
+
     /// Overwrite the stage-0 rows that already hold each replacement's path, in place.
     ///
     /// Same result and cache invalidation as [`Self::replace_stage0_entries_batch`], without
@@ -2442,6 +2475,10 @@ impl Index {
     /// Append sorted `replacements` to a sorted index and merge in one linear pass.
     fn merge_sorted_replacements_into_entries(&mut self, mut replacements: Vec<IndexEntry>) {
         if replacements.is_empty() {
+            return;
+        }
+        if self.entries.is_empty() {
+            self.entries = replacements;
             return;
         }
         self.entries.reserve(replacements.len());
@@ -2973,7 +3010,10 @@ impl Index {
     /// Find a mutable entry by path and stage.
     pub fn get_mut(&mut self, path: &[u8], stage: u8) -> Option<&mut IndexEntry> {
         let pos = self.find_entry_pos(path, stage)?;
-        Some(&mut self.entries[pos])
+        let entry = &mut self.entries[pos];
+        // The caller may change `oid` or stat data, which voids a just-hashed mark.
+        entry.take_content_verified();
+        Some(entry)
     }
 
     /// Index positions of stage-0 entries, keyed like [`index_path_outcome_key`].
@@ -4627,6 +4667,45 @@ mod tests {
             path: path.as_bytes().to_vec(),
             base_index_pos: 0,
         }
+    }
+
+    #[test]
+    fn content_verified_bit_is_in_memory_only() {
+        let mut index = Index::new();
+        let mut plain = make_entry("a.txt");
+        plain.mark_content_verified();
+        let mut skipped = make_entry("b.txt");
+        skipped.set_skip_worktree(true);
+        skipped.mark_content_verified();
+        index.add_or_replace(plain);
+        index.add_or_replace(skipped);
+
+        let mut only_marked = index.clone();
+        only_marked.remove(b"b.txt");
+        let mut out = Vec::new();
+        only_marked.serialize_into(&mut out).unwrap();
+        assert_eq!(&out[4..8], &2u32.to_be_bytes(), "the bit alone keeps v2");
+
+        out.clear();
+        index.serialize_into(&mut out).unwrap();
+        let checksum = hash_index_body(index.hash_algo, &out);
+        out.extend_from_slice(&checksum);
+        let reread = Index::parse(&out).unwrap();
+        assert_eq!(reread.version, 3);
+        assert!(reread
+            .entries
+            .iter()
+            .all(|e| !e.clone().take_content_verified()));
+        assert!(reread.get(b"b.txt", 0).unwrap().skip_worktree());
+
+        assert!(index.get_mut(b"a.txt", 0).is_some());
+        assert_eq!(
+            index.entries[0].flags_extended, None,
+            "get_mut voids the mark"
+        );
+        index.clear_content_verified();
+        assert!(index.entries[1].skip_worktree());
+        assert!(!index.entries[1].clone().take_content_verified());
     }
 
     #[test]

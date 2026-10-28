@@ -690,7 +690,7 @@ fn stage_inner_on_index(
         stage_untracked_paths_parallel(
             repo,
             work_tree,
-            &untracked,
+            std::mem::take(&mut untracked),
             &matches,
             &indexed_any_stage,
             &rules,
@@ -1132,35 +1132,32 @@ fn embedded_gitlink_root_for_path(
     }
 }
 
+/// Replace paths inside unregistered embedded repositories with the repository roots, sorted
+/// and deduplicated. Works in place: only trees that contain such a repository allocate.
 fn collapse_embedded_git_repo_untracked_paths(
     index: &Index,
     work_tree: &Path,
-    untracked: &[String],
+    mut untracked: Vec<String>,
     precompose_unicode: bool,
 ) -> Vec<String> {
-    let mut roots: BTreeSet<String> = BTreeSet::new();
-    let mut plain = Vec::new();
-    for path in untracked {
-        if let Some(root) =
+    let roots: BTreeSet<String> = untracked
+        .iter()
+        .filter_map(|path| {
             embedded_gitlink_root_for_path(index, work_tree, path, precompose_unicode)
-        {
-            roots.insert(root);
-        } else {
-            plain.push(path.clone());
-        }
-    }
-    let mut out: Vec<String> = plain
-        .into_iter()
-        .filter(|path| {
-            !roots
-                .iter()
-                .any(|root| path == root || path.starts_with(&format!("{root}/")))
         })
         .collect();
-    out.extend(roots);
-    out.sort();
-    out.dedup();
-    out
+    if !roots.is_empty() {
+        untracked.retain(|path| {
+            !roots.iter().any(|root| {
+                path.strip_prefix(root.as_str())
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+            })
+        });
+        untracked.extend(roots);
+    }
+    untracked.sort_unstable();
+    untracked.dedup();
+    untracked
 }
 
 /// Untracked files hashed per parallel wave, so progress and cancel are seen between waves.
@@ -1170,7 +1167,7 @@ const UNTRACKED_STAGE_CHUNK: usize = 4096;
 fn stage_untracked_paths_parallel(
     repo: &Repository,
     work_tree: &Path,
-    untracked: &[String],
+    untracked: Vec<String>,
     matches: &impl Fn(&str) -> bool,
     indexed_any_stage: &HashSet<Vec<u8>>,
     rules: &WorktreeRules,
@@ -1192,102 +1189,107 @@ fn stage_untracked_paths_parallel(
     let untracked =
         collapse_embedded_git_repo_untracked_paths(index, work_tree, untracked, precompose_unicode);
 
-    let mut batch_inputs: Vec<WorktreeBlobReadInput> = Vec::new();
+    let skip_per_path_cache_invalidate =
+        index.cache_tree.is_none() && index.untracked_cache.is_none();
     let mut deferred: Vec<String> = Vec::new();
-
-    for path in &untracked {
-        if !matches(path) {
-            continue;
+    // Entries stay compact; only one chunk of read inputs (attributes, metadata, absolute
+    // paths) is alive at a time. The entries merge into the index once, after the last chunk.
+    let mut batch_entries: Vec<IndexEntry> = Vec::with_capacity(untracked.len());
+    let mut inputs: Vec<WorktreeBlobReadInput> = Vec::with_capacity(UNTRACKED_STAGE_CHUNK);
+    let mut prefix_dirs_ready = dry_run;
+    let mut paths = untracked.into_iter();
+    loop {
+        inputs.clear();
+        while inputs.len() < UNTRACKED_STAGE_CHUNK {
+            let Some(path) = paths.next() else {
+                break;
+            };
+            if !matches(&path) || indexed_any_stage.contains(storage_bytes(&path).as_ref()) {
+                continue;
+            }
+            let resolved = resolve_worktree_path_for_staging(work_tree, &path, precompose_unicode);
+            let meta = fs::symlink_metadata(&resolved.abs).map_err(Error::Io)?;
+            if crate::read_dir_kind::metadata_is_git_ignored_special(&meta) {
+                continue;
+            }
+            if is_unregistered_embedded_git_repo(index, &resolved.index_relpath, &resolved.abs) {
+                deferred.push(resolved.index_relpath.trim_end_matches('/').to_owned());
+                continue;
+            }
+            let file_attrs =
+                rules.file_attrs(&as_utf8_for_matching(&resolved.index_relpath), false);
+            inputs.push(WorktreeBlobReadInput {
+                abs: resolved.abs,
+                index_relpath: resolved.index_relpath,
+                index_entry: None,
+                file_attrs,
+                cached_meta: Some(meta),
+            });
         }
-        if indexed_any_stage.contains(storage_bytes(path).as_ref()) {
-            continue;
+        if inputs.is_empty() {
+            break;
         }
-        let resolved = resolve_worktree_path_for_staging(work_tree, path, precompose_unicode);
-        let meta = fs::symlink_metadata(&resolved.abs).map_err(Error::Io)?;
-        if crate::read_dir_kind::metadata_is_git_ignored_special(&meta) {
-            continue;
-        }
-        if is_unregistered_embedded_git_repo(index, &resolved.index_relpath, &resolved.abs) {
-            deferred.push(resolved.index_relpath.trim_end_matches('/').to_owned());
-            continue;
-        }
-        let file_attrs = rules.file_attrs(&as_utf8_for_matching(&resolved.index_relpath), false);
-        batch_inputs.push(WorktreeBlobReadInput {
-            abs: resolved.abs,
-            index_relpath: resolved.index_relpath,
-            index_entry: None,
-            file_attrs,
-            cached_meta: Some(meta),
-        });
-    }
-
-    if !dry_run && !batch_inputs.is_empty() {
-        repo.odb().ensure_all_loose_prefix_dirs()?;
-    }
-    let mut prepared = Vec::with_capacity(batch_inputs.len());
-    for chunk in batch_inputs.chunks(UNTRACKED_STAGE_CHUNK) {
         scope.poll()?;
-        if dry_run {
-            prepared.extend(
-                crate::worktree_batch::prepare_worktree_blobs_parallel(
-                    repo.odb(),
-                    chunk,
-                    rules.conversion(),
-                    parallelism,
-                    Some(rules.filter_process()),
-                    scope.watch(),
-                )?
-                .into_iter()
-                .map(|prepared| prepared.blob),
-            );
-        } else {
-            prepared.extend(prepare_and_store_worktree_blobs_parallel(
+        if !prefix_dirs_ready {
+            repo.odb().ensure_all_loose_prefix_dirs()?;
+            prefix_dirs_ready = true;
+        }
+        let blobs = if dry_run {
+            crate::worktree_batch::prepare_worktree_blobs_parallel(
                 repo.odb(),
-                chunk,
+                &inputs,
+                rules.conversion(),
+                parallelism,
+                Some(rules.filter_process()),
+                scope.watch(),
+            )?
+            .into_iter()
+            .map(|prepared| prepared.blob)
+            .collect()
+        } else {
+            prepare_and_store_worktree_blobs_parallel(
+                repo.odb(),
+                &inputs,
                 rules.conversion(),
                 parallelism,
                 Some(rules.filter_process()),
                 BULK_NEW_LOOSE_WRITE,
                 scope.watch(),
-            )?);
-        }
-        scope.sink().inc(chunk.len() as u64);
-    }
+            )?
+        };
+        scope.sink().inc(inputs.len() as u64);
+        inputs.clear();
 
-    let skip_per_path_cache_invalidate =
-        index.cache_tree.is_none() && index.untracked_cache.is_none();
-    let mut batch_entries: Vec<IndexEntry> = Vec::with_capacity(prepared.len());
-    for prep in prepared {
-        let abs = crate::repo_relpath::worktree_abs(work_tree, &prep.index_relpath);
-        if prep.meta.is_dir()
-            && !prep.meta.file_type().is_symlink()
-            && read_submodule_head_oid(&abs).is_some()
-        {
-            deferred.push(prep.index_relpath);
-            continue;
+        batch_entries.reserve(blobs.len());
+        for blob in blobs {
+            let abs = crate::repo_relpath::worktree_abs(work_tree, &blob.index_relpath);
+            if blob.meta.is_dir()
+                && !blob.meta.file_type().is_symlink()
+                && read_submodule_head_oid(&abs).is_some()
+            {
+                deferred.push(blob.index_relpath);
+                continue;
+            }
+            let index_path = storage_bytes(&blob.index_relpath);
+            icase_map.remove_alias_of(index, &index_path);
+            let mode =
+                mode_with_executable_hint(blob.mode, &blob.index_relpath, executable_hint, matches);
+            let mut entry = entry_from_metadata(&blob.meta, &index_path, blob.oid, mode);
+            entry.mode = mode;
+            if !dry_run {
+                if !skip_per_path_cache_invalidate {
+                    index.invalidate_untracked_cache_for_path(&as_utf8_for_matching(
+                        &blob.index_relpath,
+                    ));
+                    index.invalidate_cache_tree_for_path(&entry.path);
+                }
+                entry.mark_content_verified();
+            }
+            batch_entries.push(entry);
+            outcome.added.push(blob.index_relpath);
         }
-        let index_path = storage_bytes(&prep.index_relpath);
-        icase_map.remove_alias_of(index, &index_path);
-        let mode =
-            mode_with_executable_hint(prep.mode, &prep.index_relpath, executable_hint, matches);
-        let mut entry = entry_from_metadata(&prep.meta, &index_path, prep.oid, mode);
-        entry.mode = mode;
-        if !dry_run && !skip_per_path_cache_invalidate {
-            index.invalidate_untracked_cache_for_path(&as_utf8_for_matching(&prep.index_relpath));
-            index.invalidate_cache_tree_for_path(&entry.path);
-        }
-        batch_entries.push(entry);
-        outcome.added.push(prep.index_relpath);
     }
     let staged_batch_count = batch_entries.len();
-    if !dry_run {
-        for entry in &batch_entries {
-            if let Ok(rel) = std::str::from_utf8(&entry.path) {
-                mark_fsmonitor_staged(index, rel);
-            }
-            index.mark_content_verified(&entry.path, entry.oid);
-        }
-    }
     if staged_batch_count >= 64 {
         index.replace_stage0_entries_batch(batch_entries);
     } else {
@@ -2110,6 +2112,89 @@ mod tests {
             .map(|e| String::from_utf8_lossy(&e.path).into_owned())
             .collect();
         assert_eq!(outcome.added, index_order);
+    }
+
+    /// More untracked files than one hashing chunk, into an index that already tracks paths
+    /// sorting before, between and after them, all merge in Git order with their contents.
+    #[test]
+    fn bulk_stage_across_chunks_merges_into_tracked_index() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        let mut index = Index::new();
+        let tracked = ["a.txt", "m/d3/mid.txt", "zz.txt"];
+        for rel in tracked {
+            stage_file_in_index(&repo, &mut index, rel, rel.as_bytes());
+        }
+        write_index(&repo, &mut index);
+        let count = UNTRACKED_STAGE_CHUNK * 2 + 3;
+        for i in 0..count {
+            let dir = root.join(format!("m/d{}", i % 13));
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join(format!("f{i}.txt")), format!("{i}\n")).unwrap();
+        }
+
+        let outcome = stage(
+            &repo,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        assert_eq!(outcome.added.len(), count);
+
+        let index = repo.load_index().unwrap();
+        assert_eq!(index.entries.len(), count + tracked.len());
+        assert!(index.entries.windows(2).all(|w| w[0].path < w[1].path));
+        for i in [0, UNTRACKED_STAGE_CHUNK, count - 1] {
+            let rel = format!("m/d{}/f{i}.txt", i % 13);
+            let oid = repo
+                .odb()
+                .hash(ObjectKind::Blob, format!("{i}\n").as_bytes())
+                .unwrap();
+            assert_eq!(index.get(rel.as_bytes(), 0).unwrap().oid, oid, "{rel}");
+            assert!(repo.odb().exists(&oid));
+        }
+        let added_in_index_order: Vec<String> = index
+            .entries
+            .iter()
+            .map(|e| index_path_to_string(&e.path))
+            .filter(|p| !tracked.contains(&p.as_str()))
+            .collect();
+        assert_eq!(outcome.added, added_in_index_order);
+    }
+
+    /// Bulk-staged entries record "just hashed" on the entry itself (no per-path copy in the
+    /// index's map), and the index write consumes the mark without promoting the file to v3.
+    #[test]
+    fn bulk_staged_entries_carry_the_verified_bit_until_written() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        for i in 0..100 {
+            fs::write(root.join(format!("f{i}.txt")), format!("{i}\n")).unwrap();
+        }
+        let mut index = repo.load_index().unwrap();
+        stage_on_index(
+            &repo,
+            &mut index,
+            &StageOptions::default(),
+            &mut NullProgress,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap();
+        assert_eq!(index.entries.len(), 100);
+        assert!(index.content_verified.is_empty());
+        assert!(index
+            .entries
+            .iter()
+            .all(|e| e.clone().take_content_verified()));
+
+        repo.write_index(&mut index).unwrap();
+        assert!(index.entries.iter().all(|e| e.flags_extended.is_none()));
+        let raw = fs::read(repo.index_path()).unwrap();
+        assert_eq!(&raw[4..8], &2u32.to_be_bytes(), "index version");
+        assert_eq!(repo.load_index().unwrap().entries, index.entries);
     }
 
     #[test]
