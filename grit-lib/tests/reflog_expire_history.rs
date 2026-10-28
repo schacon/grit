@@ -24,6 +24,7 @@ use grit_lib::refs::reflog::{
 };
 use grit_lib::refs::{reflog_file_path, write_ref};
 use grit_lib::repo::{InitOptions, Repository};
+use grit_lib::repo_handles::ExpireOptions;
 
 use support::{
     assert_reflog_tree_matches, copy_worktree, git, git_fsck_strict, git_version_at_least,
@@ -417,6 +418,92 @@ fn expire_unreachable_case(total: Option<i64>) {
         .collect::<Vec<_>>();
     assert_eq!(kept, ["annotated tag", "tagged commit"]);
     assert_eq!(pruned, vec![1, 2, 1, 1], "per-ref prune counts");
+    assert!(git_fsck_strict(grit_copy.path()));
+}
+
+/// Many branches expired in one pass share what the pass has read, but each judges
+/// reachability from its own tip: an old entry naming a commit only another branch reaches
+/// is pruned, whether that branch was expired before or after it.
+#[test]
+fn expire_many_refs_in_one_pass_judges_each_ref_by_its_own_tip_like_git() {
+    const BRANCHES: usize = 40;
+    let (seed, h) = seed_repo();
+    let git_dir = seed.path().join(".git");
+    let repo = open_repo(seed.path());
+    let mut b = HistoryBuilder::new(&repo);
+    let sides = (0..BRANCHES)
+        .map(|_| b.commit(&[h.tagged], None))
+        .collect::<Vec<_>>();
+    drop(repo);
+    let z = ObjectId::zero();
+    let mut refnames = Vec::new();
+    for (i, side) in sides.iter().enumerate() {
+        let refname = format!("refs/heads/b{i}");
+        write_ref(&git_dir, &refname, side).expect("branch ref");
+        let other = sides[(i + 1) % BRANCHES];
+        write_reflog(
+            &git_dir,
+            &refname,
+            &[
+                entry(z, h.early, OLD, "reachable old"),
+                entry(h.early, other, OLD, "only on the next branch"),
+                entry(other, *side, RECENT, "recent"),
+            ],
+        );
+        refnames.push(refname);
+    }
+    write_reflog(
+        &git_dir,
+        "HEAD",
+        &[
+            entry(z, sides[7], OLD, "reachable from a branch"),
+            entry(sides[7], h.lost, OLD, "to lost commit"),
+            entry(h.lost, h.tip, RECENT, "recent"),
+        ],
+    );
+    refnames.push("HEAD".to_owned());
+
+    let grit_copy = tempfile::tempdir().expect("grit copy");
+    let git_copy = tempfile::tempdir().expect("git copy");
+    copy_worktree(seed.path(), grit_copy.path());
+    copy_worktree(seed.path(), git_copy.path());
+
+    let (tx, rx) = mpsc::channel();
+    let worktree = grit_copy.path().to_path_buf();
+    std::thread::spawn(move || {
+        let outcome = open_repo(&worktree)
+            .reflogs()
+            .expire(&ExpireOptions {
+                now: NOW,
+                expire: Some("never".into()),
+                expire_unreachable: Some(UNREACHABLE_CUTOFF.to_string()),
+                all: false,
+                dry_run: false,
+            })
+            .expect("expire");
+        let _ = tx.send(outcome);
+    });
+    let outcome = rx
+        .recv_timeout(TIME_LIMIT)
+        .unwrap_or_else(|_| panic!("grit reflog expiry did not finish within {TIME_LIMIT:?}"));
+    git(
+        git_copy.path(),
+        &[
+            "reflog",
+            "expire",
+            "--expire=never",
+            &format!("--expire-unreachable={UNREACHABLE_CUTOFF}"),
+            "--all",
+        ],
+    );
+
+    let compared = refnames.iter().map(String::as_str).collect::<Vec<_>>();
+    assert_logs_match(git_copy.path(), grit_copy.path(), &compared);
+    assert_eq!(outcome.entries_pruned, BRANCHES + 1);
+    for refname in &refnames {
+        let result = outcome.refs.iter().find(|r| &r.ref_name == refname);
+        assert_eq!(result.map(|r| r.pruned), Some(1), "pruned from {refname}");
+    }
     assert!(git_fsck_strict(grit_copy.path()));
 }
 

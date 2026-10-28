@@ -9,7 +9,6 @@
 //! ```
 
 use std::cell::{OnceCell, RefCell};
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::File;
@@ -25,7 +24,7 @@ use crate::error::{Error, Result};
 use crate::ident::Signature;
 use crate::index::MODE_TREE;
 use crate::merge_base;
-use crate::objects::{parse_commit, parse_tree, CommitRef, ObjectId, ObjectKind};
+use crate::objects::{parse_commit, parse_tree, CommitRef, ObjectId, ObjectKind, OidHashMap};
 use crate::refs::store::RefStore as _;
 use crate::refs::{self, reflog_file_path};
 use crate::repo::Repository;
@@ -1004,9 +1003,70 @@ fn resolve_expire_for_ref(
 #[derive(Debug, Default)]
 pub(crate) struct ReflogExpiryCache {
     promised: OnceCell<HashSet<ObjectId>>,
-    /// Parents and committer time of every commit a reachability walk has read.
-    linkage: RefCell<HashMap<ObjectId, (Vec<ObjectId>, i64)>>,
+    /// Every commit a reachability walk has reached, with its parents once read.
+    commits: RefCell<CommitLinks>,
     complete: RefCell<HashMap<ObjectId, bool>>,
+}
+
+/// Commits interned to dense indices, so the reachability walk of each ref marks a bit per
+/// commit instead of hashing object ids, and later refs in the pass reuse earlier reads.
+#[derive(Debug, Default)]
+struct CommitLinks {
+    index: OidHashMap<u32>,
+    nodes: Vec<Linkage>,
+}
+
+#[derive(Debug)]
+enum Linkage {
+    Unread(ObjectId),
+    /// Missing, or not a commit.
+    Absent,
+    Read {
+        time: i64,
+        parents: Box<[u32]>,
+    },
+}
+
+impl CommitLinks {
+    fn intern(&mut self, oid: ObjectId) -> u32 {
+        let next = u32::try_from(self.nodes.len()).unwrap_or(u32::MAX);
+        let node = *self.index.entry(oid).or_insert(next);
+        if node == next {
+            self.nodes.push(Linkage::Unread(oid));
+        }
+        node
+    }
+
+    fn lookup(&self, oid: &ObjectId) -> Option<u32> {
+        self.index.get(oid).copied()
+    }
+
+    fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Committer time and parents of `node`, calling `read` for the parents and committer time
+    /// of a commit the pass has not read yet. `None` when the commit is missing or not a commit.
+    fn linkage(
+        &mut self,
+        node: u32,
+        read: impl FnOnce(ObjectId) -> Option<(Vec<ObjectId>, i64)>,
+    ) -> Option<(i64, &[u32])> {
+        let idx = node as usize;
+        if let Linkage::Unread(oid) = self.nodes[idx] {
+            self.nodes[idx] = match read(oid) {
+                Some((parents, time)) => Linkage::Read {
+                    time,
+                    parents: parents.into_iter().map(|p| self.intern(p)).collect(),
+                },
+                None => Linkage::Absent,
+            };
+        }
+        match &self.nodes[idx] {
+            Linkage::Read { time, parents } => Some((*time, parents)),
+            Linkage::Unread(_) | Linkage::Absent => None,
+        }
+    }
 }
 
 impl ReflogExpiryCache {
@@ -1173,16 +1233,19 @@ fn head_reflog_tips(repo: &Repository, promised: &HashSet<ObjectId>) -> Vec<Obje
 /// history, once. Answers never depend on the cutoff, only the amount of history read.
 /// Shallow boundaries are not walked through. Parents come from the commit-graph when it
 /// covers a commit, and are kept in the [`ReflogExpiryCache`] so the walks of later refs in
-/// the same pass do not read them again.
+/// the same pass do not read them again; each walk only marks the interned commits it visits.
 struct ReachableCommits<'r> {
     repo: &'r Repository,
     cache: &'r ReflogExpiryCache,
     graph: Option<Arc<CommitGraphChain>>,
-    shallow: HashSet<ObjectId>,
-    seen: HashSet<ObjectId>,
-    pending: Vec<ObjectId>,
+    /// Interned shallow boundary commits, sorted.
+    shallow: Vec<u32>,
+    /// Indexed by interned commit; grows as the walk interns new commits.
+    seen: Vec<bool>,
+    seen_count: usize,
+    pending: Vec<u32>,
     /// Parents of commits older than the cutoff, walked on the first miss.
-    deferred: Vec<ObjectId>,
+    deferred: Vec<u32>,
 }
 
 impl<'r> ReachableCommits<'r> {
@@ -1196,39 +1259,53 @@ impl<'r> ReachableCommits<'r> {
         let mut reachable = Self {
             repo,
             cache,
-            graph: if tips.is_empty() {
-                None
-            } else {
-                repo.caches().commit_graph_chain(repo.odb().objects_dir())
-            },
-            shallow: if tips.is_empty() {
-                HashSet::new()
-            } else {
-                crate::shallow::load_shallow_boundaries(repo.git_dir())
-            },
-            seen: HashSet::new(),
-            pending: tips,
+            graph: None,
+            shallow: Vec::new(),
+            seen: Vec::new(),
+            seen_count: 0,
+            pending: Vec::new(),
             deferred: Vec::new(),
         };
+        if tips.is_empty() {
+            return reachable;
+        }
+        reachable.graph = repo.caches().commit_graph_chain(repo.odb().objects_dir());
+        {
+            let mut commits = cache.commits.borrow_mut();
+            let mut shallow = crate::shallow::load_shallow_boundaries(repo.git_dir())
+                .into_iter()
+                .map(|oid| commits.intern(oid))
+                .collect::<Vec<_>>();
+            shallow.sort_unstable();
+            reachable.shallow = shallow;
+            reachable.pending = tips.into_iter().map(|oid| commits.intern(oid)).collect();
+        }
         reachable.walk(cutoff);
         reachable
     }
 
     fn walk(&mut self, cutoff: i64) {
-        let cache = self.cache;
-        let mut memo = cache.linkage.borrow_mut();
-        while let Some(oid) = self.pending.pop() {
-            if !self.seen.insert(oid) || self.shallow.contains(&oid) {
+        let repo = self.repo;
+        let graph = self.graph.as_deref();
+        let mut commits = self.cache.commits.borrow_mut();
+        while let Some(node) = self.pending.pop() {
+            let idx = node as usize;
+            if idx >= self.seen.len() {
+                self.seen.resize(commits.len(), false);
+            }
+            if std::mem::replace(&mut self.seen[idx], true) {
                 continue;
             }
-            let (parents, time) = match memo.entry(oid) {
-                Entry::Occupied(known) => known.into_mut(),
-                Entry::Vacant(slot) => match self.read_linkage(oid) {
-                    Some(linkage) => slot.insert(linkage),
-                    None => continue,
-                },
+            self.seen_count += 1;
+            if !self.shallow.is_empty() && self.shallow.binary_search(&node).is_ok() {
+                continue;
+            }
+            let Some((time, parents)) =
+                commits.linkage(node, |oid| read_commit_linkage(repo, graph, oid))
+            else {
+                continue;
             };
-            if cutoff > 0 && *time < cutoff {
+            if cutoff > 0 && time < cutoff {
                 self.deferred.extend_from_slice(parents);
             } else {
                 self.pending.extend_from_slice(parents);
@@ -1236,27 +1313,39 @@ impl<'r> ReachableCommits<'r> {
         }
     }
 
-    /// Parents and committer time of commit `oid`, or `None` when it is missing or not a
-    /// commit.
-    fn read_linkage(&self, oid: ObjectId) -> Option<(Vec<ObjectId>, i64)> {
-        if let Some(linkage) = self.graph.as_ref().and_then(|g| g.graph_commit(&oid)) {
-            return Some(linkage);
-        }
-        let obj = self.repo.odb().try_read_once(&oid).ok()??;
-        if obj.kind != ObjectKind::Commit {
-            return None;
-        }
-        let commit = CommitRef::parse(&obj.data).ok()?;
-        Some((commit.parents().to_vec(), commit.committer_timestamp()))
+    fn is_seen(&self, oid: &ObjectId) -> bool {
+        self.cache
+            .commits
+            .borrow()
+            .lookup(oid)
+            .is_some_and(|node| self.seen.get(node as usize) == Some(&true))
     }
 
     fn contains(&mut self, oid: &ObjectId) -> bool {
-        if !self.seen.contains(oid) && !self.deferred.is_empty() {
+        if !self.is_seen(oid) && !self.deferred.is_empty() {
             self.pending.append(&mut self.deferred);
             self.walk(0);
         }
-        self.seen.contains(oid)
+        self.is_seen(oid)
     }
+}
+
+/// Parents and committer time of commit `oid`, from the commit-graph when it covers `oid`, or
+/// `None` when it is missing or not a commit.
+fn read_commit_linkage(
+    repo: &Repository,
+    graph: Option<&CommitGraphChain>,
+    oid: ObjectId,
+) -> Option<(Vec<ObjectId>, i64)> {
+    if let Some(linkage) = graph.and_then(|g| g.graph_commit(&oid)) {
+        return Some(linkage);
+    }
+    let obj = repo.odb().try_read_once(&oid).ok()??;
+    if obj.kind != ObjectKind::Commit {
+        return None;
+    }
+    let commit = CommitRef::parse(&obj.data).ok()?;
+    Some((commit.parents().to_vec(), commit.committer_timestamp()))
 }
 
 /// Whether a reflog entry side names a commit that is not reachable. Missing objects count
@@ -1266,7 +1355,7 @@ fn is_unreachable_oid(
     reachable: &mut ReachableCommits<'_>,
     oid: ObjectId,
 ) -> bool {
-    if oid.is_zero() || reachable.seen.contains(&oid) {
+    if oid.is_zero() || reachable.is_seen(&oid) {
         return false;
     }
     match repo.odb().try_read_once(&oid) {
@@ -2032,7 +2121,7 @@ mod completeness_tests {
     use crate::objects::{serialize_tree, ObjectId, ObjectKind, TreeEntry};
     use crate::repo::{init_repository, Repository};
 
-    use super::{ReachableCommits, ReflogExpiryCache};
+    use super::{Linkage, ReachableCommits, ReflogExpiryCache};
 
     fn seed_repo() -> (TempDir, Repository) {
         let tmp = TempDir::new().expect("tempdir");
@@ -2137,31 +2226,57 @@ mod completeness_tests {
         let cache = ReflogExpiryCache::default();
         let mut reachable = ReachableCommits::new(&repo, &cache, vec![chain[9]], 8);
         assert_eq!(
-            reachable.seen.len(),
-            4,
+            reachable.seen_count, 4,
             "commits from time 10 down to the first one older than the cutoff"
         );
         assert!(reachable.contains(&chain[7]));
-        assert_eq!(reachable.seen.len(), 4, "a hit does not walk further");
+        assert_eq!(reachable.seen_count, 4, "a hit does not walk further");
         assert!(reachable.contains(&chain[0]));
-        assert_eq!(reachable.seen.len(), 10, "a miss walks the rest once");
+        assert_eq!(reachable.seen_count, 10, "a miss walks the rest once");
         assert!(!reachable.contains(&unrelated));
 
         let mut everything = ReachableCommits::new(&repo, &cache, vec![chain[9]], 0);
-        assert_eq!(everything.seen.len(), 10);
+        assert_eq!(everything.seen_count, 10);
         assert!(!everything.contains(&unrelated));
+        assert_eq!(
+            cache.commits.borrow().len(),
+            10,
+            "both walks share one interned commit per commit"
+        );
 
-        cache
-            .linkage
-            .borrow_mut()
-            .insert(chain[9], (vec![unrelated], 10));
+        {
+            let mut commits = cache.commits.borrow_mut();
+            let tip = commits.intern(chain[9]) as usize;
+            let parent = commits.intern(unrelated);
+            commits.nodes[tip] = Linkage::Read {
+                time: 10,
+                parents: Box::new([parent]),
+            };
+        }
         let mut reused = ReachableCommits::new(&repo, &cache, vec![chain[9]], 0);
         assert!(
             reused.contains(&unrelated),
             "a later walk in the same pass takes linkage from the cache"
         );
-        assert!(ReachableCommits::new(&repo, &cache, Vec::new(), 0)
-            .seen
-            .is_empty());
+        assert_eq!(
+            ReachableCommits::new(&repo, &cache, Vec::new(), 0).seen_count,
+            0
+        );
+    }
+
+    #[test]
+    fn reachability_walk_counts_shallow_boundaries_as_reachable_without_walking_past_them() {
+        let (_tmp, repo) = seed_repo();
+        let tree = tree(&repo, &[]);
+        let root = commit_at(&repo, tree, &[], 1);
+        let boundary = commit_at(&repo, tree, &[root], 2);
+        let tip = commit_at(&repo, tree, &[boundary], 3);
+        std::fs::write(repo.git_dir().join("shallow"), format!("{boundary}\n")).expect("shallow");
+
+        let cache = ReflogExpiryCache::default();
+        let mut reachable = ReachableCommits::new(&repo, &cache, vec![tip], 0);
+        assert!(reachable.contains(&boundary));
+        assert!(!reachable.contains(&root));
+        assert_eq!(reachable.seen_count, 2);
     }
 }
