@@ -391,31 +391,36 @@ pub enum Ref {
 /// - [`Error::InvalidRef`] if the file content is not a valid ref.
 /// - [`Error::Io`] on filesystem errors.
 pub fn read_ref_file(path: &Path) -> Result<Ref> {
-    if let Ok(target) = fs::read_link(path) {
-        return Ok(Ref::Symbolic(target.to_string_lossy().into_owned()));
+    // One `lstat` answers the common "no such ref" probe and finds legacy symlink refs.
+    let meta = fs::symlink_metadata(path).map_err(loose_ref_io_error)?;
+    if meta.file_type().is_symlink() {
+        if let Ok(target) = fs::read_link(path) {
+            return Ok(Ref::Symbolic(target.to_string_lossy().into_owned()));
+        }
     }
     read_regular_ref_file(path)
 }
 
 /// Like [`read_ref_file`] for a path known not to be a symlink.
 pub(crate) fn read_regular_ref_file(path: &Path) -> Result<Ref> {
-    let content = match fs::read_to_string(path) {
-        Ok(c) => c,
-        // `refs/heads/master` can be a directory when a branch named `master/...` exists, and a
-        // probe like `refs/remotes/v1` can hit ENOTDIR when `refs/remotes` is a file. Treat both
-        // like a missing loose ref so optional DWIM candidates fall through cleanly.
-        Err(e)
-            if e.kind() == io::ErrorKind::IsADirectory
-                || e.kind() == io::ErrorKind::NotADirectory
-                || e.raw_os_error() == Some(libc::EISDIR)
-                || e.raw_os_error() == Some(libc::ENOTDIR) =>
-        {
-            return Err(Error::Io(io::Error::new(io::ErrorKind::NotFound, e)));
-        }
-        Err(e) => return Err(Error::Io(e)),
-    };
-    let content = content.trim_end_matches('\n');
-    parse_ref_content(content)
+    let content = fs::read_to_string(path).map_err(loose_ref_io_error)?;
+    parse_ref_content(content.trim_end_matches('\n'))
+}
+
+/// Map a failure to read a loose ref file to [`Error::Io`].
+///
+/// `refs/heads/master` can be a directory when a branch named `master/...` exists, and a probe
+/// like `refs/remotes/v1` can hit ENOTDIR when `refs/remotes` is a file. Both read as a missing
+/// loose ref ([`io::ErrorKind::NotFound`]) so optional DWIM candidates fall through cleanly.
+fn loose_ref_io_error(e: io::Error) -> Error {
+    if e.kind() == io::ErrorKind::IsADirectory
+        || e.kind() == io::ErrorKind::NotADirectory
+        || e.raw_os_error() == Some(libc::EISDIR)
+        || e.raw_os_error() == Some(libc::ENOTDIR)
+    {
+        return Error::Io(io::Error::new(io::ErrorKind::NotFound, e));
+    }
+    Error::Io(e)
 }
 
 /// Parse the content of a ref file (without trailing newline).

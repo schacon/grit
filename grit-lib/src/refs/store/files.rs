@@ -229,16 +229,6 @@ impl FilesRefStore {
         Ok(())
     }
 
-    fn first_packed_descendant(&self, storage_name: &str) -> Result<Option<(String, ObjectId)>> {
-        self.refresh_packed_cache_if_stale()?;
-        let guard = self.packed_cache.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(ref file) = guard.file else {
-            return Ok(None);
-        };
-        let path = super::paths::packed_refs_path(&self.common_dir);
-        file.first_descendant(&path, storage_name)
-    }
-
     /// Records of the common dir's `packed-refs` under `prefix` (storage names), read through
     /// the cached file view so a listing and later lookups index the file once.
     fn packed_map_for_prefix_filtered(
@@ -290,17 +280,25 @@ impl FilesRefStore {
             .filter(|u| u.new_value.is_some() && !u.flags.log_only && !refs.contains_key(&u.name))
             .map(|u| u.name.as_str())
             .collect();
+        let packed = self.packed_refs_view()?;
+        // Siblings share their ancestors; look each one up once per batch.
+        let mut not_refs: HashSet<&str> = HashSet::new();
         for name in creates {
             for (slash, _) in name.match_indices('/') {
                 let ancestor = &name[..slash];
-                if refs.contains_key(ancestor) {
+                if refs.contains_key(ancestor) || not_refs.contains(ancestor) {
                     continue;
                 }
-                if let Some(raw) = self.read_existing_ref_named(ancestor)? {
-                    refs.insert(ancestor.to_owned(), raw);
+                match self.existing_ref_named_in(ancestor, packed.as_ref(), None)? {
+                    Some(raw) => {
+                        refs.insert(ancestor.to_owned(), raw);
+                    }
+                    None => {
+                        not_refs.insert(ancestor);
+                    }
                 }
             }
-            for (descendant, raw) in self.descendant_refs(name)? {
+            for (descendant, raw) in self.descendant_refs_in(name, packed.as_ref())? {
                 refs.entry(descendant).or_insert(raw);
             }
         }
@@ -314,15 +312,50 @@ impl FilesRefStore {
     /// size and mtime, instead of re-reading `packed-refs` for every ancestor. Any file under
     /// `<name>/` blocks the create, since the directory could not be replaced by the ref file.
     /// Unreadable refs count as absent, as in the path-based check.
+    ///
+    /// `held_lock` is the path of `name`'s lock file when the caller holds it: every path above
+    /// it is then a directory, so ancestors are not probed for loose files there.
     fn verify_create_available(
         &self,
         name: &str,
-        extras: &BTreeSet<String>,
+        extras: &BTreeSet<&str>,
+        held_lock: Option<&Path>,
+    ) -> std::result::Result<(), RefnameUnavailable> {
+        let packed = self.packed_refs_view().ok().flatten();
+        self.verify_create_available_in(
+            name,
+            extras,
+            held_lock,
+            packed.as_ref(),
+            &mut HashMap::new(),
+        )
+    }
+
+    /// [`Self::verify_create_available`] against one view of `packed-refs` (`packed`), with
+    /// `ancestors` remembering which ancestor names are refs across the creates of a batch.
+    fn verify_create_available_in(
+        &self,
+        name: &str,
+        extras: &BTreeSet<&str>,
+        held_lock: Option<&Path>,
+        packed: Option<&crate::refs::PackedRefsFileView>,
+        ancestors: &mut HashMap<String, bool>,
     ) -> std::result::Result<(), RefnameUnavailable> {
         let mut blocking = BTreeSet::new();
         for (slash, _) in name.match_indices('/') {
             let ancestor = &name[..slash];
-            if let Ok(Some(_)) = self.read_existing_ref_named(ancestor) {
+            let is_ref = match ancestors.get(ancestor) {
+                Some(&is_ref) => is_ref,
+                None => {
+                    let is_ref = matches!(
+                        self.existing_ref_named_in(ancestor, packed, held_lock),
+                        Ok(Some(_))
+                    );
+                    ancestors.insert(ancestor.to_owned(), is_ref);
+                    is_ref
+                }
+            };
+            if is_ref {
                 blocking.insert(ancestor.to_owned());
             }
         }
@@ -331,9 +364,10 @@ impl FilesRefStore {
         for base in self.store_bases() {
             collect_loose_file_names(&base.join(&storage), &storage, &mut storage_names);
         }
-        if storage.contains('/') {
-            if let Ok(Some((packed, _))) = self.first_packed_descendant(&storage) {
-                storage_names.insert(packed);
+        if let Some(packed) = packed.filter(|_| storage.contains('/')) {
+            let path = super::paths::packed_refs_path(&self.common_dir);
+            if let Ok(Some((descendant, _))) = packed.first_descendant(&path, &storage) {
+                storage_names.insert(descendant);
             }
         }
         blocking.extend(storage_names.iter().map(|s| self.logical_name(s)));
@@ -352,25 +386,39 @@ impl FilesRefStore {
     /// The value of `name` as a full listing would report it: a parseable loose file in either
     /// store directory, else a visible packed record. Directories and unparseable files are
     /// not refs.
-    fn read_existing_ref_named(&self, name: &str) -> Result<Option<RawRef>> {
+    ///
+    /// `packed` is one view of `packed-refs` shared by several lookups, so the file is
+    /// revalidated once. Loose paths above `held_lock`, a lock file the caller holds, are
+    /// directories and are not probed.
+    fn existing_ref_named_in(
+        &self,
+        name: &str,
+        packed: Option<&crate::refs::PackedRefsFileView>,
+        held_lock: Option<&Path>,
+    ) -> Result<Option<RawRef>> {
         let storage = self.route(name).storage_name;
         for base in self.store_bases() {
             let path = base.join(&storage);
-            if !path.is_file() {
+            if held_lock.is_some_and(|lock| lock.starts_with(&path)) || !path.is_file() {
                 continue;
             }
             if let Ok(r) = read_ref_file(&path) {
                 return Ok(Some(ref_to_raw(r)));
             }
         }
-        if !self.packed_storage_visible(&storage) {
+        let Some(packed) = packed.filter(|_| self.packed_storage_visible(&storage)) else {
             return Ok(None);
-        }
-        Ok(self.lookup_packed_oid(&storage)?.map(RawRef::Direct))
+        };
+        let path = super::paths::packed_refs_path(&self.common_dir);
+        Ok(packed.lookup_oid(&path, &storage)?.map(RawRef::Direct))
     }
 
-    /// Loose refs under `<name>/` in either store directory, plus the first packed one.
-    fn descendant_refs(&self, name: &str) -> Result<BTreeMap<String, RawRef>> {
+    /// Loose refs under `<name>/` in either store directory, plus the first one in `packed`.
+    fn descendant_refs_in(
+        &self,
+        name: &str,
+        packed: Option<&crate::refs::PackedRefsFileView>,
+    ) -> Result<BTreeMap<String, RawRef>> {
         let storage = self.route(name).storage_name;
         let mut storage_map = BTreeMap::new();
         for base in self.store_bases() {
@@ -381,10 +429,11 @@ impl FilesRefStore {
         }
         // Refs live under `refs/`, so a one-level name has no packed descendants; skipping it
         // also avoids scanning from a pseudoref like `ORIG_HEAD` to the end of the file.
-        if storage.contains('/') {
-            if let Some((packed, oid)) = self.first_packed_descendant(&storage)? {
-                if self.packed_storage_visible(&packed) {
-                    storage_map.entry(packed).or_insert(RawRef::Direct(oid));
+        if let Some(packed) = packed.filter(|_| storage.contains('/')) {
+            let path = super::paths::packed_refs_path(&self.common_dir);
+            if let Some((descendant, oid)) = packed.first_descendant(&path, &storage)? {
+                if self.packed_storage_visible(&descendant) {
+                    storage_map.entry(descendant).or_insert(RawRef::Direct(oid));
                 }
             }
         }
@@ -766,6 +815,70 @@ impl FilesRefStore {
         })
     }
 
+    /// Take the locks of `names` that `prepare` holds, recording them in `ref_locks`: the
+    /// `carried` ref (the first update's, which commit keeps writing under), and every other
+    /// ref whose lock path is not plainly absent right now, so a lock held elsewhere is waited
+    /// for, and a path that cannot hold a lock is reported, before anything is written.
+    ///
+    /// Commit re-takes the other locks one update at a time, so creating and removing each
+    /// uncontended lock here would only add a file create and unlink per ref.
+    ///
+    /// # Errors
+    ///
+    /// The failure of [`Self::lock_ref`]; every lock in `ref_locks` is released first.
+    fn take_prepare_locks<'a>(
+        &self,
+        names: impl IntoIterator<Item = &'a String>,
+        carried: Option<&str>,
+        wait: LockWait,
+        ref_locks: &mut HashMap<String, PathBuf>,
+    ) -> StoreResult<()> {
+        for name in names {
+            if ref_locks.contains_key(name) {
+                continue;
+            }
+            let (_, _, lock) = self.ref_lock_paths(name);
+            // Only a lock path that is really absent can wait for commit. Anything else (a
+            // file where a parent directory belongs, a permission error) must fail here,
+            // before the batch writes any ref.
+            let absent = matches!(
+                fs::symlink_metadata(&lock),
+                Err(err) if err.kind() == io::ErrorKind::NotFound
+            );
+            if carried != Some(name.as_str()) && absent {
+                continue;
+            }
+            if let Err(err) = self.lock_ref(name, &lock, wait) {
+                for acquired in ref_locks.values() {
+                    let _ = fs::remove_file(acquired);
+                }
+                return Err(Self::ref_store_error_from_lib(err));
+            }
+            ref_locks.insert(name.clone(), lock);
+        }
+        Ok(())
+    }
+
+    /// Take `refname`'s lock file at `lock_path`, creating its directory when needed.
+    ///
+    /// # Errors
+    ///
+    /// A directory that cannot be created (a ref file in the way) is reported as a
+    /// [`GitDirPathOperation::CreateDir`] failure; otherwise as [`Self::acquire_ref_lock_mapped`].
+    fn lock_ref(&self, refname: &str, lock_path: &Path, wait: LockWait) -> Result<()> {
+        let Err(err) = self.acquire_ref_lock_mapped(lock_path, refname, wait) else {
+            return Ok(());
+        };
+        if let Some(parent) = lock_path.parent() {
+            self.io_ref_store(
+                parent,
+                GitDirPathOperation::CreateDir,
+                fs::create_dir_all(parent),
+            )?;
+        }
+        Err(err)
+    }
+
     fn acquire_ref_lock_mapped(
         &self,
         lock_path: &Path,
@@ -826,16 +939,6 @@ impl FilesRefStore {
         lock: &Path,
         value: &RawRef,
     ) -> Result<()> {
-        remove_empty_ref_directory(path);
-        if let Some(parent) = path.parent() {
-            io_with_ref_store_path(
-                common_dir,
-                checkout_git_dir,
-                parent,
-                GitDirPathOperation::CreateDir,
-                fs::create_dir_all(parent),
-            )?;
-        }
         let content = match value {
             RawRef::Direct(oid) => format!("{oid}\n"),
             RawRef::Symbolic(target) => format!("ref: {target}\n"),
@@ -847,12 +950,20 @@ impl FilesRefStore {
             GitDirPathOperation::UpdateRef,
             fs::write(lock, content),
         )?;
+        // An empty directory tree left by deleted nested refs may occupy the ref's path.
+        let renamed = fs::rename(lock, path).or_else(|err| {
+            if !path.is_dir() {
+                return Err(err);
+            }
+            remove_empty_ref_directory(path);
+            fs::rename(lock, path)
+        });
         io_with_ref_store_path(
             common_dir,
             checkout_git_dir,
             path,
             GitDirPathOperation::UpdateRef,
-            fs::rename(lock, path),
+            renamed,
         )?;
         Ok(())
     }
@@ -1085,12 +1196,15 @@ impl FilesRefStore {
         Err(Error::RefStore(RefStoreError::SymrefLoop))
     }
 
+    /// Verify `update` against disk under its locks: its expectation, and for a create that
+    /// the name is still free. `held_lock` is `update.name`'s lock file when it is held.
     fn recheck_update_at_commit(
         &self,
         update: &RefUpdate,
-        batch_extras: &BTreeSet<String>,
+        batch_extras: &BTreeSet<&str>,
         batch_start: &RefBatchState,
         state_before: &RefBatchState,
+        held_lock: Option<&Path>,
         ctx: CommitContext<'_>,
     ) -> StoreResult<()> {
         if update.flags.log_only {
@@ -1138,7 +1252,7 @@ impl FilesRefStore {
             }
         }
         if update.new_value.is_some() && actual_ref.is_none() && !batch_differs {
-            self.verify_create_available(&update.name, batch_extras)?;
+            self.verify_create_available(&update.name, batch_extras, held_lock)?;
         }
         Ok(())
     }
@@ -1172,14 +1286,7 @@ impl FilesRefStore {
         persisted_refs: &mut HashSet<String>,
     ) -> Result<()> {
         let (_, _, lock_path) = self.ref_lock_paths(name);
-        if let Some(parent) = lock_path.parent() {
-            self.io_ref_store(
-                parent,
-                GitDirPathOperation::CreateDir,
-                fs::create_dir_all(parent),
-            )?;
-        }
-        self.acquire_ref_lock_mapped(&lock_path, name, ctx.ref_lock_wait)?;
+        self.lock_ref(name, &lock_path, ctx.ref_lock_wait)?;
         let write_result = self.persist_one_ref_change(name, value, &lock_path, ctx);
         let _ = fs::remove_file(&lock_path);
         write_result?;
@@ -1200,7 +1307,7 @@ impl FilesRefStore {
     fn persist_update_locked(
         &self,
         update: &RefUpdate,
-        batch_extras: &BTreeSet<String>,
+        batch_extras: &BTreeSet<&str>,
         before: &RefBatchState,
         running: &RefBatchState,
         touched: Option<&str>,
@@ -1241,23 +1348,16 @@ impl FilesRefStore {
                 continue;
             }
             let (_, _, lock_path) = self.ref_lock_paths(name);
-            let acquired = match lock_path.parent() {
-                Some(parent) => self.io_ref_store(
-                    parent,
-                    GitDirPathOperation::CreateDir,
-                    fs::create_dir_all(parent),
-                ),
-                None => Ok(()),
-            }
-            .and_then(|()| self.acquire_ref_lock_mapped(&lock_path, name, ctx.ref_lock_wait));
-            if let Err(err) = acquired {
+            if let Err(err) = self.lock_ref(name, &lock_path, ctx.ref_lock_wait) {
                 release(&held);
                 return Err(err);
             }
             held.insert(name.clone(), lock_path);
         }
 
-        if let Err(err) = self.recheck_update_at_commit(update, batch_extras, before, running, ctx)
+        let held_lock = held.get(&update.name).map(PathBuf::as_path);
+        if let Err(err) =
+            self.recheck_update_at_commit(update, batch_extras, before, running, held_lock, ctx)
         {
             release(&held);
             return Err(err.into());
@@ -1291,32 +1391,28 @@ impl FilesRefStore {
         let after = &batch.after_commit;
         let updates = batch.updates.as_slice();
         let packed_lock_held = batch.packed_lock.is_some();
-        let batch_extras: BTreeSet<String> = updates.iter().map(|u| u.name.clone()).collect();
+        let batch_extras: BTreeSet<&str> = updates.iter().map(|u| u.name.as_str()).collect();
         if updates.iter().any(|u| {
             u.new_value.is_some() && !u.flags.log_only && !before.refs.contains_key(&u.name)
         }) {
             self.forget_packed_cache();
         }
 
-        let mut names: BTreeSet<String> = BTreeSet::new();
-        names.extend(before.refs.keys().cloned());
-        names.extend(after.refs.keys().cloned());
-        names.extend(before.reflogs.keys().cloned());
-        names.extend(after.reflogs.keys().cloned());
-
+        // Only names with a reflog on either side can have a reflog change to write.
+        let names: BTreeSet<&String> = before.reflogs.keys().chain(after.reflogs.keys()).collect();
         for name in names {
-            let (old, new) = (before.reflogs.get(&name), after.reflogs.get(&name));
+            let (old, new) = (before.reflogs.get(name), after.reflogs.get(name));
             if old == new {
                 continue;
             }
             // A log the batch only added to gets the new lines appended, so what it held
             // stays byte for byte, as read or not.
             if let (Some(old), Some(new)) = (old, new) {
-                if new.starts_with(old) && self.append_reflog_entries(&name, &new[old.len()..])? {
+                if new.starts_with(old) && self.append_reflog_entries(name, &new[old.len()..])? {
                     continue;
                 }
             }
-            self.persist_reflog(&name, new.map(Vec::as_slice).unwrap_or_default())?;
+            self.persist_reflog(name, new.map(Vec::as_slice).unwrap_or_default())?;
         }
 
         let pruned = if packed_lock_held {
@@ -1350,7 +1446,7 @@ impl FilesRefStore {
     fn persist_batch_refs(
         &self,
         batch: &PreparedFilesBatch,
-        batch_extras: &BTreeSet<String>,
+        batch_extras: &BTreeSet<&str>,
         ctx: CommitContext<'_>,
         persisted_refs: &mut HashSet<String>,
         carried: &mut Option<(String, PathBuf)>,
@@ -1526,29 +1622,12 @@ impl RefStore for FilesRefStore {
         let lock_names = ref_lock_names_for_updates(&preliminary, &updates);
         let ref_lock_wait = LockWait::files_ref_lock_for_git_dir(&self.common_dir);
 
+        let carried = updates
+            .iter()
+            .find(|u| !u.flags.log_only)
+            .map(|u| u.name.as_str());
         let mut ref_locks: HashMap<String, PathBuf> = HashMap::new();
-        for name in &lock_names {
-            let (_, _, lock) = self.ref_lock_paths(name);
-            if let Some(parent) = lock.parent() {
-                if let Err(err) = self.io_ref_store(
-                    parent,
-                    GitDirPathOperation::CreateDir,
-                    fs::create_dir_all(parent),
-                ) {
-                    for acquired in ref_locks.values() {
-                        let _ = fs::remove_file(acquired);
-                    }
-                    return Err(Self::ref_store_error_from_lib(err));
-                }
-            }
-            if let Err(err) = self.acquire_ref_lock_mapped(&lock, name, ref_lock_wait) {
-                for acquired in ref_locks.values() {
-                    let _ = fs::remove_file(acquired);
-                }
-                return Err(Self::ref_store_error_from_lib(err));
-            }
-            ref_locks.insert(name.clone(), lock);
-        }
+        self.take_prepare_locks(&lock_names, carried, ref_lock_wait, &mut ref_locks)?;
 
         if let Err(err) =
             simulate_batch_apply(&preliminary, &updates, &reflog_renames, &case_only_renames)
@@ -1559,7 +1638,9 @@ impl RefStore for FilesRefStore {
             return Err(err);
         }
 
-        let extras: BTreeSet<String> = updates.iter().map(|u| u.name.clone()).collect();
+        let extras: BTreeSet<&str> = updates.iter().map(|u| u.name.as_str()).collect();
+        let packed = self.packed_refs_view().ok().flatten();
+        let mut ancestors = HashMap::new();
         for update in &updates {
             if update.new_value.is_none() || update.flags.log_only {
                 continue;
@@ -1567,7 +1648,13 @@ impl RefStore for FilesRefStore {
             if preliminary.refs.contains_key(&update.name) {
                 continue;
             }
-            if let Err(reason) = self.verify_create_available(&update.name, &extras) {
+            if let Err(reason) = self.verify_create_available_in(
+                &update.name,
+                &extras,
+                ref_locks.get(&update.name).map(PathBuf::as_path),
+                packed.as_ref(),
+                &mut ancestors,
+            ) {
                 for acquired in ref_locks.values() {
                     let _ = fs::remove_file(acquired);
                 }
@@ -1596,35 +1683,11 @@ impl RefStore for FilesRefStore {
                     .loose_ref_file_exists(&update.name)
                     .map_err(|e| RefStoreError::Corrupt(e.to_string()))?
             {
-                changed.insert(update.name.clone());
+                changed.insert(&update.name);
             }
         }
 
-        for name in &changed {
-            if ref_locks.contains_key(name) {
-                continue;
-            }
-            let (_, _, lock) = self.ref_lock_paths(name);
-            if let Some(parent) = lock.parent() {
-                if let Err(err) = self.io_ref_store(
-                    parent,
-                    GitDirPathOperation::CreateDir,
-                    fs::create_dir_all(parent),
-                ) {
-                    for acquired in ref_locks.values() {
-                        let _ = fs::remove_file(acquired);
-                    }
-                    return Err(Self::ref_store_error_from_lib(err));
-                }
-            }
-            if let Err(err) = self.acquire_ref_lock_mapped(&lock, name, ref_lock_wait) {
-                for acquired in ref_locks.values() {
-                    let _ = fs::remove_file(acquired);
-                }
-                return Err(Self::ref_store_error_from_lib(err));
-            }
-            ref_locks.insert(name.clone(), lock);
-        }
+        self.take_prepare_locks(changed, carried, ref_lock_wait, &mut ref_locks)?;
 
         let mut packed_lock = None;
         if self.needs_packed_lock(&updates) {
@@ -1781,8 +1844,9 @@ impl PreparedRefTransaction for FilesPrepared<'_> {
         }
 
         // The first update is written before any other ref, so it keeps the lock it took in
-        // `prepare` instead of releasing and re-creating it. The rest are released here and
-        // re-taken one update at a time, so other writers can touch later refs mid-batch.
+        // `prepare` instead of releasing and re-creating it. Any other lock `prepare` took (only
+        // ones another writer held) is released here; each ref is locked again when its update
+        // is written, so other writers can touch later refs mid-batch.
         let mut ref_locks = std::mem::take(&mut batch.ref_locks);
         let mut carried = batch
             .updates
@@ -2019,16 +2083,14 @@ fn utf8_or_lossy(bytes: &[u8]) -> Cow<'_, str> {
     }
 }
 
-fn changed_ref_names(
-    before: &BTreeMap<String, RawRef>,
-    after: &BTreeMap<String, RawRef>,
-) -> BTreeSet<String> {
-    let mut names: BTreeSet<String> = BTreeSet::new();
-    names.extend(before.keys().cloned());
-    names.extend(after.keys().cloned());
-    names
-        .into_iter()
-        .filter(|name| before.get(name) != after.get(name))
+fn changed_ref_names<'a>(
+    before: &'a BTreeMap<String, RawRef>,
+    after: &'a BTreeMap<String, RawRef>,
+) -> BTreeSet<&'a String> {
+    before
+        .keys()
+        .chain(after.keys())
+        .filter(|name| before.get(*name) != after.get(*name))
         .collect()
 }
 
@@ -2272,7 +2334,11 @@ mod tests {
             "refs/tags/v2",
         ] {
             assert_eq!(
-                refs.verify_create_available(name, &extras),
+                refs.verify_create_available(
+                    name,
+                    &extras.iter().map(String::as_str).collect(),
+                    None
+                ),
                 crate::refs::verify_refname_available_for_create(
                     path,
                     name,
@@ -2939,5 +3005,34 @@ mod tests {
         ));
         assert!(!dir.path().join("packed-refs").exists());
         assert!(!dir.path().join("packed-refs.lock").exists());
+    }
+
+    #[test]
+    fn batch_blocked_by_a_file_in_place_of_a_parent_writes_nothing() {
+        let dir = git_dir();
+        fs::write(dir.path().join("refs/heads/block"), "not a ref\n").expect("obstruction");
+        let store = store(dir.path());
+
+        let err = commit_all(
+            &store,
+            vec![
+                create("refs/heads/first", oid(1)),
+                create("refs/heads/block/child", oid(2)),
+            ],
+        )
+        .expect_err("refs/heads/block/child cannot be created");
+        assert!(
+            !matches!(err, RefStoreError::ExpectedMismatch { .. }),
+            "{err:?}"
+        );
+        assert!(
+            !dir.path().join("refs/heads/first").exists(),
+            "the batch is all-or-nothing: no ref before the failing one is written"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("refs/heads/block")).expect("read"),
+            "not a ref\n"
+        );
+        assert!(!dir.path().join("refs/heads/first.lock").exists());
     }
 }

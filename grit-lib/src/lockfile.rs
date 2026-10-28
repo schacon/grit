@@ -212,13 +212,6 @@ impl LockFile {
         clock: Arc<dyn LockClock>,
         jitter: Arc<dyn LockJitter>,
     ) -> Result<Self, LockError> {
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|source| LockError::Io {
-                path: target.to_path_buf(),
-                source,
-            })?;
-        }
-
         let deadline = match wait {
             LockWait::Immediately => Some(clock.now()),
             LockWait::Backoff { budget } => Some(clock.now() + budget),
@@ -226,8 +219,20 @@ impl LockFile {
         };
 
         let mut attempt: u32 = 0;
+        // The parent usually exists, so it is only created once an open fails. Creating it
+        // then still reports a parent blocked by a file as the directory error.
+        let mut parent_ready = false;
         loop {
             match OpenOptions::new().write(true).create_new(true).open(target) {
+                Err(_) if !parent_ready => {
+                    parent_ready = true;
+                    if let Some(parent) = target.parent() {
+                        fs::create_dir_all(parent).map_err(|source| LockError::Io {
+                            path: target.to_path_buf(),
+                            source,
+                        })?;
+                    }
+                }
                 Ok(file) => {
                     return Ok(Self {
                         lock_path: target.to_path_buf(),
