@@ -2487,7 +2487,7 @@ impl Repository {
                 }
             }
         }
-        index.content_verified.clear();
+        index.clear_content_verified();
         let skip_hash = crate::index::index_skip_hash_for_write(Some(cfg.as_ref()));
         Ok((skip_hash, cfg))
     }

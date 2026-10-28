@@ -856,23 +856,24 @@ pub fn commit_worktree(
     guard_incomplete_rewrite_apply(repo)?;
     let head = resolve_head_for_repository(repo)?;
     let mut index = repo.load_index()?;
-    let staged = crate::porcelain::add::stage_for_commit_on_index(
+    let staged_count = crate::porcelain::add::stage_for_commit_on_index(
         repo,
         &mut index,
         progress,
         cancel,
         req.dry_run,
-    )?;
+    )?
+    .total();
     if index.has_unmerged_entries() {
         return Err(Error::IndexUnmerged);
     }
     let mut req = req.clone();
     req.assume_worktree_synced = true;
     if req.skip_pre_commit_tree_match {
-        req.staged_change_count = Some(staged.total());
+        req.staged_change_count = Some(staged_count);
     }
     let result = create_commit_with_index(repo, head, &mut index, &req, progress, cancel, None);
-    if matches!(result, Err(Error::NothingToCommit)) && !req.dry_run && staged.total() > 0 {
+    if matches!(result, Err(Error::NothingToCommit)) && !req.dry_run && staged_count > 0 {
         repo.write_index(&mut index)?;
     }
     result
@@ -908,6 +909,30 @@ fn commit_files_between_trees(
 ) -> Result<Vec<CommitFile>> {
     let entries = diff_trees_with_renames(odb, old_tree, Some(new_tree), "", 50)?;
     Ok(commit_files_from_diff_entries(&entries))
+}
+
+/// Files of a root commit, read from the index its tree was just written from: every path is
+/// added, so this skips the whole-tree diff and its per-path entries.
+///
+/// Returns `None` when the index holds sparse-directory placeholders, whose files only the
+/// tree lists.
+fn root_commit_files_from_index(index: &Index) -> Option<Vec<CommitFile>> {
+    let mut files = Vec::with_capacity(index.entries().len());
+    for entry in index.entries() {
+        if entry.mode == crate::index::MODE_TREE {
+            return None;
+        }
+        if entry.stage() != 0 || entry.intent_to_add() {
+            continue;
+        }
+        files.push(CommitFile {
+            path: crate::repo_relpath::storage_string(&entry.path),
+            status: DiffStatus::Added,
+            old_path: None,
+        });
+    }
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Some(files)
 }
 
 fn commit_files_index_vs_parent_tree(
@@ -1333,7 +1358,14 @@ fn create_commit_with_index(
     }
 
     let tree = write_tree_update_index(repo.odb(), index, "", WriteTreeFlags::silent())?;
-    let commit_files = commit_files_between_trees(repo.odb(), parent_tree.as_ref(), &tree)?;
+    let root_files = parent_tree
+        .is_none()
+        .then(|| root_commit_files_from_index(index))
+        .flatten();
+    let commit_files = match root_files {
+        Some(files) => files,
+        None => commit_files_between_trees(repo.odb(), parent_tree.as_ref(), &tree)?,
+    };
 
     if !req.allow_empty && !req.amend {
         if parent_tree.is_none() && is_empty_tree_oid(repo.odb(), &tree) {
@@ -1793,6 +1825,45 @@ mod tests {
     fn write_index(repo: &Repository, index: &mut Index) {
         index.sort();
         repo.write_index(index).unwrap();
+    }
+
+    #[test]
+    fn root_commit_files_from_index_match_the_tree_diff() {
+        let dir = TempDir::new().unwrap();
+        let repo = init_repo(dir.path());
+        let mut index = Index::new();
+        for rel in ["a.txt", "dir/sub/b.txt", "dir-x.txt", "z/last.txt"] {
+            stage_file_in_index(&repo, &mut index, rel, rel.as_bytes());
+        }
+        let template = index.get(b"a.txt", 0).unwrap().clone();
+        let with_path = |path: &[u8], mode: u32, oid: ObjectId| {
+            let mut entry = template.clone();
+            entry.path = path.to_vec();
+            entry.flags = path.len() as u16;
+            entry.mode = mode;
+            entry.oid = oid;
+            entry
+        };
+        let blob = repo.odb().write(ObjectKind::Blob, b"raw\n").unwrap();
+        index.add_or_replace(with_path(b"bin\xff.txt", MODE_REGULAR, blob));
+        let gitlink = ObjectId::from_hex("1111111111111111111111111111111111111111").unwrap();
+        index.add_or_replace(with_path(b"module", crate::index::MODE_GITLINK, gitlink));
+        let mut ita = with_path(b"ita.txt", MODE_REGULAR, blob);
+        ita.set_intent_to_add(true);
+        index.add_or_replace(ita);
+        index.sort();
+
+        let tree =
+            write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent()).unwrap();
+        let from_tree = commit_files_between_trees(repo.odb(), None, &tree).unwrap();
+        let from_index = root_commit_files_from_index(&index).expect("no sparse placeholders");
+        assert_eq!(from_index.len(), 6);
+        assert_eq!(from_index, from_tree);
+
+        let mut placeholder = with_path(b"sparse/", crate::index::MODE_TREE, tree);
+        placeholder.set_skip_worktree(true);
+        index.add_or_replace(placeholder);
+        assert!(root_commit_files_from_index(&index).is_none());
     }
 
     fn commit_req(message: &str) -> CommitRequest {

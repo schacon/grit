@@ -9,6 +9,41 @@ For a map of **grit-lib** modules, **grit** commands, common workflows, and ever
 
 Command-level numbers below come from the committed **grit-bench** JSON baselines listed in `content/docs/site.toml`. Scenario suites use **hyperfine** against the system **`git`** binary and a release **`grit`** build on the same machine; individual studies below document their sampling method. Times are wall-clock milliseconds.
 
+## Bulk add and first commit of a large new tree (2026-10-28)
+
+Issue [#2169](https://github.com/gitbutlerapp/grit/issues/2169): `grit add` of a
+large new tree into an empty index peaked at about 1.4 KiB per file, 4.6 times
+`git add -A`. Staging built a read request (attributes, metadata, absolute path)
+for every untracked file, then a hashed result for every file, before it created
+any index entry. It also cloned every path to look for embedded repositories,
+and recorded a second copy of every path to skip the racy-entry re-read at index
+write. Now it reads, hashes and stores 4,096 files at a time and turns each chunk
+straight into compact index entries. Freshly built entries carry an in-memory
+"just hashed" bit instead of the extra path copy. The first `grit commit` of such
+a tree also lists its files from the index instead of diffing the new tree
+against nothing.
+
+The tree has 300,000 three-line files, 100 per leaf directory
+(`top{d%30}/mid{(d/30)%10}/pkg{d/300}/leaf{d}`). Rows are one sitting on a
+4-vCPU Intel Xeon Linux VM (15 GiB RAM, Rust 1.99 `release`, Git 2.43.0), with
+peak RSS and wall time from `/usr/bin/time`. Main is `307186978`. "Objects
+present" stages the same files again after `git rm -r --cached .`. Git's first
+commit row is `git add -A` followed by `git commit`.
+
+| Operation | Git | Main | Fixed |
+| --- | ---: | ---: | ---: |
+| add, fresh repository | 25.32 s / 78,840 KB | 7.70 s / 433,272 KB | 7.04 s / 133,120 KB |
+| add `--threads 1`, fresh repository | | 16.54 s / 430,668 KB | 16.04 s / 130,388 KB |
+| add, objects present | 2.21 s / 87,100 KB | 7.78 s / 435,488 KB | 4.00 s / 131,260 KB |
+| first commit (stage all) | 11.23 + 1.40 s / 79,156 KB | 8.50 s / 434,356 KB | 8.12 s / 153,292 KB |
+
+Peak memory drops by 69% for add and 65% for the first commit. Git still uses
+less: the remaining peak is mostly the index entries themselves, the staged path
+list the command reports, and the serialized index buffer. The
+`add-initial-monorepo-20000` baseline (20,000 files) goes from 48,800 KiB to
+32,412 KiB with unchanged time. The `add_bulk_memory` integration test checks
+grit's peak against `git add -A` on 60,000 files: 5.2 times before, 1.9 times now.
+
 ## Walk reads and JSON-only log rows (2026-10-28)
 
 Commit walks that parse objects themselves (log pages, merge bases, ahead/behind,

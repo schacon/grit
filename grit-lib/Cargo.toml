@@ -279,6 +279,11 @@ name = "integration"
 path = "tests/integration.rs"
 
 [[test]]
+name = "add_bulk_memory"
+path = "tests/add_bulk_memory.rs"
+required-features = ["full-tests"]
+
+[[test]]
 name = "add_pathspec_staging"
 path = "tests/add_pathspec_staging.rs"
 required-features = ["full-tests"]
