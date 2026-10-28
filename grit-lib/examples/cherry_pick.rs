@@ -9,7 +9,9 @@
 use grit_lib::commit::trailers;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::merge_file::MergeFavor;
-use grit_lib::diff::merge_trees::{merge_trees_three_way, WhitespaceMergeOptions};
+use grit_lib::diff::merge_trees::{
+    merge_trees_three_way, DirectoryRenameMode, WhitespaceMergeOptions,
+};
 use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectKind};
 use grit_lib::refs;
@@ -156,12 +158,13 @@ fn main() -> grit_lib::error::Result<()> {
             df_directory_ours_commit: None,
             df_directory_theirs_commit: None,
         },
+        DirectoryRenameMode::from_repo(&repo)?,
     )?;
 
-    if !merged.conflict_content.is_empty() {
+    if grit_lib::operation::tree_merge_has_conflicts(&merged) {
         return Err(grit_lib::error::Error::Message(format!(
-            "merge produced {} conflict path(s); this example expects a clean pick",
-            merged.conflict_content.len()
+            "merge produced {} conflict(s); this example expects a clean pick",
+            grit_lib::operation::conflicts_from_tree_merge(&merged).len()
         )));
     }
 

@@ -45,6 +45,9 @@ Every grit command that reports conflicts (`status`, `merge`, `pick`, `revert`, 
 | `deleted_by_us` | deleted by us | `DU` | We deleted the path and they changed it. |
 | `deleted_by_them` | deleted by them | `UD` | We changed the path and they deleted it. |
 | `rename_rename` | — | — | Both sides renamed one file to different names (`merge`, `pick`, `revert`, `rebase` and `pull` only; `status` shows the three paths as `both_deleted`, `added_by_us` and `added_by_them`). |
+| `directory_rename_moved` | moved with its directory | — | A file one side added to a directory the other side renamed was moved into the new directory; confirm the location (operations only; `status` shows the path as `added_by_us` or `added_by_them`). See [directory renames](../merge/#directory-renames). |
+| `directory_rename_split` | directory split up | — | A directory was spread over several directories with no clear destination, so files added to it stayed put. The path is the directory; nothing is unmerged (operations only). |
+| `directory_rename_blocked` | directory move blocked | — | Files were not moved into a renamed directory because their destination is taken. The path is the destination; nothing is unmerged (operations only). |
 
 ### Interrupted rebases and history edits
 

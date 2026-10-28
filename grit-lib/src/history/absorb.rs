@@ -12,7 +12,8 @@ use crate::index::write_tree::write_tree_from_index;
 use crate::merge_base::fork_point;
 use crate::merge_file::MergeFavor;
 use crate::merge_trees::{
-    merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+    merge_trees_three_way, DirectoryRenameMode, TreeMergeConflictPresentation,
+    WhitespaceMergeOptions,
 };
 use crate::objects::{parse_tree, CommitData, ObjectId, ObjectKind};
 use crate::repo::Repository;
@@ -890,10 +891,11 @@ fn merged_tree_for_target_with_trees(
         WhitespaceMergeOptions::default(),
         None,
         TreeMergeConflictPresentation::default(),
+        DirectoryRenameMode::from_repo(repo).map_err(library_err)?,
     )
     .map_err(library_err)?;
 
-    if merge.index.has_unmerged_entries() || !merge.conflict_content.is_empty() {
+    if crate::operation::tree_merge_has_conflicts(&merge) {
         return Err(HistoryError::Conflict {
             commit: target,
             conflicts: crate::operation::conflicts_from_tree_merge(&merge),

@@ -10,11 +10,15 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 #[path = "merge_tree_cache.rs"]
 mod merge_tree_cache;
 pub(crate) use merge_tree_cache::MergeTreeCache;
+#[path = "merge_dir_renames.rs"]
+mod merge_dir_renames;
 #[path = "merge_trees_walk.rs"]
 mod merge_trees_walk;
 
+use crate::config::ConfigSet;
 use crate::crlf::{DiffAttr, FileAttrs, MergeAttr, TextAttr};
 use crate::diff::{detect_renames, diff_trees, DiffStatus};
+use crate::error::ConfigError;
 use crate::index::{
     entry_from_stat, worktree_path_from_index_rel, Index, IndexEntry, MODE_REGULAR,
 };
@@ -43,6 +47,143 @@ pub struct TreeMergeOutput {
     /// stage 2 under [`RenameRenameConflict::ours_path`] and stage 3 under
     /// [`RenameRenameConflict::theirs_path`], with the merged content at both destinations.
     pub rename_conflicts: Vec<RenameRenameConflict>,
+    /// Directory renames that need the user's attention, sorted by [`DirectoryRenameConflict::path`].
+    ///
+    /// [`DirectoryRenameConflict::Moved`] paths also have unmerged index rows; split and
+    /// blocked directory renames have none, yet still make the merge conflicted.
+    pub directory_rename_conflicts: Vec<DirectoryRenameConflict>,
+}
+
+/// How a three-way merge treats files one side adds inside a directory the other side renamed.
+///
+/// A directory counts as renamed when one side moved all of its files out of it and most of
+/// them (the destination with the most files, without a tie) into one other directory. Files the
+/// other side added to the old directory, or renamed into it, then most likely belong in the new
+/// one. Read from the `merge.directoryRenames` config with [`Self::from_config`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum DirectoryRenameMode {
+    /// Leave such files where the adding side put them (`merge.directoryRenames=false`).
+    Off,
+    /// Move them into the renamed directory as a clean merge (`true`).
+    Apply,
+    /// Move them, but leave each one unmerged at the adding side's stage so the user confirms
+    /// the new location (`conflict`; Git's default).
+    #[default]
+    Conflict,
+}
+
+impl DirectoryRenameMode {
+    /// Config key holding the mode.
+    pub const CONFIG_KEY: &'static str = "merge.directoryRenames";
+
+    /// Parse a `merge.directoryRenames` value: `conflict` or a Git boolean (`true` applies the
+    /// renames, `false` turns them off).
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError::InvalidDirectoryRenames`] for any other value.
+    pub fn from_config_value(value: &str) -> std::result::Result<Self, ConfigError> {
+        if value.eq_ignore_ascii_case("conflict") {
+            return Ok(Self::Conflict);
+        }
+        match crate::config::parse_bool(value) {
+            Ok(true) => Ok(Self::Apply),
+            Ok(false) => Ok(Self::Off),
+            Err(_) => Err(ConfigError::InvalidDirectoryRenames {
+                value: value.to_owned(),
+            }),
+        }
+    }
+
+    /// The mode set by [`Self::CONFIG_KEY`] in `config`, or [`Self::Conflict`] when unset.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError::InvalidDirectoryRenames`] when the value is not recognised.
+    pub fn from_config(config: &ConfigSet) -> std::result::Result<Self, ConfigError> {
+        config
+            .get(Self::CONFIG_KEY)
+            .map_or(Ok(Self::default()), |value| Self::from_config_value(&value))
+    }
+
+    /// [`Self::from_config`] for the configuration of `repo`.
+    ///
+    /// # Errors
+    ///
+    /// Config load failures, and [`ConfigError::InvalidDirectoryRenames`].
+    pub fn from_repo(repo: &Repository) -> crate::error::Result<Self> {
+        let config = repo.config()?;
+        Ok(Self::from_config(&config)?)
+    }
+}
+
+/// One side of a three-way merge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MergeSide {
+    /// The side merged into (index stage 2).
+    Ours,
+    /// The side merged in (index stage 3).
+    Theirs,
+}
+
+impl MergeSide {
+    /// Index stage holding this side's version of an unmerged path (2 or 3).
+    #[must_use]
+    pub fn index_stage(self) -> u8 {
+        match self {
+            Self::Ours => 2,
+            Self::Theirs => 3,
+        }
+    }
+}
+
+/// A directory rename that a merge could not settle on its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirectoryRenameConflict {
+    /// A file was moved into the renamed directory and left unmerged
+    /// ([`DirectoryRenameMode::Conflict`]) so the user can confirm its new location.
+    Moved {
+        /// Path the adding side gave the file, inside the old directory.
+        from: Vec<u8>,
+        /// Path in the renamed directory, where the merge put it.
+        to: Vec<u8>,
+        /// Side that added the file (or renamed it into the old directory).
+        added_by: MergeSide,
+    },
+    /// A side spread a directory's files over several directories with no single most popular
+    /// destination, so nothing added to it on the other side was moved.
+    Split {
+        /// The directory in the merge base.
+        dir: Vec<u8>,
+        /// Side that emptied the directory.
+        renamed_by: MergeSide,
+    },
+    /// New files were not moved into a renamed directory because their destination is taken on
+    /// the side that added them, or claimed by several of them. (A file the base or the renaming
+    /// side has there does not block the move; the moved file is merged with it.)
+    Blocked {
+        /// Destination the directory rename gives the files.
+        path: Vec<u8>,
+        /// The new files that would have moved there, sorted; they stay where they were added.
+        sources: Vec<Vec<u8>>,
+        /// `true` when the adding side already has a file or directory at
+        /// [`Self::Blocked::path`] (or the renaming side has a directory there); `false`
+        /// when several new files would land on it.
+        existing: bool,
+    },
+}
+
+impl DirectoryRenameConflict {
+    /// The path the conflict is reported at: the new location for [`Self::Moved`], the old
+    /// directory for [`Self::Split`] and the blocked destination for [`Self::Blocked`].
+    #[must_use]
+    pub fn path(&self) -> &[u8] {
+        match self {
+            Self::Moved { to, .. } => to,
+            Self::Split { dir, .. } => dir,
+            Self::Blocked { path, .. } => path,
+        }
+    }
 }
 
 /// One base path that each side of a merge renamed to a different destination.
@@ -134,6 +275,10 @@ impl Default for TreeMergeConflictPresentation<'_> {
 /// - `favor` / `ws` — merge strategy favour and whitespace options for textual merges.
 /// - `diff_algorithm` — optional line diff algorithm name used for textual merges.
 /// - `presentation` — conflict marker labels and style (`label_base` is the diff3 "base" name).
+/// - `directory_renames` — whether files one side added inside a directory the other side
+///   renamed follow the rename ([`DirectoryRenameMode`]; callers usually pass
+///   [`DirectoryRenameMode::from_repo`]). Conflicts are reported in
+///   [`TreeMergeOutput::directory_rename_conflicts`].
 ///
 /// # Errors
 ///
@@ -147,6 +292,7 @@ pub fn merge_trees_three_way(
     ws: WhitespaceMergeOptions,
     diff_algorithm: Option<&str>,
     presentation: TreeMergeConflictPresentation<'_>,
+    directory_renames: DirectoryRenameMode,
 ) -> crate::error::Result<TreeMergeOutput> {
     merge_trees_three_way_cached(
         repo,
@@ -158,6 +304,7 @@ pub fn merge_trees_three_way(
         ws,
         diff_algorithm,
         presentation,
+        directory_renames,
     )
 }
 
@@ -173,6 +320,7 @@ pub(crate) fn merge_trees_three_way_cached(
     ws: WhitespaceMergeOptions,
     diff_algorithm: Option<&str>,
     presentation: TreeMergeConflictPresentation<'_>,
+    directory_renames: DirectoryRenameMode,
 ) -> crate::error::Result<TreeMergeOutput> {
     let odb = &repo.odb();
     let mut touched =
@@ -253,6 +401,38 @@ pub(crate) fn merge_trees_three_way_cached(
     }
     let rename_conflicts =
         rename_rename_conflicts(&ours_new_to_old, &theirs_old_to_new, &base, &ours, &theirs);
+    let directory_rename_plan = if directory_renames == DirectoryRenameMode::Off {
+        None
+    } else {
+        let ours_changes = merge_dir_renames::SideChanges {
+            tree: ours_tree,
+            files: &ours,
+            renames: ours_new_to_old
+                .iter()
+                .filter(|(new, old)| new != old)
+                .map(|(new, old)| (old.as_slice(), new.as_slice()))
+                .collect(),
+            new_paths: paths_missing_from(&ours, &base),
+        };
+        let theirs_changes = merge_dir_renames::SideChanges {
+            tree: theirs_tree,
+            files: &theirs,
+            renames: theirs_old_to_new
+                .iter()
+                .filter(|(old, new)| old != new)
+                .map(|(old, new)| (old.as_slice(), new.as_slice()))
+                .collect(),
+            new_paths: paths_missing_from(&theirs, &base),
+        };
+        Some(merge_dir_renames::plan_directory_renames(
+            cache,
+            odb,
+            base_tree,
+            &base,
+            &ours_changes,
+            &theirs_changes,
+        )?)
+    };
 
     drop(ours_old_to_new_pairs);
     let mut output = merge_trees_walk::three_way_on_touched_paths(
@@ -300,6 +480,21 @@ pub(crate) fn merge_trees_three_way_cached(
         }
     }
     drop((ours_new_to_old, theirs_old_to_new));
+    if let Some(plan) = directory_rename_plan {
+        merge_dir_renames::apply_directory_rename_plan(
+            &mut output,
+            plan,
+            directory_renames,
+            &mut renamed_away,
+            &merge_dir_renames::DestinationMerge {
+                ctx: &PathMergeContext::new(repo),
+                favor,
+                ws,
+                diff_algorithm,
+                presentation,
+            },
+        )?;
+    }
     output.result_tree = merge_trees_walk::finish_merge_result_tree(
         cache,
         odb,
@@ -310,6 +505,17 @@ pub(crate) fn merge_trees_three_way_cached(
         &renamed_away,
     )?;
     Ok(output)
+}
+
+/// Paths of `side` that `base` has no file at.
+fn paths_missing_from<'a>(
+    side: &'a BTreeMap<Vec<u8>, IndexEntry>,
+    base: &BTreeMap<Vec<u8>, IndexEntry>,
+) -> Vec<&'a [u8]> {
+    side.keys()
+        .filter(|path| !base.contains_key(*path))
+        .map(Vec::as_slice)
+        .collect()
 }
 
 fn augment_renames_with_same_blob(
@@ -1422,6 +1628,7 @@ fn pending_tree_merge_index_rows(index: &Index, merged: &TreeMergeOutput) -> Tre
             .cloned()
             .collect(),
         rename_conflicts: Vec::new(),
+        directory_rename_conflicts: Vec::new(),
     }
 }
 
@@ -1569,6 +1776,7 @@ mod tests {
                 df_directory_theirs_commit: Some(theirs_commit),
                 ..TreeMergeConflictPresentation::default()
             },
+            DirectoryRenameMode::default(),
         )
         .expect("merge");
         assert!(out.index.get(b"dir/foo", 0).is_some());
@@ -1661,6 +1869,7 @@ mod tests {
                 WhitespaceMergeOptions::default(),
                 None,
                 presentation,
+                DirectoryRenameMode::default(),
             )
             .expect("merge")
         }
@@ -1794,6 +2003,7 @@ mod tests {
             WhitespaceMergeOptions::default(),
             None,
             TreeMergeConflictPresentation::default(),
+            DirectoryRenameMode::default(),
         )
         .expect("merge");
         assert!(out.index.get(b"theirs-only.txt", 0).is_some());
@@ -1854,6 +2064,7 @@ mod tests {
             WhitespaceMergeOptions::default(),
             None,
             TreeMergeConflictPresentation::default(),
+            DirectoryRenameMode::default(),
         )
         .expect("merge");
         assert!(out.index.get(b"f.txt", 0).is_some());
@@ -1958,6 +2169,7 @@ mod tests {
             WhitespaceMergeOptions::default(),
             None,
             TreeMergeConflictPresentation::default(),
+            DirectoryRenameMode::default(),
         )
         .expect("merge");
         assert!(out.index.get(b"sub", 1).is_some());
@@ -2019,6 +2231,7 @@ mod tests {
             WhitespaceMergeOptions::default(),
             None,
             TreeMergeConflictPresentation::default(),
+            DirectoryRenameMode::default(),
         )
         .expect("merge");
         let entry = out.index.get(b"bin.dat", 0).expect("stage 0");
@@ -2080,6 +2293,7 @@ mod tests {
             WhitespaceMergeOptions::default(),
             None,
             TreeMergeConflictPresentation::default(),
+            DirectoryRenameMode::default(),
         )
         .expect("merge");
         let entry = out.index.get(b"bin.dat", 0).expect("stage 0");
@@ -2152,6 +2366,7 @@ mod tests {
             WhitespaceMergeOptions::default(),
             None,
             TreeMergeConflictPresentation::default(),
+            DirectoryRenameMode::default(),
         )
         .expect("merge");
         assert!(

@@ -13,7 +13,8 @@ use crate::error::Error;
 use crate::merge_base::is_ancestor;
 use crate::merge_file::MergeFavor;
 use crate::merge_trees::{
-    merge_trees_three_way, TreeMergeConflictPresentation, TreeMergeOutput, WhitespaceMergeOptions,
+    merge_trees_three_way, DirectoryRenameMode, TreeMergeConflictPresentation, TreeMergeOutput,
+    WhitespaceMergeOptions,
 };
 use crate::objects::{serialize_commit, CommitData, HashAlgo, ObjectId, ObjectKind};
 use crate::porcelain::commit::prepare_commit_bytes;
@@ -1554,10 +1555,11 @@ fn transplant_tree_across_parent_move(
         WhitespaceMergeOptions::default(),
         None,
         TreeMergeConflictPresentation::default(),
+        DirectoryRenameMode::from_repo(repo).map_err(library_err)?,
     )
     .map_err(library_err)?;
 
-    if merge.index.has_unmerged_entries() || !merge.conflict_content.is_empty() {
+    if crate::operation::tree_merge_has_conflicts(&merge) {
         let conflicts = crate::operation::conflicts_from_tree_merge(&merge);
         if REPLAY_STOP_COMMIT.with(|c| c.get()) == Some(commit) {
             if let Some(replayed_parent) = REPLAY_STOP_PARENT.with(|p| p.get()) {

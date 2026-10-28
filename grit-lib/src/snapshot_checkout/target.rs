@@ -26,7 +26,8 @@ use crate::merge_base::{
 };
 use crate::merge_file::MergeFavor;
 use crate::merge_trees::{
-    merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+    merge_trees_three_way, DirectoryRenameMode, TreeMergeConflictPresentation,
+    WhitespaceMergeOptions,
 };
 use crate::objects::{parse_commit, ObjectId, ObjectKind};
 use crate::repo::Repository;
@@ -404,15 +405,12 @@ pub fn integrate(
             WhitespaceMergeOptions::default(),
             None,
             TreeMergeConflictPresentation::default(),
+            DirectoryRenameMode::from_repo(repo)?,
         )?;
-        let mut conflicts: Vec<String> = merged
-            .index
-            .entries()
-            .iter()
-            .filter(|e| e.stage() != 0)
-            .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+        let conflicts: Vec<String> = crate::operation::conflicts_from_tree_merge(&merged)
+            .into_iter()
+            .map(|c| c.path)
             .collect();
-        conflicts.dedup();
         if !conflicts.is_empty() {
             return Ok(Err(TargetRefusal::Conflict {
                 branch: name.to_owned(),

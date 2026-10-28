@@ -716,6 +716,9 @@ fn kind_label(kind: &ConflictKind) -> &'static str {
         ConflictKind::DeletedByUs => "deleted by us",
         ConflictKind::DeletedByThem => "deleted by them",
         ConflictKind::RenameRename(_) => "renamed differently",
+        ConflictKind::DirectoryRenameMoved(_) => "moved with its directory",
+        ConflictKind::DirectoryRenameSplit => "directory split up",
+        ConflictKind::DirectoryRenameBlocked(_) => "directory move blocked",
     }
 }
 

@@ -36,7 +36,8 @@ use crate::ident::Signature;
 use crate::index::MODE_EXECUTABLE;
 use crate::merge_file::MergeFavor;
 use crate::merge_trees::{
-    merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+    merge_trees_three_way, DirectoryRenameMode, TreeMergeConflictPresentation,
+    WhitespaceMergeOptions,
 };
 use crate::objects::{parse_tree, CommitData, ObjectId, ObjectKind};
 use crate::odb::Odb;
@@ -1372,6 +1373,7 @@ fn merge_stash_index_trees(
             label_base: "Stash base",
             ..TreeMergeConflictPresentation::default()
         },
+        DirectoryRenameMode::Off,
     )?;
     if output.index.entries.iter().any(|entry| entry.stage() != 0) {
         return Err(Error::StashIndexConflict);

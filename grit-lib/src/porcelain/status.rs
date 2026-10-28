@@ -269,7 +269,8 @@ pub struct StatusModel {
     pub conflicts: Vec<String>,
     /// Unmerged paths with a [`ConflictKind`] derived from index stages 1–3.
     ///
-    /// Never [`ConflictKind::RenameRename`]: the index does not record rename pairings.
+    /// Never [`ConflictKind::RenameRename`] or a directory rename kind: the index does not
+    /// record rename pairings.
     pub conflict_details: Vec<Conflict>,
     /// Paused operation and suggested follow-up steps, when any apply.
     pub operation: Option<Operation>,
@@ -2769,7 +2770,13 @@ fn porcelain_v2_unmerged_xy(stagemask: u8) -> (char, char) {
         Some(ConflictKind::AddedByThem) => "UA",
         Some(ConflictKind::DeletedByUs) => "DU",
         Some(ConflictKind::BothAdded) => "AA",
-        Some(ConflictKind::BothModified | ConflictKind::RenameRename(_)) => "UU",
+        Some(
+            ConflictKind::BothModified
+            | ConflictKind::RenameRename(_)
+            | ConflictKind::DirectoryRenameMoved(_)
+            | ConflictKind::DirectoryRenameSplit
+            | ConflictKind::DirectoryRenameBlocked(_),
+        ) => "UU",
         None => {
             debug_assert!(false, "unexpected unmerged stagemask {stagemask:#x}");
             "UU"

@@ -902,6 +902,9 @@ mod merge_continue_git_compat;
 #[path = "merge_diff_line_coverage.rs"]
 mod merge_diff_line_coverage;
 #[cfg(feature = "full-tests")]
+#[path = "merge_directory_renames_git_compat.rs"]
+mod merge_directory_renames_git_compat;
+#[cfg(feature = "full-tests")]
 #[path = "merge_dirty_unrelated_git_compat.rs"]
 mod merge_dirty_unrelated_git_compat;
 #[cfg(feature = "full-tests")]

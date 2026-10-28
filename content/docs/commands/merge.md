@@ -51,6 +51,27 @@ Local edits are allowed when they only touch paths the merge does not change, or
 
 On an interactive terminal (human output, not `--json` or `--markdown`), a live **Checkout** line on stderr counts the files the merge writes, and `--continue` shows a **Staging** line while it auto-stages; nothing is drawn when stderr is not a TTY.
 
+### Directory renames
+
+When one branch moved every file out of a directory (renaming `a/` to `b/`) and the other branch added a file inside the old directory, the new file most likely belongs in `b/`. Grit detects this the way Git does: the directory must be gone on the renaming side, and its destination is the directory that received the most of its files. The `merge.directoryRenames` config decides what happens:
+
+- **`conflict`** (default, as in Git) — The file is moved to `b/` and left unmerged so you can confirm the location. It's in the work tree at the new path; stage it there (or move it back) and run `grit merge --continue`.
+- **`true`** — The file is moved to `b/` and the merge is clean.
+- **`false`** — The file stays in `a/`.
+
+Any other value is an error. With `conflict` or `true`, two cases still stop the merge without moving anything, and leave nothing unmerged: a directory whose files went to several directories with no clear winner (`directory_rename_split`), and a new file whose destination already exists on the branch that added it, or would be shared with another new file (`directory_rename_blocked`). When only the base or the renaming branch has a file at the destination, the moved file is merged with it there, as Git does; that can stop with an ordinary conflict at the new path, such as `deleted_by_us` when the renaming branch deleted that file. Review the placement, then run `grit merge --continue`. [`grit pick`](../pick/), [`grit revert`](../revert/), [`grit rebase`](../rebase/) and [`grit pull`](../pull/) follow the same setting.
+
+```console
+$ grit merge theirs
+CONFLICT (directory_rename_moved): a/new was added to a directory the other side renamed, so it now sits at b/new; stage it there or move it back
+
+Automatic merge failed; fix conflicts and run `grit merge --continue`, or run `grit merge --abort`.
+
+$ grit add b/new
+$ grit merge --continue
+Merged theirs into the current branch (06e1c12)
+```
+
 ## Options
 
 | Option | Description |
@@ -202,7 +223,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `oid` | string or null | Resulting commit after a real merge or fast-forward; for `--check` with `result: clean`, the predicted merge tree OID (the id `git merge-tree --write-tree` prints; `--check` does not store that tree, so it is not in the object database). Omitted for `--dry-run` when a new merge commit would be created. |
 | `parents` | array or null | For `--dry-run` with `result: merged`, the two parent commit ids of the merge commit that would be recorded. |
 | `change_id` | string or null | Stored `change-id` on `oid` when present (merge commit or fast-forward tip). |
-| `conflicts` | array or null | When `result` is `conflicts`, each item has `path`, a [conflict `kind`](../status/#conflict-kinds) (the same names `grit status` uses, plus `rename_rename`), and optional `summary` text for `deleted_by_us`, `deleted_by_them` and `rename_rename` conflicts. A `rename_rename` conflict lists all three paths (the old name and both new names); the `summary` is on the old name's item. |
+| `conflicts` | array or null | When `result` is `conflicts`, each item has `path`, a [conflict `kind`](../status/#conflict-kinds) (the same names `grit status` uses, plus `rename_rename` and the `directory_rename_*` kinds), and optional `summary` text for `deleted_by_us`, `deleted_by_them`, `rename_rename` and directory rename conflicts. A `rename_rename` conflict lists all three paths (the old name and both new names); the `summary` is on the old name's item. |
 | `next_steps` | array or null | Ordered follow-up commands when `result` is `conflicts` (for example `grit diff`, `grit add .`), or suggested commands when `result` is `squashed` or `stopped`. |
 | `alternatives` | array or null | Mutually exclusive options such as `grit merge --abort` (not part of the ordered sequence). |
 

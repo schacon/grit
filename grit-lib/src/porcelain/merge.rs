@@ -48,7 +48,7 @@ use crate::merge_base::{
 use crate::merge_file::{ConflictStyle, MergeFavor};
 use crate::merge_trees::{
     apply_tree_merge_output_to_index, materialized_merge_result_tree, merge_trees_three_way,
-    TreeMergeConflictPresentation, TreeMergeOutput, WhitespaceMergeOptions,
+    DirectoryRenameMode, TreeMergeConflictPresentation, TreeMergeOutput, WhitespaceMergeOptions,
 };
 use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
 use crate::operation::{conflicts_from_tree_merge, tree_merge_has_conflicts, Conflict};
@@ -290,6 +290,10 @@ pub struct MergeOptions {
     pub allow_unrelated: bool,
     /// Whether to run `post-merge` after a fast-forward, merge commit or squash.
     pub hooks: PostOperationHooks,
+    /// Whether files the merged branch added inside a directory the current branch renamed
+    /// (or the reverse) follow the rename; when unset, `merge.directoryRenames` decides
+    /// ([`DirectoryRenameMode::from_repo`]).
+    pub directory_renames: Option<DirectoryRenameMode>,
 }
 
 /// Resolve conflict marker style: explicit option, then `merge.conflictStyle`, then `merge`.
@@ -299,6 +303,15 @@ pub fn resolve_merge_conflict_style(
     override_style: Option<ConflictStyle>,
 ) -> ConflictStyle {
     override_style.unwrap_or_else(|| conflict_style_from_config(repo))
+}
+
+/// Directory rename handling: explicit option, then `merge.directoryRenames`, then
+/// [`DirectoryRenameMode::Conflict`].
+fn resolve_directory_renames(
+    repo: &Repository,
+    override_mode: Option<DirectoryRenameMode>,
+) -> Result<DirectoryRenameMode> {
+    override_mode.map_or_else(|| DirectoryRenameMode::from_repo(repo), Ok)
 }
 
 /// Options for [`integrate_branch_with_options`] (pull fast-forward toggle).
@@ -337,6 +350,9 @@ pub struct MergePredictionOptions {
     pub ours_label: String,
     /// Label for the incoming side in conflict-marker metadata (presentation only).
     pub theirs_label: String,
+    /// Whether files one side added inside a directory the other side renamed follow the
+    /// rename; when unset, `merge.directoryRenames` decides ([`DirectoryRenameMode::from_repo`]).
+    pub directory_renames: Option<DirectoryRenameMode>,
 }
 
 impl Default for MergePredictionOptions {
@@ -348,6 +364,7 @@ impl Default for MergePredictionOptions {
             whitespace: WhitespaceMergeOptions::default(),
             ours_label: "HEAD".into(),
             theirs_label: "branch".into(),
+            directory_renames: None,
         }
     }
 }
@@ -556,6 +573,7 @@ fn merge_commit_trees(
         options.whitespace,
         None,
         presentation,
+        resolve_directory_renames(repo, options.directory_renames)?,
     )
 }
 
@@ -622,6 +640,7 @@ pub fn plan_branch_merge(
         favor: options.favor,
         whitespace: WhitespaceMergeOptions::default(),
         theirs_label: label.to_owned(),
+        directory_renames: options.directory_renames,
         ..MergePredictionOptions::default()
     };
     match predict_merge(repo, into_oid, other_oid, &prediction_opts)? {
@@ -972,6 +991,7 @@ fn integrate_branch_without_hooks(
         WhitespaceMergeOptions::default(),
         None,
         presentation,
+        resolve_directory_renames(repo, options.directory_renames)?,
     )?;
     poll_cancel(progress, cancel)?;
 
@@ -1963,6 +1983,7 @@ mod integrate_tests {
             result_tree: crate::diff::zero_oid(),
             touched_paths: HashSet::new(),
             rename_conflicts: Vec::new(),
+            directory_rename_conflicts: Vec::new(),
         };
         let paths: Vec<String> = conflicts_from_tree_merge(&merged)
             .into_iter()

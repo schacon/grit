@@ -523,6 +523,7 @@ fn run_fetch_merge_notes_no_crosstalk_once(iter: usize) {
             WhitespaceMergeOptions::default(),
             None,
             TreeMergeConflictPresentation::default(),
+            grit_lib::diff::merge_trees::DirectoryRenameMode::default(),
         )
         .expect("merge");
         let path = "shared.txt";

@@ -187,6 +187,7 @@ fn bench_merge_trees_three_way_2000(c: &mut Criterion) {
                     grit_lib::diff::merge_trees::WhitespaceMergeOptions::default(),
                     None,
                     grit_lib::diff::merge_trees::TreeMergeConflictPresentation::default(),
+                    grit_lib::diff::merge_trees::DirectoryRenameMode::default(),
                 )
                 .expect("merge"),
             );

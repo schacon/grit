@@ -640,6 +640,7 @@ fn cherry_pick_tree_remap_matches_git() {
             grit_lib::diff::merge_trees::WhitespaceMergeOptions::default(),
             None,
             presentation,
+            grit_lib::diff::merge_trees::DirectoryRenameMode::default(),
         )
         .unwrap();
         grit_merge_result_tree(&grit, &merged).unwrap().to_hex()

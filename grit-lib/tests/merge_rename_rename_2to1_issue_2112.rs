@@ -118,6 +118,7 @@ fn assert_tree_merge_matches_git(fx: &Fixture, context: &str) -> (ObjectId, Obje
         Default::default(),
         None,
         labels.presentation(),
+        grit_lib::diff::merge_trees::DirectoryRenameMode::default(),
     )
     .expect("merge trees");
     let oracle = git_merge_tree_oracle(

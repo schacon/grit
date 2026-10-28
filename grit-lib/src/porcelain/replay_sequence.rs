@@ -18,7 +18,7 @@ use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::merge_file::{ConflictStyle, MergeFavor};
 use crate::merge_trees::{
-    merge_trees_three_way, merge_trees_three_way_cached, MergeTreeCache,
+    merge_trees_three_way, merge_trees_three_way_cached, DirectoryRenameMode, MergeTreeCache,
     TreeMergeConflictPresentation, WhitespaceMergeOptions,
 };
 use crate::objects::{parse_commit, CommitData, ObjectId, ObjectKind};
@@ -775,6 +775,7 @@ fn predict_sequence(
 ) -> Result<SequencePrediction> {
     let mut head_commit = head_oid;
     let mut head_tree = commit_tree(repo, &head_oid)?;
+    let directory_renames = DirectoryRenameMode::from_repo(repo)?;
     for entry in todo {
         match predict_one_step(
             repo,
@@ -783,6 +784,7 @@ fn predict_sequence(
             direction,
             opts,
             entry,
+            directory_renames,
         )? {
             PredictStepResult::Advanced => {}
             PredictStepResult::DroppedEmpty => dropped.push(entry.oid),
@@ -857,6 +859,7 @@ fn predict_one_step(
     direction: ReplayDirection,
     opts: &ReplayOptions,
     entry: &TodoEntry,
+    directory_renames: DirectoryRenameMode,
 ) -> Result<PredictStepResult> {
     let source_oid = entry.oid;
     if direction == ReplayDirection::Pick && source_oid == *head_commit {
@@ -909,6 +912,7 @@ fn predict_one_step(
         WhitespaceMergeOptions::default(),
         None,
         presentation,
+        directory_renames,
     )?;
 
     if crate::operation::tree_merge_has_conflicts(&merged) {
@@ -1028,6 +1032,7 @@ fn apply_one_step(
         WhitespaceMergeOptions::default(),
         None,
         presentation,
+        DirectoryRenameMode::from_config(config)?,
     )?;
 
     if crate::operation::tree_merge_has_conflicts(&merged) {

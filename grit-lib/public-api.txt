@@ -3743,6 +3743,87 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::merge_file::MergeO
 pub fn grit_lib::diff::merge_file::is_binary(&[u8]) -> bool
 pub fn grit_lib::diff::merge_file::merge(&grit_lib::diff::merge_file::MergeInput<'_>) -> grit_lib::error::Result<grit_lib::diff::merge_file::MergeOutput>
 pub mod grit_lib::diff::merge_trees
+pub enum grit_lib::diff::merge_trees::DirectoryRenameConflict
+pub grit_lib::diff::merge_trees::DirectoryRenameConflict::Blocked
+pub grit_lib::diff::merge_trees::DirectoryRenameConflict::Blocked::existing: bool
+pub grit_lib::diff::merge_trees::DirectoryRenameConflict::Blocked::path: alloc::vec::Vec<u8>
+pub grit_lib::diff::merge_trees::DirectoryRenameConflict::Blocked::sources: alloc::vec::Vec<alloc::vec::Vec<u8>>
+pub grit_lib::diff::merge_trees::DirectoryRenameConflict::Moved
+pub grit_lib::diff::merge_trees::DirectoryRenameConflict::Moved::added_by: grit_lib::diff::merge_trees::MergeSide
+pub grit_lib::diff::merge_trees::DirectoryRenameConflict::Moved::from: alloc::vec::Vec<u8>
+pub grit_lib::diff::merge_trees::DirectoryRenameConflict::Moved::to: alloc::vec::Vec<u8>
+pub grit_lib::diff::merge_trees::DirectoryRenameConflict::Split
+pub grit_lib::diff::merge_trees::DirectoryRenameConflict::Split::dir: alloc::vec::Vec<u8>
+pub grit_lib::diff::merge_trees::DirectoryRenameConflict::Split::renamed_by: grit_lib::diff::merge_trees::MergeSide
+impl grit_lib::diff::merge_trees::DirectoryRenameConflict
+pub fn grit_lib::diff::merge_trees::DirectoryRenameConflict::path(&self) -> &[u8]
+impl core::clone::Clone for grit_lib::diff::merge_trees::DirectoryRenameConflict
+pub fn grit_lib::diff::merge_trees::DirectoryRenameConflict::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::diff::merge_trees::DirectoryRenameConflict
+impl core::cmp::PartialEq for grit_lib::diff::merge_trees::DirectoryRenameConflict
+pub fn grit_lib::diff::merge_trees::DirectoryRenameConflict::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::diff::merge_trees::DirectoryRenameConflict
+pub fn grit_lib::diff::merge_trees::DirectoryRenameConflict::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::diff::merge_trees::DirectoryRenameConflict
+impl core::marker::Freeze for grit_lib::diff::merge_trees::DirectoryRenameConflict
+impl core::marker::Send for grit_lib::diff::merge_trees::DirectoryRenameConflict
+impl core::marker::Sync for grit_lib::diff::merge_trees::DirectoryRenameConflict
+impl core::marker::Unpin for grit_lib::diff::merge_trees::DirectoryRenameConflict
+impl core::marker::UnsafeUnpin for grit_lib::diff::merge_trees::DirectoryRenameConflict
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::merge_trees::DirectoryRenameConflict
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::merge_trees::DirectoryRenameConflict
+pub enum grit_lib::diff::merge_trees::DirectoryRenameMode
+pub grit_lib::diff::merge_trees::DirectoryRenameMode::Apply
+pub grit_lib::diff::merge_trees::DirectoryRenameMode::Conflict
+pub grit_lib::diff::merge_trees::DirectoryRenameMode::Off
+impl grit_lib::diff::merge_trees::DirectoryRenameMode
+pub const grit_lib::diff::merge_trees::DirectoryRenameMode::CONFIG_KEY: &'static str
+pub fn grit_lib::diff::merge_trees::DirectoryRenameMode::from_config(&grit_lib::config::ConfigSet) -> core::result::Result<Self, grit_lib::error::ConfigError>
+pub fn grit_lib::diff::merge_trees::DirectoryRenameMode::from_config_value(&str) -> core::result::Result<Self, grit_lib::error::ConfigError>
+pub fn grit_lib::diff::merge_trees::DirectoryRenameMode::from_repo(&grit_lib::repo::Repository) -> grit_lib::error::Result<Self>
+impl core::clone::Clone for grit_lib::diff::merge_trees::DirectoryRenameMode
+pub fn grit_lib::diff::merge_trees::DirectoryRenameMode::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::diff::merge_trees::DirectoryRenameMode
+impl core::cmp::PartialEq for grit_lib::diff::merge_trees::DirectoryRenameMode
+pub fn grit_lib::diff::merge_trees::DirectoryRenameMode::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::diff::merge_trees::DirectoryRenameMode
+pub fn grit_lib::diff::merge_trees::DirectoryRenameMode::default() -> Self
+impl core::fmt::Debug for grit_lib::diff::merge_trees::DirectoryRenameMode
+pub fn grit_lib::diff::merge_trees::DirectoryRenameMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for grit_lib::diff::merge_trees::DirectoryRenameMode
+pub fn grit_lib::diff::merge_trees::DirectoryRenameMode::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for grit_lib::diff::merge_trees::DirectoryRenameMode
+impl core::marker::StructuralPartialEq for grit_lib::diff::merge_trees::DirectoryRenameMode
+impl core::marker::Freeze for grit_lib::diff::merge_trees::DirectoryRenameMode
+impl core::marker::Send for grit_lib::diff::merge_trees::DirectoryRenameMode
+impl core::marker::Sync for grit_lib::diff::merge_trees::DirectoryRenameMode
+impl core::marker::Unpin for grit_lib::diff::merge_trees::DirectoryRenameMode
+impl core::marker::UnsafeUnpin for grit_lib::diff::merge_trees::DirectoryRenameMode
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::merge_trees::DirectoryRenameMode
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::merge_trees::DirectoryRenameMode
+pub enum grit_lib::diff::merge_trees::MergeSide
+pub grit_lib::diff::merge_trees::MergeSide::Ours
+pub grit_lib::diff::merge_trees::MergeSide::Theirs
+impl grit_lib::diff::merge_trees::MergeSide
+pub fn grit_lib::diff::merge_trees::MergeSide::index_stage(self) -> u8
+impl core::clone::Clone for grit_lib::diff::merge_trees::MergeSide
+pub fn grit_lib::diff::merge_trees::MergeSide::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::diff::merge_trees::MergeSide
+impl core::cmp::PartialEq for grit_lib::diff::merge_trees::MergeSide
+pub fn grit_lib::diff::merge_trees::MergeSide::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::diff::merge_trees::MergeSide
+pub fn grit_lib::diff::merge_trees::MergeSide::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for grit_lib::diff::merge_trees::MergeSide
+pub fn grit_lib::diff::merge_trees::MergeSide::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for grit_lib::diff::merge_trees::MergeSide
+impl core::marker::StructuralPartialEq for grit_lib::diff::merge_trees::MergeSide
+impl core::marker::Freeze for grit_lib::diff::merge_trees::MergeSide
+impl core::marker::Send for grit_lib::diff::merge_trees::MergeSide
+impl core::marker::Sync for grit_lib::diff::merge_trees::MergeSide
+impl core::marker::Unpin for grit_lib::diff::merge_trees::MergeSide
+impl core::marker::UnsafeUnpin for grit_lib::diff::merge_trees::MergeSide
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::merge_trees::MergeSide
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::merge_trees::MergeSide
 pub enum grit_lib::diff::merge_trees::TheirsConflictLabel<'a>
 pub grit_lib::diff::merge_trees::TheirsConflictLabel::Fixed(&'a str)
 pub grit_lib::diff::merge_trees::TheirsConflictLabel::PathUtf8
@@ -3801,6 +3882,7 @@ impl<'a> core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::merge_trees
 impl<'a> core::panic::unwind_safe::UnwindSafe for grit_lib::diff::merge_trees::TreeMergeConflictPresentation<'a>
 pub struct grit_lib::diff::merge_trees::TreeMergeOutput
 pub grit_lib::diff::merge_trees::TreeMergeOutput::conflict_content: alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, grit_lib::objects::ObjectId>
+pub grit_lib::diff::merge_trees::TreeMergeOutput::directory_rename_conflicts: alloc::vec::Vec<grit_lib::diff::merge_trees::DirectoryRenameConflict>
 pub grit_lib::diff::merge_trees::TreeMergeOutput::index: grit_lib::index::Index
 pub grit_lib::diff::merge_trees::TreeMergeOutput::rename_conflicts: alloc::vec::Vec<grit_lib::diff::merge_trees::RenameRenameConflict>
 pub grit_lib::diff::merge_trees::TreeMergeOutput::result_tree: grit_lib::objects::ObjectId
@@ -3837,7 +3919,7 @@ pub fn grit_lib::diff::merge_trees::apply_tree_merge_output_to_index(&mut grit_l
 pub fn grit_lib::diff::merge_trees::apply_tree_merge_output_to_worktree_index(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &grit_lib::diff::merge_trees::TreeMergeOutput) -> grit_lib::error::Result<()>
 pub fn grit_lib::diff::merge_trees::index_tree_oid_matches_head(&grit_lib::objects::odb::Odb, &grit_lib::index::Index, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
 pub fn grit_lib::diff::merge_trees::materialized_merge_result_tree(&grit_lib::objects::odb::Odb, &grit_lib::diff::merge_trees::TreeMergeOutput) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
-pub fn grit_lib::diff::merge_trees::merge_trees_three_way(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, grit_lib::diff::merge_file::MergeFavor, grit_lib::diff::merge_trees::WhitespaceMergeOptions, core::option::Option<&str>, grit_lib::diff::merge_trees::TreeMergeConflictPresentation<'_>) -> grit_lib::error::Result<grit_lib::diff::merge_trees::TreeMergeOutput>
+pub fn grit_lib::diff::merge_trees::merge_trees_three_way(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, grit_lib::diff::merge_file::MergeFavor, grit_lib::diff::merge_trees::WhitespaceMergeOptions, core::option::Option<&str>, grit_lib::diff::merge_trees::TreeMergeConflictPresentation<'_>, grit_lib::diff::merge_trees::DirectoryRenameMode) -> grit_lib::error::Result<grit_lib::diff::merge_trees::TreeMergeOutput>
 pub fn grit_lib::diff::merge_trees::refresh_tree_merge_index_stat_cache(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &grit_lib::diff::merge_trees::TreeMergeOutput) -> grit_lib::error::Result<()>
 pub mod grit_lib::diff::patch_ids
 pub enum grit_lib::diff::patch_ids::PatchIdMode
@@ -5455,6 +5537,8 @@ pub grit_lib::error::ConfigError::ConfigFileLocked::path: alloc::string::String
 pub grit_lib::error::ConfigError::IncludeDepthExceeded
 pub grit_lib::error::ConfigError::IncludeDepthExceeded::depth: usize
 pub grit_lib::error::ConfigError::IncludeDepthExceeded::limit: usize
+pub grit_lib::error::ConfigError::InvalidDirectoryRenames
+pub grit_lib::error::ConfigError::InvalidDirectoryRenames::value: alloc::string::String
 pub grit_lib::error::ConfigError::InvalidUntrackedFilesMode
 pub grit_lib::error::ConfigError::InvalidUntrackedFilesMode::value: alloc::string::String
 pub grit_lib::error::ConfigError::KeyNotSet
@@ -12275,6 +12359,9 @@ pub grit_lib::operation::ConflictKind::BothDeleted
 pub grit_lib::operation::ConflictKind::BothModified
 pub grit_lib::operation::ConflictKind::DeletedByThem
 pub grit_lib::operation::ConflictKind::DeletedByUs
+pub grit_lib::operation::ConflictKind::DirectoryRenameBlocked(alloc::boxed::Box<grit_lib::operation::BlockedMove>)
+pub grit_lib::operation::ConflictKind::DirectoryRenameMoved(alloc::boxed::Box<grit_lib::operation::MovedPath>)
+pub grit_lib::operation::ConflictKind::DirectoryRenameSplit
 pub grit_lib::operation::ConflictKind::RenameRename(alloc::boxed::Box<grit_lib::operation::RenamedPaths>)
 impl grit_lib::operation::ConflictKind
 pub fn grit_lib::operation::ConflictKind::as_str(&self) -> &'static str
@@ -12353,6 +12440,30 @@ impl core::marker::Unpin for grit_lib::state::NextStep
 impl core::marker::UnsafeUnpin for grit_lib::state::NextStep
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::state::NextStep
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::state::NextStep
+pub struct grit_lib::operation::BlockedMove
+pub grit_lib::operation::BlockedMove::existing: bool
+pub grit_lib::operation::BlockedMove::sources: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for grit_lib::operation::BlockedMove
+pub fn grit_lib::operation::BlockedMove::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::operation::BlockedMove
+impl core::cmp::Ord for grit_lib::operation::BlockedMove
+pub fn grit_lib::operation::BlockedMove::cmp(&self, &Self) -> core::cmp::Ordering
+impl core::cmp::PartialEq for grit_lib::operation::BlockedMove
+pub fn grit_lib::operation::BlockedMove::eq(&self, &Self) -> bool
+impl core::cmp::PartialOrd for grit_lib::operation::BlockedMove
+pub fn grit_lib::operation::BlockedMove::partial_cmp(&self, &Self) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for grit_lib::operation::BlockedMove
+pub fn grit_lib::operation::BlockedMove::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for grit_lib::operation::BlockedMove
+pub fn grit_lib::operation::BlockedMove::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for grit_lib::operation::BlockedMove
+impl core::marker::Freeze for grit_lib::operation::BlockedMove
+impl core::marker::Send for grit_lib::operation::BlockedMove
+impl core::marker::Sync for grit_lib::operation::BlockedMove
+impl core::marker::Unpin for grit_lib::operation::BlockedMove
+impl core::marker::UnsafeUnpin for grit_lib::operation::BlockedMove
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::operation::BlockedMove
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::operation::BlockedMove
 pub struct grit_lib::operation::Conflict
 pub grit_lib::operation::Conflict::kind: grit_lib::operation::ConflictKind
 pub grit_lib::operation::Conflict::path: alloc::string::String
@@ -12373,6 +12484,29 @@ impl core::marker::Unpin for grit_lib::operation::Conflict
 impl core::marker::UnsafeUnpin for grit_lib::operation::Conflict
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::operation::Conflict
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::operation::Conflict
+pub struct grit_lib::operation::MovedPath
+pub grit_lib::operation::MovedPath::original_path: alloc::string::String
+impl core::clone::Clone for grit_lib::operation::MovedPath
+pub fn grit_lib::operation::MovedPath::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::operation::MovedPath
+impl core::cmp::Ord for grit_lib::operation::MovedPath
+pub fn grit_lib::operation::MovedPath::cmp(&self, &Self) -> core::cmp::Ordering
+impl core::cmp::PartialEq for grit_lib::operation::MovedPath
+pub fn grit_lib::operation::MovedPath::eq(&self, &Self) -> bool
+impl core::cmp::PartialOrd for grit_lib::operation::MovedPath
+pub fn grit_lib::operation::MovedPath::partial_cmp(&self, &Self) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for grit_lib::operation::MovedPath
+pub fn grit_lib::operation::MovedPath::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for grit_lib::operation::MovedPath
+pub fn grit_lib::operation::MovedPath::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for grit_lib::operation::MovedPath
+impl core::marker::Freeze for grit_lib::operation::MovedPath
+impl core::marker::Send for grit_lib::operation::MovedPath
+impl core::marker::Sync for grit_lib::operation::MovedPath
+impl core::marker::Unpin for grit_lib::operation::MovedPath
+impl core::marker::UnsafeUnpin for grit_lib::operation::MovedPath
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::operation::MovedPath
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::operation::MovedPath
 pub struct grit_lib::operation::Operation
 pub grit_lib::operation::Operation::alternatives: alloc::vec::Vec<grit_lib::state::NextStep>
 pub grit_lib::operation::Operation::kind: grit_lib::state::InProgressOperation
@@ -14304,6 +14438,7 @@ pub struct grit_lib::porcelain::merge::MergeOptions
 pub grit_lib::porcelain::merge::MergeOptions::allow_unrelated: bool
 pub grit_lib::porcelain::merge::MergeOptions::commit: grit_lib::porcelain::merge::MergeCommitMode
 pub grit_lib::porcelain::merge::MergeOptions::conflict_style: core::option::Option<grit_lib::diff::merge_file::ConflictStyle>
+pub grit_lib::porcelain::merge::MergeOptions::directory_renames: core::option::Option<grit_lib::diff::merge_trees::DirectoryRenameMode>
 pub grit_lib::porcelain::merge::MergeOptions::fast_forward: grit_lib::porcelain::merge::FastForwardPolicy
 pub grit_lib::porcelain::merge::MergeOptions::favor: grit_lib::diff::merge_file::MergeFavor
 pub grit_lib::porcelain::merge::MergeOptions::hooks: grit_lib::command_runner::hooks::PostOperationHooks
@@ -14330,6 +14465,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::merge::MergeO
 pub struct grit_lib::porcelain::merge::MergePredictionOptions
 pub grit_lib::porcelain::merge::MergePredictionOptions::allow_fast_forward: bool
 pub grit_lib::porcelain::merge::MergePredictionOptions::allow_unrelated_histories: bool
+pub grit_lib::porcelain::merge::MergePredictionOptions::directory_renames: core::option::Option<grit_lib::diff::merge_trees::DirectoryRenameMode>
 pub grit_lib::porcelain::merge::MergePredictionOptions::favor: grit_lib::diff::merge_file::MergeFavor
 pub grit_lib::porcelain::merge::MergePredictionOptions::ours_label: alloc::string::String
 pub grit_lib::porcelain::merge::MergePredictionOptions::theirs_label: alloc::string::String

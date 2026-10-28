@@ -107,6 +107,25 @@ pub fn conflict_json(conflict: &Conflict, merge_label: Option<&str>) -> Conflict
                 )
             })
         }
+        ConflictKind::DirectoryRenameMoved(moved) => Some(format!(
+            "{original} was added to a directory the other side renamed, so it now sits at {path}; stage it there or move it back",
+            original = moved.original_path
+        )),
+        ConflictKind::DirectoryRenameSplit => Some(format!(
+            "{path}/ was split across several directories with no clear destination; files added to it stay in {path}/"
+        )),
+        ConflictKind::DirectoryRenameBlocked(blocked) => {
+            let sources = blocked.sources.join(", ");
+            Some(if blocked.existing {
+                format!(
+                    "{sources} would follow a directory rename to {path}, but that path is taken; left where it was added"
+                )
+            } else {
+                format!(
+                    "{sources} would all follow directory renames to {path}; each was left where it was added"
+                )
+            })
+        }
         ConflictKind::DeletedByUs => merge_label.map(|label| {
             format!(
                 "{path} deleted on the current branch and modified in {label}; {label}'s version is in the work tree"
