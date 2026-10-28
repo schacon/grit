@@ -5,12 +5,13 @@
 //! smart HTTP without a separate negotiation implementation.
 
 use std::io::{self, Cursor, Read, Write};
-use std::sync::mpsc::{Receiver, SyncSender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::Arc;
-use std::thread::JoinHandle;
+use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::objects::ObjectId;
+use crate::progress::{Cancel, NeverCancel};
 use crate::transport::http::HttpClient;
 use crate::transport::rpc_channel::RpcChannel;
 use crate::transport::{Connection, Service};
@@ -79,10 +80,76 @@ impl Read for ChunkReader {
     }
 }
 
+/// How often a wait for the receive-pack request checks for a cancel.
+const CANCEL_POLL: Duration = Duration::from_millis(20);
+
+/// A receive-pack response read to the end, replaying the error that ended it
+/// (a reset after the report, say) once its bytes are consumed.
+struct ReadResponse {
+    bytes: Cursor<Vec<u8>>,
+    error: Option<io::Error>,
+}
+
+impl ReadResponse {
+    fn read_from(mut reader: Box<dyn Read + Send>) -> Self {
+        let mut bytes = Vec::new();
+        let error = reader.read_to_end(&mut bytes).err();
+        Self {
+            bytes: Cursor::new(bytes),
+            error,
+        }
+    }
+}
+
+impl Read for ReadResponse {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self.bytes.read(buf)? {
+            0 if !buf.is_empty() => self.error.take().map_or(Ok(0), Err),
+            n => Ok(n),
+        }
+    }
+}
+
+/// A receive-pack request running on its own thread, which also reads the
+/// (small) report so waiting for it can be interrupted.
+struct PendingResponse(Receiver<Result<ReadResponse>>);
+
+impl PendingResponse {
+    fn spawn<F>(request: F) -> io::Result<Self>
+    where
+        F: FnOnce() -> Result<Box<dyn Read + Send>> + Send + 'static,
+    {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("grit-http-post".to_owned())
+            .spawn(move || {
+                let _ = tx.send(request().map(ReadResponse::read_from));
+            })?;
+        Ok(Self(rx))
+    }
+
+    /// The response, or [`Error::Cancelled`] once `cancel` fires first. A cancelled
+    /// request is left to finish on its own thread.
+    fn wait(&self, cancel: &dyn Cancel) -> Result<ReadResponse> {
+        loop {
+            match self.0.recv_timeout(CANCEL_POLL) {
+                Ok(response) => return response,
+                Err(RecvTimeoutError::Timeout) if cancel.is_cancelled() => {
+                    return Err(Error::Cancelled)
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(Error::Message("HTTP upload thread panicked".to_owned()))
+                }
+            }
+        }
+    }
+}
+
 /// A receive-pack POST running on its own thread while the body is written.
 struct StreamingPost {
     chunks: SyncSender<BodyChunk>,
-    request: JoinHandle<Result<Box<dyn Read + Send>>>,
+    response: PendingResponse,
 }
 
 impl StreamingPost {
@@ -93,38 +160,56 @@ impl StreamingPost {
         accept: String,
     ) -> io::Result<Self> {
         let (chunks, rx) = std::sync::mpsc::sync_channel(STREAM_QUEUE);
-        let request = std::thread::Builder::new()
-            .name("grit-http-post".to_owned())
-            .spawn(move || {
-                let mut body = ChunkReader {
-                    chunks: rx,
-                    chunk: Vec::new(),
-                    pos: 0,
-                };
-                client.post_streaming(&url, &content_type, &accept, &mut body, None)
-            })?;
-        Ok(Self { chunks, request })
+        let response = PendingResponse::spawn(move || {
+            let mut body = ChunkReader {
+                chunks: rx,
+                chunk: Vec::new(),
+                pos: 0,
+            };
+            client.post_streaming(&url, &content_type, &accept, &mut body, None)
+        })?;
+        Ok(Self { chunks, response })
     }
 
     /// Queue `chunk`; when the request already ended, its error.
     fn send(self, chunk: Vec<u8>) -> std::result::Result<Self, Error> {
         match self.chunks.send(BodyChunk::Data(chunk)) {
             Ok(()) => Ok(self),
-            Err(_) => Err(match self.finish() {
-                Err(e) => e,
-                Ok(_) => Error::Message("server answered before the request body was sent".into()),
-            }),
+            Err(_) => Err(self.ended_early()),
         }
     }
 
-    /// End the body and wait for the response.
-    fn finish(self) -> Result<Box<dyn Read + Send>> {
-        // A request that already ended has dropped the receiver; its result
-        // says why.
-        let _ = self.chunks.send(BodyChunk::End);
-        self.request
-            .join()
-            .unwrap_or_else(|_| Err(Error::Message("HTTP upload thread panicked".to_owned())))
+    /// Queue `item` while the upload thread makes room, unless `cancel` fires first.
+    fn send_until(&self, mut item: BodyChunk, cancel: &dyn Cancel) -> Result<()> {
+        loop {
+            match self.chunks.try_send(item) {
+                Ok(()) => return Ok(()),
+                Err(TrySendError::Full(back)) => {
+                    if cancel.is_cancelled() {
+                        return Err(Error::Cancelled);
+                    }
+                    item = back;
+                    std::thread::sleep(CANCEL_POLL);
+                }
+                Err(TrySendError::Disconnected(_)) => return Err(self.ended_early()),
+            }
+        }
+    }
+
+    /// Why a request whose body could not be queued ended.
+    fn ended_early(&self) -> Error {
+        match self.response.wait(&NeverCancel) {
+            Err(e) => e,
+            Ok(_) => Error::Message("server answered before the request body was sent".into()),
+        }
+    }
+
+    /// Queue the last `chunk`, end the body and wait for the response. When
+    /// `cancel` fires before the body ended, dropping `self` abandons it.
+    fn finish(self, chunk: Vec<u8>, cancel: &dyn Cancel) -> Result<ReadResponse> {
+        self.send_until(BodyChunk::Data(chunk), cancel)?;
+        self.send_until(BodyChunk::End, cancel)?;
+        self.response.wait(cancel)
     }
 }
 
@@ -264,27 +349,32 @@ impl<C: HttpClient + 'static> StatelessHttpConnection<C> {
         Ok(())
     }
 
-    fn post_receive_pack(&mut self) -> Result<()> {
+    /// Send the receive-pack request (or the rest of its streamed body) and wait
+    /// for the report, giving up once `cancel` fires.
+    fn post_receive_pack(&mut self, cancel: &dyn Cancel) -> Result<()> {
         if self.recv_posted {
             return Ok(());
         }
         self.recv_posted = true;
+        let body = std::mem::take(&mut self.recv_body);
         let response = match self.recv_stream.take() {
-            Some(stream) => {
-                let body = std::mem::take(&mut self.recv_body);
-                stream.send(body).and_then(StreamingPost::finish)
+            Some(stream) => stream.finish(body, cancel),
+            None => {
+                let client = Arc::clone(&self.client);
+                let (url, content_type, accept) = (
+                    self.post_url.clone(),
+                    self.content_type.clone(),
+                    self.accept.clone(),
+                );
+                PendingResponse::spawn(move || {
+                    client.post_into_reader(&url, &content_type, &accept, &body, None)
+                })
+                .map_err(Error::Io)
+                .and_then(|pending| pending.wait(cancel))
             }
-            None => self.client.post_into_reader(
-                &self.post_url,
-                &self.content_type,
-                &self.accept,
-                &self.recv_body,
-                None,
-            ),
         };
-        self.response = Some(response.inspect_err(|e| {
-            self.set_transport_err(e);
-        })?);
+        let response = response.inspect_err(|e| self.set_transport_err(e))?;
+        self.response = Some(Box::new(response));
         Ok(())
     }
 
@@ -342,7 +432,7 @@ impl<C: HttpClient + 'static> StatelessHttpConnection<C> {
 
     fn ensure_response_for_read(&mut self) -> Result<()> {
         if self.service == Service::ReceivePack && !self.recv_posted {
-            self.post_receive_pack()?;
+            self.post_receive_pack(&NeverCancel)?;
         }
         Ok(())
     }
@@ -438,10 +528,17 @@ impl<C: HttpClient + 'static> Connection for StatelessHttpConnection<C> {
 
     fn finish_send(&mut self) {
         if self.service == Service::ReceivePack && !self.recv_posted {
-            if let Err(e) = self.post_receive_pack() {
+            if let Err(e) = self.post_receive_pack(&NeverCancel) {
                 self.set_transport_err(&e);
             }
         }
+    }
+
+    fn wait_for_response(&mut self, cancel: &dyn Cancel) -> Result<()> {
+        if self.service == Service::ReceivePack {
+            self.post_receive_pack(cancel)?;
+        }
+        Ok(())
     }
 }
 

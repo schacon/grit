@@ -1,21 +1,30 @@
-//! Cancelling a push: a local (`file://`) push stops on the caller's [`Cancel`]
-//! while the pack is built or indexed, leaves the remote without new refs or
-//! stray files, and a retry still lands the push.
+//! Cancelling a push: a local (`file://`) push and a smart-HTTP push stop on the
+//! caller's [`Cancel`] while the pack is built, streamed or waited on, leave the
+//! remote without new refs or stray files, and a retry still lands the push.
 //!
-//! Repositories are built with the library only.
+//! Repositories are built with the library only; the smart-HTTP server is an
+//! in-process [`HttpClient`] over [`receive_pack`].
 
 use std::collections::BTreeSet;
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::config::ConfigSet;
+use grit_lib::error::{Error, Result};
 use grit_lib::objects::{parse_commit, serialize_tree, ObjectId, ObjectKind, TreeEntry};
 use grit_lib::progress::{Cancel, FlagCancel, NeverCancel};
 use grit_lib::refs::resolve_ref;
 use grit_lib::remote::fetch::NoProgress;
+use grit_lib::remote::pkt_line;
+use grit_lib::remote::push::push_http;
 use grit_lib::remote::push_report::PushRefStatus;
+use grit_lib::remote::serve::{receive_pack, ReceivePolicy, ServeOptions};
 use grit_lib::remote::transfer::{PushOptions, PushRefSpec};
+use grit_lib::remote::transport::http::HttpClient;
 use grit_lib::remote::Remote;
 use grit_lib::repo::{InitOptions, Repository};
 
@@ -289,4 +298,237 @@ fn local_push_returns_promptly_when_cancelled_from_another_thread() {
         returned.saturating_duration_since(flipped)
     );
     assert_eq!(remote_main(&remote_dir), None);
+}
+
+/// A smart-HTTP receive-pack endpoint served in-process.
+struct InProcessServer {
+    repo_dir: PathBuf,
+    /// Pause between reads of a streamed body, like a server indexing as it reads.
+    read_pause: Duration,
+    /// Streamed body bytes read so far.
+    body_read: Arc<AtomicUsize>,
+    /// When set, a complete request waits here before it is served.
+    hold: Mutex<Option<mpsc::Receiver<()>>>,
+    /// Set once a request is waiting at `hold`.
+    held: Arc<AtomicBool>,
+    /// How each streamed body ended: its length, or the read error.
+    body_end: Mutex<Option<mpsc::Sender<std::io::Result<usize>>>>,
+}
+
+impl InProcessServer {
+    fn new(repo_dir: &Path) -> Self {
+        Self {
+            repo_dir: repo_dir.to_path_buf(),
+            read_pause: Duration::ZERO,
+            body_read: Arc::new(AtomicUsize::new(0)),
+            hold: Mutex::new(None),
+            held: Arc::new(AtomicBool::new(false)),
+            body_end: Mutex::new(None),
+        }
+    }
+
+    fn repo(&self) -> Result<Repository> {
+        Repository::open(&self.repo_dir, &RepositoryOptions::empty())
+    }
+
+    fn serve(&self, body: &[u8]) -> Result<Vec<u8>> {
+        let probe = body == b"0000";
+        let hold = (!probe)
+            .then(|| self.hold.lock().unwrap_or_else(|e| e.into_inner()).take())
+            .flatten();
+        if let Some(hold) = hold {
+            self.held.store(true, Ordering::SeqCst);
+            let _ = hold.recv();
+        }
+        let mut out = Vec::new();
+        let opts = ServeOptions {
+            stateless_rpc: true,
+            ..Default::default()
+        };
+        receive_pack(
+            &self.repo()?,
+            &mut Cursor::new(body),
+            &mut out,
+            &opts,
+            &ReceivePolicy::from_config(&ConfigSet::new()),
+        )
+        .map_err(|e| Error::Message(e.to_string()))?;
+        Ok(out)
+    }
+}
+
+impl HttpClient for InProcessServer {
+    fn get(&self, _url: &str, _git_protocol: Option<&str>) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        pkt_line::write_line_to_vec(&mut out, "# service=git-receive-pack")?;
+        out.extend_from_slice(b"0000");
+        let opts = ServeOptions {
+            stateless_rpc: true,
+            advertise_refs: true,
+            ..Default::default()
+        };
+        receive_pack(
+            &self.repo()?,
+            &mut std::io::empty(),
+            &mut out,
+            &opts,
+            &ReceivePolicy::from_config(&ConfigSet::new()),
+        )
+        .map_err(|e| Error::Message(e.to_string()))?;
+        Ok(out)
+    }
+
+    fn post(
+        &self,
+        _url: &str,
+        _content_type: &str,
+        _accept: &str,
+        body: &[u8],
+        _git_protocol: Option<&str>,
+    ) -> Result<Vec<u8>> {
+        self.serve(body)
+    }
+
+    fn post_streaming(
+        &self,
+        _url: &str,
+        _content_type: &str,
+        _accept: &str,
+        body: &mut dyn Read,
+        _git_protocol: Option<&str>,
+    ) -> Result<Box<dyn Read + Send>> {
+        let mut got = Vec::new();
+        let mut buf = vec![0u8; 64 * 1024];
+        let end = loop {
+            match body.read(&mut buf) {
+                Ok(0) => break Ok(got.len()),
+                Ok(n) => {
+                    got.extend_from_slice(&buf[..n]);
+                    self.body_read.fetch_add(n, Ordering::SeqCst);
+                    std::thread::sleep(self.read_pause);
+                }
+                Err(e) => break Err(e),
+            }
+        };
+        let failed = end.is_err();
+        if let Some(tx) = self
+            .body_end
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            let _ = tx.send(end);
+        }
+        if failed {
+            return Err(Error::Message("request body did not finish".to_owned()));
+        }
+        Ok(Box::new(Cursor::new(self.serve(&got)?)))
+    }
+}
+
+/// A local repo whose push to an empty remote streams a body of several MiB.
+fn http_fixture(tmp: &Path) -> (PathBuf, ObjectId, PathBuf) {
+    let local_dir = tmp.join("local.git");
+    let local = init_bare(&local_dir);
+    let tip = build_history(&local, 40, 8, 256 * 1024);
+    let remote_dir = tmp.join("remote.git");
+    init_bare(&remote_dir);
+    (local_dir, tip, remote_dir)
+}
+
+fn push_over_http(
+    server: Arc<InProcessServer>,
+    local_dir: &Path,
+    tip: ObjectId,
+    cancel: &dyn Cancel,
+) -> Result<Vec<PushRefStatus>> {
+    push_http(
+        server,
+        local_dir,
+        "http://in-process.invalid/remote.git",
+        &[main_spec(tip)],
+        &PushOptions::default(),
+        &mut NoProgress,
+        cancel,
+    )
+    .map(|outcome| outcome.results.into_iter().map(|r| r.status).collect())
+}
+
+#[test]
+fn http_push_cancelled_mid_body_abandons_the_request_and_a_retry_lands() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (local_dir, tip, remote_dir) = http_fixture(tmp.path());
+    let (end_tx, end_rx) = mpsc::channel();
+    let mut server = InProcessServer::new(&remote_dir);
+    server.read_pause = Duration::from_millis(20);
+    server.body_end = Mutex::new(Some(end_tx));
+    let body_read = Arc::clone(&server.body_read);
+    let server = Arc::new(server);
+
+    let cancel = FlagCancel::new();
+    let flip = cancel.clone();
+    let flipper = std::thread::spawn(move || {
+        while body_read.load(Ordering::SeqCst) < 512 * 1024 {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        flip.cancel();
+        Instant::now()
+    });
+    let err = push_over_http(Arc::clone(&server), &local_dir, tip, &cancel).expect_err("cancelled");
+    let returned = Instant::now();
+    let flipped = flipper.join().expect("flipper");
+    assert!(matches!(err, Error::Cancelled), "{err:?}");
+    assert!(
+        returned.saturating_duration_since(flipped) < Duration::from_secs(2),
+        "push kept running {:?} after the cancel",
+        returned.saturating_duration_since(flipped)
+    );
+    let end = end_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the server saw the body end");
+    assert!(
+        end.is_err(),
+        "a cancelled body must not look complete: {end:?}"
+    );
+    assert_eq!(remote_main(&remote_dir), None);
+
+    let retry = Arc::new(InProcessServer::new(&remote_dir));
+    assert_eq!(
+        push_over_http(retry, &local_dir, tip, &NeverCancel).expect("retry"),
+        vec![PushRefStatus::Ok]
+    );
+    assert_eq!(remote_main(&remote_dir), Some(tip));
+}
+
+#[test]
+fn http_push_cancelled_while_the_server_is_silent_returns_at_once() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (local_dir, tip, remote_dir) = http_fixture(tmp.path());
+    let (release, hold) = mpsc::channel();
+    let server = InProcessServer::new(&remote_dir);
+    *server.hold.lock().unwrap() = Some(hold);
+    let held = Arc::clone(&server.held);
+    let server = Arc::new(server);
+
+    let cancel = FlagCancel::new();
+    let flip = cancel.clone();
+    let flipper = std::thread::spawn(move || {
+        while !held.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        flip.cancel();
+        Instant::now()
+    });
+    let err = push_over_http(Arc::clone(&server), &local_dir, tip, &cancel).expect_err("cancelled");
+    let returned = Instant::now();
+    let flipped = flipper.join().expect("flipper");
+    assert!(matches!(err, Error::Cancelled), "{err:?}");
+    assert!(
+        returned.saturating_duration_since(flipped) < Duration::from_secs(1),
+        "push waited {:?} for a silent server after the cancel",
+        returned.saturating_duration_since(flipped)
+    );
+    // The whole request was sent, so the server may still apply it once it
+    // answers; the cancelled push just stopped waiting for that answer.
+    drop(release);
 }

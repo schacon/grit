@@ -238,6 +238,7 @@ pub(crate) fn push_remote_with(
         pending: SidebandLines::new(),
     };
     poll_cancel(&mut sideband, cancel)?;
+    let stop = crate::progress::CancelSignal::new(cancel);
     use crate::net_trace::net_trace;
     net_trace!(
         opts.network_trace,
@@ -331,7 +332,7 @@ pub(crate) fn push_remote_with(
                 let mut haves: Vec<ObjectId> = adv.remote_refs.values().copied().collect();
                 haves.extend_from_slice(&adv.advertised_haves);
                 match session.write_bundle(local.odb(), &haves, &tips, threshold, |w| {
-                    pack.write_to(local, w).map(drop)
+                    pack.write_to(local, w, &stop).map(drop)
                 })? {
                     crate::push_bundle::Spooled::Bundle => true,
                     crate::push_bundle::Spooled::Small(small) => {
@@ -384,7 +385,7 @@ pub(crate) fn push_remote_with(
         let mut out = std::io::BufWriter::with_capacity(PACK_SEND_BUFFER, conn.writer());
         let sent = match spooled_pack.take() {
             Some(spooled) => spooled.copy_to(&mut out)?,
-            None => pack.write_to(local, &mut out)?.pack_bytes,
+            None => pack.write_to(local, &mut out, &stop)?.pack_bytes,
         };
         out.flush()?;
         drop(out);
@@ -420,7 +421,8 @@ pub(crate) fn push_remote_with(
     // reset the TCP connection immediately after sending a complete report-status
     // instead of shutting down cleanly. Treat that as success when the bytes we
     // already received parse as a full report for every ref we sent.
-    let raw = read_receive_pack_response(conn.reader(), &sent_refs, adv.server_sideband)?;
+    conn.wait_for_response(cancel)?;
+    let raw = read_receive_pack_response(conn.reader(), &sent_refs, adv.server_sideband, cancel)?;
     let report = if adv.server_sideband {
         demux_report_and_remote_messages(&raw, &mut sideband)?
     } else {
@@ -756,14 +758,20 @@ impl PushPack {
         Ok(Some(Self { wants, haves, opts }))
     }
 
-    /// Stream the pack to `w`.
-    fn write_to(&self, local: &Repository, w: &mut dyn Write) -> Result<PackStats> {
-        crate::pack_objects::write_pack_for_push(
+    /// Stream the pack to `w`, stopping with [`Error::Cancelled`] once `stop` fires.
+    fn write_to(
+        &self,
+        local: &Repository,
+        w: &mut dyn Write,
+        stop: &crate::progress::CancelSignal<'_>,
+    ) -> Result<PackStats> {
+        crate::pack_objects::write_pack_for_push_with_cancel(
             local.odb(),
             &self.wants,
             &self.haves,
             &self.opts,
             w,
+            stop,
         )
     }
 }
@@ -985,14 +993,24 @@ fn decide_push_wire(
 /// When the server resets the connection after sending a complete
 /// `report-status`, the accumulated bytes are returned as success so tracking
 /// refs can be updated. Incomplete buffers still surface as I/O errors.
+///
+/// `cancel` is checked before each read; it stops the read with
+/// [`Error::Cancelled`] only while the report is still incomplete.
 pub(crate) fn read_receive_pack_response(
     reader: &mut dyn Read,
     sent_refs: &[&str],
     server_sideband: bool,
+    cancel: &dyn Cancel,
 ) -> Result<Vec<u8>> {
     let mut raw = Vec::new();
     let mut buf = [0u8; 8192];
     loop {
+        if cancel.is_cancelled() {
+            if receive_pack_response_complete(&raw, sent_refs, server_sideband)? {
+                break;
+            }
+            return Err(Error::Cancelled);
+        }
         match reader.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => raw.extend_from_slice(&buf[..n]),
@@ -1378,7 +1396,7 @@ mod tests {
         PushPack::for_plan(plan, repo, adv)?
             .map(|pack| {
                 let mut bytes = Vec::new();
-                pack.write_to(repo, &mut bytes)?;
+                pack.write_to(repo, &mut bytes, &crate::progress::CancelSignal::never())?;
                 Ok(bytes)
             })
             .transpose()
@@ -1685,7 +1703,8 @@ mod tests {
         sideband: bool,
         progress: &mut dyn Progress,
     ) -> Result<Vec<u8>> {
-        let raw = read_receive_pack_response(reader, sent_refs, sideband)?;
+        let raw =
+            read_receive_pack_response(reader, sent_refs, sideband, &crate::progress::NeverCancel)?;
         if sideband {
             demux_report_and_remote_messages(&raw, progress)
         } else {
@@ -1701,9 +1720,48 @@ mod tests {
             pos: 0,
             err_kind: ErrorKind::ConnectionReset,
         };
-        let out =
-            read_receive_pack_response(&mut reader, &["refs/heads/main"], false).expect("reset");
+        let out = read_receive_pack_response(
+            &mut reader,
+            &["refs/heads/main"],
+            false,
+            &crate::progress::NeverCancel,
+        )
+        .expect("reset");
         assert_eq!(out, report);
+    }
+
+    #[test]
+    fn a_cancel_stops_an_incomplete_report_but_keeps_a_complete_one() {
+        /// Hands out `payload` in one read, then fires `cancel`.
+        struct CancelAfterRead {
+            payload: Cursor<Vec<u8>>,
+            cancel: crate::progress::FlagCancel,
+        }
+        impl Read for CancelAfterRead {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let n = self.payload.read(buf)?;
+                self.cancel.cancel();
+                Ok(n)
+            }
+        }
+        let refs = ["refs/heads/main"];
+        for (lines, complete) in [
+            (&["unpack ok"][..], false),
+            (&["unpack ok", "ok refs/heads/main"][..], true),
+        ] {
+            let cancel = crate::progress::FlagCancel::new();
+            let report = report_bytes(lines);
+            let mut reader = CancelAfterRead {
+                payload: Cursor::new(report.clone()),
+                cancel: cancel.clone(),
+            };
+            let out = read_receive_pack_response(&mut reader, &refs, false, &cancel);
+            if complete {
+                assert_eq!(out.expect("complete report"), report);
+            } else {
+                assert!(matches!(out, Err(Error::Cancelled)), "{out:?}");
+            }
+        }
     }
 
     #[test]
@@ -1714,7 +1772,13 @@ mod tests {
             pos: 0,
             err_kind: ErrorKind::ConnectionReset,
         };
-        let err = read_receive_pack_response(&mut reader, &["refs/heads/main"], false).unwrap_err();
+        let err = read_receive_pack_response(
+            &mut reader,
+            &["refs/heads/main"],
+            false,
+            &crate::progress::NeverCancel,
+        )
+        .unwrap_err();
         assert!(
             matches!(err, Error::Io(_)),
             "incomplete report must stay an I/O error, got {err:?}"

@@ -124,6 +124,27 @@ pub trait Connection {
     /// (v0/v1 connections, where the server closes after the single response).
     fn finish_send(&mut self) {}
 
+    /// Send whatever request is still buffered and wait until the server's
+    /// response can be read from [`Self::reader`], giving up once `cancel` fires.
+    ///
+    /// Smart HTTP sends the receive-pack request here and waits for the reply on
+    /// another thread, polling `cancel` meanwhile; a request that was not sent in
+    /// full is abandoned, so the server sees a truncated body. Once the whole
+    /// request was sent, the server may still apply it after a cancel. Streaming
+    /// transports have nothing to wait for, so the default returns at once.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::error::Error::Cancelled`] when `cancel` fires first, or the
+    /// transport error that ended the request.
+    fn wait_for_response(
+        &mut self,
+        cancel: &dyn crate::progress::Cancel,
+    ) -> crate::error::Result<()> {
+        let _ = cancel;
+        Ok(())
+    }
+
     /// Smart HTTP stateless RPC (`gitprotocol-http`): each POST carries a full
     /// command body rather than appending to one duplex stream.
     fn stateless_rpc(&self) -> bool {

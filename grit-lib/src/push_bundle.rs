@@ -267,7 +267,12 @@ pub(crate) fn push(
         }));
     }
     let mut body = response.body;
-    let raw = crate::push::read_receive_pack_response(&mut body, sent_refs, sideband)?;
+    let raw = crate::push::read_receive_pack_response(
+        &mut body,
+        sent_refs,
+        sideband,
+        &crate::progress::NeverCancel,
+    )?;
     session.remove();
     Ok(raw)
 }
