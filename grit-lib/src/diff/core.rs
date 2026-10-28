@@ -5223,6 +5223,9 @@ pub(crate) struct SymlinkDirCache {
     /// Single-walk check for directories several components below `real_dirs`.
     #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     chain: Option<crate::worktree_scan::RealDirChain>,
+    /// Filesystem queries made so far.
+    #[cfg(test)]
+    fs_queries: usize,
 }
 
 /// Whether `path` is `dir` itself or lies under it (`dir` has no trailing `/`).
@@ -5321,6 +5324,10 @@ impl SymlinkDirCache {
                 Some(chain) if chain.work_tree() == work_tree => chain,
                 slot => slot.insert(crate::worktree_scan::RealDirChain::open(work_tree)),
             };
+            #[cfg(test)]
+            {
+                self.fs_queries += 1;
+            }
             if chain.confirms(dir) {
                 self.real_dirs.clear();
                 self.real_dirs.extend_from_slice(dir);
@@ -5340,6 +5347,10 @@ impl SymlinkDirCache {
             let prefix = &dir[..end];
             let abs =
                 index_entry_worktree_abs_bytes(work_tree, prefix, precompose_unicode, ignorecase);
+            #[cfg(test)]
+            {
+                self.fs_queries += 1;
+            }
             match ancestor_kind(&abs) {
                 AncestorKind::Directory => {
                     let known = self.real_dirs.len();
@@ -12980,6 +12991,41 @@ mod smudge_racily_clean_tests {
         assert!(!chain.confirms(b""));
         assert!(!chain.confirms(b"a/\0b"));
         assert!(chain.confirms(b"a/b"));
+    }
+
+    #[test]
+    fn symlink_dir_cache_probes_each_new_directory_once_in_index_order() {
+        let td = tempfile::tempdir().expect("tempdir");
+        let wt = td.path();
+        let depth = 12;
+        let chains = 20;
+        let mut paths = Vec::new();
+        for chain in 0..chains {
+            let dir: Vec<String> = (0..depth)
+                .map(|level| format!("c{chain:02}l{level:02}"))
+                .collect();
+            let dir = format!("shared/{}", dir.join("/"));
+            fs::create_dir_all(wt.join(&dir)).expect("mkdir");
+            paths.extend((0..3).map(|file| format!("{dir}/f{file}")));
+        }
+        paths.sort();
+        let mut cache = super::SymlinkDirCache::default();
+        for rel in &paths {
+            assert!(!cache.has_symlink_in_path_bytes(wt, rel.as_bytes(), false, false));
+        }
+        // Each chain's directories are new; `shared` and sibling files are already known.
+        let unique_dirs = 1 + chains * depth;
+        assert!(
+            cache.fs_queries <= unique_dirs,
+            "{} filesystem queries for {unique_dirs} directories",
+            cache.fs_queries
+        );
+        #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+        assert!(
+            cache.fs_queries <= chains + 1,
+            "one chain walk per new directory: {} queries for {chains} chains",
+            cache.fs_queries
+        );
     }
 
     #[test]
