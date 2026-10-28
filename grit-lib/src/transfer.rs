@@ -1275,11 +1275,12 @@ fn objects_missing_from_peer(peer_odb: &Odb, send: &[ObjectId]) -> Vec<ObjectId>
 
 /// Stream the pack that copies `missing` (a subset of `send_set`) into the peer to `w`.
 ///
-/// With no `haves` and a non-thin pack, `missing` is already the exact set the
-/// peer lacks (the walk stopped at every object the peer stores), so it is
-/// packed as-is. Re-enumerating from `missing` instead would walk its whole
-/// closure and re-send objects just linked into the peer, such as every packed
-/// object reachable from a loose annotated tag. Otherwise defer to
+/// For a non-thin pack, `missing` is already the exact set the peer lacks (the walk
+/// stopped at every object the peer stores, with or without `haves`), so it is packed
+/// as-is. Re-enumerating from `missing` instead would walk its whole closure again (for
+/// a fetch with `haves`, a second reachability pass over everything the peer has) and
+/// re-send objects just linked into the peer, such as every packed object reachable
+/// from a loose annotated tag. A thin pack, or a shallow peer, defers to
 /// [`write_pack_for_local_fetch`], which negotiates against the peer's `haves`.
 /// Stops with [`Error::Cancelled`] once `stop` fires.
 #[allow(clippy::too_many_arguments)]
@@ -1295,7 +1296,7 @@ fn write_pack_for_local_transfer(
     stop: &crate::progress::CancelSignal<'_>,
     w: &mut dyn Write,
 ) -> Result<()> {
-    if haves.is_empty() && !opts.thin {
+    if !opts.thin && have_shallow.is_empty() {
         crate::pack_objects::write_pack_from_send_list(
             source_odb,
             missing,
