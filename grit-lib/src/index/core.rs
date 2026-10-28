@@ -55,7 +55,11 @@ pub struct StatMatchPolicy {
     pub trust_ctime: bool,
     /// When true, compare owner, inode, device, and nanoseconds (if `use_nanosec`).
     pub check_stat: bool,
-    /// When true with `check_stat`, compare sub-second mtime/ctime fractions.
+    /// When true with `check_stat`, compare sub-second mtime/ctime fractions, and judge an
+    /// entry racily clean only when its mtime is at or after the index file's to the
+    /// nanosecond rather than to the second.
+    ///
+    /// Defaults to [`Self::DEFAULT_USE_NANOSEC`].
     pub use_nanosec: bool,
 }
 
@@ -64,13 +68,22 @@ impl Default for StatMatchPolicy {
         Self {
             trust_ctime: true,
             check_stat: true,
-            use_nanosec: false,
+            use_nanosec: Self::DEFAULT_USE_NANOSEC,
         }
     }
 }
 
 impl StatMatchPolicy {
-    /// Load policy from repository config, using Git's defaults for unset keys.
+    /// `core.usenanosec` when the key is unset: on for Windows, off elsewhere.
+    ///
+    /// A clone or switch writes the whole tree and then its index within the same second.
+    /// Under whole-second racy detection every entry is then re-read once by the next status,
+    /// and opening files is what makes that slow on Windows. NTFS keeps 100 ns timestamps, so
+    /// comparing sub-second fractions there is sound and keeps that first status stat-only,
+    /// as it is with Git for Windows. Elsewhere Git's default is off.
+    pub const DEFAULT_USE_NANOSEC: bool = cfg!(windows);
+
+    /// Load policy from repository config, using the platform defaults for unset keys.
     #[must_use]
     pub fn from_config(config: Option<&ConfigSet>) -> Self {
         let mut policy = Self::default();
@@ -4222,11 +4235,14 @@ pub(crate) fn stage0_mtime_max(entries: &[IndexEntry]) -> (u32, u32) {
 ///
 /// This only acts when the index write lands on the same timestamp tick as the newest entry
 /// (or earlier), as coarse filesystem clocks allow, and moves it the smallest step past that
-/// entry. That step clears raciness only under `core.usenanosec`. Under the default
-/// whole-second rule, entries in the index's own second stay racy, and the next status
-/// verifies them by content once and then rewrites the index. Never move the mtime into a
-/// later second: stat matching ignores nanoseconds by default, so that would hide an edit
-/// made within the entry's second.
+/// entry: one tick of the filesystem clock, which is 100 ns on NTFS (a 1 ns step would be
+/// truncated back onto the entry's own tick there). That step clears raciness only under
+/// `core.usenanosec` (the default on Windows, see [`StatMatchPolicy::DEFAULT_USE_NANOSEC`]).
+/// Under the whole-second rule, entries in the index's own second stay racy, and the next
+/// status verifies them by content once and then rewrites the index. Never move the mtime
+/// into a later second: whole-second stat matching would then hide an edit made within the
+/// entry's second. When the newest entry sits on the last tick of its second, the index is
+/// left as it is and those entries stay racy.
 ///
 /// When `touched_only_max` is set, it must be the true maximum stage-0 mtime in the index after
 /// checkout (not just the touched entries), or later switch prepare may treat paths as racy.
@@ -4252,11 +4268,11 @@ pub(crate) fn advance_index_file_mtime_past_entries(
     if !needs_bump {
         return Ok(());
     }
-    let ft = if max_nsec < 999_999_999 {
-        FileTime::from_unix_time(i64::from(max_sec), max_nsec + 1)
-    } else {
-        FileTime::from_unix_time(i64::from(max_sec) + 1, 0)
-    };
+    const TICK_NSEC: u32 = if cfg!(windows) { 100 } else { 1 };
+    if max_nsec >= 1_000_000_000 - TICK_NSEC {
+        return Ok(());
+    }
+    let ft = FileTime::from_unix_time(i64::from(max_sec), max_nsec + TICK_NSEC);
     filetime::set_file_mtime(index_path, ft).map_err(Error::Io)
 }
 
@@ -4445,11 +4461,23 @@ impl From<&fs::Metadata> for IndexStatFields {
 }
 
 impl IndexStatFields {
-    /// Whether munged size and whole-second mtime match the index row (Git quick stat check).
+    /// Whether munged size and mtime match the index row, plus the sub-second mtime/ctime
+    /// fractions that `policy` compares; ctime seconds and identity fields are ignored.
     #[must_use]
     #[cfg_attr(not(windows), allow(dead_code))]
-    pub(crate) fn mtime_and_size_match_index(&self, ie: &IndexEntry) -> bool {
-        self.size == ie.size && self.mtime_sec == ie.mtime_sec
+    pub(crate) fn size_and_times_match_index(
+        &self,
+        ie: &IndexEntry,
+        policy: StatMatchPolicy,
+    ) -> bool {
+        if self.size != ie.size || self.mtime_sec != ie.mtime_sec {
+            return false;
+        }
+        if !(policy.use_nanosec && policy.check_stat) {
+            return true;
+        }
+        self.mtime_nsec == ie.mtime_nsec
+            && (!policy.trust_ctime || self.ctime_nsec == ie.ctime_nsec)
     }
 
     /// Whether cached stat fields match a stage-0 index row (Git `ie_match_stat`).
@@ -5392,6 +5420,198 @@ mod tests {
         assert!(!policy.trust_ctime);
         assert!(!policy.check_stat);
         assert!(policy.use_nanosec);
+    }
+
+    fn policy_from_core_config(body: &str) -> StatMatchPolicy {
+        let dir = TempDir::new().unwrap();
+        let git_dir = dir.path().join(".git");
+        fs::create_dir_all(&git_dir).unwrap();
+        fs::write(git_dir.join("config"), format!("[core]\n{body}")).unwrap();
+        let cfg = crate::config::ConfigSet::load(
+            &crate::environment::Environment::empty(),
+            Some(&git_dir),
+            true,
+        )
+        .unwrap();
+        StatMatchPolicy::from_config(Some(&cfg))
+    }
+
+    #[test]
+    fn stat_match_policy_uses_nanoseconds_by_default_on_windows_only() {
+        assert_eq!(StatMatchPolicy::DEFAULT_USE_NANOSEC, cfg!(windows));
+        assert_eq!(StatMatchPolicy::default().use_nanosec, cfg!(windows));
+        assert_eq!(
+            StatMatchPolicy::from_config(None),
+            StatMatchPolicy::default()
+        );
+        assert_eq!(
+            policy_from_core_config("\tbare = false\n"),
+            StatMatchPolicy::default()
+        );
+        assert!(!policy_from_core_config("\tusenanosec = false\n").use_nanosec);
+        assert!(policy_from_core_config("\tusenanosec = true\n").use_nanosec);
+    }
+
+    const NSEC_POLICY: StatMatchPolicy = StatMatchPolicy {
+        trust_ctime: true,
+        check_stat: true,
+        use_nanosec: true,
+    };
+    const WHOLE_SECOND_POLICY: StatMatchPolicy = StatMatchPolicy {
+        use_nanosec: false,
+        ..NSEC_POLICY
+    };
+
+    fn entry_with_mtime(sec: u32, nsec: u32) -> IndexEntry {
+        IndexEntry {
+            mtime_sec: sec,
+            mtime_nsec: nsec,
+            ctime_sec: sec,
+            ctime_nsec: nsec,
+            size: 42,
+            ..make_entry("f")
+        }
+    }
+
+    #[test]
+    fn nanosecond_policy_trusts_same_second_entries_but_sees_newer_fractions() {
+        let ie = entry_with_mtime(1_700_000_000, 123_456_700);
+        let index_mtime = Some((ie.mtime_sec, ie.mtime_nsec + 1));
+        assert!(!crate::diff::entry_is_racy_with_policy(
+            &ie,
+            index_mtime,
+            NSEC_POLICY
+        ));
+        assert!(crate::diff::entry_is_racy_with_policy(
+            &ie,
+            Some((ie.mtime_sec, ie.mtime_nsec)),
+            NSEC_POLICY
+        ));
+        assert!(
+            crate::diff::entry_is_racy_with_policy(&ie, index_mtime, WHOLE_SECOND_POLICY),
+            "the whole-second rule keeps the index's own second racy"
+        );
+
+        // A same-second, same-size edit is only visible in the fraction.
+        let mut edited = IndexStatFields::of_entry(&ie);
+        edited.mtime_nsec += 1;
+        assert!(IndexStatFields::of_entry(&ie).matches_index_entry(&ie, NSEC_POLICY));
+        assert!(!edited.matches_index_entry(&ie, NSEC_POLICY));
+        assert!(edited.matches_index_entry(&ie, WHOLE_SECOND_POLICY));
+    }
+
+    #[test]
+    fn minimal_checkstat_keeps_whole_second_racy_rule_under_nanosec() {
+        let minimal = StatMatchPolicy {
+            check_stat: false,
+            ..NSEC_POLICY
+        };
+        let ie = entry_with_mtime(1_700_000_000, 100_000_000);
+        let index_mtime = Some((ie.mtime_sec, 500_000_000));
+        assert!(
+            crate::diff::entry_is_racy_with_policy(&ie, index_mtime, minimal),
+            "without fraction equality, a same-second entry must stay racy"
+        );
+        let mut edited = IndexStatFields::of_entry(&ie);
+        edited.mtime_nsec = 200_000_000;
+        assert!(edited.matches_index_entry(&ie, minimal));
+        assert!(!crate::diff::entry_is_racy_with_policy(
+            &ie,
+            Some((ie.mtime_sec + 1, 0)),
+            minimal
+        ));
+    }
+
+    #[test]
+    fn advancing_index_mtime_never_leaves_the_last_tick_of_a_second() {
+        let dir = TempDir::new().unwrap();
+        let index_path = dir.path().join("index");
+        let sec = 1_700_000_000u32;
+        let last_tick = if cfg!(windows) {
+            999_999_900
+        } else {
+            999_999_999
+        };
+        let mut index = Index::new();
+        index.add_or_replace(entry_with_mtime(sec, last_tick));
+        index.write(&index_path).unwrap();
+        let pinned = filetime::FileTime::from_unix_time(i64::from(sec), last_tick);
+        filetime::set_file_mtime(&index_path, pinned).unwrap();
+
+        advance_index_file_mtime_past_entries(&index, &index_path, None).unwrap();
+        assert_eq!(index_file_mtime(&index_path), Some((sec, last_tick)));
+        for policy in [NSEC_POLICY, WHOLE_SECOND_POLICY] {
+            assert!(crate::diff::entry_is_racy_with_policy(
+                &index.entries[0],
+                index_file_mtime(&index_path),
+                policy
+            ));
+        }
+    }
+
+    #[test]
+    fn size_and_times_match_index_compares_fractions_only_under_nanosec_policy() {
+        let ie = entry_with_mtime(1_700_000_000, 123_456_700);
+        let mut scan = IndexStatFields::of_entry(&ie);
+        scan.ctime_sec += 5;
+        scan.ino = 99;
+        assert!(scan.size_and_times_match_index(&ie, NSEC_POLICY));
+
+        let mut mtime_frac = IndexStatFields::of_entry(&ie);
+        mtime_frac.mtime_nsec += 100;
+        assert!(!mtime_frac.size_and_times_match_index(&ie, NSEC_POLICY));
+        assert!(mtime_frac.size_and_times_match_index(&ie, WHOLE_SECOND_POLICY));
+
+        let mut ctime_frac = IndexStatFields::of_entry(&ie);
+        ctime_frac.ctime_nsec += 100;
+        assert!(!ctime_frac.size_and_times_match_index(&ie, NSEC_POLICY));
+        let no_ctime = StatMatchPolicy {
+            trust_ctime: false,
+            ..NSEC_POLICY
+        };
+        assert!(ctime_frac.size_and_times_match_index(&ie, no_ctime));
+
+        let mut resized = IndexStatFields::of_entry(&ie);
+        resized.size += 1;
+        assert!(!resized.size_and_times_match_index(&ie, WHOLE_SECOND_POLICY));
+    }
+
+    #[test]
+    fn advancing_index_mtime_clears_same_tick_entries_within_their_second() {
+        let dir = TempDir::new().unwrap();
+        let index_path = dir.path().join("index");
+        let (sec, nsec) = (1_700_000_000u32, 123_456_700u32);
+        let mut index = Index::new();
+        index.add_or_replace(entry_with_mtime(sec, nsec));
+        index.write(&index_path).unwrap();
+        filetime::set_file_mtime(
+            &index_path,
+            filetime::FileTime::from_unix_time(i64::from(sec), nsec),
+        )
+        .unwrap();
+        let ie = &index.entries[0];
+        assert!(crate::diff::entry_is_racy_with_policy(
+            ie,
+            index_file_mtime(&index_path),
+            NSEC_POLICY
+        ));
+
+        advance_index_file_mtime_past_entries(&index, &index_path, None).unwrap();
+        let bumped = index_file_mtime(&index_path);
+        assert_eq!(
+            bumped.map(|(s, _)| s),
+            Some(sec),
+            "never leave the entry's second"
+        );
+        assert!(
+            !crate::diff::entry_is_racy_with_policy(ie, bumped, NSEC_POLICY),
+            "bumped index mtime {bumped:?} must be past the entry's filesystem tick"
+        );
+        assert!(crate::diff::entry_is_racy_with_policy(
+            ie,
+            bumped,
+            WHOLE_SECOND_POLICY
+        ));
     }
 
     #[test]

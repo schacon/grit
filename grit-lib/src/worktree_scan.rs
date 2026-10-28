@@ -218,8 +218,10 @@ fn align_lookup_stat_with_index_path_windows(
         return BlobDiskLookup::Present(stat);
     }
     // NTFS read_dir metadata can disagree with the index on ctime/inode while mtime+size still
-    // match; avoid a second path stat in that case (#1622).
-    if stat.fields.mtime_and_size_match_index(ie) {
+    // match; avoid a second path stat in that case (#1622). A disagreement in the sub-second
+    // fractions compared under `core.usenanosec` still takes the path probe, or every such
+    // entry would be re-hashed.
+    if stat.fields.size_and_times_match_index(ie, stat_policy) {
         return BlobDiskLookup::Present(stat);
     }
     match symlink_metadata_path(&target_abs()) {
@@ -2010,5 +2012,131 @@ mod tests {
         if let BlobDiskLookup::Present(s) = lookup {
             assert_eq!(s.fields.index_size(), dir_stat.fields.index_size());
         }
+    }
+
+    #[cfg(windows)]
+    const NSEC_POLICY: crate::index::StatMatchPolicy = crate::index::StatMatchPolicy {
+        trust_ctime: true,
+        check_stat: true,
+        use_nanosec: true,
+    };
+
+    #[cfg(windows)]
+    #[test]
+    fn align_lookup_skips_path_probe_when_scan_fractions_match() {
+        let tmp = TempDir::new().unwrap();
+        let wt = tmp.path();
+        fs::create_dir_all(wt.join(".git/objects")).unwrap();
+        let rel = "clean.txt";
+        let oid = write_blob_file(wt, rel, b"payload\n");
+        let mut index = Index::new();
+        let mut ie = entry_from_stat(&wt.join(rel), rel.as_bytes(), oid, 0o100644).unwrap();
+        ie.ctime_sec += 1;
+        index.add_or_replace(ie);
+        let scan = BlobDiskStat::from_metadata(&fs::symlink_metadata(wt.join(rel)).unwrap());
+        let lookup = align_lookup_stat_with_index_path_windows(
+            &index,
+            0,
+            BlobDiskLookup::Present(scan),
+            || panic!("whole-second ctime disagreement alone must not probe the path"),
+            NSEC_POLICY,
+        );
+        assert!(matches!(lookup, BlobDiskLookup::Present(_)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn align_lookup_probes_path_when_scan_mtime_fraction_disagrees() {
+        let tmp = TempDir::new().unwrap();
+        let wt = tmp.path();
+        fs::create_dir_all(wt.join(".git/objects")).unwrap();
+        let oid = write_blob_file(wt, "indexed.txt", b"payload\n");
+        write_blob_file(wt, "scanned.txt", b"payload\n");
+        let pinned = filetime::FileTime::from_unix_time(1_700_000_000, 123_456_700);
+        let later = filetime::FileTime::from_unix_time(1_700_000_000, 123_456_800);
+        filetime::set_file_mtime(wt.join("indexed.txt"), pinned).unwrap();
+        filetime::set_file_mtime(wt.join("scanned.txt"), later).unwrap();
+        let mut index = Index::new();
+        index.add_or_replace(
+            entry_from_stat(&wt.join("indexed.txt"), b"indexed.txt", oid, 0o100644).unwrap(),
+        );
+        let policy = crate::index::StatMatchPolicy {
+            trust_ctime: false,
+            ..NSEC_POLICY
+        };
+        let scan =
+            BlobDiskStat::from_metadata(&fs::symlink_metadata(wt.join("scanned.txt")).unwrap());
+        assert!(!crate::diff::stat_matches_blob_stat(
+            &index.entries[0],
+            &scan,
+            policy
+        ));
+
+        let lookup = align_lookup_stat_with_index_path_windows(
+            &index,
+            0,
+            BlobDiskLookup::Present(scan),
+            || wt.join("indexed.txt"),
+            policy,
+        );
+        let BlobDiskLookup::Present(stat) = lookup else {
+            panic!("expected a present lookup");
+        };
+        assert!(
+            crate::diff::stat_matches_blob_stat(&index.entries[0], &stat, policy),
+            "a matching path probe must replace the scan stat"
+        );
+    }
+
+    /// A clean checkout must status clean without opening tracked files, even one another
+    /// process holds open with no sharing (issue #2175).
+    #[cfg(windows)]
+    #[test]
+    fn status_after_checkout_is_clean_with_an_exclusively_locked_file() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let tmp = TempDir::new().unwrap();
+        let wt = tmp.path();
+        fs::create_dir_all(wt.join(".git/objects")).unwrap();
+        let mut index = Index::new();
+        for rel in ["a.txt", "dir/b.txt", "locked.txt"] {
+            let oid = write_blob_file(wt, rel, format!("{rel}\n").as_bytes());
+            index.add_or_replace(
+                entry_from_stat(&wt.join(rel), rel.as_bytes(), oid, 0o100644).unwrap(),
+            );
+        }
+        index.sort();
+        let index_path = wt.join(".git/index");
+        index.write(&index_path).unwrap();
+        let (sec, nsec) = crate::index::stage0_mtime_max(&index.entries);
+        filetime::set_file_mtime(
+            &index_path,
+            filetime::FileTime::from_unix_time(i64::from(sec), nsec),
+        )
+        .unwrap();
+        crate::index::advance_index_file_mtime_past_entries(&index, &index_path, None).unwrap();
+
+        let _lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(wt.join("locked.txt"))
+            .unwrap();
+        assert!(
+            fs::read(wt.join("locked.txt")).is_err(),
+            "file must be unreadable"
+        );
+
+        let odb = Odb::new(&wt.join(".git/objects"));
+        let (diffs, _) = crate::diff::diff_index_to_worktree_with_options(
+            &odb,
+            &mut index,
+            wt,
+            crate::diff::DiffIndexToWorktreeOptions {
+                index_mtime: crate::index::index_file_mtime(&index_path),
+                ..crate::diff::DiffIndexToWorktreeOptions::default()
+            },
+        )
+        .expect("stat-only status must not read the locked file");
+        assert!(diffs.is_empty(), "{diffs:?}");
     }
 }

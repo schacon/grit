@@ -156,8 +156,15 @@ fn parallel_status_trusts_stat_with_filemode_true() {
     assert_clean_without_content_reads(PARALLEL_STAT_MIN_ENTRIES + 24, true, 4);
 }
 
-/// Pin every tracked file and the index to the same second so all entries are racily clean.
+/// Pin every tracked file and the index to the same second so all entries are racily clean
+/// under the whole-second rule, which is pinned too since Windows defaults to nanoseconds.
 fn make_index_racy(root: &Path, files: usize) {
+    git_in(root, &["config", "core.usenanosec", "false"]);
+    pin_checkout_times(root, files);
+}
+
+/// File mtimes at the start of a second and the index later within it, as a checkout leaves them.
+fn pin_checkout_times(root: &Path, files: usize) {
     for i in 0..files {
         let abs = root.join(format!("d{}/s{}/f{i:04}.txt", i % 7, i % 3));
         set_file_mtime(&abs, FileTime::from_unix_time(OLD_MTIME, 0)).expect("mtime");
@@ -267,6 +274,78 @@ fn parallel_status_verifies_racy_tree_once_on_worker_threads() {
     assert_eq!(second_reads, 0, "second status must trust stat data");
     assert_eq!(git_status_porcelain(root), "");
     git_in(root, &["fsck", "--no-progress"]);
+}
+
+/// Status right after a checkout under `core.usenanosec` (the Windows default, issue #2175):
+/// the index written later within the files' second proves them clean, so no tracked file is
+/// read, serially or on the worker pool. A same-second, same-size edit still shows through its
+/// mtime fraction.
+#[cfg_attr(
+    not(feature = "full-tests"),
+    ignore = "starts system git or is heavy; run with --features full-tests"
+)]
+#[test]
+fn nanosecond_policy_trusts_same_second_checkout_without_content_reads() {
+    const FILES: usize = PARALLEL_STAT_MIN_ENTRIES + 24;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_committed_repo(root, FILES, true);
+    git_in(root, &["config", "core.usenanosec", "true"]);
+    git_in(root, &["config", "core.trustctime", "false"]);
+    pin_checkout_times(root, FILES);
+
+    let repo = open(root);
+    for threads in [1, 4] {
+        let (unstaged, reads) = status_counting_reads(&repo, threads);
+        assert!(unstaged.is_empty(), "threads {threads}: {unstaged:?}");
+        assert_eq!(
+            reads, 0,
+            "threads {threads}: same-second checkout must be stat-only"
+        );
+    }
+
+    let rel = "d1/s1/f0001.txt";
+    let abs = root.join(rel);
+    let mut bytes = fs::read(&abs).expect("read");
+    bytes[0] = b'X';
+    fs::write(&abs, &bytes).expect("write");
+    set_file_mtime(&abs, FileTime::from_unix_time(OLD_MTIME, 1_000)).expect("mtime");
+    for threads in [1, 4] {
+        let (unstaged, _) = status_counting_reads(&repo, threads);
+        assert_eq!(unstaged, vec![rel.to_owned()], "threads {threads}");
+    }
+    assert_eq!(git_status_porcelain(root), format!(" M {rel}\n"));
+}
+
+/// `core.checkstat=minimal` ignores mtime fractions in stat equality, so racy detection must
+/// stay whole-second even under `core.usenanosec`, or a same-second, same-size edit is hidden.
+#[cfg_attr(
+    not(feature = "full-tests"),
+    ignore = "starts system git or is heavy; run with --features full-tests"
+)]
+#[test]
+fn minimal_checkstat_with_nanoseconds_still_reports_same_second_edit() {
+    const FILES: usize = 16;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_committed_repo(root, FILES, true);
+    git_in(root, &["config", "core.usenanosec", "true"]);
+    git_in(root, &["config", "core.checkstat", "minimal"]);
+    pin_checkout_times(root, FILES);
+
+    let rel = "d1/s1/f0001.txt";
+    let abs = root.join(rel);
+    let mut bytes = fs::read(&abs).expect("read");
+    bytes[0] = b'X';
+    fs::write(&abs, &bytes).expect("write");
+    set_file_mtime(&abs, FileTime::from_unix_time(OLD_MTIME, 200_000_000)).expect("mtime");
+
+    let repo = open(root);
+    for run in 0..2 {
+        let (unstaged, _) = status_counting_reads(&repo, 1);
+        assert_eq!(unstaged, vec![rel.to_owned()], "run {run}");
+    }
+    assert_eq!(git_status_porcelain(root), format!(" M {rel}\n"));
 }
 
 /// A same-size edit within the racy second keeps matching stat data; only its content shows it.

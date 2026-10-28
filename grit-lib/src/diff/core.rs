@@ -5323,6 +5323,10 @@ pub fn entry_is_racy(ie: &IndexEntry, index_mtime: Option<(u32, u32)>) -> bool {
 }
 
 /// Like [`entry_is_racy`], honoring `core.usenanosec` for sub-second racy detection.
+///
+/// Sub-second racy detection applies only when stat equality also compares the fractions
+/// (`core.usenanosec` with `core.checkstat=default`); otherwise a same-second, same-size edit
+/// would be neither racy nor a stat mismatch.
 #[must_use]
 pub fn entry_is_racy_with_policy(
     ie: &IndexEntry,
@@ -5335,7 +5339,7 @@ pub fn entry_is_racy_with_policy(
     if index_mtime_sec == 0 {
         return false;
     }
-    if policy.use_nanosec {
+    if policy.use_nanosec && policy.check_stat {
         index_mtime_sec < ie.mtime_sec
             || (index_mtime_sec == ie.mtime_sec && index_mtime_nsec <= ie.mtime_nsec)
     } else {
