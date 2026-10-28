@@ -115,6 +115,32 @@ Exec stops use grit's `rebase-merge/grit-exec` recovery record. Resume these wit
 grit. Commands exiting nonzero retain their existing rollback behavior and command
 exit code.
 
+### When the branch moves during a stop
+
+Something else may move the rebased branch while the rebase is stopped: a commit from
+another worktree, `git branch -f`, `git update-ref`, or checking the branch out and
+amending it. The saved plan no longer applies then, so `--continue` and `--skip` refuse
+with exit **1** and change nothing:
+
+```console
+$ grit rebase --continue
+error: refs/heads/feature moved to 045e4cc while the rebase was stopped, so it cannot be continued or skipped; run `grit rebase --abort` to restore refs/heads/feature to b37ca7f (the moved tip stays in its reflog)
+```
+
+`--abort` always works: it resets the branch to its pre-rebase tip (`orig-head`), clears
+the rebase state, and reports the tip it overwrote, which stays reachable as
+`<branch>@{1}` (logged as `rebase (abort)`). This holds for conflict stops and exec stops
+alike:
+
+```console
+$ grit rebase --abort
+Rebase aborted.
+  refs/heads/feature was moved during the rebase; reset 045e4cc → b37ca7f (the moved tip stays in its reflog)
+```
+
+In `--json`, the overwritten branch appears in `refs` as `{ref, old, new}`, with `old`
+the moved tip and `new` the restored one. An abort of an unmoved branch has no `refs`.
+
 ## Options
 
 | Option | Description |
@@ -122,7 +148,7 @@ exit code.
 | `<upstream>` | Exclude commits reachable from this revision (default: `@{upstream}`). |
 | `--onto` | Replay onto this revision instead of `<upstream>`. |
 | `--continue` | Finish the current conflict resolution (including a replay conflict after an amending exec), or resume exec after saving its edits. |
-| `--abort` | Cancel the rebase and restore the branch to `orig-head`. Also cancels a rebase that `git` started. |
+| `--abort` | Cancel the rebase and restore the branch to `orig-head`, even if something moved it during the stop (the overwritten tip is reported). Also cancels a rebase that `git` started. |
 | `--skip` | Skip a conflicted commit, or remaining exec commands at an exec stop (save edits first). |
 | `--dry-run` | List ref updates without moving refs (no session). |
 | `--update-refs` | `branches` (default: the checked-out branch and every stacked branch on or above the replayed commits, but not other branches at the `HEAD` commit) or `head`. |
@@ -162,7 +188,7 @@ Pass `--json` on `grit rebase` or `grit history rebase`:
 | `result` | string | `completed`, `conflicts`, `exec_dirty`, or `aborted`. |
 | `operation` | string | `rebase` when present. |
 | `rewritten` | array | `{old,new,change_id,subject}` per replayed commit when `result` is `completed`. |
-| `refs` | array | `{ref,old,new}` for each ref that moved. |
+| `refs` | array | `{ref,old,new}` for each ref that moved. For `aborted`, each branch the abort reset after something else moved it during the stop (`old` is the overwritten tip, `new` the restored `orig-head`); omitted when nothing was overwritten. |
 | `head` | object or null | `{old,new}` for the completed invocation's `HEAD` OID change; `null` when unchanged. Dry runs show the planned change; conflict and abort outcomes use `null`. |
 | `dry_run` | boolean | Whether refs were left unchanged. |
 | `exec` | array | Captured invocations during this call, on completion or an exec stop: `{commit, command, exit_code}` per invocation (full hex `commit`). |

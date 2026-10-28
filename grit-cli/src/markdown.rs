@@ -1271,7 +1271,18 @@ pub fn print_rebase_outcome(
     outln!(w, "## Rebase");
     outln!(w);
     match outcome.result {
-        RebaseResult::Aborted => outln!(w, "Rebase aborted."),
+        RebaseResult::Aborted => {
+            outln!(w, "Rebase aborted.");
+            for pair in &outcome.refs {
+                outln!(
+                    w,
+                    "- `{}` was moved during the rebase; reset `{}` → `{}` (the moved tip stays in its reflog)",
+                    pair.ref_name,
+                    short_hex(&pair.old),
+                    short_hex(&pair.new)
+                );
+            }
+        }
         RebaseResult::ExecDirty => {
             outln!(
                 w,

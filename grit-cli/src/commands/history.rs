@@ -341,6 +341,8 @@ pub struct RebaseCliOutcome {
     pub operation: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rewritten: Vec<RewrittenPair>,
+    /// Ref tip updates. For `aborted`, branches something else moved during the stop that the
+    /// abort reset: `old` is the overwritten tip, `new` the restored pre-rebase tip.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub refs: Vec<RefPair>,
     /// Previous and new `HEAD` commit OIDs for a completed invocation; null when unchanged.
@@ -461,7 +463,18 @@ impl RebaseCliOutcome {
 impl HumanRender for RebaseCliOutcome {
     fn render_human(&self, w: &mut dyn Write, ctx: &RenderContext) -> Result<()> {
         match self.result {
-            RebaseResult::Aborted => outln!(w, "Rebase aborted."),
+            RebaseResult::Aborted => {
+                outln!(w, "Rebase aborted.");
+                for pair in &self.refs {
+                    outln!(
+                        w,
+                        "  {} was moved during the rebase; reset {} → {} (the moved tip stays in its reflog)",
+                        pair.ref_name,
+                        short(&pair.old),
+                        short(&pair.new)
+                    );
+                }
+            }
             RebaseResult::ExecDirty => {
                 outln!(
                     w,
@@ -1280,13 +1293,24 @@ pub fn run_rebase(opts: &RebaseRunOptions<'_>) -> Result<RebaseRunOutcome> {
     let on_err = history_error("rebase");
     let repo = context::discover()?;
     if opts.abort {
-        abort_rebase(&repo, &reflog_identity(&repo)?).map_err(|err| match err {
+        let abort = abort_rebase(&repo, &reflog_identity(&repo)?).map_err(|err| match err {
             RebaseSessionError::ForeignRebaseInProgress => anyhow::anyhow!(
                 "this rebase was started by git and cannot be restored by grit; cancel it with `git rebase --abort`"
             ),
             other => map_rebase_session_error(other),
         })?;
-        return Ok(RebaseRunOutcome::Rebase(RebaseCliOutcome::aborted()));
+        let mut outcome = RebaseCliOutcome::aborted();
+        outcome.refs = abort
+            .overwritten
+            .iter()
+            .map(|update| RefPair {
+                ref_name: update.name.clone(),
+                name: update.name.clone(),
+                old: update.old.to_hex(),
+                new: update.new.to_hex(),
+            })
+            .collect();
+        return Ok(RebaseRunOutcome::Rebase(outcome));
     }
 
     let rewrite = Rewrite::new(repo, shared)?;
@@ -1513,6 +1537,19 @@ fn map_rebase_session_error(err: RebaseSessionError) -> anyhow::Error {
         RebaseSessionError::NotOnBranch => {
             anyhow::anyhow!("rebase session requires HEAD on a branch")
         }
+        RebaseSessionError::StaleExecPlan {
+            name,
+            expected,
+            actual,
+        } => anyhow::anyhow!(
+            "{name} moved to {} while the rebase was stopped, so it cannot be continued or skipped; \
+             run `grit rebase --abort` to restore {name} to {} (the moved tip stays in its reflog)",
+            actual.map_or_else(|| "(deleted)".to_owned(), |oid| short(&oid.to_hex()).to_owned()),
+            short(&expected.to_hex())
+        ),
+        RebaseSessionError::AbortRefMoved { name } => anyhow::anyhow!(
+            "{name} moved while the rebase was being aborted; retry `grit rebase --abort`"
+        ),
         RebaseSessionError::History(e) => history_error("rebase")(e),
         RebaseSessionError::Library(e) => e.into(),
         _ => err.into(),

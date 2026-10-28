@@ -217,6 +217,7 @@
       "type": "array"
     },
     "refs": {
+      "description": "Ref tip updates. For `aborted`, branches something else moved during the stop that the abort reset: `old` is the overwritten tip, `new` the restored pre-rebase tip.",
       "items": {
         "$ref": "#/definitions/RefPair"
       },

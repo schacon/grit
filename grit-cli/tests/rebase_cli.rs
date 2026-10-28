@@ -838,6 +838,87 @@ fn successful_dirty_exec_stops_immediately_and_preserves_index_and_worktree() ->
     Ok(())
 }
 
+#[test]
+fn exec_stop_with_moved_branch_refuses_resume_and_abort_restores_the_branch() -> TestResult {
+    for mode in ["human", "--json", "--markdown"] {
+        let scratch = Scratch::new("exec-dirty-moved-branch")?;
+        let dir = scratch.path();
+        let tip = init_dirty_exec_fixture(dir, 2)?;
+        let stop = gs(dir, ["rebase", "main", "--exec", "echo fmt >> f"])?;
+        assert_eq!(stop.status, Some(1), "{}\n{}", stop.stdout, stop.stderr);
+        let moved = git(
+            dir,
+            &[
+                "commit-tree",
+                "-p",
+                "feature",
+                "-m",
+                "moved",
+                "feature^{tree}",
+            ],
+        )?
+        .trim()
+        .to_owned();
+        git(dir, &["update-ref", "refs/heads/feature", &moved])?;
+
+        let flags: &[&str] = if mode == "human" { &[] } else { &[mode] };
+        for resume in ["--continue", "--skip"] {
+            let out = gs(dir, [&["rebase", resume][..], flags].concat())?;
+            assert_eq!(out.status, Some(1), "{}\n{}", out.stdout, out.stderr);
+            let text = format!("{}{}", out.stdout, out.stderr);
+            assert!(
+                text.contains("refs/heads/feature moved to")
+                    && text.contains("grit rebase --abort")
+                    && !text.contains("exec left tracked changes"),
+                "{resume} {mode}: {text}"
+            );
+            assert_eq!(git(dir, &["rev-parse", "feature"])?.trim(), moved);
+            assert_eq!(fs::read_to_string(dir.join("f"))?, "base\nfmt\n");
+        }
+
+        let abort = gs(dir, [&["rebase", "--abort"][..], flags].concat())?;
+        assert!(abort.success(), "{}\n{}", abort.stdout, abort.stderr);
+        match mode {
+            "--json" => {
+                let json = parse_json(&abort.stdout)?;
+                assert_eq!(json["result"], "aborted");
+                assert_eq!(
+                    json["refs"],
+                    serde_json::json!([{
+                        "ref": "refs/heads/feature",
+                        "name": "refs/heads/feature",
+                        "old": moved,
+                        "new": tip,
+                    }])
+                );
+            }
+            _ => {
+                assert!(abort.stdout.contains("Rebase aborted."), "{}", abort.stdout);
+                assert!(
+                    abort.stdout.contains("refs/heads/feature")
+                        && abort.stdout.contains(&moved[..7])
+                        && abort.stdout.contains(&tip[..7]),
+                    "{}",
+                    abort.stdout
+                );
+            }
+        }
+        assert_eq!(git(dir, &["rev-parse", "feature"])?.trim(), tip);
+        assert_eq!(
+            git(dir, &["symbolic-ref", "HEAD"])?.trim(),
+            "refs/heads/feature"
+        );
+        assert_eq!(git(dir, &["rev-parse", "feature@{1}"])?.trim(), moved);
+        assert_eq!(fs::read_to_string(dir.join("f"))?, "base\n");
+        assert_eq!(git(dir, &["status", "--porcelain"])?, "");
+        assert!(!dir.join(".git/rebase-merge").exists());
+        git_fsck_strict(dir)?;
+        let again = gs(dir, ["rebase", "main", "--json"])?;
+        assert!(again.success(), "{}\n{}", again.stdout, again.stderr);
+    }
+    Ok(())
+}
+
 /// The issue #2156 fixture: `one` and `two` on `feature`, `up` on `main`.
 fn init_amend_exec_fixture(dir: &Path) -> Result<(), Box<dyn Error>> {
     git(dir, &["init", "-q", "-b", "main"])?;
