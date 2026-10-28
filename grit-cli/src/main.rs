@@ -2869,6 +2869,7 @@ fn dispatch(
                     left_right,
                     cherry_mark,
                 },
+                opts.mode,
             )?,
             opts,
             ctx,
