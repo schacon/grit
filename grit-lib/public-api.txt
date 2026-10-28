@@ -381,6 +381,27 @@ impl core::marker::Unpin for grit_lib::blame::BlameDiffAlgorithm
 impl core::marker::UnsafeUnpin for grit_lib::blame::BlameDiffAlgorithm
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::blame::BlameDiffAlgorithm
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::blame::BlameDiffAlgorithm
+pub enum grit_lib::blame::BlameFinalSource
+pub grit_lib::blame::BlameFinalSource::Contents(alloc::vec::Vec<u8>)
+pub grit_lib::blame::BlameFinalSource::Revision
+pub grit_lib::blame::BlameFinalSource::Worktree
+impl core::clone::Clone for grit_lib::blame::BlameFinalSource
+pub fn grit_lib::blame::BlameFinalSource::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::blame::BlameFinalSource
+impl core::cmp::PartialEq for grit_lib::blame::BlameFinalSource
+pub fn grit_lib::blame::BlameFinalSource::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::blame::BlameFinalSource
+pub fn grit_lib::blame::BlameFinalSource::default() -> Self
+impl core::fmt::Debug for grit_lib::blame::BlameFinalSource
+pub fn grit_lib::blame::BlameFinalSource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::blame::BlameFinalSource
+impl core::marker::Freeze for grit_lib::blame::BlameFinalSource
+impl core::marker::Send for grit_lib::blame::BlameFinalSource
+impl core::marker::Sync for grit_lib::blame::BlameFinalSource
+impl core::marker::Unpin for grit_lib::blame::BlameFinalSource
+impl core::marker::UnsafeUnpin for grit_lib::blame::BlameFinalSource
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::blame::BlameFinalSource
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::blame::BlameFinalSource
 pub enum grit_lib::blame::CopyDetection
 pub grit_lib::blame::CopyDetection::FromAnyCommit
 pub grit_lib::blame::CopyDetection::FromCreatingCommit
@@ -454,6 +475,7 @@ pub grit_lib::blame::BlameAttributedLine::commit: grit_lib::objects::ObjectId
 pub grit_lib::blame::BlameAttributedLine::content: alloc::string::String
 pub grit_lib::blame::BlameAttributedLine::final_line: usize
 pub grit_lib::blame::BlameAttributedLine::ignored: bool
+pub grit_lib::blame::BlameAttributedLine::not_committed: bool
 pub grit_lib::blame::BlameAttributedLine::original_line: usize
 pub grit_lib::blame::BlameAttributedLine::original_path: alloc::string::String
 pub grit_lib::blame::BlameAttributedLine::unblamable: bool
@@ -516,9 +538,9 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::blame::BlameHunk
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::blame::BlameHunk
 pub struct grit_lib::blame::BlameLine
 pub grit_lib::blame::BlameLine::content: alloc::string::String
-pub grit_lib::blame::BlameLine::external_contents: bool
 pub grit_lib::blame::BlameLine::final_lineno: usize
 pub grit_lib::blame::BlameLine::ignored: bool
+pub grit_lib::blame::BlameLine::not_committed: bool
 pub grit_lib::blame::BlameLine::oid: grit_lib::objects::ObjectId
 pub grit_lib::blame::BlameLine::orig_lineno: usize
 pub grit_lib::blame::BlameLine::original_path: alloc::string::String
@@ -541,9 +563,11 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::blame::BlameLine
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::blame::BlameLine
 pub struct grit_lib::blame::BlameOptions
 pub grit_lib::blame::BlameOptions::copy_detection: grit_lib::blame::CopyDetection
+pub grit_lib::blame::BlameOptions::final_source: grit_lib::blame::BlameFinalSource
 pub grit_lib::blame::BlameOptions::first_parent_only: bool
 pub grit_lib::blame::BlameOptions::ignore: grit_lib::blame::IgnoreRevs
 pub grit_lib::blame::BlameOptions::line_range: core::option::Option<core::ops::range::RangeInclusive<usize>>
+pub grit_lib::blame::BlameOptions::now: core::option::Option<time::offset_date_time::OffsetDateTime>
 pub grit_lib::blame::BlameOptions::start: core::option::Option<grit_lib::objects::ObjectId>
 pub grit_lib::blame::BlameOptions::whitespace: grit_lib::diff::WhitespaceMode
 impl core::clone::Clone for grit_lib::blame::BlameOptions
@@ -649,6 +673,7 @@ pub fn grit_lib::blame::compute_blame(&grit_lib::objects::odb::Odb, grit_lib::ob
 pub fn grit_lib::blame::parse_diff_algorithm_name(&str) -> core::option::Option<grit_lib::blame::BlameDiffAlgorithm>
 pub fn grit_lib::blame::read_object_for_blame(&grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, core::option::Option<&grit_lib::repo::Repository>) -> grit_lib::error::Result<grit_lib::objects::Object>
 pub fn grit_lib::blame::resolve_blame_line_range(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, &str, &str) -> core::result::Result<core::ops::range::RangeInclusive<usize>, grit_lib::line_range::LineRangeError>
+pub fn grit_lib::blame::resolve_blame_line_range_with_options(&grit_lib::repo::Repository, &str, &str, &grit_lib::blame::BlameOptions) -> core::result::Result<core::ops::range::RangeInclusive<usize>, grit_lib::line_range::LineRangeError>
 pub fn grit_lib::blame::resolve_line_range(&str, &str, &str, &grit_lib::config::ConfigSet, core::option::Option<&grit_lib::diff::userdiff::FuncnameMatcher>, usize) -> core::result::Result<core::ops::range::RangeInclusive<usize>, grit_lib::line_range::LineRangeError>
 pub type grit_lib::blame::PromisorHydrateHook = fn(&grit_lib::repo::Repository, grit_lib::objects::ObjectId)
 pub mod grit_lib::bundle
@@ -5509,6 +5534,7 @@ pub grit_lib::error::Error::BlameIgnoreRevsFileInvalidRev::rev: alloc::string::S
 pub grit_lib::error::Error::BlameIgnoreRevsFileOpen
 pub grit_lib::error::Error::BlameIgnoreRevsFileOpen::path: alloc::string::String
 pub grit_lib::error::Error::BlameIgnoreRevsFileOpen::source: core::io::error::Error
+pub grit_lib::error::Error::BlameWorktreeBareRepository
 pub grit_lib::error::Error::Branch(grit_lib::porcelain::branch_error::BranchError)
 pub grit_lib::error::Error::BranchCheckedOutInWorktree
 pub grit_lib::error::Error::BranchCheckedOutInWorktree::branch: alloc::string::String
@@ -15829,6 +15855,7 @@ pub grit_lib::prelude::Error::BlameIgnoreRevsFileInvalidRev::rev: alloc::string:
 pub grit_lib::prelude::Error::BlameIgnoreRevsFileOpen
 pub grit_lib::prelude::Error::BlameIgnoreRevsFileOpen::path: alloc::string::String
 pub grit_lib::prelude::Error::BlameIgnoreRevsFileOpen::source: core::io::error::Error
+pub grit_lib::prelude::Error::BlameWorktreeBareRepository
 pub grit_lib::prelude::Error::Branch(grit_lib::porcelain::branch_error::BranchError)
 pub grit_lib::prelude::Error::BranchCheckedOutInWorktree
 pub grit_lib::prelude::Error::BranchCheckedOutInWorktree::branch: alloc::string::String

@@ -1705,6 +1705,10 @@ pub enum Error {
     #[error("cannot stash in a bare repository")]
     StashBareRepository,
 
+    /// [`crate::blame::BlameFinalSource::Worktree`] was requested in a bare repository.
+    #[error("cannot blame the working tree of a bare repository")]
+    BlameWorktreeBareRepository,
+
     /// [`crate::repo_handles::RepositoryStash::apply`] with `restore_index` could
     /// not merge the current index with the stashed index parent.
     #[error("conflicts in index while applying stash with --index")]
@@ -2085,6 +2089,7 @@ impl Error {
             Self::ReflogIndexOutOfRange { .. } => "reflog_index_out_of_range",
             Self::StashNoInitialCommit => "stash_no_initial_commit",
             Self::StashBareRepository => "stash_bare_repository",
+            Self::BlameWorktreeBareRepository => "blame_worktree_bare_repository",
             Self::StashIndexConflict => "stash_index_conflict",
             Self::StashOptionConflict(..) => "stash_option_conflict",
             Self::HunkSelection(..) => "hunk_selection",

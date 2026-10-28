@@ -137,3 +137,43 @@ same storage representation. Recover its exact bytes with
 `repo_relpath::storage_bytes`. Decode once:
 a literal filename that itself resembles an encoded path is a separate file.
 Line ranges and Git-written changed-path Bloom filters use the decoded path too.
+
+### Blaming uncommitted content
+
+By default `blame_file` blames the file as committed at
+[`BlameOptions::start`](rustdoc:grit_lib::blame::BlameOptions::start) (or
+`HEAD`). Set
+[`BlameOptions::final_source`](rustdoc:grit_lib::blame::BlameOptions::final_source)
+to [`BlameFinalSource::Worktree`](rustdoc:grit_lib::blame::BlameFinalSource::Worktree)
+to blame the working-tree file, or to
+[`BlameFinalSource::Contents`](rustdoc:grit_lib::blame::BlameFinalSource::Contents)
+with an editor buffer's bytes. The content is blamed as a commit on top of the
+start revision (plus any `MERGE_HEAD` commits), so returned line numbers match
+the buffer. Lines that exist only in that content have
+[`BlameAttributedLine::not_committed`](rustdoc:grit_lib::blame::BlameAttributedLine::not_committed)
+set and the null object id as `commit`; their
+[`BlameCommitInfo`](rustdoc:grit_lib::blame::BlameCommitInfo) carries
+[`BlameOptions::now`](rustdoc:grit_lib::blame::BlameOptions::now) as the author
+time, with the labels left to the caller. Resolve `-L` specs against the same
+text with
+[`resolve_blame_line_range_with_options`](rustdoc:grit_lib::blame::resolve_blame_line_range_with_options).
+Nothing is written to the object database.
+
+```rust
+use grit_lib::blame::{blame_file, BlameFinalSource, BlameOptions};
+
+# fn editor(repo: &grit_lib::repo::Repository, buffer: Vec<u8>) -> grit_lib::error::Result<()> {
+let result = blame_file(
+    repo,
+    "src/main.rs",
+    &BlameOptions {
+        final_source: BlameFinalSource::Contents(buffer),
+        ..BlameOptions::default()
+    },
+)?;
+for line in result.lines.iter().filter(|line| line.not_committed) {
+    println!("unsaved or uncommitted: {}", line.content);
+}
+# Ok(())
+# }
+```

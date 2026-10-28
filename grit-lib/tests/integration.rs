@@ -115,6 +115,9 @@ mod blame_textconv_pair_cache;
 #[path = "blame_whitespace_git_compat.rs"]
 mod blame_whitespace_git_compat;
 #[cfg(feature = "full-tests")]
+#[path = "blame_worktree_git_compat.rs"]
+mod blame_worktree_git_compat;
+#[cfg(feature = "full-tests")]
 #[path = "bounded_limit_list.rs"]
 mod bounded_limit_list;
 #[cfg(feature = "full-tests")]
