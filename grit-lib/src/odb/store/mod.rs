@@ -88,8 +88,11 @@ pub trait ObjectStore: Send + Sync + std::fmt::Debug {
 
     /// Load object payload into `buf`, reusing its capacity when possible.
     ///
-    /// Default implementation delegates to [`Self::read`] and copies into `buf`.
-    /// Native backends should inflate or resolve deltas directly into `buf`.
+    /// History walks (rev-list, merge-base, path-limited log) read commits through this
+    /// method into one reused buffer, so it is the hot path for a custom backend. The
+    /// default implementation delegates to [`Self::read`], which allocates an owned
+    /// [`Object`] per call, and copies into `buf`. Backends should override it to decode
+    /// or copy their stored bytes straight into `buf`.
     ///
     /// # Errors
     ///
@@ -353,6 +356,18 @@ impl ObjectStore for MemoryStore {
         }))
     }
 
+    fn read_into(&self, oid: &ObjectId, buf: &mut Vec<u8>) -> Result<Option<ObjectKind>> {
+        let guard = self
+            .objects
+            .read()
+            .map_err(|e| Error::Io(io::Error::other(e.to_string())))?;
+        Ok(guard.get(oid).map(|(kind, data)| {
+            buf.clear();
+            buf.extend_from_slice(data);
+            *kind
+        }))
+    }
+
     fn read_info(&self, oid: &ObjectId) -> Result<Option<ObjectInfo>> {
         let guard = self
             .objects
@@ -509,6 +524,14 @@ mod tests {
         assert_eq!(obj.kind, ObjectKind::Blob);
         assert_eq!(obj.data, data);
         assert!(store.read(&ObjectId::zero()).unwrap().is_none());
+        let mut buf = b"stale bytes".to_vec();
+        assert_eq!(
+            store.read_into(&oid, &mut buf).unwrap(),
+            Some(ObjectKind::Blob)
+        );
+        assert_eq!(buf, data);
+        assert_eq!(store.read_into(&ObjectId::zero(), &mut buf).unwrap(), None);
+        assert_eq!(buf, data, "a miss leaves the buffer alone");
         assert!(store.read_info(&ObjectId::zero()).unwrap().is_none());
         assert!(!store.contains(&ObjectId::zero()).unwrap());
         assert!(store.contains(&oid).unwrap());

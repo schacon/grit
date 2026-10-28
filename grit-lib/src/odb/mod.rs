@@ -1877,6 +1877,21 @@ impl Odb {
         PackStore::with_context(store, f)
     }
 
+    /// Run a read against the primary store.
+    ///
+    /// Only the files primary reads packs under `objects/`, so only it gets this database's
+    /// pack-read context; installing that context costs a path copy and a cache warm-up per
+    /// call, which a custom primary would pay on every object for nothing.
+    fn with_primary_read_context<R>(&self, f: impl FnOnce() -> R) -> R {
+        if self.custom_primary.is_some()
+            || PackStore::read_context_matches_objects_dir(&self.objects_dir)
+        {
+            f()
+        } else {
+            self.with_pack_store_for(&self.objects_dir, f)
+        }
+    }
+
     /// Run `f` with pack read caches for this database's primary `objects/` directory.
     ///
     /// Use for batch workloads (for example `cat-file --batch`) so each object read does not
@@ -2112,11 +2127,7 @@ impl Odb {
         let files_primary = self.primary().ok();
         let mut unreadable_local_loose = None;
         let read_primary = || primary.read(oid);
-        match if PackStore::read_context_matches_objects_dir(&self.objects_dir) {
-            read_primary()
-        } else {
-            self.with_pack_store_for(&self.objects_dir, read_primary)
-        } {
+        match self.with_primary_read_context(read_primary) {
             Ok(Some(obj)) => return self.finish_session_loose_read(oid, obj, remember),
             Ok(None) => {}
             Err(err)
@@ -2205,11 +2216,7 @@ impl Odb {
         let files_primary = self.primary().ok();
         let mut unreadable_local_loose = None;
         let read_primary = || primary.read(oid);
-        match if PackStore::read_context_matches_objects_dir(&self.objects_dir) {
-            read_primary()
-        } else {
-            self.with_pack_store_for(&self.objects_dir, read_primary)
-        } {
+        match self.with_primary_read_context(read_primary) {
             Ok(Some(obj)) => return Ok(Some(self.finish_session_loose_read(oid, obj, true)?)),
             Ok(None) => {}
             Err(err)
@@ -2299,12 +2306,8 @@ impl Odb {
         let primary = self.primary_writable()?;
         let files_primary = self.primary().ok();
         let mut unreadable_local_loose = None;
-        let mut read_primary = || primary.read_into(oid, buf);
-        match if PackStore::read_context_matches_objects_dir(&self.objects_dir) {
-            read_primary()
-        } else {
-            self.with_pack_store_for(&self.objects_dir, read_primary)
-        } {
+        let read_primary = || primary.read_into(oid, buf);
+        match self.with_primary_read_context(read_primary) {
             Ok(Some(kind)) => return Ok(kind),
             Ok(None) => {}
             Err(err)
@@ -2342,7 +2345,9 @@ impl Odb {
     /// For walks that read many objects sharing delta chains (successive root trees) and do
     /// not want the per-session object copy [`Self::read`] makes. Objects outside the local
     /// object directory (overlay, alternates, promisor fetches) and any local read failure go
-    /// through [`Self::read`], so errors and fallbacks match it.
+    /// through [`Self::read`], so errors and fallbacks match it. A custom primary has no local
+    /// packs, so its objects go through [`Self::read_into`] and the store's
+    /// [`ObjectStore::read_into`].
     ///
     /// # Errors
     ///
@@ -2369,6 +2374,9 @@ impl Odb {
                     return Ok(kind);
                 }
             }
+        }
+        if self.custom_primary.is_some() {
+            return self.read_into(oid, buf);
         }
         let object = self.read(oid)?;
         buf.clear();
@@ -2437,12 +2445,8 @@ impl Odb {
         let primary = self.primary_writable()?;
         let files_primary = self.primary().ok();
         let mut unreadable_local_loose = None;
-        let mut read_primary = || primary.read_into(oid, buf);
-        match if PackStore::read_context_matches_objects_dir(&self.objects_dir) {
-            read_primary()
-        } else {
-            self.with_pack_store_for(&self.objects_dir, read_primary)
-        } {
+        let read_primary = || primary.read_into(oid, buf);
+        match self.with_primary_read_context(read_primary) {
             Ok(Some(kind)) => return Ok(Some(kind)),
             Ok(None) => {}
             Err(err)
