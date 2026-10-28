@@ -141,6 +141,11 @@ impl HumanRender for PushOutcome {
                         );
                     } else if detail == "remote_ref_missing" {
                         outln!(w, "  rejected {target}: remote ref does not exist");
+                    } else if detail == "already_exists" {
+                        outln!(
+                            w,
+                            "  rejected {target}: created on the remote meanwhile — run `grit fetch` and try again"
+                        );
                     } else {
                         outln!(w, "  rejected {target}: {detail}");
                     }
@@ -287,6 +292,10 @@ pub fn run(
                 PushRefStatus::RejectRemoteRefMissing => {
                     rejected = true;
                     Some("remote_ref_missing".to_owned())
+                }
+                PushRefStatus::RejectAlreadyExists => {
+                    rejected = true;
+                    Some("already_exists".to_owned())
                 }
                 _ => {
                     rejected = true;
