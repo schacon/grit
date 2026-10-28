@@ -111,6 +111,13 @@ $ grit branch -D spike
 Deleted branch spike (was a7020c2).
 ```
 
+A branch name cannot also be a directory of other branches. Creating `rel` while `rel/1.0` exists (loose or packed, or with only its reflog left under `.git/logs/`) names the branch in the way, and `grit switch -c rel` refuses the same way:
+
+```console
+$ grit branch rel
+error: cannot lock ref 'refs/heads/rel': 'refs/heads/rel/1.0' exists; cannot create 'refs/heads/rel'
+```
+
 ## JSON output
 
 List results include `truncated: true` when `-n` / `--limit` caps the branch list and more branches matched. With `--contains` and name ordering (including `--reverse`), the limit bounds matching rows: grit checks tips in name order and stops after the extra match needed to detect truncation. Earlier nonmatching branches do not consume the limit. Graft-defined ancestry, including cycles, has the same ordered matches and truncation as an unlimited query.

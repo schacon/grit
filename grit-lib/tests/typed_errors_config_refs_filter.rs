@@ -6,6 +6,8 @@ use grit_lib::error::{
     ApplyError, BadNumericSource, ConfigError, Error, FilterError, FilterPhase, RefLockError,
 };
 use grit_lib::objects::ObjectId;
+use grit_lib::refs::store::RefStoreError;
+use grit_lib::refs::RefnameUnavailable;
 use grit_lib::worktree::crlf::{
     convert_to_git_with_opts, ConversionConfig, ConvertToGitOpts, FileAttrs,
 };
@@ -83,21 +85,42 @@ fn ref_lock_directory_in_the_way_matches_git_update_ref() {
     )
     .unwrap();
     let err = grit_lib::refs::write_ref(&git_dir, "refs/heads/feature", &oid).unwrap_err();
-    assert!(matches!(
-        err,
-        Error::RefLock(RefLockError::DirectoryInTheWay { .. })
-    ));
+    assert!(
+        matches!(
+            err,
+            Error::RefStore(RefStoreError::NameUnavailable {
+                reason: RefnameUnavailable::DescendantExists { ref blocking, .. }
+            }) if blocking == "refs/heads/feature/extra"
+        ),
+        "{err:?}"
+    );
 
     let git_out = git_cmd(&["update-ref", "refs/heads/feature", &oid.to_hex()])
         .in_dir(dir.path())
         .exec();
     assert!(!git_out.ok(), "git should refuse when directory blocks ref");
-    let combined = format!("{}{}", git_out.stderr, git_out.stdout);
     assert!(
-        combined.contains("blocking reference")
-            || combined.contains("cannot lock ref")
-            || combined.contains("exists"),
-        "git should refuse the ref update: {combined}"
+        git_out.stderr.contains("'refs/heads/feature/extra' exists"),
+        "git should name the same blocking ref: {}",
+        git_out.stderr
+    );
+
+    // With only a lock file inside, there is no ref to name.
+    fs::remove_file(git_dir.join("refs/heads/feature/extra")).unwrap();
+    fs::write(git_dir.join("refs/heads/feature/extra.lock"), "").unwrap();
+    let err = grit_lib::refs::write_ref(&git_dir, "refs/heads/feature", &oid).unwrap_err();
+    assert!(
+        matches!(err, Error::RefLock(RefLockError::DirectoryInTheWay { .. })),
+        "{err:?}"
+    );
+    let git_out = git_cmd(&["update-ref", "refs/heads/feature", &oid.to_hex()])
+        .in_dir(dir.path())
+        .exec();
+    assert!(!git_out.ok(), "git should refuse when directory blocks ref");
+    assert!(
+        git_out.stderr.contains("non-empty directory"),
+        "{}",
+        git_out.stderr
     );
 }
 

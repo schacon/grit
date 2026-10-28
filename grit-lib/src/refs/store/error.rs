@@ -32,7 +32,7 @@ pub enum RefStoreError {
     },
 
     /// A ref name cannot be created because of a directory/file conflict.
-    #[error("cannot lock ref: {}", reason.lock_message_suffix())]
+    #[error("cannot lock ref '{}': {}", reason.refname(), reason.lock_message_suffix())]
     NameUnavailable {
         /// Structured conflict reason (Git `refs_verify_refname_available` style).
         reason: RefnameUnavailable,

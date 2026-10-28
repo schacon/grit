@@ -1251,6 +1251,9 @@ mod racy_index_git_compat;
 #[path = "read_info_git_compat.rs"]
 mod read_info_git_compat;
 #[cfg(feature = "full-tests")]
+#[path = "ref_dir_file_conflict_2198.rs"]
+mod ref_dir_file_conflict_2198;
+#[cfg(feature = "full-tests")]
 #[path = "ref_name_validation_git_compat.rs"]
 mod ref_name_validation_git_compat;
 #[path = "ref_target_verification.rs"]

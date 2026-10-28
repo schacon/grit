@@ -482,7 +482,8 @@ fn rename_aborts_when_destination_reflog_path_is_directory() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = git_fixture(tmp.path());
     let log_dir = dir.join(".git/logs/refs/heads/new");
-    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::create_dir_all(log_dir.join("x")).unwrap();
+    std::fs::write(log_dir.join("x/y"), "").unwrap();
     let repo = open(&dir);
     let err = rename_branch(
         &repo,
@@ -494,7 +495,15 @@ fn rename_aborts_when_destination_reflog_path_is_directory() {
         },
     )
     .unwrap_err();
-    assert!(err.to_string().contains("directory"), "{err:?}");
+    assert!(
+        matches!(
+            err,
+            Error::RefStore(grit_lib::refs::store::RefStoreError::NameUnavailable {
+                reason: grit_lib::refs::RefnameUnavailable::DescendantExists { ref blocking, .. }
+            }) if blocking == "refs/heads/new/x/y"
+        ),
+        "{err:?}"
+    );
     assert!(git_cmd(&["show-ref", "--verify", "refs/heads/topic"])
         .in_dir(&dir)
         .exec()
@@ -503,4 +512,41 @@ fn rename_aborts_when_destination_reflog_path_is_directory() {
         .in_dir(&dir)
         .exec()
         .ok());
+    assert!(
+        !git_cmd(&["branch", "-m", "topic", "new"])
+            .in_dir(&dir)
+            .exec()
+            .ok(),
+        "git refuses while logs remain under the new name"
+    );
+}
+
+#[test]
+fn rename_clears_an_empty_directory_at_the_destination_reflog_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = git_fixture(tmp.path());
+    std::fs::create_dir_all(dir.join(".git/logs/refs/heads/new/x")).unwrap();
+    let mut git_side = dir.clone();
+    git_side.set_file_name("git-side");
+    git(
+        tmp.path(),
+        &["clone", "-q", dir.to_str().unwrap(), "git-side"],
+    );
+    git(&git_side, &["branch", "topic", "origin/topic"]);
+    std::fs::create_dir_all(git_side.join(".git/logs/refs/heads/new/x")).unwrap();
+    git(&git_side, &["branch", "-m", "topic", "new"]);
+
+    rename_branch(
+        &open(&dir),
+        &RenameBranchOptions {
+            old: "topic".into(),
+            new: "new".into(),
+            force: false,
+            dry_run: false,
+        },
+    )
+    .expect("rename over an empty log directory, as git does");
+    assert!(dir.join(".git/logs/refs/heads/new").is_file());
+    git(&dir, &["show-ref", "--verify", "refs/heads/new"]);
+    git(&dir, &["fsck", "--no-progress"]);
 }
