@@ -4013,7 +4013,8 @@ pub struct PackedRefRecord {
 /// Replace `packed-refs` with `records`, sorted by ref name.
 ///
 /// Existing loose ref files for names present in `records` are removed so the
-/// packed file is authoritative (Git's `pack-refs` behaviour).
+/// packed file is authoritative (Git's `pack-refs` behaviour). Directories left
+/// empty below `refs/` are removed too; `refs/` itself always remains.
 ///
 /// # Errors
 ///

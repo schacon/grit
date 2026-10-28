@@ -2147,6 +2147,9 @@ fn pack_has_keep_marker(pack_dir: &Path, path: &Path) -> bool {
 
 /// Pack loose refs into `packed-refs` (files backend) or compact reftable stacks.
 ///
+/// With the files backend, directories emptied by removing packed loose refs are
+/// deleted, but `refs/` itself is kept so Git still recognizes the repository.
+///
 /// # Errors
 ///
 /// Propagates ref-store, locking, and I/O failures.
