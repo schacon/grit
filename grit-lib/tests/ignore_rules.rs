@@ -722,6 +722,181 @@ fn negated_file_under_directory_glob_still_works() {
     }
 }
 
+/// A fresh repository holding `gitignores` (`(path, content)`) and empty `files`.
+fn ignore_layout(name: &str, gitignores: &[(&str, &str)], files: &[&str]) -> (PathBuf, PathBuf) {
+    let home = unique_tmp("ignore", &format!("{name}-home"));
+    let root = unique_tmp("ignore", name);
+    fs::create_dir_all(&home).expect("home");
+    assert!(
+        hermetic_git(&home, &root, &["init"]).status.success(),
+        "git init"
+    );
+    for (path, content) in gitignores
+        .iter()
+        .copied()
+        .chain(files.iter().map(|f| (*f, "")))
+    {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        fs::write(path, content).expect("write");
+    }
+    (home, root)
+}
+
+/// A slash-free pattern matches only the queried path's basename; children of a directory it
+/// matches are ignored only while that directory stays excluded, so a later `!name/` (or
+/// `!sub/name/`) re-includes everything under it (issue #2168).
+#[test]
+fn negated_directory_reincludes_dir_matched_by_plain_pattern() {
+    struct Case {
+        name: &'static str,
+        gitignores: &'static [(&'static str, &'static str)],
+        /// `(path, is_dir, ignored)`
+        checks: &'static [(&'static str, bool, bool)],
+    }
+    let cases = [
+        Case {
+            name: "2168-tags-negated",
+            gitignores: &[(".gitignore", "tags\n!tags/\n")],
+            checks: &[
+                ("tags", true, false),
+                ("tags/a.txt", false, false),
+                ("src/tags", false, true),
+                ("sub/tags/b.txt", false, false),
+            ],
+        },
+        Case {
+            name: "2168-tags-plain",
+            gitignores: &[(".gitignore", "tags\n")],
+            checks: &[
+                ("tags", true, true),
+                ("tags/a.txt", false, true),
+                ("sub/tags/b.txt", false, true),
+            ],
+        },
+        Case {
+            name: "2168-perf-negated-dir",
+            gitignores: &[("tools/perf/.gitignore", "perf\n!include/perf/\n")],
+            checks: &[
+                ("tools/perf/perf", false, true),
+                ("tools/perf/include/perf", true, false),
+                ("tools/perf/include/perf/file.h", false, false),
+            ],
+        },
+        Case {
+            name: "2168-perf-negated-file",
+            gitignores: &[(".gitignore", "perf\n!include/perf/file.h\n")],
+            checks: &[
+                ("include/perf", true, true),
+                ("include/perf/file.h", false, true),
+            ],
+        },
+        Case {
+            name: "2168-dir-only-then-plain-negation",
+            gitignores: &[(".gitignore", "foo/\n!foo\n")],
+            checks: &[
+                ("foo", true, false),
+                ("foo/sub", true, false),
+                ("foo/sub/x", false, false),
+            ],
+        },
+    ];
+    for case in cases {
+        let files: Vec<&str> = case
+            .checks
+            .iter()
+            .filter(|(_, is_dir, _)| !is_dir)
+            .map(|(path, _, _)| *path)
+            .collect();
+        let (home, root) = ignore_layout(case.name, case.gitignores, &files);
+        let repo = open_at(&root);
+        let mut matcher = IgnoreMatcher::from_repository(&repo).expect("matcher");
+        let paths: Vec<&str> = case.checks.iter().map(|(path, _, _)| *path).collect();
+        let git_map = git_check_ignore_verbose(&home, &root, &paths, true);
+        for &(path, is_dir, expected) in case.checks {
+            let (ignored, m) = grit_check(&repo, &mut matcher, None, path, is_dir);
+            assert_eq!(ignored, expected, "{}: {path}", case.name);
+            let git = git_map.get(path).expect("git check-ignore");
+            assert_match_eq(path, git, ignored, &m);
+        }
+    }
+}
+
+/// The linux tree shapes from issue #2168: status lists the re-included directories and staging
+/// everything indexes the files under them, as `git add -A` does.
+#[test]
+fn negated_directory_reincluded_files_are_listed_and_staged_like_git() {
+    use grit_lib::porcelain::add::{stage, StageMode, StageOptions};
+    use grit_lib::porcelain::status::{status, StatusOptions, UntrackedMode};
+    use grit_lib::progress::{NeverCancel, NullProgress};
+
+    let (home, root) = ignore_layout(
+        "2168-linux-shapes",
+        &[
+            (".gitignore", "tags\n!tags/\n"),
+            ("tools/perf/.gitignore", "perf\n!include/perf/\n"),
+        ],
+        &[
+            "tags/a.txt",
+            "scripts/tags",
+            "tools/perf/perf",
+            "tools/perf/include/perf/perf_dlfilter.h",
+            "tools/testing/selftests/arm64/tags/Makefile",
+            "tools/testing/selftests/arm64/tags/tags_test.c",
+        ],
+    );
+    let repo = open_at(&root);
+
+    assert_status_untracked_matches_git(&home, &root);
+    let model = status(
+        &repo,
+        &StatusOptions {
+            untracked: UntrackedMode::Normal,
+            ..StatusOptions::default()
+        },
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("status");
+    let grit_untracked: std::collections::BTreeSet<String> = model.untracked.into_iter().collect();
+    let git_untracked: std::collections::BTreeSet<String> =
+        git_lines(&home, &root, &["status", "--porcelain", "-unormal"])
+            .iter()
+            .filter_map(|l| l.strip_prefix("?? ").map(str::to_owned))
+            .collect();
+    assert!(git_untracked.contains("tags/"), "{git_untracked:?}");
+    assert_eq!(grit_untracked, git_untracked, "status -unormal vs git");
+
+    stage(
+        &repo,
+        &StageOptions {
+            mode: StageMode::All,
+            ..StageOptions::default()
+        },
+        &mut NullProgress,
+        &NeverCancel,
+    )
+    .expect("stage all");
+    let tracked = git_lines(&home, &root, &["ls-files"]);
+    let expected: std::collections::BTreeSet<String> = [
+        ".gitignore",
+        "tags/a.txt",
+        "tools/perf/.gitignore",
+        "tools/perf/include/perf/perf_dlfilter.h",
+        "tools/testing/selftests/arm64/tags/Makefile",
+        "tools/testing/selftests/arm64/tags/tags_test.c",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    assert_eq!(tracked, expected, "grit stage vs expected git add -A");
+    let leftover = git_lines(&home, &root, &["ls-files", "-o", "--exclude-standard"]);
+    assert!(
+        leftover.is_empty(),
+        "git still sees untracked: {leftover:?}"
+    );
+}
+
 /// The issue #1912 fixture: `.gitignore` patterns whose case differs from the work tree.
 fn ignorecase_fixture(name: &str, ignore_case: bool) -> (PathBuf, PathBuf) {
     let home = unique_tmp("ignore", &format!("{name}-home"));
