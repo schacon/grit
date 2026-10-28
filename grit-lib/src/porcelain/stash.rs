@@ -28,9 +28,9 @@ use crate::index::{
 use crate::objects::FileMode;
 use crate::worktree::{map_worktree_io, WorktreePathOperation};
 // `MODE_EXECUTABLE` only drives the Unix executable-bit application below.
-use crate::apply::{apply_patch_to_index, FilePatch, IndexApplyOptions};
+use crate::apply::{apply_patch_to_index, IndexApplyOptions};
 use crate::check_ref_format::validate_branch_short_name;
-use crate::diff::hunk_id::DiffSide;
+use crate::diff::hunk_id::HunkId;
 use crate::ident::Signature;
 #[cfg(unix)]
 use crate::index::MODE_EXECUTABLE;
@@ -51,8 +51,8 @@ use crate::porcelain::checkout::{checkout_between_trees_locked, CheckoutIndexWri
 use crate::porcelain::clean::{is_nested_git_worktree, path_in_nested_git_worktree};
 use crate::porcelain::commit::write_commit_object;
 use crate::porcelain::hunk_select::{
-    diff_options_for_hunk_select, resolve_selection, reverse_apply_patches_to_worktree,
-    HunkSelection, WorktreeReverseApplyOptions,
+    resolve_unstaged_selection, reverse_apply_patches_to_worktree, HunkSelection,
+    ResolvedSelection, WorktreeReverseApplyOptions,
 };
 use crate::porcelain::index_from_tree::{
     index_from_tree_with_seeded_stats, index_from_tree_with_seeded_worktree_stats,
@@ -332,6 +332,12 @@ pub struct StashPreview {
     pub paths: Vec<String>,
     /// Untracked paths that would be included when `include_untracked` is set.
     pub untracked: Vec<String>,
+    /// For a partial push ([`StashPushOptions::selection`]), the hunk ids that would be stashed,
+    /// per repository-relative path. Empty otherwise.
+    pub stashed_hunks: BTreeMap<String, Vec<HunkId>>,
+    /// For a partial push, the requested line range labels (`start` or `start-end`) that would
+    /// be stashed, per path. Empty otherwise.
+    pub stashed_lines: BTreeMap<String, Vec<String>>,
 }
 
 /// Options for [`RepositoryStash::push`](crate::repo_handles::RepositoryStash::push),
@@ -380,6 +386,11 @@ impl StashPushOptions {
         if self.mode == StashMode::KeepIndex && selection_is_active(self) {
             return Err(Error::StashOptionConflict(
                 "cannot combine --keep-index with --hunks or --lines".into(),
+            ));
+        }
+        if self.include_untracked && selection_is_active(self) {
+            return Err(Error::StashOptionConflict(
+                "cannot combine --include-untracked with --hunks or --lines".into(),
             ));
         }
         Ok(())
@@ -919,7 +930,7 @@ struct BuiltStash {
     i_tree: ObjectId,
     message: String,
     untracked_paths: Vec<String>,
-    partial_patches: Option<Vec<FilePatch>>,
+    partial: Option<ResolvedSelection>,
     push_pathspecs: Vec<String>,
     staged_only_paths: Vec<String>,
     mode: StashMode,
@@ -1062,13 +1073,6 @@ fn tracked_stash_preview_paths(
     for path in staged_change_paths_for_options(repo, &index, head_tree, options)? {
         paths.insert(path);
     }
-    if let Some(ref patches) = resolve_partial_stash_patches(repo, options)? {
-        for patch in patches {
-            if let Some(path) = patch.new_path.as_ref().or(patch.old_path.as_ref()) {
-                paths.insert(path.clone());
-            }
-        }
-    }
     Ok(paths.into_iter().collect())
 }
 
@@ -1091,18 +1095,20 @@ pub(crate) fn preview_stash(
     let head_oid = head_commit_oid(&head)?;
     let head_tree = repo.odb().commit_tree(&head_oid)?;
 
-    if selection_is_active(options) {
-        let patches = resolve_partial_stash_patches(repo, options)?.unwrap_or_default();
-        if patches.is_empty() {
+    if let Some(partial) = resolve_partial_stash(repo, options)? {
+        if partial.patches.is_empty() {
             return Ok(None);
         }
-        let paths: Vec<String> = patches
+        let paths: Vec<String> = partial
+            .patches
             .into_iter()
             .filter_map(|p| p.new_path.or(p.old_path))
             .collect();
         return Ok(Some(StashPreview {
             paths,
             untracked: Vec::new(),
+            stashed_hunks: partial.selected_hunks,
+            stashed_lines: partial.selected_lines,
         }));
     }
 
@@ -1123,7 +1129,12 @@ pub(crate) fn preview_stash(
     if paths.is_empty() && untracked.is_empty() {
         return Ok(None);
     }
-    Ok(Some(StashPreview { paths, untracked }))
+    Ok(Some(StashPreview {
+        paths,
+        untracked,
+        stashed_hunks: BTreeMap::new(),
+        stashed_lines: BTreeMap::new(),
+    }))
 }
 
 fn stash_push_pathspecs_active(options: &StashPushOptions) -> bool {
@@ -1368,19 +1379,21 @@ fn merge_stash_index_trees(
     Ok(Some(output.result_tree))
 }
 
-fn resolve_partial_stash_patches(
+fn resolve_partial_stash(
     repo: &Repository,
     options: &StashPushOptions,
-) -> Result<Option<Vec<FilePatch>>> {
+) -> Result<Option<ResolvedSelection>> {
     if !selection_is_active(options) {
         return Ok(None);
     }
     let Some(sel) = options.selection.as_ref() else {
         return Ok(None);
     };
-    let diff_opts = diff_options_for_hunk_select(repo)?;
-    let patches = resolve_selection(repo, DiffSide::Unstaged, sel, &options.pathspecs, diff_opts)?;
-    Ok(Some(patches))
+    Ok(Some(resolve_unstaged_selection(
+        repo,
+        sel,
+        &options.pathspecs,
+    )?))
 }
 
 fn build_stash_commit(
@@ -1401,10 +1414,10 @@ fn build_stash_commit(
         validate_stash_push_pathspecs(repo, work_tree, options)?;
     }
 
-    let partial_patches = resolve_partial_stash_patches(repo, options)?;
+    let partial = resolve_partial_stash(repo, options)?;
     let mut reusable_unstaged = None;
-    if let Some(ref patches) = partial_patches {
-        if patches.is_empty() {
+    if let Some(ref partial) = partial {
+        if partial.patches.is_empty() {
             return Ok(None);
         }
     } else if pathspec_push {
@@ -1474,11 +1487,11 @@ fn build_stash_commit(
         // only files whose stat changed, and the primed cache-tree limits the W tree write to
         // the directories those files invalidate.
         let mut w_index = index_from_tree_with_seeded_stats(repo, &i_tree, &index)?;
-        if let Some(ref patches) = partial_patches {
+        if let Some(ref partial) = partial {
             apply_patch_to_index(
                 repo,
                 &mut w_index,
-                patches,
+                &partial.patches,
                 &IndexApplyOptions {
                     dry_run: false,
                     reverse: false,
@@ -1529,7 +1542,7 @@ fn build_stash_commit(
         i_tree,
         message: w_message.trim_end().to_owned(),
         untracked_paths,
-        partial_patches,
+        partial,
         push_pathspecs: if pathspec_push {
             options.pathspecs.clone()
         } else {
@@ -1598,6 +1611,12 @@ pub struct StashPushResult {
     pub message: String,
     /// Tree recorded on the W commit.
     pub w_tree: ObjectId,
+    /// For a partial push ([`StashPushOptions::selection`]), the hunk ids that were stashed, per
+    /// repository-relative path. Empty otherwise.
+    pub stashed_hunks: BTreeMap<String, Vec<HunkId>>,
+    /// For a partial push, the requested line range labels (`start` or `start-end`) that were
+    /// stashed, per path. Empty otherwise.
+    pub stashed_lines: BTreeMap<String, Vec<String>>,
 }
 
 /// Create a stash entry, store it, and reset the worktree and index to `HEAD`.
@@ -1647,10 +1666,16 @@ pub(crate) fn push_stash(
         &options.identity.header_line(),
     )?;
     reset_after_stash_push(repo, work_tree, &built, &mut lock, scope.sink(), cancel)?;
+    let (stashed_hunks, stashed_lines) = built
+        .partial
+        .map(|partial| (partial.selected_hunks, partial.selected_lines))
+        .unwrap_or_default();
     Ok(Some(StashPushResult {
         oid: built.w_commit,
         message: built.message,
         w_tree: built.w_tree,
+        stashed_hunks,
+        stashed_lines,
     }))
 }
 
@@ -1666,10 +1691,10 @@ fn reset_after_stash_push(
     if !built.untracked_paths.is_empty() {
         remove_stashed_untracked(repo, work_tree, &built.untracked_paths)?;
     }
-    if let Some(ref patches) = built.partial_patches {
+    if let Some(ref partial) = built.partial {
         return reverse_apply_patches_to_worktree(
             repo,
-            patches,
+            &partial.patches,
             &WorktreeReverseApplyOptions { dry_run: false },
             progress,
             cancel,
@@ -3449,7 +3474,7 @@ mod hunk_push_tests {
     use crate::diff::hunk_id::{hunk_ids_with_duplicate_peers, DiffSide};
     use crate::diff::{unstaged_file_diffs_with_peer_hunks, DiffOptions};
     use crate::environment::RepositoryOptions;
-    use crate::porcelain::hunk_select::HunkSelection;
+    use crate::porcelain::hunk_select::{HunkSelection, LineRange};
     use crate::porcelain::index_from_tree::index_from_tree;
     use crate::repo::Repository;
     use std::process::Command;
@@ -3535,6 +3560,7 @@ mod hunk_push_tests {
     #[test]
     fn stash_push_hunks_dry_run_does_not_mutate_repo() {
         let (tmp, repo, selection) = setup_two_hunk_repo();
+        let selected_ids = selection.ids.clone();
         let before = fs::read_to_string(tmp.path().join("f.txt")).unwrap();
         let preview = preview_stash(
             &repo,
@@ -3551,6 +3577,11 @@ mod hunk_push_tests {
         .expect("preview")
         .expect("paths");
         assert!(preview.paths.iter().any(|p| p == "f.txt"));
+        assert_eq!(
+            preview.stashed_hunks,
+            BTreeMap::from([("f.txt".to_string(), selected_ids)])
+        );
+        assert!(preview.stashed_lines.is_empty());
         assert_eq!(list_stashes(&repo).expect("list").len(), 0);
         assert_eq!(
             fs::read_to_string(tmp.path().join("f.txt")).unwrap(),
@@ -3566,7 +3597,8 @@ mod hunk_push_tests {
     #[test]
     fn stash_push_hunks_stashes_only_selected() {
         let (tmp, repo, selection) = setup_two_hunk_repo();
-        let oid = push_stash(
+        let selected_ids = selection.ids.clone();
+        let pushed = push_stash(
             &repo,
             &StashPushOptions {
                 message: Some("partial".into()),
@@ -3581,9 +3613,13 @@ mod hunk_push_tests {
             &NeverCancel,
         )
         .expect("push")
-        .expect("oid")
-        .oid;
-        let w_tree = stash_w_tree(&repo, &oid);
+        .expect("oid");
+        assert_eq!(
+            pushed.stashed_hunks,
+            BTreeMap::from([("f.txt".to_string(), selected_ids)])
+        );
+        assert!(pushed.stashed_lines.is_empty());
+        let w_tree = stash_w_tree(&repo, &pushed.oid);
         let blob = tree_blob(&repo, &w_tree, "f.txt");
         let text = String::from_utf8_lossy(&blob);
         assert!(text.contains("LINE5"), "stashed hunk in W tree: {text}");
@@ -3696,5 +3732,103 @@ mod hunk_push_tests {
             "pop restored stashed hunk: {on_disk}"
         );
         git(tmp.path(), &["fsck", "--strict"]);
+    }
+
+    fn options_with(selection: Option<HunkSelection>, include_untracked: bool) -> StashPushOptions {
+        StashPushOptions {
+            message: None,
+            include_untracked,
+            identity: IDENT.parse().expect("signature"),
+            selection,
+            pathspecs: Vec::new(),
+            dry_run: false,
+            mode: StashMode::default(),
+        }
+    }
+
+    #[test]
+    fn validate_rejects_include_untracked_with_selection() {
+        let selection = HunkSelection {
+            ids: Vec::new(),
+            ranges: vec![LineRange {
+                path: "f.txt".into(),
+                start: 1,
+                end: 1,
+            }],
+        };
+        let err = options_with(Some(selection), true)
+            .validate()
+            .expect_err("conflict");
+        assert!(
+            matches!(err, Error::StashOptionConflict(ref msg) if msg.contains("--include-untracked")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_allows_include_untracked_with_empty_selection() {
+        options_with(Some(HunkSelection::default()), true)
+            .validate()
+            .expect("an empty selection is a full stash");
+        options_with(None, true).validate().expect("no selection");
+    }
+
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
+    #[test]
+    fn stash_push_lines_reports_line_labels() {
+        let (tmp, repo, _) = setup_two_hunk_repo();
+        let selection = HunkSelection {
+            ids: Vec::new(),
+            ranges: vec![LineRange {
+                path: "f.txt".into(),
+                start: 6,
+                end: 6,
+            }],
+        };
+        let preview = preview_stash(&repo, &options_with(Some(selection.clone()), false))
+            .expect("preview")
+            .expect("something to stash");
+        let expected_lines = BTreeMap::from([("f.txt".to_string(), vec!["6".to_string()])]);
+        assert_eq!(preview.stashed_lines, expected_lines);
+        assert!(preview.stashed_hunks.is_empty());
+
+        let pushed = push_stash(
+            &repo,
+            &options_with(Some(selection), false),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .expect("push")
+        .expect("stashed");
+        assert_eq!(pushed.stashed_lines, expected_lines);
+        assert!(pushed.stashed_hunks.is_empty());
+        let on_disk = fs::read_to_string(tmp.path().join("f.txt")).unwrap();
+        assert!(!on_disk.contains("LINE5") && on_disk.contains("LINE18"));
+        git(tmp.path(), &["fsck", "--strict"]);
+    }
+
+    #[cfg_attr(
+        not(feature = "full-tests"),
+        ignore = "starts system git or is heavy; run with --features full-tests"
+    )]
+    #[test]
+    fn stash_push_without_selection_reports_no_hunks() {
+        let (_tmp, repo, _) = setup_two_hunk_repo();
+        let preview = preview_stash(&repo, &options_with(None, false))
+            .expect("preview")
+            .expect("something to stash");
+        assert!(preview.stashed_hunks.is_empty() && preview.stashed_lines.is_empty());
+        let pushed = push_stash(
+            &repo,
+            &options_with(None, false),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .expect("push")
+        .expect("stashed");
+        assert!(pushed.stashed_hunks.is_empty() && pushed.stashed_lines.is_empty());
     }
 }

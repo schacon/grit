@@ -87,3 +87,48 @@ fn stash_push_hunks_json() {
     assert!(on_disk.contains("LINE18"));
     assert!(!on_disk.contains("LINE5"));
 }
+
+#[test]
+fn stash_push_lines_dry_run_json_reports_lines_and_keeps_worktree() {
+    let grit = env!("CARGO_BIN_EXE_grit");
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let root = dir.path();
+    assert!(run_grit(grit, root, &["init"]).status.success());
+    let (base, edited) = two_hunk_file();
+    fs::write(root.join("f.txt"), base).expect("write");
+    assert!(run_grit(grit, root, &["add", "f.txt"]).status.success());
+    assert!(run_grit(grit, root, &["commit", "-m", "init"])
+        .status
+        .success());
+    fs::write(root.join("f.txt"), &edited).expect("write");
+
+    let preview = run_grit(
+        grit,
+        root,
+        &["stash", "push", "--lines", "f.txt:6", "--dry-run", "--json"],
+    );
+    assert!(
+        preview.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    let out: serde_json::Value = serde_json::from_slice(&preview.stdout).expect("stash json");
+    assert_eq!(out["dry_run"], serde_json::json!(true));
+    assert_eq!(out["paths"], serde_json::json!(["f.txt"]));
+    assert_eq!(out["stashed_lines"], serde_json::json!({ "f.txt": ["6"] }));
+    assert!(out.get("stashed_hunks").is_none(), "{out}");
+    assert_eq!(fs::read_to_string(root.join("f.txt")).unwrap(), edited);
+
+    let conflict = run_grit(
+        grit,
+        root,
+        &["stash", "push", "--lines", "f.txt:6", "--include-untracked"],
+    );
+    assert!(!conflict.status.success());
+    assert!(
+        String::from_utf8_lossy(&conflict.stderr).contains("--include-untracked"),
+        "stderr: {}",
+        String::from_utf8_lossy(&conflict.stderr)
+    );
+    assert_eq!(fs::read_to_string(root.join("f.txt")).unwrap(), edited);
+}

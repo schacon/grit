@@ -13680,26 +13680,6 @@ impl core::marker::Unpin for grit_lib::porcelain::hunk_select::HunkSelection
 impl core::marker::UnsafeUnpin for grit_lib::porcelain::hunk_select::HunkSelection
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::hunk_select::HunkSelection
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::hunk_select::HunkSelection
-pub struct grit_lib::porcelain::hunk_select::HunkSelectionReport
-pub grit_lib::porcelain::hunk_select::HunkSelectionReport::stashed_hunks: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<grit_lib::diff::hunk_id::HunkId>>
-pub grit_lib::porcelain::hunk_select::HunkSelectionReport::stashed_lines: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>
-impl core::clone::Clone for grit_lib::porcelain::hunk_select::HunkSelectionReport
-pub fn grit_lib::porcelain::hunk_select::HunkSelectionReport::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::porcelain::hunk_select::HunkSelectionReport
-impl core::cmp::PartialEq for grit_lib::porcelain::hunk_select::HunkSelectionReport
-pub fn grit_lib::porcelain::hunk_select::HunkSelectionReport::eq(&self, &Self) -> bool
-impl core::default::Default for grit_lib::porcelain::hunk_select::HunkSelectionReport
-pub fn grit_lib::porcelain::hunk_select::HunkSelectionReport::default() -> Self
-impl core::fmt::Debug for grit_lib::porcelain::hunk_select::HunkSelectionReport
-pub fn grit_lib::porcelain::hunk_select::HunkSelectionReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for grit_lib::porcelain::hunk_select::HunkSelectionReport
-impl core::marker::Freeze for grit_lib::porcelain::hunk_select::HunkSelectionReport
-impl core::marker::Send for grit_lib::porcelain::hunk_select::HunkSelectionReport
-impl core::marker::Sync for grit_lib::porcelain::hunk_select::HunkSelectionReport
-impl core::marker::Unpin for grit_lib::porcelain::hunk_select::HunkSelectionReport
-impl core::marker::UnsafeUnpin for grit_lib::porcelain::hunk_select::HunkSelectionReport
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::hunk_select::HunkSelectionReport
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::hunk_select::HunkSelectionReport
 pub struct grit_lib::porcelain::hunk_select::LineRange
 pub grit_lib::porcelain::hunk_select::LineRange::end: usize
 pub grit_lib::porcelain::hunk_select::LineRange::path: alloc::string::String
@@ -13787,7 +13767,6 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::hunk_select::
 pub fn grit_lib::porcelain::hunk_select::diff_options_for_hunk_select(&grit_lib::repo::Repository) -> core::result::Result<grit_lib::diff::DiffOptions, grit_lib::error::Error>
 pub fn grit_lib::porcelain::hunk_select::list_unstaged_hunk_ids(&grit_lib::repo::Repository, &[alloc::string::String], grit_lib::diff::DiffOptions) -> core::result::Result<alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<grit_lib::diff::hunk_id::HunkId>>, grit_lib::error::Error>
 pub fn grit_lib::porcelain::hunk_select::parse_hunk_id_list(&[alloc::string::String]) -> core::result::Result<grit_lib::porcelain::hunk_select::HunkSelection, grit_lib::porcelain::hunk_select::HunkSelectError>
-pub fn grit_lib::porcelain::hunk_select::report_unstaged_hunk_selection(&grit_lib::repo::Repository, &grit_lib::porcelain::hunk_select::HunkSelection, &[alloc::string::String]) -> core::result::Result<grit_lib::porcelain::hunk_select::HunkSelectionReport, grit_lib::porcelain::hunk_select::HunkSelectError>
 pub fn grit_lib::porcelain::hunk_select::resolve_selection(&grit_lib::repo::Repository, grit_lib::diff::hunk_id::DiffSide, &grit_lib::porcelain::hunk_select::HunkSelection, &[alloc::string::String], grit_lib::diff::DiffOptions) -> core::result::Result<alloc::vec::Vec<grit_lib::apply::FilePatch>, grit_lib::porcelain::hunk_select::HunkSelectError>
 pub fn grit_lib::porcelain::hunk_select::restore_hunks(&grit_lib::repo::Repository, &grit_lib::porcelain::hunk_select::HunkSelection, &[alloc::string::String], bool, bool, bool) -> core::result::Result<grit_lib::porcelain::hunk_select::RestoreHunksOutcome, grit_lib::porcelain::hunk_select::HunkSelectError>
 pub fn grit_lib::porcelain::hunk_select::reverse_apply_patches_to_worktree(&grit_lib::repo::Repository, &[grit_lib::apply::FilePatch], &grit_lib::porcelain::hunk_select::WorktreeReverseApplyOptions, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> core::result::Result<(), grit_lib::error::ApplyError>
@@ -15199,6 +15178,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::stash::StashEntry
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::stash::StashEntry
 pub struct grit_lib::porcelain::stash::StashPreview
 pub grit_lib::porcelain::stash::StashPreview::paths: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::porcelain::stash::StashPreview::stashed_hunks: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<grit_lib::diff::hunk_id::HunkId>>
+pub grit_lib::porcelain::stash::StashPreview::stashed_lines: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>
 pub grit_lib::porcelain::stash::StashPreview::untracked: alloc::vec::Vec<alloc::string::String>
 impl core::clone::Clone for grit_lib::stash::StashPreview
 pub fn grit_lib::stash::StashPreview::clone(&self) -> Self
@@ -15240,6 +15221,8 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::stash::StashPushOptions
 pub struct grit_lib::porcelain::stash::StashPushResult
 pub grit_lib::porcelain::stash::StashPushResult::message: alloc::string::String
 pub grit_lib::porcelain::stash::StashPushResult::oid: grit_lib::objects::ObjectId
+pub grit_lib::porcelain::stash::StashPushResult::stashed_hunks: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<grit_lib::diff::hunk_id::HunkId>>
+pub grit_lib::porcelain::stash::StashPushResult::stashed_lines: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>
 pub grit_lib::porcelain::stash::StashPushResult::w_tree: grit_lib::objects::ObjectId
 impl core::clone::Clone for grit_lib::stash::StashPushResult
 pub fn grit_lib::stash::StashPushResult::clone(&self) -> Self
@@ -28181,6 +28164,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::stash::StashEntry
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::stash::StashEntry
 pub struct grit_lib::stash::StashPreview
 pub grit_lib::stash::StashPreview::paths: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::stash::StashPreview::stashed_hunks: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<grit_lib::diff::hunk_id::HunkId>>
+pub grit_lib::stash::StashPreview::stashed_lines: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>
 pub grit_lib::stash::StashPreview::untracked: alloc::vec::Vec<alloc::string::String>
 impl core::clone::Clone for grit_lib::stash::StashPreview
 pub fn grit_lib::stash::StashPreview::clone(&self) -> Self
@@ -28222,6 +28207,8 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::stash::StashPushOptions
 pub struct grit_lib::stash::StashPushResult
 pub grit_lib::stash::StashPushResult::message: alloc::string::String
 pub grit_lib::stash::StashPushResult::oid: grit_lib::objects::ObjectId
+pub grit_lib::stash::StashPushResult::stashed_hunks: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<grit_lib::diff::hunk_id::HunkId>>
+pub grit_lib::stash::StashPushResult::stashed_lines: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>
 pub grit_lib::stash::StashPushResult::w_tree: grit_lib::objects::ObjectId
 impl core::clone::Clone for grit_lib::stash::StashPushResult
 pub fn grit_lib::stash::StashPushResult::clone(&self) -> Self
