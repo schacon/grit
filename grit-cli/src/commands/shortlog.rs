@@ -209,6 +209,7 @@ pub fn run(args: &ShortlogCliArgs) -> Result<ShortlogOutcome> {
         format,
         &[],
         &mut parsed,
+        true,
     )?;
 
     let (behind_commits, behind_commit_rows, behind_commit_diffs) = if args.behind {
@@ -218,6 +219,7 @@ pub fn run(args: &ShortlogCliArgs) -> Result<ShortlogOutcome> {
             format,
             &[],
             &mut parsed,
+            true,
         )?;
         (Some(bc), br, bd)
     } else {

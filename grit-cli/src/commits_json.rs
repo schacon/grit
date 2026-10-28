@@ -89,18 +89,9 @@ impl CommitJsonLoader {
         repo: &Repository,
         oids: &[ObjectId],
         now: i64,
-        mut parsed: impl CommitReuse,
+        parsed: impl CommitReuse,
     ) -> Result<(Vec<CommitJson>, Vec<CommitSummary>)> {
-        let listed;
-        let decorations = match &self.decorations {
-            Some(all) => all,
-            None => {
-                listed = collect_decorations_for_commits(repo, false, oids)?;
-                &listed
-            }
-        };
-        let loaded = load_commits_with_decorations_reusing(repo, oids, decorations, &mut parsed)?;
-        drop(parsed);
+        let loaded = self.load_commits(repo, oids, parsed)?;
         let mut json = Vec::with_capacity(loaded.len());
         let mut summaries = Vec::with_capacity(loaded.len());
         for row in &loaded {
@@ -116,6 +107,45 @@ impl CommitJsonLoader {
             json.push(CommitJson::from_loaded(row, now));
         }
         Ok((json, summaries))
+    }
+
+    /// Like [`Self::load_with_summaries_reusing`], for output that only needs the JSON rows.
+    pub fn load_reusing(
+        &self,
+        repo: &Repository,
+        oids: &[ObjectId],
+        now: i64,
+        parsed: impl CommitReuse,
+    ) -> Result<Vec<CommitJson>> {
+        Ok(self
+            .load_commits(repo, oids, parsed)?
+            .iter()
+            .map(|row| CommitJson::from_loaded(row, now))
+            .collect())
+    }
+
+    /// Load `oids` with their decorations, taking walked commits out of `parsed`, which is
+    /// dropped before the caller builds its rows.
+    fn load_commits(
+        &self,
+        repo: &Repository,
+        oids: &[ObjectId],
+        mut parsed: impl CommitReuse,
+    ) -> Result<Vec<LoadedCommit>> {
+        let listed;
+        let decorations = match &self.decorations {
+            Some(all) => all,
+            None => {
+                listed = collect_decorations_for_commits(repo, false, oids)?;
+                &listed
+            }
+        };
+        Ok(load_commits_with_decorations_reusing(
+            repo,
+            oids,
+            decorations,
+            &mut parsed,
+        )?)
     }
 
     /// Build a single [`CommitJson`] row.

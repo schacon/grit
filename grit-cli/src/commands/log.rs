@@ -670,22 +670,27 @@ pub(crate) fn render_commit_diffs_markdown(
 }
 
 /// Load commit rows for a fixed OID list, optionally attaching per-commit diff detail.
+///
+/// The human [`CommitSummary`] rows are left empty unless `summaries` is set.
 pub(crate) fn load_commits_with_format_for_oids(
     repo: &grit_lib::repo::Repository,
     oids: &[ObjectId],
     format: DiffFormatArgs,
     path_args: &[String],
     parsed: impl CommitReuse,
+    summaries: bool,
 ) -> Result<LoadedCommitList> {
     let now = context::wall_clock_now(repo.environment()).unix_timestamp();
-    let (commit_json_rows, commit_rows) = CommitJsonLoader::for_listed_commits()
-        .load_with_summaries_reusing(repo, oids, now, parsed)?;
+    let loader = CommitJsonLoader::for_listed_commits();
+    let (commit_json_rows, commit_rows) = if summaries {
+        loader.load_with_summaries_reusing(repo, oids, now, parsed)?
+    } else {
+        (loader.load_reusing(repo, oids, now, parsed)?, Vec::new())
+    };
 
     let detail = format.detail_for_log();
-    let config = repo.config().context("could not load config")?;
-    let thread_policy = repo.thread_policy();
 
-    let mut commit_inputs = Vec::with_capacity(oids.len());
+    let mut commit_inputs = Vec::new();
     if detail.is_some() {
         for oid in oids {
             let commit = context::read_commit(repo, oid)?;
@@ -704,6 +709,8 @@ pub(crate) fn load_commits_with_format_for_oids(
     };
 
     let many_results = if let Some(detail) = detail {
+        let config = repo.config().context("could not load config")?;
+        let thread_policy = repo.thread_policy();
         let mut diff_options = DiffOptions::from_config(config.as_ref());
         format.apply_context(&mut diff_options);
         diff_options.word_level_inline = false;
@@ -841,7 +848,7 @@ fn build_commit_outcome(
     }
 
     let (commits, commit_rows, commit_diffs) = if need_commit_details {
-        load_commits_with_format_for_oids(repo, oids, format, path_args, parsed)?
+        load_commits_with_format_for_oids(repo, oids, format, path_args, parsed, !json_output)?
     } else {
         let summaries = CommitJsonLoader::load_summaries_only(repo, oids, &mut parsed)?;
         drop(parsed);
