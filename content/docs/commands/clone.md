@@ -333,7 +333,7 @@ See [Exit codes](../exit-codes/).
 
 ### Interrupting a clone
 
-Ctrl-C stops a clone at any point: while it downloads, copies objects or checks out files. The first Ctrl-C asks the clone to stop; grit then rolls back the checkout, removes the destination directory it created (or empties one that already existed empty) and exits `130`. Nothing is left in the way, so the same `grit clone` command can simply be run again, and a bundle download carries on where it stopped. A duplicate signal that arrives with the first (`timeout -s INT` signals both the process and its group) is ignored; pressing Ctrl-C again later ends grit at once, without the cleanup. In a Windows console Ctrl-C and Ctrl-Break behave the same way.
+Ctrl-C stops a clone at any point: while it downloads, copies objects or checks out files. The first Ctrl-C asks the clone to stop; grit then rolls back the checkout, removes the destination directory it created (or empties one that already existed empty) and exits `130`. Nothing is left in the way, so the same `grit clone` command can simply be run again, and a bundle download carries on where it stopped. A duplicate signal that arrives with the first (`timeout -s INT` signals both the process and its group) is ignored; pressing Ctrl-C again later ends grit at once, without the cleanup. In a Windows console Ctrl-C and Ctrl-Break behave the same way. Closing the console window, or killing the process outright, gives grit no chance to clean up, so delete the leftover directory by hand before you clone again.
 
 ```console
 $ grit clone ../git git

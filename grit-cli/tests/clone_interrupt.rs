@@ -1,7 +1,7 @@
 //! Ctrl+C during `grit clone` removes everything the clone created, so the
 //! same command can simply be run again (issue #2162).
 
-#![cfg(unix)]
+#![cfg(any(unix, windows))]
 
 use std::fs;
 use std::net::TcpListener;
@@ -44,8 +44,19 @@ fn spawn_clone(base: &Path, src: &Path, dest: &Path) -> Child {
         .current_dir(base)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    own_process_group(&mut cmd);
     cmd.spawn().expect("spawn grit clone")
 }
+
+/// On Windows, Ctrl+Break can be aimed at a process group without hitting the test runner.
+#[cfg(windows)]
+fn own_process_group(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt as _;
+    cmd.creation_flags(windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP);
+}
+
+#[cfg(unix)]
+fn own_process_group(_cmd: &mut Command) {}
 
 /// Whether the clone has started writing objects into `dest/.git/objects`.
 fn copying_objects(dest: &Path) -> bool {
@@ -67,12 +78,25 @@ fn checking_out(dest: &Path) -> bool {
     })
 }
 
+/// Deliver a Ctrl+C-style interrupt to `child`.
+#[cfg(unix)]
 fn sigint(child: &Child) {
     let pid = libc::pid_t::try_from(child.id()).expect("pid");
     // SAFETY: `pid` is our own child, not yet reaped.
     unsafe {
         libc::kill(pid, libc::SIGINT);
     }
+}
+
+/// Deliver a Ctrl+C-style interrupt to `child`: Ctrl+Break, since processes in their own
+/// group ignore Ctrl+C.
+#[cfg(windows)]
+fn sigint(child: &Child) {
+    use windows_sys::Win32::System::Console::{GenerateConsoleCtrlEvent, CTRL_BREAK_EVENT};
+    // SAFETY: the child was spawned as the leader of its own process group, so its id names
+    // that group and the event reaches only the clone.
+    let sent = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child.id()) };
+    assert_ne!(sent, 0, "GenerateConsoleCtrlEvent failed");
 }
 
 /// Start a clone, send `signals` back-to-back SIGINTs once `reached` holds,
@@ -181,14 +205,13 @@ fn a_later_second_ctrl_c_terminates_a_clone_stuck_on_the_network() {
 
     let mut cmd = Command::new(GRIT);
     configure_git_env(&mut cmd);
-    let mut child = cmd
-        .env("HOME", base.path())
+    cmd.env("HOME", base.path())
         .args(["clone", &url, "dest"])
         .current_dir(base.path())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn grit clone");
+        .stderr(Stdio::null());
+    own_process_group(&mut cmd);
+    let mut child = cmd.spawn().expect("spawn grit clone");
     connected
         .recv_timeout(Duration::from_secs(30))
         .expect("clone connects to the server");
