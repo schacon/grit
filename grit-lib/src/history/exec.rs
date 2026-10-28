@@ -297,6 +297,9 @@ fn classify_head_move(
 struct ExecCursor {
     row: usize,
     command: usize,
+    /// `HEAD` the commands at `row` run at when that row has no replacement (its
+    /// conflicted replay was skipped, so pending commands run at the parent, as in Git).
+    head: Option<ObjectId>,
 }
 
 /// Checkout each rewritten commit in plan order and run `spec.commands`, then restore
@@ -368,7 +371,11 @@ pub fn verify_rebase_with_exec(
         spec,
         rewrite,
         runner,
-        ExecCursor { row: 0, command: 0 },
+        ExecCursor {
+            row: 0,
+            command: 0,
+            head: None,
+        },
     )
 }
 
@@ -402,12 +409,15 @@ fn execute_plan(
                 HistoryError::Conflict { conflicts, .. }
                     if rewrites.replays_single_parent(repo, row) =>
                 {
-                    stop_on_replay_conflict(session, plan, rewrites, spec, row, conflicts, runs)
+                    stop_on_replay_conflict(
+                        session, plan, rewrites, spec, rewrite, row, conflicts, runs,
+                    )
                 }
                 err => fail_exec_session(session, err),
             });
         }
-        let Some(mut tip) = rewrites.tip(plan, row) else {
+        let fallback = start.head.filter(|_| row == start.row);
+        let Some(mut tip) = rewrites.tip(plan, row).or(fallback) else {
             continue;
         };
         let mut tip_tree = commit_tree_for_apply(repo, tip)?;
@@ -494,10 +504,12 @@ fn execute_plan(
                     plan,
                     rewrites,
                     spec,
+                    rewrite,
                     ExecStop {
                         cursor: ExecCursor {
                             row,
                             command: command_index + 1,
+                            head: None,
                         },
                         head: tip,
                         pending_pick: false,
@@ -554,12 +566,15 @@ fn adopt_exec_head(
 }
 
 /// Check out the conflicted replay of row `row` on top of its rewritten parent and save
-/// exec recovery state with that replay pending.
+/// exec recovery state with that replay pending. If the state cannot be saved, the
+/// session is rolled back so no detached conflict is left without a recovery record.
+#[allow(clippy::too_many_arguments)]
 fn stop_on_replay_conflict(
     session: &mut ExecDetachedSession<'_>,
     plan: &RewritePlan,
     rewrites: &ExecRewrites,
     spec: &ExecSpec,
+    rewrite: &RewriteOptions,
     row: usize,
     conflicts: Vec<crate::operation::Conflict>,
     runs: Vec<ExecRunRecord>,
@@ -599,15 +614,19 @@ fn stop_on_replay_conflict(
         Ok(parent) => parent,
         Err(err) => return fail_exec_session(session, err),
     };
-    session.active = false;
     let stop = ExecStop {
-        cursor: ExecCursor { row, command: 0 },
+        cursor: ExecCursor {
+            row,
+            command: 0,
+            head: None,
+        },
         head: parent,
         pending_pick: true,
     };
-    if let Err(err) = store_exec_stop(session, plan, rewrites, spec, stop) {
-        return err;
+    if let Err(err) = store_exec_stop(session, plan, rewrites, spec, rewrite, stop) {
+        return fail_exec_session(session, err);
     }
+    session.active = false;
     HistoryError::ExecConflict {
         commit: plan.commits[row].old,
         conflicts,
@@ -766,6 +785,7 @@ struct StoredExec {
     new_tree: Option<String>,
     commit_changes: bool,
     commands: Vec<String>,
+    rewrite: RewriteOptions,
     row: usize,
     next_command: usize,
     head: String,
@@ -778,11 +798,14 @@ fn exec_io(err: impl std::fmt::Display) -> HistoryError {
     }
 }
 
+/// Write the exec recovery record. `grit-exec` is committed last, so on failure no
+/// recovery record exists and the partial `orig-head` / `head-name` are removed.
 fn store_exec_stop(
     session: &ExecDetachedSession<'_>,
     plan: &RewritePlan,
     rewrites: &ExecRewrites,
     spec: &ExecSpec,
+    rewrite: &RewriteOptions,
     stop: ExecStop,
 ) -> Result<(), HistoryError> {
     use std::io::Write;
@@ -819,28 +842,36 @@ fn store_exec_stop(
         new_tree: plan.head.new_tree.map(|o| o.to_hex()),
         commit_changes: plan.head.commit_changes,
         commands: spec.commands.clone(),
+        rewrite: rewrite.clone(),
         row: stop.cursor.row,
         next_command: stop.cursor.command,
         head: stop.head.to_hex(),
         pending_pick: stop.pending_pick,
     };
     let dir = session.repo.git_dir().join("rebase-merge");
-    fs::create_dir_all(&dir).map_err(exec_io)?;
-    let mut lock = crate::lockfile::LockFile::acquire(
-        &dir.join("grit-exec.lock"),
-        crate::lockfile::LockWait::Immediately,
-    )
-    .map_err(exec_io)?;
-    lock.write_all(&serde_json::to_vec(&state).map_err(exec_io)?)
+    let write = || -> Result<(), HistoryError> {
+        fs::create_dir_all(&dir).map_err(exec_io)?;
+        let mut lock = crate::lockfile::LockFile::acquire(
+            &dir.join("grit-exec.lock"),
+            crate::lockfile::LockWait::Immediately,
+        )
         .map_err(exec_io)?;
-    lock.commit_to(&dir.join("grit-exec")).map_err(exec_io)?;
-    fs::write(dir.join("orig-head"), format!("{}\n", state.original_head)).map_err(exec_io)?;
-    fs::write(
-        dir.join("head-name"),
-        format!("{}\n", state.head_ref.as_deref().unwrap_or("detached HEAD")),
-    )
-    .map_err(exec_io)?;
-    Ok(())
+        lock.write_all(&serde_json::to_vec(&state).map_err(exec_io)?)
+            .map_err(exec_io)?;
+        fs::write(dir.join("orig-head"), format!("{}\n", state.original_head)).map_err(exec_io)?;
+        fs::write(
+            dir.join("head-name"),
+            format!("{}\n", state.head_ref.as_deref().unwrap_or("detached HEAD")),
+        )
+        .map_err(exec_io)?;
+        lock.commit_to(&dir.join("grit-exec")).map_err(exec_io)
+    };
+    write().inspect_err(|_| {
+        for name in ["orig-head", "head-name"] {
+            let _ = fs::remove_file(dir.join(name));
+        }
+        let _ = fs::remove_dir(&dir);
+    })
 }
 
 fn load_exec_stop(repo: &Repository) -> Result<StoredExec, HistoryError> {
@@ -931,13 +962,15 @@ fn stored_rewrites(state: &StoredExec) -> Result<ExecRewrites, HistoryError> {
 
 /// Resume only after the caller has explicitly saved or removed the exec's edits, or
 /// resolved and staged a pending replay conflict.
+///
+/// Later replays and resolved commits use the rewrite options the rebase started with.
 pub(super) fn resume_exec_rebase(
     repo: &Repository,
-    rewrite: &RewriteOptions,
     apply: &super::ApplyOptions,
     skip: bool,
 ) -> Result<super::RebaseOutcome, super::RebaseSessionError> {
     let state = load_exec_stop(repo)?;
+    let rewrite = &state.rewrite;
     let prestate = stored_prestate(&state)?;
     let mut plan = stored_plan(repo, &state, &prestate)?;
     let mut rewrites = stored_rewrites(&state)?;
@@ -967,8 +1000,9 @@ pub(super) fn resume_exec_rebase(
             rewrites.remap.insert(planned, expected);
             (
                 ExecCursor {
-                    row: row + 1,
+                    row,
                     command: 0,
+                    head: Some(expected),
                 },
                 tree,
             )
@@ -989,7 +1023,14 @@ pub(super) fn resume_exec_rebase(
             let resolved = write_resolved_replay(repo, planned, tree, expected, rewrite)?;
             set_row_replacement(repo, &mut plan.commits[row], resolved)?;
             rewrites.remap.insert(planned, resolved);
-            (ExecCursor { row, command: 0 }, tree)
+            (
+                ExecCursor {
+                    row,
+                    command: 0,
+                    head: None,
+                },
+                tree,
+            )
         }
     } else {
         if let Err(err) = ensure_worktree_clean_for_rebase_exec(repo) {
@@ -1014,12 +1055,16 @@ pub(super) fn resume_exec_rebase(
             state.next_command
         };
         (
-            ExecCursor { row, command },
+            ExecCursor {
+                row,
+                command,
+                head: Some(expected),
+            },
             commit_tree_for_apply(repo, expected)?,
         )
     };
     let spec = ExecSpec {
-        commands: state.commands,
+        commands: state.commands.clone(),
     };
     let mut session = ExecDetachedSession {
         repo,

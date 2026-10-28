@@ -885,6 +885,35 @@ fn exec_amend_conflict_stops_with_conflicts_and_continues() -> TestResult {
 }
 
 #[test]
+fn exec_conflict_continue_keeps_the_empty_policy_the_rebase_started_with() -> TestResult {
+    let command = "if ! test -f two; then echo amended > two && git add two && git commit -q --amend --no-edit; fi";
+    let scratch = Scratch::new("exec-resume-options")?;
+    let dir = scratch.path();
+    init_amend_exec_fixture(dir)?;
+    git(dir, &["switch", "-q", "feature"])?;
+    fs::write(dir.join("two"), "C\n")?;
+    git(dir, &["commit", "-qam", "three"])?;
+    let out = gs(
+        dir,
+        [
+            "rebase", "main", "--empty", "keep", "--exec", command, "--json",
+        ],
+    )?;
+    assert_eq!(out.status, Some(1), "{}\n{}", out.stdout, out.stderr);
+    assert_eq!(parse_json(&out.stdout)?["result"], "conflicts");
+    fs::write(dir.join("two"), "C\n")?;
+    git(dir, &["add", "two"])?;
+    let resume = gs(dir, ["rebase", "--continue", "--json"])?;
+    assert!(resume.success(), "{}\n{}", resume.stdout, resume.stderr);
+    assert_eq!(
+        git(dir, &["log", "--format=%s", "main..feature"])?,
+        "three\ntwo\none\n"
+    );
+    git_fsck_strict(dir)?;
+    Ok(())
+}
+
+#[test]
 fn dirty_exec_human_and_markdown_explain_recovery() -> TestResult {
     for format in [None, Some("--markdown")] {
         let scratch = Scratch::new("dirty-exec-render")?;

@@ -2604,3 +2604,131 @@ fn exec_conflict_stop_skip_drops_the_commit_and_abort_restores() {
         assert_git_fsck_strict(wt);
     }
 }
+
+#[test]
+fn exec_resume_keeps_the_rewrite_options_the_rebase_started_with() {
+    use grit_lib::revwalk::history::{
+        plan_rebase, verify_rebase_with_exec, ExecSpec, HistoryError, RebasePlan,
+    };
+    let fixture = HistoryRepo::init();
+    let wt = fixture.worktree();
+    commit_file(wt, "f", "base\n", "base");
+    let upstream = git_oid(wt, "HEAD");
+    git(wt, &["switch", "-c", "topic"]);
+    commit_file(wt, "one", "one\n", "one");
+    commit_file(wt, "two", "B\n", "two");
+    commit_file(wt, "two", "C\n", "three");
+    let tip = git_oid(wt, "HEAD");
+    git(wt, &["switch", "main"]);
+    commit_file(wt, "up", "up\n", "up");
+    let onto = git_oid(wt, "HEAD");
+    git(wt, &["switch", "topic"]);
+
+    let resume_opts = start_opts(upstream, Some(onto), tip);
+    let mut keep = resume_opts.clone();
+    keep.rebase.rewrite.empty = EmptyPolicy::Keep;
+    let RebasePlan::Plan(mut plan) =
+        plan_rebase(&open_grit(wt), &keep.request, &keep.rebase).unwrap()
+    else {
+        panic!("replay plan")
+    };
+    let err = verify_rebase_with_exec(
+        &open_grit(wt),
+        &mut plan,
+        &ExecSpec {
+            commands: vec![conflicting_amend()],
+        },
+        &keep.rebase.rewrite,
+        grit_lib::command_runner::system_command_runner().as_ref(),
+    )
+    .unwrap_err();
+    assert!(matches!(err, HistoryError::ExecConflict { .. }), "{err:?}");
+    std::fs::write(wt.join("two"), "C\n").unwrap();
+    git(wt, &["add", "two"]);
+    assert_eq!(resume_opts.rebase.rewrite.empty, EmptyPolicy::Drop);
+    let RebaseOutcome::ExecDone { .. } =
+        continue_rebase(&open_grit(wt), &resume_opts).expect("continue")
+    else {
+        panic!("done")
+    };
+    assert_eq!(
+        subjects(wt, "topic"),
+        "three\ntwo\none\nup\nbase\n",
+        "the now-empty third commit is kept, as the rebase was started with --empty keep"
+    );
+    assert_eq!(git(wt, &["show", "topic:two"]), "C\n");
+    assert_git_fsck_strict(wt);
+}
+
+#[test]
+fn exec_conflict_skip_runs_the_pending_command_like_git() {
+    use grit_lib::revwalk::history::HistoryError;
+    let logs = tempfile::tempdir().unwrap();
+    let command_logging_to =
+        |log: &std::path::Path| format!("echo run >> '{}'; {}", log.display(), conflicting_amend());
+    let count = |log: &std::path::Path| {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .count()
+    };
+
+    let grit_log = logs.path().join("grit");
+    let (fixture, opts, mut plan) = exec_fixture();
+    let wt = fixture.worktree();
+    let err = run_exec(wt, &mut plan, &[&command_logging_to(&grit_log)]).unwrap_err();
+    assert!(matches!(err, HistoryError::ExecConflict { .. }), "{err:?}");
+    assert_eq!(count(&grit_log), 1);
+    let amended = git_oid(wt, "HEAD");
+    let RebaseOutcome::ExecDone { exec, plan, .. } =
+        skip_rebase(&open_grit(wt), &opts).expect("skip")
+    else {
+        panic!("done")
+    };
+    assert_eq!(count(&grit_log), 2, "the skipped pick's command still runs");
+    assert_eq!(exec.runs.len(), 1);
+    assert_eq!(exec.runs[0].commit, amended);
+    assert_eq!(plan.commits[1].new, None);
+    assert_eq!(git_oid(wt, "topic"), amended);
+
+    let git_log = logs.path().join("git");
+    let (twin, code) = git_exec_twin(&[&command_logging_to(&git_log)]);
+    assert_eq!(code, Some(1));
+    assert_eq!(count(&git_log), 1);
+    let skip = git_hermetic(twin.worktree(), &["rebase", "--skip"]);
+    assert!(skip.status.success(), "{skip:?}");
+    assert_eq!(count(&git_log), 2);
+    assert_eq!(subjects(twin.worktree(), "topic"), subjects(wt, "topic"));
+    assert_eq!(
+        git_oid(wt, "topic^{tree}"),
+        git_oid(twin.worktree(), "topic^{tree}")
+    );
+    assert_git_fsck_strict(wt);
+}
+
+#[test]
+fn exec_conflict_recovery_write_failure_rolls_back() {
+    let (fixture, opts, mut plan) = exec_fixture();
+    let wt = fixture.worktree();
+    let index = std::fs::read(wt.join(".git/index")).unwrap();
+    let command = format!(
+        "if ! test -f two; then echo amended > two && {EXEC_GIT} add two && \
+         {EXEC_GIT} commit -q --amend --no-edit && mkdir -p .git/rebase-merge && \
+         touch .git/rebase-merge/grit-exec.lock; fi"
+    );
+    let err = run_exec(wt, &mut plan, &[&command]).unwrap_err();
+    assert!(err.to_string().contains("grit-exec.lock"), "{err}");
+    assert_eq!(
+        git(wt, &["symbolic-ref", "HEAD"]).trim(),
+        "refs/heads/topic"
+    );
+    assert_eq!(git_oid(wt, "topic"), opts.request.branch_tip);
+    assert_eq!(std::fs::read(wt.join(".git/index")).unwrap(), index);
+    assert_eq!(git(wt, &["ls-files", "-u"]), "");
+    assert_eq!(std::fs::read(wt.join("two")).unwrap(), b"two\n");
+    assert_eq!(git(wt, &["status", "--porcelain"]), "");
+    for name in ["grit-exec", "orig-head", "head-name"] {
+        assert!(!wt.join(".git/rebase-merge").join(name).exists(), "{name}");
+    }
+    assert_git_fsck_strict(wt);
+}
