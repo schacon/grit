@@ -464,3 +464,153 @@ fn clone_tag_layout_covers_bare_no_tags_shallow_and_empty() {
     assert!(for_each_ref(dest.path()).is_empty());
     assert!(git_in(dest.path(), &["fsck", "--strict"]));
 }
+
+/// Loose ref files under `dir` (relative names), ignoring directories.
+fn loose_ref_files(dir: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(next) = stack.pop() {
+        let Ok(read) = std::fs::read_dir(&next) else {
+            continue;
+        };
+        for entry in read.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                out.push(path.strip_prefix(dir).unwrap().display().to_string());
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn clone_of_many_branches_packs_them_in_one_file_like_git() {
+    const BRANCHES: usize = 300;
+    let upstream = tempfile::tempdir().unwrap();
+    assert!(git_in(
+        upstream.path(),
+        &["init", "-q", "--bare", "-b", "main"]
+    ));
+    let tree = git_out(
+        upstream.path(),
+        &["hash-object", "-t", "tree", "-w", "/dev/null"],
+    )
+    .unwrap();
+    let commit = git_out(
+        upstream.path(),
+        &[
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@e.com",
+            "commit-tree",
+            &tree,
+            "-m",
+            "root",
+        ],
+    )
+    .unwrap();
+    let mut script: String = (0..BRANCHES)
+        .map(|i| format!("create refs/heads/b/n{i} {commit}\n"))
+        .collect();
+    script.push_str(&format!("create refs/heads/main {commit}\n"));
+    let mut update_ref = Command::new("git")
+        .current_dir(upstream.path())
+        .args(["update-ref", "--stdin"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write as _;
+    update_ref
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(script.as_bytes())
+        .unwrap();
+    assert!(update_ref.wait().unwrap().success());
+    assert!(git_in(
+        upstream.path(),
+        &[
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@e.com",
+            "tag",
+            "-a",
+            "v1",
+            "-m",
+            "release",
+            "main",
+        ]
+    ));
+    assert!(git_in(upstream.path(), &["pack-refs", "--all"]));
+    let url = format!("file://{}", upstream.path().display());
+
+    for bare in [true, false] {
+        let dest = tempfile::tempdir().unwrap();
+        let control = tempfile::tempdir().unwrap();
+        let mut opts = CloneOptions::new(&url, dest.path().to_path_buf());
+        opts.bare = bare;
+        let mut git_args = vec!["clone", "-q"];
+        if bare {
+            git_args.push("--bare");
+        }
+        git_args.extend([url.as_str(), "."]);
+        assert!(git_in(control.path(), &git_args));
+        let result = clone_repo(opts, &mut NoProgress, &NeverCancel, None).unwrap();
+        let git_dir = result.repo.git_dir().to_path_buf();
+
+        let imported = if bare {
+            "refs/heads"
+        } else {
+            "refs/remotes/origin"
+        };
+        let loose = loose_ref_files(&git_dir.join(imported));
+        let expected_loose: Vec<String> = if bare {
+            vec![]
+        } else {
+            vec!["HEAD".to_owned()]
+        };
+        assert_eq!(
+            loose, expected_loose,
+            "bare={bare}: imported refs stay packed"
+        );
+        assert!(
+            loose_ref_files(&git_dir.join("refs/tags")).is_empty(),
+            "bare={bare}"
+        );
+
+        let packed = std::fs::read_to_string(git_dir.join("packed-refs")).unwrap();
+        assert!(packed.starts_with("# pack-refs with: peeled fully-peeled sorted\n"));
+        let names: Vec<&str> = packed
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.starts_with('^'))
+            .map(|l| l.split_once(' ').unwrap().1)
+            .collect();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        assert_eq!(names, sorted, "bare={bare}: packed-refs is sorted");
+        assert_eq!(names.len(), BRANCHES + 2, "bare={bare}: {packed}");
+        let tag = git_out(dest.path(), &["rev-parse", "refs/tags/v1"]).unwrap();
+        assert!(
+            packed.contains(&format!("{tag} refs/tags/v1\n^{commit}\n")),
+            "bare={bare}: annotated tag is peeled"
+        );
+
+        assert_eq!(
+            for_each_ref(dest.path()),
+            for_each_ref(control.path()),
+            "bare={bare}: refs match git clone"
+        );
+        assert_eq!(
+            git_out(dest.path(), &["rev-parse", &format!("{imported}/b/n7")]).as_deref(),
+            Some(commit.as_str())
+        );
+        assert!(git_in(dest.path(), &["fsck", "--strict"]), "bare={bare}");
+    }
+}

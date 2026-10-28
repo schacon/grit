@@ -248,6 +248,7 @@ pub fn commit_ref_batch_on_store(
         updates.to_vec(),
         reflog_renames.to_vec(),
         case_only_renames.to_vec(),
+        false,
     )
 }
 
@@ -263,7 +264,24 @@ pub(crate) fn commit_owned_ref_updates_on_store(
     if updates.is_empty() {
         return Ok(());
     }
-    commit_owned_ref_batch_on_store(store, updates, Vec::new(), Vec::new())
+    commit_owned_ref_batch_on_store(store, updates, Vec::new(), Vec::new(), false)
+}
+
+/// [`commit_owned_ref_updates_on_store`] as the first ref transaction of a new repository
+/// ([`RefTransaction::initial`]): the files backend stores a batch of plain creates in one
+/// `packed-refs` rewrite instead of a loose file per ref.
+///
+/// # Errors
+///
+/// Same as [`commit_ref_updates_on_store`].
+pub(crate) fn commit_initial_ref_updates_on_store(
+    store: &dyn RefStore,
+    updates: Vec<RefUpdate>,
+) -> Result<()> {
+    if updates.is_empty() {
+        return Ok(());
+    }
+    commit_owned_ref_batch_on_store(store, updates, Vec::new(), Vec::new(), true)
 }
 
 fn commit_owned_ref_batch_on_store(
@@ -271,6 +289,7 @@ fn commit_owned_ref_batch_on_store(
     updates: Vec<RefUpdate>,
     reflog_renames: Vec<RefReflogRename>,
     case_only_renames: Vec<RefCaseOnlyRename>,
+    initial: bool,
 ) -> Result<()> {
     for update in &updates {
         if let Some(ref log) = update.reflog {
@@ -298,6 +317,9 @@ fn commit_owned_ref_batch_on_store(
     }
     for rename in case_only_renames {
         txn = txn.with_case_only_rename(rename);
+    }
+    if initial {
+        txn = txn.initial();
     }
     let prepared = store
         .prepare(txn)
@@ -3218,7 +3240,7 @@ fn pack_refs_files_matching(
         packed_loose += 1;
     }
 
-    if packed_loose == 0 && merged.is_empty() {
+    if packed_loose == 0 {
         return Ok((packed_path, 0, 0));
     }
 
@@ -3925,7 +3947,7 @@ fn normalize_list_refs_prefix(git_dir: &Path, prefix: &str) -> String {
 
 /// The `^` line of a `fully-peeled` `packed-refs` entry: the innermost non-tag object when `oid`
 /// is an annotated tag. Lightweight refs, and tags whose chain cannot be read, get no peel line.
-fn packed_ref_peel(odb: &crate::odb::Odb, oid: ObjectId) -> Option<ObjectId> {
+pub(crate) fn packed_ref_peel(odb: &crate::odb::Odb, oid: ObjectId) -> Option<ObjectId> {
     odb.peel_stored_tag_target(oid).ok().flatten()
 }
 

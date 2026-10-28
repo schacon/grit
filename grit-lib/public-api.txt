@@ -19589,8 +19589,10 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::store::RefReflogRe
 pub struct grit_lib::refs::store::RefTransaction
 impl grit_lib::refs::store::RefTransaction
 pub fn grit_lib::refs::store::RefTransaction::case_only_renames(&self) -> &[grit_lib::refs::store::RefCaseOnlyRename]
+pub fn grit_lib::refs::store::RefTransaction::initial(self) -> Self
 pub fn grit_lib::refs::store::RefTransaction::into_parts(self) -> (alloc::vec::Vec<grit_lib::refs::store::RefUpdate>, alloc::vec::Vec<grit_lib::refs::store::RefReflogRename>, alloc::vec::Vec<grit_lib::refs::store::RefCaseOnlyRename>)
 pub fn grit_lib::refs::store::RefTransaction::into_updates(self) -> alloc::vec::Vec<grit_lib::refs::store::RefUpdate>
+pub fn grit_lib::refs::store::RefTransaction::is_initial(&self) -> bool
 pub fn grit_lib::refs::store::RefTransaction::new() -> Self
 pub fn grit_lib::refs::store::RefTransaction::push_update(&mut self, grit_lib::refs::store::RefUpdate) -> core::result::Result<(), grit_lib::refs::store::RefStoreError>
 pub fn grit_lib::refs::store::RefTransaction::reflog_renames(&self) -> &[grit_lib::refs::store::RefReflogRename]

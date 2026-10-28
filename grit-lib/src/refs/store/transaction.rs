@@ -12,6 +12,7 @@ pub struct RefTransaction {
     updates: Vec<RefUpdate>,
     reflog_renames: Vec<RefReflogRename>,
     case_only_renames: Vec<RefCaseOnlyRename>,
+    initial: bool,
 }
 
 impl RefTransaction {
@@ -99,6 +100,29 @@ impl RefTransaction {
     pub fn with_case_only_rename(mut self, rename: RefCaseOnlyRename) -> Self {
         self.case_only_renames.push(rename);
         self
+    }
+
+    /// Mark this as the first ref transaction of a new repository, such as the remote refs a
+    /// clone imports (Git's initial ref transaction).
+    ///
+    /// The files backend then writes the batch as one `packed-refs` rewrite, without a loose
+    /// file or lock per ref, when every update creates a direct ref (no reflog, expectation
+    /// [`Expected::Any`] or [`Expected::Missing`]) that does not exist yet in the common
+    /// directory. Any other batch, and every other backend, commits as usual, so the flag
+    /// never changes which refs end up stored, only how they are laid out.
+    ///
+    /// The packed write takes only `packed-refs.lock`: callers promise no other writer is
+    /// creating the same refs, which holds for a repository nobody else knows about yet.
+    #[must_use]
+    pub fn initial(mut self) -> Self {
+        self.initial = true;
+        self
+    }
+
+    /// Whether [`Self::initial`] marked this transaction.
+    #[must_use]
+    pub fn is_initial(&self) -> bool {
+        self.initial
     }
 
     /// Split into ref updates, reflog renames, and case-only ref renames.

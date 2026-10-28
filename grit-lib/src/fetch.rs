@@ -1849,6 +1849,7 @@ pub(crate) fn fetch_remote_into(
                 remote_refs: &remote_refs,
                 remote_name: opts.remote_name.as_deref(),
             },
+            opts.initial_remote_fetch,
         )?;
         d_write += t.elapsed();
     }

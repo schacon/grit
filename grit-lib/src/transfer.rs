@@ -2008,6 +2008,7 @@ pub(crate) fn fetch_local_into(
                 remote_refs: &remote_refs,
                 remote_name: opts.remote_name.as_deref(),
             },
+            opts.initial_remote_fetch,
         )?;
     }
 
@@ -3482,6 +3483,10 @@ fn mark_fetch_ref_update_rejected(
 /// per-ref commits and records lock or namespace failures on the matching
 /// [`RefUpdate`] rows instead of aborting the whole fetch.
 ///
+/// With `initial` (the first fetch of a clone), the direct refs are committed first as an
+/// initial transaction ([`crate::refs::store::RefTransaction::initial`]), which the files
+/// backend stores in one `packed-refs` write; symbolic refs follow as a regular batch.
+///
 /// # Errors
 ///
 /// Propagates non-rejectable ref-store and I/O errors from the fallback path.
@@ -3490,12 +3495,27 @@ pub(crate) fn apply_fetch_ref_updates(
     store_batch: &[crate::refs::store::RefUpdate],
     updates: &mut [RefUpdate],
     hint: FetchRefRejectHint<'_>,
+    initial: bool,
 ) -> Result<()> {
     if store_batch.is_empty() {
         return Ok(());
     }
     let store = local.refs();
-    if crate::refs::commit_ref_updates_on_store(store, store_batch, &[]).is_ok() {
+    let symbolic: Vec<crate::refs::store::RefUpdate>;
+    let mut store_batch = store_batch;
+    if initial {
+        let (direct, rest) = store_batch
+            .iter()
+            .cloned()
+            .partition(|u| matches!(u.new_value, Some(crate::refs::store::RawRef::Direct(_))));
+        if crate::refs::commit_initial_ref_updates_on_store(store, direct).is_ok() {
+            symbolic = rest;
+            store_batch = &symbolic;
+        }
+    }
+    if store_batch.is_empty()
+        || crate::refs::commit_ref_updates_on_store(store, store_batch, &[]).is_ok()
+    {
         return Ok(());
     }
 

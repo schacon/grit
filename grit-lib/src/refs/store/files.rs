@@ -120,6 +120,9 @@ struct PreparedFilesBatch {
     /// Ref/reflog state observed at prepare (must drive commit, not a reload).
     before_commit: RefBatchState,
     after_commit: RefBatchState,
+    /// `packed-refs` records an initial transaction adds instead of loose files (see
+    /// [`RefTransaction::initial`]); empty for every other batch.
+    initial_packed_records: Vec<String>,
 }
 
 impl FilesRefStore {
@@ -674,6 +677,83 @@ impl FilesRefStore {
         let path = route.storage_dir.join(&route.storage_name);
         let lock = lock_path_for_ref(&path);
         (route, path, lock)
+    }
+
+    /// The `packed-refs` records (ref line plus `^` peel line for annotated tags) that store
+    /// an initial transaction's updates, or `None` when the batch must commit as usual: an
+    /// update is not a plain direct create, stores outside the common directory's
+    /// `packed-refs`, or names a ref that exists already.
+    ///
+    /// # Errors
+    ///
+    /// [`RefStoreError::NameUnavailable`] when the batch conflicts with itself or with the
+    /// stored refs (as the regular path would report), and listing failures.
+    fn initial_packed_records(&self, txn: &RefTransaction) -> StoreResult<Option<Vec<String>>> {
+        let updates = txn.updates();
+        if updates.is_empty()
+            || !txn.reflog_renames().is_empty()
+            || !txn.case_only_renames().is_empty()
+        {
+            return Ok(None);
+        }
+        let mut creates = Vec::with_capacity(updates.len());
+        for update in updates {
+            let Some(RawRef::Direct(oid)) = update.new_value else {
+                return Ok(None);
+            };
+            if update.flags.log_only
+                || update.reflog.is_some()
+                || !matches!(update.expected, Expected::Any | Expected::Missing)
+            {
+                return Ok(None);
+            }
+            let route = self.route(&update.name);
+            if route.storage_dir != self.common_dir || route.storage_name != update.name {
+                return Ok(None);
+            }
+            creates.push((update.name.as_str(), oid));
+        }
+        let existing = self
+            .load_raw_map_prefix("", None)
+            .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
+        if updates.iter().any(|u| existing.contains_key(&u.name)) {
+            return Ok(None);
+        }
+        verify_create_conflicts(&existing, updates)?;
+
+        let odb = crate::odb::Odb::new(&self.common_dir.join("objects"))
+            .with_config_git_dir(self.git_dir.clone());
+        let mut peels: HashMap<ObjectId, Option<ObjectId>> = HashMap::new();
+        let records = odb.with_pack_read_context(|| {
+            creates
+                .into_iter()
+                .map(|(name, oid)| {
+                    let peel = *peels
+                        .entry(oid)
+                        .or_insert_with(|| crate::refs::packed_ref_peel(&odb, oid));
+                    match peel {
+                        Some(peel) => format!("{oid} {name}\n^{peel}\n"),
+                        None => format!("{oid} {name}\n"),
+                    }
+                })
+                .collect()
+        });
+        Ok(Some(records))
+    }
+
+    /// Take `packed-refs.lock` for a batch, waiting as `core.packedRefsTimeout` allows.
+    fn acquire_packed_lock(&self) -> StoreResult<PathBuf> {
+        use crate::lockfile::{LockError, LockFile};
+        let packed_path = super::paths::packed_refs_path(&self.common_dir);
+        let lock = lock_path_for_ref(&packed_path);
+        let wait = LockWait::packed_refs_for_git_dir(&self.common_dir);
+        match LockFile::acquire(&lock, wait).map(|guard| guard.detach()) {
+            Ok(()) => Ok(lock),
+            Err(LockError::Held { .. }) => Err(RefStoreError::LockHeld {
+                name: super::paths::PACKED_REFS.to_owned(),
+            }),
+            Err(LockError::Io { source, .. }) => Err(RefStoreError::Corrupt(source.to_string())),
+        }
     }
 
     fn needs_packed_lock(&self, updates: &[RefUpdate]) -> bool {
@@ -1398,17 +1478,38 @@ impl RefStore for FilesRefStore {
         txn: RefTransaction,
     ) -> StoreResult<Box<dyn PreparedRefTransaction + Send + '_>> {
         txn.validate()?;
-        let (updates, reflog_renames, case_only_renames) = txn.into_parts();
 
         let mut prepared_guard = self.prepared.lock().unwrap_or_else(|e| e.into_inner());
         if prepared_guard.is_some() {
             return Err(RefStoreError::LockHeld {
-                name: updates
+                name: txn
+                    .updates()
                     .first()
                     .map(|u| u.name.clone())
                     .unwrap_or_else(|| "refs".to_owned()),
             });
         }
+
+        if txn.is_initial() {
+            if let Some(initial_packed_records) = self.initial_packed_records(&txn)? {
+                let packed_lock = self.acquire_packed_lock()?;
+                *prepared_guard = Some(PreparedFilesBatch {
+                    updates: Vec::new(),
+                    case_only_renames: Vec::new(),
+                    ref_locks: HashMap::new(),
+                    packed_lock: Some(packed_lock),
+                    ref_lock_wait: LockWait::Immediately,
+                    before_commit: RefBatchState::default(),
+                    after_commit: RefBatchState::default(),
+                    initial_packed_records,
+                });
+                return Ok(Box::new(FilesPrepared {
+                    store: self,
+                    committed: false,
+                }));
+            }
+        }
+        let (updates, reflog_renames, case_only_renames) = txn.into_parts();
 
         let mut preliminary = self
             .load_batch_state_for_prepare(&updates, &reflog_renames, &case_only_renames)
@@ -1527,22 +1628,15 @@ impl RefStore for FilesRefStore {
 
         let mut packed_lock = None;
         if self.needs_packed_lock(&updates) {
-            let packed_path = super::paths::packed_refs_path(&self.common_dir);
-            let lock = lock_path_for_ref(&packed_path);
-            use crate::lockfile::{LockError, LockFile};
-            let wait = LockWait::packed_refs_for_git_dir(&self.common_dir);
-            if let Err(err) = LockFile::acquire(&lock, wait).map(|guard| guard.detach()) {
-                for acquired in ref_locks.values() {
-                    let _ = fs::remove_file(acquired);
+            match self.acquire_packed_lock() {
+                Ok(lock) => packed_lock = Some(lock),
+                Err(err) => {
+                    for acquired in ref_locks.values() {
+                        let _ = fs::remove_file(acquired);
+                    }
+                    return Err(err);
                 }
-                return Err(match err {
-                    LockError::Held { .. } => RefStoreError::LockHeld {
-                        name: super::paths::PACKED_REFS.to_owned(),
-                    },
-                    LockError::Io { source, .. } => RefStoreError::Corrupt(source.to_string()),
-                });
             }
-            packed_lock = Some(lock);
         }
 
         *prepared_guard = Some(PreparedFilesBatch {
@@ -1553,6 +1647,7 @@ impl RefStore for FilesRefStore {
             ref_lock_wait,
             before_commit,
             after_commit,
+            initial_packed_records: Vec::new(),
         });
 
         Ok(Box::new(FilesPrepared {
@@ -1670,6 +1765,20 @@ impl PreparedRefTransaction for FilesPrepared<'_> {
         let Some(mut batch) = guard.take() else {
             return Ok(());
         };
+
+        if !batch.initial_packed_records.is_empty() {
+            let records: Vec<&str> = batch
+                .initial_packed_records
+                .iter()
+                .map(String::as_str)
+                .collect();
+            let written = restore_packed_records_under_lock(&self.store.common_dir, &records);
+            FilesRefStore::release_locks(&batch);
+            self.store.invalidate_packed_cache_after_write();
+            written.map_err(FilesRefStore::ref_store_error_from_lib)?;
+            self.committed = true;
+            return Ok(());
+        }
 
         // The first update is written before any other ref, so it keeps the lock it took in
         // `prepare` instead of releasing and re-creating it. The rest are released here and
@@ -2703,5 +2812,132 @@ mod tests {
             errors, 0,
             "listing must tolerate refs deleted between readdir and open"
         );
+    }
+
+    fn create(name: &str, value: ObjectId) -> RefUpdate {
+        RefUpdate {
+            name: name.to_owned(),
+            new_value: Some(RawRef::Direct(value)),
+            expected: Expected::Missing,
+            reflog: None,
+            flags: RefUpdateFlags::default(),
+        }
+    }
+
+    fn commit_initial(store: &FilesRefStore, updates: Vec<RefUpdate>) -> StoreResult<()> {
+        store
+            .prepare(RefTransaction::from_updates(updates)?.initial())?
+            .commit()
+    }
+
+    fn loose_files_under(dir: &Path) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        collect_loose_file_names(dir, "", &mut names);
+        names
+    }
+
+    #[test]
+    fn initial_transaction_writes_one_sorted_packed_refs_and_no_loose_files() {
+        let dir = git_dir();
+        fs::write(
+            dir.path().join("packed-refs"),
+            format!(
+                "# pack-refs with: peeled fully-peeled sorted \n{} refs/tags/kept\n",
+                oid(7)
+            ),
+        )
+        .expect("packed-refs");
+        let store = store(dir.path());
+        let mut updates: Vec<RefUpdate> = (0..500)
+            .rev()
+            .map(|i| create(&format!("refs/remotes/origin/b/n{i}"), oid(1)))
+            .collect();
+        updates.push(create("refs/tags/v1", oid(2)));
+        commit_initial(&store, updates).expect("initial batch");
+
+        assert!(loose_files_under(&dir.path().join("refs")).is_empty());
+        assert!(!dir.path().join("packed-refs.lock").exists());
+        let packed = fs::read_to_string(dir.path().join("packed-refs")).expect("read");
+        let names: Vec<&str> = packed
+            .lines()
+            .skip(1)
+            .map(|line| line.split_once(' ').expect("record").1)
+            .collect();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        assert_eq!(names, sorted);
+        assert_eq!(names.len(), 502);
+        assert!(names.contains(&"refs/tags/kept"));
+        assert_eq!(
+            store.read_raw("refs/remotes/origin/b/n42").expect("read"),
+            Some(RawRef::Direct(oid(1)))
+        );
+        assert_eq!(
+            listed_names(&store, "refs/tags/"),
+            ["refs/tags/kept", "refs/tags/v1"]
+        );
+    }
+
+    #[test]
+    fn initial_transaction_falls_back_to_loose_refs_when_it_cannot_pack() {
+        let dir = git_dir();
+        let store = store(dir.path());
+        set(&store, "refs/heads/main", oid(1), Expected::Missing).expect("seed");
+
+        // An update of an existing ref is not a create.
+        let updates = vec![
+            create("refs/heads/topic", oid(2)),
+            RefUpdate {
+                expected: Expected::Any,
+                ..create("refs/heads/main", oid(3))
+            },
+        ];
+        commit_initial(&store, updates).expect("regular batch");
+        assert_eq!(
+            loose_files_under(&dir.path().join("refs/heads")),
+            BTreeSet::from(["/main".to_owned(), "/topic".to_owned()])
+        );
+
+        // A symbolic ref is not a plain create either.
+        let symref = RefUpdate {
+            new_value: Some(RawRef::Symbolic("refs/heads/main".to_owned())),
+            ..create("refs/remotes/origin/HEAD", oid(1))
+        };
+        commit_initial(&store, vec![create("refs/tags/t", oid(4)), symref]).expect("symref");
+        assert!(dir.path().join("refs/remotes/origin/HEAD").is_file());
+        assert!(dir.path().join("refs/tags/t").is_file());
+        assert!(!dir.path().join("packed-refs").exists());
+    }
+
+    #[test]
+    fn initial_transaction_reports_name_conflicts() {
+        let dir = git_dir();
+        let store = store(dir.path());
+        set(&store, "refs/heads/a", oid(1), Expected::Missing).expect("seed");
+
+        let err = commit_initial(&store, vec![create("refs/heads/a/b", oid(2))])
+            .expect_err("stored ancestor");
+        assert!(matches!(
+            err,
+            RefStoreError::NameUnavailable {
+                reason: RefnameUnavailable::AncestorExists { .. }
+            }
+        ));
+        let err = commit_initial(
+            &store,
+            vec![
+                create("refs/heads/x", oid(2)),
+                create("refs/heads/x/y", oid(2)),
+            ],
+        )
+        .expect_err("batch conflicts with itself");
+        assert!(matches!(
+            err,
+            RefStoreError::NameUnavailable {
+                reason: RefnameUnavailable::SameBatch { .. }
+            }
+        ));
+        assert!(!dir.path().join("packed-refs").exists());
+        assert!(!dir.path().join("packed-refs.lock").exists());
     }
 }

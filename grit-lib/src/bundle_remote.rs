@@ -504,6 +504,7 @@ fn complete_bundle_fetch(
                 remote_refs,
                 remote_name: opts.remote_name.as_deref(),
             },
+            opts.initial_remote_fetch,
         )?;
     }
 
