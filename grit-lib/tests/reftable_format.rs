@@ -635,6 +635,41 @@ fn reftable_stack_write_resolve_list_and_delete() {
 }
 
 #[test]
+fn reftable_list_refs_empty_prefix_omits_root_refs() {
+    let (_dir, git_dir) = setup_reftable_git_dir();
+    let oid = oid(0x42);
+    let mut opts = read_write_options(&git_dir);
+    opts.autocompaction_enabled = false;
+    let mut stack = ReftableStack::open(&git_dir).expect("stack");
+    for (name, value) in [
+        ("refs/heads/main", RefValue::Val1(oid)),
+        ("HEAD", RefValue::Symref("refs/heads/main".to_owned())),
+        ("ORIG_HEAD", RefValue::Val1(oid)),
+    ] {
+        stack.write_ref(name, value, None, &opts).expect(name);
+    }
+
+    let names = |prefix: &str| -> Vec<String> {
+        reftable_list_refs(&git_dir, prefix)
+            .expect("list")
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
+    };
+    let check = || {
+        assert_eq!(names(""), ["refs/heads/main"]);
+        assert_eq!(names("refs/"), ["refs/heads/main"]);
+        assert_eq!(names("HEAD"), ["HEAD"]);
+        assert_eq!(names("ORIG"), ["ORIG_HEAD"]);
+    };
+    assert_eq!(stack.table_names().len(), 3, "merged multi-table path");
+    check();
+    stack.compact().expect("compact");
+    assert_eq!(stack.table_names().len(), 1, "single-table path");
+    check();
+}
+
+#[test]
 fn object_index_section_with_shared_oid() {
     let shared = oid(0x77);
     let mut refs = Vec::new();

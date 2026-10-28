@@ -110,6 +110,7 @@ pub const CASES: &[(&str, Case)] = &[
     ),
     ("empty_reflog_exists", empty_reflog_exists),
     ("prefix_iteration_order", prefix_iteration_order),
+    ("empty_prefix_omits_root_refs", empty_prefix_omits_root_refs),
     ("abort_leaves_state_unchanged", abort_leaves_state_unchanged),
     ("abort_releases_lock", abort_releases_lock),
     (
@@ -315,14 +316,7 @@ const UNSAFE_NAMES: &[&str] = &[
 ];
 
 fn all_ref_names(store: &dyn RefStore) -> Vec<String> {
-    let mut names = Vec::new();
-    store
-        .for_each_ref("", &mut |entry| {
-            names.push(entry.name.clone());
-            ControlFlow::Continue(())
-        })
-        .expect("iterate refs");
-    names
+    ref_names_with_prefix(store, "")
 }
 
 /// Names Git refuses to store fail `prepare` with [`RefStoreError::InvalidRefName`], alone or
@@ -914,6 +908,39 @@ pub fn prefix_iteration_order(store: Arc<dyn RefStore>) {
         })
         .expect("iter prefix boundary");
     assert_eq!(limited, vec!["refs/heads/a"]);
+}
+
+fn ref_names_with_prefix(store: &dyn RefStore, prefix: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    store
+        .for_each_ref(prefix, &mut |entry| {
+            names.push(entry.name.clone());
+            ControlFlow::Continue(())
+        })
+        .expect("iterate refs");
+    names
+}
+
+/// The empty prefix lists only refs under `refs/`, like `git for-each-ref` with no pattern;
+/// root refs such as `HEAD` and `ORIG_HEAD` are listed only by a non-empty prefix they match.
+pub fn empty_prefix_omits_root_refs(store: Arc<dyn RefStore>) {
+    seed_direct(store.as_ref(), "refs/heads/main", oid(1));
+    seed_symref(store.as_ref(), "HEAD", "refs/heads/main");
+    seed_direct(store.as_ref(), "ORIG_HEAD", oid(1));
+
+    for (prefix, expected) in [
+        ("", "refs/heads/main"),
+        ("refs/", "refs/heads/main"),
+        ("H", "HEAD"),
+        ("HEAD", "HEAD"),
+        ("ORIG", "ORIG_HEAD"),
+    ] {
+        assert_eq!(
+            ref_names_with_prefix(store.as_ref(), prefix),
+            vec![expected],
+            "prefix {prefix:?}"
+        );
+    }
 }
 
 /// Aborting a prepared transaction changes nothing.

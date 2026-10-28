@@ -100,6 +100,7 @@ impl RefStore for MemoryRefStore {
         prefix: &str,
         f: &mut dyn FnMut(&RefEntry) -> ControlFlow<()>,
     ) -> Result<()> {
+        let prefix = if prefix.is_empty() { "refs/" } else { prefix };
         let state = self.snapshot();
         for (name, value) in state.refs.range(prefix.to_owned()..) {
             if !name.starts_with(prefix) {

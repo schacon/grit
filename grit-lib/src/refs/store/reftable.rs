@@ -497,6 +497,7 @@ impl RefStore for ReftableRefStore {
         prefix: &str,
         f: &mut dyn FnMut(&RefEntry) -> ControlFlow<()>,
     ) -> Result<()> {
+        let prefix = if prefix.is_empty() { "refs/" } else { prefix };
         if "HEAD".starts_with(prefix) {
             if let Some(value) = read_head_raw(&self.git_dir)? {
                 let peeled = match &value {
@@ -839,14 +840,18 @@ mod tests {
         let stub = fs::read(store.git_dir.join("HEAD")).expect("stub");
         assert_eq!(stub, b"ref: refs/heads/.invalid\n");
         assert_eq!(store.read_raw("HEAD").expect("read"), Some(symbolic));
-        let mut names = Vec::new();
-        store
-            .for_each_ref("", &mut |entry| {
-                names.push(entry.name.clone());
-                ControlFlow::Continue(())
-            })
-            .expect("list");
-        assert_eq!(names, ["HEAD"]);
+        let names_with_prefix = |prefix: &str| {
+            let mut names = Vec::new();
+            store
+                .for_each_ref(prefix, &mut |entry| {
+                    names.push(entry.name.clone());
+                    ControlFlow::Continue(())
+                })
+                .expect("list");
+            names
+        };
+        assert!(names_with_prefix("").is_empty());
+        assert_eq!(names_with_prefix("HEAD"), ["HEAD"]);
         let oid = ObjectId::from_bytes(&[0x31; 20]).expect("oid");
         let detached = RawRef::Direct(oid);
         let txn = update(

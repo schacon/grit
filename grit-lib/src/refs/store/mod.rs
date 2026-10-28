@@ -123,6 +123,11 @@ pub trait RefStore: Send + Sync + Debug {
 
     /// Invoke `f` for each ref whose name starts with `prefix`, in sorted name order.
     ///
+    /// A non-empty `prefix` is a literal name prefix, so `"H"` or `"HEAD"` lists `HEAD` and
+    /// `"ORIG"` lists `ORIG_HEAD`. An empty `prefix` lists only the refs under `refs/`, like
+    /// `git for-each-ref` with no pattern: root refs such as `HEAD` and `ORIG_HEAD` are left
+    /// out and stay reachable through [`Self::read_raw`] or a non-empty prefix they match.
+    ///
     /// `f` may call back into the store; see [re-entrant callbacks](Self#re-entrant-callbacks).
     fn for_each_ref(
         &self,

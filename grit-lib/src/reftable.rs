@@ -2283,11 +2283,15 @@ impl ReftableStack {
 
     /// List direct ref names and oids under `prefix`, using cached table bytes and
     /// index/restart seeking when the stack is a single table.
+    ///
+    /// An empty `prefix` lists the refs under `refs/` only, leaving out root refs such as
+    /// `HEAD` and `ORIG_HEAD`, the same as [`RefStore::for_each_ref`](crate::refs::store::RefStore::for_each_ref).
     pub fn list_refs_under_prefix(
         &self,
         git_dir: &Path,
         prefix: &str,
     ) -> Result<Vec<(String, ObjectId)>> {
+        let prefix = if prefix.is_empty() { "refs/" } else { prefix };
         let names = self.table_names_for_read()?;
         let cached = cached_stack_tables_for_names(&self.reftable_dir, &names)?;
         let readers = self.stack_readers(&cached, &names)?;
