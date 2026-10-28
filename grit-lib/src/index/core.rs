@@ -1190,33 +1190,52 @@ impl Index {
 
         self.ensure_canonical_order();
         let mut prefixes = BTreeSet::<Vec<u8>>::new();
+        let mut last_dir: &[u8] = &[];
         for e in &self.entries {
             if e.stage() != 0 || e.mode == MODE_TREE || !e.skip_worktree() {
                 continue;
             }
+            // Sorted rows share their directory with their neighbours; every ancestor of a
+            // directory already seen is already in the set.
+            let Some(slash) = e.path.iter().rposition(|&b| b == b'/') else {
+                continue;
+            };
+            let dir = &e.path[..slash];
+            if dir == last_dir {
+                continue;
+            }
+            last_dir = dir;
             collect_directory_prefixes(&e.path, &mut prefixes);
         }
 
-        let mut collapsed_any = false;
         // Deepest prefixes first so nested dirs collapse before parents.
         let mut ordered: Vec<Vec<u8>> = prefixes.into_iter().collect();
         ordered.sort_by_key(|p| std::cmp::Reverse(p.len()));
 
+        // Each directory is judged against the index as it would look with the directories
+        // collapsed so far, but `entries` is only rewritten once at the end: removing rows and
+        // inserting a placeholder per directory is O(entries) each.
+        let mut collapsed = CollapsedDirectories::default();
+        let mut head_trees = PrefixTreeResolver::new(*head_tree);
         for pref in ordered {
             let pref_str = String::from_utf8_lossy(&pref);
             if directory_in_cone(&pref_str, patterns, cone_mode) {
                 continue;
             }
-            let Some(subtree_oid) = tree_oid_for_prefix(odb, head_tree, &pref)? else {
+            let Some(subtree_oid) = head_trees.resolve(odb, &pref)? else {
                 continue;
             };
-            let expected = collect_sparse_aware_expected_blobs(
+            let view = SparseCollapseView {
+                entries: &self.entries,
+                collapsed: &collapsed,
+            };
+            let mut expected = collect_sparse_aware_expected_blobs(
                 odb,
                 &subtree_oid,
                 &pref,
                 patterns,
                 cone_mode,
-                &self.entries,
+                &view,
                 protect,
             )?;
             if expected.is_empty() {
@@ -1231,20 +1250,22 @@ impl Index {
             if rows.iter().any(|e| e.stage() != 0) {
                 continue;
             }
-            let mut matched: Vec<_> = rows
+            // Rows are sorted and all stage 0, so `matched` is already in path order.
+            let nested = collapsed.has_descendants(&directory);
+            let mut scratch = Vec::new();
+            let matched: Vec<&IndexEntry> = rows
                 .iter()
-                .filter(|e| e.mode != MODE_TREE)
-                .cloned()
+                .filter(|e| {
+                    e.mode != MODE_TREE && !(nested && collapsed.covers(&e.path, &mut scratch))
+                })
                 .collect();
             if matched.len() != expected.len() {
                 continue;
             }
-            matched.sort_by(|a, b| a.path.cmp(&b.path));
-            let mut exp_sorted = expected;
-            exp_sorted.sort_by(|a, b| a.path.cmp(&b.path));
+            expected.sort_by(|a, b| a.path.cmp(&b.path));
             if !matched
                 .iter()
-                .zip(exp_sorted.iter())
+                .zip(expected.iter())
                 .all(|(a, b)| a.path == b.path && a.oid == b.oid && a.mode == b.mode)
             {
                 continue;
@@ -1256,42 +1277,31 @@ impl Index {
             // submodule (gitlink); the sparse-directory entry could not faithfully represent
             // the gitlink's committed OID. Leave such directories expanded.
             if matched.iter().any(|e| e.mode == MODE_GITLINK)
-                || exp_sorted.iter().any(|e| e.mode == MODE_GITLINK)
+                || expected.iter().any(|e| e.mode == MODE_GITLINK)
             {
                 continue;
             }
 
-            let mut path_with_slash = pref.clone();
-            if !path_with_slash.ends_with(b"/") {
-                path_with_slash.push(b'/');
+            collapsed.insert(directory.clone(), subtree_oid);
+            if let Ok(p) = std::str::from_utf8(&directory) {
+                self.invalidate_untracked_cache_for_path(p);
             }
-            self.entries
-                .retain(|e| e.stage() != 0 || !path_under_prefix(&e.path, &pref));
-            let mut placeholder = IndexEntry {
-                ctime_sec: 0,
-                ctime_nsec: 0,
-                mtime_sec: 0,
-                mtime_nsec: 0,
-                dev: 0,
-                ino: 0,
-                mode: MODE_TREE,
-                uid: 0,
-                gid: 0,
-                size: 0,
-                oid: subtree_oid,
-                flags: path_with_slash.len().min(0xFFF) as u16,
-                flags_extended: Some(0),
-                path: path_with_slash,
-                base_index_pos: 0,
-            };
-            placeholder.set_skip_worktree(true);
-            self.add_or_replace(placeholder);
-            collapsed_any = true;
+            self.invalidate_cache_tree_for_path(&directory);
+            self.touch_fsmonitor_after_entry_change();
         }
 
-        if collapsed_any {
+        if !collapsed.is_empty() {
+            let covered = collapsed.covered_rows(&self.entries);
+            let mut entries: Vec<IndexEntry> = std::mem::take(&mut self.entries)
+                .into_iter()
+                .zip(covered)
+                .filter(|(e, covered)| e.stage() != 0 || !covered)
+                .map(|(e, _)| e)
+                .collect();
+            entries.extend(collapsed.into_placeholders());
+            self.entries = entries;
+            self.entries_sorted = false;
             self.sort();
-            self.sparse_directories = true;
         }
         self.sparse_directories = self.has_sparse_directory_placeholders();
         Ok(())
@@ -3433,16 +3443,6 @@ fn trim_trailing_slash_bytes(path: &[u8]) -> &[u8] {
     path.strip_suffix(b"/").unwrap_or(path)
 }
 
-fn path_under_prefix(path: &[u8], prefix: &[u8]) -> bool {
-    if path == prefix {
-        return true;
-    }
-    if prefix.is_empty() {
-        return true;
-    }
-    path.len() > prefix.len() && path.starts_with(prefix) && path[prefix.len()] == b'/'
-}
-
 fn directory_in_cone(dir_path: &str, patterns: &[String], cone_mode: bool) -> bool {
     // Match Git `path_in_cone_mode_sparse_checkout`: a *directory* is in the cone when its
     // contents are recursively included. `path_matches_sparse_patterns` distinguishes a
@@ -3462,56 +3462,234 @@ fn directory_in_cone(dir_path: &str, patterns: &[String], cone_mode: bool) -> bo
 
 fn collect_directory_prefixes(path: &[u8], out: &mut BTreeSet<Vec<u8>>) {
     for (i, &b) in path.iter().enumerate() {
-        if b == b'/' {
+        if b == b'/' && !out.contains(&path[..i]) {
             out.insert(path[..i].to_vec());
         }
     }
 }
 
-fn tree_oid_for_prefix(odb: &Odb, root_tree: &ObjectId, prefix: &[u8]) -> Result<Option<ObjectId>> {
-    if prefix.is_empty() {
-        return Ok(Some(*root_tree));
+/// Directories chosen for collapse so far, keyed by their path with a trailing slash.
+///
+/// No key is nested under another: collapsing a directory drops the descendants it subsumes.
+#[derive(Default)]
+struct CollapsedDirectories {
+    dirs: BTreeMap<Vec<u8>, ObjectId>,
+}
+
+impl CollapsedDirectories {
+    fn is_empty(&self) -> bool {
+        self.dirs.is_empty()
     }
-    let pref_str = String::from_utf8_lossy(prefix);
-    let components: Vec<&str> = pref_str.split('/').filter(|c| !c.is_empty()).collect();
-    let mut current = *root_tree;
-    for comp in components {
-        let obj = odb.read(&current)?;
-        if obj.kind != ObjectKind::Tree {
-            return Ok(None);
+
+    /// Record `directory` (with trailing slash) as collapsed to `oid`.
+    fn insert(&mut self, directory: Vec<u8>, oid: ObjectId) {
+        let nested: Vec<Vec<u8>> = self
+            .dirs
+            .range::<[u8], _>((
+                std::ops::Bound::Excluded(directory.as_slice()),
+                std::ops::Bound::Unbounded,
+            ))
+            .map(|(k, _)| k)
+            .take_while(|k| k.starts_with(&directory))
+            .cloned()
+            .collect();
+        for key in nested {
+            self.dirs.remove(&key);
         }
-        let entries = parse_tree(&obj.data)?;
-        let mut next = None;
-        for e in entries {
-            if e.name == comp.as_bytes() {
-                if e.mode == MODE_TREE {
-                    next = Some(e.oid);
+        self.dirs.insert(directory, oid);
+    }
+
+    fn get(&self, directory: &[u8]) -> Option<&ObjectId> {
+        self.dirs.get(directory)
+    }
+
+    /// Whether a collapsed directory lies strictly under `directory` (with trailing slash).
+    fn has_descendants(&self, directory: &[u8]) -> bool {
+        self.dirs
+            .range::<[u8], _>((
+                std::ops::Bound::Excluded(directory),
+                std::ops::Bound::Unbounded,
+            ))
+            .next()
+            .is_some_and(|(k, _)| k.starts_with(directory))
+    }
+
+    /// For sorted `entries`, which rows [`Self::covers`] holds for, found by binary search per
+    /// collapsed directory instead of a lookup per row.
+    fn covered_rows(&self, entries: &[IndexEntry]) -> Vec<bool> {
+        let mut covered = vec![false; entries.len()];
+        let mut mark = |start: usize, matches: &dyn Fn(&[u8]) -> bool| {
+            for (row, entry) in covered[start..].iter_mut().zip(&entries[start..]) {
+                if !matches(&entry.path) {
+                    break;
                 }
-                break;
+                *row = true;
             }
-        }
-        current = match next {
-            Some(o) => o,
-            None => return Ok(None),
         };
+        for directory in self.dirs.keys() {
+            let name = trim_trailing_slash_bytes(directory);
+            let start = entries.partition_point(|e| e.path.as_slice() < name);
+            mark(start, &|path| path == name);
+            let start = entries.partition_point(|e| e.path.as_slice() < directory.as_slice());
+            mark(start, &|path| path.starts_with(directory));
+        }
+        covered
     }
-    Ok(Some(current))
+
+    /// Whether a row at `path` is replaced by a collapsed placeholder: it lies under a
+    /// collapsed directory, or names the directory itself. `scratch` is reused between calls.
+    fn covers(&self, path: &[u8], scratch: &mut Vec<u8>) -> bool {
+        if self.dirs.is_empty() {
+            return false;
+        }
+        // Keys are never nested, so the only key that can prefix `path` is the greatest key
+        // not after it.
+        let under = self
+            .dirs
+            .range::<[u8], _>((std::ops::Bound::Unbounded, std::ops::Bound::Included(path)))
+            .next_back()
+            .is_some_and(|(k, _)| path.starts_with(k));
+        if under {
+            return true;
+        }
+        scratch.clear();
+        scratch.extend_from_slice(path);
+        scratch.push(b'/');
+        self.dirs.contains_key(scratch.as_slice())
+    }
+
+    fn into_placeholders(self) -> impl Iterator<Item = IndexEntry> {
+        self.dirs.into_iter().map(|(path, oid)| {
+            let mut placeholder = IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: MODE_TREE,
+                uid: 0,
+                gid: 0,
+                size: 0,
+                oid,
+                flags: path.len().min(0xFFF) as u16,
+                flags_extended: Some(0),
+                path,
+                base_index_pos: 0,
+            };
+            placeholder.set_skip_worktree(true);
+            placeholder
+        })
+    }
+}
+
+/// The index as [`Index::try_collapse_sparse_directories`] sees it mid-run: sorted `entries`
+/// with the directories in `collapsed` replaced by placeholders.
+struct SparseCollapseView<'a> {
+    entries: &'a [IndexEntry],
+    collapsed: &'a CollapsedDirectories,
+}
+
+impl SparseCollapseView<'_> {
+    /// Whether a stage-0 sparse-directory placeholder for `path_slash` points at `oid`.
+    fn has_placeholder(&self, path_slash: &[u8], oid: &ObjectId, scratch: &mut Vec<u8>) -> bool {
+        if let Some(collapsed_oid) = self.collapsed.get(path_slash) {
+            return collapsed_oid == oid;
+        }
+        if self.collapsed.covers(path_slash, scratch) {
+            return false;
+        }
+        let start = self
+            .entries
+            .partition_point(|e| e.path.as_slice() < path_slash);
+        self.entries[start..]
+            .iter()
+            .take_while(|e| e.path == path_slash)
+            .any(|e| e.stage() == 0 && e.is_sparse_directory_placeholder() && e.oid == *oid)
+    }
+}
+
+/// Resolves directory prefixes to their tree OIDs under one root tree, reading and parsing
+/// each tree on the way at most once.
+struct PrefixTreeResolver {
+    root: ObjectId,
+    resolved: HashMap<Vec<u8>, Option<ObjectId>>,
+    parsed: HashMap<ObjectId, Option<Vec<TreeEntry>>>,
+}
+
+impl PrefixTreeResolver {
+    fn new(root: ObjectId) -> Self {
+        Self {
+            root,
+            resolved: HashMap::new(),
+            parsed: HashMap::new(),
+        }
+    }
+
+    /// The tree at `prefix` (no trailing slash), or `None` when a component is missing or
+    /// is not a tree.
+    fn resolve(&mut self, odb: &Odb, prefix: &[u8]) -> Result<Option<ObjectId>> {
+        if prefix.is_empty() {
+            return Ok(Some(self.root));
+        }
+        if let Some(known) = self.resolved.get(prefix) {
+            return Ok(*known);
+        }
+        let (parent, name) = match prefix.iter().rposition(|&b| b == b'/') {
+            Some(i) => (&prefix[..i], &prefix[i + 1..]),
+            None => (&prefix[..0], prefix),
+        };
+        let found = match self.resolve(odb, parent)? {
+            Some(parent_oid) if !name.is_empty() => {
+                let entries = match self.parsed.entry(parent_oid) {
+                    std::collections::hash_map::Entry::Occupied(known) => known.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(slot) => {
+                        let obj = odb.read(&parent_oid)?;
+                        slot.insert(if obj.kind == ObjectKind::Tree {
+                            Some(parse_tree(&obj.data)?)
+                        } else {
+                            None
+                        })
+                    }
+                };
+                entries
+                    .as_ref()
+                    .and_then(|entries| entries.iter().find(|e| e.name == name))
+                    .filter(|e| e.mode == MODE_TREE)
+                    .map(|e| e.oid)
+            }
+            // An empty component (`a//b`) is skipped, as when splitting on `/`.
+            Some(parent_oid) => Some(parent_oid),
+            None => None,
+        };
+        self.resolved.insert(prefix.to_vec(), found);
+        Ok(found)
+    }
 }
 
 /// Build the list of blob index entries under `prefix` that match `HEAD` at `tree_oid`,
-/// treating existing sparse-directory placeholders in `entries` as opaque subtrees (like Git).
+/// treating existing sparse-directory placeholders in `view` as opaque subtrees (like Git).
 fn collect_sparse_aware_expected_blobs(
     odb: &Odb,
     tree_oid: &ObjectId,
     prefix: &[u8],
     patterns: &[String],
     cone_mode: bool,
-    entries: &[IndexEntry],
+    view: &SparseCollapseView<'_>,
     protect: crate::path_validate::ProtectOptions,
-) -> Result<Vec<IndexEntry>> {
+) -> Result<Vec<ExpectedBlob>> {
     let mut out = Vec::new();
+    let mut scratch = Vec::new();
     walk_sparse_aware(
-        odb, tree_oid, prefix, patterns, cone_mode, entries, protect, &mut out,
+        odb,
+        tree_oid,
+        prefix,
+        patterns,
+        cone_mode,
+        view,
+        protect,
+        &mut scratch,
+        &mut out,
     )?;
     Ok(out)
 }
@@ -3523,71 +3701,62 @@ fn walk_sparse_aware(
     prefix: &[u8],
     patterns: &[String],
     cone_mode: bool,
-    entries: &[IndexEntry],
+    view: &SparseCollapseView<'_>,
     protect: crate::path_validate::ProtectOptions,
-    out: &mut Vec<IndexEntry>,
+    scratch: &mut Vec<u8>,
+    out: &mut Vec<ExpectedBlob>,
 ) -> Result<()> {
-    let obj = odb.read(tree_oid)?;
-    if obj.kind != ObjectKind::Tree {
-        return Err(Error::IndexError(format!("expected tree at {}", tree_oid)));
-    }
-    let tree_entries = parse_tree(&obj.data)?;
-    for te in tree_entries {
+    // Switch and checkout have usually just diffed these trees, so share the handle's cache.
+    let tree = odb.cached_tree_for_walk(tree_oid)?;
+    let mut visit = |name: &[u8], mode: u32, oid: ObjectId| -> Result<()> {
         let path = if prefix.is_empty() {
-            te.name.clone()
+            name.to_vec()
         } else {
-            let mut p = prefix.to_vec();
+            let mut p = Vec::with_capacity(prefix.len() + 1 + name.len());
+            p.extend_from_slice(prefix);
             p.push(b'/');
-            p.extend_from_slice(&te.name);
+            p.extend_from_slice(name);
             p
         };
-        crate::path_population::validate_tree_walk_entry(&path, &te.name, te.mode, protect)?;
-        if te.mode == MODE_TREE {
-            let path_slash = {
-                let mut p = path.clone();
-                p.push(b'/');
-                p
-            };
-            if entries.iter().any(|e| {
-                e.stage() == 0
-                    && e.is_sparse_directory_placeholder()
-                    && e.path == path_slash
-                    && e.oid == te.oid
-            }) {
-                continue;
+        crate::path_population::validate_tree_walk_entry(&path, name, mode, protect)?;
+        if mode == MODE_TREE {
+            let mut path_slash = path.clone();
+            path_slash.push(b'/');
+            if view.has_placeholder(&path_slash, &oid, scratch) {
+                return Ok(());
             }
-            walk_sparse_aware(
-                odb, &te.oid, &path, patterns, cone_mode, entries, protect, out,
-            )?;
-        } else {
-            let path_len = path.len().min(0xFFF) as u16;
-            let path_str = String::from_utf8_lossy(&path);
-            if crate::sparse_checkout::path_matches_sparse_patterns(&path_str, patterns, cone_mode)
-            {
-                continue;
+            return walk_sparse_aware(
+                odb, &oid, &path, patterns, cone_mode, view, protect, scratch, out,
+            );
+        }
+        let path_str = String::from_utf8_lossy(&path);
+        if crate::sparse_checkout::path_matches_sparse_patterns(&path_str, patterns, cone_mode) {
+            return Ok(());
+        }
+        out.push(ExpectedBlob { path, mode, oid });
+        Ok(())
+    };
+    match &tree {
+        crate::odb::SessionTree::Parsed(entries) => {
+            for te in entries.iter() {
+                visit(&te.name, te.mode, te.oid)?;
             }
-            let mut e = IndexEntry {
-                ctime_sec: 0,
-                ctime_nsec: 0,
-                mtime_sec: 0,
-                mtime_nsec: 0,
-                dev: 0,
-                ino: 0,
-                mode: te.mode,
-                uid: 0,
-                gid: 0,
-                size: 0,
-                oid: te.oid,
-                flags: path_len,
-                flags_extended: Some(0),
-                path,
-                base_index_pos: 0,
-            };
-            e.set_skip_worktree(true);
-            out.push(e);
+        }
+        crate::odb::SessionTree::Raw(data) => {
+            for te in crate::objects::TreeRefIter::with_oid_len(data, odb.hash_algo().len()) {
+                let te = te?;
+                visit(te.name, te.mode, te.oid)?;
+            }
         }
     }
     Ok(())
+}
+
+/// A blob a collapsible sparse directory must hold, from the `HEAD` tree.
+struct ExpectedBlob {
+    path: Vec<u8>,
+    mode: u32,
+    oid: ObjectId,
 }
 
 fn flatten_tree_blobs(
@@ -5957,6 +6126,282 @@ mod tests {
             let expected = naive_merge_sorted(&kept, &insert);
             let merged = merge_sorted_index_entries(kept, insert);
             assert_eq!(merged, expected, "seed {seed} merge mismatch");
+        }
+    }
+
+    mod sparse_collapse {
+        use super::*;
+
+        const PATTERNS: [&str; 3] = ["/*", "!/*/", "/a/"];
+
+        fn patterns() -> Vec<String> {
+            PATTERNS.iter().map(|p| (*p).to_owned()).collect()
+        }
+
+        /// Write a tree holding `files` (`path`, `mode`, blob body) and return its OID.
+        fn write_tree(odb: &Odb, files: &[(&str, u32, &str)]) -> ObjectId {
+            let mut here: BTreeMap<Vec<u8>, (u32, ObjectId)> = BTreeMap::new();
+            let mut subdirs: BTreeMap<&str, Vec<(&str, u32, &str)>> = BTreeMap::new();
+            for (path, mode, body) in files {
+                match path.split_once('/') {
+                    Some((dir, rest)) => subdirs.entry(dir).or_default().push((rest, *mode, body)),
+                    None => {
+                        let oid = if *mode == MODE_GITLINK {
+                            ObjectId::from_bytes(&[7u8; 20]).unwrap()
+                        } else {
+                            odb.write(ObjectKind::Blob, body.as_bytes()).unwrap()
+                        };
+                        here.insert(path.as_bytes().to_vec(), (*mode, oid));
+                    }
+                }
+            }
+            for (dir, children) in subdirs {
+                here.insert(
+                    dir.as_bytes().to_vec(),
+                    (MODE_TREE, write_tree(odb, &children)),
+                );
+            }
+            let mut entries: Vec<TreeEntry> = here
+                .into_iter()
+                .map(|(name, (mode, oid))| TreeEntry { mode, name, oid })
+                .collect();
+            entries.sort_by(|a, b| {
+                crate::objects::tree_entry_cmp(
+                    &a.name,
+                    a.mode == MODE_TREE,
+                    &b.name,
+                    b.mode == MODE_TREE,
+                )
+            });
+            odb.write(ObjectKind::Tree, &crate::objects::serialize_tree(&entries))
+                .unwrap()
+        }
+
+        fn subtree(odb: &Odb, root: &ObjectId, prefix: &str) -> ObjectId {
+            PrefixTreeResolver::new(*root)
+                .resolve(odb, prefix.as_bytes())
+                .unwrap()
+                .unwrap()
+        }
+
+        /// The fully expanded index for `root`, with everything outside `a/` and the top
+        /// level marked skip-worktree.
+        fn expanded_index(odb: &Odb, root: &ObjectId) -> Index {
+            let mut index = Index::new();
+            let rows = flatten_tree_blobs(
+                odb,
+                root,
+                b"",
+                crate::path_validate::ProtectOptions::default(),
+            )
+            .unwrap();
+            for mut row in rows {
+                let in_cone = !row.path.contains(&b'/') || row.path.starts_with(b"a/");
+                row.set_skip_worktree(!in_cone);
+                index.entries_mut().push(row);
+            }
+            index.sort();
+            index
+        }
+
+        fn collapse(index: &mut Index, odb: &Odb, root: &ObjectId) {
+            index
+                .try_collapse_sparse_directories(
+                    odb,
+                    root,
+                    &patterns(),
+                    true,
+                    true,
+                    crate::path_validate::ProtectOptions::default(),
+                )
+                .unwrap();
+        }
+
+        fn rows(index: &Index) -> Vec<(String, u32, ObjectId)> {
+            index
+                .entries()
+                .iter()
+                .map(|e| (String::from_utf8_lossy(&e.path).into_owned(), e.mode, e.oid))
+                .collect()
+        }
+
+        fn placeholder_paths(index: &Index) -> Vec<String> {
+            index
+                .entries()
+                .iter()
+                .filter(|e| e.is_sparse_directory_placeholder())
+                .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+                .collect()
+        }
+
+        const FILES: [(&str, u32, &str); 8] = [
+            ("a/in", 0o100644, "in\n"),
+            ("top", 0o100644, "top\n"),
+            ("w/f4", 0o100644, "f4\n"),
+            ("w/f5", 0o100755, "f5\n"),
+            ("x/f1", 0o100644, "f1\n"),
+            ("x/y/f2", 0o100644, "f2\n"),
+            ("x/y/z/f3", 0o100644, "f3\n"),
+            ("x/y-z", 0o100644, "dash\n"),
+        ];
+
+        #[test]
+        fn unchanged_excluded_directories_collapse_to_their_outermost_placeholder() {
+            let dir = TempDir::new().unwrap();
+            let odb = Odb::new(dir.path());
+            let root = write_tree(&odb, &FILES);
+            let mut index = expanded_index(&odb, &root);
+            collapse(&mut index, &odb, &root);
+
+            assert_eq!(
+                rows(&index),
+                vec![
+                    ("a/in".to_owned(), 0o100644, index.entries()[0].oid),
+                    ("top".to_owned(), 0o100644, index.entries()[1].oid),
+                    ("w/".to_owned(), MODE_TREE, subtree(&odb, &root, "w")),
+                    ("x/".to_owned(), MODE_TREE, subtree(&odb, &root, "x")),
+                ]
+            );
+            assert!(index.sparse_directories);
+            assert!(index.entries_are_sorted());
+        }
+
+        #[test]
+        fn a_changed_row_keeps_its_ancestors_expanded_but_not_its_siblings() {
+            let dir = TempDir::new().unwrap();
+            let odb = Odb::new(dir.path());
+            let root = write_tree(&odb, &FILES);
+            let mut index = expanded_index(&odb, &root);
+            let edited = odb.write(ObjectKind::Blob, b"edited\n").unwrap();
+            let pos = index.find_entry_pos(b"x/f1", 0).unwrap();
+            index.entries_mut()[pos].oid = edited;
+            index.sort();
+            collapse(&mut index, &odb, &root);
+
+            assert_eq!(
+                placeholder_paths(&index),
+                vec!["w/".to_owned(), "x/y/".to_owned()]
+            );
+            let kept: Vec<String> = rows(&index).into_iter().map(|(p, _, _)| p).collect();
+            assert_eq!(kept, ["a/in", "top", "w/", "x/f1", "x/y-z", "x/y/"]);
+            let f1 = &index.entries()[index.find_entry_pos(b"x/f1", 0).unwrap()];
+            assert_eq!(f1.oid, edited);
+            let y = &index.entries()[index.find_entry_pos(b"x/y/", 0).unwrap()];
+            assert_eq!(y.oid, subtree(&odb, &root, "x/y"));
+        }
+
+        #[test]
+        fn directories_with_worktree_rows_gitlinks_or_conflicts_stay_expanded() {
+            let dir = TempDir::new().unwrap();
+            let odb = Odb::new(dir.path());
+            let mut files = FILES.to_vec();
+            files.push(("v/sub", MODE_GITLINK, ""));
+            files.push(("u/f6", 0o100644, "f6\n"));
+            let root = write_tree(&odb, &files);
+            let mut index = expanded_index(&odb, &root);
+            let pos = index.find_entry_pos(b"w/f4", 0).unwrap();
+            index.entries_mut()[pos].set_skip_worktree(false);
+            let pos = index.find_entry_pos(b"u/f6", 0).unwrap();
+            let mut theirs = index.entries()[pos].clone();
+            index.entries_mut()[pos].set_stage(2);
+            theirs.set_stage(3);
+            index.entries_mut().push(theirs);
+            index.sort();
+            collapse(&mut index, &odb, &root);
+
+            assert_eq!(placeholder_paths(&index), vec!["x/".to_owned()]);
+            for path in ["u/f6", "v/sub", "w/f4", "w/f5"] {
+                assert!(
+                    index.entries().iter().any(|e| e.path == path.as_bytes()),
+                    "{path} must stay expanded"
+                );
+            }
+        }
+
+        #[test]
+        fn existing_placeholders_count_only_when_they_match_head() {
+            let dir = TempDir::new().unwrap();
+            let odb = Odb::new(dir.path());
+            let root = write_tree(&odb, &FILES);
+            let y = subtree(&odb, &root, "x/y");
+
+            let with_y_placeholder = |oid: ObjectId| {
+                let mut index = expanded_index(&odb, &root);
+                index.entries_mut().retain(|e| !e.path.starts_with(b"x/y/"));
+                let mut placeholder = index.entries()[0].clone();
+                placeholder.path = b"x/y/".to_vec();
+                placeholder.mode = MODE_TREE;
+                placeholder.oid = oid;
+                placeholder.flags = 4;
+                placeholder.set_skip_worktree(true);
+                index.entries_mut().push(placeholder);
+                index.sort();
+                index
+            };
+
+            let mut matching = with_y_placeholder(y);
+            collapse(&mut matching, &odb, &root);
+            assert_eq!(
+                placeholder_paths(&matching),
+                vec!["w/".to_owned(), "x/".to_owned()]
+            );
+
+            let stale = odb.write(ObjectKind::Tree, b"").unwrap();
+            let mut outdated = with_y_placeholder(stale);
+            collapse(&mut outdated, &odb, &root);
+            assert_eq!(
+                placeholder_paths(&outdated),
+                vec!["w/".to_owned(), "x/y/".to_owned()]
+            );
+            let y_row = &outdated.entries()[outdated.find_entry_pos(b"x/y/", 0).unwrap()];
+            assert_eq!(y_row.oid, stale, "an outdated placeholder is left alone");
+            assert!(outdated.entries().iter().any(|e| e.path == b"x/f1"));
+        }
+
+        #[test]
+        fn collapsed_directories_subsume_nested_ones_and_cover_their_rows() {
+            let oid = ObjectId::from_bytes(&[1u8; 20]).unwrap();
+            let mut collapsed = CollapsedDirectories::default();
+            collapsed.insert(b"a/b/".to_vec(), oid);
+            collapsed.insert(b"a/c/".to_vec(), oid);
+            assert!(collapsed.has_descendants(b"a/"));
+            assert!(!collapsed.has_descendants(b"a/b/"));
+            collapsed.insert(b"a/".to_vec(), oid);
+            assert!(!collapsed.has_descendants(b"a/"));
+            assert_eq!(collapsed.dirs.len(), 1);
+
+            let mut scratch = Vec::new();
+            for (path, covered) in [
+                (&b"a/x"[..], true),
+                (b"a/b/c", true),
+                (b"a", true),
+                (b"a-b", false),
+                (b"ab/c", false),
+                (b"0", false),
+            ] {
+                assert_eq!(
+                    collapsed.covers(path, &mut scratch),
+                    covered,
+                    "{}",
+                    String::from_utf8_lossy(path)
+                );
+            }
+
+            let entry = |path: &str| IndexEntry {
+                path: path.as_bytes().to_vec(),
+                ..make_entry(path)
+            };
+            let entries = vec![
+                entry("0"),
+                entry("a"),
+                entry("a-b"),
+                entry("a/b/c"),
+                entry("ab"),
+            ];
+            assert_eq!(
+                collapsed.covered_rows(&entries),
+                vec![false, true, false, true, false]
+            );
         }
     }
 }
