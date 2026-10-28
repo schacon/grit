@@ -1,7 +1,9 @@
 //! Directory/file refname conflict checks for in-memory stores.
 
+use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::ops::Bound;
 
 use crate::ident::{parse_author_arg, parse_signature, SignatureError};
 use crate::refs::RefnameUnavailable;
@@ -51,41 +53,57 @@ pub fn validate_reflog_update(log: &ReflogUpdate) -> Result<(), RefStoreError> {
     Ok(())
 }
 
-fn refname_is_strict_prefix(parent: &str, child: &str) -> bool {
-    child.len() > parent.len()
-        && child.as_bytes().get(parent.len()) == Some(&b'/')
-        && child.starts_with(parent)
-}
-
-/// Verify batch-internal D/F conflicts (Git `refs_verify_refnames_available` between extras).
-pub fn verify_same_batch_conflicts(updates: &[RefUpdate]) -> Result<(), RefnameUnavailable> {
-    let names: Vec<&str> = updates.iter().map(|u| u.name.as_str()).collect();
-    for i in 0..names.len() {
-        for j in (i + 1)..names.len() {
-            let (a, b) = (names[i], names[j]);
-            let (parent, child) = if refname_is_strict_prefix(a, b) {
-                (a, b)
-            } else if refname_is_strict_prefix(b, a) {
-                (b, a)
-            } else {
-                continue;
-            };
+/// Verify batch-internal D/F conflicts (Git `refs_verify_refnames_available` between extras):
+/// no name of `updates` may be a `/`-separated ancestor of another.
+///
+/// `names` holds every name of `updates`. Each name costs one set probe per ancestor plus one
+/// range probe for descendants, so a batch of `n` refs is checked in `O(n log n)`. The range
+/// probe starts at `<name>/`, which also finds a child separated from its parent by names
+/// holding a byte that sorts before `/` (`a/b`, `a!`, `a/b/c`).
+fn verify_same_batch_conflicts(
+    updates: &[RefUpdate],
+    names: &BTreeSet<&str>,
+) -> Result<(), RefnameUnavailable> {
+    let mut dir = String::new();
+    for update in updates {
+        let name = update.name.as_str();
+        if let Some(parent) = name
+            .match_indices('/')
+            .map(|(slash, _)| &name[..slash])
+            .find(|ancestor| names.contains(ancestor))
+        {
             return Err(RefnameUnavailable::SameBatch {
-                refname: child.to_owned(),
+                refname: name.to_owned(),
                 other: parent.to_owned(),
+            });
+        }
+        dir.clear();
+        dir.push_str(name);
+        dir.push('/');
+        if let Some(child) = find_descendant_in_sorted(&dir, names) {
+            return Err(RefnameUnavailable::SameBatch {
+                refname: (*child).to_owned(),
+                other: name.to_owned(),
             });
         }
     }
     Ok(())
 }
 
-fn find_descendant_in_sorted(dirname_with_slash: &str, names: &BTreeSet<String>) -> Option<String> {
-    let start = names.range(dirname_with_slash.to_string()..).next()?;
-    if start.starts_with(dirname_with_slash) {
-        Some(start.clone())
-    } else {
-        None
-    }
+fn find_descendant_in_sorted<'a, S>(
+    dirname_with_slash: &str,
+    names: &'a BTreeSet<S>,
+) -> Option<&'a S>
+where
+    S: Borrow<str> + Ord,
+{
+    let start = names
+        .range::<str, _>((Bound::Included(dirname_with_slash), Bound::Unbounded))
+        .next()?;
+    start
+        .borrow()
+        .starts_with(dirname_with_slash)
+        .then_some(start)
 }
 
 /// Verify that each *new* ref in `updates` can be created without conflicting with `existing`
@@ -94,10 +112,9 @@ pub fn verify_create_conflicts(
     existing: &BTreeMap<String, RawRef>,
     updates: &[RefUpdate],
 ) -> Result<(), RefnameUnavailable> {
-    verify_same_batch_conflicts(updates)?;
-
-    let extras: BTreeSet<String> = updates.iter().map(|u| u.name.clone()).collect();
-    let existing_names: BTreeSet<String> = existing.keys().cloned().collect();
+    let extras: BTreeSet<&str> = updates.iter().map(|u| u.name.as_str()).collect();
+    verify_same_batch_conflicts(updates, &extras)?;
+    let existing_names: BTreeSet<&str> = existing.keys().map(String::as_str).collect();
 
     for update in updates {
         if update.new_value.is_none() || update.flags.log_only {
@@ -113,11 +130,15 @@ pub fn verify_create_conflicts(
 
 /// Whether `refname` can be created when `existing` holds the stored ref names near it (at
 /// least its ancestors and descendants) and `extras` the names of its batch.
-pub(super) fn verify_name_available_for_create(
+pub(super) fn verify_name_available_for_create<E, X>(
     refname: &str,
-    existing: &BTreeSet<String>,
-    extras: &BTreeSet<String>,
-) -> Result<(), RefnameUnavailable> {
+    existing: &BTreeSet<E>,
+    extras: &BTreeSet<X>,
+) -> Result<(), RefnameUnavailable>
+where
+    E: Borrow<str> + Ord,
+    X: Borrow<str> + Ord,
+{
     let segments: Vec<&str> = refname.split('/').filter(|s| !s.is_empty()).collect();
     if segments.len() > 1 {
         let mut dirname = String::new();
@@ -126,13 +147,13 @@ pub(super) fn verify_name_available_for_create(
                 dirname.push('/');
             }
             dirname.push_str(part);
-            if existing.contains(&dirname) {
+            if existing.contains(dirname.as_str()) {
                 return Err(RefnameUnavailable::AncestorExists {
                     blocking: dirname.clone(),
                     new_ref: refname.to_owned(),
                 });
             }
-            if extras.contains(&dirname) {
+            if extras.contains(dirname.as_str()) {
                 return Err(RefnameUnavailable::SameBatch {
                     refname: refname.to_owned(),
                     other: dirname.clone(),
@@ -147,16 +168,114 @@ pub(super) fn verify_name_available_for_create(
 
     if let Some(blocking) = find_descendant_in_sorted(&leaf_dir, existing) {
         return Err(RefnameUnavailable::DescendantExists {
-            blocking,
+            blocking: blocking.borrow().to_owned(),
             new_ref: refname.to_owned(),
         });
     }
     if let Some(blocking) = find_descendant_in_sorted(&leaf_dir, extras) {
         return Err(RefnameUnavailable::SameBatch {
             refname: refname.to_owned(),
-            other: blocking,
+            other: blocking.borrow().to_owned(),
         });
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::objects::ObjectId;
+    use crate::refs::store::{Expected, RefUpdateFlags};
+
+    fn oid(byte: u8) -> ObjectId {
+        ObjectId::from_bytes(&[byte; 20]).expect("oid")
+    }
+
+    fn create(name: &str) -> RefUpdate {
+        RefUpdate {
+            name: name.to_owned(),
+            new_value: Some(RawRef::Direct(oid(1))),
+            expected: Expected::Missing,
+            reflog: None,
+            flags: RefUpdateFlags::default(),
+        }
+    }
+
+    fn delete(name: &str) -> RefUpdate {
+        RefUpdate {
+            new_value: None,
+            expected: Expected::Any,
+            ..create(name)
+        }
+    }
+
+    fn siblings(n: usize) -> Vec<RefUpdate> {
+        (0..n)
+            .map(|i| create(&format!("refs/remotes/origin/b/n{i}")))
+            .collect()
+    }
+
+    #[test]
+    fn many_sibling_creates_are_accepted() {
+        let updates = siblings(20_000);
+        verify_create_conflicts(&BTreeMap::new(), &updates).expect("siblings never conflict");
+    }
+
+    #[test]
+    fn parent_and_child_split_by_a_name_sorting_before_slash_conflict() {
+        // `x!` sorts between `x` and `x/y`, so only a probe at `x/` finds the pair.
+        for order in [["x", "x!", "x/y"], ["x/y", "x!", "x"]] {
+            let mut updates = siblings(3_000);
+            updates.extend(order.map(|leaf| create(&format!("refs/heads/{leaf}"))));
+            let err = verify_create_conflicts(&BTreeMap::new(), &updates)
+                .expect_err("parent and child in one batch");
+            assert_eq!(
+                err,
+                RefnameUnavailable::SameBatch {
+                    refname: "refs/heads/x/y".to_owned(),
+                    other: "refs/heads/x".to_owned(),
+                },
+                "{order:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn deleting_a_parent_does_not_free_its_name_for_a_child_in_the_same_batch() {
+        let existing: BTreeMap<String, RawRef> =
+            [("refs/heads/a".to_owned(), RawRef::Direct(oid(2)))].into();
+        let updates = vec![delete("refs/heads/a"), create("refs/heads/a/b")];
+        assert_eq!(
+            verify_create_conflicts(&existing, &updates),
+            Err(RefnameUnavailable::SameBatch {
+                refname: "refs/heads/a/b".to_owned(),
+                other: "refs/heads/a".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn create_next_to_stored_refs_reports_ancestor_and_descendant() {
+        let existing: BTreeMap<String, RawRef> = [
+            ("refs/heads/p".to_owned(), RawRef::Direct(oid(2))),
+            ("refs/heads/q/r".to_owned(), RawRef::Direct(oid(2))),
+        ]
+        .into();
+        assert_eq!(
+            verify_create_conflicts(&existing, &[create("refs/heads/p/c")]),
+            Err(RefnameUnavailable::AncestorExists {
+                blocking: "refs/heads/p".to_owned(),
+                new_ref: "refs/heads/p/c".to_owned(),
+            })
+        );
+        assert_eq!(
+            verify_create_conflicts(&existing, &[create("refs/heads/q")]),
+            Err(RefnameUnavailable::DescendantExists {
+                blocking: "refs/heads/q/r".to_owned(),
+                new_ref: "refs/heads/q".to_owned(),
+            })
+        );
+        verify_create_conflicts(&existing, &[create("refs/heads/q!")]).expect("no conflict");
+    }
 }
