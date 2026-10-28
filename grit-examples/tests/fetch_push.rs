@@ -3,7 +3,7 @@
 //! use real fixtures (an on-disk remote and, when available, a `git daemon`) and
 //! cross-check the result with the system `git`.
 
-use std::net::TcpListener;
+use grit_test_support::free_port;
 use std::net::TcpStream;
 use std::path::Path;
 use std::process::Child;
@@ -248,12 +248,6 @@ impl Drop for DaemonGuard {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
-}
-
-fn free_port() -> Option<u16> {
-    let l = TcpListener::bind(("127.0.0.1", 0)).ok()?;
-    let p = l.local_addr().ok()?.port();
-    Some(p)
 }
 
 fn wait_ready(port: u16) -> bool {

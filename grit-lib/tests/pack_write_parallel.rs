@@ -1,5 +1,6 @@
 //! Byte-identical delta packs across pack-write worker counts (1/2/4/8 threads).
 
+use grit_test_support::rev_parse;
 use std::path::Path;
 use std::process::Command;
 
@@ -41,10 +42,6 @@ fn git_try(dir: &Path, args: &[&str]) -> bool {
         cmd.env(k, v);
     }
     cmd.output().map(|o| o.status.success()).unwrap_or(false)
-}
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("oid")
 }
 
 fn open_odb(dir: &Path) -> Odb {

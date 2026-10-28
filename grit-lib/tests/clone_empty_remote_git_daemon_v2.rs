@@ -1,6 +1,7 @@
 //! Clone an empty bare remote over protocol v2 (`git://` + system `git daemon`).
 
-use std::net::{TcpListener, TcpStream};
+use grit_test_support::free_port;
+use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -22,21 +23,6 @@ fn git(dir: &Path, args: &[&str]) {
         "git {args:?}: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-}
-
-fn free_port() -> Option<u16> {
-    static USED: std::sync::Mutex<Vec<u16>> = std::sync::Mutex::new(Vec::new());
-    let mut used = USED.lock().unwrap_or_else(|e| e.into_inner());
-    for _ in 0..200 {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).ok()?;
-        let port = listener.local_addr().ok()?.port();
-        drop(listener);
-        if !used.contains(&port) {
-            used.push(port);
-            return Some(port);
-        }
-    }
-    None
 }
 
 fn spawn_daemon(base_path: &Path, port: u16) -> Option<Child> {

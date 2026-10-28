@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::net::TcpListener;
+use grit_test_support::free_port;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -45,12 +45,6 @@ fn write_hook(repo: &Path, name: &str, body: &str) {
         perms.set_mode(0o755);
         std::fs::set_permissions(&hook, perms).unwrap();
     }
-}
-
-fn free_port() -> Option<u16> {
-    TcpListener::bind("127.0.0.1:0")
-        .ok()
-        .and_then(|l| l.local_addr().ok().map(|a| a.port()))
 }
 
 fn wait_tcp(port: u16) -> bool {

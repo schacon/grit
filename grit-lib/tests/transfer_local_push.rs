@@ -8,6 +8,7 @@
 //! non-fast-forward, force, delete, and force-with-lease (CAS) pushes — cross
 //! checking remote state with the system `git`.
 
+use grit_test_support::rev_parse;
 use std::path::Path;
 
 use grit_lib::config::environment::RepositoryOptions;
@@ -25,10 +26,6 @@ fn git_try(dir: &Path, args: &[&str]) -> (bool, String) {
     let mut combined = out.stdout;
     combined.push_str(&out.stderr);
     (ok, combined)
-}
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("valid oid")
 }
 
 /// The remote's current value of `dst`, via the system git, or `None` if absent.

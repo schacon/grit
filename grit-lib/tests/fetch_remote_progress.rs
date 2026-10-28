@@ -5,6 +5,7 @@
 
 #![cfg(unix)]
 
+use grit_test_support::{git, rev_parse};
 use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -17,32 +18,6 @@ use grit_lib::refs::resolve_ref;
 use grit_lib::remote::fetch::{fetch_remote, Progress};
 use grit_lib::remote::transfer::{FetchOptions, TagMode};
 use grit_lib::remote::transport::{ConnectOptions, Connection, Service, SshTransport, Transport};
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .current_dir(dir)
-        .args(args)
-        .env("GIT_AUTHOR_NAME", "T")
-        .env("GIT_AUTHOR_EMAIL", "t@example.com")
-        .env("GIT_AUTHOR_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_COMMITTER_NAME", "T")
-        .env("GIT_COMMITTER_EMAIL", "t@example.com")
-        .env("GIT_COMMITTER_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .expect("run git");
-    assert!(
-        out.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).expect("utf8 git output")
-}
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("valid oid")
-}
 
 fn build_progress_source(dir: &Path) {
     git(dir, &["init", "-q", "-b", "main", "."]);

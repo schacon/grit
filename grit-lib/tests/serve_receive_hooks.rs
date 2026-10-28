@@ -1,8 +1,9 @@
 //! Receive-pack server hooks, quarantine, and side-band hook output.
 
+use grit_test_support::{free_port, git, rev_parse};
 use std::io::Write;
 #[cfg(unix)]
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
@@ -17,32 +18,6 @@ use grit_lib::remote::serve::{
     receive_pack, ProtocolVersion, ReceiveOutcome, ReceivePolicy, RefUpdateRefusal, ServeOptions,
 };
 use grit_lib::repo::Repository;
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .current_dir(dir)
-        .args(args)
-        .env("GIT_AUTHOR_NAME", "T")
-        .env("GIT_AUTHOR_EMAIL", "t@example.com")
-        .env("GIT_AUTHOR_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_COMMITTER_NAME", "T")
-        .env("GIT_COMMITTER_EMAIL", "t@example.com")
-        .env("GIT_COMMITTER_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .expect("run git");
-    assert!(
-        out.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).expect("utf8")
-}
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("oid")
-}
 
 fn write_executable_hook(path: &Path, body: &str) {
     std::fs::write(path, body).expect("hook body");
@@ -755,12 +730,6 @@ fn find_binary(name: &str) -> Option<PathBuf> {
         }
     }
     None
-}
-
-#[cfg(unix)]
-fn free_port() -> Option<u16> {
-    let l = TcpListener::bind(("127.0.0.1", 0)).ok()?;
-    Some(l.local_addr().ok()?.port())
 }
 
 #[cfg(unix)]

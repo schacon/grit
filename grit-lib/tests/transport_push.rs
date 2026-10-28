@@ -12,7 +12,8 @@
 //! cannot bind, or refuses the receive-pack service — the happy path is
 //! otherwise real end-to-end wire I/O.
 
-use std::net::{TcpListener, TcpStream};
+use grit_test_support::{free_port, git, rev_parse};
+use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -25,32 +26,6 @@ use grit_lib::remote::push::push_remote;
 use grit_lib::remote::push_report::PushRefStatus;
 use grit_lib::remote::transfer::{PushOptions, PushRefSpec};
 use grit_lib::remote::transport::{ConnectOptions, GitDaemonTransport, Service, Transport};
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .current_dir(dir)
-        .args(args)
-        .env("GIT_AUTHOR_NAME", "T")
-        .env("GIT_AUTHOR_EMAIL", "t@example.com")
-        .env("GIT_AUTHOR_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_COMMITTER_NAME", "T")
-        .env("GIT_COMMITTER_EMAIL", "t@example.com")
-        .env("GIT_COMMITTER_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .expect("run git");
-    assert!(
-        out.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).expect("utf8 git output")
-}
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("valid oid")
-}
 
 fn open_odb(git_dir: &Path) -> Odb {
     Odb::new(&git_dir.join("objects")).with_config_git_dir(git_dir.to_path_buf())
@@ -66,24 +41,6 @@ fn build_source(dir: &Path) {
     std::fs::write(dir.join("b.txt"), "two\n").unwrap();
     git(dir, &["add", "b.txt"]);
     git(dir, &["commit", "-q", "-m", "c2"]);
-}
-
-fn free_port() -> Option<u16> {
-    // Dedup port handout per process so a concurrent caller never accepts a
-    // port another test already reserved (closes the bind-before-spawn TOCTOU
-    // that let two servers share a port under high test parallelism).
-    static USED: std::sync::Mutex<Vec<u16>> = std::sync::Mutex::new(Vec::new());
-    let mut used = USED.lock().unwrap_or_else(|e| e.into_inner());
-    for _ in 0..200 {
-        let l = TcpListener::bind(("127.0.0.1", 0)).ok()?;
-        let p = l.local_addr().ok()?.port();
-        drop(l);
-        if !used.contains(&p) {
-            used.push(p);
-            return Some(p);
-        }
-    }
-    None
 }
 
 /// Spawn `git daemon` over `base_path` on `port` with receive-pack enabled.

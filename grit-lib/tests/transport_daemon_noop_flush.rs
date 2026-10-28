@@ -4,8 +4,9 @@
 
 #![cfg(unix)]
 
+use grit_test_support::free_port;
 use std::io::Read;
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -46,21 +47,6 @@ fn build_source(dir: &Path) {
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     git(Some(dir), &["add", "a.txt"]);
     git(Some(dir), &["commit", "-q", "-m", "c1"]);
-}
-
-fn free_port() -> Option<u16> {
-    static USED: std::sync::Mutex<Vec<u16>> = std::sync::Mutex::new(Vec::new());
-    let mut used = USED.lock().unwrap_or_else(|e| e.into_inner());
-    for _ in 0..200 {
-        let l = TcpListener::bind(("127.0.0.1", 0)).ok()?;
-        let p = l.local_addr().ok()?.port();
-        drop(l);
-        if !used.contains(&p) {
-            used.push(p);
-            return Some(p);
-        }
-    }
-    None
 }
 
 fn wait_tcp(port: u16) -> bool {

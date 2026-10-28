@@ -1,5 +1,6 @@
 //! Shallow clone (`CloneOptions::depth`) matches `git clone --depth=1` on disk.
 
+use grit_test_support::rev_parse;
 use std::path::Path;
 use std::process::Command;
 
@@ -11,10 +12,6 @@ use grit_lib::remote::clone::{clone as clone_repo, CloneOptions};
 use grit_lib::remote::fetch::NoProgress;
 use grit_lib::remote::shallow::load_shallow_oids;
 use grit_test_support::git;
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("valid oid")
-}
 
 fn git_fsck_clean(work_tree: &Path) {
     let out = Command::new("git")

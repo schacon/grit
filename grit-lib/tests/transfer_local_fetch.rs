@@ -7,22 +7,19 @@
 //! objects, the per-ref `UpdateMode`, and the resolved default branch — then
 //! repeat after advancing the remote to assert a `FastForward`.
 
+use grit_test_support::rev_parse;
 use std::path::Path;
 use std::process::Command;
 
 use grit_lib::config::environment::Environment;
 use grit_lib::config::ConfigSet;
 use grit_lib::objects::odb::Odb;
-use grit_lib::objects::{ObjectId, ObjectKind};
+use grit_lib::objects::ObjectKind;
 use grit_lib::refs::resolve_ref;
 use grit_lib::remote::transfer::{
     build_pack, fetch_local, FetchOptions, PackBuildOptions, TagMode, UpdateMode,
 };
 use grit_test_support::{git, git_cmd};
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("valid oid")
-}
 
 fn open_odb(git_dir: &Path) -> Odb {
     Odb::new(&git_dir.join("objects")).with_config_git_dir(git_dir.to_path_buf())

@@ -1,5 +1,6 @@
 //! Shallow fetch `--depth`, `--deepen`, and `--unshallow` vs system `git` (file:// and HTTP).
 
+use grit_test_support::git;
 use std::collections::HashSet;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -11,27 +12,6 @@ use grit_lib::progress::NeverCancel;
 use grit_lib::remote::fetch::{fetch_remote, NoProgress};
 use grit_lib::remote::transfer::{fetch_local, FetchDepth, FetchOptions, TagMode};
 use grit_lib::remote::transport::{ConnectOptions, GitDaemonTransport, Service, Transport};
-fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
-        .current_dir(dir)
-        .args(args)
-        .env("GIT_AUTHOR_NAME", "T")
-        .env("GIT_AUTHOR_EMAIL", "t@example.com")
-        .env("GIT_AUTHOR_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_COMMITTER_NAME", "T")
-        .env("GIT_COMMITTER_EMAIL", "t@example.com")
-        .env("GIT_COMMITTER_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .expect("git");
-    assert!(
-        out.status.success(),
-        "git {args:?} in {}: {}",
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
 
 fn git_out(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")

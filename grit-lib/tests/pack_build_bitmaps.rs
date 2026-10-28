@@ -1,5 +1,6 @@
 //! Pack generation with reachability bitmap enumeration.
 
+use grit_test_support::free_port;
 use std::collections::HashSet;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -287,12 +288,6 @@ fn find_binary(name: &str) -> Option<PathBuf> {
         }
     }
     None
-}
-
-fn free_port() -> Option<u16> {
-    let l = TcpListener::bind(("127.0.0.1", 0)).ok()?;
-    let p = l.local_addr().ok()?.port();
-    Some(p)
 }
 
 struct ServerHandle {

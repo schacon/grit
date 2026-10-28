@@ -1,16 +1,12 @@
 //! Fetch must not overwrite an existing local tag when the remote tag moves.
 
-use std::path::Path;
+use grit_test_support::rev_parse;
 use std::process::Command;
 
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::resolve_ref;
 use grit_lib::remote::transfer::{fetch_local, FetchOptions, TagMode, UpdateMode};
 use grit_test_support::git;
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("valid oid")
-}
 
 #[test]
 fn fetch_local_rejects_moved_tag_without_force() {

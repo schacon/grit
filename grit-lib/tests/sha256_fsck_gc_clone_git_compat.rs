@@ -1,6 +1,7 @@
 //! Regression for issue #1962: SHA-256 repos from git must fsck/gc/clone cleanly.
 
-use std::net::{TcpListener, TcpStream};
+use grit_test_support::{free_port, git};
+use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -16,27 +17,6 @@ use grit_lib::remote::fetch::NoProgress;
 use grit_lib::repo::Repository;
 use grit_test_support::git_supports_sha256;
 use tempfile::TempDir;
-
-fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
-        .current_dir(dir)
-        .args(args)
-        .env("GIT_AUTHOR_NAME", "T")
-        .env("GIT_AUTHOR_EMAIL", "t@example.com")
-        .env("GIT_AUTHOR_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_COMMITTER_NAME", "T")
-        .env("GIT_COMMITTER_EMAIL", "t@example.com")
-        .env("GIT_COMMITTER_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .expect("run git");
-    assert!(
-        out.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
 
 fn git_init_sha256(dir: &Path) {
     git(
@@ -120,12 +100,6 @@ fn grit_clone_local_git_sha256_repo() {
     assert_eq!(String::from_utf8_lossy(&cloned.stdout).trim(), expected);
 
     git(&dest, &["fsck", "--strict"]);
-}
-
-fn free_port() -> Option<u16> {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).ok()?;
-    let port = listener.local_addr().ok()?.port();
-    Some(port)
 }
 
 fn wait_ready(port: u16) -> bool {

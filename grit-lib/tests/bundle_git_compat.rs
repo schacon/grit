@@ -1,5 +1,6 @@
 //! Round-trip and compatibility tests for [`grit_lib::bundle`] vs system `git bundle`.
 
+use grit_test_support::rev_parse;
 use std::path::Path;
 use std::process::Command;
 
@@ -37,10 +38,6 @@ fn git(dir: &Path, args: &[&str]) -> String {
 
 fn git_ok(dir: &Path, args: &[&str]) {
     git(dir, args);
-}
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("oid")
 }
 
 fn fsck_strict(dir: &Path) {

@@ -2,6 +2,7 @@
 //! following, for annotated tags and for tags moved on the remote (issue #2157),
 //! over the local transport and over SSH against system `git upload-pack`.
 
+use grit_test_support::rev_parse;
 use std::path::{Path, PathBuf};
 
 use grit_lib::objects::ObjectId;
@@ -10,10 +11,6 @@ use grit_lib::remote::fetch::{fetch_remote, NoProgress};
 use grit_lib::remote::transfer::{fetch_local, FetchOptions, FetchOutcome, TagMode, UpdateMode};
 use grit_lib::remote::transport::{ConnectOptions, Service, SshTransport, Transport};
 use grit_test_support::git;
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("valid oid")
-}
 
 fn fsck(dir: &Path) {
     git(dir, &["fsck", "--strict", "--no-dangling"]);

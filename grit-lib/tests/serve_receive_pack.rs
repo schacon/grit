@@ -1,6 +1,7 @@
 //! `receive_pack_with_hook`: typed refusals, in-process policy hooks, streamed
 //! pack storage, and hook environment, checked against the system `git`.
 
+use grit_test_support::{git, rev_parse};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -17,32 +18,6 @@ use grit_lib::remote::serve::{
 use grit_lib::repo::Repository;
 
 const ZERO: &str = "0000000000000000000000000000000000000000";
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .current_dir(dir)
-        .args(args)
-        .env("GIT_AUTHOR_NAME", "T")
-        .env("GIT_AUTHOR_EMAIL", "t@example.com")
-        .env("GIT_AUTHOR_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_COMMITTER_NAME", "T")
-        .env("GIT_COMMITTER_EMAIL", "t@example.com")
-        .env("GIT_COMMITTER_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .expect("run git");
-    assert!(
-        out.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).expect("utf8")
-}
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("oid")
-}
 
 /// A source repository with `commits` commits on `main`, each adding a file.
 fn source_repo(dir: &Path, commits: usize) -> ObjectId {

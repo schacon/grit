@@ -2,6 +2,7 @@
 //! (still quarantined) commits are accepted, history rewrites of branches are
 //! refused, and other refs are left alone, as with `git receive-pack`.
 
+use grit_test_support::rev_parse;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -37,10 +38,6 @@ fn git(dir: &Path, args: &[&str]) -> String {
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8(out.stdout).expect("utf8")
-}
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("oid")
 }
 
 /// Pack of everything reachable from `tip` but not from `exclude`.

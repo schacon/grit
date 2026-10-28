@@ -48,8 +48,9 @@
 
 #![cfg(feature = "http-ureq")]
 
+use grit_test_support::{free_port, rev_parse};
 use std::io;
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -106,10 +107,6 @@ fn git(dir: &Path, args: &[&str]) -> String {
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8(out.stdout).expect("utf8 git output")
-}
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("valid oid")
 }
 
 fn open_odb(git_dir: &Path) -> Odb {
@@ -260,24 +257,6 @@ fn assert_objects_present(bare: &Path, oids: &[ObjectId]) {
         odb.read(oid)
             .unwrap_or_else(|e| panic!("read {}: {e}", oid.to_hex()));
     }
-}
-
-fn free_port() -> Option<u16> {
-    // Dedup port handout per process so a concurrent caller never accepts a
-    // port another test already reserved (closes the bind-before-spawn TOCTOU
-    // that let two servers share a port under high test parallelism).
-    static USED: std::sync::Mutex<Vec<u16>> = std::sync::Mutex::new(Vec::new());
-    let mut used = USED.lock().unwrap_or_else(|e| e.into_inner());
-    for _ in 0..200 {
-        let l = TcpListener::bind(("127.0.0.1", 0)).ok()?;
-        let p = l.local_addr().ok()?.port();
-        drop(l);
-        if !used.contains(&p) {
-            used.push(p);
-            return Some(p);
-        }
-    }
-    None
 }
 
 fn wait_ready(port: u16, secs: u64) -> bool {

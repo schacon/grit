@@ -3,8 +3,9 @@
 
 #![cfg(unix)]
 
+use grit_test_support::free_port;
 use std::collections::BTreeMap;
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -152,21 +153,6 @@ fn build_source(dir: &Path) {
     git(Some(dir), &["commit", "-q", "-m", "c2"]);
     git(Some(dir), &["tag", "-a", "v1", "-m", "tag"]);
     git(Some(dir), &["branch", "topic"]);
-}
-
-fn free_port() -> Option<u16> {
-    static USED: std::sync::Mutex<Vec<u16>> = std::sync::Mutex::new(Vec::new());
-    let mut used = USED.lock().unwrap_or_else(|e| e.into_inner());
-    for _ in 0..200 {
-        let l = TcpListener::bind(("127.0.0.1", 0)).ok()?;
-        let p = l.local_addr().ok()?.port();
-        drop(l);
-        if !used.contains(&p) {
-            used.push(p);
-            return Some(p);
-        }
-    }
-    None
 }
 
 fn ensure_grit_http_server_built() {

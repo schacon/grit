@@ -7,19 +7,15 @@
 //! check that nothing is re-copied from the linked pack, and that the system `git`
 //! accepts the result.
 
+use grit_test_support::rev_parse;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use grit_lib::objects::ObjectId;
 use grit_lib::progress::NeverCancel;
 use grit_lib::remote::clone::{clone as clone_repo, CloneOptions};
 use grit_lib::remote::fetch::NoProgress;
 use grit_lib::remote::transfer::{push_local, PushOptions, PushRefSpec};
 use grit_test_support::{git, git_cmd};
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("valid oid")
-}
 
 fn commit_file(dir: &Path, name: &str, body: &str, msg: &str) {
     if let Some(parent) = Path::new(name).parent() {

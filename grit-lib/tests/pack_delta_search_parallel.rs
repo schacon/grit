@@ -1,5 +1,6 @@
 //! Deterministic windowed delta search across worker counts (1/2/4/8 threads).
 
+use grit_test_support::rev_parse;
 use std::path::Path;
 use std::process::Command;
 
@@ -31,10 +32,6 @@ fn git(dir: &Path, args: &[&str]) -> String {
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8(out.stdout).expect("utf8")
-}
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("oid")
 }
 
 fn open_odb(dir: &Path) -> Odb {

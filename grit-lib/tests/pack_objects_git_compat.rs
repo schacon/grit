@@ -1,6 +1,7 @@
 //! Git compatibility for [`grit_lib::objects::pack_objects`] packs: `index-pack --strict`, `fsck`,
 //! thin-pack fix, size parity vs `git pack-objects --revs`, and SHA-256 repos.
 
+use grit_test_support::rev_parse;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -42,10 +43,6 @@ fn git(dir: &Path, args: &[&str]) -> String {
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8(out.stdout).expect("utf8")
-}
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("oid")
 }
 
 fn open_odb(dir: &Path) -> Odb {

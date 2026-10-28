@@ -22,6 +22,7 @@
 //! cleanly only when a genuinely unavailable feature (e.g. `--object-format=sha256`)
 //! is missing, and even then the SHA-1 happy path remains fully asserted.
 
+use grit_test_support::git;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -38,29 +39,6 @@ use grit_lib::repo::Repository;
 // System-git fixture helpers (copied/adapted from the sibling transfer_pack.rs
 // harness so we do not reinvent repo bring-up or the index-pack/fsck plumbing).
 // ---------------------------------------------------------------------------
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .current_dir(dir)
-        .args(args)
-        .env("GIT_AUTHOR_NAME", "T")
-        .env("GIT_AUTHOR_EMAIL", "t@example.com")
-        .env("GIT_COMMITTER_NAME", "T")
-        .env("GIT_COMMITTER_EMAIL", "t@example.com")
-        .env("GIT_AUTHOR_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_COMMITTER_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .expect("run git");
-    assert!(
-        out.status.success(),
-        "git {:?} failed: {}",
-        args,
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).expect("utf8 git output")
-}
 
 /// Like [`git`] but returns success/failure without panicking — for capability
 /// probes (e.g. does this git support `--object-format=sha256`).

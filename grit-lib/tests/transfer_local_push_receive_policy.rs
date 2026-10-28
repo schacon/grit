@@ -1,9 +1,9 @@
 //! Local-path push must honor the remote's `receive.*` policy, matching wire
 //! receive-pack and system `git push` to the same repository.
 
+use grit_test_support::rev_parse;
 use std::path::Path;
 
-use grit_lib::objects::ObjectId;
 use grit_lib::remote::push_report::PushRefStatus;
 use grit_lib::remote::transfer::{push_local, PushOptions, PushRefSpec};
 use grit_test_support::{git, git_cmd};
@@ -14,10 +14,6 @@ fn git_try(dir: &Path, args: &[&str]) -> (bool, String) {
     let mut combined = out.stdout;
     combined.push_str(&out.stderr);
     (ok, combined)
-}
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("oid")
 }
 
 fn git_config(repo: &Path, key: &str, value: &str) {

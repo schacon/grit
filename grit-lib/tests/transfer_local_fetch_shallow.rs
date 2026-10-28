@@ -4,17 +4,13 @@
 //! not create tag refs to missing commits, and cloning from a shallow source must
 //! propagate `.git/shallow` and stay fsck-clean with system `git`.
 
+use grit_test_support::rev_parse;
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::objects::ObjectId;
 use grit_lib::refs::resolve_ref;
 use grit_lib::remote::transfer::{fetch_local, FetchDepth, FetchOptions, TagMode, UpdateMode};
 use grit_test_support::git;
-
-fn rev_parse(dir: &Path, rev: &str) -> ObjectId {
-    ObjectId::from_hex(git(dir, &["rev-parse", rev]).trim()).expect("valid oid")
-}
 
 fn git_fsck_clean(work_tree: &Path) {
     let out = Command::new("git")
