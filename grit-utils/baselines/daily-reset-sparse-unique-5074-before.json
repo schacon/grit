@@ -1,0 +1,2309 @@
+{
+  "schema": "grit-daily-bench/1",
+  "generated_at": "2026-10-28T06:26:11.411468523Z",
+  "machine": {
+    "cpu_model": "Intel(R) Xeon(R) Processor",
+    "physical_cores": 4,
+    "logical_cores": 4,
+    "ram_bytes": 16780574720,
+    "os": "linux",
+    "kernel": "Linux 6.12.94+",
+    "scratch_filesystem": "ext4",
+    "rustc_version": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "cargo_profile": "release"
+  },
+  "tools": {
+    "git": "git version 2.43.0",
+    "grit": "grit 0.5.23",
+    "grit_commit": "b5f9647f055dcc198f80d14309040f783e7e9acd"
+  },
+  "scenarios": [
+    {
+      "id": "reset/blobless@git-git",
+      "area": "remotes",
+      "description": "Materialize a fresh blobless no-checkout clone with reset --hard HEAD over smart HTTP",
+      "git": {
+        "median_wall_ms": 2643.291047,
+        "peak_rss_bytes": 72368128,
+        "runs": 5,
+        "samples_ms": [
+          2625.523,
+          2631.1,
+          2643.291,
+          2663.319,
+          2656.491
+        ],
+        "min_ms": 2625.523463,
+        "max_ms": 2663.319079,
+        "stddev_ms": 16.10546635530488
+      },
+      "grit": {
+        "median_wall_ms": 2417.3022775,
+        "peak_rss_bytes": 56369152,
+        "runs": 4,
+        "samples_ms": [
+          2393.646,
+          2507.876,
+          2401.802,
+          2432.803
+        ],
+        "min_ms": 2393.6464960000003,
+        "max_ms": 2507.875884,
+        "stddev_ms": 52.03914629413212
+      },
+      "ratio": 0.9145047724666998,
+      "detail": {
+        "setup": "remote http://127.0.0.1:35061/remote.git served by git http-backend (git's own smart HTTP server)",
+        "prepare": "set -e\nrm -rf /tmp/grit-bench-scratch/daily-remote-git-git/remote.git-reset '/tmp/grit-bench-scratch/daily-remote-git-git/remote.grit-reset'\ngit clone -q --filter=blob:none --no-checkout http://127.0.0.1:35061/remote.git '/tmp/grit-bench-scratch/daily-remote-git-git/remote.git-reset'\ngrit clone --blobs none --no-checkout http://127.0.0.1:35061/remote.git '/tmp/grit-bench-scratch/daily-remote-git-git/remote.grit-reset'\n",
+        "commands": {
+          "git": "git -C /tmp/grit-bench-scratch/daily-remote-git-git/remote.git-reset reset --hard HEAD",
+          "grit": "grit -C /tmp/grit-bench-scratch/daily-remote-git-git/remote.grit-reset reset --hard HEAD"
+        },
+        "correctness": "before timing, git and grit were each run once and their results compared",
+        "phases": {
+          "git": [
+            {
+              "name": "unpack_trees: unpack_trees",
+              "ms": 2601.496,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "progress: Updating",
+              "ms": 2598.358,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "run: git fetch.negotiationAlgorithm=noop",
+              "ms": 2364.483,
+              "count": 1,
+              "depth": 1
+            },
+            {
+              "name": "run: git remote-http",
+              "ms": 2361.287,
+              "count": 1,
+              "depth": 2
+            },
+            {
+              "name": "run: git-remote-http",
+              "ms": 2360.01,
+              "count": 1,
+              "depth": 3
+            },
+            {
+              "name": "fetch: fetch_refs",
+              "ms": 2339.479,
+              "count": 1,
+              "depth": 1
+            },
+            {
+              "name": "run: git fetch-pack",
+              "ms": 2333.232,
+              "count": 1,
+              "depth": 4
+            },
+            {
+              "name": "run: git index-pack",
+              "ms": 945.754,
+              "count": 1,
+              "depth": 5
+            },
+            {
+              "name": "fetch-pack: parse_remote_refs_and_find_cutoff",
+              "ms": 12.841,
+              "count": 1,
+              "depth": 4
+            },
+            {
+              "name": "unpack_trees: traverse_trees",
+              "ms": 3.001,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "fetch: consume_refs",
+              "ms": 2.786,
+              "count": 1,
+              "depth": 1
+            },
+            {
+              "name": "run: git maintenance",
+              "ms": 1.521,
+              "count": 1,
+              "depth": 2
+            },
+            {
+              "name": "index: do_write_index",
+              "ms": 1.343,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "fetch-pack: mark_complete_local_refs",
+              "ms": 0.802,
+              "count": 1,
+              "depth": 4
+            },
+            {
+              "name": "fetch-pack: mark_common_remote_refs",
+              "ms": 0.604,
+              "count": 1,
+              "depth": 4
+            },
+            {
+              "name": "cache-tree: prime_cache_tree",
+              "ms": 0.522,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: write",
+              "ms": 0.038,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "index: do_read_index",
+              "ms": 0.012,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "progress: Filtering",
+              "ms": 0.008,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "fetch-pack: negotiation_v0_v1",
+              "ms": 0.004,
+              "count": 1,
+              "depth": 4
+            }
+          ],
+          "grit": [
+            {
+              "name": "grit.pack.index",
+              "ms": 91.83,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.delta.resolve",
+              "ms": 83.81,
+              "count": 1,
+              "depth": 1
+            },
+            {
+              "name": "grit.index.write",
+              "ms": 0.744,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.repository.open",
+              "ms": 0.309,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.104,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.index.open",
+              "ms": 0.043,
+              "count": 3,
+              "depth": 0
+            },
+            {
+              "name": "grit.index.read",
+              "ms": 0.038,
+              "count": 1,
+              "depth": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "reset/hard-delete-heavy@wide-48k",
+      "area": "worktree",
+      "description": "Hard reset to a commit deleting 2000 files in 20 dirs of a 48k-file tree and back: grit reset --hard vs git reset --hard",
+      "git": {
+        "median_wall_ms": 232.620298,
+        "peak_rss_bytes": 22274048,
+        "runs": 10,
+        "samples_ms": [
+          230.193,
+          225.154,
+          232.97,
+          292.219,
+          238.648,
+          232.27,
+          237.684,
+          229.336,
+          237.633,
+          229.553
+        ],
+        "min_ms": 225.154418,
+        "max_ms": 292.219409,
+        "stddev_ms": 19.343918647125133
+      },
+      "grit": {
+        "median_wall_ms": 256.159849,
+        "peak_rss_bytes": 53276672,
+        "runs": 10,
+        "samples_ms": [
+          250.435,
+          300.506,
+          311.567,
+          270.205,
+          256.843,
+          254.895,
+          252.726,
+          255.476,
+          250.29,
+          274.621
+        ],
+        "min_ms": 250.29032899999999,
+        "max_ms": 311.56679399999996,
+        "stddev_ms": 21.88692726023364
+      },
+      "ratio": 1.101193022287333,
+      "detail": {
+        "prepare": "grit-bench prepare-switch --git git",
+        "commands": {
+          "git": "git reset -q --hard bench-b && git reset -q --hard 8cc277da027f3c1ec31bdcd25d9c2ffef8b3d5a3",
+          "grit": "grit reset --hard bench-b && grit reset --hard 8cc277da027f3c1ec31bdcd25d9c2ffef8b3d5a3"
+        },
+        "phases": {
+          "git": [
+            {
+              "name": "unpack_trees: unpack_trees",
+              "ms": 174.533,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: traverse_trees",
+              "ms": 117.738,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: do_write_index",
+              "ms": 19.631,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache-tree: prime_cache_tree",
+              "ms": 17.274,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: do_read_index",
+              "ms": 6.08,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: read",
+              "ms": 0.196,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: write",
+              "ms": 0.134,
+              "count": 2,
+              "depth": 0
+            }
+          ],
+          "grit": [
+            {
+              "name": "grit.index.write",
+              "ms": 22.55,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.index.read",
+              "ms": 8.41,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.diff.tree",
+              "ms": 1.608,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.repository.open",
+              "ms": 0.748,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.228,
+              "count": 4,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.index.open",
+              "ms": 0.036,
+              "count": 2,
+              "depth": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "reset/hard@synth-10k",
+      "area": "worktree",
+      "description": "Hard reset dirty tree: grit reset --hard HEAD vs git reset --hard HEAD",
+      "git": {
+        "median_wall_ms": 15.730165,
+        "peak_rss_bytes": 11149312,
+        "runs": 20,
+        "samples_ms": [
+          20.701,
+          15.905,
+          21.187,
+          16.676,
+          14.784,
+          15.283,
+          16.808,
+          14.976,
+          15.439,
+          15.286,
+          15.79,
+          15.53,
+          15.346,
+          15.507,
+          15.797,
+          15.556,
+          15.679,
+          15.982,
+          15.851,
+          15.781
+        ],
+        "min_ms": 14.783604,
+        "max_ms": 21.187277,
+        "stddev_ms": 1.6950862296672293
+      },
+      "grit": {
+        "median_wall_ms": 25.4935695,
+        "peak_rss_bytes": 25587712,
+        "runs": 20,
+        "samples_ms": [
+          25.367,
+          28.835,
+          30.123,
+          24.37,
+          26.739,
+          25.133,
+          28.751,
+          25.724,
+          24.873,
+          28.822,
+          24.625,
+          23.912,
+          25.778,
+          24.493,
+          24.142,
+          23.665,
+          23.476,
+          26.697,
+          26.039,
+          25.62
+        ],
+        "min_ms": 23.475829,
+        "max_ms": 30.122871,
+        "stddev_ms": 1.924265771026623
+      },
+      "ratio": 1.620680361585527,
+      "detail": {
+        "prepare": "grit-bench prepare-worktree-status-dirty --git git",
+        "commands": {
+          "git": "git reset --hard HEAD",
+          "grit": "grit reset --hard HEAD"
+        },
+        "phases": {
+          "git": [
+            {
+              "name": "unpack_trees: unpack_trees",
+              "ms": 7.874,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: traverse_trees",
+              "ms": 5.676,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "index: do_write_index",
+              "ms": 2.458,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "progress: Updating",
+              "ms": 1.981,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "cache-tree: prime_cache_tree",
+              "ms": 1.742,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "index: do_read_index",
+              "ms": 0.532,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: read",
+              "ms": 0.027,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: write",
+              "ms": 0.023,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "progress: Filtering",
+              "ms": 0.004,
+              "count": 1,
+              "depth": 0
+            }
+          ],
+          "grit": [
+            {
+              "name": "grit.repository.open",
+              "ms": 3.16,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.index.write",
+              "ms": 2.6,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.index.read",
+              "ms": 0.828,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.125,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.index.open",
+              "ms": 0.019,
+              "count": 1,
+              "depth": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "reset/keep@synth-10k",
+      "area": "worktree",
+      "description": "Reset branch with unrelated local edits: grit reset --keep HEAD~1 vs git reset --keep HEAD~1",
+      "git": {
+        "median_wall_ms": 10.96716,
+        "peak_rss_bytes": 11624448,
+        "runs": 20,
+        "samples_ms": [
+          33.867,
+          34.57,
+          35.056,
+          10.626,
+          12.18,
+          10.841,
+          10.091,
+          11.0,
+          11.83,
+          12.114,
+          10.917,
+          10.443,
+          11.298,
+          10.796,
+          10.934,
+          11.714,
+          10.765,
+          10.469,
+          10.73,
+          11.132
+        ],
+        "min_ms": 10.090887,
+        "max_ms": 35.055515,
+        "stddev_ms": 8.60876349065876
+      },
+      "grit": {
+        "median_wall_ms": 14.087668,
+        "peak_rss_bytes": 23842816,
+        "runs": 20,
+        "samples_ms": [
+          15.017,
+          19.171,
+          15.413,
+          14.825,
+          14.072,
+          13.945,
+          13.556,
+          14.174,
+          13.71,
+          14.461,
+          14.103,
+          13.623,
+          14.158,
+          13.785,
+          14.533,
+          13.638,
+          13.41,
+          13.876,
+          13.471,
+          14.149
+        ],
+        "min_ms": 13.410445,
+        "max_ms": 19.171075,
+        "stddev_ms": 1.2518205247477894
+      },
+      "ratio": 1.2845320028156788,
+      "detail": {
+        "prepare": "set -eu\nset -eu\ngrit-bench prepare-daily-reset --git git\ncd /tmp/grit-bench-scratch/daily-synth-10k/worktree-run-synth-10k\ntarget=$(cat /tmp/grit-bench-scratch/daily-synth-10k/.grit-bench-reset-keep-path)\necho bench-local >> \"$target\"\n",
+        "commands": {
+          "git": "git reset --keep HEAD~1",
+          "grit": "grit reset --keep HEAD~1"
+        },
+        "phases": {
+          "git": [
+            {
+              "name": "unpack_trees: unpack_trees",
+              "ms": 3.454,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: traverse_trees",
+              "ms": 2.532,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: do_write_index",
+              "ms": 2.351,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "cache-tree: prime_cache_tree",
+              "ms": 1.75,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "index: do_read_index",
+              "ms": 0.572,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: update",
+              "ms": 0.275,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "progress: Updating",
+              "ms": 0.27,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: read",
+              "ms": 0.031,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: write",
+              "ms": 0.022,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "progress: Filtering",
+              "ms": 0.004,
+              "count": 1,
+              "depth": 0
+            }
+          ],
+          "grit": [
+            {
+              "name": "grit.index.write",
+              "ms": 2.56,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.index.read",
+              "ms": 2.418,
+              "count": 3,
+              "depth": 0
+            },
+            {
+              "name": "grit.repository.open",
+              "ms": 0.263,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.checkout.write",
+              "ms": 0.208,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.09,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.checkout.plan",
+              "ms": 0.069,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.index.open",
+              "ms": 0.014,
+              "count": 1,
+              "depth": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "reset/mixed@synth-10k",
+      "area": "worktree",
+      "description": "Mixed reset dirty tree: grit reset HEAD vs git reset --mixed HEAD",
+      "git": {
+        "median_wall_ms": 8.997778,
+        "peak_rss_bytes": 9572352,
+        "runs": 20,
+        "samples_ms": [
+          32.841,
+          32.992,
+          9.178,
+          8.974,
+          9.356,
+          8.951,
+          8.919,
+          9.47,
+          8.608,
+          8.888,
+          9.004,
+          8.915,
+          8.992,
+          9.016,
+          9.139,
+          10.122,
+          8.42,
+          10.097,
+          8.741,
+          8.693
+        ],
+        "min_ms": 8.420020000000001,
+        "max_ms": 32.992042999999995,
+        "stddev_ms": 7.348349106267827
+      },
+      "grit": {
+        "median_wall_ms": 12.386706499999999,
+        "peak_rss_bytes": 23969792,
+        "runs": 20,
+        "samples_ms": [
+          31.304,
+          34.009,
+          13.269,
+          12.926,
+          12.421,
+          13.289,
+          11.851,
+          12.464,
+          12.088,
+          11.845,
+          12.16,
+          12.182,
+          11.6,
+          12.107,
+          12.1,
+          12.749,
+          13.596,
+          12.353,
+          12.177,
+          12.68
+        ],
+        "min_ms": 11.600103,
+        "max_ms": 34.009124,
+        "stddev_ms": 6.260553963866085
+      },
+      "ratio": 1.3766405994902295,
+      "detail": {
+        "prepare": "grit-bench prepare-worktree-status-dirty --git git",
+        "commands": {
+          "git": "git reset --mixed HEAD",
+          "grit": "grit reset HEAD"
+        },
+        "phases": {
+          "git": [
+            {
+              "name": "index: do_write_index",
+              "ms": 2.739,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "index: preload",
+              "ms": 2.717,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "index: do_read_index",
+              "ms": 0.565,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "index: refresh",
+              "ms": 0.36,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: unpack_trees",
+              "ms": 0.062,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: write",
+              "ms": 0.041,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: read",
+              "ms": 0.028,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: traverse_trees",
+              "ms": 0.004,
+              "count": 1,
+              "depth": 0
+            }
+          ],
+          "grit": [
+            {
+              "name": "grit.index.write",
+              "ms": 2.76,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.index.read",
+              "ms": 0.911,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.repository.open",
+              "ms": 0.319,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.105,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.index.open",
+              "ms": 0.016,
+              "count": 1,
+              "depth": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "reset/sparse@sparse-120k",
+      "area": "worktree",
+      "description": "Sparse reset out and back, 300 visible files and 400 excluded directories",
+      "git": {
+        "median_wall_ms": 31.1324185,
+        "peak_rss_bytes": 12763136,
+        "runs": 20,
+        "samples_ms": [
+          29.18,
+          29.671,
+          30.499,
+          29.943,
+          33.017,
+          34.672,
+          30.298,
+          31.125,
+          31.14,
+          53.095,
+          31.314,
+          31.376,
+          31.229,
+          32.184,
+          30.125,
+          32.033,
+          32.864,
+          30.757,
+          29.22,
+          29.027
+        ],
+        "min_ms": 29.027217,
+        "max_ms": 53.094797,
+        "stddev_ms": 5.13455065010989
+      },
+      "grit": {
+        "median_wall_ms": 27.082697500000002,
+        "peak_rss_bytes": 20881408,
+        "runs": 20,
+        "samples_ms": [
+          25.35,
+          27.036,
+          26.129,
+          25.956,
+          26.421,
+          27.136,
+          27.088,
+          26.619,
+          27.632,
+          28.421,
+          27.31,
+          28.753,
+          27.454,
+          28.58,
+          27.077,
+          27.893,
+          27.132,
+          26.546,
+          24.449,
+          26.505
+        ],
+        "min_ms": 24.448587,
+        "max_ms": 28.752803,
+        "stddev_ms": 1.0547476663323931
+      },
+      "ratio": 0.8699194860174452,
+      "detail": {
+        "commands": {
+          "git": "git reset --hard sparse-base && git reset --hard sparse-edited",
+          "grit": "grit reset --hard sparse-base && grit reset --hard sparse-edited"
+        },
+        "correctness": "before timing, git and grit were each run once and their results compared",
+        "phases": {
+          "git": [
+            {
+              "name": "unpack_trees: unpack_trees",
+              "ms": 13.003,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "progress: Updating",
+              "ms": 12.514,
+              "count": 6,
+              "depth": 0
+            },
+            {
+              "name": "cache-tree: prime_cache_tree",
+              "ms": 11.145,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: clear_skip_worktree_from_present_files",
+              "ms": 0.731,
+              "count": 4,
+              "depth": 0
+            },
+            {
+              "name": "index: do_write_index",
+              "ms": 0.576,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: traverse_trees",
+              "ms": 0.33,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: do_read_index",
+              "ms": 0.28,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: read",
+              "ms": 0.126,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: clear_ce_flags(0x00000000,0x02000000)",
+              "ms": 0.104,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: write",
+              "ms": 0.074,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "progress: Filtering",
+              "ms": 0.009,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: clear_ce_flags(0x00080000,0x42000000)",
+              "ms": 0.007,
+              "count": 2,
+              "depth": 0
+            }
+          ],
+          "grit": [
+            {
+              "name": "grit.index.write",
+              "ms": 0.547,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.repository.open",
+              "ms": 0.502,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.index.read",
+              "ms": 0.299,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.diff.tree",
+              "ms": 0.247,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.156,
+              "count": 4,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.index.open",
+              "ms": 0.024,
+              "count": 2,
+              "depth": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "reset/sparse@sparse-240k",
+      "area": "worktree",
+      "description": "Sparse reset out and back, 300 visible files and 400 excluded directories",
+      "git": {
+        "median_wall_ms": 38.8874055,
+        "peak_rss_bytes": 17743872,
+        "runs": 20,
+        "samples_ms": [
+          39.356,
+          39.352,
+          38.628,
+          38.452,
+          38.085,
+          38.883,
+          38.349,
+          39.015,
+          38.523,
+          39.327,
+          38.657,
+          38.632,
+          40.741,
+          38.927,
+          38.892,
+          38.628,
+          39.561,
+          39.176,
+          38.11,
+          39.171
+        ],
+        "min_ms": 38.084543,
+        "max_ms": 40.740596,
+        "stddev_ms": 0.5977376201128453
+      },
+      "grit": {
+        "median_wall_ms": 25.067045,
+        "peak_rss_bytes": 20795392,
+        "runs": 20,
+        "samples_ms": [
+          25.044,
+          25.675,
+          24.518,
+          24.732,
+          24.849,
+          24.963,
+          26.048,
+          24.329,
+          25.613,
+          24.349,
+          25.593,
+          31.255,
+          25.557,
+          25.091,
+          24.705,
+          24.609,
+          25.631,
+          25.565,
+          25.324,
+          24.044
+        ],
+        "min_ms": 24.044292,
+        "max_ms": 31.255272,
+        "stddev_ms": 1.488531823218203
+      },
+      "ratio": 0.6446057451685739,
+      "detail": {
+        "commands": {
+          "git": "git reset --hard sparse-base && git reset --hard sparse-edited",
+          "grit": "grit reset --hard sparse-base && grit reset --hard sparse-edited"
+        },
+        "correctness": "before timing, git and grit were each run once and their results compared",
+        "phases": {
+          "git": [
+            {
+              "name": "cache-tree: prime_cache_tree",
+              "ms": 21.199,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: unpack_trees",
+              "ms": 13.038,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "progress: Updating",
+              "ms": 12.528,
+              "count": 6,
+              "depth": 0
+            },
+            {
+              "name": "index: clear_skip_worktree_from_present_files",
+              "ms": 0.647,
+              "count": 4,
+              "depth": 0
+            },
+            {
+              "name": "index: do_write_index",
+              "ms": 0.575,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: do_read_index",
+              "ms": 0.401,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: traverse_trees",
+              "ms": 0.347,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: read",
+              "ms": 0.237,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: clear_ce_flags(0x00000000,0x02000000)",
+              "ms": 0.104,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: write",
+              "ms": 0.084,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "progress: Filtering",
+              "ms": 0.01,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: clear_ce_flags(0x00080000,0x42000000)",
+              "ms": 0.007,
+              "count": 2,
+              "depth": 0
+            }
+          ],
+          "grit": [
+            {
+              "name": "grit.index.write",
+              "ms": 0.625,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.repository.open",
+              "ms": 0.45,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.index.read",
+              "ms": 0.297,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.diff.tree",
+              "ms": 0.257,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.157,
+              "count": 4,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.index.open",
+              "ms": 0.022,
+              "count": 2,
+              "depth": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "reset/sparse@sparse-unique-120k",
+      "area": "worktree",
+      "description": "Sparse reset out and back, 300 visible files and 400 excluded directories",
+      "git": {
+        "median_wall_ms": 56.6892005,
+        "peak_rss_bytes": 22937600,
+        "runs": 10,
+        "samples_ms": [
+          56.467,
+          58.525,
+          57.458,
+          57.189,
+          56.612,
+          56.72,
+          56.173,
+          56.287,
+          58.354,
+          56.659
+        ],
+        "min_ms": 56.172759,
+        "max_ms": 58.524668000000005,
+        "stddev_ms": 0.8303777724935467
+      },
+      "grit": {
+        "median_wall_ms": 928.578851,
+        "peak_rss_bytes": 94859264,
+        "runs": 10,
+        "samples_ms": [
+          1022.306,
+          955.486,
+          943.747,
+          917.099,
+          898.715,
+          913.598,
+          954.32,
+          940.058,
+          905.859,
+          901.962
+        ],
+        "min_ms": 898.714782,
+        "max_ms": 1022.3061149999999,
+        "stddev_ms": 37.345515949943874
+      },
+      "ratio": 16.38017193415878,
+      "detail": {
+        "commands": {
+          "git": "git reset --hard sparse-base && git reset --hard sparse-edited",
+          "grit": "grit reset --hard sparse-base && grit reset --hard sparse-edited"
+        },
+        "correctness": "before timing, git and grit were each run once and their results compared",
+        "phases": {
+          "git": [
+            {
+              "name": "cache-tree: prime_cache_tree",
+              "ms": 36.334,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: unpack_trees",
+              "ms": 14.174,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "progress: Updating",
+              "ms": 13.452,
+              "count": 6,
+              "depth": 0
+            },
+            {
+              "name": "index: clear_skip_worktree_from_present_files",
+              "ms": 0.779,
+              "count": 4,
+              "depth": 0
+            },
+            {
+              "name": "index: do_write_index",
+              "ms": 0.56,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: traverse_trees",
+              "ms": 0.517,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: do_read_index",
+              "ms": 0.325,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: read",
+              "ms": 0.146,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: clear_ce_flags(0x00000000,0x02000000)",
+              "ms": 0.119,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: write",
+              "ms": 0.09,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "progress: Filtering",
+              "ms": 0.01,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: clear_ce_flags(0x00080000,0x42000000)",
+              "ms": 0.009,
+              "count": 2,
+              "depth": 0
+            }
+          ],
+          "grit": [
+            {
+              "name": "grit.index.write",
+              "ms": 528.67,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.diff.tree",
+              "ms": 39.71,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.repository.open",
+              "ms": 0.546,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.index.read",
+              "ms": 0.331,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.208,
+              "count": 4,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.index.open",
+              "ms": 0.039,
+              "count": 2,
+              "depth": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "reset/undo-commit@git-git",
+      "area": "worktree",
+      "description": "Undo the last commit on pinned git.git (deep history, many tags): grit reset --soft HEAD~1 vs git reset --soft HEAD~1",
+      "git": {
+        "median_wall_ms": 1.9677495,
+        "peak_rss_bytes": 8687616,
+        "runs": 20,
+        "samples_ms": [
+          1.918,
+          2.145,
+          1.898,
+          2.146,
+          2.322,
+          2.329,
+          2.248,
+          1.91,
+          1.921,
+          2.068,
+          1.922,
+          1.847,
+          2.122,
+          1.951,
+          2.136,
+          1.849,
+          2.103,
+          1.88,
+          1.984,
+          1.744
+        ],
+        "min_ms": 1.743733,
+        "max_ms": 2.328566,
+        "stddev_ms": 0.1655307673925876
+      },
+      "grit": {
+        "median_wall_ms": 12.4561525,
+        "peak_rss_bytes": 47087616,
+        "runs": 20,
+        "samples_ms": [
+          12.927,
+          12.964,
+          12.944,
+          12.884,
+          12.68,
+          14.244,
+          12.692,
+          12.17,
+          13.003,
+          12.296,
+          11.834,
+          12.48,
+          12.063,
+          12.46,
+          12.196,
+          12.288,
+          12.452,
+          11.969,
+          12.228,
+          11.908
+        ],
+        "min_ms": 11.833936999999999,
+        "max_ms": 14.244486,
+        "stddev_ms": 0.548518823889544
+      },
+      "ratio": 6.330151525892904,
+      "detail": {
+        "prepare": "set -eu\ngrit-bench prepare-daily-reset --git git\ncd /tmp/grit-bench-scratch/daily-git-git-wt/worktree-run-git-git-wt && git -c gc.auto=0 -c maintenance.auto=false -c user.name=grit-bench -c user.email=bench@example.com commit -q --allow-empty --no-verify -m daily-bench-wip",
+        "commands": {
+          "git": "git reset --soft HEAD~1",
+          "grit": "grit reset --soft HEAD~1"
+        },
+        "phases": {
+          "git": [
+            {
+              "name": "index: do_read_index",
+              "ms": 0.344,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: read",
+              "ms": 0.044,
+              "count": 1,
+              "depth": 0
+            }
+          ],
+          "grit": [
+            {
+              "name": "grit.repository.open",
+              "ms": 0.237,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.084,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.index.open",
+              "ms": 0.012,
+              "count": 1,
+              "depth": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "stash/pop-sparse@wide-120k",
+      "area": "worktree",
+      "description": "Pop 3k edits in a mostly unchanged 120k-file tree vs git stash pop",
+      "git": {
+        "median_wall_ms": 375.2998855,
+        "peak_rss_bytes": 56598528,
+        "runs": 10,
+        "samples_ms": [
+          362.022,
+          358.56,
+          364.792,
+          379.406,
+          436.842,
+          377.06,
+          391.451,
+          373.54,
+          363.828,
+          512.922
+        ],
+        "min_ms": 358.560143,
+        "max_ms": 512.921961,
+        "stddev_ms": 48.19699559732808
+      },
+      "grit": {
+        "median_wall_ms": 132.020176,
+        "peak_rss_bytes": 50827264,
+        "runs": 10,
+        "samples_ms": [
+          123.358,
+          135.405,
+          176.262,
+          122.46,
+          128.635,
+          140.653,
+          113.955,
+          125.385,
+          192.862,
+          142.182
+        ],
+        "min_ms": 113.95515,
+        "max_ms": 192.861541,
+        "stddev_ms": 25.256822102449107
+      },
+      "ratio": 0.3517724920808695,
+      "detail": {
+        "prepare": "set -eu\ncd /tmp/grit-bench-scratch/daily-stash-pop-sparse\ngit reset --hard -q 'HEAD'\ngit stash 'clear'\ngit stash store -m 'sparse edits' \"$(git rev-parse 'refs/grit-bench/stash-sparse')\" ",
+        "commands": {
+          "git": "git stash pop",
+          "grit": "grit stash pop"
+        },
+        "correctness": "before timing, git and grit were each run once and their results compared",
+        "phases": {
+          "git": [
+            {
+              "name": "unpack_trees: unpack_trees",
+              "ms": 148.238,
+              "count": 4,
+              "depth": 0
+            },
+            {
+              "name": "merge: checkout",
+              "ms": 141.542,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "index: do_write_index",
+              "ms": 91.139,
+              "count": 3,
+              "depth": 0
+            },
+            {
+              "name": "run: git status",
+              "ms": 90.577,
+              "count": 1,
+              "depth": 1
+            },
+            {
+              "name": "index: preload",
+              "ms": 61.699,
+              "count": 3,
+              "depth": 0
+            },
+            {
+              "name": "index: do_read_index",
+              "ms": 29.538,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: refresh",
+              "ms": 17.807,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: traverse_trees",
+              "ms": 17.29,
+              "count": 4,
+              "depth": 0
+            },
+            {
+              "name": "status: untracked",
+              "ms": 7.737,
+              "count": 1,
+              "depth": 1
+            },
+            {
+              "name": "dir: read_directory",
+              "ms": 7.704,
+              "count": 1,
+              "depth": 1
+            },
+            {
+              "name": "status: worktrees",
+              "ms": 6.471,
+              "count": 1,
+              "depth": 1
+            },
+            {
+              "name": "index: name-hash-init",
+              "ms": 5.934,
+              "count": 1,
+              "depth": 1
+            },
+            {
+              "name": "cache_tree: update",
+              "ms": 5.274,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "status: index",
+              "ms": 2.479,
+              "count": 1,
+              "depth": 1
+            },
+            {
+              "name": "status: print",
+              "ms": 1.653,
+              "count": 1,
+              "depth": 1
+            },
+            {
+              "name": "merge: incore_nonrecursive",
+              "ms": 0.367,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "merge: process_entries",
+              "ms": 0.304,
+              "count": 3,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: read",
+              "ms": 0.209,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: write",
+              "ms": 0.207,
+              "count": 3,
+              "depth": 0
+            },
+            {
+              "name": "merge: collect_merge_info",
+              "ms": 0.175,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "merge: traverse_trees",
+              "ms": 0.086,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "diff: setup",
+              "ms": 0.079,
+              "count": 2,
+              "depth": 1
+            },
+            {
+              "name": "diff: write",
+              "ms": 0.077,
+              "count": 2,
+              "depth": 1
+            },
+            {
+              "name": "merge: write_auto_merge",
+              "ms": 0.056,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "merge: plist",
+              "ms": 0.046,
+              "count": 3,
+              "depth": 0
+            },
+            {
+              "name": "merge: merge_start",
+              "ms": 0.015,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "merge: processing",
+              "ms": 0.008,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "merge: allocate/init",
+              "ms": 0.006,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "merge: display",
+              "ms": 0.004,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "merge: record_conflicted",
+              "ms": 0.003,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "merge: renames",
+              "ms": 0.003,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "merge: sanity",
+              "ms": 0.001,
+              "count": 1,
+              "depth": 0
+            }
+          ],
+          "grit": [
+            {
+              "name": "grit.index.write",
+              "ms": 29.64,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.index.read",
+              "ms": 12.27,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.diff.tree",
+              "ms": 2.359,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.repository.open",
+              "ms": 0.528,
+              "count": 1,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.189,
+              "count": 2,
+              "depth": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "switch/sparse@sparse-120k",
+      "area": "worktree",
+      "description": "Sparse switch out and back, 300 visible files and 400 excluded directories",
+      "git": {
+        "median_wall_ms": 43.177878,
+        "peak_rss_bytes": 8249344,
+        "runs": 20,
+        "samples_ms": [
+          42.86,
+          43.358,
+          43.205,
+          43.441,
+          42.733,
+          42.218,
+          42.888,
+          42.126,
+          42.632,
+          46.052,
+          43.368,
+          43.124,
+          43.188,
+          43.275,
+          42.566,
+          43.052,
+          43.168,
+          43.309,
+          43.683,
+          43.193
+        ],
+        "min_ms": 42.125739,
+        "max_ms": 46.052012000000005,
+        "stddev_ms": 0.7875261208736685
+      },
+      "grit": {
+        "median_wall_ms": 25.248206,
+        "peak_rss_bytes": 20766720,
+        "runs": 20,
+        "samples_ms": [
+          29.836,
+          25.996,
+          25.198,
+          25.241,
+          25.255,
+          25.741,
+          24.998,
+          25.019,
+          24.194,
+          25.834,
+          23.673,
+          25.788,
+          23.235,
+          25.084,
+          24.869,
+          25.088,
+          25.624,
+          31.601,
+          28.741,
+          27.312
+        ],
+        "min_ms": 23.234824,
+        "max_ms": 31.601450000000003,
+        "stddev_ms": 2.032392076888458
+      },
+      "ratio": 0.5847486530023546,
+      "detail": {
+        "commands": {
+          "git": "git switch --detach sparse-base && git switch --detach sparse-edited",
+          "grit": "grit switch --detach sparse-base && grit switch --detach sparse-edited"
+        },
+        "correctness": "before timing, git and grit were each run once and their results compared",
+        "phases": {
+          "git": [
+            {
+              "name": "unpack_trees: unpack_trees",
+              "ms": 37.147,
+              "count": 4,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: traverse_trees",
+              "ms": 24.005,
+              "count": 4,
+              "depth": 0
+            },
+            {
+              "name": "index: refresh",
+              "ms": 1.855,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: do_write_index",
+              "ms": 0.488,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: update",
+              "ms": 0.38,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: clear_skip_worktree_from_present_files",
+              "ms": 0.351,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: do_read_index",
+              "ms": 0.308,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: read",
+              "ms": 0.127,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: clear_ce_flags(0x00000000,0x02000000)",
+              "ms": 0.111,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: write",
+              "ms": 0.071,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: clear_ce_flags(0x00080000,0x42000000)",
+              "ms": 0.022,
+              "count": 2,
+              "depth": 0
+            }
+          ],
+          "grit": [
+            {
+              "name": "grit.index.write",
+              "ms": 0.606,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.repository.open",
+              "ms": 0.502,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.index.read",
+              "ms": 0.292,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.248,
+              "count": 6,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.index.open",
+              "ms": 0.033,
+              "count": 2,
+              "depth": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "switch/sparse@sparse-240k",
+      "area": "worktree",
+      "description": "Sparse switch out and back, 300 visible files and 400 excluded directories",
+      "git": {
+        "median_wall_ms": 64.5258795,
+        "peak_rss_bytes": 8503296,
+        "runs": 20,
+        "samples_ms": [
+          64.03,
+          65.661,
+          63.621,
+          64.018,
+          65.147,
+          64.059,
+          64.222,
+          65.798,
+          64.474,
+          64.217,
+          63.608,
+          69.557,
+          63.15,
+          66.782,
+          65.049,
+          71.088,
+          64.867,
+          67.575,
+          64.578,
+          64.082
+        ],
+        "min_ms": 63.150330000000004,
+        "max_ms": 71.088222,
+        "stddev_ms": 2.048828074626244
+      },
+      "grit": {
+        "median_wall_ms": 25.6513665,
+        "peak_rss_bytes": 20926464,
+        "runs": 20,
+        "samples_ms": [
+          27.528,
+          25.948,
+          25.49,
+          26.325,
+          25.66,
+          23.865,
+          24.973,
+          25.377,
+          31.695,
+          25.284,
+          24.859,
+          27.994,
+          25.621,
+          26.908,
+          27.313,
+          25.643,
+          25.229,
+          26.045,
+          24.86,
+          25.821
+        ],
+        "min_ms": 23.865342000000002,
+        "max_ms": 31.695447,
+        "stddev_ms": 1.6463591733226792
+      },
+      "ratio": 0.3975361002247168,
+      "detail": {
+        "commands": {
+          "git": "git switch --detach sparse-base && git switch --detach sparse-edited",
+          "grit": "grit switch --detach sparse-base && grit switch --detach sparse-edited"
+        },
+        "correctness": "before timing, git and grit were each run once and their results compared",
+        "phases": {
+          "git": [
+            {
+              "name": "unpack_trees: unpack_trees",
+              "ms": 56.756,
+              "count": 4,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: traverse_trees",
+              "ms": 44.069,
+              "count": 4,
+              "depth": 0
+            },
+            {
+              "name": "index: refresh",
+              "ms": 1.802,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: do_write_index",
+              "ms": 0.495,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: update",
+              "ms": 0.372,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: clear_skip_worktree_from_present_files",
+              "ms": 0.362,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: do_read_index",
+              "ms": 0.299,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: read",
+              "ms": 0.13,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: clear_ce_flags(0x00000000,0x02000000)",
+              "ms": 0.102,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: write",
+              "ms": 0.07,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: clear_ce_flags(0x00080000,0x42000000)",
+              "ms": 0.013,
+              "count": 2,
+              "depth": 0
+            }
+          ],
+          "grit": [
+            {
+              "name": "grit.index.write",
+              "ms": 0.668,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.repository.open",
+              "ms": 0.567,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.index.read",
+              "ms": 0.365,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.299,
+              "count": 6,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.index.open",
+              "ms": 0.032,
+              "count": 2,
+              "depth": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "switch/sparse@sparse-unique-120k",
+      "area": "worktree",
+      "description": "Sparse switch out and back, 300 visible files and 400 excluded directories",
+      "git": {
+        "median_wall_ms": 77.3603435,
+        "peak_rss_bytes": 18366464,
+        "runs": 10,
+        "samples_ms": [
+          76.99,
+          75.986,
+          77.187,
+          77.679,
+          76.61,
+          77.533,
+          78.168,
+          76.086,
+          106.465,
+          82.984
+        ],
+        "min_ms": 75.986261,
+        "max_ms": 106.465403,
+        "stddev_ms": 9.314259803613474
+      },
+      "grit": {
+        "median_wall_ms": 759.910906,
+        "peak_rss_bytes": 58245120,
+        "runs": 10,
+        "samples_ms": [
+          767.531,
+          757.309,
+          746.01,
+          760.481,
+          734.169,
+          762.868,
+          759.264,
+          868.759,
+          762.79,
+          759.341
+        ],
+        "min_ms": 734.1691099999999,
+        "max_ms": 868.7587679999999,
+        "stddev_ms": 36.75148752804512
+      },
+      "ratio": 9.823003254891184,
+      "detail": {
+        "commands": {
+          "git": "git switch --detach sparse-base && git switch --detach sparse-edited",
+          "grit": "grit switch --detach sparse-base && grit switch --detach sparse-edited"
+        },
+        "correctness": "before timing, git and grit were each run once and their results compared",
+        "phases": {
+          "git": [
+            {
+              "name": "unpack_trees: unpack_trees",
+              "ms": 70.416,
+              "count": 4,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: traverse_trees",
+              "ms": 55.987,
+              "count": 4,
+              "depth": 0
+            },
+            {
+              "name": "index: refresh",
+              "ms": 1.916,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: update",
+              "ms": 0.873,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: do_write_index",
+              "ms": 0.502,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: clear_skip_worktree_from_present_files",
+              "ms": 0.419,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "index: do_read_index",
+              "ms": 0.325,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: read",
+              "ms": 0.139,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: clear_ce_flags(0x00000000,0x02000000)",
+              "ms": 0.101,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "cache_tree: write",
+              "ms": 0.071,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "unpack_trees: clear_ce_flags(0x00080000,0x42000000)",
+              "ms": 0.012,
+              "count": 2,
+              "depth": 0
+            }
+          ],
+          "grit": [
+            {
+              "name": "grit.index.write",
+              "ms": 547.38,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.repository.open",
+              "ms": 0.484,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.config.load",
+              "ms": 0.275,
+              "count": 6,
+              "depth": 0
+            },
+            {
+              "name": "grit.index.read",
+              "ms": 0.267,
+              "count": 2,
+              "depth": 0
+            },
+            {
+              "name": "grit.pack.index.open",
+              "ms": 0.034,
+              "count": 2,
+              "depth": 0
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

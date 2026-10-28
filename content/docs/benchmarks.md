@@ -412,9 +412,9 @@ status, write-tree and strict fsck checks after the grit operations.
 
 The unique-blob case documents the remaining fallback cost: changed excluded
 directories still expand. Reset improves about **2.2×**, and switch about **1.2×**,
-with peak memory essentially unchanged. Keeping changed excluded trees opaque is
-a follow-up; the deterministic regression here requires zero expanded descendant
-rows for unchanged excluded trees.
+with peak memory essentially unchanged. Hard reset now keeps changed excluded trees
+opaque too (see [Hard reset of changed excluded trees](#hard-reset-of-changed-excluded-trees-2026-10-28));
+switch still expands them.
 
 The fixtures and library benchmarks live in `grit-test-support/src/sparse_scale.rs`
 and `grit-lib/benches/hot_paths.rs`. Daily rows are
@@ -457,6 +457,41 @@ strict fsck. These are a separate run from the initial measurements above.
 The cleanup fix preserves the pre-review timing and memory profile, including
 changed excluded trees and full checkouts. Endpoint samples and binary hashes are
 in [`sparse-transitions-review-2081.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/sparse-transitions-review-2081.json).
+
+### Hard reset of changed excluded trees (2026-10-28)
+
+`reset/sparse@sparse-unique-120k` changes 5,000 excluded paths, so all 400 excluded
+directories differ between the two commits. Hard reset used to expand each of them
+into full index rows (about 120,000), diff and probe them, and collapse them again
+when writing the index. A hard reset discards staged content and never writes
+excluded paths, so an excluded directory that is absent from disk now keeps its
+sparse-directory entry whenever the target still has a tree there, and the entry
+takes the target's subtree ID, as Git's sparse-index reset does. The tree diff
+stops at those directories instead of reading both sides' subtrees. Directories
+present on disk, and directories the target removes or replaces with a file, are
+still expanded. Switch keeps the expanded path because it must check for staged
+changes.
+
+Daily-matrix medians of ten runs (each run resets out and back), measured in one
+sitting on a four-vCPU Intel Xeon Linux VM with stock Git 2.43.0 and Rust 1.99.0
+release builds. Values are **milliseconds / peak MB**:
+
+| Scenario | Git | Before | After |
+| --- | ---: | ---: | ---: |
+| `reset/sparse@sparse-unique-120k` | 56.4 / 23.0 | 928.6 / 94.9 | 30.9 / 22.0 |
+| `reset/sparse@sparse-120k` | 28.4 / 12.7 | 27.1 / 20.9 | 24.4 / 21.1 |
+| `reset/sparse@sparse-240k` | 40.2 / 17.7 | 25.1 / 20.8 | 31.3 / 21.4 |
+| `reset/hard@synth-10k` | 15.5 / 11.2 | 25.5 / 25.6 | 24.9 / 26.0 |
+| `reset/hard-delete-heavy@wide-48k` | 226.2 / 22.2 | 256.2 / 53.3 | 246.4 / 53.8 |
+
+The changed-tree reset is **30×** faster and uses a quarter of the memory. The other
+rows run no new code apart from an index scan for sparse entries, and stay within noise. An
+interleaved `hyperfine` rerun of the 240k round trip (40 runs) measured 28.9 and
+33.7 ms before against 27.6 and 29.5 ms after (Git: 44.3 and 42.8 ms). Full reports
+for every reset scenario and the sparse switch rows:
+[`daily-reset-sparse-unique-5074-before.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/daily-reset-sparse-unique-5074-before.json)
+and
+[`daily-reset-sparse-unique-5074-after.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/daily-reset-sparse-unique-5074-after.json).
 
 ## Sparse stash apply/pop (2026-10-27)
 
