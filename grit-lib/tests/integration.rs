@@ -1615,6 +1615,9 @@ mod split_index_git_compat;
 #[path = "stage_tracked_chunked_restage_git_compat.rs"]
 mod stage_tracked_chunked_restage_git_compat;
 #[cfg(feature = "full-tests")]
+#[path = "stage_type_flip_issue_2170.rs"]
+mod stage_type_flip_issue_2170;
+#[cfg(feature = "full-tests")]
 #[path = "stash_apply_autocrlf.rs"]
 mod stash_apply_autocrlf;
 #[cfg(feature = "full-tests")]

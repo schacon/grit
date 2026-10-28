@@ -969,7 +969,7 @@ fn lookup_lone_blob_in_directory(
         Err(e)
             if e.kind() == io::ErrorKind::NotFound
                 || e.kind() == io::ErrorKind::PermissionDenied
-                || e.raw_os_error() == Some(20) =>
+                || e.kind() == io::ErrorKind::NotADirectory =>
         {
             return BlobDiskLookup::Missing;
         }
@@ -1270,7 +1270,9 @@ fn matching_dir_entry<'a>(
 fn symlink_metadata_blob_lookup(target_abs: &Path) -> BlobDiskLookup {
     match symlink_metadata_path(target_abs) {
         Ok(meta) => BlobDiskLookup::Present(BlobDiskStat::from_metadata(&meta)),
-        Err(e) if e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(20) => {
+        Err(e)
+            if e.kind() == io::ErrorKind::NotFound || e.kind() == io::ErrorKind::NotADirectory =>
+        {
             BlobDiskLookup::Missing
         }
         Err(e) => BlobDiskLookup::Io(e),
@@ -1289,7 +1291,10 @@ fn blob_lookup_from_dir_entry_or_path(
     if let Some(entry) = dir_entry {
         match dir_entry_metadata(entry) {
             Ok(m) => BlobDiskLookup::Present(BlobDiskStat::from_metadata(&m)),
-            Err(e) if e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(20) => {
+            Err(e)
+                if e.kind() == io::ErrorKind::NotFound
+                    || e.kind() == io::ErrorKind::NotADirectory =>
+            {
                 symlink_metadata_blob_lookup(&target_abs())
             }
             Err(e) => BlobDiskLookup::Io(e),
@@ -1351,7 +1356,7 @@ fn read_directory_map(abs_dir: &Path, expected: usize) -> Result<(bool, Director
         Err(e)
             if e.kind() == io::ErrorKind::NotFound
                 || e.kind() == io::ErrorKind::PermissionDenied
-                || e.raw_os_error() == Some(20) =>
+                || e.kind() == io::ErrorKind::NotADirectory =>
         {
             Ok((false, DirectoryMap::new()))
         }
