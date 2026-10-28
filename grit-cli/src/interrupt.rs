@@ -1,24 +1,23 @@
 //! Ctrl+C as a library [`Cancel`] signal.
 //!
-//! Without a handler `SIGINT` kills the process mid-write, so library rollbacks never run.
-//! While an [`InterruptCancel`] is installed the first `SIGINT` only asks the running
-//! operation to stop (it then undoes its partial work and returns `Error::Cancelled`). A
-//! second Ctrl+C terminates the process as usual, unless it arrives within
-//! [`DUPLICATE_WINDOW_NS`] of the first: tools such as `timeout` signal both the child and
-//! its process group, and that duplicate must not cut the rollback short.
+//! Without a handler Ctrl+C (`SIGINT` on Unix, `CTRL_C_EVENT` or `CTRL_BREAK_EVENT` on a
+//! Windows console) kills the process mid-write, so library rollbacks never run. While an
+//! [`InterruptCancel`] is installed the first interrupt only asks the running operation to
+//! stop (it then undoes its partial work and returns `Error::Cancelled`). A second Ctrl+C
+//! terminates the process as usual, unless it arrives within [`DUPLICATE_WINDOW_NS`] of the
+//! first: tools such as `timeout` signal both the child and its process group, and that
+//! duplicate must not cut the rollback short.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use grit_lib::progress::Cancel;
 
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
-/// Monotonic time of the first `SIGINT`, in nanoseconds.
-#[cfg(unix)]
-static FIRST_INTERRUPT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Monotonic time of the first interrupt, in nanoseconds.
+static FIRST_INTERRUPT_NS: AtomicU64 = AtomicU64::new(0);
 
-/// A further `SIGINT` this soon after the first is the same interrupt delivered twice.
-#[cfg(unix)]
+/// A further interrupt this soon after the first is the same interrupt delivered twice.
 const DUPLICATE_WINDOW_NS: u64 = 100_000_000;
 
 /// Cancels the running library operation on the first Ctrl+C; restores the previous handler
@@ -26,6 +25,19 @@ const DUPLICATE_WINDOW_NS: u64 = 100_000_000;
 pub struct InterruptCancel {
     #[cfg(unix)]
     previous: libc::sigaction,
+}
+
+/// Record an interrupt at monotonic time `now_ns` (only touches atomics, so it is
+/// async-signal-safe).
+///
+/// Returns `true` when the interrupt is absorbed (the first one, or a duplicate of it) and
+/// `false` when the process should terminate.
+fn absorb_interrupt(now_ns: u64) -> bool {
+    if !INTERRUPTED.swap(true, Ordering::Relaxed) {
+        FIRST_INTERRUPT_NS.store(now_ns, Ordering::Relaxed);
+        return true;
+    }
+    now_ns.saturating_sub(FIRST_INTERRUPT_NS.load(Ordering::Relaxed)) < DUPLICATE_WINDOW_NS
 }
 
 #[cfg(unix)]
@@ -39,14 +51,21 @@ fn monotonic_ns() -> u64 {
     u64::try_from(ts.tv_sec).unwrap_or(0) * 1_000_000_000 + u64::try_from(ts.tv_nsec).unwrap_or(0)
 }
 
+/// Console control handlers run on an ordinary thread, so `Instant` is fine here.
+#[cfg(windows)]
+fn monotonic_ns() -> u64 {
+    static BASE: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    u64::try_from(
+        BASE.get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_nanos(),
+    )
+    .unwrap_or(u64::MAX)
+}
+
 #[cfg(unix)]
 extern "C" fn on_interrupt(_signal: libc::c_int) {
-    let now = monotonic_ns();
-    if !INTERRUPTED.swap(true, Ordering::Relaxed) {
-        FIRST_INTERRUPT_NS.store(now, Ordering::Relaxed);
-        return;
-    }
-    if now.saturating_sub(FIRST_INTERRUPT_NS.load(Ordering::Relaxed)) < DUPLICATE_WINDOW_NS {
+    if absorb_interrupt(monotonic_ns()) {
         return;
     }
     // SAFETY: `signal` and `raise` are async-signal-safe. SIGINT stays blocked until this
@@ -55,6 +74,16 @@ extern "C" fn on_interrupt(_signal: libc::c_int) {
         libc::signal(libc::SIGINT, libc::SIG_DFL);
         libc::raise(libc::SIGINT);
     }
+}
+
+/// Returning `FALSE` passes the event on to the default handler, which ends the process.
+/// Close, logoff and shutdown events are never absorbed.
+#[cfg(windows)]
+extern "system" fn on_console_ctrl(ctrl_type: u32) -> windows_sys::core::BOOL {
+    use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT};
+
+    let interrupt = ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT;
+    windows_sys::core::BOOL::from(interrupt && absorb_interrupt(monotonic_ns()))
 }
 
 impl InterruptCancel {
@@ -74,8 +103,24 @@ impl InterruptCancel {
         }
     }
 
-    /// Ctrl+C keeps its default meaning on platforms without `SIGINT` handling here.
-    #[cfg(not(unix))]
+    /// Route the next console Ctrl+C or Ctrl+Break to [`Cancel::is_cancelled`] instead of
+    /// terminating.
+    ///
+    /// When the process has no console the registration still succeeds and simply never
+    /// fires.
+    #[cfg(windows)]
+    pub fn install() -> Self {
+        INTERRUPTED.store(false, Ordering::Relaxed);
+        monotonic_ns();
+        // SAFETY: registers a handler that only touches atomics; it is removed in `drop`.
+        unsafe {
+            windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(on_console_ctrl), 1);
+        }
+        Self {}
+    }
+
+    /// Ctrl+C keeps its default meaning on platforms without interrupt handling here.
+    #[cfg(not(any(unix, windows)))]
     pub fn install() -> Self {
         Self {}
     }
@@ -94,13 +139,40 @@ impl Drop for InterruptCancel {
         unsafe {
             libc::sigaction(libc::SIGINT, &self.previous, std::ptr::null_mut());
         }
+        #[cfg(windows)]
+        // SAFETY: removes the handler registered by `install`.
+        unsafe {
+            windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(on_console_ctrl), 0);
+        }
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The handler state is process-global; tests that install or raise must not overlap.
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn first_interrupt_and_its_duplicate_are_absorbed_a_later_one_terminates() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        INTERRUPTED.store(false, Ordering::Relaxed);
+        let start = 5_000_000_000;
+        assert!(absorb_interrupt(start), "the first interrupt cancels");
+        assert!(INTERRUPTED.load(Ordering::Relaxed));
+        assert!(
+            absorb_interrupt(start + DUPLICATE_WINDOW_NS - 1),
+            "a duplicate delivery is absorbed"
+        );
+        assert!(
+            !absorb_interrupt(start + DUPLICATE_WINDOW_NS),
+            "a deliberate second Ctrl+C terminates"
+        );
+        INTERRUPTED.store(false, Ordering::Relaxed);
+    }
+
+    #[cfg(unix)]
     fn current_sigint_handler() -> libc::sighandler_t {
         // SAFETY: querying the current action with a null new action.
         unsafe {
@@ -110,8 +182,10 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn first_sigint_cancels_a_duplicate_is_absorbed_and_drop_restores_the_handler() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let before = current_sigint_handler();
         let cancel = InterruptCancel::install();
         assert!(!cancel.is_cancelled());
@@ -133,5 +207,39 @@ mod tests {
         );
         drop(cancel);
         assert_eq!(current_sigint_handler(), before);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn console_ctrl_c_and_ctrl_break_cancel_but_close_is_not_absorbed() {
+        use windows_sys::Win32::System::Console::{
+            CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT,
+        };
+
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let cancel = InterruptCancel::install();
+        assert!(!cancel.is_cancelled());
+        assert_eq!(on_console_ctrl(CTRL_CLOSE_EVENT), 0);
+        assert!(
+            !cancel.is_cancelled(),
+            "closing the console is not a cancel"
+        );
+        assert_eq!(on_console_ctrl(CTRL_C_EVENT), 1, "Ctrl+C is handled");
+        assert!(cancel.is_cancelled());
+        assert_eq!(
+            on_console_ctrl(CTRL_BREAK_EVENT),
+            1,
+            "a duplicate is absorbed"
+        );
+        drop(cancel);
+
+        let cancel = InterruptCancel::install();
+        assert!(!cancel.is_cancelled(), "install starts uncancelled");
+        assert_eq!(
+            on_console_ctrl(CTRL_BREAK_EVENT),
+            1,
+            "Ctrl+Break is handled"
+        );
+        assert!(cancel.is_cancelled());
     }
 }
