@@ -47,7 +47,7 @@ The target branch is the first that exists of: the `target.branch` config value,
 | Recent history, ten at a time | `grit log`, then `grit log --cursor <next>` using the `next` value from `--json` (passing a cursor to `--before` is deprecated) |
 | History with patches or file lists | `grit log -p`, `grit log --stat`, `grit log --name-status`, … (same format flags as `grit diff`) |
 | Commits on this branch not on the target | `grit shortlog` or `grit ahead` (`-n` / `--max-count`, `--behind`, `--stat`, `--name-only`; add `--target <REF>` to pick the base) |
-| Who last touched each line | `grit blame [<rev>] [--] <file>`; slice with `-L` (`10,25`, `10,+20`, `/pattern/`, `:funcname`); **`--group`** for smaller `hunks[]` in `--json` on large files |
+| Who last touched each line | `grit blame [<rev>] [--] <file>`; slice with `-L` (`10,25`, `10,+20`, `/pattern/`, `:funcname`); **`--group`** for smaller `hunks[]` in `--json` on large files. Without a revision the working-tree file is blamed (uncommitted lines have `not_committed: true` and an all-zeros commit); `--rev HEAD` blames the committed file; `--contents <file\|->` blames an unsaved buffer |
 | Skip formatting commits in blame | `grit blame --ignore-rev <OID>` or `grit blame --ignore-revs-file .git-blame-ignore-revs` (set `blame.ignoreRevsFile` in config for a default list) |
 | Ignore whitespace-only edits in blame | `grit blame -w` / `--ignore-all-space` (same spelling as `grit diff -w`) |
 | Follow copies across files in blame | `grit blame -C` (repeat `-C` up to three times for deeper copy search, like Git) |

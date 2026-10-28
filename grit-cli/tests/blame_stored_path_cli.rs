@@ -45,8 +45,16 @@ fn status_encoded_paths_feed_blame_lines_and_grouped_ranges() {
     assert_eq!(storage_bytes(stored).as_ref(), raw);
     let blame = json(root, &["blame", stored]);
     assert_eq!(blame["file"], stored);
-    assert_eq!(blame["lines"].as_array().unwrap().len(), 3);
+    assert_eq!(blame["lines"].as_array().unwrap().len(), 4);
     assert_eq!(blame["lines"][0]["content"], "hello");
+    assert_eq!(blame["lines"][3]["content"], "modified");
+    assert_eq!(blame["lines"][3]["not_committed"], true);
+    assert_eq!(
+        storage_bytes(blame["lines"][3]["original_path"].as_str().unwrap()).as_ref(),
+        raw
+    );
+    let committed = json(root, &["blame", "--rev", "HEAD", stored]);
+    assert_eq!(committed["lines"].as_array().unwrap().len(), 3);
     assert_eq!(
         storage_bytes(blame["lines"][0]["original_path"].as_str().unwrap()).as_ref(),
         raw

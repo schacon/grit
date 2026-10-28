@@ -1009,7 +1009,8 @@ enum Command {
         /// File to blame (repository-relative).
         #[arg(value_name = "FILE", last = true, allow_hyphen_values = true)]
         file: Option<String>,
-        /// Blame at this revision instead of `HEAD`.
+        /// Blame the file as committed at this revision. Without a revision the working
+        /// tree file is blamed, with uncommitted lines marked.
         #[arg(long)]
         rev: Option<String>,
         /// Limit output with a Git-style line range (`-L` / `--lines`).
@@ -1038,6 +1039,10 @@ enum Command {
         /// Detect lines copied from other files (`git blame -C`; repeat up to three times).
         #[arg(short = 'C', long = "copy-detection", action = clap::ArgAction::Count)]
         copy_detection: u8,
+        /// Blame this file's content (`-` for stdin) instead of the working tree, on top of
+        /// the revision (default `HEAD`); lines not in the revision show as uncommitted.
+        #[arg(long, value_name = "FILE")]
+        contents: Option<String>,
     },
     /// Show changes as a diff. No argument: uncommitted changes; with a commit:
     /// the change that commit introduced; with two commits (or `A..B`) diff their trees.
@@ -2940,6 +2945,7 @@ fn dispatch(
             group,
             ignore_all_space,
             copy_detection,
+            contents,
         } => emit_success(
             &commands::blame::run(
                 rev_pos,
@@ -2952,6 +2958,7 @@ fn dispatch(
                 group,
                 ignore_all_space,
                 copy_detection,
+                contents,
                 ctx.now,
             )?,
             opts,

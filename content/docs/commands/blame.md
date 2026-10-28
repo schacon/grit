@@ -8,15 +8,23 @@ order: 2
 ## Synopsis
 
 ```text
-grit blame [<rev>] [--rev <commit>] [-L RANGE] [--first-parent] [--group] [-w]
-  [-C]... [--ignore-rev <REV>]... [--ignore-revs-file <FILE>]... [--] <file>
+grit blame [<rev>] [--rev <commit>] [--contents <file>] [-L RANGE] [--first-parent]
+  [--group] [-w] [-C]... [--ignore-rev <REV>]... [--ignore-revs-file <FILE>]... [--] <file>
 ```
 
 ## Description
 
-Walks history for one file and prints each line with the commit that last modified it, the author, when that commit was made, and the line number in the blamed revision. The file operand uses Git pathspec cwd rules (same as [`grit diff`](../diff/)): from a subdirectory, a bare name like `f.txt` refers to that path under your current directory.
+Walks history for one file and prints each line with the commit that last modified it, the author, when that commit was made, and the line number in the blamed file. The file operand uses Git pathspec cwd rules (same as [`grit diff`](../diff/)): from a subdirectory, a bare name like `f.txt` refers to that path under your current directory.
 
 Paths returned by `grit status --json` can be passed directly as the file operand, including reversible `grit+pathhex:` strings for non-UTF-8 filenames. These encoded paths are repository-relative, even when invoked from a subdirectory. Blame decodes one storage layer and compares exact filename bytes, so raw invalid-byte names, valid Unicode names, and literal names beginning with `grit+pathhex:` remain distinct. JSON `original_path` values (both lines and grouped hunks) use the same reversible encoding, including rename and copy origins. In Rust, use `repo_relpath::storage_bytes` to recover the original bytes; use `storage_string` when supplying raw names that begin with the reserved prefix.
+
+### Uncommitted changes
+
+Without a revision, blame reads the file from the working tree, so line numbers match what is on disk (and in your editor). The file is cleaned the way `grit add` would store it (line-ending conversion, clean filters; a symlink blames its target path), then blamed as if it were a commit on top of `HEAD`: lines that match `HEAD` keep their history, and lines that exist only in the working tree are reported as **not committed**. They show the null commit `0000000` and the author `Not Committed Yet`, and every later line keeps its working-tree line number. During an unfinished merge, the commits in `MERGE_HEAD` are parents too, so lines brought in by the merge are blamed on the incoming branch. With `--first-parent` only `HEAD` is a parent, so those lines are not committed (as in Git). A file that is staged but not yet committed is entirely not committed; a file that is neither committed nor staged is an error. When the working tree matches `HEAD`, blame is the same as `--rev HEAD`. Nothing is written to the object database.
+
+Passing a revision (`<rev>` or `--rev`, including `HEAD`) blames that commit's file and ignores the working tree. `--contents <file>` blames the given file's content instead (`-` reads standard input), on top of the revision or `HEAD`; this is how an editor can blame an unsaved buffer. Those uncommitted lines show the author `External file (--contents)`. In a bare repository, blame without `--contents` uses `HEAD`.
+
+`-L` ranges (numbers, `/regex/`, `:funcname`) are resolved against the same text that is blamed, so `-L /pattern/` finds the line where it sits in the working tree or `--contents` buffer.
 
 For a literal root filename such as `grit+pathhex:6162`, `./grit+pathhex:6162` also works; ordinary operands (including `../` from a subdirectory) are normalized before the result is escaped for storage lookup.
 
@@ -89,8 +97,9 @@ main's path errors provide no comparable successful-operation timing.
 
 | Option | Description |
 | --- | --- |
-| `<rev>` | Optional revision before `--` (same values as `--rev`). Defaults to `HEAD` when omitted. |
-| `--rev <commit>` | Blame the file as it existed at this revision. Cannot be combined with a positional `<rev>`. |
+| `<rev>` | Optional revision before `--` (same values as `--rev`). Without a revision the working-tree file is blamed on top of `HEAD`. |
+| `--rev <commit>` | Blame the file as committed at this revision, ignoring the working tree. Cannot be combined with a positional `<rev>`. |
+| `--contents <file>` | Blame this file's content (`-` for standard input) instead of the working tree, on top of the revision (default `HEAD`). Lines not in the revision are reported as not committed. |
 | `-L RANGE` | Limit output with a Git-style line range in the final file (see below). Blame stops once every line in the range is attributed. |
 | `--lines` | Same as `-L` (long form). |
 | `--first-parent` | At merge commits, follow only the first parent when attributing lines. Default matches Git blame: all parents are considered. |
@@ -104,12 +113,20 @@ Human output prefixes ignored lines with `?` and lines that cannot be blamed pas
 
 ## Examples
 
-Blame a file at `HEAD`:
+Blame a file as it is in the working tree:
 
 ```console
 $ grit blame src/lib.rs
-a1b2c3d (ada 2 days ago    1) use std::io;
-f4e5d6c (bob 1 week ago    2) fn main() {
+0000000 (Not Committed Yet just now    1) // edited
+a1b2c3d (ada 2 days ago    2) use std::io;
+f4e5d6c (bob 1 week ago    3) fn main() {
+```
+
+Blame the committed file, or an unsaved editor buffer piped on standard input:
+
+```console
+$ grit blame --rev HEAD src/lib.rs
+$ cat buffer.rs | grit blame --contents - src/lib.rs
 ```
 
 Blame an older revision and a slice of lines:
@@ -137,18 +154,21 @@ Pass `--json` for stable, scripting-friendly output:
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
 | `file` | string | Work-tree path that was blamed (repository-relative after cwd resolution). |
-| `rev` | string | Full commit oid of the start revision. |
+| `rev` | string | Full commit oid of the start revision (the `HEAD` commit unless a revision was given, also when blaming the working tree or `--contents`). |
 | `lines` | array | One record per line (after any `-L` filter), in final-line order. |
-| `lines[].commit` | string | Full commit oid for the line. |
+| `lines[].commit` | string | Full commit oid for the line; all zeros for a line that is not committed. |
 | `lines[].original_line` | number | 1-based line number in the originating commit. |
 | `lines[].original_path` | string | Reversibly stored path in the originating commit, preserving filename bytes through renames and copies. |
-| `lines[].final_line` | number | 1-based line number in the blamed revision. |
+| `lines[].final_line` | number | 1-based line number in the blamed file (the working tree or `--contents` when those are blamed). |
 | `lines[].content` | string | Line text. |
 | `lines[].ignored` | boolean | Present and `true` when the line was attributed through an ignored revision. |
 | `lines[].unblamable` | boolean | Present and `true` when the line was added in an ignored revision and cannot be blamed further back. |
+| `lines[].not_committed` | boolean | Present and `true` when the line exists only in the working tree or `--contents` buffer. `commit` is then all zeros and `original_line` equals `final_line`. |
 | `commits` | object | Map of commit oid → metadata for every line. |
 | `commits.<oid>.author` | object | Author with `name`, `email`, and `date` (RFC 3339 — same shape as [`grit show`](../show/)). Author date is only here, not repeated on each line or hunk. |
 | `commits.<oid>.summary` | string | First line of the commit message. |
+
+Lines that are not committed share the all-zeros entry in `commits`: its author is `Not Committed Yet` (or `External file (--contents)`) with email `not.committed.yet`, dated when the command ran, and its summary repeats that label.
 
 ### Grouped JSON (`--json --group`)
 
@@ -163,6 +183,7 @@ Same top-level `file`, `rev`, and `commits` map. Replaces `lines[]` with `hunks[
 | `hunks[].count` | number | Number of consecutive final lines in the hunk. |
 | `hunks[].ignored` | boolean | Present and `true` when the hunk passed through an ignored revision. |
 | `hunks[].unblamable` | boolean | Present and `true` when blame could not continue past an ignored revision. |
+| `hunks[].not_committed` | boolean | Present and `true` when the hunk's lines are not committed (`commit` is all zeros). |
 | `hunks[].lines` | array of strings | Line text for each row in the hunk (same order as final lines). |
 
 Every `original_path` names the file in its reported `commit`, even when a line range crosses rename-and-edit commits or subtree imports. After decoding the filename bytes, read that commit's file at `original_line` (or `original_start` for a hunk). The path can differ from both the requested path and intermediate names in history.
@@ -212,7 +233,7 @@ Revision `83352a61f6715ec3f0a297c6d6150725154fb833`
 
 | Line | Mark | Commit | Author | Date | Original | Content |
 | ---: | :---: | --- | --- | --- | ---: | --- |
-| 1 |  | `83352a6` | Test | [TIME_AGO] | 1 | tracked v2 |
+| 1 |  | `0000000` | Not Committed Yet | [TIME_AGO] | 1 | tracked modified |
 ```
 
 ## Exit status

@@ -699,6 +699,11 @@ pub fn register_common_cli_snapshot_filters(settings: &mut insta::Settings) {
     settings.add_filter(r#"\{\\"duration_ms\\": ?\d+"#, r#"{\"duration_ms\": 0"#);
     settings.add_filter(r"- \*\*duration_ms:\*\* \d+", "- **duration_ms:** 0");
     settings.add_filter(r"pack-[0-9a-f]{20,}\.pack", "pack-[HASH].pack");
+    // Blame reports uncommitted lines at the wall-clock time of the run.
+    settings.add_filter(
+        r#"(not\.committed\.yet\\",\\"date\\":\\")[^\\]+"#,
+        "$1[NOW]",
+    );
     for (pattern, replacement) in CRATE_VERSION_SNAPSHOT_FILTERS {
         settings.add_filter(pattern, *replacement);
     }

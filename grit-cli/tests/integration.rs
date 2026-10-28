@@ -59,6 +59,8 @@ mod blame_stored_path_cli;
 #[cfg(feature = "full-tests")]
 #[path = "blame_whitespace_cli.rs"]
 mod blame_whitespace_cli;
+#[path = "blame_worktree_cli.rs"]
+mod blame_worktree_cli;
 #[cfg(feature = "full-tests")]
 #[path = "branch_list_cli.rs"]
 mod branch_list_cli;

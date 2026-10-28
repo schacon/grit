@@ -44,6 +44,12 @@
           },
           "type": "array"
         },
+        "not_committed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "original_path": {
           "type": "string"
         },
@@ -83,6 +89,12 @@
           "type": "integer"
         },
         "ignored": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "not_committed": {
           "type": [
             "boolean",
             "null"
