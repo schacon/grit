@@ -2426,6 +2426,10 @@ struct CommitGraphCache<'r> {
     /// True only while [`Self::commit_time_for_heap`] runs, so commits read for painting
     /// or ancestry checks are not retained.
     retain_reads: bool,
+    /// Payload of the commit [`Self::parents_of`] parses, reused across reads. Linkage and
+    /// [`Self::retained`] keep what the walk needs, so a per-commit allocation (and the
+    /// object database's session copy of every walked commit) would only be thrown away.
+    read_buf: Vec<u8>,
 }
 
 impl<'r> CommitGraphCache<'r> {
@@ -2470,14 +2474,17 @@ impl<'r> CommitGraphCache<'r> {
             single_pack: None,
             retained: None,
             retain_reads: false,
+            read_buf: Vec::new(),
         }
     }
 
-    fn read_object(&mut self, oid: &ObjectId) -> Result<crate::objects::Object> {
+    /// Read `oid` into `buf` and return its kind. Delta bases stay cached, as for
+    /// [`crate::odb::Odb::read`].
+    fn read_object_into(&mut self, oid: &ObjectId, buf: &mut Vec<u8>) -> Result<ObjectKind> {
         self.ensure_single_pack_reader();
         match self.single_pack.as_mut() {
-            Some(reader) => reader.read_object(oid),
-            None => self.repo.odb().read(oid),
+            Some(reader) => reader.read_object_into_with_delta_policy(oid, true, buf),
+            None => self.repo.odb().read_into_caching_delta_bases(oid, buf),
         }
     }
 
@@ -2602,36 +2609,40 @@ impl<'r> CommitGraphCache<'r> {
         }
         // A plain commit without a replacement is its own peel target, so one read serves both
         // the peel and the parse; anything else (tags, replaced objects) peels first.
+        let mut buf = std::mem::take(&mut self.read_buf);
+        let parents = self.parents_from_object(oid, &mut buf);
+        self.read_buf = buf;
+        parents
+    }
+
+    /// [`Self::parents_of`] for a commit the commit-graph does not cover: read and parse its
+    /// object through `buf`, then record its linkage.
+    fn parents_from_object(&mut self, oid: ObjectId, buf: &mut Vec<u8>) -> Result<Vec<ObjectId>> {
         let effective_oid = self.repo.object_id_after_replace(&oid);
-        let direct = if effective_oid == oid {
-            Some(self.read_object(&oid)?).filter(|object| object.kind == ObjectKind::Commit)
+        let direct_commit =
+            effective_oid == oid && self.read_object_into(&oid, buf)? == ObjectKind::Commit;
+        let commit_oid = if direct_commit {
+            oid
         } else {
-            None
-        };
-        let (commit_oid, object) = match direct {
-            Some(object) => (oid, object),
-            None => {
-                let commit_oid =
-                    peel_to_commit_for_merge_base(self.repo, oid).map_err(|e| match e {
-                        Error::InvalidRef(msg) => Error::CorruptObject(msg),
-                        other => other,
-                    })?;
-                (
-                    commit_oid,
-                    self.read_object(&self.repo.object_id_after_replace(&commit_oid))?,
-                )
+            let commit_oid =
+                peel_to_commit_for_merge_base(self.repo, oid).map_err(|e| match e {
+                    Error::InvalidRef(msg) => Error::CorruptObject(msg),
+                    other => other,
+                })?;
+            let kind =
+                self.read_object_into(&self.repo.object_id_after_replace(&commit_oid), buf)?;
+            if kind != ObjectKind::Commit {
+                return Err(Error::CorruptObject(format!(
+                    "object {commit_oid} is not a commit"
+                )));
             }
+            commit_oid
         };
-        if object.kind != ObjectKind::Commit {
-            return Err(Error::CorruptObject(format!(
-                "object {commit_oid} is not a commit"
-            )));
-        }
-        let linkage = CommitRef::parse(&object.data)?;
+        let linkage = CommitRef::parse(buf)?;
         let (time, parsed_parents) = (linkage.committer_timestamp(), linkage.parents().to_vec());
         if self.retain_reads && effective_oid == oid && commit_oid == oid {
             if let Some(retained) = self.retained.as_mut() {
-                retained.insert(oid, &object.data);
+                retained.insert(oid, buf);
             }
         }
         let parents: Vec<ObjectId> = if self.shallow_boundaries.contains(&commit_oid) {
@@ -3397,6 +3408,47 @@ mod tests {
             },
         )?;
         Repository::open(dir.path(), &RepositoryOptions::empty())
+    }
+
+    #[test]
+    fn parents_of_reads_through_one_buffer_without_session_copies() -> Result<()> {
+        let dir = tempdir()?;
+        let repo = open_test_bare(&dir)?;
+        let root = write_commit_same_time(repo.odb(), &[], "root", 100)?;
+        let mid = write_commit_same_time(repo.odb(), &[root], "mid", 200)?;
+        let tip = write_commit_same_time(repo.odb(), &[mid], "tip with a longer message", 300)?;
+        let tag = repo.odb().write_loose_materialize(
+            ObjectKind::Tag,
+            format!("object {tip}\ntype commit\ntag v1\ntagger T <t@e.com> 300 +0000\n\nv1\n")
+                .as_bytes(),
+        )?;
+
+        let mut cache = CommitGraphCache::with_commit_graph(&repo, false);
+        cache.retained = Some(WalkedCommits::default());
+        cache.retain_reads = true;
+        assert_eq!(cache.parents_of(tip)?, vec![mid]);
+        assert_eq!(cache.parents_of(mid)?, vec![root]);
+        assert_eq!(cache.parents_of(root)?, Vec::<ObjectId>::new());
+        for oid in [tip, mid, root] {
+            assert!(
+                !repo.odb().session_read_is_cached(&oid),
+                "walked commit {oid} must not be copied into the session read cache"
+            );
+        }
+        use crate::porcelain::log::CommitReuse;
+        let mut retained = cache.retained.take().expect("retention enabled");
+        for (oid, message) in [(tip, "tip with a longer message\n"), (root, "root\n")] {
+            let data = retained
+                .take_commit(&oid)
+                .expect("walked commit is retained")?;
+            assert_eq!(data.message, message);
+        }
+
+        cache.retain_reads = false;
+        assert_eq!(cache.parents_of(tag)?, vec![mid]);
+        let _ = repo.odb().read(&mid)?;
+        assert!(repo.odb().session_read_is_cached(&mid));
+        Ok(())
     }
 
     #[test]

@@ -563,6 +563,12 @@ impl Odb {
         self.session_loose_reads.lock().ok()?.get(oid).cloned()
     }
 
+    /// Whether the session read cache holds a copy of `oid` (crate-internal tests only).
+    #[cfg(test)]
+    pub(crate) fn session_read_is_cached(&self, oid: &ObjectId) -> bool {
+        self.session_cached_loose_read(oid).is_some()
+    }
+
     /// Keep `obj` in the session read cache. Bounded checkout reads call this directly for
     /// the small blobs they reuse; general reads go through [`Self::finish_session_loose_read`].
     fn remember_session_loose_read(&self, oid: &ObjectId, obj: &Object) {
