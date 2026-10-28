@@ -579,10 +579,16 @@ fn checkout_hard_to_tree_journaled(
     use crate::porcelain::index_from_tree::index_from_tree_reusing_cache_tree;
 
     let mut pre_reset_index =
-        crate::porcelain::index_from_tree::load_index_for_tree_transition(repo, target_tree)?;
+        crate::porcelain::index_from_tree::load_index_for_hard_reset(repo, target_tree)?;
     let trees_differ = head_tree != target_tree;
+    // Sparse-directory rows left by the load already record the target subtree.
     let changes = if trees_differ {
-        diff_trees(repo.odb(), Some(head_tree), Some(target_tree), "")?
+        crate::diff::diff_trees_outside_sparse_directories(
+            repo.odb(),
+            &pre_reset_index,
+            Some(head_tree),
+            Some(target_tree),
+        )?
     } else {
         Vec::new()
     };

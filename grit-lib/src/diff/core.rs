@@ -2430,7 +2430,11 @@ pub(crate) fn diff_trees_with_index(
         && old_tree_oid.is_some()
         && index.entries_sorted
         && !index.entries.iter().any(|e| e.stage() != 0))
-    .then_some(DiffTreesIndexHint { index });
+    .then_some(DiffTreesIndexHint {
+        index,
+        old_tree_matches: true,
+        skip_sparse_directories: false,
+    });
     diff_trees_opts(
         odb,
         old_tree_oid,
@@ -2441,9 +2445,47 @@ pub(crate) fn diff_trees_with_index(
     )
 }
 
+/// Like [`diff_trees`], but subtrees at directories `index` holds as sparse-directory rows are
+/// not descended into, so no entry lies inside one. Paths of those directories themselves (a
+/// blob replaced by a tree, say) are still reported.
+pub(crate) fn diff_trees_outside_sparse_directories(
+    odb: &Odb,
+    index: &Index,
+    old_tree_oid: Option<&ObjectId>,
+    new_tree_oid: Option<&ObjectId>,
+) -> Result<Vec<DiffEntry>> {
+    crate::trace::trace_span!("grit.diff.tree");
+    let hint = index
+        .has_sparse_directory_placeholders()
+        .then_some(DiffTreesIndexHint {
+            index,
+            old_tree_matches: false,
+            skip_sparse_directories: true,
+        });
+    diff_trees_opts(odb, old_tree_oid, new_tree_oid, "", false, hint.as_ref())
+}
+
 #[derive(Clone, Copy)]
 struct DiffTreesIndexHint<'a> {
     index: &'a Index,
+    /// `index` holds exactly the old tree's entries, so deleted subtrees may be listed from it.
+    old_tree_matches: bool,
+    /// Do not descend into directories `index` holds as sparse-directory rows.
+    skip_sparse_directories: bool,
+}
+
+impl DiffTreesIndexHint<'_> {
+    /// Whether the walk must not enter directory `dir` (stored form, no trailing slash).
+    fn skips(&self, dir: &str) -> bool {
+        if !self.skip_sparse_directories || dir.is_empty() {
+            return false;
+        }
+        let mut row = crate::repo_relpath::storage_bytes(dir).into_owned();
+        row.push(b'/');
+        self.index
+            .find_entry_pos(&row, 0)
+            .is_some_and(|pos| self.index.entries[pos].is_sparse_directory_placeholder())
+    }
 }
 
 /// Count path-level differences between two trees without building a [`DiffEntry`] list.
@@ -2645,6 +2687,9 @@ fn diff_subtrees_in_place(
     index_hint: Option<&DiffTreesIndexHint<'_>>,
     result: &mut Vec<DiffEntry>,
 ) -> Result<()> {
+    if index_hint.is_some_and(|hint| hint.skips(prefix)) {
+        return Ok(());
+    }
     if !show_trees {
         if let (Some(a), Some(b)) = (old_tree_oid, new_tree_oid) {
             if a == b {
@@ -2891,7 +2936,7 @@ fn diff_tree_entries_opts(
                     }
                     std::cmp::Ordering::Greater => {
                         // New entry not in old → added
-                        emit_added_opts(odb, n, prefix, show_trees, result)?;
+                        emit_added_opts(odb, n, prefix, show_trees, index_hint, result)?;
                         new_entry = new.next_entry()?;
                     }
                     std::cmp::Ordering::Equal => {
@@ -2924,11 +2969,11 @@ fn diff_tree_entries_opts(
                             } else if is_tree_mode(o.mode) && !is_tree_mode(n.mode) {
                                 // Tree → blob: delete tree contents, add blob
                                 emit_deleted_opts(odb, o, prefix, show_trees, index_hint, result)?;
-                                emit_added_opts(odb, n, prefix, show_trees, result)?;
+                                emit_added_opts(odb, n, prefix, show_trees, index_hint, result)?;
                             } else if !is_tree_mode(o.mode) && is_tree_mode(n.mode) {
                                 // Blob → tree: delete blob, add tree contents
                                 emit_deleted_opts(odb, o, prefix, show_trees, index_hint, result)?;
-                                emit_added_opts(odb, n, prefix, show_trees, result)?;
+                                emit_added_opts(odb, n, prefix, show_trees, index_hint, result)?;
                             } else {
                                 result.push(DiffEntry {
                                     status: DiffStatus::for_content_change(o.mode, n.mode),
@@ -2952,7 +2997,7 @@ fn diff_tree_entries_opts(
                 old_entry = old.next_entry()?;
             }
             (None, Some(n)) => {
-                emit_added_opts(odb, n, prefix, show_trees, result)?;
+                emit_added_opts(odb, n, prefix, show_trees, index_hint, result)?;
                 new_entry = new.next_entry()?;
             }
             (None, None) => break,
@@ -3053,13 +3098,21 @@ fn emit_deleted_opts(
                 score: None,
             });
         }
-        if let Some(hint) =
-            index_hint.filter(|hint| !hint.index.has_sparse_directory_placeholders())
+        if let Some(hint) = index_hint
+            .filter(|hint| hint.old_tree_matches && !hint.index.has_sparse_directory_placeholders())
         {
             emit_deleted_tree_from_index(hint.index, &path, result);
             return Ok(());
         }
-        diff_subtrees_in_place(odb, Some(&entry.oid), None, &path, show_trees, None, result)?;
+        diff_subtrees_in_place(
+            odb,
+            Some(&entry.oid),
+            None,
+            &path,
+            show_trees,
+            index_hint,
+            result,
+        )?;
     } else {
         result.push(DiffEntry {
             status: DiffStatus::Deleted,
@@ -3080,6 +3133,7 @@ fn emit_added_opts(
     entry: &TreeEntryRef<'_>,
     prefix: &str,
     show_trees: bool,
+    index_hint: Option<&DiffTreesIndexHint<'_>>,
     result: &mut Vec<DiffEntry>,
 ) -> Result<()> {
     let path = crate::repo_relpath::format_path_stored(prefix, entry.name);
@@ -3096,7 +3150,15 @@ fn emit_added_opts(
                 score: None,
             });
         }
-        diff_subtrees_in_place(odb, None, Some(&entry.oid), &path, show_trees, None, result)?;
+        diff_subtrees_in_place(
+            odb,
+            None,
+            Some(&entry.oid),
+            &path,
+            show_trees,
+            index_hint,
+            result,
+        )?;
     } else {
         result.push(DiffEntry {
             status: DiffStatus::Added,
