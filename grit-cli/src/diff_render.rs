@@ -3,10 +3,11 @@
 use std::io::{IsTerminal, Write};
 
 use anyhow::Result;
+use grit_lib::diff::{DiffStat as LibDiffStat, DiffTotals, FileStat, StatBar};
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::commands::diff::{FileDiff, LineKind};
+use crate::commands::diff::FileDiff;
 use crate::markdown;
 use crate::output::{outln, ChangeStatus};
 use crate::ui::PathDisplayOptions;
@@ -14,80 +15,100 @@ use crate::ui::PathDisplayOptions;
 /// Width budget for the `+`/`-` change bars in the diffstat.
 const BAR_WIDTH: usize = 40;
 
+/// A library [`LibDiffStat`] carried through command outcomes; serializes as
+/// [`DiffStatJson`].
+#[derive(Clone)]
+pub struct DiffStat(LibDiffStat);
+
 /// A diffstat: per-file insertion/deletion counts plus totals.
-#[derive(Serialize, JsonSchema, Clone)]
-pub struct DiffStat {
-    pub files: Vec<FileStat>,
-    pub files_changed: usize,
-    pub insertions: usize,
-    pub deletions: usize,
+#[derive(Serialize, JsonSchema)]
+#[serde(rename = "DiffStat")]
+struct DiffStatJson {
+    files: Vec<FileStatJson>,
+    files_changed: usize,
+    insertions: usize,
+    deletions: usize,
 }
 
-#[derive(Serialize, JsonSchema, Clone)]
-pub struct FileStat {
-    pub path: String,
+#[derive(Serialize, JsonSchema)]
+#[serde(rename = "FileStat")]
+struct FileStatJson {
+    path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
-    pub old_path: Option<String>,
-    pub status: ChangeStatus,
-    pub insertions: usize,
-    pub deletions: usize,
-    pub binary: bool,
+    old_path: Option<String>,
+    status: ChangeStatus,
+    insertions: usize,
+    deletions: usize,
+    binary: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
-    pub similarity: Option<u32>,
+    similarity: Option<u32>,
 }
 
-/// Reduce a full patch diff to a per-file insertion/deletion summary.
-pub fn diffstat_from_patch(diff: &[FileDiff]) -> DiffStat {
-    let mut files = Vec::new();
-    let mut insertions = 0;
-    let mut deletions = 0;
-    for file in diff {
-        let (ins, del) = file
-            .stat
-            .map(|s| (s.insertions, s.deletions))
-            .unwrap_or_else(|| counts_from_hunks(file));
-        insertions += ins;
-        deletions += del;
-        files.push(FileStat {
-            path: file.path.clone(),
-            old_path: file.old_path.clone(),
-            status: file.status,
-            insertions: ins,
-            deletions: del,
-            binary: file.binary,
-            similarity: file.similarity,
-        });
-    }
-    DiffStat {
-        files_changed: files.len(),
-        files,
-        insertions,
-        deletions,
-    }
-}
-
-fn counts_from_hunks(file: &FileDiff) -> (usize, usize) {
-    let mut ins = 0;
-    let mut del = 0;
-    if let Some(hunks) = &file.hunks {
-        for hunk in hunks {
-            for line in &hunk.lines {
-                match line.kind {
-                    LineKind::Add => ins += 1,
-                    LineKind::Del => del += 1,
-                    LineKind::Context => {}
-                }
-            }
+impl From<&DiffStat> for DiffStatJson {
+    fn from(DiffStat(stat): &DiffStat) -> Self {
+        let totals = stat.totals();
+        Self {
+            files: stat
+                .files()
+                .iter()
+                .map(|file| FileStatJson {
+                    path: file.path.clone(),
+                    old_path: file.old_path.clone(),
+                    status: file.status.into(),
+                    insertions: file.lines.insertions,
+                    deletions: file.lines.deletions,
+                    binary: file.binary,
+                    similarity: file.similarity,
+                })
+                .collect(),
+            files_changed: totals.files_changed,
+            insertions: totals.insertions,
+            deletions: totals.deletions,
         }
     }
-    (ins, del)
 }
 
-/// Build a [`DiffStat`] from stat-mode diff files (library counts).
+impl Serialize for DiffStat {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        DiffStatJson::from(self).serialize(serializer)
+    }
+}
+
+impl JsonSchema for DiffStat {
+    fn schema_name() -> String {
+        DiffStatJson::schema_name()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        DiffStatJson::json_schema(gen)
+    }
+}
+
+impl DiffStat {
+    /// The library model behind this diffstat.
+    #[must_use]
+    pub fn lib(&self) -> &LibDiffStat {
+        &self.0
+    }
+}
+
+/// Build a [`DiffStat`] from CLI diff files at any detail level.
 pub fn diffstat_from_files(files: &[FileDiff]) -> DiffStat {
-    diffstat_from_patch(files)
+    DiffStat(
+        files
+            .iter()
+            .map(|file| FileStat {
+                path: file.path.clone(),
+                old_path: file.old_path.clone(),
+                status: file.status.into(),
+                binary: file.binary,
+                similarity: file.similarity,
+                lines: file.line_stat(),
+            })
+            .collect(),
+    )
 }
 
 /// Render the diffstat, mirroring `git show --stat`.
@@ -117,7 +138,8 @@ fn render_stat_with_options(
     path_opts: Option<&PathDisplayOptions>,
     leading_blank: bool,
 ) -> Result<()> {
-    if stat.files.is_empty() {
+    let stat = stat.lib();
+    if stat.is_empty() {
         return Ok(());
     }
     if leading_blank {
@@ -125,31 +147,26 @@ fn render_stat_with_options(
     }
 
     let name_width = stat
-        .files
+        .files()
         .iter()
         .map(|f| stat_path(f, path_opts).chars().count())
         .max()
         .unwrap_or(0)
         .min(60);
-    let max_changes = stat
-        .files
-        .iter()
-        .map(|f| f.insertions + f.deletions)
-        .max()
-        .unwrap_or(0);
+    let max_changes = stat.max_changes();
 
-    for file in &stat.files {
+    for file in stat.files() {
         let path = stat_path(file, path_opts);
         if file.binary {
             outln!(w, " {path:<name_width$} | Bin");
             continue;
         }
-        let total = file.insertions + file.deletions;
-        let bar = change_bar(file.insertions, file.deletions, max_changes, color);
+        let total = file.lines.changes();
+        let bar = paint_bar(file.lines.bar(max_changes, BAR_WIDTH), color);
         outln!(w, " {path:<name_width$} | {total:>3} {bar}");
     }
 
-    outln!(w, " {}", summary_line(stat));
+    outln!(w, " {}", summary_line(stat.totals()));
     Ok(())
 }
 
@@ -158,14 +175,15 @@ pub fn render_markdown_stat(
     stat: &DiffStat,
     path_opts: Option<&PathDisplayOptions>,
 ) -> Result<()> {
-    if stat.files.is_empty() {
+    let stat = stat.lib();
+    if stat.is_empty() {
         return Ok(());
     }
     outln!(w, "## Changes");
     outln!(w);
     outln!(w, "| File | + | − |");
     outln!(w, "| --- | ---: | ---: |");
-    for file in &stat.files {
+    for file in stat.files() {
         let path = markdown::escape_table_cell(&stat_path(file, path_opts));
         let path_code = markdown::format_inline_code(&path);
         if file.binary {
@@ -174,13 +192,13 @@ pub fn render_markdown_stat(
             outln!(
                 w,
                 "| {path_code} | {} | {} |",
-                file.insertions,
-                file.deletions
+                file.lines.insertions,
+                file.lines.deletions
             );
         }
     }
     outln!(w);
-    outln!(w, "{}", summary_line(stat));
+    outln!(w, "{}", summary_line(stat.totals()));
     Ok(())
 }
 
@@ -215,11 +233,8 @@ pub fn render_numstat(
             outln!(w, "-\t-\t{path}");
             continue;
         }
-        let (ins, del) = file
-            .stat
-            .map(|s| (s.insertions, s.deletions))
-            .unwrap_or_else(|| counts_from_hunks(file));
-        outln!(w, "{ins}\t{del}\t{path}");
+        let lines = file.line_stat();
+        outln!(w, "{}\t{}\t{path}", lines.insertions, lines.deletions);
     }
     Ok(())
 }
@@ -282,8 +297,9 @@ pub fn render_name_status(
 }
 
 pub fn render_shortstat(w: &mut dyn Write, stat: &DiffStat) -> Result<()> {
-    if stat.files_changed > 0 {
-        outln!(w, "{}", summary_line(stat));
+    let totals = stat.lib().totals();
+    if totals.files_changed > 0 {
+        outln!(w, "{}", summary_line(totals));
     }
     Ok(())
 }
@@ -305,28 +321,12 @@ fn stat_path(file: &FileStat, path_opts: Option<&PathDisplayOptions>) -> String 
     }
 }
 
-fn change_bar(insertions: usize, deletions: usize, max_changes: usize, color: bool) -> String {
-    let total = insertions + deletions;
-    if total == 0 {
+fn paint_bar(bar: StatBar, color: bool) -> String {
+    if bar == StatBar::default() {
         return String::new();
     }
-    let scaled = if max_changes > BAR_WIDTH {
-        ((total * BAR_WIDTH).div_ceil(max_changes)).max(1)
-    } else {
-        total
-    };
-    let mut plus = ((insertions * scaled) as f64 / total as f64).round() as usize;
-    let mut minus = scaled.saturating_sub(plus);
-    if insertions > 0 && plus == 0 {
-        plus = 1;
-        minus = minus.saturating_sub(1);
-    }
-    if deletions > 0 && minus == 0 {
-        minus = 1;
-        plus = plus.saturating_sub(1);
-    }
-    let plus_bar = "+".repeat(plus);
-    let minus_bar = "-".repeat(minus);
+    let plus_bar = "+".repeat(bar.plus);
+    let minus_bar = "-".repeat(bar.minus);
     if color {
         format!(
             "{}{}",
@@ -338,24 +338,24 @@ fn change_bar(insertions: usize, deletions: usize, max_changes: usize, color: bo
     }
 }
 
-pub fn summary_line(stat: &DiffStat) -> String {
+pub fn summary_line(totals: DiffTotals) -> String {
     let mut parts = vec![format!(
         "{} file{} changed",
-        stat.files_changed,
-        plural(stat.files_changed)
+        totals.files_changed,
+        plural(totals.files_changed)
     )];
-    if stat.insertions > 0 {
+    if totals.insertions > 0 {
         parts.push(format!(
             "{} insertion{}(+)",
-            stat.insertions,
-            plural(stat.insertions)
+            totals.insertions,
+            plural(totals.insertions)
         ));
     }
-    if stat.deletions > 0 {
+    if totals.deletions > 0 {
         parts.push(format!(
             "{} deletion{}(-)",
-            stat.deletions,
-            plural(stat.deletions)
+            totals.deletions,
+            plural(totals.deletions)
         ));
     }
     parts.join(", ")

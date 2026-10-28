@@ -28,8 +28,9 @@ use grit_lib::diff::{
     submodule_porcelain_flags, tree_diff_structured_parallel, write_commit_log_patch,
     write_commits_log_patch, write_patch, write_patch_resolved, DiffArguments, DiffDetail,
     DiffEntry, DiffFilesOutput, DiffIndexToWorktreeOptions, DiffMerges, DiffOptions, DiffRequest,
-    DiffSide, DiffStatus, DiffTarget, ListedFileDiff, LogPatchCommitHeader, LogPatchOptions,
-    PatchResolvedSide, PatchSide, PatchTextOptions, ResolveDiffArgumentsError, TreeDiffStructured,
+    DiffSide, DiffStatus, DiffTarget, DiffTotals, LineStat, ListedFileDiff, LogPatchCommitHeader,
+    LogPatchOptions, PatchResolvedSide, PatchSide, PatchTextOptions, ResolveDiffArgumentsError,
+    TreeDiffStructured,
 };
 use grit_lib::index::Index;
 use grit_lib::objects::odb::Odb;
@@ -89,11 +90,39 @@ pub struct DiffTotalsJson {
     pub deletions: usize,
 }
 
+impl From<DiffTotals> for DiffTotalsJson {
+    fn from(totals: DiffTotals) -> Self {
+        Self {
+            files_changed: totals.files_changed,
+            insertions: totals.insertions,
+            deletions: totals.deletions,
+        }
+    }
+}
+
 /// Per-file line counts in JSON when stat modes are active.
 #[derive(Serialize, JsonSchema, Clone, Copy)]
 pub struct LineStatJson {
     pub insertions: usize,
     pub deletions: usize,
+}
+
+impl From<LineStat> for LineStatJson {
+    fn from(stat: LineStat) -> Self {
+        Self {
+            insertions: stat.insertions,
+            deletions: stat.deletions,
+        }
+    }
+}
+
+impl From<LineStatJson> for LineStat {
+    fn from(stat: LineStatJson) -> Self {
+        Self {
+            insertions: stat.insertions,
+            deletions: stat.deletions,
+        }
+    }
 }
 
 /// Result of `grit diff`.
@@ -167,6 +196,23 @@ pub struct FileDiff {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub hunks: Option<Vec<Hunk>>,
+}
+
+impl FileDiff {
+    /// Line counts from the stat, or counted from the patch hunks when only those were built.
+    #[must_use]
+    pub fn line_stat(&self) -> LineStat {
+        match self.stat {
+            Some(stat) => stat.into(),
+            None => self
+                .hunks
+                .iter()
+                .flatten()
+                .flat_map(|hunk| &hunk.lines)
+                .map(|line| StructuredLineKind::from(line.kind))
+                .collect(),
+        }
+    }
 }
 
 /// A contiguous run of changes plus surrounding context.
@@ -299,6 +345,16 @@ pub enum LineKind {
     Del,
 }
 
+impl From<LineKind> for StructuredLineKind {
+    fn from(kind: LineKind) -> Self {
+        match kind {
+            LineKind::Context => Self::Context,
+            LineKind::Add => Self::Add,
+            LineKind::Del => Self::Del,
+        }
+    }
+}
+
 /// A run of text within a line, flagged if it's part of the word-level change.
 #[derive(Clone, Serialize, JsonSchema)]
 pub struct Segment {
@@ -377,12 +433,7 @@ fn attach_path_display(
 fn finish_no_index_outcome(format: DiffFormatArgs, mut outcome: DiffOutcome) -> DiffOutcome {
     outcome.changed = !outcome.files.is_empty();
     if format.detail() == DiffDetail::Stat && outcome.totals.is_none() {
-        let stat = diffstat_from_files(&outcome.files);
-        outcome.totals = Some(DiffTotalsJson {
-            files_changed: stat.files_changed,
-            insertions: stat.insertions,
-            deletions: stat.deletions,
-        });
+        outcome.totals = Some(diffstat_from_files(&outcome.files).lib().totals().into());
     }
     outcome.format = format;
     outcome
@@ -397,12 +448,7 @@ fn finish_outcome(
         outcome.changed = !outcome.files.is_empty();
     }
     if format.detail() == DiffDetail::Stat && outcome.totals.is_none() {
-        let stat = diffstat_from_files(&outcome.files);
-        outcome.totals = Some(DiffTotalsJson {
-            files_changed: stat.files_changed,
-            insertions: stat.insertions,
-            deletions: stat.deletions,
-        });
+        outcome.totals = Some(diffstat_from_files(&outcome.files).lib().totals().into());
     }
     attach_path_display(repo, format, outcome)
 }
@@ -499,11 +545,7 @@ fn outcome_from_lib(
     format: DiffFormatArgs,
     detail: DiffDetail,
 ) -> DiffOutcome {
-    let totals = output.totals.map(|t| DiffTotalsJson {
-        files_changed: t.files_changed,
-        insertions: t.insertions,
-        deletions: t.deletions,
-    });
+    let totals = output.totals.map(DiffTotalsJson::from);
     let files = output
         .files
         .into_iter()
@@ -601,10 +643,7 @@ fn lib_file_to_cli(f: ListedFileDiff, detail: DiffDetail) -> FileDiff {
         binary: f.binary,
         content_changed,
         similarity: f.similarity,
-        stat: f.stat.map(|s| LineStatJson {
-            insertions: s.insertions,
-            deletions: s.deletions,
-        }),
+        stat: f.stat.map(LineStatJson::from),
         combined_status: f.combined_status,
         hunks: if detail == DiffDetail::Patch {
             Some(hunks.unwrap_or_default())
@@ -1234,21 +1273,7 @@ fn file_diff_from_lib(f: grit_lib::diff::FileDiff, detail: DiffDetail) -> FileDi
     let stat = if f.binary {
         None
     } else if detail == DiffDetail::Stat {
-        let mut insertions = 0usize;
-        let mut deletions = 0usize;
-        for h in &f.hunks {
-            for l in &h.lines {
-                match l.kind {
-                    StructuredLineKind::Add => insertions += 1,
-                    StructuredLineKind::Del => deletions += 1,
-                    StructuredLineKind::Context => {}
-                }
-            }
-        }
-        Some(LineStatJson {
-            insertions,
-            deletions,
-        })
+        Some(LineStat::from_hunks(&f.hunks).into())
     } else {
         None
     };
@@ -1718,8 +1743,7 @@ fn outcome_stat_from_changes(
     diff_options: DiffOptions,
     format: DiffFormatArgs,
 ) -> DiffOutcome {
-    let mut insertions = 0usize;
-    let mut deletions = 0usize;
+    let mut lines = LineStat::default();
     let files = changes
         .into_iter()
         .map(|fc| {
@@ -1728,12 +1752,8 @@ fn outcome_stat_from_changes(
             } else {
                 let counts =
                     line_change_counts(&fc.old_bytes.text(), &fc.new_bytes.text(), &diff_options);
-                insertions += counts.insertions;
-                deletions += counts.deletions;
-                Some(LineStatJson {
-                    insertions: counts.insertions,
-                    deletions: counts.deletions,
-                })
+                lines += counts;
+                Some(counts.into())
             };
             FileDiff {
                 path: fc.path,
@@ -1757,8 +1777,8 @@ fn outcome_stat_from_changes(
         changed: files_changed > 0,
         totals: Some(DiffTotalsJson {
             files_changed,
-            insertions,
-            deletions,
+            insertions: lines.insertions,
+            deletions: lines.deletions,
         }),
         files,
         format,
@@ -2330,7 +2350,7 @@ impl DiffOutcome {
         let fmt = self.format;
         if fmt.human_shortstat_only() {
             let stat = diffstat_from_files(&self.files);
-            outln!(w, "{}", diff_render::summary_line(&stat));
+            outln!(w, "{}", diff_render::summary_line(stat.lib().totals()));
             return Ok(());
         }
         if fmt.detail() == DiffDetail::Stat {

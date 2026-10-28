@@ -383,6 +383,20 @@ impl From<DiffStatus> for ChangeStatus {
     }
 }
 
+impl From<ChangeStatus> for DiffStatus {
+    fn from(status: ChangeStatus) -> Self {
+        match status {
+            ChangeStatus::Added => Self::Added,
+            ChangeStatus::Deleted => Self::Deleted,
+            ChangeStatus::Modified => Self::Modified,
+            ChangeStatus::TypeChanged => Self::TypeChanged,
+            ChangeStatus::Renamed => Self::Renamed,
+            ChangeStatus::Copied => Self::Copied,
+            ChangeStatus::Unmerged => Self::Unmerged,
+        }
+    }
+}
+
 impl From<&DiffStatus> for ChangeStatus {
     fn from(status: &DiffStatus) -> Self {
         (*status).into()
