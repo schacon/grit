@@ -28,6 +28,11 @@ fn setup_clone_like_layout(tmp: &Path) -> (PathBuf, PathBuf, ObjectId) {
         .trim()
         .parse()
         .unwrap();
+    // A clone holds the objects its remote-tracking refs name.
+    git(
+        &local,
+        &["fetch", "-q", remote.to_str().unwrap(), "refs/heads/main"],
+    );
     write_symbolic_ref(
         &local_git,
         "refs/remotes/origin/HEAD",
@@ -97,6 +102,11 @@ fn setup_slash_remote_layout(tmp: &Path) -> (PathBuf, PathBuf) {
         .trim()
         .parse()
         .unwrap();
+    // A clone holds the objects its remote-tracking refs name.
+    git(
+        &local,
+        &["fetch", "-q", remote.to_str().unwrap(), "refs/heads/main"],
+    );
     write_symbolic_ref(
         &local_git,
         "refs/remotes/team/origin/HEAD",

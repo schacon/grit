@@ -331,6 +331,12 @@ fn inspect_tracked_with_non_directory_destination_prefix_reftable() {
         upstream.display()
     ));
     std::fs::write(&config_path, config).expect("write config");
+    // The tracking refs must name objects the client can read; borrow upstream's.
+    std::fs::write(
+        repo.git_dir().join("objects/info/alternates"),
+        format!("{}\n", upstream.join(".git/objects").display()),
+    )
+    .expect("write alternates");
     for name in ["refs/remotes/origin-main", "refs/remotes/origin-topic"] {
         grit_lib::refs::write_ref(&repo.git_dir(), name, &head).expect("write tracking ref");
     }

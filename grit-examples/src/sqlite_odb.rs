@@ -471,11 +471,10 @@ pub fn run_sqlite_object_store_demo(repo_root: &Path) -> Result<Vec<String>> {
         .odb()
         .write(ObjectKind::Commit, commit_body.as_bytes())?;
     // The commit lives in the custom store, which only the repository's own ref store checks.
-    repo.references()
-        .update(
-            &RefName::try_from("refs/heads/main").map_err(|e| Error::InvalidRef(e.to_string()))?,
-            &commit,
-        )?;
+    repo.references().update(
+        &RefName::try_from("refs/heads/main").map_err(|e| Error::InvalidRef(e.to_string()))?,
+        &commit,
+    )?;
 
     let tip = commit.to_hex();
     let listed = rev_list(

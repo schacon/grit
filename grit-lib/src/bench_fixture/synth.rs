@@ -12,7 +12,7 @@ use crate::odb::Odb;
 use crate::pack_write::{install_pack_stream, whole_pack_uncompressed_size, InstallPackOptions};
 use crate::porcelain::checkout::checkout_between_trees;
 use crate::prune_packed::{prune_packed_objects, PrunePackedOptions};
-use crate::refs::{write_packed_refs_file, write_ref, PackedRefRecord};
+use crate::refs::{write_packed_refs_file, PackedRefRecord};
 use crate::repo::{InitOptions, Repository};
 use crate::transfer::{build_pack, PackBuildOptions};
 use crate::write_tree::{write_tree_from_index, write_tree_update_index, WriteTreeFlags};
@@ -355,7 +355,7 @@ fn generate_into_repo(repo: &Repository, spec: TierSpec) -> Result<ObjectId> {
         .last()
         .ok_or_else(|| Error::CorruptObject("no commits generated".into()))?;
     write_refs(repo, &commits, spec, &mut rng)?;
-    write_ref(repo.git_dir(), "refs/heads/main", &head)?;
+    crate::refs::update_direct_ref_on_store(repo.refs(), repo.git_dir(), "refs/heads/main", &head)?;
     Ok(head)
 }
 

@@ -1,5 +1,7 @@
 //! [`Repository::refs`] honors `GIT_NAMESPACE` from [`RepositoryOptions`].
 
+use crate::support;
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::ops::ControlFlow;
@@ -61,7 +63,7 @@ fn repository_files_refstore_honors_git_namespace_option() {
     let opts = RepositoryOptions::with_environment(env);
     let repo = Repository::open(&git_dir, &opts).expect("open");
 
-    let oid = sample_oid();
+    let oid = support::stored_commit(&git_dir, 1);
     repo.refs()
         .prepare(
             RefTransaction::new()

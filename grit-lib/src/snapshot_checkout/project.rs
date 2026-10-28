@@ -445,7 +445,12 @@ pub fn project_branch(
         Err(refusal) => return Ok(Err(refusal)),
     };
     known.record(&projection.made())?;
-    crate::refs::write_ref(repo.git_dir(), &in_ref(&checkout.id, name), &projection.tip)?;
+    crate::refs::update_direct_ref_on_store(
+        repo.refs(),
+        repo.git_dir(),
+        &in_ref(&checkout.id, name),
+        &projection.tip,
+    )?;
     Ok(Ok(BranchInfo {
         name: name.to_owned(),
         tip: tip.to_hex(),

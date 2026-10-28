@@ -403,12 +403,8 @@ fn concurrent_reftable_cas_single_winner() {
     )
     .expect("init");
     let git_dir = repo.git_dir().to_path_buf();
-    let c1: ObjectId = "67bf698f3ab735e92fb011a99cff3497c44d30c1"
-        .parse()
-        .expect("c1");
-    let c2: ObjectId = "1111111111111111111111111111111111111111"
-        .parse()
-        .expect("c2");
+    let c1 = support::stored_commit(&git_dir, 1);
+    let c2 = support::stored_commit(&git_dir, 2);
     write_ref(&git_dir, "refs/heads/cas-rt", &c1).expect("seed");
 
     let item = RefTransactionItem {

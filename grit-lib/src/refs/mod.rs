@@ -1934,7 +1934,9 @@ pub fn ref_update_flags(refname: &str) -> RefUpdateFlags {
 ///
 /// # Errors
 ///
-/// Returns an error when the ref already exists, the name is invalid, or ref/reflog I/O fails.
+/// Returns an error when the ref already exists, the name is invalid, `oid` is missing from
+/// `git_dir`'s objects or (for a branch) is not a commit (see [`write_ref`]), or ref/reflog
+/// I/O fails.
 pub fn create_ref_with_reflog(
     git_dir: &Path,
     refname: &str,
@@ -1948,9 +1950,8 @@ pub fn create_ref_with_reflog(
         true,
     )
     .unwrap_or_default();
-    let store = open_ref_store(git_dir)?;
     create_ref_with_reflog_on_store(
-        store.as_ref(),
+        &store::open_checked_ref_store(git_dir)?,
         git_dir,
         &config,
         refname,
