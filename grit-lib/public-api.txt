@@ -3547,6 +3547,8 @@ impl core::cmp::PartialEq for grit_lib::diff::hunk_id::DiffSide
 pub fn grit_lib::diff::hunk_id::DiffSide::eq(&self, &Self) -> bool
 impl core::fmt::Debug for grit_lib::diff::hunk_id::DiffSide
 pub fn grit_lib::diff::hunk_id::DiffSide::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::diff::hunk_id::DiffSide
+pub fn grit_lib::diff::hunk_id::DiffSide::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for grit_lib::diff::hunk_id::DiffSide
 pub fn grit_lib::diff::hunk_id::DiffSide::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for grit_lib::diff::hunk_id::DiffSide
@@ -3563,8 +3565,6 @@ pub grit_lib::diff::hunk_id::HunkIdError::Invalid
 impl core::cmp::Eq for grit_lib::diff::hunk_id::HunkIdError
 impl core::cmp::PartialEq for grit_lib::diff::hunk_id::HunkIdError
 pub fn grit_lib::diff::hunk_id::HunkIdError::eq(&self, &Self) -> bool
-impl core::convert::From<grit_lib::diff::hunk_id::HunkIdError> for grit_lib::porcelain::hunk_select::HunkSelectError
-pub fn grit_lib::porcelain::hunk_select::HunkSelectError::from(grit_lib::diff::hunk_id::HunkIdError) -> Self
 impl core::error::Error for grit_lib::diff::hunk_id::HunkIdError
 impl core::fmt::Debug for grit_lib::diff::hunk_id::HunkIdError
 pub fn grit_lib::diff::hunk_id::HunkIdError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -4219,6 +4219,8 @@ impl core::cmp::PartialEq for grit_lib::diff::hunk_id::DiffSide
 pub fn grit_lib::diff::hunk_id::DiffSide::eq(&self, &Self) -> bool
 impl core::fmt::Debug for grit_lib::diff::hunk_id::DiffSide
 pub fn grit_lib::diff::hunk_id::DiffSide::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::diff::hunk_id::DiffSide
+pub fn grit_lib::diff::hunk_id::DiffSide::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for grit_lib::diff::hunk_id::DiffSide
 pub fn grit_lib::diff::hunk_id::DiffSide::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for grit_lib::diff::hunk_id::DiffSide
@@ -4285,8 +4287,6 @@ pub grit_lib::diff::HunkIdError::Invalid
 impl core::cmp::Eq for grit_lib::diff::hunk_id::HunkIdError
 impl core::cmp::PartialEq for grit_lib::diff::hunk_id::HunkIdError
 pub fn grit_lib::diff::hunk_id::HunkIdError::eq(&self, &Self) -> bool
-impl core::convert::From<grit_lib::diff::hunk_id::HunkIdError> for grit_lib::porcelain::hunk_select::HunkSelectError
-pub fn grit_lib::porcelain::hunk_select::HunkSelectError::from(grit_lib::diff::hunk_id::HunkIdError) -> Self
 impl core::error::Error for grit_lib::diff::hunk_id::HunkIdError
 impl core::fmt::Debug for grit_lib::diff::hunk_id::HunkIdError
 pub fn grit_lib::diff::hunk_id::HunkIdError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -13567,6 +13567,12 @@ pub enum grit_lib::porcelain::hunk_select::HunkSelectError
 pub grit_lib::porcelain::hunk_select::HunkSelectError::Apply(grit_lib::error::ApplyError)
 pub grit_lib::porcelain::hunk_select::HunkSelectError::Binary
 pub grit_lib::porcelain::hunk_select::HunkSelectError::Binary::path: alloc::string::String
+pub grit_lib::porcelain::hunk_select::HunkSelectError::Gitlink
+pub grit_lib::porcelain::hunk_select::HunkSelectError::Gitlink::path: alloc::string::String
+pub grit_lib::porcelain::hunk_select::HunkSelectError::InvalidMode
+pub grit_lib::porcelain::hunk_select::HunkSelectError::InvalidMode::mode: alloc::string::String
+pub grit_lib::porcelain::hunk_select::HunkSelectError::InvalidMode::path: alloc::string::String
+pub grit_lib::porcelain::hunk_select::HunkSelectError::MissingPath
 pub grit_lib::porcelain::hunk_select::HunkSelectError::PatchBuild
 pub grit_lib::porcelain::hunk_select::HunkSelectError::RangeOutOfBounds
 pub grit_lib::porcelain::hunk_select::HunkSelectError::RangeOutOfBounds::end: usize
@@ -13575,24 +13581,19 @@ pub grit_lib::porcelain::hunk_select::HunkSelectError::RangeOutOfBounds::path: a
 pub grit_lib::porcelain::hunk_select::HunkSelectError::RangeOutOfBounds::start: usize
 pub grit_lib::porcelain::hunk_select::HunkSelectError::RangeSelectsNothing
 pub grit_lib::porcelain::hunk_select::HunkSelectError::RangeSelectsNothing::path: alloc::string::String
-pub grit_lib::porcelain::hunk_select::HunkSelectError::Repository(alloc::string::String)
+pub grit_lib::porcelain::hunk_select::HunkSelectError::Repository(alloc::boxed::Box<grit_lib::error::Error>)
 pub grit_lib::porcelain::hunk_select::HunkSelectError::StaleId
 pub grit_lib::porcelain::hunk_select::HunkSelectError::StaleId::current_ids: alloc::vec::Vec<grit_lib::diff::hunk_id::HunkId>
 pub grit_lib::porcelain::hunk_select::HunkSelectError::StaleId::id: grit_lib::diff::hunk_id::HunkId
 pub grit_lib::porcelain::hunk_select::HunkSelectError::StaleId::path: core::option::Option<alloc::string::String>
 pub grit_lib::porcelain::hunk_select::HunkSelectError::UnknownId
 pub grit_lib::porcelain::hunk_select::HunkSelectError::UnknownId::id: alloc::string::String
+pub grit_lib::porcelain::hunk_select::HunkSelectError::UnselectableSide
+pub grit_lib::porcelain::hunk_select::HunkSelectError::UnselectableSide::side: grit_lib::diff::hunk_id::DiffSide
 pub grit_lib::porcelain::hunk_select::HunkSelectError::WrongSide
-pub grit_lib::porcelain::hunk_select::HunkSelectError::WrongSide::actual_side: &'static str
+pub grit_lib::porcelain::hunk_select::HunkSelectError::WrongSide::actual_side: grit_lib::diff::hunk_id::DiffSide
 pub grit_lib::porcelain::hunk_select::HunkSelectError::WrongSide::id: grit_lib::diff::hunk_id::HunkId
-pub grit_lib::porcelain::hunk_select::HunkSelectError::WrongSide::requested_side: &'static str
-impl core::clone::Clone for grit_lib::porcelain::hunk_select::HunkSelectError
-pub fn grit_lib::porcelain::hunk_select::HunkSelectError::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::porcelain::hunk_select::HunkSelectError
-impl core::cmp::PartialEq for grit_lib::porcelain::hunk_select::HunkSelectError
-pub fn grit_lib::porcelain::hunk_select::HunkSelectError::eq(&self, &Self) -> bool
-impl core::convert::From<grit_lib::diff::hunk_id::HunkIdError> for grit_lib::porcelain::hunk_select::HunkSelectError
-pub fn grit_lib::porcelain::hunk_select::HunkSelectError::from(grit_lib::diff::hunk_id::HunkIdError) -> Self
+pub grit_lib::porcelain::hunk_select::HunkSelectError::WrongSide::requested_side: grit_lib::diff::hunk_id::DiffSide
 impl core::convert::From<grit_lib::error::ApplyError> for grit_lib::porcelain::hunk_select::HunkSelectError
 pub fn grit_lib::porcelain::hunk_select::HunkSelectError::from(grit_lib::error::ApplyError) -> Self
 impl core::convert::From<grit_lib::error::Error> for grit_lib::porcelain::hunk_select::HunkSelectError
@@ -13609,14 +13610,13 @@ impl core::fmt::Debug for grit_lib::porcelain::hunk_select::HunkSelectError
 pub fn grit_lib::porcelain::hunk_select::HunkSelectError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::fmt::Display for grit_lib::porcelain::hunk_select::HunkSelectError
 pub fn grit_lib::porcelain::hunk_select::HunkSelectError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for grit_lib::porcelain::hunk_select::HunkSelectError
 impl core::marker::Freeze for grit_lib::porcelain::hunk_select::HunkSelectError
 impl core::marker::Send for grit_lib::porcelain::hunk_select::HunkSelectError
 impl core::marker::Sync for grit_lib::porcelain::hunk_select::HunkSelectError
 impl core::marker::Unpin for grit_lib::porcelain::hunk_select::HunkSelectError
 impl core::marker::UnsafeUnpin for grit_lib::porcelain::hunk_select::HunkSelectError
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::hunk_select::HunkSelectError
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::hunk_select::HunkSelectError
+impl !core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::hunk_select::HunkSelectError
+impl !core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::hunk_select::HunkSelectError
 pub struct grit_lib::porcelain::hunk_select::HunkSelection
 pub grit_lib::porcelain::hunk_select::HunkSelection::ids: alloc::vec::Vec<grit_lib::diff::hunk_id::HunkId>
 pub grit_lib::porcelain::hunk_select::HunkSelection::ranges: alloc::vec::Vec<grit_lib::porcelain::hunk_select::LineRange>

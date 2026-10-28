@@ -138,10 +138,14 @@ pub fn hunks_exit_code(err: &anyhow::Error) -> i32 {
         match sel {
             HunkSelectError::UnknownId { .. }
             | HunkSelectError::StaleId { .. }
-            | HunkSelectError::WrongSide { .. } => 2,
+            | HunkSelectError::WrongSide { .. }
+            | HunkSelectError::UnselectableSide { .. } => 2,
             HunkSelectError::Binary { .. }
             | HunkSelectError::RangeOutOfBounds { .. }
             | HunkSelectError::RangeSelectsNothing { .. }
+            | HunkSelectError::Gitlink { .. }
+            | HunkSelectError::InvalidMode { .. }
+            | HunkSelectError::MissingPath
             | HunkSelectError::Apply(_)
             | HunkSelectError::Repository(_)
             | HunkSelectError::PatchBuild => 1,
