@@ -1731,7 +1731,8 @@ pub(crate) fn fetch_remote_into(
     }
     let d_prune = t_prune.elapsed();
 
-    let mut store_batch: Vec<crate::refs::store::RefUpdate> = Vec::new();
+    let mut store_batch: Vec<(String, crate::refs::store::RawRef)> =
+        Vec::with_capacity(matched.len());
 
     // Load `packed-refs` once for the whole apply. Resolving each ref's previous
     // value (and the per-write namespace-conflict check) would otherwise re-read
@@ -1817,13 +1818,7 @@ pub(crate) fn fetch_remote_into(
                 });
                 continue;
             }
-            store_batch.push(crate::refs::store::RefUpdate {
-                name: local_ref.clone(),
-                new_value: Some(crate::refs::store::RawRef::Direct(m.oid)),
-                expected: crate::refs::store::Expected::Any,
-                reflog: None,
-                flags: Default::default(),
-            });
+            store_batch.push((local_ref.clone(), crate::refs::store::RawRef::Direct(m.oid)));
             n_written += 1;
         }
 
@@ -1841,7 +1836,7 @@ pub(crate) fn fetch_remote_into(
         let t = std::time::Instant::now();
         crate::transfer::apply_fetch_ref_updates(
             local,
-            &store_batch,
+            store_batch,
             &mut updates,
             crate::transfer::FetchRefRejectHint {
                 prune: opts.prune,

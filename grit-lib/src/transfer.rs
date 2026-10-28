@@ -1896,7 +1896,8 @@ pub(crate) fn fetch_local_into(
         prune_tracking_refs(local, &positive, &remote_refs, opts.dry_run, &mut updates)?;
     }
 
-    let mut store_batch: Vec<crate::refs::store::RefUpdate> = Vec::new();
+    let mut store_batch: Vec<(String, crate::refs::store::RawRef)> =
+        Vec::with_capacity(matched.len());
     for m in &matched {
         let Some(local_ref) = &m.local_ref else {
             // dst empty: fetched but not stored. Report as a no-store update.
@@ -1957,13 +1958,7 @@ pub(crate) fn fetch_local_into(
                 });
                 continue;
             }
-            store_batch.push(crate::refs::store::RefUpdate {
-                name: local_ref.clone(),
-                new_value: Some(crate::refs::store::RawRef::Direct(m.oid)),
-                expected: crate::refs::store::Expected::Any,
-                reflog: None,
-                flags: Default::default(),
-            });
+            store_batch.push((local_ref.clone(), crate::refs::store::RawRef::Direct(m.oid)));
         }
 
         updates.push(RefUpdate {
@@ -1982,16 +1977,10 @@ pub(crate) fn fetch_local_into(
                 let head_ref = format!("refs/remotes/{remote}/HEAD");
                 if crate::refs::resolve_ref_in(local, &head_ref).is_err() {
                     let target = format!("refs/remotes/{remote}/{branch}");
-                    let target_will_exist = store_batch.iter().any(|u| u.name == target)
+                    let target_will_exist = store_batch.iter().any(|(name, _)| *name == target)
                         || crate::refs::resolve_ref_in(local, &target).is_ok();
                     if target_will_exist {
-                        store_batch.push(crate::refs::store::RefUpdate {
-                            name: head_ref,
-                            new_value: Some(crate::refs::store::RawRef::Symbolic(target)),
-                            expected: crate::refs::store::Expected::Any,
-                            reflog: None,
-                            flags: Default::default(),
-                        });
+                        store_batch.push((head_ref, crate::refs::store::RawRef::Symbolic(target)));
                     }
                 }
             }
@@ -2000,7 +1989,7 @@ pub(crate) fn fetch_local_into(
     if !opts.dry_run && !store_batch.is_empty() {
         apply_fetch_ref_updates(
             local,
-            &store_batch,
+            store_batch,
             &mut updates,
             FetchRefRejectHint {
                 prune: opts.prune,
@@ -3479,8 +3468,9 @@ fn mark_fetch_ref_update_rejected(
 /// Commit tracking-ref writes from a fetch into `local`'s ref store, applying every ref
 /// that can be updated.
 ///
-/// Uses one batch transaction when the full batch validates; otherwise falls back to
-/// per-ref commits and records lock or namespace failures on the matching
+/// Each of `writes` stores a value under a name whatever the ref held before, without a
+/// reflog entry. They are committed as one batch transaction when the full batch validates;
+/// otherwise one at a time, recording lock or namespace failures on the matching
 /// [`RefUpdate`] rows instead of aborting the whole fetch.
 ///
 /// With `initial` (the first fetch of a clone), the direct refs are committed first as an
@@ -3492,30 +3482,33 @@ fn mark_fetch_ref_update_rejected(
 /// Propagates non-rejectable ref-store and I/O errors from the fallback path.
 pub(crate) fn apply_fetch_ref_updates(
     local: &crate::repo::Repository,
-    store_batch: &[crate::refs::store::RefUpdate],
+    writes: Vec<(String, crate::refs::store::RawRef)>,
     updates: &mut [RefUpdate],
     hint: FetchRefRejectHint<'_>,
     initial: bool,
 ) -> Result<()> {
-    if store_batch.is_empty() {
-        return Ok(());
-    }
+    use crate::refs::store::RawRef;
+    let store_update = |(name, value): &(String, RawRef)| crate::refs::store::RefUpdate {
+        name: name.clone(),
+        new_value: Some(value.clone()),
+        expected: crate::refs::store::Expected::Any,
+        reflog: None,
+        flags: Default::default(),
+    };
     let store = local.refs();
-    let symbolic: Vec<crate::refs::store::RefUpdate>;
-    let mut store_batch = store_batch;
+    let mut pending: Vec<&(String, RawRef)> = writes.iter().collect();
     if initial {
-        let (direct, rest) = store_batch
+        let (direct, rest): (Vec<_>, Vec<_>) = pending
             .iter()
-            .cloned()
-            .partition(|u| matches!(u.new_value, Some(crate::refs::store::RawRef::Direct(_))));
+            .copied()
+            .partition(|(_, value)| matches!(value, RawRef::Direct(_)));
+        let direct = direct.into_iter().map(store_update).collect();
         if crate::refs::commit_initial_ref_updates_on_store(store, direct).is_ok() {
-            symbolic = rest;
-            store_batch = &symbolic;
+            pending = rest;
         }
     }
-    if store_batch.is_empty()
-        || crate::refs::commit_ref_updates_on_store(store, store_batch, &[]).is_ok()
-    {
+    let batch = pending.iter().copied().map(store_update).collect();
+    if pending.is_empty() || crate::refs::commit_owned_ref_updates_on_store(store, batch).is_ok() {
         return Ok(());
     }
 
@@ -3528,17 +3521,11 @@ pub(crate) fn apply_fetch_ref_updates(
             .collect()
     };
 
-    for store_update in store_batch {
-        match crate::refs::commit_ref_update_on_store(store, store_update.clone()) {
+    for write in pending {
+        match crate::refs::commit_ref_update_on_store(store, store_update(write)) {
             Ok(()) => {}
             Err(err) if fetch_ref_store_error_rejectable(&err) => {
-                mark_fetch_ref_update_rejected(
-                    updates,
-                    &store_update.name,
-                    &err,
-                    &stale_tracking,
-                    &hint,
-                );
+                mark_fetch_ref_update_rejected(updates, &write.0, &err, &stale_tracking, &hint);
             }
             Err(err) => return Err(err),
         }

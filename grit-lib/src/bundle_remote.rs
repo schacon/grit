@@ -425,7 +425,8 @@ fn complete_bundle_fetch(
         prune_tracking_refs(local, &positive, remote_refs, opts.dry_run, &mut updates)?;
     }
 
-    let mut store_batch: Vec<crate::refs::store::RefUpdate> = Vec::new();
+    let mut store_batch: Vec<(String, crate::refs::store::RawRef)> =
+        Vec::with_capacity(matched.len());
     for m in &matched {
         let Some(local_ref) = &m.local_ref else {
             updates.push(RefUpdate {
@@ -474,13 +475,7 @@ fn complete_bundle_fetch(
                 });
                 continue;
             }
-            store_batch.push(crate::refs::store::RefUpdate {
-                name: local_ref.clone(),
-                new_value: Some(crate::refs::store::RawRef::Direct(m.oid)),
-                expected: crate::refs::store::Expected::Any,
-                reflog: None,
-                flags: Default::default(),
-            });
+            store_batch.push((local_ref.clone(), crate::refs::store::RawRef::Direct(m.oid)));
         }
 
         updates.push(RefUpdate {
@@ -496,7 +491,7 @@ fn complete_bundle_fetch(
     if !opts.dry_run && !store_batch.is_empty() {
         crate::transfer::apply_fetch_ref_updates(
             local,
-            &store_batch,
+            store_batch,
             &mut updates,
             crate::transfer::FetchRefRejectHint {
                 prune: opts.prune,
