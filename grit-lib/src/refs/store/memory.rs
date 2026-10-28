@@ -18,7 +18,8 @@ struct MemoryRefStoreInner {
     /// Shared so iterators can walk a snapshot after releasing the lock; writers go through
     /// [`Arc::make_mut`], which copies only while such a walk still holds the old state.
     state: Arc<RefBatchState>,
-    prepared: Option<PreparedBatch>,
+    /// The single writer slot: the transaction between `prepare` and commit or abort.
+    prepared: Option<RefTransaction>,
 }
 
 impl MemoryRefStoreInner {
@@ -27,16 +28,12 @@ impl MemoryRefStoreInner {
     }
 }
 
-#[derive(Debug, Clone)]
-struct PreparedBatch {
-    lock_name: String,
-    txn: RefTransaction,
-}
-
 /// Fully in-memory ref database with transactional updates.
 ///
 /// Built only on the public [`super::backend`] helpers, so it doubles as a reference for
-/// custom backends.
+/// custom backends. One prepared transaction at a time holds the whole store; another
+/// `prepare` meanwhile fails with [`RefStoreError::LockHeld`], which grit-lib's ref writes
+/// retry (see [`crate::refs::prepare_with_lock_wait`]).
 #[derive(Debug)]
 pub struct MemoryRefStore {
     inner: Mutex<MemoryRefStoreInner>,
@@ -64,15 +61,14 @@ impl MemoryRefStore {
     ///
     /// # Errors
     ///
-    /// Returns [`RefStoreError::LockHeld`] when a transaction is prepared.
+    /// Returns [`RefStoreError::LockHeld`] naming `name` when a transaction is prepared.
     pub fn set_ref(&self, name: impl Into<String>, value: RawRef) -> StoreResult<()> {
+        let name = name.into();
         let mut inner = self.lock();
-        if let Some(active) = &inner.prepared {
-            return Err(RefStoreError::LockHeld {
-                name: active.lock_name.clone(),
-            });
+        if inner.prepared.is_some() {
+            return Err(RefStoreError::LockHeld { name });
         }
-        inner.state_mut().refs.insert(name.into(), value);
+        inner.state_mut().refs.insert(name, value);
         Ok(())
     }
 
@@ -128,22 +124,14 @@ impl RefStore for MemoryRefStore {
     ) -> StoreResult<Box<dyn PreparedRefTransaction + Send + '_>> {
         txn.validate()?;
         let mut inner = self.lock();
-        if let Some(active) = &inner.prepared {
+        if inner.prepared.is_some() {
             return Err(RefStoreError::LockHeld {
-                name: active.lock_name.clone(),
+                name: txn.lock_name(),
             });
         }
 
         check_transaction(&inner.state, &txn)?;
-
-        let lock_name = txn
-            .updates()
-            .first()
-            .map(|u| u.name.clone())
-            .or_else(|| txn.reflog_renames().first().map(|r| r.from.clone()))
-            .or_else(|| txn.case_only_renames().first().map(|r| r.from.clone()))
-            .unwrap_or_else(|| "refs".to_owned());
-        inner.prepared = Some(PreparedBatch { lock_name, txn });
+        inner.prepared = Some(txn);
 
         Ok(Box::new(MemoryPrepared {
             store: self,
@@ -227,11 +215,11 @@ struct MemoryPrepared<'a> {
 impl PreparedRefTransaction for MemoryPrepared<'_> {
     fn commit(mut self: Box<Self>) -> StoreResult<()> {
         let mut inner = self.store.lock();
-        let Some(batch) = inner.prepared.take() else {
+        let Some(txn) = inner.prepared.take() else {
             return Ok(());
         };
         let mut trial = inner.state.snapshot();
-        apply_transaction(&mut trial, &batch.txn)?;
+        apply_transaction(&mut trial, &txn)?;
         inner.state = Arc::new(trial);
         self.committed = true;
         Ok(())

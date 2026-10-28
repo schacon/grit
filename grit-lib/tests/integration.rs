@@ -1341,6 +1341,8 @@ mod refstore_conformance_memory;
 mod refstore_conformance_reftable;
 #[path = "refstore_custom_backend.rs"]
 mod refstore_custom_backend;
+#[path = "refstore_lock_wait.rs"]
+mod refstore_lock_wait;
 #[path = "refstore_reftable_create_race.rs"]
 mod refstore_reftable_create_race;
 #[cfg(feature = "full-tests")]

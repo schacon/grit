@@ -212,18 +212,28 @@ impl LockFile {
         clock: Arc<dyn LockClock>,
         jitter: Arc<dyn LockJitter>,
     ) -> Result<Self, LockError> {
-        let deadline = match wait {
-            LockWait::Immediately => Some(clock.now()),
-            LockWait::Backoff { budget } => Some(clock.now() + budget),
-            LockWait::Indefinitely => None,
+        let to_lock_error = |source: io::Error| {
+            if source.kind() == io::ErrorKind::AlreadyExists {
+                LockError::Held {
+                    path: target.to_path_buf(),
+                }
+            } else {
+                LockError::Io {
+                    path: target.to_path_buf(),
+                    source,
+                }
+            }
         };
-
-        let mut attempt: u32 = 0;
+        let open = || OpenOptions::new().write(true).create_new(true).open(target);
         // The parent usually exists, so it is only created once an open fails. Creating it
         // then still reports a parent blocked by a file as the directory error.
         let mut parent_ready = false;
-        loop {
-            match OpenOptions::new().write(true).create_new(true).open(target) {
+        retry_while_held(
+            target,
+            || wait,
+            clock.as_ref(),
+            jitter.as_ref(),
+            || match open() {
                 Err(_) if !parent_ready => {
                     parent_ready = true;
                     if let Some(parent) = target.parent() {
@@ -232,40 +242,18 @@ impl LockFile {
                             source,
                         })?;
                     }
+                    open().map_err(to_lock_error)
                 }
-                Ok(file) => {
-                    return Ok(Self {
-                        lock_path: target.to_path_buf(),
-                        commit_path: None,
-                        file: Some(file),
-                        committed: false,
-                    });
-                }
-                Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {
-                    if matches!(wait, LockWait::Immediately)
-                        || deadline.is_some_and(|deadline| clock.now() >= deadline)
-                    {
-                        return Err(LockError::Held {
-                            path: target.to_path_buf(),
-                        });
-                    }
-                    let delay = backoff_delay(target, attempt, jitter.as_ref());
-                    attempt = attempt.saturating_add(1);
-                    if let Some(deadline) = deadline {
-                        let remaining = deadline.saturating_duration_since(clock.now());
-                        clock.sleep(delay.min(remaining));
-                    } else {
-                        clock.sleep(delay);
-                    }
-                }
-                Err(source) => {
-                    return Err(LockError::Io {
-                        path: target.to_path_buf(),
-                        source,
-                    });
-                }
-            }
-        }
+                other => other.map_err(to_lock_error),
+            },
+            |err| matches!(err, LockError::Held { .. }),
+        )
+        .map(|file| Self {
+            lock_path: target.to_path_buf(),
+            commit_path: None,
+            file: Some(file),
+            committed: false,
+        })
     }
 
     /// Set the destination path used by [`Self::commit`].
@@ -401,6 +389,54 @@ impl Drop for LockFile {
         }
         drop(self.file.take());
         let _ = fs::remove_file(&self.lock_path);
+    }
+}
+
+/// Run `attempt` until it succeeds, fails with an error `is_held` does not accept, or the wait
+/// budget is spent, sleeping the jittered backoff between attempts.
+///
+/// The deadline starts before the first attempt, so time spent inside `attempt` (which may
+/// itself wait on a lock) counts against the budget. `wait` is resolved only after the first
+/// held failure, so callers that read it from config pay nothing when the lock is free.
+/// `key` names the lock for [`LockJitter::fraction`].
+///
+/// # Errors
+///
+/// Returns the last error from `attempt`: immediately when `is_held` rejects it, otherwise
+/// once the budget is exhausted.
+pub(crate) fn retry_while_held<T, E>(
+    key: &Path,
+    wait: impl FnOnce() -> LockWait,
+    clock: &dyn LockClock,
+    jitter: &dyn LockJitter,
+    mut attempt: impl FnMut() -> Result<T, E>,
+    is_held: impl Fn(&E) -> bool,
+) -> Result<T, E> {
+    let start = clock.now();
+    let mut err = match attempt() {
+        Err(err) if is_held(&err) => err,
+        other => return other,
+    };
+    let deadline = match wait() {
+        LockWait::Immediately => return Err(err),
+        LockWait::Backoff { budget } => Some(start + budget),
+        LockWait::Indefinitely => None,
+    };
+    let mut tries: u32 = 0;
+    loop {
+        if deadline.is_some_and(|deadline| clock.now() >= deadline) {
+            return Err(err);
+        }
+        let delay = backoff_delay(key, tries, jitter);
+        tries = tries.saturating_add(1);
+        clock.sleep(match deadline {
+            Some(deadline) => delay.min(deadline.saturating_duration_since(clock.now())),
+            None => delay,
+        });
+        match attempt() {
+            Err(held) if is_held(&held) => err = held,
+            other => return other,
+        }
     }
 }
 
@@ -705,5 +741,75 @@ mod tests {
             Arc::new(FixedJitter(0.0)),
         )
         .expect("indefinite wait should eventually acquire");
+    }
+
+    #[test]
+    fn retry_while_held_resolves_wait_lazily_and_counts_attempt_time() {
+        let key = Path::new("refs");
+        let jitter = FixedJitter(0.0);
+        let clock = FakeLockClock::new(Instant::now());
+
+        let ok: Result<u32, u32> = retry_while_held(
+            key,
+            || panic!("wait resolved without contention"),
+            clock.as_ref(),
+            &jitter,
+            || Ok(7),
+            |_| true,
+        );
+        assert_eq!(ok, Ok(7));
+
+        let mut calls = 0;
+        let other = retry_while_held(
+            key,
+            || LockWait::Indefinitely,
+            clock.as_ref(),
+            &jitter,
+            || {
+                calls += 1;
+                Err::<(), _>("io")
+            },
+            |e| *e == "held",
+        );
+        assert_eq!((other, calls), (Err("io"), 1));
+        assert!(clock.sleeps().is_empty());
+
+        // The first attempt itself takes the whole budget, so nothing is retried.
+        let mut calls = 0;
+        let slow = retry_while_held(
+            key,
+            || LockWait::Backoff {
+                budget: Duration::from_millis(10),
+            },
+            clock.as_ref(),
+            &jitter,
+            || {
+                calls += 1;
+                clock.sleep(Duration::from_millis(10));
+                Err::<(), _>(calls)
+            },
+            |_| true,
+        );
+        assert_eq!(slow, Err(1));
+
+        let mut calls = 0;
+        let later = retry_while_held(
+            key,
+            || LockWait::Backoff {
+                budget: Duration::from_secs(1),
+            },
+            clock.as_ref(),
+            &jitter,
+            || {
+                calls += 1;
+                if calls < 4 {
+                    Err(calls)
+                } else {
+                    Ok(calls)
+                }
+            },
+            |_| true,
+        );
+        assert_eq!(later, Ok(4));
     }
 }

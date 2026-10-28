@@ -557,13 +557,13 @@ impl RefStore for ReftableRefStore {
         txn: RefTransaction,
     ) -> StoreResult<Box<dyn PreparedRefTransaction + Send + '_>> {
         txn.validate()?;
-        let (updates, reflog_renames, _case_only_renames) = txn.into_parts();
         let mut guard_state = self.prepared.lock().unwrap_or_else(|e| e.into_inner());
         if guard_state.is_some() {
             return Err(RefStoreError::LockHeld {
-                name: "refs".to_owned(),
+                name: txn.lock_name(),
             });
         }
+        let (updates, reflog_renames, _case_only_renames) = txn.into_parts();
 
         let updates = self.split_cross_stack_symref_updates(updates)?;
         let mut grouped: BTreeMap<PathBuf, Vec<RefUpdate>> = BTreeMap::new();

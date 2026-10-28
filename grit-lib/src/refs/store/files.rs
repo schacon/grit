@@ -1578,11 +1578,7 @@ impl RefStore for FilesRefStore {
         let mut prepared_guard = self.prepared.lock().unwrap_or_else(|e| e.into_inner());
         if prepared_guard.is_some() {
             return Err(RefStoreError::LockHeld {
-                name: txn
-                    .updates()
-                    .first()
-                    .map(|u| u.name.clone())
-                    .unwrap_or_else(|| "refs".to_owned()),
+                name: txn.lock_name(),
             });
         }
 

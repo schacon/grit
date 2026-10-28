@@ -145,8 +145,12 @@ pub trait RefStore: Send + Sync + Debug {
     ///    update other than a reflog-only one that would store the null object id with
     ///    [`RefStoreError::NullOid`], and malformed reflog identity or message fields with
     ///    [`RefStoreError::InvalidReflog`].
-    /// 2. While another prepared transaction holds the lock, fail with
-    ///    [`RefStoreError::LockHeld`] (do not wait indefinitely).
+    /// 2. While another prepared transaction holds a lock this one needs, fail promptly with
+    ///    [`RefStoreError::LockHeld`] naming this transaction's first ref. Do not spin or
+    ///    queue: grit-lib's ref writes go through [`crate::refs::prepare_with_lock_wait`],
+    ///    which retries with backoff for `core.filesRefLockTimeout`. A store with one
+    ///    writer slot for everything may report every overlap this way, so disjoint refs
+    ///    serialize but still all succeed.
     /// 3. Reject a created ref whose name is a directory prefix of a stored ref or of
     ///    another ref in the batch, or the other way round (`a` vs `a/b`), with
     ///    [`RefStoreError::NameUnavailable`]. Deletes in the same batch do not free a name.

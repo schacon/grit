@@ -8,6 +8,7 @@ use crate::config::ConfigSet;
 use crate::diff::{diff_trees, mode_from_metadata};
 use crate::hooks::{run_post_checkout, run_post_rewrite, HookName, RewriteKind};
 use crate::index::MODE_REGULAR;
+use crate::lockfile::LockWait;
 use crate::objects::ObjectId;
 use crate::objects::{parse_tree, ObjectKind};
 use crate::porcelain::switch::{
@@ -15,6 +16,7 @@ use crate::porcelain::switch::{
     verify_tree_transition_allow_local, TreeTransitionVerifyError,
 };
 use crate::porcelain::worktree_guard::prepare_tree_checkout;
+use crate::refs::prepare_with_lock_wait;
 use crate::refs::read_symbolic_ref_for_repository;
 use crate::refs::ref_update_flags;
 use crate::refs::should_autocreate_reflog_with_config;
@@ -1409,7 +1411,8 @@ fn commit_planned_ref_updates(
             .update(update)
             .map_err(|e| map_ref_store_error(e, &planned.name))?;
     }
-    let prepared = store.prepare(txn).map_err(|e| {
+    let wait = LockWait::files_ref_lock(config.as_ref().map(|c| c.as_ref()));
+    let prepared = prepare_with_lock_wait(store, txn, wait).map_err(|e| {
         map_ref_store_error(
             e,
             updates.first().map(|u| u.name.as_str()).unwrap_or("refs"),
@@ -1466,8 +1469,8 @@ pub(super) fn log_head_move(
     let txn = RefTransaction::new()
         .update(update)
         .map_err(|e| map_ref_store_error(e, "HEAD"))?;
-    repo.refs()
-        .prepare(txn)
+    let wait = LockWait::files_ref_lock(config.as_ref().map(|c| c.as_ref()));
+    prepare_with_lock_wait(repo.refs(), txn, wait)
         .and_then(|prepared| prepared.commit())
         .map_err(|e| map_ref_store_error(e, "HEAD"))?;
     Ok(())

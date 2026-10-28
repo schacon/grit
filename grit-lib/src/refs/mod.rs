@@ -60,14 +60,16 @@ use std::io;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use store::{
-    open_ref_store, Expected, RawRef as StoreRawRef, RefCaseOnlyRename, RefEntry, RefReflogRename,
-    RefStorageFormat, RefStore, RefTransaction, RefUpdate, RefUpdateFlags, ReflogUpdate,
+    open_ref_store, Expected, PreparedRefTransaction, RawRef as StoreRawRef, RefCaseOnlyRename,
+    RefEntry, RefReflogRename, RefStorageFormat, RefStore, RefStoreError, RefTransaction,
+    RefUpdate, RefUpdateFlags, ReflogUpdate,
 };
 
 use crate::check_ref_format::{check_refname_format_borrowed, RefNameOptions};
 use crate::config::ConfigSet;
 use crate::error::{Error, RefLockError, Result};
 use crate::ident::Signature;
+use crate::lockfile::LockWait;
 use crate::objects::{HashAlgo, ObjectId};
 use crate::pack;
 use store::format_reflog_identity;
@@ -131,6 +133,16 @@ pub(crate) fn commit_store_update(git_dir: &Path, update: RefUpdate) -> Result<(
 ///
 /// Propagates validation, compare-and-swap, and backend errors.
 pub fn commit_ref_update_on_store(store: &dyn RefStore, update: RefUpdate) -> Result<()> {
+    commit_ref_update_on_store_with_wait(store, update, || default_ref_lock_wait(store))
+}
+
+/// [`commit_ref_update_on_store`] retrying a busy store for `wait` (see
+/// [`prepare_with_lock_wait`]); `wait` is only evaluated once the store reports a held lock.
+pub(crate) fn commit_ref_update_on_store_with_wait(
+    store: &dyn RefStore,
+    update: RefUpdate,
+    wait: impl FnOnce() -> LockWait,
+) -> Result<()> {
     if let Some(ref log) = update.reflog {
         validate_reflog_update(log)?;
     }
@@ -138,12 +150,94 @@ pub fn commit_ref_update_on_store(store: &dyn RefStore, update: RefUpdate) -> Re
     let txn = RefTransaction::new()
         .update(update)
         .map_err(crate::error::Error::from)?;
-    let prepared = store
-        .prepare(txn)
+    let prepared = prepare_retrying(store, txn, wait)
         .map_err(|e| map_public_ref_store_error(Error::from(e), &refname))?;
     prepared
         .commit()
         .map_err(|e| map_public_ref_store_error(Error::from(e), &refname))
+}
+
+/// Prepare `txn` on `store`, retrying while the store reports [`RefStoreError::LockHeld`]
+/// until `wait` runs out.
+///
+/// [`RefStore::prepare`] fails fast when another transaction holds the lock it needs. A
+/// backend with one writer slot for the whole store (such as
+/// [`store::MemoryRefStore`], or a database with a single write transaction) therefore
+/// rejects concurrent updates even to disjoint refs. This helper turns that into a bounded
+/// wait, sleeping a short jittered backoff between attempts: [`LockWait::Immediately`] tries
+/// once, [`LockWait::Backoff`] retries until its budget elapses, and
+/// [`LockWait::Indefinitely`] retries until the lock is free. Use
+/// [`LockWait::files_ref_lock`] to follow `core.filesRefLockTimeout` like Git. The budget
+/// includes time spent inside `prepare`, so a backend that already waits for its own locks
+/// (the files and reftable backends) is not waited for twice. grit-lib's own ref writes
+/// (commits, branch updates, history rewrites, fetch and push) go through this retry.
+///
+/// ```rust
+/// use grit_lib::lockfile::LockWait;
+/// use grit_lib::objects::ObjectId;
+/// use grit_lib::refs::prepare_with_lock_wait;
+/// use grit_lib::refs::store::{
+///     Expected, MemoryRefStore, RawRef, RefStore, RefStoreError, RefTransaction, RefUpdate,
+/// };
+/// # fn main() -> grit_lib::error::Result<()> {
+/// let store = MemoryRefStore::new();
+/// let oid = ObjectId::from_hex("1111111111111111111111111111111111111111")?;
+/// let txn = |name: &str| {
+///     RefTransaction::new().update(RefUpdate {
+///         name: name.into(),
+///         new_value: Some(RawRef::Direct(oid)),
+///         expected: Expected::Any,
+///         reflog: None,
+///         flags: Default::default(),
+///     })
+/// };
+///
+/// let held = store.prepare(txn("refs/heads/a")?)?;
+/// let busy = prepare_with_lock_wait(&store, txn("refs/heads/b")?, LockWait::Immediately);
+/// assert!(matches!(busy.map(|_| ()), Err(RefStoreError::LockHeld { name }) if name == "refs/heads/b"));
+/// held.commit()?;
+///
+/// prepare_with_lock_wait(&store, txn("refs/heads/b")?, LockWait::files_ref_lock(None))?.commit()?;
+/// assert_eq!(store.read_raw("refs/heads/b")?, Some(RawRef::Direct(oid)));
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Errors
+///
+/// Returns [`RefStoreError::LockHeld`] when the lock is still held after `wait`, and any
+/// other error from `prepare` immediately, without retrying.
+pub fn prepare_with_lock_wait(
+    store: &dyn RefStore,
+    txn: RefTransaction,
+    wait: LockWait,
+) -> std::result::Result<Box<dyn PreparedRefTransaction + Send + '_>, RefStoreError> {
+    prepare_retrying(store, txn, || wait)
+}
+
+fn prepare_retrying(
+    store: &dyn RefStore,
+    txn: RefTransaction,
+    wait: impl FnOnce() -> LockWait,
+) -> std::result::Result<Box<dyn PreparedRefTransaction + Send + '_>, RefStoreError> {
+    use crate::lockfile::{retry_while_held, SystemLockClock, SystemLockJitter};
+    retry_while_held(
+        Path::new("refs"),
+        wait,
+        &SystemLockClock,
+        &SystemLockJitter,
+        || store.prepare(txn.clone()),
+        |err| matches!(err, RefStoreError::LockHeld { .. }),
+    )
+}
+
+/// How long ref writes wait for a busy store when the caller has no config at hand: the files
+/// backend's own `core.filesRefLockTimeout`, else Git's 100 ms default.
+fn default_ref_lock_wait(store: &dyn RefStore) -> LockWait {
+    store.as_files().map_or_else(
+        || LockWait::files_ref_lock(None),
+        |files| LockWait::files_ref_lock_for_git_dir(files.git_dir()),
+    )
 }
 
 /// Point `refname` at `oid` using `store`, optionally running loose-files prechecks when
@@ -249,7 +343,21 @@ pub fn commit_ref_batch_on_store(
         reflog_renames.to_vec(),
         case_only_renames.to_vec(),
         false,
+        || default_ref_lock_wait(store),
     )
+}
+
+/// [`commit_ref_updates_on_store`] retrying a busy store for `wait` (see
+/// [`prepare_with_lock_wait`]); `wait` is only evaluated once the store reports a held lock.
+pub(crate) fn commit_ref_updates_on_store_with_wait(
+    store: &dyn RefStore,
+    updates: &[RefUpdate],
+    wait: impl FnOnce() -> LockWait,
+) -> Result<()> {
+    if updates.is_empty() {
+        return Ok(());
+    }
+    commit_owned_ref_batch_on_store(store, updates.to_vec(), Vec::new(), Vec::new(), false, wait)
 }
 
 /// [`commit_ref_updates_on_store`] taking ownership of `updates`, so a large batch is not copied.
@@ -264,7 +372,9 @@ pub(crate) fn commit_owned_ref_updates_on_store(
     if updates.is_empty() {
         return Ok(());
     }
-    commit_owned_ref_batch_on_store(store, updates, Vec::new(), Vec::new(), false)
+    commit_owned_ref_batch_on_store(store, updates, Vec::new(), Vec::new(), false, || {
+        default_ref_lock_wait(store)
+    })
 }
 
 /// [`commit_owned_ref_updates_on_store`] as the first ref transaction of a new repository
@@ -281,7 +391,9 @@ pub(crate) fn commit_initial_ref_updates_on_store(
     if updates.is_empty() {
         return Ok(());
     }
-    commit_owned_ref_batch_on_store(store, updates, Vec::new(), Vec::new(), true)
+    commit_owned_ref_batch_on_store(store, updates, Vec::new(), Vec::new(), true, || {
+        default_ref_lock_wait(store)
+    })
 }
 
 fn commit_owned_ref_batch_on_store(
@@ -290,6 +402,7 @@ fn commit_owned_ref_batch_on_store(
     reflog_renames: Vec<RefReflogRename>,
     case_only_renames: Vec<RefCaseOnlyRename>,
     initial: bool,
+    wait: impl FnOnce() -> LockWait,
 ) -> Result<()> {
     for update in &updates {
         if let Some(ref log) = update.reflog {
@@ -321,8 +434,7 @@ fn commit_owned_ref_batch_on_store(
     if initial {
         txn = txn.initial();
     }
-    let prepared = store
-        .prepare(txn)
+    let prepared = prepare_retrying(store, txn, wait)
         .map_err(|e| map_public_ref_store_error(Error::from(e), &label))?;
     prepared
         .commit()
@@ -454,7 +566,7 @@ pub(crate) fn parse_ref_content(content: &str) -> Result<Ref> {
 ///
 /// # Errors
 ///
-/// - [`Error::RefStore`] with [`RefStoreError::NotFound`](store::RefStoreError::NotFound) if
+/// - [`Error::RefStore`] with [`RefStoreError::NotFound`] if
 ///   `refname`, or the target at the end of its symbolic chain, does not exist.
 /// - [`Error::InvalidRef`] if the ref is malformed or forms a cycle.
 pub fn resolve_ref(git_dir: &Path, refname: &str) -> Result<ObjectId> {
@@ -2416,7 +2528,7 @@ fn remove_dir_tree(dir: &Path) -> io::Result<()> {
 ///
 /// # Errors
 ///
-/// Returns [`RefStoreError::NotFound`](store::RefStoreError::NotFound) (inside
+/// Returns [`RefStoreError::NotFound`] (inside
 /// [`Error::RefStore`]) when `refname` does not exist, [`Error::InvalidRef`] when it is not
 /// safe for ref storage, or [`Error::Io`] for filesystem failures.
 pub fn delete_ref(git_dir: &Path, refname: &str) -> Result<()> {

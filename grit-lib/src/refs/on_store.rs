@@ -9,13 +9,14 @@
 use crate::config::ConfigSet;
 use crate::diff::zero_oid;
 use crate::error::{Error, Result};
+use crate::lockfile::LockWait;
 use crate::objects::ObjectId;
 
 use super::store::{Expected, RawRef, RefStore, RefUpdate, RefUpdateFlags, ReflogUpdate};
 use super::{
-    append_reflog_with_config, commit_ref_update_on_store, commit_ref_updates_on_store,
-    ensure_refname_safe_for_storage, should_autocreate_reflog_for_mode, store_write_value_on_store,
-    BranchCommitRefUpdate,
+    append_reflog_with_config, commit_ref_update_on_store, commit_ref_update_on_store_with_wait,
+    commit_ref_updates_on_store_with_wait, ensure_refname_safe_for_storage,
+    should_autocreate_reflog_for_mode, store_write_value_on_store, BranchCommitRefUpdate,
 };
 
 /// Whether an update to `refname` should carry a reflog entry: auto-created under
@@ -64,7 +65,8 @@ pub(crate) fn verify_new_tip(store: &dyn RefStore, refname: &str, new_oid: Objec
 /// written when `core.logAllRefUpdates` (read from `config`) allows auto-creating them or the
 /// ref already has a reflog. On the files backend the branch lock is held from the
 /// compare-and-swap through the reflog appends and the ref write; on every other backend the
-/// branch update and both reflog entries commit as one transaction.
+/// branch update and both reflog entries commit as one transaction, waiting up to
+/// `core.filesRefLockTimeout` (from `config`) while another writer holds the store's lock.
 ///
 /// # Errors
 ///
@@ -126,7 +128,9 @@ pub fn update_branch_for_commit_on_store(
         reflog: reflog_wanted(store, config, update.branch_ref)?.then(reflog),
         flags: RefUpdateFlags::default(),
     });
-    commit_ref_updates_on_store(store, &updates, &[])
+    commit_ref_updates_on_store_with_wait(store, &updates, || {
+        LockWait::files_ref_lock(Some(config))
+    })
 }
 
 /// Advance detached `HEAD` to `new_oid` through `store`, with compare-and-swap on
@@ -164,7 +168,7 @@ pub(crate) fn update_detached_head_for_commit_on_store(
     let reflog_old = expected_old.unwrap_or_else(zero_oid);
     let reflog = reflog_wanted(store, config, "HEAD")?
         .then(|| explicit_reflog(identity, reflog_message, reflog_old, new_oid));
-    commit_ref_update_on_store(
+    commit_ref_update_on_store_with_wait(
         store,
         RefUpdate {
             name: "HEAD".to_owned(),
@@ -177,6 +181,7 @@ pub(crate) fn update_detached_head_for_commit_on_store(
                 ..Default::default()
             },
         },
+        || LockWait::files_ref_lock(Some(config)),
     )
 }
 
@@ -216,7 +221,7 @@ pub(crate) fn append_reflog_on_store(
     if !force_create && !reflog_wanted(store, config, refname)? {
         return Ok(());
     }
-    commit_ref_update_on_store(
+    commit_ref_update_on_store_with_wait(
         store,
         RefUpdate {
             name: refname.to_owned(),
@@ -229,6 +234,7 @@ pub(crate) fn append_reflog_on_store(
                 ..Default::default()
             },
         },
+        || LockWait::files_ref_lock(Some(config)),
     )
 }
 

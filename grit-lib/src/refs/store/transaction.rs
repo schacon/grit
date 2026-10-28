@@ -131,6 +131,17 @@ impl RefTransaction {
         (self.updates, self.reflog_renames, self.case_only_renames)
     }
 
+    /// The ref a lock failure on this transaction is reported under: the first update, else
+    /// the source of the first reflog or case-only rename, else `refs`.
+    pub(crate) fn lock_name(&self) -> String {
+        self.updates
+            .first()
+            .map(|u| &u.name)
+            .or_else(|| self.reflog_renames.first().map(|r| &r.from))
+            .or_else(|| self.case_only_renames.first().map(|r| &r.from))
+            .map_or_else(|| "refs".to_owned(), Clone::clone)
+    }
+
     /// Backend-independent checks every [`super::RefStore::prepare`] runs before taking locks.
     ///
     /// Duplicate names cannot reach here because [`Self::push_update`] rejects them.

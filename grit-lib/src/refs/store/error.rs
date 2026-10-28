@@ -13,10 +13,16 @@ use super::{Expected, RawRef};
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum RefStoreError {
-    /// Another prepared transaction holds the store lock.
+    /// Another writer holds a lock this transaction needs.
+    ///
+    /// For per-ref backends (files) that is the lock of `name` itself; for a backend with one
+    /// writer slot for the whole store ([`super::MemoryRefStore`], a database with a single
+    /// write transaction) it means that slot is busy, whichever refs the holder updates.
+    /// Transient: [`crate::refs::prepare_with_lock_wait`] retries it.
     #[error("cannot lock ref '{name}': lock held")]
     LockHeld {
-        /// Ref name associated with the active lock (often the first update name).
+        /// A ref of the failed transaction: the locked ref, or the transaction's first ref
+        /// when the whole store is locked. Always one of the failed transaction's own refs.
         name: String,
     },
 

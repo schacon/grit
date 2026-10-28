@@ -19972,6 +19972,7 @@ pub fn grit_lib::refs::lock_path_for_ref(&std::path::Path) -> std::path::PathBuf
 pub fn grit_lib::refs::pack_remote_tracking_refs_for_clone(&std::path::Path, &str) -> grit_lib::error::Result<()>
 pub fn grit_lib::refs::packed_refs_entry_exists(&std::path::Path, &str) -> grit_lib::error::Result<bool>
 pub fn grit_lib::refs::peel_symref_to_terminal_ref(&grit_lib::repo::Repository, &str) -> grit_lib::error::Result<alloc::string::String>
+pub fn grit_lib::refs::prepare_with_lock_wait(&dyn grit_lib::refs::store::RefStore, grit_lib::refs::store::RefTransaction, grit_lib::lockfile::LockWait) -> core::result::Result<alloc::boxed::Box<(dyn grit_lib::refs::store::PreparedRefTransaction + core::marker::Send + '_)>, grit_lib::refs::store::RefStoreError>
 pub fn grit_lib::refs::read_head(&std::path::Path) -> grit_lib::error::Result<core::option::Option<alloc::string::String>>
 pub fn grit_lib::refs::read_log_refs_config(&std::path::Path) -> grit_lib::refs::LogRefsConfig
 pub fn grit_lib::refs::read_raw_ref(&std::path::Path, &str) -> grit_lib::error::Result<grit_lib::refs::RawRefLookup>
