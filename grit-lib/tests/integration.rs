@@ -1076,6 +1076,9 @@ mod odb_read_commit_git_compat;
 #[cfg(feature = "full-tests")]
 #[path = "odb_read_into.rs"]
 mod odb_read_into;
+#[cfg(feature = "full-tests")]
+#[path = "odb_read_store.rs"]
+mod odb_read_store;
 #[path = "odb_store_object_safety.rs"]
 mod odb_store_object_safety;
 #[cfg(feature = "full-tests")]

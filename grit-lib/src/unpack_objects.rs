@@ -235,8 +235,9 @@ pub fn unpack_objects(reader: &mut dyn Read, odb: &Odb, opts: &UnpackOptions) ->
 /// - `store` receives every object in the pack.
 /// - `bases` resolves `REF_DELTA` bases a *thin* pack leaves out, and answers
 ///   [`UnpackOptions::strict`] connectivity checks. `store` is consulted first, so pass
-///   `store` again when it is the only source, or a repository-wide view (for example a
-///   [`CompositeStore`](crate::odb::store::CompositeStore)) when bases may live elsewhere.
+///   `store` again when it is the only source, or a repository-wide view (a repository's
+///   [`Odb::read_store`], or a [`CompositeStore`](crate::odb::store::CompositeStore)) when
+///   bases may live elsewhere.
 ///
 /// The trailing checksum is verified before any delta is applied. Objects without a
 /// delta are written as they are read, so a failed ingest can leave some objects in

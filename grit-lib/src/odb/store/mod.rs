@@ -260,6 +260,93 @@ pub trait WritableObjectStore: ObjectStore {
     fn freshen(&self, oid: &ObjectId) -> Result<bool>;
 }
 
+/// Forward both traits through a pointer type so a store behind `Arc`, `Box` or `&` is
+/// itself a store: a decorator generic over `S: ObjectStore` can wrap a shared
+/// `Arc<dyn ObjectStore>` and still be passed on as one. Every method forwards, so the
+/// pointee's overrides (batched `contains_many`, native `read_into`, ...) are kept.
+macro_rules! forward_object_store {
+    ($pointer:ty) => {
+        impl<T: ObjectStore + ?Sized> ObjectStore for $pointer {
+            fn hash_algo(&self) -> HashAlgo {
+                (**self).hash_algo()
+            }
+
+            fn read(&self, oid: &ObjectId) -> Result<Option<Object>> {
+                (**self).read(oid)
+            }
+
+            fn read_into(&self, oid: &ObjectId, buf: &mut Vec<u8>) -> Result<Option<ObjectKind>> {
+                (**self).read_into(oid, buf)
+            }
+
+            fn read_info(&self, oid: &ObjectId) -> Result<Option<ObjectInfo>> {
+                (**self).read_info(oid)
+            }
+
+            fn contains(&self, oid: &ObjectId) -> Result<bool> {
+                (**self).contains(oid)
+            }
+
+            fn contains_many(&self, oids: &[ObjectId]) -> Result<Vec<bool>> {
+                (**self).contains_many(oids)
+            }
+
+            fn open_stream(&self, oid: &ObjectId) -> Result<Option<ObjectStream<'_>>> {
+                (**self).open_stream(oid)
+            }
+
+            fn for_each_object(
+                &self,
+                f: &mut dyn FnMut(&ObjectId) -> ControlFlow<()>,
+            ) -> Result<()> {
+                (**self).for_each_object(f)
+            }
+
+            fn lookup_prefix(
+                &self,
+                prefix: &str,
+                limit: usize,
+                out: &mut Vec<ObjectId>,
+            ) -> Result<()> {
+                (**self).lookup_prefix(prefix, limit, out)
+            }
+
+            fn refresh(&self) -> Result<bool> {
+                (**self).refresh()
+            }
+        }
+
+        impl<T: WritableObjectStore + ?Sized> WritableObjectStore for $pointer {
+            fn write(
+                &self,
+                kind: ObjectKind,
+                data: &[u8],
+                options: WriteOptions,
+            ) -> Result<ObjectId> {
+                (**self).write(kind, data, options)
+            }
+
+            fn write_stream(
+                &self,
+                kind: ObjectKind,
+                size: u64,
+                reader: &mut dyn Read,
+                options: WriteOptions,
+            ) -> Result<ObjectId> {
+                (**self).write_stream(kind, size, reader, options)
+            }
+
+            fn freshen(&self, oid: &ObjectId) -> Result<bool> {
+                (**self).freshen(oid)
+            }
+        }
+    };
+}
+
+forward_object_store!(Arc<T>);
+forward_object_store!(Box<T>);
+forward_object_store!(&T);
+
 /// True when `oid` is stored as loose or in a non-promisor pack under `objects_dir`.
 pub(crate) fn local_object_materialized(objects_dir: &Path, oid: &ObjectId) -> bool {
     if local_object_materialized_without_rescan(objects_dir, oid) {

@@ -24,6 +24,7 @@
 pub mod builder;
 mod commit;
 mod peel;
+mod read_store;
 pub mod store;
 mod stream;
 
@@ -1011,9 +1012,15 @@ impl Odb {
 
     /// Primary on-disk object source for this repository's `objects/` directory.
     ///
+    /// Files-backed primaries only. For a store that works with any primary use
+    /// [`Self::primary_writable`] (the primary alone) or [`Self::read_store`] (everything
+    /// this database can read).
+    ///
     /// # Errors
     ///
-    /// Propagates failures while opening pack, MIDX, or loose backends.
+    /// - [`Error::UnsupportedObjectStore`] (`operation: "primary"`) when
+    ///   [`OdbBuilder::primary`] replaced the files-backed primary.
+    /// - Failures while opening pack, MIDX, or loose backends.
     pub fn primary(&self) -> Result<Arc<FilesSource>> {
         self.require_files_primary("primary")?;
         if let Some(src) = self.primary_source.get() {
@@ -1046,6 +1053,10 @@ impl Odb {
     }
 
     /// Alternate object directories (`info/alternates`, env, submodules) as one composite store.
+    ///
+    /// Only the alternates: neither the primary nor [`OdbBuilder::push_read_source`] layers
+    /// are included, and the composite is empty when [`OdbBuilder::alternates`] is off. Use
+    /// [`Self::read_store`] for the whole lookup chain.
     ///
     /// # Errors
     ///
@@ -2203,7 +2214,7 @@ impl Odb {
     /// Read available storage without consulting the promisor fetcher.
     /// Missing objects return `None`; corrupt storage still returns an error.
     pub(crate) fn try_read_once(&self, oid: &ObjectId) -> Result<Option<Object>> {
-        if oid.is_well_known_empty_tree() {
+        if self.is_empty_tree(oid) {
             return Ok(Some(Object {
                 kind: ObjectKind::Tree,
                 data: Vec::new(),
@@ -2639,7 +2650,7 @@ impl Odb {
     }
 
     fn try_read_info_once(&self, oid: &ObjectId) -> Result<Option<ObjectInfo>> {
-        if oid.is_well_known_empty_tree() {
+        if self.is_empty_tree(oid) {
             return Ok(Some(ObjectInfo {
                 kind: ObjectKind::Tree,
                 size: 0,
@@ -2803,6 +2814,14 @@ impl Odb {
         f: impl FnOnce(ObjectStream<'_>) -> Result<R>,
     ) -> Result<Option<R>> {
         use std::io::Cursor;
+        if self.is_empty_tree(oid) {
+            return f(ObjectStream {
+                kind: ObjectKind::Tree,
+                size: 0,
+                reader: Box::new(std::io::empty()),
+            })
+            .map(Some);
+        }
         if let Some(obj) = self.overlay_read(oid) {
             let size = u64::try_from(obj.data.len()).map_err(|_| {
                 Error::CorruptObject(format!("object size overflow for {}", oid.to_hex()))
