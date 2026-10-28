@@ -464,7 +464,9 @@ pub enum OrderingMode {
 pub struct RevListOptions {
     /// Include all refs (`--all`) as positive tips.
     pub all_refs: bool,
-    /// Follow only first parent when walking merges.
+    /// Follow only first parent when walking merges to collect listed commits. Excluded tips
+    /// still hide everything they reach through every parent unless
+    /// [`Self::exclude_first_parent_only`] is set.
     pub first_parent: bool,
     /// Enable ancestry-path filtering.
     pub ancestry_path: bool,
@@ -1289,6 +1291,25 @@ pub fn rev_list(
         && !options.ancestry_path
         && !options.simplify_merges;
 
+    // `--first-parent` follows first parents only from listed commits; excluded tips still hide
+    // everything they reach through any parent unless `--exclude-first-parent-only` says so.
+    let hide_all_parents =
+        options.first_parent && !options.exclude_first_parent_only && !exclude.is_empty();
+    let painted_hidden_frontier = if hide_all_parents
+        && !options.exclude_promisor_objects
+        && options.missing_action == MissingAction::Error
+        && !include.is_empty()
+    {
+        Some(crate::merge_base::first_parent_hidden_frontier(
+            repo,
+            &include,
+            &exclude,
+            options.use_commit_graph,
+        )?)
+    } else {
+        None
+    };
+
     let mut traversal_missing = Vec::new();
     let mut traversal_missing_seen = HashSet::new();
     let (mut included, mut discovery_order) = if include.is_empty() {
@@ -1308,18 +1329,29 @@ pub fn rev_list(
             &mut traversal_missing,
             &mut traversal_missing_seen,
         )?
+    } else if let Some(frontier) = &painted_hidden_frontier {
+        walk_closure_ordered_excluding(&mut graph, &include, frontier)?
     } else {
         walk_closure_ordered(&mut graph, &include)?
     };
+    let mut all_parents_graph;
+    let exclude_graph = if hide_all_parents && painted_hidden_frontier.is_none() {
+        all_parents_graph = CommitGraph::with_commit_graph(repo, false, options.use_commit_graph);
+        &mut all_parents_graph
+    } else {
+        &mut graph
+    };
     let excluded = if exclude.is_empty() {
         HashSet::new()
+    } else if let Some(frontier) = painted_hidden_frontier {
+        frontier
     } else if options.exclude_promisor_objects {
-        walk_closure_ordered_excluding(&mut graph, &exclude, &excluded_promisor)?.0
+        walk_closure_ordered_excluding(exclude_graph, &exclude, &excluded_promisor)?.0
     } else if options.exclude_first_parent_only {
-        walk_closure_first_parent_only(&mut graph, &exclude)?
+        walk_closure_first_parent_only(exclude_graph, &exclude)?
     } else if options.missing_action != MissingAction::Error {
         walk_closure_ordered_with_missing(
-            &mut graph,
+            exclude_graph,
             &exclude,
             &HashSet::new(),
             options.missing_action,
@@ -1328,7 +1360,7 @@ pub fn rev_list(
         )?
         .0
     } else {
-        walk_closure(&mut graph, &exclude)?
+        walk_closure(exclude_graph, &exclude)?
     };
     included.retain(|oid| !excluded.contains(oid));
 

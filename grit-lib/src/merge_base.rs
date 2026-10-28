@@ -1342,6 +1342,57 @@ pub fn count_commits_reachable_excluding_ancestors_of(
     Ok(count)
 }
 
+/// The first commit on each first-parent chain from `tips` that a `hide` tip reaches through
+/// any parent: the cut points of a `--first-parent` range walk.
+///
+/// Git follows only first parents from the commits it lists, while excluded tips still hide
+/// everything they reach. Every ancestor of a hidden commit is hidden too, so a first-parent
+/// walk from `tips` that stops at the returned commits lists exactly the range. The paint ends
+/// once the tips' first-parent chains meet hidden history when commit-graph generations bound
+/// it; otherwise it converges like the range count does.
+///
+/// # Parameters
+///
+/// - `tips` - commits to list from, following first parents only.
+/// - `hide` - excluded tips; their ancestry through every parent is hidden.
+/// - `use_commit_graph` - read parents and generations from the on-disk commit-graph.
+///
+/// # Errors
+///
+/// Propagates commit read and parse errors for commits not reached from `hide`.
+pub(crate) fn first_parent_hidden_frontier(
+    repo: &Repository,
+    tips: &[ObjectId],
+    hide: &[ObjectId],
+    use_commit_graph: bool,
+) -> Result<HashSet<ObjectId>> {
+    let mut cache = CommitGraphCache::with_commit_graph(repo, use_commit_graph);
+    // Grafts and replacements rewrite parents behind the graph's back, so its generations
+    // cannot order the paint.
+    if cache.graph.is_some() && cache.has_parent_rewrites()? {
+        cache = CommitGraphCache::with_commit_graph(repo, false);
+    }
+    let paint = SidePaint::compute_hiding_first_parent(&mut cache, tips, hide)?;
+
+    let mut frontier = HashSet::new();
+    let mut seen = oid_hash_set();
+    let mut stack = tips.to_vec();
+    while let Some(oid) = stack.pop() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        // Unpainted chain commits lie below a commit both sides reach, so they are hidden.
+        if paint.sides.get(&oid) != Some(&PAINT_LEFT) {
+            frontier.insert(oid);
+            continue;
+        }
+        if let Some(&parent) = cache.parents_of(oid)?.first() {
+            stack.push(parent);
+        }
+    }
+    Ok(frontier)
+}
+
 /// Shortcuts for [`count_commits_reachable_excluding_ancestors_of`] that avoid painting, or
 /// `None` when the paint has to run.
 fn try_count_without_paint(

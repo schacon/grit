@@ -933,3 +933,182 @@ fn upstream_range_at_u_matches_git() {
         .expect("upstream symmetric counts");
     assert_eq!(grit_counts, git_counts);
 }
+
+/// The DAG from issue 2177: `R` merges `c` as its second parent, `main` merges `R`.
+///
+/// ```text
+/// a - b - c - d - M (main)
+///  \       \     /
+///   s1 ----- R -'
+/// ```
+fn first_parent_hide_fixture(wt: &Path) -> HashMap<&'static str, ObjectId> {
+    let mut oids = HashMap::new();
+    let mut commit = |label: &'static str, parents: &[&'static str], time: i64| {
+        let date = format!("@{time} +0000");
+        let parents: Vec<ObjectId> = parents.iter().map(|p| oids[p]).collect();
+        let oid = support::commit_labeled_with_dates(wt, label, &parents, &date, &date);
+        oids.insert(label, oid);
+    };
+    commit("a", &[], 1_000);
+    commit("b", &["a"], 1_010);
+    commit("c", &["b"], 1_020);
+    commit("s1", &["a"], 1_030);
+    commit("R", &["s1", "c"], 1_040);
+    commit("d", &["c"], 1_050);
+    commit("M", &["d", "R"], 1_060);
+    git(wt, &["update-ref", "refs/heads/main", &oids["M"].to_hex()]);
+    git(wt, &["update-ref", "refs/heads/R", &oids["R"].to_hex()]);
+    oids
+}
+
+fn first_parent_walk() -> RevWalkListOptions {
+    RevWalkListOptions {
+        first_parent: true,
+        ..RevWalkListOptions::default()
+    }
+}
+
+/// `git rev-list --left-right <args>` as `(oid, is_left)` pairs in output order.
+fn git_rev_list_sides(wt: &Path, args: &[&str]) -> Vec<(ObjectId, bool)> {
+    let mut argv = vec!["rev-list", "--left-right"];
+    argv.extend(args);
+    git(wt, &argv)
+        .lines()
+        .map(|line| {
+            let (side, hex) = line.split_at(1);
+            (hex.parse().expect("oid"), side == "<")
+        })
+        .collect()
+}
+
+fn grit_rev_list_sides(
+    repo: &Repository,
+    token: &str,
+    opts: &RevWalkListOptions,
+) -> Vec<(ObjectId, bool)> {
+    let opts = RevWalkListOptions {
+        left_right: true,
+        ..opts.clone()
+    };
+    let result = repo
+        .rev_walk()
+        .rev_list_result(&[token], &opts)
+        .unwrap_or_else(|e| panic!("{token}: {e}"));
+    result
+        .commits
+        .iter()
+        .map(|oid| (*oid, result.left_right_map[oid]))
+        .collect()
+}
+
+#[test]
+fn first_parent_range_hides_exclusions_through_every_parent() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    let oids = first_parent_hide_fixture(wt);
+
+    for with_graph in [false, true] {
+        if with_graph {
+            git_commit_graph_write(wt);
+        }
+        let repo = open_grit(wt);
+        let listed = grit_rev_list_oids(&repo, &["R..main"], &first_parent_walk());
+        assert_eq!(
+            listed,
+            vec![oids["M"], oids["d"]],
+            "commit-graph: {with_graph}"
+        );
+        assert_eq!(
+            listed,
+            git_rev_list(wt, &["--first-parent", "R..main"]),
+            "commit-graph: {with_graph}"
+        );
+        assert_eq!(
+            grit_rev_list_oids(&repo, &["^R", "main"], &first_parent_walk()),
+            listed,
+            "commit-graph: {with_graph}"
+        );
+        assert_eq!(
+            grit_rev_list_sides(&repo, "R...main", &first_parent_walk()),
+            git_rev_list_sides(wt, &["--first-parent", "R...main"]),
+            "commit-graph: {with_graph}"
+        );
+    }
+}
+
+#[test]
+fn exclude_first_parent_only_keeps_second_parent_ancestry_of_exclusions() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    let oids = first_parent_hide_fixture(wt);
+    let repo = open_grit(wt);
+    let opts = RevListOptions {
+        first_parent: true,
+        exclude_first_parent_only: true,
+        ..RevListOptions::default()
+    };
+    support::assert_rev_list_commits_match_git(
+        wt,
+        &repo,
+        &["--first-parent", "--exclude-first-parent-only", "R..main"],
+        &["main".to_owned()],
+        &["R".to_owned()],
+        opts.clone(),
+        "--exclude-first-parent-only R..main",
+    );
+    let listed = repo
+        .rev_walk()
+        .walk("R..main", &opts)
+        .expect("rev_list")
+        .commits;
+    assert_eq!(listed, vec![oids["M"], oids["d"], oids["c"], oids["b"]]);
+}
+
+#[test]
+fn first_parent_range_lists_match_git_on_merge_heavy_history() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    build_merge_heavy_history(wt);
+
+    let ranges: [&[&str]; 6] = [
+        &["old..main"],
+        &["topic..main"],
+        &["main..topic"],
+        &["elsewhere..main"],
+        &["main..elsewhere"],
+        &["^old", "^topic", "main", "elsewhere"],
+    ];
+    let symmetric = ["old...topic", "topic...main", "elsewhere...main"];
+    for with_graph in [false, true] {
+        if with_graph {
+            git_commit_graph_write(wt);
+        }
+        let repo = open_grit(wt);
+        for tokens in ranges {
+            let mut args = vec!["--first-parent"];
+            args.extend(tokens);
+            assert_eq!(
+                grit_rev_list_oids(&repo, tokens, &first_parent_walk()),
+                git_rev_list(wt, &args),
+                "{args:?}, commit-graph: {with_graph}"
+            );
+            let limited = RevWalkListOptions {
+                limit: Some(3),
+                ..first_parent_walk()
+            };
+            args.insert(0, "--max-count=3");
+            assert_eq!(
+                grit_rev_list_oids(&repo, tokens, &limited),
+                git_rev_list(wt, &args),
+                "{args:?}, commit-graph: {with_graph}"
+            );
+        }
+        for token in symmetric {
+            assert_eq!(
+                grit_rev_list_sides(&repo, token, &first_parent_walk()),
+                git_rev_list_sides(wt, &["--first-parent", token]),
+                "{token}, commit-graph: {with_graph}"
+            );
+        }
+    }
+}

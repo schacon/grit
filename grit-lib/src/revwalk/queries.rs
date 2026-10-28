@@ -81,7 +81,8 @@ pub struct RevWalkListOptions {
     pub reverse: bool,
     /// Additional positive ref tips (`--all`, `--branches`, `--tags`, `--remotes`).
     pub refs: Vec<RefSelection>,
-    /// Follow only the first parent at merges.
+    /// Follow only the first parent at merges when collecting listed commits. Exclusions
+    /// (`^A`, the left side of `A..B`) still hide everything they reach through every parent.
     pub first_parent: bool,
     /// Limit history to commits that touch these paths (same rules as `rev-list --`).
     pub paths: Vec<String>,
