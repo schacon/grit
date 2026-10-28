@@ -635,3 +635,66 @@ fn moved_file_conflicts_round_trip_through_conflicts_from_tree_merge() {
         }]
     );
 }
+
+/// `grit merge --abort` must delete files that only exist as conflict stages (the moved file
+/// here, or the modified side of a modify/delete), as `git merge --abort` does.
+#[test]
+fn abort_removes_files_that_only_exist_as_conflict_stages() {
+    let fx = fixture(Scenario::Basic);
+    let root = fx.root();
+    let repo = fx.repo();
+    let outcome = integrate_branch_with(
+        &repo,
+        "refs/heads/main",
+        fx.ours,
+        fx.theirs,
+        "theirs",
+        &MergeOptions::default(),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
+    assert!(matches!(outcome, IntegrateBranchOutcome::Conflicts { .. }));
+    assert!(root.join("b/new").exists());
+    grit_lib::porcelain::merge::abort_branch_merge(&repo).expect("abort");
+    assert!(!root.join("b/new").exists());
+    assert_eq!(
+        git(root, &["status", "--porcelain", "--untracked-files=all"]),
+        ""
+    );
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    git(root, &["config", "user.name", "T"]);
+    git(root, &["config", "user.email", "t@e.com"]);
+    write(root, "d/f", "f", 10);
+    commit(root, "base");
+    git(root, &["switch", "-qc", "topic"]);
+    edit_line(root, "d/f", "f 1\n", "topic 1\n");
+    commit(root, "edit");
+    git(root, &["switch", "-q", "main"]);
+    git(root, &["rm", "-q", "d/f"]);
+    commit(root, "delete");
+    let rev = |spec: &str| -> ObjectId { git(root, &["rev-parse", spec]).trim().parse().unwrap() };
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let outcome = integrate_branch_with(
+        &repo,
+        "refs/heads/main",
+        rev("main"),
+        rev("topic"),
+        "topic",
+        &MergeOptions::default(),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("merge");
+    assert!(matches!(outcome, IntegrateBranchOutcome::Conflicts { .. }));
+    assert!(root.join("d/f").exists());
+    grit_lib::porcelain::merge::abort_branch_merge(&repo).expect("abort");
+    assert!(!root.join("d").exists());
+    assert_eq!(
+        git(root, &["status", "--porcelain", "--untracked-files=all"]),
+        ""
+    );
+}

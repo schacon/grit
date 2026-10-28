@@ -1460,9 +1460,27 @@ fn restore_pre_merge_state(repo: &Repository) -> Result<()> {
     let old_index = repo.load_index()?;
     let from_tree = write_tree_from_index(repo.odb(), &old_index, "")?;
     let mut clean_index = index_from_tree_with_worktree_stats(repo, &head_tree)?;
+    // `from_tree` leaves out unmerged paths, so the diff never deletes a conflicted file the
+    // merge wrote at a path the pre-merge commit does not have.
+    let mut conflict_only: Vec<&[u8]> = old_index
+        .entries()
+        .iter()
+        .filter(|e| e.stage() != 0 && clean_index.get(&e.path, 0).is_none())
+        .map(|e| e.path.as_slice())
+        .collect();
+    conflict_only.dedup();
     repo.write_index(&mut clean_index)?;
     let changes = diff_trees(repo.odb(), Some(&from_tree), Some(&head_tree), "")?;
     checkout::checkout_tree_changes(repo, &changes)?;
+    if let Some(work_tree) = repo.work_tree() {
+        for path in conflict_only {
+            let abs = crate::index::worktree_path_from_index_rel(work_tree, path);
+            if abs.symlink_metadata().is_ok_and(|meta| !meta.is_dir()) {
+                fs::remove_file(&abs)?;
+                checkout::remove_empty_parent_dirs(work_tree, &abs);
+            }
+        }
+    }
     clear_merge_state(repo.git_dir())?;
     Ok(())
 }
