@@ -923,38 +923,9 @@ fn apply_commands_with_hooks(
         }
     }
 
-    let algo = repo.odb().hash_algo();
-    let shallow_env = shallow.hook_env()?;
-    let mut push_option_env = push_option_env_owned(&request.push_options);
-    push_option_env.extend(shallow_env.iter().cloned());
-    let mut pre_hook_env_owned = push_option_env.clone();
-    if let Some(q) = quarantine.as_ref() {
-        pre_hook_env_owned.extend(q.hook_env());
-    }
-    let pre_hook_env: Vec<(&str, &str)> = pre_hook_env_owned
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    let update_hook_env: Vec<(&str, &str)> = shallow_env
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    let update_hook_env = update_hook_env.as_slice();
-    let post_receive_env_owned = push_option_env;
-    let post_receive_env: Vec<(&str, &str)> = post_receive_env_owned
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-
+    let scripts = ReceiveHookScripts::new(repo, &request.push_options, shallow.hook_env()?);
     let all_cmds: Vec<&RefCommand> = request.commands.iter().collect();
-    let pre_stdin = commands_stdin(&all_cmds, algo);
-    let pre_result = run_hook_in_git_dir(
-        repo,
-        "pre-receive",
-        &[],
-        Some(pre_stdin.as_bytes()),
-        &pre_hook_env,
-    );
+    let pre_result = scripts.pre_receive(&all_cmds, quarantine.as_deref());
     relay_hook_sideband(&mut sideband_out, &pre_result)?;
     hook_records.push(hook_record("pre-receive", &pre_result));
     if !pre_result.is_ok() {
@@ -979,11 +950,7 @@ fn apply_commands_with_hooks(
             result.error = Some(refusal);
             continue;
         }
-        let zero = null_oid_hex(algo);
-        let old_hex = cmd.old.map(|o| o.to_hex()).unwrap_or_else(|| zero.clone());
-        let new_hex = cmd.new.map(|o| o.to_hex()).unwrap_or(zero.clone());
-        let args = [cmd.refname.as_str(), old_hex.as_str(), new_hex.as_str()];
-        let update_result = run_hook_in_git_dir(repo, "update", &args, None, update_hook_env);
+        let update_result = scripts.update(cmd);
         relay_hook_sideband(&mut sideband_out, &update_result)?;
         hook_records.push(hook_record("update", &update_result));
         if !update_result.is_ok() {
@@ -1051,28 +1018,11 @@ fn apply_commands_with_hooks(
         .map(|(c, _)| c)
         .collect();
     if !successful.is_empty() {
-        let post_stdin = commands_stdin(&successful, algo);
-        let post_result = run_hook_in_git_dir(
-            repo,
-            "post-receive",
-            &[],
-            Some(post_stdin.as_bytes()),
-            &post_receive_env,
-        );
+        let post_result = scripts.post_receive(&successful);
         relay_hook_sideband(&mut sideband_out, &post_result)?;
         hook_records.push(hook_record("post-receive", &post_result));
 
-        let mut post_update_args: Vec<&str> = Vec::new();
-        for result in results.iter().filter(|r| r.error.is_none()) {
-            post_update_args.push(result.refname.as_str());
-        }
-        let pu_result = run_hook_in_git_dir(
-            repo,
-            "post-update",
-            &post_update_args,
-            None,
-            update_hook_env,
-        );
+        let pu_result = scripts.post_update(&successful);
         relay_hook_sideband(&mut sideband_out, &pu_result)?;
         hook_records.push(hook_record("post-update", &pu_result));
     }
@@ -1095,34 +1045,121 @@ fn hook_record(name: &str, result: &HookResult) -> HookRunRecord {
     }
 }
 
-fn push_option_env_owned(options: &[String]) -> Vec<(String, String)> {
-    let mut pairs = vec![(
-        "GIT_PUSH_OPTION_COUNT".to_owned(),
-        options.len().to_string(),
-    )];
-    for (i, opt) in options.iter().enumerate() {
-        pairs.push((format!("GIT_PUSH_OPTION_{i}"), opt.clone()));
+/// The receiving repository's hook scripts for one push, run with Git's arguments, stdin
+/// and environment.
+///
+/// Every script runs from the repository directory with `GIT_DIR=.` (see
+/// [`run_hook_in_git_dir`]) and its output captured. `pre-receive` and `post-receive` get the
+/// push options as `GIT_PUSH_OPTION_COUNT` / `GIT_PUSH_OPTION_<n>`; `update` and
+/// `post-update` do not, as in Git. Each `*_env` pair list also carries the extra
+/// variables given to [`Self::new`] (such as `GIT_SHALLOW_FILE`).
+pub(crate) struct ReceiveHookScripts<'a> {
+    repo: &'a Repository,
+    /// Push options plus the extra variables, for `pre-receive` and `post-receive`.
+    receive_env: Vec<(String, String)>,
+    /// The extra variables alone, for `update` and `post-update`.
+    update_env: Vec<(String, String)>,
+}
+
+impl<'a> ReceiveHookScripts<'a> {
+    /// Scripts of `repo` for a push that sent `push_options`, with `extra_env` set for every
+    /// script.
+    pub(crate) fn new(
+        repo: &'a Repository,
+        push_options: &[String],
+        extra_env: Vec<(String, String)>,
+    ) -> Self {
+        let mut receive_env = Vec::with_capacity(push_options.len() + 1 + extra_env.len());
+        receive_env.push((
+            "GIT_PUSH_OPTION_COUNT".to_owned(),
+            push_options.len().to_string(),
+        ));
+        receive_env.extend(
+            push_options
+                .iter()
+                .enumerate()
+                .map(|(i, opt)| (format!("GIT_PUSH_OPTION_{i}"), opt.clone())),
+        );
+        receive_env.extend(extra_env.iter().cloned());
+        Self {
+            repo,
+            receive_env,
+            update_env: extra_env,
+        }
     }
-    pairs
+
+    /// Run `pre-receive` over `commands` (one `<old> <new> <ref>` line each on stdin).
+    ///
+    /// With `quarantine`, the script also gets its variables so it can read the pushed
+    /// objects before they enter the repository.
+    pub(crate) fn pre_receive(
+        &self,
+        commands: &[&RefCommand],
+        quarantine: Option<&ReceiveQuarantine>,
+    ) -> HookResult {
+        let mut env = self.receive_env.clone();
+        if let Some(q) = quarantine {
+            env.extend(q.hook_env());
+        }
+        self.run_with_commands("pre-receive", commands, &env)
+    }
+
+    /// Run `update` for one command, with `<ref> <old> <new>` as arguments.
+    pub(crate) fn update(&self, cmd: &RefCommand) -> HookResult {
+        let algo = self.repo.odb().hash_algo();
+        let hex = |oid: Option<ObjectId>| oid.unwrap_or_else(|| ObjectId::null(algo)).to_hex();
+        let (old, new) = (hex(cmd.old), hex(cmd.new));
+        let args = [cmd.refname.as_str(), old.as_str(), new.as_str()];
+        run_hook_in_git_dir(self.repo, "update", &args, None, &pairs(&self.update_env))
+    }
+
+    /// Run `post-receive` over the applied `commands`.
+    pub(crate) fn post_receive(&self, commands: &[&RefCommand]) -> HookResult {
+        self.run_with_commands("post-receive", commands, &self.receive_env)
+    }
+
+    /// Run `post-update` with the names of the applied `commands` as arguments.
+    pub(crate) fn post_update(&self, commands: &[&RefCommand]) -> HookResult {
+        let args: Vec<&str> = commands.iter().map(|c| c.refname.as_str()).collect();
+        run_hook_in_git_dir(
+            self.repo,
+            "post-update",
+            &args,
+            None,
+            &pairs(&self.update_env),
+        )
+    }
+
+    fn run_with_commands(
+        &self,
+        hook_name: &str,
+        commands: &[&RefCommand],
+        env: &[(String, String)],
+    ) -> HookResult {
+        let zero = ObjectId::null(self.repo.odb().hash_algo());
+        let stdin: String = commands
+            .iter()
+            .map(|c| {
+                format!(
+                    "{} {} {}\n",
+                    c.old.unwrap_or(zero).to_hex(),
+                    c.new.unwrap_or(zero).to_hex(),
+                    c.refname
+                )
+            })
+            .collect();
+        run_hook_in_git_dir(
+            self.repo,
+            hook_name,
+            &[],
+            Some(stdin.as_bytes()),
+            &pairs(env),
+        )
+    }
 }
 
-fn commands_stdin(commands: &[&RefCommand], algo: crate::objects::HashAlgo) -> String {
-    let zero = null_oid_hex(algo);
-    commands
-        .iter()
-        .map(|c| {
-            format!(
-                "{} {} {}\n",
-                c.old.map(|o| o.to_hex()).unwrap_or_else(|| zero.clone()),
-                c.new.map(|o| o.to_hex()).unwrap_or_else(|| zero.clone()),
-                c.refname
-            )
-        })
-        .collect()
-}
-
-fn null_oid_hex(algo: crate::objects::HashAlgo) -> String {
-    ObjectId::null(algo).to_hex()
+fn pairs(env: &[(String, String)]) -> Vec<(&str, &str)> {
+    env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect()
 }
 
 fn receive_command_store_update(cmd: &RefCommand) -> crate::refs::store::RefUpdate {
