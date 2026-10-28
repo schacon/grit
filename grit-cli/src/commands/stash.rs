@@ -7,11 +7,10 @@ use std::io::Write;
 use crate::pathspec_args::TrailingPathspecArgs;
 use anyhow::{Context, Result};
 use grit_lib::config::ident_resolve::IdentRole;
+use grit_lib::diff::hunk_id::HunkId;
 use grit_lib::error::Error;
 use grit_lib::error::Error as LibError;
-use grit_lib::porcelain::hunk_select::{
-    parse_hunk_id_list, report_unstaged_hunk_selection, HunkSelectError,
-};
+use grit_lib::porcelain::hunk_select::{parse_hunk_id_list, HunkSelectError};
 use grit_lib::stash::{StashApplyOptions, StashDiffOptions, StashMode, StashPushOptions};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -412,32 +411,12 @@ pub fn run_push(args: StashPushRunArgs<'_>) -> Result<StashPushOutcome> {
         }
         Some(sel)
     };
-    if include_untracked && selection.is_some() {
-        anyhow::bail!("--include-untracked cannot be used with --hunks or --lines");
-    }
     let mode = stash_mode_from_flags(staged, keep_index)?;
     let resolved = pathspec_args.resolve(&repo)?;
     let (pathspecs, _) = resolved.into_pathspec_lists();
     if !pathspecs.is_empty() && selection.is_some() {
         anyhow::bail!("path arguments cannot be used with --hunks or --lines");
     }
-    let (stashed_hunks, stashed_lines) = if let Some(ref sel) = selection {
-        let report =
-            report_unstaged_hunk_selection(&repo, sel, &pathspecs).map_err(anyhow::Error::new)?;
-        let hunks = report
-            .stashed_hunks
-            .into_iter()
-            .map(|(path, ids)| {
-                (
-                    path,
-                    ids.into_iter().map(|id| id.as_str().to_string()).collect(),
-                )
-            })
-            .collect();
-        (hunks, report.stashed_lines)
-    } else {
-        (BTreeMap::new(), BTreeMap::new())
-    };
     let push_paths = pathspecs.clone();
     let options = StashPushOptions {
         message: message.clone(),
@@ -463,8 +442,8 @@ pub fn run_push(args: StashPushRunArgs<'_>) -> Result<StashPushOutcome> {
                     mode: mode.into(),
                     paths,
                     untracked,
-                    stashed_hunks,
-                    stashed_lines,
+                    stashed_hunks: hunk_id_strings(p.stashed_hunks),
+                    stashed_lines: p.stashed_lines,
                 }
             }
             None => StashPushOutcome::Nothing { stashed: false },
@@ -480,12 +459,19 @@ pub fn run_push(args: StashPushRunArgs<'_>) -> Result<StashPushOutcome> {
             message: result.message,
             dry_run: false,
             mode: mode.into(),
-            stashed_hunks,
-            stashed_lines,
+            stashed_hunks: hunk_id_strings(result.stashed_hunks),
+            stashed_lines: result.stashed_lines,
             paths: push_paths,
         },
         None => StashPushOutcome::Nothing { stashed: false },
     })
+}
+
+fn hunk_id_strings(by_path: BTreeMap<String, Vec<HunkId>>) -> BTreeMap<String, Vec<String>> {
+    by_path
+        .into_iter()
+        .map(|(path, ids)| (path, ids.iter().map(|id| id.as_str().to_owned()).collect()))
+        .collect()
 }
 
 pub fn run_list() -> Result<StashListOutcome> {

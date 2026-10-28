@@ -244,47 +244,37 @@ pub fn resolve_selection(
     Ok(resolve_selection_with_staged(repo, side, selection, pathspecs, diff_options)?.patches)
 }
 
-/// Path-keyed hunk ids and line ranges resolved from a selection (for JSON reporting).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct HunkSelectionReport {
-    /// Stable hunk ids per repository-relative path.
-    pub stashed_hunks: BTreeMap<String, Vec<HunkId>>,
-    /// Line range labels per path (`start` or `start-end` strings).
-    pub stashed_lines: BTreeMap<String, Vec<String>>,
+/// A selection resolved against the live diff: the patches to apply plus, per path, which hunk
+/// ids and line range labels they came from.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ResolvedSelection {
+    pub(crate) patches: Vec<FilePatch>,
+    pub(crate) selected_hunks: BTreeMap<String, Vec<HunkId>>,
+    /// Line range labels (`start` or `start-end`) per path.
+    pub(crate) selected_lines: BTreeMap<String, Vec<String>>,
 }
 
-/// Resolve `selection` on the unstaged side and return path-keyed reporting maps.
+/// Resolve `selection` on the unstaged side, keeping the per-path ids and line labels that
+/// [`resolve_selection`] drops.
 ///
 /// # Errors
 ///
 /// Same as [`resolve_selection`].
-pub fn report_unstaged_hunk_selection(
+pub(crate) fn resolve_unstaged_selection(
     repo: &Repository,
     selection: &HunkSelection,
     pathspecs: &[String],
-) -> std::result::Result<HunkSelectionReport, HunkSelectError> {
+) -> std::result::Result<ResolvedSelection, HunkSelectError> {
     let diff_opts = diff_options_for_hunk_select(repo)?;
-    let resolved =
-        resolve_selection_with_staged(repo, DiffSide::Unstaged, selection, pathspecs, diff_opts)?;
-    Ok(HunkSelectionReport {
-        stashed_hunks: resolved.staged_hunks,
-        stashed_lines: resolved.staged_lines,
-    })
-}
-
-#[derive(Debug, Clone)]
-struct ResolvedSelection {
-    patches: Vec<FilePatch>,
-    staged_hunks: BTreeMap<String, Vec<HunkId>>,
-    staged_lines: BTreeMap<String, Vec<String>>,
+    resolve_selection_with_staged(repo, DiffSide::Unstaged, selection, pathspecs, diff_opts)
 }
 
 fn merge_resolved(into: &mut ResolvedSelection, other: ResolvedSelection) {
-    for (path, ids) in other.staged_hunks {
-        into.staged_hunks.entry(path).or_default().extend(ids);
+    for (path, ids) in other.selected_hunks {
+        into.selected_hunks.entry(path).or_default().extend(ids);
     }
-    for (path, ranges) in other.staged_lines {
-        into.staged_lines.entry(path).or_default().extend(ranges);
+    for (path, ranges) in other.selected_lines {
+        into.selected_lines.entry(path).or_default().extend(ranges);
     }
     for patch in other.patches {
         if let Some(existing) = into
@@ -308,11 +298,7 @@ fn resolve_selection_with_staged(
     diff_options: DiffOptions,
 ) -> std::result::Result<ResolvedSelection, HunkSelectError> {
     if selection.ids.is_empty() && selection.ranges.is_empty() {
-        return Ok(ResolvedSelection {
-            patches: Vec::new(),
-            staged_hunks: BTreeMap::new(),
-            staged_lines: BTreeMap::new(),
-        });
+        return Ok(ResolvedSelection::default());
     }
     let opts = diff_options;
     let requested: HashSet<HunkId> = selection.ids.iter().cloned().collect();
@@ -320,11 +306,7 @@ fn resolve_selection_with_staged(
     match side {
         DiffSide::Unstaged => {
             let mut resolved = if requested.is_empty() {
-                ResolvedSelection {
-                    patches: Vec::new(),
-                    staged_hunks: BTreeMap::new(),
-                    staged_lines: BTreeMap::new(),
-                }
+                ResolvedSelection::default()
             } else {
                 resolve_unstaged(repo, pathspecs, opts.clone(), &requested)?
             };
@@ -443,8 +425,8 @@ fn resolve_unstaged(
 
     Ok(ResolvedSelection {
         patches,
-        staged_hunks,
-        staged_lines: BTreeMap::new(),
+        selected_hunks: staged_hunks,
+        selected_lines: BTreeMap::new(),
     })
 }
 
@@ -675,8 +657,8 @@ fn resolve_on_files(
 
     Ok(ResolvedSelection {
         patches,
-        staged_hunks: staged_by_path,
-        staged_lines: BTreeMap::new(),
+        selected_hunks: staged_by_path,
+        selected_lines: BTreeMap::new(),
     })
 }
 
@@ -1063,8 +1045,8 @@ fn resolve_line_ranges_unstaged(
 
     Ok(ResolvedSelection {
         patches,
-        staged_hunks: BTreeMap::new(),
-        staged_lines,
+        selected_hunks: BTreeMap::new(),
+        selected_lines: staged_lines,
     })
 }
 
@@ -1148,8 +1130,8 @@ pub fn restore_hunks(
             .extend(apply.added.into_iter().chain(apply.modified));
         outcome.restored.sort();
         outcome.restored.dedup();
-        outcome.restored_hunks = resolved.staged_hunks;
-        outcome.restored_lines = resolved.staged_lines;
+        outcome.restored_hunks = resolved.selected_hunks;
+        outcome.restored_lines = resolved.selected_lines;
     }
     if restore_worktree {
         let resolved = resolve_selection_with_staged(
@@ -1167,8 +1149,8 @@ pub fn restore_hunks(
                 push_restored_path(&mut outcome.restored, &plan.path);
             }
         }
-        merge_restored_maps(&mut outcome.restored_hunks, resolved.staged_hunks);
-        merge_restored_line_maps(&mut outcome.restored_lines, resolved.staged_lines);
+        merge_restored_maps(&mut outcome.restored_hunks, resolved.selected_hunks);
+        merge_restored_line_maps(&mut outcome.restored_lines, resolved.selected_lines);
     }
     Ok(outcome)
 }
@@ -1537,8 +1519,8 @@ pub fn stage_hunks(
     )?;
     Ok(StageHunksOutcome::from_apply(
         dry_run,
-        resolved.staged_hunks,
-        resolved.staged_lines,
+        resolved.selected_hunks,
+        resolved.selected_lines,
         apply,
     ))
 }
