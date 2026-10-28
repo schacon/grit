@@ -4104,7 +4104,12 @@ pub struct DiffIndexToWorktreeOptions {
     /// Shared per-operation attribute/conversion context (see [`crate::worktree_rules::WorktreeRules`]).
     pub worktree_rules:
         Option<std::sync::Arc<std::sync::Mutex<crate::worktree_rules::WorktreeRules>>>,
-    /// When true, omit worktree-vs-index diffs for unmerged paths (used by `status` only).
+    /// Status-only shortcuts (default `false`).
+    ///
+    /// When true, a tracked file whose size differs from its index entry is reported as
+    /// modified without reading it, with the *index* blob as `new_oid`, and intent-to-add
+    /// entries are not hashed. Content diffs must leave this off so a content change always
+    /// carries a null worktree `new_oid` (`old_oid != new_oid`).
     pub for_status: bool,
     /// When true (default), query `core.fsmonitor` before scanning the worktree.
     pub refresh_fsmonitor: bool,
@@ -4917,9 +4922,7 @@ fn diff_index_to_worktree_inner(
     let blob_count = blob_dirs.len();
     let thread_policy = options.thread_policy.unwrap_or_default();
     let hash_threads = stat_scan_thread_count(&thread_policy, &config, blob_scan, blob_count);
-    let parallel_blob_work = blob_count >= PARALLEL_STAT_MIN_ENTRIES
-        && hash_threads > 1
-        && (materialize_dirty_blobs || options.for_status);
+    let parallel_blob_work = blob_count >= PARALLEL_STAT_MIN_ENTRIES && hash_threads > 1;
     let mut staging_hash_jobs: Vec<StagingHashJob> = Vec::new();
     // Entries the stat refresh just hashed and found matching their recorded blob.
     let mut refresh_content_verified = vec![false; index.entries.len()];
