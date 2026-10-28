@@ -55,8 +55,8 @@ use crate::pack_objects::{PackBuildOptions, SerializedDeltaPack};
 use crate::pack_rev::write_pack_rev_sidecar_for_index_path;
 use crate::prune_packed::{prune_packed_objects, PrunePackedOptions};
 use crate::reflog::{
-    expire_reflog_git_with_promises, load_gc_reflog_expire_config, reflog_refs_on_store,
-    ReflogExpireParams,
+    expire_reflog_git_with_cache, load_gc_reflog_expire_config, reflog_refs_on_store,
+    ReflogExpireParams, ReflogExpiryCache,
 };
 use crate::repack_pack::{write_repack_pack, RepackPackSettings};
 use crate::repo::Repository;
@@ -1837,9 +1837,9 @@ fn expire_reflogs_for_gc(repo: &Repository, dry_run: bool, now: i64) -> Result<u
         verbose: false,
     };
     let mut total = 0usize;
-    let promises = std::cell::OnceCell::new();
+    let cache = ReflogExpiryCache::default();
     for refname in reflog_refs_on_store(repo.refs())? {
-        let result = expire_reflog_git_with_promises(
+        let result = expire_reflog_git_with_cache(
             repo,
             &refname,
             &params,
@@ -1849,7 +1849,7 @@ fn expire_reflogs_for_gc(repo: &Repository, dry_run: bool, now: i64) -> Result<u
             gc_cfg.global_total,
             gc_cfg.global_unreachable,
             now,
-            &promises,
+            &cache,
         )?;
         total += result.pruned;
     }
