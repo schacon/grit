@@ -45,7 +45,7 @@ pub use handle::References;
 pub use on_store::update_branch_for_commit_on_store;
 pub(crate) use on_store::{
     append_reflog_on_store, delete_ref_on_store, update_detached_head_for_commit_on_store,
-    write_symbolic_ref_on_store,
+    verify_new_tip, write_symbolic_ref_on_store,
 };
 
 /// In-process ref-transaction and loose-object prune helpers.
@@ -3836,13 +3836,14 @@ pub fn update_branch_for_commit(git_dir: &Path, update: &BranchCommitRefUpdate<'
 
 /// Like [`update_branch_for_commit`], using a repository config snapshot for reflog policy.
 ///
-/// Opens the ref store for `git_dir`; see [`update_branch_for_commit_on_store`].
+/// Opens the ref store for `git_dir`, checked against that repository's objects like
+/// [`write_ref`]; see [`update_branch_for_commit_on_store`].
 pub fn update_branch_for_commit_with_config(
     git_dir: &Path,
     update: &BranchCommitRefUpdate<'_>,
     config: &ConfigSet,
 ) -> Result<()> {
-    update_branch_for_commit_on_store(open_ref_store(git_dir)?.as_ref(), update, config)
+    update_branch_for_commit_on_store(&store::open_checked_ref_store(git_dir)?, update, config)
 }
 
 /// Files-backend body of [`update_detached_head_for_commit_on_store`]; the caller has checked

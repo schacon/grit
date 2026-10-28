@@ -170,6 +170,25 @@ pub trait RefStore: Send + Sync + Debug {
         txn: RefTransaction,
     ) -> StoreResult<Box<dyn PreparedRefTransaction + Send + '_>>;
 
+    /// Check the objects `updates` would point refs at, without taking any lock or writing.
+    ///
+    /// This is the object check [`Self::prepare`] makes on the store
+    /// [`Repository::refs`](crate::repo::Repository::refs) returns. Writers that update a ref
+    /// without a transaction (the files-backend fast path behind
+    /// [`update_branch_for_commit_on_store`](crate::refs::update_branch_for_commit_on_store))
+    /// call it before locking. Backends do not look at objects, so the default accepts
+    /// everything; there is no need to override it.
+    ///
+    /// # Errors
+    ///
+    /// On the repository's store: [`RefStoreError::MissingObject`],
+    /// [`RefStoreError::NotACommit`] or [`RefStoreError::ObjectLookup`] for the first
+    /// offending update.
+    fn verify_update_targets(&self, updates: &[RefUpdate]) -> StoreResult<()> {
+        let _ = updates;
+        Ok(())
+    }
+
     /// Whether a reflog is present for `name`.
     fn reflog_exists(&self, name: &str) -> Result<bool>;
 

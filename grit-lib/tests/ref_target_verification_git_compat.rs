@@ -237,3 +237,41 @@ fn skip_oid_verification_writes_the_dangling_ref_git_fsck_reports() {
         );
     });
 }
+
+#[test]
+fn branch_commit_writer_to_a_missing_object_is_refused_and_git_fsck_stays_clean() {
+    each_backend(|backend, repo| {
+        let commit = empty_commit_oid(repo);
+        if !git_interop_available(backend) {
+            return;
+        }
+        let grit = open(repo);
+        let err = grit_lib::refs::update_branch_for_commit_on_store(
+            grit.refs(),
+            &grit_lib::refs::BranchCommitRefUpdate {
+                branch_ref: "refs/heads/main",
+                expected_old: Some(commit),
+                new_oid: bogus(),
+                identity: "Ref Verify <verify@example.com> 1700000000 +0000",
+                reflog_message: "commit: bogus",
+            },
+            &grit_lib::config::ConfigSet::new(),
+        )
+        .expect_err("missing tip");
+        assert!(
+            matches!(&err, Error::RefStore(RefStoreError::MissingObject { .. })),
+            "{backend:?}: {err:?}"
+        );
+        // Git refuses the equivalent update too.
+        assert!(!git_ok(
+            repo.worktree(),
+            &["update-ref", "refs/heads/main", BOGUS]
+        ));
+        assert_eq!(
+            git(repo.worktree(), &["rev-parse", "HEAD"]).trim(),
+            commit.to_hex()
+        );
+        assert!(git_ok(repo.worktree(), &["fsck", "--no-progress"]));
+        assert_fsck_when_git_interop(repo);
+    });
+}

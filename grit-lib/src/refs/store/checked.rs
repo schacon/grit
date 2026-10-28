@@ -45,8 +45,9 @@ pub(crate) fn open_checked_ref_store(git_dir: &Path) -> Result<ObjectCheckedRefS
     ))
 }
 
-/// A repository's ref backend wrapped so [`RefStore::prepare`] first runs
-/// [`verify_update_targets`] against the repository's object database.
+/// A repository's ref backend wrapped so [`RefStore::prepare`] and
+/// [`RefStore::verify_update_targets`] check updates against the repository's object
+/// database.
 ///
 /// Reads, iteration and reflog maintenance go straight to the backend.
 pub(crate) struct ObjectCheckedRefStore {
@@ -101,8 +102,12 @@ impl RefStore for ObjectCheckedRefStore {
     ) -> StoreResult<Box<dyn PreparedRefTransaction + Send + '_>> {
         // Malformed names and null ids keep their own errors, ahead of any object lookup.
         txn.validate()?;
-        verify_update_targets(&self.odb, txn.updates())?;
+        self.verify_update_targets(txn.updates())?;
         self.inner.prepare(txn)
+    }
+
+    fn verify_update_targets(&self, updates: &[RefUpdate]) -> StoreResult<()> {
+        verify_update_targets(&self.odb, updates)
     }
 
     fn reflog_exists(&self, name: &str) -> Result<bool> {

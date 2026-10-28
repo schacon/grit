@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::config::ConfigSet;
 use grit_lib::error::Error;
 use grit_lib::ident::Signature;
 use grit_lib::objects::{NewCommit, ObjectId, ObjectKind, TreeEntry};
@@ -13,6 +14,9 @@ use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::refs::store::{
     Expected, MemoryRefStore, RawRef, RefName, RefStore, RefStoreError, RefTransaction, RefUpdate,
     RefUpdateFlags, ReflogUpdate,
+};
+use grit_lib::refs::{
+    update_branch_for_commit, update_branch_for_commit_on_store, BranchCommitRefUpdate,
 };
 use grit_lib::repo::{InitOptions, Repository, RepositoryBuilder};
 
@@ -483,4 +487,73 @@ fn injected_ref_store_is_checked_against_the_repository_objects() {
     // The raw store itself is the unchecked backend layer.
     commit_updates(store.as_ref(), vec![put("refs/heads/raw", bogus())])
         .expect("raw stores take synthetic ids");
+}
+
+fn branch_commit<'a>(expected_old: ObjectId, new_oid: ObjectId) -> BranchCommitRefUpdate<'a> {
+    BranchCommitRefUpdate {
+        branch_ref: "refs/heads/main",
+        expected_old: Some(expected_old),
+        new_oid,
+        identity: "Ref Verify <verify@example.com> 1700000000 +0000",
+        reflog_message: "commit: next",
+    }
+}
+
+#[test]
+fn branch_commit_writer_refuses_missing_and_non_commit_tips() {
+    each_format(|format, fx| {
+        let config = ConfigSet::new();
+        let err = update_branch_for_commit_on_store(
+            fx.repo.refs(),
+            &branch_commit(fx.commit, bogus()),
+            &config,
+        )
+        .expect_err("missing tip");
+        assert!(
+            matches!(&err, Error::RefStore(e) if *e == missing("refs/heads/main", bogus())),
+            "{format:?}: {err:?}"
+        );
+        let err = update_branch_for_commit_on_store(
+            fx.repo.refs(),
+            &branch_commit(fx.commit, fx.tree),
+            &config,
+        )
+        .expect_err("tree tip");
+        assert!(
+            matches!(
+                &err,
+                Error::RefStore(e) if *e == not_a_commit("refs/heads/main", fx.tree, ObjectKind::Tree)
+            ),
+            "{format:?}: {err:?}"
+        );
+        let err = update_branch_for_commit(fx.repo.git_dir(), &branch_commit(fx.commit, bogus()))
+            .expect_err("path-based writer, missing tip");
+        assert!(
+            matches!(&err, Error::RefStore(e) if *e == missing("refs/heads/main", bogus())),
+            "{format:?}: {err:?}"
+        );
+        assert_eq!(
+            fx.raw("refs/heads/main"),
+            Some(RawRef::Direct(fx.commit)),
+            "{format:?}"
+        );
+        assert_eq!(
+            fx.raw("HEAD"),
+            Some(RawRef::Symbolic("refs/heads/main".to_owned())),
+            "{format:?}"
+        );
+        assert!(
+            !fx.repo.git_dir().join("refs/heads/main.lock").exists(),
+            "{format:?}: the check runs before the lock"
+        );
+
+        let (next, _) = write_commit(&fx.repo, "next", b"next\n");
+        update_branch_for_commit_on_store(fx.repo.refs(), &branch_commit(fx.commit, next), &config)
+            .unwrap_or_else(|err| panic!("{format:?}: {err}"));
+        assert_eq!(
+            fx.raw("refs/heads/main"),
+            Some(RawRef::Direct(next)),
+            "{format:?}"
+        );
+    });
 }
