@@ -16,13 +16,15 @@ use std::io;
 use std::io::{Read, Seek, SeekFrom};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use crate::commit_graph_file::CommitGraphChain;
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::ident::Signature;
 use crate::index::MODE_TREE;
 use crate::merge_base;
-use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use crate::objects::{parse_commit, parse_tree, CommitRef, ObjectId, ObjectKind};
 use crate::refs::store::RefStore as _;
 use crate::refs::{self, reflog_file_path};
 use crate::repo::Repository;
@@ -1139,13 +1141,6 @@ fn peel_tip_to_commit(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UnreachableKind {
-    Always,
-    Normal,
-    Head,
-}
-
 fn is_head_ref(refname: &str) -> bool {
     refname == "HEAD" || refname.ends_with("/HEAD")
 }
@@ -1168,46 +1163,100 @@ fn head_reflog_tips(repo: &Repository, promised: &HashSet<ObjectId>) -> Vec<Obje
         .collect()
 }
 
-fn reachable_commit_set(repo: &Repository, tips: &[ObjectId]) -> HashSet<ObjectId> {
-    let shallow = crate::shallow::load_shallow_boundaries(repo.git_dir());
-    let mut seen = HashSet::new();
-    let mut pending = tips.to_vec();
-    while let Some(oid) = pending.pop() {
-        if !seen.insert(oid) || shallow.contains(&oid) {
-            continue;
-        }
-        let Ok(Some(obj)) = repo.odb().try_read_once(&oid) else {
-            continue;
-        };
-        if obj.kind != ObjectKind::Commit {
-            continue;
-        }
-        if let Ok(commit) = parse_commit(&obj.data) {
-            pending.extend(commit.parents);
-        }
-    }
-    seen
+/// Commits reachable from a set of tips, discovered lazily.
+///
+/// The first walk stops below commits older than a cutoff (the total-expiry cutoff, which
+/// old reflog entries rarely reach past); only a lookup that misses walks the rest of
+/// history, once. Answers never depend on the cutoff, only the amount of history read.
+/// Shallow boundaries are not walked through, and parents come from the commit-graph when
+/// it covers a commit.
+struct ReachableCommits<'r> {
+    repo: &'r Repository,
+    graph: Option<Arc<CommitGraphChain>>,
+    shallow: HashSet<ObjectId>,
+    seen: HashSet<ObjectId>,
+    pending: Vec<ObjectId>,
+    /// Parents of commits older than the cutoff, walked on the first miss.
+    deferred: Vec<ObjectId>,
 }
 
+impl<'r> ReachableCommits<'r> {
+    /// Walk from `tips` down to commits older than `cutoff` (`0` walks everything).
+    fn new(repo: &'r Repository, tips: Vec<ObjectId>, cutoff: i64) -> Self {
+        let mut reachable = Self {
+            repo,
+            graph: if tips.is_empty() {
+                None
+            } else {
+                repo.caches().commit_graph_chain(repo.odb().objects_dir())
+            },
+            shallow: if tips.is_empty() {
+                HashSet::new()
+            } else {
+                crate::shallow::load_shallow_boundaries(repo.git_dir())
+            },
+            seen: HashSet::new(),
+            pending: tips,
+            deferred: Vec::new(),
+        };
+        reachable.walk(cutoff);
+        reachable
+    }
+
+    fn walk(&mut self, cutoff: i64) {
+        while let Some(oid) = self.pending.pop() {
+            if !self.seen.insert(oid) || self.shallow.contains(&oid) {
+                continue;
+            }
+            let Some((parents, time)) = self.linkage(oid) else {
+                continue;
+            };
+            if cutoff > 0 && time < cutoff {
+                self.deferred.extend(parents);
+            } else {
+                self.pending.extend(parents);
+            }
+        }
+    }
+
+    /// Parents and committer time of commit `oid`, or `None` when it is missing or not a
+    /// commit.
+    fn linkage(&self, oid: ObjectId) -> Option<(Vec<ObjectId>, i64)> {
+        if let Some(linkage) = self.graph.as_ref().and_then(|g| g.graph_commit(&oid)) {
+            return Some(linkage);
+        }
+        let obj = self.repo.odb().try_read_once(&oid).ok()??;
+        if obj.kind != ObjectKind::Commit {
+            return None;
+        }
+        let commit = CommitRef::parse(&obj.data).ok()?;
+        Some((commit.parents().to_vec(), commit.committer_timestamp()))
+    }
+
+    fn contains(&mut self, oid: &ObjectId) -> bool {
+        if !self.seen.contains(oid) && !self.deferred.is_empty() {
+            self.pending.append(&mut self.deferred);
+            self.walk(0);
+        }
+        self.seen.contains(oid)
+    }
+}
+
+/// Whether a reflog entry side names a commit that is not reachable. Missing objects count
+/// as unreachable, and objects that are not commits as reachable.
 fn is_unreachable_oid(
     repo: &Repository,
-    reachable: &HashSet<ObjectId>,
-    kind: UnreachableKind,
+    reachable: &mut ReachableCommits<'_>,
     oid: ObjectId,
 ) -> bool {
-    if oid.is_zero() {
+    if oid.is_zero() || reachable.seen.contains(&oid) {
         return false;
     }
-    if reachable.contains(&oid) {
-        return false;
+    match repo.odb().try_read_once(&oid) {
+        Ok(Some(obj)) if obj.kind == ObjectKind::Commit => !reachable.contains(&oid),
+        Ok(Some(_)) => false,
+        _ => true,
     }
-    if kind == UnreachableKind::Always {
-        return true;
-    }
-    let Ok(Some(obj)) = repo.odb().try_read_once(&oid) else {
-        return true;
-    };
-    obj.kind == ObjectKind::Commit
 }
 
 fn reflog_entry_timestamp(entry: &ReflogEntry) -> i64 {
@@ -1236,8 +1285,7 @@ fn should_drop_reflog_entry(
     entry: &ReflogEntry,
     expire_total: i64,
     expire_unreachable: i64,
-    unreachable_kind: UnreachableKind,
-    reachable: &HashSet<ObjectId>,
+    reachable: Option<&mut ReachableCommits<'_>>,
     stale_fix: Option<&StaleFix<'_>>,
 ) -> bool {
     let ts = reflog_entry_timestamp(entry);
@@ -1247,19 +1295,15 @@ fn should_drop_reflog_entry(
     if stale_fix.is_some_and(|fix| fix.entry_is_stale(repo, entry)) {
         return true;
     }
-    if expire_unreachable > 0 && ts < expire_unreachable {
-        match unreachable_kind {
-            UnreachableKind::Always => return true,
-            UnreachableKind::Normal | UnreachableKind::Head => {
-                if is_unreachable_oid(repo, reachable, unreachable_kind, entry.old_oid)
-                    || is_unreachable_oid(repo, reachable, unreachable_kind, entry.new_oid)
-                {
-                    return true;
-                }
-            }
-        }
+    if expire_unreachable == 0 || ts >= expire_unreachable {
+        return false;
     }
-    false
+    // Without a reachability set (no commit tip to judge by) every old entry expires.
+    let Some(reachable) = reachable else {
+        return true;
+    };
+    is_unreachable_oid(repo, reachable, entry.old_oid)
+        || is_unreachable_oid(repo, reachable, entry.new_oid)
 }
 
 /// Reflog expiry for one ref.
@@ -1377,25 +1421,19 @@ pub(crate) fn expire_reflog_git_with_cache(
 
     // Old entries are judged against the commits reachable from the ref's own tip (every ref
     // for HEAD), as Git does; a tip that does not name a commit expires them all.
-    let (unreachable_kind, tips) = if !may_drop_unreachable || expire_unreachable <= expire_total {
-        (UnreachableKind::Always, Vec::new())
+    let tips = if !may_drop_unreachable || expire_unreachable <= expire_total {
+        None
     } else if is_head_ref(refname) {
-        (
-            UnreachableKind::Head,
-            head_reflog_tips(repo, cache.promised(repo)?),
-        )
+        Some(head_reflog_tips(repo, cache.promised(repo)?))
     } else {
         let promised = cache.promised(repo)?;
-        match store
+        store
             .resolve(refname)
             .ok()
             .and_then(|tip| peel_tip_to_commit(repo, promised, tip))
-        {
-            Some(tip) => (UnreachableKind::Normal, vec![tip]),
-            None => (UnreachableKind::Always, Vec::new()),
-        }
+            .map(|tip| vec![tip])
     };
-    let reachable = reachable_commit_set(repo, &tips);
+    let mut reachable = tips.map(|tips| ReachableCommits::new(repo, tips, expire_total));
     let mut kept_entries = Vec::new();
     let mut pruned = 0usize;
     let mut actions = Vec::with_capacity(entries.len());
@@ -1406,8 +1444,7 @@ pub(crate) fn expire_reflog_git_with_cache(
             entry,
             expire_total,
             expire_unreachable,
-            unreachable_kind,
-            &reachable,
+            reachable.as_mut(),
             stale_fix.as_ref(),
         );
         let action = if drop {
@@ -1978,7 +2015,7 @@ mod completeness_tests {
     use crate::objects::{serialize_tree, ObjectId, ObjectKind, TreeEntry};
     use crate::repo::{init_repository, Repository};
 
-    use super::ReflogExpiryCache;
+    use super::{ReachableCommits, ReflogExpiryCache};
 
     fn seed_repo() -> (TempDir, Repository) {
         let tmp = TempDir::new().expect("tempdir");
@@ -2008,13 +2045,17 @@ mod completeness_tests {
     }
 
     fn commit(repo: &Repository, tree: ObjectId, parents: &[ObjectId]) -> ObjectId {
+        commit_at(repo, tree, parents, 1)
+    }
+
+    fn commit_at(repo: &Repository, tree: ObjectId, parents: &[ObjectId], when: i64) -> ObjectId {
         let mut body = format!("tree {tree}\n");
         for p in parents {
             body.push_str(&format!("parent {p}\n"));
         }
-        body.push_str(
-            "author A <a@example.com> 1 +0000\ncommitter A <a@example.com> 1 +0000\n\nc\n",
-        );
+        body.push_str(&format!(
+            "author A <a@example.com> {when} +0000\ncommitter A <a@example.com> {when} +0000\n\nc\n"
+        ));
         repo.odb()
             .write(ObjectKind::Commit, body.as_bytes())
             .expect("write commit")
@@ -2063,5 +2104,34 @@ mod completeness_tests {
         let fresh = ReflogExpiryCache::default();
         assert!(fresh.commit_complete(&repo, &promised, child));
         assert!(fresh.commit_complete(&repo, &promised, missing));
+    }
+
+    #[test]
+    fn reachability_walk_stops_at_the_cutoff_until_a_lookup_misses() {
+        let (_tmp, repo) = seed_repo();
+        let tree = tree(&repo, &[]);
+        let mut chain = Vec::new();
+        for when in 1..=10 {
+            let parents = chain.last().copied().into_iter().collect::<Vec<_>>();
+            chain.push(commit_at(&repo, tree, &parents, when));
+        }
+        let unrelated = commit_at(&repo, tree, &[], 5);
+
+        let mut reachable = ReachableCommits::new(&repo, vec![chain[9]], 8);
+        assert_eq!(
+            reachable.seen.len(),
+            4,
+            "commits from time 10 down to the first one older than the cutoff"
+        );
+        assert!(reachable.contains(&chain[7]));
+        assert_eq!(reachable.seen.len(), 4, "a hit does not walk further");
+        assert!(reachable.contains(&chain[0]));
+        assert_eq!(reachable.seen.len(), 10, "a miss walks the rest once");
+        assert!(!reachable.contains(&unrelated));
+
+        let mut everything = ReachableCommits::new(&repo, vec![chain[9]], 0);
+        assert_eq!(everything.seen.len(), 10);
+        assert!(!everything.contains(&unrelated));
+        assert!(ReachableCommits::new(&repo, Vec::new(), 0).seen.is_empty());
     }
 }

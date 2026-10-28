@@ -34,6 +34,8 @@ const NOW: i64 = 1_700_000_000;
 const OLD: i64 = 1_500_000_000;
 const UNREACHABLE_CUTOFF: i64 = 1_600_000_000;
 const RECENT: i64 = 1_690_000_000;
+/// Commit dates are `1_400_000_000 + n` for the n-th generated commit.
+const MID_HISTORY: i64 = 1_400_000_060;
 const DIRS: usize = 8;
 const FILES_PER_DIR: usize = 32;
 const LINEAR_COMMITS: usize = 40;
@@ -307,6 +309,19 @@ fn grit_expire_within_limit(
 
 #[test]
 fn expire_unreachable_with_deep_merged_history_matches_git_quickly() {
+    expire_unreachable_case(None);
+}
+
+/// A total cutoff in the middle of history: the reachability walk first stops there and has
+/// to dig further for the entries naming early commits.
+#[test]
+fn expire_unreachable_with_total_cutoff_mid_history_matches_git() {
+    expire_unreachable_case(Some(MID_HISTORY));
+}
+
+/// Expire every test ref with `--expire=<total>` (never when `None`) and the unreachable
+/// cutoff, with grit and with git, and compare.
+fn expire_unreachable_case(total: Option<i64>) {
     let (seed, h) = seed_repo();
     let git_dir = seed.path().join(".git");
     let z = ObjectId::zero();
@@ -366,7 +381,7 @@ fn expire_unreachable_with_deep_merged_history_matches_git_quickly() {
             dry_run: false,
             verbose: false,
         },
-        Some(0),
+        Some(total.unwrap_or(0)),
         Some(UNREACHABLE_CUTOFF),
     );
     // Git 2.35 through 2.46.0 did not peel an annotated-tag tip for this check and expired
@@ -377,11 +392,12 @@ fn expire_unreachable_with_deep_merged_history_matches_git_quickly() {
         .copied()
         .filter(|r| git_peels_tag_tips || *r != "refs/tags/v1")
         .collect::<Vec<_>>();
+    let expire = total.map_or_else(|| "--expire=never".to_owned(), |t| format!("--expire={t}"));
     let cutoff = format!("--expire-unreachable={UNREACHABLE_CUTOFF}");
     for refname in &compared {
         git(
             git_copy.path(),
-            &["reflog", "expire", "--expire=never", &cutoff, refname],
+            &["reflog", "expire", &expire, &cutoff, refname],
         );
     }
 
