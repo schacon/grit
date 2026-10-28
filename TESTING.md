@@ -658,7 +658,7 @@ Reproduce locally with **`make docs-check`**; preview with **`make docs`** (dev 
 ## Adding tests
 
 - Put **library behavior** in `grit-lib/src/**` unit tests or `grit-lib/tests/*.rs` integration tests.
-- Use **`grit-test-support`** helpers for temp repos and fixtures shared across crates.
+- Use **`grit-test-support`** helpers for temp repos and fixtures shared across crates. Run system `git` with `grit_test_support::git` (hermetic identity, date and config), resolve revisions with `grit_test_support::rev_parse`, and reserve server ports with `grit_test_support::free_port` (its handout list is process-wide, so modules in one test binary never collide) instead of adding per-file copies.
 - Integration tests in `grit-lib`, `grit-cli`, `grit-utils`, `grit-examples`, `grit-protocol` and `grit-http-server` build as **one test binary per crate**, `tests/integration.rs`, which includes each `tests/*.rs` file as a module. After adding, renaming or removing a test file, run **`python3 scripts/sync_integration_tests.py`**; the `every_test_file_is_compiled` test fails until you do. Run one file's tests with `cargo test -p <crate> --test integration <file>::`. A file that changes the working directory or environment, or runs its own binary again by test name, gets a `[[test]]` entry in the crate's `Cargo.toml` instead, so it keeps its own process. Shared helper directories (`tests/support/`) are declared once in `integration.rs`; a test file uses them with `use crate::support;`.
 - For new **public API**, add at least one test that exercises the happy path and important errors.
 - When behavior must match Git, assert it against the system `git` binary in the test (formats, protocols, `fsck`), not against copied Git output text.

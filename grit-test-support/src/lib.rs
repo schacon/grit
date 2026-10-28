@@ -7,6 +7,7 @@
 pub mod binaries;
 pub mod blame;
 pub mod cli_fixture;
+pub mod net;
 pub mod objects;
 pub mod odb_conformance;
 pub mod parallel;
@@ -20,6 +21,7 @@ pub use cli_fixture::{
     CliFixtureWithUpstream, ModeCapture, NetworkSnapshotOptions, PreparedNetworkRun,
     SnapshotExitCodes, SnapshotOutputMode,
 };
+pub use net::free_port;
 pub use objects::{
     git_cat_file_batch_check, git_commit_graph_verify, git_fsck, git_hash_object_literally,
     git_midx_verify, git_supports_sha256, git_verify_pack, hash_loose_object, loose_object_path,
@@ -409,6 +411,17 @@ pub fn merge_git_config_env<'a>(cmd: &'a mut Command, extra: &[(&str, &str)]) ->
 /// setup. Use [`git_cmd`] when stderr or non-zero statuses are relevant.
 pub fn git(dir: &Path, args: &[&str]) -> String {
     git_cmd(args).in_dir(dir).suc().stdout
+}
+
+/// Resolve `rev` in the repository at `dir` with system `git rev-parse`.
+///
+/// Works for SHA-1 and SHA-256 repositories. Panics when `git` fails or does not
+/// print an object id.
+#[must_use]
+pub fn rev_parse(dir: &Path, rev: &str) -> grit_lib::objects::ObjectId {
+    let out = git(dir, &["rev-parse", rev]);
+    grit_lib::objects::ObjectId::from_hex(out.trim())
+        .unwrap_or_else(|e| panic!("git rev-parse {rev} printed {out:?}: {e}"))
 }
 
 /// Create `dir/history.git`: a bare repository whose history is fully packed by
