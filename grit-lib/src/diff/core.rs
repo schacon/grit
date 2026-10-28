@@ -4130,7 +4130,7 @@ fn parallel_process_blob_worktree_jobs(
     par_opts.min_total_bytes = None;
     let est_bytes = jobs.len().saturating_mul(8192);
     let store_dirty_blobs = (materialize_dirty_blobs && !hash_blobs_without_write)
-        .then_some(crate::odb::BULK_NEW_LOOSE_WRITE);
+        .then(|| odb.bulk_stage_write_options());
     let stream_from = if store_dirty_blobs.is_some() {
         odb.big_file_threshold()?
     } else {
@@ -4349,7 +4349,7 @@ fn push_index_blob_worktree_diff(
     }
 
     let store = (materialize_dirty_blobs && !hash_blobs_without_write)
-        .then_some(crate::odb::BULK_NEW_LOOSE_WRITE);
+        .then(|| odb.bulk_stage_write_options());
     let stream_from = if store.is_some() {
         odb.big_file_threshold()?
     } else {
@@ -6900,7 +6900,7 @@ fn worktree_file_oid(
         filter_process,
         stream_from,
     )?
-    .object_id(odb, materialize.then_some(crate::odb::BULK_NEW_LOOSE_WRITE))
+    .object_id(odb, materialize.then(|| odb.bulk_stage_write_options()))
 }
 
 /// Hash normalized worktree bytes for a path (does not write to the object database).

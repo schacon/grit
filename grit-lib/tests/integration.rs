@@ -46,6 +46,9 @@ mod add_many_pathspec_perf_git_compat;
 #[path = "add_many_untracked_dirs_git_compat.rs"]
 mod add_many_untracked_dirs_git_compat;
 #[cfg(feature = "full-tests")]
+#[path = "add_packed_blobs_no_loose_issue_2190.rs"]
+mod add_packed_blobs_no_loose_issue_2190;
+#[cfg(feature = "full-tests")]
 #[path = "add_stream_size_git_compat.rs"]
 mod add_stream_size_git_compat;
 #[cfg(feature = "full-tests")]

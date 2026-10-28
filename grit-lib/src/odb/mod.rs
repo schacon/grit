@@ -113,19 +113,33 @@ pub struct WriteOptions {
     /// every pack on a miss.
     pub assume_loose_only_existence: bool,
     /// When set, skip existence probes and write when the loose path is absent
-    /// (bulk add of all-new blobs).
+    /// (bulk add of all-new blobs). [`Self::freshen_existing`] still applies.
     pub trust_new_loose: bool,
     /// When set, skip `create_dir_all` on the loose prefix directory (call
     /// [`Odb::ensure_all_loose_prefix_dirs`] first).
     pub loose_prefix_dirs_ready: bool,
+    /// When set and no loose copy exists in this repository's object directory, freshen
+    /// a copy stored in a local pack (promisor packs included) or in an alternate object
+    /// directory, and skip the write when that succeeds (Git freshens before writing).
+    ///
+    /// Packs are looked up in the cached pack listing; a miss does not rescan
+    /// `objects/pack/`, so many probes for new objects stay cheap. An object stored only
+    /// where it cannot be freshened (a cruft pack) is still written loose. Like the pack
+    /// hits of [`Self::assume_loose_only_existence`], the copy is freshened even when
+    /// [`Self::silent`] is set.
+    pub freshen_existing: bool,
 }
 
 /// [`WriteOptions`] for parallel staging of new worktree blobs (bulk `git add`).
+///
+/// Only a loose copy stops the write; use [`Odb::bulk_stage_write_options`] for staging
+/// content that may already be packed.
 pub const BULK_NEW_LOOSE_WRITE: WriteOptions = WriteOptions {
     assume_loose_only_existence: true,
     trust_new_loose: true,
     silent: false,
     loose_prefix_dirs_ready: true,
+    freshen_existing: false,
 };
 
 /// Parallel restage of tracked modifications (objects may already be loose or packed).
@@ -134,6 +148,7 @@ pub const BULK_TRACKED_RESTAGE_LOOSE_WRITE: WriteOptions = WriteOptions {
     trust_new_loose: false,
     silent: false,
     loose_prefix_dirs_ready: true,
+    freshen_existing: false,
 };
 
 /// True when `oid` is stored as a loose object or in a **non-promisor** local pack.
@@ -1964,8 +1979,17 @@ impl Odb {
         if loose.is_file() {
             return self.touch_object_mtime(&loose).is_some();
         }
+        self.freshen_packed_or_alternate(oid)
+    }
 
-        if self.freshen_object_in_objects_dir(&self.objects_dir, oid) {
+    /// [`Self::freshen_object`] without the loose probe in this repository's object
+    /// directory: touch the local pack holding `oid` (cached listing, no rescan) or a
+    /// loose or packed copy in an alternate object directory.
+    fn freshen_packed_or_alternate(&self, oid: &ObjectId) -> bool {
+        if self.is_empty_tree(oid) {
+            return false;
+        }
+        if self.freshen_packed_in_objects_dir(&self.objects_dir, oid) {
             return true;
         }
 
@@ -2000,6 +2024,10 @@ impl Odb {
         if loose.is_file() {
             return self.touch_object_mtime(&loose).is_some();
         }
+        self.freshen_packed_in_objects_dir(objects_dir, oid)
+    }
+
+    fn freshen_packed_in_objects_dir(&self, objects_dir: &Path, oid: &ObjectId) -> bool {
         self.with_pack_store_for(objects_dir, || {
             let Ok(indexes) = pack::read_local_pack_indexes_cached(objects_dir) else {
                 return false;
@@ -2033,6 +2061,28 @@ impl Odb {
         pack::refresh_pack_bytes_signature(pack_path, touched_at);
         guard.insert(pack_path.to_path_buf());
         true
+    }
+
+    /// [`WriteOptions`] for storing many worktree blobs while staging (`add`, restage).
+    ///
+    /// Returns [`BULK_NEW_LOOSE_WRITE`] when this database has no local pack and no
+    /// alternate object directory, so only the loose path can hold a copy and nothing
+    /// else is probed. Otherwise the options also set [`WriteOptions::freshen_existing`],
+    /// so content already stored in a pack or alternate is freshened instead of written
+    /// again as a loose object. Call once per batch: the pack listing is read here, so
+    /// workers probe already-loaded indexes.
+    #[must_use]
+    pub fn bulk_stage_write_options(&self) -> WriteOptions {
+        let stored_beyond_loose = self.custom_primary.is_none()
+            && (self.alternate_object_lookup_needed()
+                || self.with_pack_read_context(|| {
+                    pack::read_local_pack_indexes_cached(&self.objects_dir)
+                        .is_ok_and(|indexes| !indexes.is_empty())
+                }));
+        WriteOptions {
+            freshen_existing: stored_beyond_loose,
+            ..BULK_NEW_LOOSE_WRITE
+        }
     }
 
     /// When `oid` is already reachable, freshen it and return its id. Returns `None` when the
@@ -3227,6 +3277,9 @@ impl Odb {
         if let Some(existing) = primary.try_finish_duplicate_write(oid, options)? {
             return Ok(existing);
         }
+        if options.freshen_existing && self.freshen_packed_or_alternate(oid) {
+            return Ok(*oid);
+        }
 
         let already_exists = !(options.trust_new_loose || options.assume_loose_only_existence)
             && self.object_exists_for_write_skip(oid);
@@ -3268,6 +3321,9 @@ impl Odb {
         let primary = self.primary()?;
         if let Some(existing) = primary.try_finish_duplicate_write(oid, options)? {
             return Ok(existing);
+        }
+        if options.freshen_existing && self.freshen_packed_or_alternate(oid) {
+            return Ok(*oid);
         }
         let already_exists = !(options.trust_new_loose || options.assume_loose_only_existence)
             && self.object_exists_for_write_skip(oid);
@@ -3321,6 +3377,9 @@ impl Odb {
         let primary = self.primary()?;
         if let Some(existing) = primary.try_finish_duplicate_write(&oid, options)? {
             return Ok(existing);
+        }
+        if options.freshen_existing && self.freshen_packed_or_alternate(&oid) {
+            return Ok(oid);
         }
 
         let already_exists = !(options.trust_new_loose || options.assume_loose_only_existence)

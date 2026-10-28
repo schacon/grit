@@ -624,6 +624,127 @@ fn bulk_trust_new_loose_materializes_loose_when_object_only_in_cruft_pack() {
     );
 }
 
+fn git_quiet(repo: &RepoFixture, args: &[&str]) {
+    let out = Command::new("git")
+        .current_dir(repo.path())
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("spawn git");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Move loose `oid` into a new pack with `git pack-objects` and return the `.pack` path.
+fn pack_loose_object(repo: &RepoFixture, oid: &ObjectId) -> std::path::PathBuf {
+    let mut child = Command::new("git")
+        .current_dir(repo.path())
+        .args(["pack-objects", "-q", ".git/objects/pack/pack"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn git pack-objects");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(format!("{}\n", oid.to_hex()).as_bytes())
+        .expect("write oid");
+    let out = child.wait_with_output().expect("git pack-objects");
+    assert!(out.status.success());
+    let name = String::from_utf8(out.stdout).expect("utf-8");
+    git_quiet(repo, &["prune-packed"]);
+    repo.objects_dir()
+        .join("pack")
+        .join(format!("pack-{}.pack", name.trim()))
+}
+
+#[test]
+fn bulk_stage_write_options_without_packs_or_alternates_is_bulk_new_loose_write() {
+    let repo = init_repo(HashAlgo::Sha1);
+    let odb = Odb::new(&repo.objects_dir());
+    assert_eq!(odb.bulk_stage_write_options(), BULK_NEW_LOOSE_WRITE);
+}
+
+#[test]
+fn bulk_stage_write_skips_blob_already_in_regular_pack_and_freshens_it() {
+    let repo = init_repo(HashAlgo::Sha1);
+    let odb = Odb::new(&repo.objects_dir());
+    let data = b"packed bulk restage\n";
+    let oid = odb.write(ObjectKind::Blob, data).expect("write loose blob");
+    let pack = pack_loose_object(&repo, &oid);
+    odb.invalidate_packs();
+    assert!(!odb.object_path(&oid).is_file());
+
+    let opts = odb.bulk_stage_write_options();
+    assert!(opts.freshen_existing);
+    assert!(opts.trust_new_loose);
+
+    let old = filetime::FileTime::from_unix_time(1_000_000_000, 0);
+    filetime::set_file_mtime(&pack, old).unwrap();
+
+    let again = odb
+        .write_with_options(ObjectKind::Blob, data, opts)
+        .expect("bulk stage write of packed blob");
+    assert_eq!(again, oid);
+    assert!(
+        !odb.object_path(&oid).is_file(),
+        "a blob already in a pack must not be written again as a loose object"
+    );
+    let touched = filetime::FileTime::from_last_modification_time(&pack.metadata().unwrap());
+    assert!(touched > old, "the pack holding the blob is freshened");
+
+    let new_oid = odb
+        .write_with_options(ObjectKind::Blob, b"brand new\n", opts)
+        .expect("bulk stage write of new blob");
+    assert!(odb.object_path(&new_oid).is_file());
+    assert!(git_fsck(repo.path(), true).ok, "git fsck --strict");
+}
+
+#[test]
+fn bulk_stage_write_materializes_loose_when_object_only_in_cruft_pack() {
+    let repo = init_repo(HashAlgo::Sha1);
+    let odb = Odb::new(&repo.objects_dir());
+    let data = b"cruft-pack bulk stage rescue\n";
+    let oid = odb.write(ObjectKind::Blob, data).expect("write loose blob");
+    git_quiet(&repo, &["repack", "--cruft", "-d"]);
+    odb.invalidate_packs();
+    assert!(!odb.object_path(&oid).is_file());
+
+    let opts = odb.bulk_stage_write_options();
+    assert!(opts.freshen_existing);
+    odb.write_with_options(ObjectKind::Blob, data, opts)
+        .expect("bulk stage write after cruft repack");
+    assert!(
+        odb.object_path(&oid).is_file(),
+        "a cruft-only object cannot be freshened, so it must become loose again"
+    );
+}
+
+#[test]
+fn bulk_stage_write_treats_promisor_pack_object_as_present() {
+    let repo = init_repo(HashAlgo::Sha1);
+    let odb = Odb::new(&repo.objects_dir());
+    let data = b"promisor packed blob\n";
+    let oid = odb.write(ObjectKind::Blob, data).expect("write loose blob");
+    let pack = pack_loose_object(&repo, &oid);
+    std::fs::write(pack.with_extension("promisor"), b"").unwrap();
+    odb.invalidate_packs();
+
+    odb.write_with_options(ObjectKind::Blob, data, odb.bulk_stage_write_options())
+        .expect("bulk stage write of promisor-packed blob");
+    assert!(
+        !odb.object_path(&oid).is_file(),
+        "an object in a promisor pack is stored locally and must not be unpacked loose"
+    );
+}
+
 #[test]
 fn t1006_zlib_preset_dictionary_returns_needs_dictionary() {
     let repo = init_repo(HashAlgo::Sha1);
