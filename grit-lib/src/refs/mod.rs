@@ -98,12 +98,7 @@ fn files_legacy_write_precheck(git_dir: &Path, refname: &str) -> Result<()> {
         .map(|m| m.file_type().is_dir())
         .unwrap_or(false)
     {
-        let display = ref_path_for_display(&path);
-        return Err(crate::error::RefLockError::DirectoryInTheWay {
-            refname: refname.to_owned(),
-            path: display,
-        }
-        .into());
+        return Err(directory_in_the_way(git_dir, refname, &path));
     }
     if path.is_file() && matches!(read_ref_file(&path), Err(Error::InvalidRef(_))) {
         return Err(Error::InvalidRef(format!(
@@ -111,6 +106,23 @@ fn files_legacy_write_precheck(git_dir: &Path, refname: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// The error for a non-empty directory at `path`, where the loose file of `refname` goes.
+///
+/// When a ref below it (loose or packed) or a packed ancestor blocks the name, this is
+/// [`store::RefStoreError::NameUnavailable`] naming that ref, as the ref store reports it.
+/// A directory that holds no ref (stray files or lock files only) is
+/// [`RefLockError::DirectoryInTheWay`].
+fn directory_in_the_way(git_dir: &Path, refname: &str, path: &Path) -> Error {
+    match verify_refname_available_for_create(git_dir, refname, &BTreeSet::new(), &HashSet::new()) {
+        Err(reason) => Error::RefStore(store::RefStoreError::NameUnavailable { reason }),
+        Ok(()) => RefLockError::DirectoryInTheWay {
+            refname: refname.to_owned(),
+            path: ref_path_for_display(path),
+        }
+        .into(),
+    }
 }
 
 fn legacy_ref_update_flags(refname: &str) -> RefUpdateFlags {
@@ -504,35 +516,52 @@ pub enum Ref {
 /// - [`Error::Io`] on filesystem errors.
 pub fn read_ref_file(path: &Path) -> Result<Ref> {
     // One `lstat` answers the common "no such ref" probe and finds legacy symlink refs.
-    let meta = fs::symlink_metadata(path).map_err(loose_ref_io_error)?;
+    let meta = fs::symlink_metadata(path).map_err(|e| loose_ref_io_error(e, path))?;
     if meta.file_type().is_symlink() {
         if let Ok(target) = fs::read_link(path) {
             return Ok(Ref::Symbolic(target.to_string_lossy().into_owned()));
         }
+    }
+    if meta.is_dir() {
+        return Err(Error::Io(io::Error::new(
+            io::ErrorKind::NotFound,
+            "loose ref path is a directory",
+        )));
     }
     read_regular_ref_file(path)
 }
 
 /// Like [`read_ref_file`] for a path known not to be a symlink.
 pub(crate) fn read_regular_ref_file(path: &Path) -> Result<Ref> {
-    let content = fs::read_to_string(path).map_err(loose_ref_io_error)?;
+    let content = fs::read_to_string(path).map_err(|e| loose_ref_io_error(e, path))?;
     parse_ref_content(content.trim_end_matches('\n'))
 }
 
-/// Map a failure to read a loose ref file to [`Error::Io`].
-///
-/// `refs/heads/master` can be a directory when a branch named `master/...` exists, and a probe
-/// like `refs/remotes/v1` can hit ENOTDIR when `refs/remotes` is a file. Both read as a missing
-/// loose ref ([`io::ErrorKind::NotFound`]) so optional DWIM candidates fall through cleanly.
-fn loose_ref_io_error(e: io::Error) -> Error {
-    if e.kind() == io::ErrorKind::IsADirectory
-        || e.kind() == io::ErrorKind::NotADirectory
-        || e.raw_os_error() == Some(libc::EISDIR)
-        || e.raw_os_error() == Some(libc::ENOTDIR)
-    {
+/// Map a failure to read the loose ref file at `path` to [`Error::Io`], with
+/// [`io::ErrorKind::NotFound`] when [`io_error_is_missing_file`] holds so optional DWIM
+/// candidates fall through cleanly.
+fn loose_ref_io_error(e: io::Error, path: &Path) -> Error {
+    if io_error_is_missing_file(&e, path) {
         return Error::Io(io::Error::new(io::ErrorKind::NotFound, e));
     }
     Error::Io(e)
+}
+
+/// Whether `err`, from reading `path` as a file, means there is no file there.
+///
+/// A ref or reflog path is a directory when refs exist below it (`refs/heads/rel` while
+/// `refs/heads/rel/1.0` exists), and a probe like `refs/remotes/v1` runs through a file
+/// when `refs/remotes` is one. Opening a directory fails with "is a directory" on Unix but
+/// with access denied on Windows, so a permission error counts as a miss only when `path` is
+/// a directory; an unreadable file stays an error.
+pub(crate) fn io_error_is_missing_file(err: &io::Error, path: &Path) -> bool {
+    match err.kind() {
+        io::ErrorKind::NotFound | io::ErrorKind::IsADirectory | io::ErrorKind::NotADirectory => {
+            true
+        }
+        io::ErrorKind::PermissionDenied => fs::symlink_metadata(path).is_ok_and(|m| m.is_dir()),
+        _ => matches!(err.raw_os_error(), Some(libc::EISDIR | libc::ENOTDIR)),
+    }
 }
 
 /// Parse the content of a ref file (without trailing newline).
@@ -753,6 +782,16 @@ pub enum RefnameUnavailable {
 }
 
 impl RefnameUnavailable {
+    /// The ref that could not be created (for [`Self::SameBatch`], the one validated first).
+    #[must_use]
+    pub fn refname(&self) -> &str {
+        match self {
+            RefnameUnavailable::AncestorExists { new_ref, .. }
+            | RefnameUnavailable::DescendantExists { new_ref, .. } => new_ref,
+            RefnameUnavailable::SameBatch { refname, .. } => refname,
+        }
+    }
+
     /// Suffix after `cannot lock ref '<display_ref>': ` for stderr (no trailing newline).
     #[must_use]
     pub fn lock_message_suffix(&self) -> String {
@@ -930,10 +969,10 @@ pub fn verify_refname_available_for_create(
                 let Ok(meta) = fs::metadata(&path) else {
                     continue;
                 };
-                if !meta.is_file() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !meta.is_file() || name.ends_with(".lock") {
                     continue;
                 }
-                let name = entry.file_name().to_string_lossy().into_owned();
                 let full = format!("{refname}/{name}");
                 blocking = Some(full);
                 break;
@@ -2150,22 +2189,13 @@ fn write_ref_at_storage(
     // directory". Non-empty directories (containing files or `*.lock`) are left in place so the
     // subsequent write surfaces the conflict, matching Git's behaviour.
     remove_empty_ref_directory(&path);
-    // If a *non-empty* directory still sits where the ref file must go, locking cannot
-    // proceed. Git reports this as a "non-empty directory ... blocking reference" rather
-    // than letting the rename fail with a raw "Is a directory" I/O error (see t0600
-    // "non-empty directory blocks create"). Mirror that message so callers display it
-    // verbatim. This only applies to direct (non-deref) writes where `refname` is also the
-    // user-visible ref; indirect symref writes are handled by the caller.
+    // A non-empty directory where the ref file must go blocks the lock; report it as a typed
+    // conflict rather than letting the rename fail with a raw "Is a directory" I/O error.
     if fs::symlink_metadata(&path)
         .map(|m| m.file_type().is_dir())
         .unwrap_or(false)
     {
-        let display = ref_path_for_display(&path);
-        return Err(crate::error::RefLockError::DirectoryInTheWay {
-            refname: refname.to_owned(),
-            path: display,
-        }
-        .into());
+        return Err(directory_in_the_way(git_dir, refname, &path));
     }
     if path.is_file() && matches!(read_ref_file(&path), Err(Error::InvalidRef(_))) {
         return Err(Error::InvalidRef(format!(
@@ -3769,12 +3799,7 @@ impl BranchCommitRefLock {
             .map(|m| m.file_type().is_dir())
             .unwrap_or(false)
         {
-            let display = ref_path_for_display(&path);
-            return Err(crate::error::RefLockError::DirectoryInTheWay {
-                refname: branch_ref.to_owned(),
-                path: display,
-            }
-            .into());
+            return Err(directory_in_the_way(git_dir, branch_ref, &path));
         }
         if let Some(parent) = path.parent() {
             crate::git_dir::io_error::io_with_git_path(
@@ -5274,6 +5299,53 @@ mod read_raw_ref_tests {
             read_raw_ref(git_dir, "refs/heads/packed").unwrap(),
             RawRefLookup::Exists
         );
+    }
+
+    #[test]
+    fn access_denied_on_a_directory_is_a_missing_file() {
+        let dir = tempdir().unwrap();
+        let ref_dir = dir.path().join("refs/heads/rel");
+        fs::create_dir_all(&ref_dir).unwrap();
+        let file = dir.path().join("refs/heads/main");
+        fs::write(&file, "x\n").unwrap();
+        let denied = || io::Error::from(io::ErrorKind::PermissionDenied);
+
+        // Windows opens a directory with ERROR_ACCESS_DENIED rather than EISDIR.
+        assert!(io_error_is_missing_file(&denied(), &ref_dir));
+        assert!(
+            !io_error_is_missing_file(&denied(), &file),
+            "an unreadable ref file is a real I/O error"
+        );
+        assert!(!io_error_is_missing_file(
+            &denied(),
+            &dir.path().join("refs/heads/none")
+        ));
+        for kind in [
+            io::ErrorKind::NotFound,
+            io::ErrorKind::IsADirectory,
+            io::ErrorKind::NotADirectory,
+        ] {
+            assert!(io_error_is_missing_file(&io::Error::from(kind), &file));
+        }
+        assert!(io_error_is_missing_file(
+            &io::Error::from_raw_os_error(libc::EISDIR),
+            &file
+        ));
+        assert!(!io_error_is_missing_file(
+            &io::Error::from(io::ErrorKind::InvalidData),
+            &ref_dir
+        ));
+    }
+
+    #[test]
+    fn reading_a_ref_directory_is_not_found() {
+        let dir = tempdir().unwrap();
+        let ref_dir = dir.path().join("refs/heads/rel");
+        fs::create_dir_all(ref_dir.join("1.0")).unwrap();
+        match read_ref_file(&ref_dir) {
+            Err(Error::Io(e)) => assert_eq!(e.kind(), io::ErrorKind::NotFound),
+            other => panic!("expected a missing ref, got {other:?}"),
+        }
     }
 }
 

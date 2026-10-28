@@ -449,10 +449,38 @@ fn t0600_nonempty_directory_blocks_create() {
 
         let err = write_ref(&git_dir, "refs/heads/blocker", &oid).unwrap_err();
         assert!(
-            matches!(err, Error::RefLock(_)),
-            "non-empty directory should block create: {err:?}"
+            matches!(
+                err,
+                Error::RefStore(RefStoreError::NameUnavailable {
+                    reason: RefnameUnavailable::DescendantExists { ref blocking, .. }
+                }) if blocking == "refs/heads/blocker/sibling"
+            ),
+            "the ref inside the directory should block create: {err:?}"
         );
         eprintln!("ok t0600_nonempty_directory");
+    });
+}
+
+#[test]
+fn t0600_directory_of_lock_files_blocks_create() {
+    each_backend(|backend, repo| {
+        if backend != Backend::Files {
+            return;
+        }
+        let git_dir = repo.git_dir();
+        let oid = empty_commit_oid(repo);
+        let lock = git_dir.join("refs/heads/blocker/sibling.lock");
+        fs::create_dir_all(lock.parent().unwrap()).expect("parent");
+        fs::write(&lock, "").expect("lock");
+
+        let err = write_ref(&git_dir, "refs/heads/blocker", &oid).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::RefLock(grit_lib::error::RefLockError::DirectoryInTheWay { .. })
+            ),
+            "a directory holding no ref should block create: {err:?}"
+        );
     });
 }
 

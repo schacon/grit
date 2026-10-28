@@ -19832,6 +19832,7 @@ pub grit_lib::refs::RefnameUnavailable::SameBatch::other: alloc::string::String
 pub grit_lib::refs::RefnameUnavailable::SameBatch::refname: alloc::string::String
 impl grit_lib::refs::RefnameUnavailable
 pub fn grit_lib::refs::RefnameUnavailable::lock_message_suffix(&self) -> alloc::string::String
+pub fn grit_lib::refs::RefnameUnavailable::refname(&self) -> &str
 impl core::clone::Clone for grit_lib::refs::RefnameUnavailable
 pub fn grit_lib::refs::RefnameUnavailable::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::refs::RefnameUnavailable

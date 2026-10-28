@@ -1717,7 +1717,9 @@ fn failed_head_reflog_append_keeps_rebase_detached_and_abortable() {
     let head_log = wt.join(".git/logs/HEAD");
     let saved_log = std::fs::read(&head_log).expect("HEAD log");
     std::fs::remove_file(&head_log).expect("remove HEAD log");
+    // An empty directory would be cleared like Git does; one holding a file blocks the log.
     std::fs::create_dir(&head_log).expect("block HEAD log");
+    std::fs::write(head_log.join("stray"), "").expect("keep HEAD log blocked");
     continue_rebase(
         &grit,
         &opts,
@@ -1735,7 +1737,7 @@ fn failed_head_reflog_append_keeps_rebase_detached_and_abortable() {
     );
     assert!(grit.git_dir().join("rebase-merge").is_dir());
 
-    std::fs::remove_dir(&head_log).expect("unblock HEAD log");
+    std::fs::remove_dir_all(&head_log).expect("unblock HEAD log");
     std::fs::write(&head_log, saved_log).expect("restore HEAD log");
     abort_rebase(&grit, &test_ident()).expect("abort");
     assert_eq!(git_oid(wt, "topic"), orig_tip);

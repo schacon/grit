@@ -518,15 +518,37 @@ impl FilesRefStore {
         Ok(RefBatchState { refs, reflogs })
     }
 
+    /// Make room for a new reflog of `name`: an empty directory tree at its path is removed,
+    /// and one that still holds logs (left behind for `<name>/…` refs) blocks the write.
+    ///
+    /// # Errors
+    ///
+    /// [`RefStoreError::NameUnavailable`] naming the first log under the directory, or
+    /// [`RefStoreError::Corrupt`] when the directory cannot be listed.
     fn ensure_reflog_path_writable(&self, name: &str) -> StoreResult<()> {
         let path = self.reflog_path(name);
-        if path.is_dir() {
+        let is_dir = |path: &Path| fs::symlink_metadata(path).is_ok_and(|m| m.is_dir());
+        if !is_dir(&path) {
+            return Ok(());
+        }
+        crate::refs::remove_empty_ref_directory(&path);
+        if !is_dir(&path) {
+            return Ok(());
+        }
+        let storage = self.route(name).storage_name;
+        let mut logs = BTreeSet::new();
+        collect_loose_file_names(&path, &storage, &mut logs);
+        let Some(log) = logs.first() else {
             return Err(RefStoreError::Corrupt(format!(
-                "refusing to write reflog at '{}': path is a directory",
+                "cannot write reflog at '{}': unreadable directory in the way",
                 path.display()
             )));
+        };
+        Err(RefnameUnavailable::DescendantExists {
+            blocking: self.logical_name(log),
+            new_ref: name.to_owned(),
         }
-        Ok(())
+        .into())
     }
 
     fn read_raw_at_route(&self, route: &RefStorageRoute) -> Result<Option<RawRef>> {
@@ -1682,6 +1704,19 @@ impl RefStore for FilesRefStore {
                 changed.insert(&update.name);
             }
         }
+        // Commit writes reflogs before refs, so a directory where a new log goes must stop
+        // the batch here, not after some of it is written.
+        for name in after_commit.reflogs.keys() {
+            if before_commit.reflogs.contains_key(name) {
+                continue;
+            }
+            if let Err(err) = self.ensure_reflog_path_writable(name) {
+                for acquired in ref_locks.values() {
+                    let _ = fs::remove_file(acquired);
+                }
+                return Err(err);
+            }
+        }
 
         self.take_prepare_locks(changed, carried, ref_lock_wait, &mut ref_locks)?;
 
@@ -2051,16 +2086,7 @@ fn read_reflog_at_path(path: &Path) -> Result<Vec<ReflogEntry>> {
         Ok(bytes) => bytes,
         // A ref being created can collide with a file or directory in `logs/`; that is a
         // missing log here, and the ref conflict check reports the collision.
-        Err(e)
-            if matches!(
-                e.kind(),
-                io::ErrorKind::NotFound
-                    | io::ErrorKind::NotADirectory
-                    | io::ErrorKind::IsADirectory
-            ) =>
-        {
-            return Ok(Vec::new());
-        }
+        Err(e) if crate::refs::io_error_is_missing_file(&e, path) => return Ok(Vec::new()),
         Err(e) => return Err(Error::Io(e)),
     };
     let text = utf8_or_lossy(&content);
@@ -2551,6 +2577,112 @@ mod tests {
             "{err:?}"
         );
         assert!(!path.join("refs/heads/a.lock").exists());
+    }
+
+    fn create_with_reflog(name: &str, value: ObjectId) -> RefTransaction {
+        RefTransaction::new()
+            .update(RefUpdate {
+                name: name.to_owned(),
+                new_value: Some(RawRef::Direct(value)),
+                expected: Expected::Missing,
+                reflog: Some(super::super::ReflogUpdate {
+                    identity: "T <t@t>".into(),
+                    message: "branch: Created from main".into(),
+                    time: time::OffsetDateTime::UNIX_EPOCH,
+                    old_oid: None,
+                    new_oid: None,
+                }),
+                flags: RefUpdateFlags::default(),
+            })
+            .expect("txn")
+    }
+
+    /// Prepare a reflogged create of `refs/heads/rel` and check it names `blocking`, leaving
+    /// no lock, ref or log behind.
+    fn assert_rel_create_blocked_by(path: &Path, blocking_ref: &str) {
+        let writer = store(path);
+        let err = writer
+            .prepare(create_with_reflog("refs/heads/rel", oid(2)))
+            .map(|_| ())
+            .expect_err("conflict");
+        assert!(
+            matches!(
+                err,
+                RefStoreError::NameUnavailable {
+                    reason: RefnameUnavailable::DescendantExists { ref blocking, ref new_ref }
+                } if blocking == blocking_ref && new_ref == "refs/heads/rel"
+            ),
+            "{err:?}"
+        );
+        assert_eq!(writer.read_raw("refs/heads/rel").expect("read"), None);
+        assert!(!path.join("refs/heads/rel.lock").exists());
+        assert!(!path.join("logs/refs/heads/rel").is_file());
+    }
+
+    #[test]
+    fn create_with_reflog_over_a_loose_descendant_names_it() {
+        let dir = git_dir();
+        let path = dir.path();
+        store(path)
+            .prepare(create_with_reflog("refs/heads/rel/1.0", oid(1)))
+            .expect("prepare seed")
+            .commit()
+            .expect("seed");
+        assert!(path.join("logs/refs/heads/rel/1.0").is_file());
+        assert_rel_create_blocked_by(path, "refs/heads/rel/1.0");
+    }
+
+    #[test]
+    fn create_with_reflog_over_a_packed_descendant_with_its_log_dir_names_it() {
+        let dir = git_dir();
+        let path = dir.path();
+        // `pack-refs` leaves `logs/refs/heads/rel/1.0`, and an empty `refs/heads/rel/`.
+        fs::write(
+            path.join("packed-refs"),
+            format!(
+                "# pack-refs with: peeled fully-peeled sorted \n{} refs/heads/rel/1.0\n",
+                oid(1)
+            ),
+        )
+        .expect("packed-refs");
+        fs::create_dir_all(path.join("refs/heads/rel")).expect("empty ref dir");
+        fs::create_dir_all(path.join("logs/refs/heads/rel")).expect("logs");
+        fs::write(path.join("logs/refs/heads/rel/1.0"), "").expect("log");
+        assert_rel_create_blocked_by(path, "refs/heads/rel/1.0");
+    }
+
+    #[test]
+    fn create_with_reflog_over_a_stray_log_directory_names_the_log() {
+        let dir = git_dir();
+        let path = dir.path();
+        fs::create_dir_all(path.join("logs/refs/heads/rel/deep")).expect("logs");
+        fs::write(path.join("logs/refs/heads/rel/deep/2.0"), "").expect("log");
+        assert_rel_create_blocked_by(path, "refs/heads/rel/deep/2.0");
+        assert!(path.join("logs/refs/heads/rel/deep/2.0").is_file());
+    }
+
+    #[test]
+    fn create_with_reflog_removes_an_empty_log_directory() {
+        let dir = git_dir();
+        let path = dir.path();
+        fs::create_dir_all(path.join("logs/refs/heads/rel/a/b")).expect("empty logs");
+        let writer = store(path);
+        writer
+            .prepare(create_with_reflog("refs/heads/rel", oid(2)))
+            .expect("prepare")
+            .commit()
+            .expect("commit");
+        assert_eq!(
+            writer.read_raw("refs/heads/rel").expect("read"),
+            Some(RawRef::Direct(oid(2)))
+        );
+        assert_eq!(
+            writer
+                .read_reflog_entries("refs/heads/rel")
+                .expect("log")
+                .len(),
+            1
+        );
     }
 
     #[test]
