@@ -6,12 +6,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::diff::{
-    entry_is_racy, hash_worktree_file, index_mtime_for_diff,
-    refresh_index_stat_content_verified_with_rules, stat_matches,
-};
+use crate::diff::{entry_is_racy, hash_worktree_file, index_mtime_for_diff, stat_matches};
 use crate::error::{Error, Result};
-use crate::index::index_file_mtime;
 use crate::index::{
     entry_from_metadata, Index, IndexEntry, IndexLock, MODE_EXECUTABLE, MODE_GITLINK,
 };
@@ -25,6 +21,7 @@ use crate::porcelain::checkout::{
     remove_empty_parent_dirs, write_blob_to_worktree, write_smudged_blob_to_worktree,
     LeadingDirCache,
 };
+use crate::porcelain::index_from_tree::refresh_stage0_index_stats_for_paths;
 use crate::porcelain::stash::{flat_tree_lookup, flatten_tree_full, FlatTreeEntry};
 use crate::progress::{poll_cancel, Cancel, ProgressPhase, ProgressSink};
 use crate::repo::Repository;
@@ -960,33 +957,7 @@ fn refresh_restored_index_stats(
         .chain(outcome.removed.iter())
         .map(String::as_str)
         .collect();
-    if touched.is_empty() {
-        return Ok(());
-    }
-    let index_mtime = index_file_mtime(&repo.index_path());
-    let rules = WorktreeRules::from_repository(repo, index).ok();
-    let rules_arc = rules.map(|r| std::sync::Arc::new(std::sync::Mutex::new(r)));
-    let mut subset = index.clone();
-    subset
-        .entries
-        .retain(|e| e.stage() == 0 && touched.contains(String::from_utf8_lossy(&e.path).as_ref()));
-    if subset.entries.is_empty() {
-        return Ok(());
-    }
-    let _ = refresh_index_stat_content_verified_with_rules(
-        repo.odb(),
-        repo.git_dir(),
-        &mut subset,
-        work_tree,
-        index_mtime,
-        repo.config().ok().as_deref(),
-        None,
-        rules_arc.as_ref(),
-    )?;
-    for entry in subset.entries {
-        index.stage_file(entry);
-    }
-    Ok(())
+    refresh_stage0_index_stats_for_paths(repo, work_tree, index, &touched)
 }
 
 fn blob_index_size(repo: &Repository, entry: &FlatTreeEntry) -> Result<u32> {

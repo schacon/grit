@@ -601,3 +601,100 @@ fn undo_after_fixup_restores_a_staged_submodule_pointer() {
     assert_eq!(git_rev_parse(&wt.join("sub"), "HEAD"), Some(s2));
     git_fsck_strict(wt);
 }
+
+/// Three CRLF commits under `core.autocrlf=true`, as in the issue report.
+fn crlf_three_commit_repo() -> (HistoryRepo, ObjectId) {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    git(wt, &["config", "core.autocrlf", "true"]);
+    let c1 = commit_file(wt, "f1.txt", "c1\r\n", "c1");
+    commit_file(wt, "f2.txt", "c2\r\n", "c2");
+    commit_file(wt, "f3.txt", "c3\r\n", "c3");
+    (repo, c1)
+}
+
+/// `git ls-files --debug` size of `path`'s index entry.
+fn index_entry_size(wt: &std::path::Path, path: &str) -> u64 {
+    let debug = git(wt, &["ls-files", "--debug", "--", path]);
+    let size = debug
+        .split_whitespace()
+        .skip_while(|word| *word != "size:")
+        .nth(1)
+        .expect("size field");
+    size.parse().expect("numeric size")
+}
+
+fn grit_status_paths(grit: &Repository) -> (Vec<String>, Vec<String>) {
+    let model = grit_lib::porcelain::status::status(
+        grit,
+        &grit_lib::porcelain::status::StatusOptions::default(),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("grit status");
+    let paths = |entries: &[grit_lib::diff::DiffEntry]| {
+        entries.iter().map(|e| e.path().to_owned()).collect()
+    };
+    (paths(&model.staged), paths(&model.unstaged))
+}
+
+#[test]
+fn undo_after_fixup_restores_a_staged_crlf_file_stat_clean() {
+    let (repo, c1) = crlf_three_commit_repo();
+    let wt = repo.worktree();
+    fs::write(wt.join("f1.txt"), "edit\r\n").expect("edit");
+    git(wt, &["add", "f1.txt"]);
+    let staged_blob = git_rev_parse(wt, ":f1.txt").expect("staged blob");
+    assert_eq!(status_porcelain(wt), "M  f1.txt\n");
+    let grit = open_grit(wt);
+    fixup_staged_into(&grit, c1);
+
+    let outcome = undo_last_rewrite(&grit, &undo_opts(), false).expect("undo");
+    assert_eq!(outcome.restored_paths, vec!["f1.txt".to_owned()]);
+    assert_eq!(status_porcelain(wt), "M  f1.txt\n");
+    assert_eq!(git_rev_parse(wt, ":f1.txt"), Some(staged_blob));
+    assert_eq!(fs::read(wt.join("f1.txt")).expect("read"), b"edit\r\n");
+    assert_eq!(git(wt, &["diff"]), "");
+    assert!(git(wt, &["diff", "--cached"]).contains("+edit"));
+    assert_eq!(index_entry_size(wt, "f1.txt"), 6);
+    git(wt, &["update-index", "--refresh"]);
+    let grit = open_grit(wt);
+    assert_eq!(
+        grit_status_paths(&grit),
+        (vec!["f1.txt".to_owned()], Vec::new())
+    );
+    git_fsck_strict(wt);
+
+    undo_last_rewrite(&grit, &undo_opts(), false).expect("redo");
+    assert_eq!(status_porcelain(wt), "");
+    git(wt, &["update-index", "--refresh"]);
+}
+
+#[test]
+fn undo_after_fixup_keeps_an_unstaged_crlf_edit_visible() {
+    let (repo, c1) = crlf_three_commit_repo();
+    let wt = repo.worktree();
+    fs::write(wt.join("f1.txt"), "edit\r\n").expect("edit");
+    git(wt, &["add", "f1.txt"]);
+    let staged_blob = git_rev_parse(wt, ":f1.txt").expect("staged blob");
+    fs::write(wt.join("f1.txt"), "edit\r\nmore\r\n").expect("unstaged edit");
+    let grit = open_grit(wt);
+    fixup_staged_into(&grit, c1);
+    assert_eq!(status_porcelain(wt), " M f1.txt\n");
+
+    undo_last_rewrite(&grit, &undo_opts(), false).expect("undo");
+    assert_eq!(status_porcelain(wt), "MM f1.txt\n");
+    assert_eq!(git_rev_parse(wt, ":f1.txt"), Some(staged_blob));
+    assert_eq!(
+        fs::read(wt.join("f1.txt")).expect("read"),
+        b"edit\r\nmore\r\n"
+    );
+    assert!(git(wt, &["diff"]).contains("+more"));
+    assert!(git(wt, &["diff", "--cached"]).contains("+edit"));
+    let grit = open_grit(wt);
+    assert_eq!(
+        grit_status_paths(&grit),
+        (vec!["f1.txt".to_owned()], vec!["f1.txt".to_owned()])
+    );
+    git_fsck_strict(wt);
+}

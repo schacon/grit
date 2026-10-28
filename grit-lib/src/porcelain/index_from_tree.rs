@@ -1,5 +1,6 @@
 //! Build stage-0 indexes from tree objects and refresh worktree stat caches.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::diff::refresh_index_stat_content_verified_with_rules;
@@ -50,6 +51,46 @@ pub(crate) fn refresh_stage0_index_stats_from_worktree(
         None,
         rules_arc.as_ref(),
     )?;
+    Ok(())
+}
+
+/// Like [`refresh_stage0_index_stats_from_worktree`], limited to the stage-0 entries of `paths`.
+///
+/// For callers that just wrote those files (restore, partial restore, history undo): an entry
+/// whose cleaned worktree content (autocrlf, eol, ident, filters) matches its OID takes the
+/// file's stat data; any other entry keeps the stat fields it had.
+pub(crate) fn refresh_stage0_index_stats_for_paths(
+    repo: &Repository,
+    work_tree: &Path,
+    index: &mut Index,
+    paths: &BTreeSet<&str>,
+) -> Result<()> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let mut subset = index.clone();
+    subset
+        .entries
+        .retain(|e| e.stage() == 0 && paths.contains(String::from_utf8_lossy(&e.path).as_ref()));
+    if subset.entries.is_empty() {
+        return Ok(());
+    }
+    let index_mtime = index_file_mtime(&repo.index_path());
+    let rules = WorktreeRules::from_repository(repo, index).ok();
+    let rules_arc = rules.map(|r| std::sync::Arc::new(std::sync::Mutex::new(r)));
+    let _ = refresh_index_stat_content_verified_with_rules(
+        repo.odb(),
+        repo.git_dir(),
+        &mut subset,
+        work_tree,
+        index_mtime,
+        repo.config().ok().as_deref(),
+        None,
+        rules_arc.as_ref(),
+    )?;
+    for entry in subset.entries {
+        index.stage_file(entry);
+    }
     Ok(())
 }
 

@@ -20,19 +20,19 @@ use crate::diff::structured::{
 };
 use crate::diff::{
     collect_files_for_target, hunk_diff_bundle, imara_unified_hunk_slices,
-    read_worktree_side_bytes_for_diff, refresh_index_stat_content_verified_with_rules,
-    unified_hunk_body_for_diff_options, unstaged_file_diffs_with_peer_hunks,
-    unstaged_raw_changes_with_peer_hunks, DiffOptions, DiffStatus, DiffTarget, FileChange,
-    FileDiff,
+    read_worktree_side_bytes_for_diff, unified_hunk_body_for_diff_options,
+    unstaged_file_diffs_with_peer_hunks, unstaged_raw_changes_with_peer_hunks, DiffOptions,
+    DiffStatus, DiffTarget, FileChange, FileDiff,
 };
 use crate::error::{ApplyError, Error};
-use crate::index::{index_file_mtime, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR};
+use crate::index::{MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR};
 use crate::objects::FileMode;
 use crate::objects::{parse_commit, ObjectId, ObjectKind};
 use crate::porcelain::checkout::{
     remove_empty_parent_dirs, smudge_bytes_for_worktree_path, write_smudged_blob_to_worktree,
     write_to_worktree_cached, LeadingDirCache,
 };
+use crate::porcelain::index_from_tree::refresh_stage0_index_stats_for_paths;
 use crate::progress::{poll_cancel, Cancel, ProgressPhase, ProgressSink};
 use crate::repo::Repository;
 use crate::state::{resolve_head_for_repository, HeadState};
@@ -1289,33 +1289,8 @@ fn refresh_partial_restore_index_stats(
     index: &mut crate::index::Index,
     restored: &[String],
 ) -> std::result::Result<(), HunkSelectError> {
-    if restored.is_empty() {
-        return Ok(());
-    }
     let touched: BTreeSet<&str> = restored.iter().map(String::as_str).collect();
-    let index_mtime = index_file_mtime(&repo.index_path());
-    let rules = WorktreeRules::from_repository(repo, index).ok();
-    let rules_arc = rules.map(|r| std::sync::Arc::new(std::sync::Mutex::new(r)));
-    let mut subset = index.clone();
-    subset
-        .entries
-        .retain(|e| e.stage() == 0 && touched.contains(String::from_utf8_lossy(&e.path).as_ref()));
-    if subset.entries.is_empty() {
-        return Ok(());
-    }
-    let _ = refresh_index_stat_content_verified_with_rules(
-        repo.odb(),
-        repo.git_dir(),
-        &mut subset,
-        work_tree,
-        index_mtime,
-        repo.config().ok().as_deref(),
-        None,
-        rules_arc.as_ref(),
-    )?;
-    for entry in subset.entries {
-        index.stage_file(entry);
-    }
+    refresh_stage0_index_stats_for_paths(repo, work_tree, index, &touched)?;
     Ok(())
 }
 
