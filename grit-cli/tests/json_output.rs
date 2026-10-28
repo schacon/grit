@@ -1571,6 +1571,43 @@ fn diff_binary_content_shows_differs_message() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn diff_binary_size_change_shows_differs_message_in_every_format() -> TestResult {
+    let scratch = Scratch::new("diffbinsize")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    std::fs::write(repo.join("bin.dat"), b"\0\x01\x02\0\xff\xfe\0")?;
+    gs_ok(&repo, &["commit", "init"]);
+    std::fs::write(repo.join("bin.dat"), b"\0\x01\x02\0\xff\xfe\0\t")?;
+    for target in [&[][..], &["--unstaged"][..]] {
+        let label = if target.is_empty() {
+            "default"
+        } else {
+            "--unstaged"
+        };
+        let human = gs(&repo, [&["diff"][..], target].concat());
+        assert_eq!(human.status, Some(0), "{label}: {}", human.dump());
+        assert!(
+            human.stdout.contains("Binary file differs"),
+            "{label}: size-changing binary must be noted: {}",
+            human.dump()
+        );
+        let md = gs(&repo, [&["diff", "--markdown"][..], target].concat());
+        assert_eq!(md.status, Some(0), "{label}: {}", md.dump());
+        assert!(
+            md.stdout.contains("Binary file differs."),
+            "{label}: markdown must note the binary change: {}",
+            md.dump()
+        );
+        let json = gs(&repo, [&["diff", "--json"][..], target].concat());
+        assert_eq!(json.status, Some(0), "{label}: {}", json.dump());
+        let v: Value = serde_json::from_str(&json.stdout)?;
+        assert_binary_json_no_hunk_content(&v, label);
+    }
+    Ok(())
+}
+
 fn assert_binary_json_no_hunk_content(v: &Value, label: &str) {
     let files = v["files"].as_array().expect("files array");
     assert_eq!(files.len(), 1, "{label}: {v}");

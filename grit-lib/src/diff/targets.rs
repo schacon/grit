@@ -788,7 +788,6 @@ fn unstaged_changes_inner(
         config: Some(config_arc.clone()),
         thread_policy: Some(repo.thread_policy()),
         refresh_index_stat_in_pass: false,
-        for_status: !narrow,
         refresh_fsmonitor: if narrow {
             false
         } else {
