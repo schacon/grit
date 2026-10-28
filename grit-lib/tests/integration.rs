@@ -348,6 +348,9 @@ mod commit_graph_chain_exercise;
 #[path = "commit_graph_corruption.rs"]
 mod commit_graph_corruption;
 #[cfg(feature = "full-tests")]
+#[path = "commit_graph_custom_store.rs"]
+mod commit_graph_custom_store;
+#[cfg(feature = "full-tests")]
 #[path = "commit_graph_file_api.rs"]
 mod commit_graph_file_api;
 #[cfg(feature = "full-tests")]

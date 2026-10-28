@@ -86,7 +86,70 @@ Some operations still install or verify packs under the on-disk `objects/` direc
 | `push` | [`Remote::push`](rustdoc:grit_lib::remote::Remote::push), `repo.remotes().push` |
 | `gc`, `commit-graph write`, `repack`, `midx write`, `prune` | Filesystem maintenance (`Odb::gc`, `Odb::write_commit_graph`, `Odb::pack_store`, pack install with `index_pack::install_pack_*`, MIDX write) |
 
-Maintenance stays files-only by design: packs, `.idx`, multi-pack-index and commit-graph files are how the files backend stores objects, and a custom store owns its own layout. Use `Odb::files_objects_dir` when you need the on-disk `objects/` path only for files-backed repos.
+Maintenance stays files-only by design: packs, `.idx`, multi-pack-index and commit-graph files are how the files backend stores objects, and a custom store owns its own layout. A custom store still gets a commit-graph, built in memory and kept in its own storage (see [Commit-graphs for a custom store](#commit-graphs-for-a-custom-store)). Use `Odb::files_objects_dir` when you need the on-disk `objects/` path only for files-backed repos.
+
+## Fast history walks
+
+Rev-list, merge-base and path-limited log read every commit they cross through [`ObjectStore::read_into`](rustdoc:grit_lib::objects::odb::store::ObjectStore::read_into), into one buffer the walk reuses. Implement it to copy or decode your stored bytes straight into that buffer. The default goes through `read`, which allocates an owned `Object` per commit before copying it. Without a commit-graph, a store that implements `read_into` walks history about as fast as the files backend: on a 120,000-commit history, counting every commit takes the same time through a pass-through store as through the files backend.
+
+## Commit-graphs for a custom store
+
+A commit-graph lets walks skip reading commit objects entirely. Parents, root trees, committer dates and generation numbers come from the graph, and so do changed-path Bloom filters for `log -- <path>`. On the 120,000-commit history above, counting commits drops from about 650 ms to about 40 ms.
+
+Graph files under `objects/info/` describe the files layout, not your store, so grit never reads them for a custom primary: a stale or foreign graph there cannot make a walk report commits your store does not have. Instead:
+
+1. Build the graph through any `Odb` with [`build_commit_graph`](rustdoc:grit_lib::maintenance::build_commit_graph) (or `Repository::build_commit_graph`). It walks every commit reachable from the repository's refs and returns a [`CommitGraphBuild`](rustdoc:grit_lib::maintenance::CommitGraphBuild): either a [`BuiltCommitGraph`](rustdoc:grit_lib::maintenance::BuiltCommitGraph) or, in a shallow repository or one with grafts or replace refs, the [`CommitGraphSkipReason`](rustdoc:grit_lib::maintenance::CommitGraphSkipReason) no graph may be built.
+2. Store `BuiltCommitGraph::bytes` wherever your backend keeps its data. They are byte for byte the file Git writes to `objects/info/commit-graph`, and `git commit-graph verify` accepts them.
+3. When you open the repository, parse the bytes with [`CommitGraphChain::from_bytes`](rustdoc:grit_lib::revwalk::commit_graph::CommitGraphChain::from_bytes) and attach them with [`OdbBuilder::commit_graph`](rustdoc:grit_lib::objects::odb::OdbBuilder::commit_graph).
+
+```rust
+use std::sync::Arc;
+
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::maintenance::{CommitGraphBuild, CommitGraphOptions};
+use grit_lib::objects::odb::store::WritableObjectStore;
+use grit_lib::objects::odb::OdbBuilder;
+use grit_lib::repo::{Repository, RepositoryBuilder};
+use grit_lib::revwalk::commit_graph::CommitGraphChain;
+
+fn open(
+    git_dir: &std::path::Path,
+    store: Arc<dyn WritableObjectStore>,
+    graph: Option<Vec<u8>>,
+) -> grit_lib::error::Result<Repository> {
+    let mut odb = OdbBuilder::files(git_dir.join("objects"))
+        .primary(store)
+        .alternates(false);
+    if let Some(bytes) = graph {
+        odb = odb.commit_graph(Arc::new(CommitGraphChain::from_bytes(bytes)?));
+    }
+    RepositoryBuilder::new(RepositoryOptions::empty())
+        .odb_builder(odb)
+        .open(git_dir, None)
+}
+
+fn refresh_graph(repo: &Repository) -> grit_lib::error::Result<Option<Vec<u8>>> {
+    match repo.build_commit_graph(&CommitGraphOptions::with_changed_paths(true))? {
+        CommitGraphBuild::Built(graph) => Ok(Some(graph.bytes)),
+        CommitGraphBuild::Skipped(_) => Ok(None),
+    }
+}
+```
+
+An attached graph is trusted, not checked against the store: every commit it lists must be in the store with the parents and tree it records, which holds for a graph built from the same repository. Commits written after the graph was built are not in it and are read from the store as usual, so rebuilding now and then (with your other maintenance) is enough. With changed paths on, a rebuild reuses the Bloom filters of the attached graph and only computes filters for new commits. The graph's hash algorithm must match the repository's object format, or opening fails with [`Error::ObjectFormatMismatch`](rustdoc:grit_lib::error::Error::ObjectFormatMismatch). `OdbBuilder::commit_graph` works for a files primary too, and takes the place of its on-disk graph.
+
+### Benchmarks
+
+A 120,000-commit linear history (350 files, 44 MB `.git`, one pack) on a 4-vCPU Linux VM, release build, best of three, in milliseconds. The custom store is a pass-through over the same repository's files backend, so only the cost of the store interface differs. Git 2.43 timings are hyperfine means of the matching commands.
+
+| Operation | Git, no graph | Files backend | Custom store, before | Custom store | Git, graph | Custom store, attached graph |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `rev-list --count HEAD` | 425 | 651 | 1129 | 682 | 75 | 41 |
+| `rev-list --count HEAD~100000..HEAD` | 356 | 285 | 661 | 304 | 67 | 110 |
+| `merge-base HEAD~60000 HEAD~10` | 196 | 161 | 381 | 163 | 36 | 40 |
+| `log -n 20 -- dir7/f3.txt` | 53 | 43 | 95 | 52 | 10 | 8 |
+
+"Before" is grit-lib before custom-store reads stopped installing the files backend's pack-read context on every object. The graph columns use changed-path Bloom filters. Peak memory for all four walks in one process is about 187 MB for the files backend and for the custom store without a graph, and 46 MB with the attached graph.
 
 ## Receiving packs into a custom store
 

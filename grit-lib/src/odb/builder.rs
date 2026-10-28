@@ -22,14 +22,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::commit_graph_file::CommitGraphChain;
-use crate::commit_graph_write::{
-    build_commit_graph_bytes, collect_reachable_commit_oids, load_commit_graph_commit_info,
-};
+use crate::commit_graph_write::collect_reachable_commit_oids;
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::fsck::reachability_roots;
 use crate::gc::prune_loose_unreachable;
-use crate::objects::{oid_hash_map, HashAlgo, ObjectId};
+use crate::objects::HashAlgo;
 use crate::odb::store::{ObjectStore, WritableObjectStore};
 use crate::repo::Repository;
 
@@ -42,6 +40,7 @@ pub struct OdbBuilder {
     custom_primary: Option<Arc<dyn WritableObjectStore>>,
     read_sources: Vec<Arc<dyn ObjectStore>>,
     alternates: bool,
+    commit_graph: Option<Arc<CommitGraphChain>>,
 }
 
 impl OdbBuilder {
@@ -59,6 +58,7 @@ impl OdbBuilder {
             custom_primary: None,
             read_sources: Vec::new(),
             alternates: true,
+            commit_graph: None,
         }
     }
 
@@ -83,6 +83,11 @@ impl OdbBuilder {
     ///   [`RepositoryRemotes::push`](crate::repo_handles::RepositoryRemotes::push)
     /// - maintenance: [`Odb::gc`], [`Odb::write_commit_graph`], repack, MIDX, and pack helpers
     ///
+    /// History walks never read commit-graph files from `objects/` for a custom primary: such
+    /// a file describes the files layout, not this store. To give walks a commit-graph, build
+    /// one with [`crate::maintenance::build_commit_graph`], persist its bytes in the store, and
+    /// attach it with [`Self::commit_graph`] when opening the repository.
+    ///
     /// The store's [`ObjectStore::hash_algo`] must match the repository's object format:
     /// [`RepositoryBuilder::open`](crate::repo::RepositoryBuilder::open) fails with
     /// [`Error::ObjectFormatMismatch`] otherwise. [`Self::build`] does not check, since it
@@ -101,6 +106,29 @@ impl OdbBuilder {
     #[must_use]
     pub fn push_read_source(mut self, store: Arc<dyn ObjectStore>) -> Self {
         self.read_sources.push(store);
+        self
+    }
+
+    /// Attach a commit-graph for history walks to consult, for any primary store.
+    ///
+    /// Rev-list, merge-base, ancestry checks, rev-parse navigation, blame and path-limited log
+    /// read parents, root trees, committer dates and generation numbers from `chain`, and test
+    /// changed-path Bloom filters when it has them, instead of reading commit objects. Commits
+    /// missing from the graph (written after it was built) are read from the store as usual,
+    /// so a graph that covers only older history stays correct.
+    ///
+    /// An attached graph replaces any graph file under `objects/info/`. It is trusted, not
+    /// checked against the store: every commit it lists must be in this database with exactly
+    /// the parents and tree it records, which holds for a graph
+    /// [`crate::maintenance::build_commit_graph`] built from this repository. Build it with
+    /// [`CommitGraphChain::from_bytes`].
+    ///
+    /// The graph's [`CommitGraphChain::hash_algo`] must match the repository's object format,
+    /// or [`RepositoryBuilder::open`](crate::repo::RepositoryBuilder::open) fails with
+    /// [`Error::ObjectFormatMismatch`].
+    #[must_use]
+    pub fn commit_graph(mut self, chain: Arc<CommitGraphChain>) -> Self {
+        self.commit_graph = Some(chain);
         self
     }
 
@@ -126,12 +154,14 @@ impl OdbBuilder {
         self.custom_primary.is_some()
     }
 
-    /// Hash algorithms of the injected stores: the custom primary, then each read source.
+    /// Hash algorithms of the injected stores: the custom primary, then each read source,
+    /// then the attached commit-graph.
     pub(crate) fn injected_hash_algos(&self) -> impl Iterator<Item = HashAlgo> + '_ {
         self.custom_primary
             .iter()
             .map(|store| store.hash_algo())
             .chain(self.read_sources.iter().map(|store| store.hash_algo()))
+            .chain(self.commit_graph.iter().map(|chain| chain.hash_algo()))
     }
 
     /// Construct an [`Odb`] handle (attach [`Odb::with_config_git_dir`] when opening a repository).
@@ -149,6 +179,7 @@ impl Odb {
         odb.custom_primary = builder.custom_primary;
         odb.extra_read_sources = builder.read_sources;
         odb.alternates_enabled = builder.alternates;
+        odb.attached_commit_graph = builder.commit_graph;
         odb
     }
 
@@ -216,6 +247,10 @@ impl Odb {
 
     /// Write `objects/info/commit-graph` from reachable commits (files primary only).
     ///
+    /// A custom primary has no `objects/info/` to install a graph in: build it in memory with
+    /// [`crate::maintenance::build_commit_graph`] and attach it with
+    /// [`OdbBuilder::commit_graph`] instead.
+    ///
     /// Writes nothing and deletes any existing graph in a repository that rewrites parent
     /// lists (shallow, `info/grafts`, or replace refs unless `core.useReplaceRefs=false`), as
     /// [`crate::maintenance::write_commit_graph`] does.
@@ -253,51 +288,16 @@ impl Odb {
             crate::commit_graph_write::remove_commit_graph_files(objects_dir)?;
             return Ok(());
         }
-        let bloom = crate::maintenance::bloom_settings_for_commit_graph_write(&config, true);
-        let write_generation = crate::maintenance::commit_graph_writes_generation_data(&config);
         let commits = collect_reachable_commit_oids(git_dir, self)?;
-        let mut sorted: Vec<ObjectId> = commits.into_iter().collect();
-        sorted.sort();
-        let mut infos = oid_hash_map();
-        for oid in &sorted {
-            infos.insert(*oid, load_commit_graph_commit_info(self, *oid)?);
-        }
-        let chain = CommitGraphChain::try_load(objects_dir).ok().flatten();
-        let mut existing_filters = oid_hash_map();
-        let mut upgraded_filters = oid_hash_map();
-        if let Some(ref chain) = chain {
-            for oid in &sorted {
-                if let Some(bytes) = chain.existing_filter_bytes(oid, &bloom) {
-                    existing_filters.insert(*oid, bytes);
-                } else if let Some(bytes) = chain.upgradable_filter_bytes(oid, &bloom) {
-                    upgraded_filters.insert(*oid, bytes);
-                }
-            }
-        }
-        use std::collections::HashMap;
-        let infos_map: HashMap<_, _> = infos.iter().map(|(k, v)| (*k, v.clone())).collect();
-        let existing_map: HashMap<_, _> = existing_filters
-            .iter()
-            .map(|(k, v)| (*k, v.clone()))
-            .collect();
-        let upgraded_map: HashMap<_, _> = upgraded_filters
-            .iter()
-            .map(|(k, v)| (*k, v.clone()))
-            .collect();
-        let (bytes, _) = build_commit_graph_bytes(
-            &sorted,
-            &infos_map,
+        let existing = CommitGraphChain::try_load(objects_dir).ok().flatten();
+        let built = crate::maintenance::build_commit_graph_for_commits(
             self,
+            commits,
+            &config,
             true,
-            &bloom,
-            None,
-            &[],
-            None,
-            &existing_map,
-            &upgraded_map,
-            write_generation,
+            existing.as_ref(),
         )?;
-        crate::commit_graph_write::atomic_replace_commit_graph(objects_dir, &bytes)?;
+        crate::commit_graph_write::atomic_replace_commit_graph(objects_dir, &built.bytes)?;
         let _ = crate::commit_graph_write::remove_commit_graph_chain_dir(objects_dir);
         Ok(())
     }

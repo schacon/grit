@@ -256,6 +256,8 @@ pub struct Odb {
     extra_read_sources: Vec<Arc<dyn ObjectStore>>,
     /// When false, alternate object directories are not consulted ([`OdbBuilder::alternates`]).
     alternates_enabled: bool,
+    /// Commit-graph supplied by [`OdbBuilder::commit_graph`]; used instead of any on-disk graph.
+    attached_commit_graph: Option<Arc<crate::commit_graph_file::CommitGraphChain>>,
     /// Avoid re-reading the same loose object repeatedly during one repository session.
     session_loose_reads: Arc<std::sync::Mutex<SessionLooseReads>>,
     /// Parsed or raw trees reused for the lifetime of this [`Odb`] handle (Git object cache).
@@ -532,6 +534,7 @@ impl Odb {
             custom_primary: None,
             extra_read_sources: Vec::new(),
             alternates_enabled: true,
+            attached_commit_graph: None,
             session_loose_reads: Arc::new(Mutex::new(SessionLooseReads::default())),
             session_tree_entries: Arc::new(Mutex::new(SessionTreeEntries::default())),
             #[cfg(test)]
@@ -585,6 +588,7 @@ impl Odb {
             custom_primary: None,
             extra_read_sources: Vec::new(),
             alternates_enabled: true,
+            attached_commit_graph: None,
             session_loose_reads: Arc::new(Mutex::new(SessionLooseReads::default())),
             session_tree_entries: Arc::new(Mutex::new(SessionTreeEntries::default())),
             #[cfg(test)]
@@ -1547,13 +1551,25 @@ impl Odb {
         &self.objects_dir
     }
 
-    /// The repository's commit-graph chain, loaded at most once per repository handle.
+    /// The commit-graph history walks consult for this database.
     ///
-    /// `None` when this database is not attached to a repository's caches (built
-    /// standalone) or has no readable commit-graph; callers then read commits directly.
+    /// A graph attached with [`OdbBuilder::commit_graph`] wins for any primary. Otherwise a
+    /// files primary loads `objects/info/commit-graph` (or the split chain) at most once per
+    /// repository handle. A custom primary never reads graph files from `objects/`: they
+    /// describe whatever the files layout holds, not the custom store, and a walk trusting
+    /// them would report commits the store does not have.
+    ///
+    /// `None` when no graph applies, or when a files-backed database is not attached to a
+    /// repository's caches (built standalone); callers then read commits directly.
     pub(crate) fn commit_graph_chain(
         &self,
     ) -> Option<Arc<crate::commit_graph_file::CommitGraphChain>> {
+        if let Some(chain) = &self.attached_commit_graph {
+            return Some(Arc::clone(chain));
+        }
+        if self.custom_primary.is_some() {
+            return None;
+        }
         self.shared_config_state
             .as_ref()?
             .commit_graph_chain(self.objects_dir())

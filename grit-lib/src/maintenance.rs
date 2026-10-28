@@ -534,6 +534,135 @@ pub(crate) fn commit_graph_writes_generation_data(config: &ConfigSet) -> bool {
         .unwrap_or(true)
 }
 
+/// A commit-graph file built in memory by [`build_commit_graph`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BuiltCommitGraph {
+    /// The complete file, byte-for-byte what Git reads from `objects/info/commit-graph`.
+    pub bytes: Vec<u8>,
+    /// Commits recorded in the graph.
+    pub commit_count: usize,
+    /// Bloom generation counters when [`CommitGraphOptions::changed_paths`] was set.
+    pub bloom_stats: Option<BloomWriteStats>,
+}
+
+impl BuiltCommitGraph {
+    /// Parse [`Self::bytes`] into a chain for
+    /// [`OdbBuilder::commit_graph`](crate::odb::OdbBuilder::commit_graph).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::CorruptObject`] if the bytes fail verification (see
+    /// [`CommitGraphChain::from_bytes`]).
+    pub fn to_chain(&self) -> Result<CommitGraphChain> {
+        CommitGraphChain::from_bytes(self.bytes.clone())
+    }
+}
+
+/// Outcome of [`build_commit_graph`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommitGraphBuild {
+    /// The graph of every commit reachable from the repository's refs.
+    Built(BuiltCommitGraph),
+    /// The repository rewrites parent lists, so no graph may describe it.
+    Skipped(CommitGraphSkipReason),
+}
+
+/// Build a reachable commit-graph in memory, for any object store.
+///
+/// Reachable commits are discovered from [`Repository::refs`](crate::repo::Repository::refs)
+/// and read through [`Repository::odb`](crate::repo::Repository::odb), so this works for a
+/// custom primary ([`crate::odb::OdbBuilder::primary`]) as well as the files backend. Nothing is
+/// written: a custom store persists [`BuiltCommitGraph::bytes`] in its own storage and attaches
+/// the graph when it next opens the repository, with
+/// [`OdbBuilder::commit_graph`](crate::odb::OdbBuilder::commit_graph) and
+/// [`CommitGraphChain::from_bytes`]. For a files-backed repository [`write_commit_graph`] builds
+/// the same bytes and installs them under `objects/info/`.
+///
+/// With [`CommitGraphOptions::changed_paths`], changed-path Bloom filters are added, reusing
+/// the filters of the graph the repository's walks already use (the attached graph, or the
+/// files backend's on-disk graph) where their settings match.
+/// [`CommitGraphOptions::dry_run`] has no effect. In a shallow repository, with
+/// `info/grafts`, or with enabled replace refs, [`CommitGraphBuild::Skipped`] says why no graph
+/// was built (see [`CommitGraphSkipReason`]).
+///
+/// # Errors
+///
+/// Propagates ref, object read and config errors.
+pub fn build_commit_graph(
+    repo: &Repository,
+    opts: &CommitGraphOptions,
+) -> Result<CommitGraphBuild> {
+    if let Some(reason) = CommitGraphSkipReason::detect_for_repository(repo)? {
+        return Ok(CommitGraphBuild::Skipped(reason));
+    }
+    let odb = repo.odb();
+    let existing = odb.commit_graph_chain();
+    let commits = collect_reachable_commit_oids_for_repository(repo)?;
+    build_commit_graph_for_commits(
+        odb,
+        commits,
+        &*repo.config()?,
+        opts.changed_paths,
+        existing.as_deref(),
+    )
+    .map(CommitGraphBuild::Built)
+}
+
+/// Encode a commit-graph of `commits`, read through `odb`.
+///
+/// Bloom filters and generation data follow `config` (`commitGraph.changedPathsVersion`,
+/// `commitGraph.generationVersion`); with `changed_paths`, filters already in `existing` are
+/// reused where their settings match.
+pub(crate) fn build_commit_graph_for_commits(
+    odb: &Odb,
+    commits: impl IntoIterator<Item = ObjectId>,
+    config: &ConfigSet,
+    changed_paths: bool,
+    existing: Option<&CommitGraphChain>,
+) -> Result<BuiltCommitGraph> {
+    let bloom = bloom_settings_for_commit_graph_write(config, changed_paths);
+    let write_generation = commit_graph_writes_generation_data(config);
+    let mut sorted: Vec<ObjectId> = commits.into_iter().collect();
+    sorted.sort_unstable();
+
+    let mut infos = oid_hash_map();
+    for oid in &sorted {
+        infos.insert(*oid, load_commit_graph_commit_info(odb, *oid)?);
+    }
+
+    let mut existing_filters = oid_hash_map();
+    let mut upgraded_filters = oid_hash_map();
+    if let (true, Some(chain)) = (changed_paths, existing) {
+        for oid in &sorted {
+            if let Some(bytes) = chain.existing_filter_bytes(oid, &bloom) {
+                existing_filters.insert(*oid, bytes);
+            } else if let Some(bytes) = chain.upgradable_filter_bytes(oid, &bloom) {
+                upgraded_filters.insert(*oid, bytes);
+            }
+        }
+    }
+
+    let (bytes, bloom_stats) = build_commit_graph_bytes_from_oid_maps(
+        &sorted,
+        &infos,
+        odb,
+        changed_paths,
+        &bloom,
+        None,
+        &[],
+        None,
+        &existing_filters,
+        &upgraded_filters,
+        write_generation,
+    )?;
+    Ok(BuiltCommitGraph {
+        bytes,
+        commit_count: sorted.len(),
+        bloom_stats: changed_paths.then_some(bloom_stats),
+    })
+}
+
 /// Write a monolithic reachable commit-graph under `objects/info/commit-graph`.
 ///
 /// Reachable commits are discovered from [`Repository::refs`](crate::repo::Repository::refs)
@@ -544,6 +673,9 @@ pub(crate) fn commit_graph_writes_generation_data(config: &ConfigSet) -> bool {
 /// Git only skips the write in that state, but `git fsck` still verifies a graph that is
 /// already there, so an existing graph and split chain are deleted as well (except in
 /// [`CommitGraphOptions::dry_run`]).
+///
+/// Only a files-backed repository has an `objects/info/` directory to install the graph in.
+/// A custom primary builds the same graph with [`build_commit_graph`] and stores it itself.
 ///
 /// # Errors
 ///
@@ -579,69 +711,35 @@ pub fn write_commit_graph(
         });
     }
 
-    let config = repo.config()?;
-    let bloom = bloom_settings_for_commit_graph_write(&config, opts.changed_paths);
-    let write_generation = commit_graph_writes_generation_data(&config);
-
-    let chain = CommitGraphChain::try_load(objects_dir).ok().flatten();
-
     let commits = collect_reachable_commit_oids_for_repository(repo)?;
-    let mut sorted: Vec<ObjectId> = commits.into_iter().collect();
-    sorted.sort();
-    let commit_count = sorted.len();
-
     if opts.dry_run {
         return Ok(CommitGraphWriteReport {
             path,
-            commit_count,
+            commit_count: commits.len(),
             removed_chain: false,
             bloom_stats: opts.changed_paths.then_some(BloomWriteStats::default()),
             skipped: None,
         });
     }
 
-    let mut infos = oid_hash_map();
-    for oid in &sorted {
-        infos.insert(*oid, load_commit_graph_commit_info(odb, *oid)?);
-    }
-
-    let mut existing_filters = oid_hash_map();
-    let mut upgraded_filters = oid_hash_map();
-    if opts.changed_paths {
-        if let Some(ref chain) = chain {
-            for oid in &sorted {
-                if let Some(bytes) = chain.existing_filter_bytes(oid, &bloom) {
-                    existing_filters.insert(*oid, bytes);
-                } else if let Some(bytes) = chain.upgradable_filter_bytes(oid, &bloom) {
-                    upgraded_filters.insert(*oid, bytes);
-                }
-            }
-        }
-    }
-
-    let (bytes, bloom_stats) = build_commit_graph_bytes_from_oid_maps(
-        &sorted,
-        &infos,
+    let existing = CommitGraphChain::try_load(objects_dir).ok().flatten();
+    let built = build_commit_graph_for_commits(
         odb,
+        commits,
+        &*repo.config()?,
         opts.changed_paths,
-        &bloom,
-        None,
-        &[],
-        None,
-        &existing_filters,
-        &upgraded_filters,
-        write_generation,
+        existing.as_ref(),
     )?;
 
-    let written_path = atomic_replace_commit_graph(objects_dir, &bytes)?;
+    let written_path = atomic_replace_commit_graph(objects_dir, &built.bytes)?;
     let removed_chain = remove_commit_graph_chain_dir(objects_dir);
     repo.caches().invalidate_commit_graph_cache();
 
     Ok(CommitGraphWriteReport {
         path: written_path,
-        commit_count,
+        commit_count: built.commit_count,
         removed_chain,
-        bloom_stats: opts.changed_paths.then_some(bloom_stats),
+        bloom_stats: built.bloom_stats,
         skipped: None,
     })
 }
@@ -2069,6 +2167,15 @@ impl Repository {
     /// See [`write_commit_graph`].
     pub fn write_commit_graph(&self, opts: &CommitGraphOptions) -> Result<CommitGraphWriteReport> {
         write_commit_graph(self, opts)
+    }
+
+    /// Build a reachable commit-graph in memory, for any object store.
+    ///
+    /// # Errors
+    ///
+    /// See [`build_commit_graph`].
+    pub fn build_commit_graph(&self, opts: &CommitGraphOptions) -> Result<CommitGraphBuild> {
+        build_commit_graph(self, opts)
     }
 
     /// Write or refresh the multi-pack index for this repository's pack directory.

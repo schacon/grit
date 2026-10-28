@@ -1396,9 +1396,7 @@ pub fn rev_list(
             && crate::pathspec::pathspecs_allow_bloom(&options.paths);
         let read_changed = read_paths && options.commit_graph_read_changed_paths;
         let chain = if use_bloom {
-            repo.caches()
-                .commit_graph_chain(repo.odb().objects_dir())
-                .map(|arc| (*arc).clone())
+            repo.odb().commit_graph_chain().map(|arc| (*arc).clone())
         } else {
             None
         };
@@ -6301,7 +6299,7 @@ fn try_filtered_count_only(
         .collect();
     let grafts = crate::rev_parse::load_graft_parents(repo.git_dir());
     let graph_chain = if options.use_commit_graph && !exclude.is_empty() {
-        repo.caches().commit_graph_chain(repo.odb().objects_dir())
+        repo.odb().commit_graph_chain()
     } else {
         None
     };
@@ -6371,7 +6369,7 @@ fn try_commit_graph_count_only(
     if !crate::rev_parse::load_graft_parents(repo.git_dir()).is_empty() {
         return Ok(None);
     }
-    let Some(chain) = repo.caches().commit_graph_chain(repo.odb().objects_dir()) else {
+    let Some(chain) = repo.odb().commit_graph_chain() else {
         return Ok(None);
     };
     let n = if exclude.is_empty() {
@@ -7284,7 +7282,7 @@ fn dense_bloom_context_for_paths(
         && crate::pathspec::pathspecs_allow_bloom(&options.paths);
     let read_changed = read_paths && options.commit_graph_read_changed_paths;
     let chain = if use_bloom {
-        repo.caches().commit_graph_chain(repo.odb().objects_dir())
+        repo.odb().commit_graph_chain()
     } else {
         None
     };
@@ -7732,9 +7730,7 @@ impl<'r> CommitGraph<'r> {
                 .into_iter()
                 .collect();
         let graph_chain = if use_commit_graph {
-            repo.caches()
-                .commit_graph_chain(repo.odb().objects_dir())
-                .map(|arc| (*arc).clone())
+            repo.odb().commit_graph_chain().map(|arc| (*arc).clone())
         } else {
             None
         };

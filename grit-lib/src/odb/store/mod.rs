@@ -75,6 +75,12 @@ pub struct ObjectStream<'a> {
 ///
 /// Implementations must be safe to share across threads (`Send + Sync`). Missing
 /// objects are reported as `Ok(None)`, not as errors.
+///
+/// A store used as a repository's primary can give history walks a commit-graph so they
+/// skip commit reads altogether: build one with [`crate::maintenance::build_commit_graph`],
+/// persist its bytes, and attach it with
+/// [`OdbBuilder::commit_graph`](crate::odb::OdbBuilder::commit_graph). Graph files under
+/// `objects/info/` are never read for a custom primary.
 pub trait ObjectStore: Send + Sync + std::fmt::Debug {
     /// Hash algorithm for objects written through this store.
     fn hash_algo(&self) -> HashAlgo;

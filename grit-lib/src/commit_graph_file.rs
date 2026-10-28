@@ -88,6 +88,8 @@ pub struct CommitGraphLayer {
     base_chunk_size: usize,
     /// OID width in bytes implied by the header hash version (20 for SHA-1, 32 for SHA-256).
     hash_len: usize,
+    /// Hash algorithm named by the header hash version.
+    algo: HashAlgo,
     extra_edges_off: Option<usize>,
     extra_edges_end: Option<usize>,
 }
@@ -685,6 +687,7 @@ impl CommitGraphLayer {
             bloom_disabled: false,
             base_chunk_size,
             hash_len,
+            algo,
             extra_edges_off,
             extra_edges_end,
         })
@@ -961,6 +964,48 @@ pub fn commit_graph_chain_from_layers_for_test(layers: Vec<CommitGraphLayer>) ->
 }
 
 impl CommitGraphChain {
+    /// Parse a complete, self-contained commit-graph file held in memory.
+    ///
+    /// `bytes` is what Git stores at `objects/info/commit-graph`, for example the output of
+    /// [`crate::maintenance::build_commit_graph`] that a custom object store persisted in its
+    /// own storage. Attach the result with
+    /// [`OdbBuilder::commit_graph`](crate::odb::OdbBuilder::commit_graph) so history walks
+    /// read parents, committer dates, generation numbers and changed-path Bloom filters from
+    /// it instead of reading commit objects.
+    ///
+    /// The file is fully verified (trailing checksum, chunk table, object id order, parent
+    /// positions). It is not checked against any object store: every commit it lists must
+    /// exist in the store it is attached to.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::CorruptObject`] when the bytes are not a valid commit-graph file, or
+    /// when the file is one layer of a split chain (it names base graphs it depends on).
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, Error> {
+        if bytes.get(7).is_some_and(|&base_graphs| base_graphs != 0) {
+            return Err(Error::CorruptObject(
+                "commit-graph layer depends on base graphs".to_owned(),
+            ));
+        }
+        let layer = CommitGraphLayer::try_parse(PathBuf::from("commit-graph"), bytes)?;
+        if layer.base_chunk_size != 0 {
+            return Err(Error::CorruptObject(
+                "commit-graph layer depends on base graphs".to_owned(),
+            ));
+        }
+        Ok(Self {
+            layers: vec![layer],
+        })
+    }
+
+    /// Hash algorithm of the object ids this chain records.
+    #[must_use]
+    pub fn hash_algo(&self) -> HashAlgo {
+        self.layers
+            .first()
+            .map_or(HashAlgo::Sha1, |layer| layer.algo)
+    }
+
     /// Bloom settings from the newest layer, if that layer carries Bloom data.
     #[must_use]
     pub fn top_layer_bloom_settings(&self) -> Option<BloomFilterSettings> {
@@ -1913,6 +1958,107 @@ mod tests {
         bytes.extend_from_slice(&digest);
     }
 
+    fn memory_primary_over(
+        dir: &tempfile::TempDir,
+        files: &Repository,
+        graph: Option<std::sync::Arc<super::CommitGraphChain>>,
+    ) -> Repository {
+        use crate::odb::store::{MemoryStore, ObjectStore, WritableObjectStore};
+        let store = std::sync::Arc::new(MemoryStore::new(files.odb().hash_algo()));
+        let source = files.odb().primary().expect("files primary");
+        let mut oids = Vec::new();
+        source
+            .for_each_object(&mut |oid| {
+                oids.push(*oid);
+                std::ops::ControlFlow::Continue(())
+            })
+            .expect("list objects");
+        for oid in oids {
+            let obj = source.read(&oid).expect("read").expect("present");
+            store
+                .write(obj.kind, &obj.data, crate::odb::WriteOptions::default())
+                .expect("copy");
+        }
+        let git_dir = dir.path().join(".git");
+        let mut builder = crate::odb::OdbBuilder::files(git_dir.join("objects"))
+            .primary(store)
+            .alternates(false);
+        if let Some(graph) = graph {
+            builder = builder.commit_graph(graph);
+        }
+        crate::repo::RepositoryBuilder::new(crate::environment::RepositoryOptions::empty())
+            .odb_builder(builder)
+            .open(&git_dir, Some(dir.path()))
+            .expect("open custom")
+    }
+
+    #[test]
+    fn from_bytes_parses_a_written_graph_and_rejects_bad_files() {
+        let (_dir, repo, commit) = one_commit_repo();
+        repo.write_commit_graph(&crate::maintenance::CommitGraphOptions::default())
+            .expect("write graph");
+        let bytes =
+            std::fs::read(repo.odb().objects_dir().join("info/commit-graph")).expect("graph file");
+
+        let chain = super::CommitGraphChain::from_bytes(bytes.clone()).expect("parse");
+        assert_eq!(chain.total_commits(), 1);
+        assert_eq!(chain.hash_algo(), crate::objects::HashAlgo::Sha1);
+        assert_eq!(chain.graph_commit(&commit).map(|(p, _)| p), Some(vec![]));
+
+        let mut flipped = bytes.clone();
+        let middle = flipped.len() / 2;
+        flipped[middle] ^= 0xff;
+        assert!(matches!(
+            super::CommitGraphChain::from_bytes(flipped),
+            Err(crate::error::Error::CorruptObject(_))
+        ));
+        assert!(super::CommitGraphChain::from_bytes(bytes[..20].to_vec()).is_err());
+        assert!(super::CommitGraphChain::from_bytes(Vec::new()).is_err());
+
+        let mut split_layer = bytes;
+        split_layer[7] = 1;
+        reseal_graph(&mut split_layer, crate::objects::HashAlgo::Sha1);
+        assert!(matches!(
+            super::CommitGraphChain::from_bytes(split_layer),
+            Err(crate::error::Error::CorruptObject(_))
+        ));
+    }
+
+    #[test]
+    fn custom_primary_ignores_graph_files_and_uses_the_attached_graph() {
+        let (dir, files, commit) = one_commit_repo();
+        files
+            .write_commit_graph(&crate::maintenance::CommitGraphOptions::default())
+            .expect("write graph");
+        assert!(files.odb().commit_graph_chain().is_some());
+
+        let custom = memory_primary_over(&dir, &files, None);
+        assert!(
+            custom.odb().commit_graph_chain().is_none(),
+            "a graph file under objects/ does not describe a custom store"
+        );
+
+        let crate::maintenance::CommitGraphBuild::Built(built) = custom
+            .build_commit_graph(&crate::maintenance::CommitGraphOptions::default())
+            .expect("build")
+        else {
+            panic!("plain repository must not skip the graph");
+        };
+        assert_eq!(built.commit_count, 1);
+        assert_eq!(built.bloom_stats, None);
+        assert_eq!(
+            built.bytes,
+            std::fs::read(files.odb().objects_dir().join("info/commit-graph")).expect("file"),
+            "the in-memory build matches the files writer byte for byte"
+        );
+
+        let chain = std::sync::Arc::new(built.to_chain().expect("chain"));
+        let attached = memory_primary_over(&dir, &files, Some(std::sync::Arc::clone(&chain)));
+        let used = attached.odb().commit_graph_chain().expect("attached graph");
+        assert!(std::sync::Arc::ptr_eq(&used, &chain));
+        assert!(used.graph_commit(&commit).is_some());
+    }
+
     #[test]
     fn try_parse_rejects_bad_signature_and_truncated_toc() {
         let (_dir, repo, commit) = one_commit_repo();
@@ -2320,10 +2466,7 @@ mod tests {
         let git_dir = std::path::Path::new(&repo_path).join(".git");
         let repo =
             Repository::open(git_dir.as_path(), &RepositoryOptions::default()).expect("open");
-        let chain = repo
-            .caches()
-            .commit_graph_chain(repo.odb().objects_dir())
-            .expect("graph");
+        let chain = repo.odb().commit_graph_chain().expect("graph");
         let settings = chain.top_layer_bloom_settings().expect("bloom");
         let norm = bloom_lookup_prefix_with_cwd("Makefile", None).expect("prefix");
         let keys = bloom_keyvec_for_path(norm.as_str(), &settings);

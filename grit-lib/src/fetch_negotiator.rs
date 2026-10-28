@@ -2,6 +2,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::commit_graph_file::CommitGraphChain;
 use crate::error::{Error, Result};
@@ -95,7 +96,7 @@ struct Entry {
 /// Skipping algorithm negotiator for fetch `have` lines.
 pub struct SkippingNegotiator<'r> {
     repo: &'r Repository,
-    commit_graph: Option<CommitGraphChain>,
+    commit_graph: Option<Arc<CommitGraphChain>>,
     heap: BinaryHeap<HeapItem>,
     entries: HashMap<ObjectId, Entry>,
     flags: HashMap<ObjectId, u8>,
@@ -107,9 +108,7 @@ impl<'r> SkippingNegotiator<'r> {
     /// New negotiator reading commits through `repo`'s object store.
     pub fn new(repo: &'r Repository) -> Self {
         let shallow = read_shallow_boundary(repo);
-        let commit_graph = CommitGraphChain::try_load(repo.odb().objects_dir())
-            .ok()
-            .flatten();
+        let commit_graph = repo.odb().commit_graph_chain();
         Self {
             repo,
             commit_graph,
@@ -135,7 +134,7 @@ impl<'r> SkippingNegotiator<'r> {
         if self.shallow.contains(&oid) {
             return Ok(Vec::new());
         }
-        read_parents(self.repo, self.commit_graph.as_ref(), oid)
+        read_parents(self.repo, self.commit_graph.as_deref(), oid)
     }
 
     fn f(&self, oid: ObjectId) -> u8 {
@@ -158,7 +157,7 @@ impl<'r> SkippingNegotiator<'r> {
         if mark & COMMON == 0 {
             self.non_common_revs += 1;
         }
-        let d = commit_date(self.repo, self.commit_graph.as_ref(), oid)?;
+        let d = commit_date(self.repo, self.commit_graph.as_deref(), oid)?;
         self.heap.push(HeapItem { date: d, oid });
         Ok(())
     }

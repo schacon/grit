@@ -2507,9 +2507,7 @@ impl<'r> CommitGraphCache<'r> {
             oid_hash_set()
         };
         let graph = if use_commit_graph {
-            repo.caches()
-                .commit_graph_chain(repo.odb().objects_dir())
-                .map(|arc| (*arc).clone())
+            repo.odb().commit_graph_chain().map(|arc| (*arc).clone())
         } else {
             None
         };
@@ -2572,7 +2570,7 @@ impl<'r> CommitGraphCache<'r> {
     }
 
     fn ensure_single_pack_reader(&mut self) {
-        if self.single_pack.is_some() {
+        if self.single_pack.is_some() || !self.repo.odb().uses_files_primary() {
             return;
         }
         let objects_dir = self.repo.odb().objects_dir();

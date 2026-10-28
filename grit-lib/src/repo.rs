@@ -328,8 +328,9 @@ impl RepositoryBuilder {
     /// - [`Error::OdbObjectsDirMismatch`] when a files-backed [`Self::odb_builder`] names a
     ///   directory other than the repository's `objects/` (or the environment's
     ///   `GIT_OBJECT_DIRECTORY`).
-    /// - [`Error::ObjectFormatMismatch`] when the builder's custom primary or a read source
-    ///   reports a [`hash_algo`](crate::odb::store::ObjectStore::hash_algo) other than the
+    /// - [`Error::ObjectFormatMismatch`] when the builder's custom primary, a read source or
+    ///   its attached [`commit_graph`](crate::odb::OdbBuilder::commit_graph) reports a
+    ///   [`hash_algo`](crate::odb::store::ObjectStore::hash_algo) other than the
     ///   repository's `extensions.objectformat` (SHA-1 when unset or when the git directory
     ///   has no config).
     /// - [`Error::InvalidRef`] when [`Self::initial_branch`] is not a valid branch name.
@@ -1826,7 +1827,7 @@ impl Repository {
     }
 
     /// Fail with [`Error::ObjectFormatMismatch`] when one of `injected` (the hash algorithms
-    /// of the stores passed to [`RepositoryBuilder::odb_builder`]) differs from
+    /// of the stores and commit-graph passed to [`RepositoryBuilder::odb_builder`]) differs from
     /// `extensions.objectformat`, SHA-1 when unset.
     ///
     /// Reads the config snapshot the open already loaded. Files-backed primaries and

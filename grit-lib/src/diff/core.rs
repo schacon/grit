@@ -2557,7 +2557,7 @@ pub fn tree_oid_of_commit_in_repo(
     repo: &crate::repo::Repository,
     commit_oid: &ObjectId,
 ) -> Result<ObjectId> {
-    if let Some(chain) = repo.caches().commit_graph_chain(repo.odb().objects_dir()) {
+    if let Some(chain) = repo.odb().commit_graph_chain() {
         if let Some(tree) = chain.graph_commit_tree(commit_oid) {
             return Ok(tree);
         }

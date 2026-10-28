@@ -7832,6 +7832,24 @@ impl core::marker::Unpin for grit_lib::maintenance::AutoGcReason
 impl core::marker::UnsafeUnpin for grit_lib::maintenance::AutoGcReason
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::AutoGcReason
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::AutoGcReason
+pub enum grit_lib::maintenance::CommitGraphBuild
+pub grit_lib::maintenance::CommitGraphBuild::Built(grit_lib::maintenance::BuiltCommitGraph)
+pub grit_lib::maintenance::CommitGraphBuild::Skipped(grit_lib::maintenance::CommitGraphSkipReason)
+impl core::clone::Clone for grit_lib::maintenance::CommitGraphBuild
+pub fn grit_lib::maintenance::CommitGraphBuild::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::maintenance::CommitGraphBuild
+impl core::cmp::PartialEq for grit_lib::maintenance::CommitGraphBuild
+pub fn grit_lib::maintenance::CommitGraphBuild::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::maintenance::CommitGraphBuild
+pub fn grit_lib::maintenance::CommitGraphBuild::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::maintenance::CommitGraphBuild
+impl core::marker::Freeze for grit_lib::maintenance::CommitGraphBuild
+impl core::marker::Send for grit_lib::maintenance::CommitGraphBuild
+impl core::marker::Sync for grit_lib::maintenance::CommitGraphBuild
+impl core::marker::Unpin for grit_lib::maintenance::CommitGraphBuild
+impl core::marker::UnsafeUnpin for grit_lib::maintenance::CommitGraphBuild
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::CommitGraphBuild
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::CommitGraphBuild
 #[non_exhaustive] pub enum grit_lib::maintenance::CommitGraphSkipReason
 pub grit_lib::maintenance::CommitGraphSkipReason::Grafts
 pub grit_lib::maintenance::CommitGraphSkipReason::ReplaceRefs
@@ -7866,6 +7884,27 @@ impl core::marker::Unpin for grit_lib::maintenance::GcLockAttempt
 impl core::marker::UnsafeUnpin for grit_lib::maintenance::GcLockAttempt
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::GcLockAttempt
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::GcLockAttempt
+#[non_exhaustive] pub struct grit_lib::maintenance::BuiltCommitGraph
+pub grit_lib::maintenance::BuiltCommitGraph::bloom_stats: core::option::Option<grit_lib::revwalk::commit_graph::BloomWriteStats>
+pub grit_lib::maintenance::BuiltCommitGraph::bytes: alloc::vec::Vec<u8>
+pub grit_lib::maintenance::BuiltCommitGraph::commit_count: usize
+impl grit_lib::maintenance::BuiltCommitGraph
+pub fn grit_lib::maintenance::BuiltCommitGraph::to_chain(&self) -> grit_lib::error::Result<grit_lib::revwalk::commit_graph::CommitGraphChain>
+impl core::clone::Clone for grit_lib::maintenance::BuiltCommitGraph
+pub fn grit_lib::maintenance::BuiltCommitGraph::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::maintenance::BuiltCommitGraph
+impl core::cmp::PartialEq for grit_lib::maintenance::BuiltCommitGraph
+pub fn grit_lib::maintenance::BuiltCommitGraph::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::maintenance::BuiltCommitGraph
+pub fn grit_lib::maintenance::BuiltCommitGraph::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::maintenance::BuiltCommitGraph
+impl core::marker::Freeze for grit_lib::maintenance::BuiltCommitGraph
+impl core::marker::Send for grit_lib::maintenance::BuiltCommitGraph
+impl core::marker::Sync for grit_lib::maintenance::BuiltCommitGraph
+impl core::marker::Unpin for grit_lib::maintenance::BuiltCommitGraph
+impl core::marker::UnsafeUnpin for grit_lib::maintenance::BuiltCommitGraph
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::BuiltCommitGraph
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::BuiltCommitGraph
 #[non_exhaustive] pub struct grit_lib::maintenance::CommitGraphOptions
 pub grit_lib::maintenance::CommitGraphOptions::changed_paths: bool
 pub grit_lib::maintenance::CommitGraphOptions::dry_run: bool
@@ -8202,6 +8241,7 @@ impl core::marker::UnsafeUnpin for grit_lib::maintenance::RepackStats
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::RepackStats
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::RepackStats
 pub fn grit_lib::maintenance::auto_gc_needed(&grit_lib::repo::Repository) -> grit_lib::error::Result<core::option::Option<grit_lib::maintenance::AutoGcReason>>
+pub fn grit_lib::maintenance::build_commit_graph(&grit_lib::repo::Repository, &grit_lib::maintenance::CommitGraphOptions) -> grit_lib::error::Result<grit_lib::maintenance::CommitGraphBuild>
 pub fn grit_lib::maintenance::collect_maintenance_object_roots(&grit_lib::repo::Repository) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
 pub fn grit_lib::maintenance::gc(&grit_lib::repo::Repository, &grit_lib::maintenance::GcOptions) -> grit_lib::error::Result<grit_lib::maintenance::GcStats>
 pub fn grit_lib::maintenance::gc_auto(&grit_lib::repo::Repository, &grit_lib::maintenance::GcOptions) -> grit_lib::error::Result<grit_lib::maintenance::AutoGcOutcome>
@@ -8851,8 +8891,10 @@ pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::commit_generation_for_
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::count_reachable_commits(&self, &[grit_lib::objects::ObjectId], &[grit_lib::objects::ObjectId], bool, &std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>) -> core::option::Option<usize>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::existing_filter_bytes(&self, &grit_lib::objects::ObjectId, &grit_lib::diff::bloom::BloomFilterSettings) -> core::option::Option<alloc::vec::Vec<u8>>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::find_commit(&self, &grit_lib::objects::ObjectId) -> core::option::Option<(usize, u32)>
+pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::from_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, grit_lib::error::Error>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::global_position(&self, &grit_lib::objects::ObjectId) -> core::option::Option<u32>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::graph_commit(&self, &grit_lib::objects::ObjectId) -> core::option::Option<(alloc::vec::Vec<grit_lib::objects::ObjectId>, i64)>
+pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::hash_algo(&self) -> grit_lib::objects::HashAlgo
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::layer_commit_counts_tip_first(&self) -> alloc::vec::Vec<u32>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::layer_has_generation_data_tip_first(&self) -> alloc::vec::Vec<bool>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::layer_hashes_tip_first(&self) -> alloc::vec::Vec<alloc::string::String>
@@ -9449,6 +9491,8 @@ pub fn grit_lib::objects::odb::builder::OdbBuilder::alternates(self, bool) -> Se
 pub fn grit_lib::objects::odb::builder::OdbBuilder::alternates(self, bool) -> Self
 pub fn grit_lib::objects::odb::builder::OdbBuilder::build(self) -> grit_lib::objects::odb::Odb
 pub fn grit_lib::objects::odb::builder::OdbBuilder::build(self) -> grit_lib::objects::odb::Odb
+pub fn grit_lib::objects::odb::builder::OdbBuilder::commit_graph(self, alloc::rcs::arc::Arc<grit_lib::revwalk::commit_graph::CommitGraphChain>) -> Self
+pub fn grit_lib::objects::odb::builder::OdbBuilder::commit_graph(self, alloc::rcs::arc::Arc<grit_lib::revwalk::commit_graph::CommitGraphChain>) -> Self
 pub fn grit_lib::objects::odb::builder::OdbBuilder::files(impl core::convert::AsRef<std::path::Path>) -> Self
 pub fn grit_lib::objects::odb::builder::OdbBuilder::files(impl core::convert::AsRef<std::path::Path>) -> Self
 pub fn grit_lib::objects::odb::builder::OdbBuilder::objects_dir(&self) -> &std::path::Path
@@ -10428,6 +10472,7 @@ pub struct grit_lib::objects::odb::OdbBuilder
 impl grit_lib::objects::odb::builder::OdbBuilder
 pub fn grit_lib::objects::odb::builder::OdbBuilder::alternates(self, bool) -> Self
 pub fn grit_lib::objects::odb::builder::OdbBuilder::build(self) -> grit_lib::objects::odb::Odb
+pub fn grit_lib::objects::odb::builder::OdbBuilder::commit_graph(self, alloc::rcs::arc::Arc<grit_lib::revwalk::commit_graph::CommitGraphChain>) -> Self
 pub fn grit_lib::objects::odb::builder::OdbBuilder::files(impl core::convert::AsRef<std::path::Path>) -> Self
 pub fn grit_lib::objects::odb::builder::OdbBuilder::objects_dir(&self) -> &std::path::Path
 pub fn grit_lib::objects::odb::builder::OdbBuilder::primary(self, alloc::rcs::arc::Arc<dyn grit_lib::objects::odb::store::WritableObjectStore>) -> Self
@@ -16964,6 +17009,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::command_runner::Recor
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::command_runner::RecordingRunner
 pub struct grit_lib::prelude::Repository
 impl grit_lib::repo::Repository
+pub fn grit_lib::repo::Repository::build_commit_graph(&self, &grit_lib::maintenance::CommitGraphOptions) -> grit_lib::error::Result<grit_lib::maintenance::CommitGraphBuild>
+pub fn grit_lib::repo::Repository::write_commit_graph(&self, &grit_lib::maintenance::CommitGraphOptions) -> grit_lib::error::Result<grit_lib::maintenance::CommitGraphWriteReport>
+pub fn grit_lib::repo::Repository::write_midx(&self, &grit_lib::maintenance::MidxOptions) -> grit_lib::error::Result<grit_lib::maintenance::MidxWriteReport>
+impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::bundles(&self) -> grit_lib::repo_handles::RepositoryBundles<'_>
 pub fn grit_lib::repo::Repository::change_id_generator(&self) -> alloc::rcs::arc::Arc<dyn grit_lib::change_id::ChangeIdGenerator>
 pub fn grit_lib::repo::Repository::command_runner(&self) -> alloc::rcs::arc::Arc<dyn grit_lib::command_runner::CommandRunner>
@@ -17037,9 +17086,6 @@ pub fn grit_lib::repo::Repository::resolve_ref_name(&self, &str) -> core::result
 pub fn grit_lib::repo::Repository::revision_label(&self, &str) -> grit_lib::error::Result<core::option::Option<grit_lib::revwalk::object_inspect::RevisionLabel>>
 pub fn grit_lib::repo::Repository::verify_object(&self, &str, core::option::Option<grit_lib::objects::ObjectKind>) -> core::result::Result<grit_lib::objects::ObjectId, grit_lib::revwalk::object_inspect::ResolveError>
 pub fn grit_lib::repo::Repository::with_object_stream_for_display<R>(&self, &grit_lib::objects::ObjectId, impl core::ops::function::FnOnce(grit_lib::objects::odb::store::ObjectStream<'_>) -> grit_lib::error::Result<R>) -> grit_lib::error::Result<core::option::Option<R>>
-impl grit_lib::repo::Repository
-pub fn grit_lib::repo::Repository::write_commit_graph(&self, &grit_lib::maintenance::CommitGraphOptions) -> grit_lib::error::Result<grit_lib::maintenance::CommitGraphWriteReport>
-pub fn grit_lib::repo::Repository::write_midx(&self, &grit_lib::maintenance::MidxOptions) -> grit_lib::error::Result<grit_lib::maintenance::MidxWriteReport>
 impl core::fmt::Debug for grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl !core::marker::Freeze for grit_lib::repo::Repository
@@ -24261,6 +24307,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo::InitOutcome
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo::InitOutcome
 pub struct grit_lib::repo::Repository
 impl grit_lib::repo::Repository
+pub fn grit_lib::repo::Repository::build_commit_graph(&self, &grit_lib::maintenance::CommitGraphOptions) -> grit_lib::error::Result<grit_lib::maintenance::CommitGraphBuild>
+pub fn grit_lib::repo::Repository::write_commit_graph(&self, &grit_lib::maintenance::CommitGraphOptions) -> grit_lib::error::Result<grit_lib::maintenance::CommitGraphWriteReport>
+pub fn grit_lib::repo::Repository::write_midx(&self, &grit_lib::maintenance::MidxOptions) -> grit_lib::error::Result<grit_lib::maintenance::MidxWriteReport>
+impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::bundles(&self) -> grit_lib::repo_handles::RepositoryBundles<'_>
 pub fn grit_lib::repo::Repository::change_id_generator(&self) -> alloc::rcs::arc::Arc<dyn grit_lib::change_id::ChangeIdGenerator>
 pub fn grit_lib::repo::Repository::command_runner(&self) -> alloc::rcs::arc::Arc<dyn grit_lib::command_runner::CommandRunner>
@@ -24334,9 +24384,6 @@ pub fn grit_lib::repo::Repository::resolve_ref_name(&self, &str) -> core::result
 pub fn grit_lib::repo::Repository::revision_label(&self, &str) -> grit_lib::error::Result<core::option::Option<grit_lib::revwalk::object_inspect::RevisionLabel>>
 pub fn grit_lib::repo::Repository::verify_object(&self, &str, core::option::Option<grit_lib::objects::ObjectKind>) -> core::result::Result<grit_lib::objects::ObjectId, grit_lib::revwalk::object_inspect::ResolveError>
 pub fn grit_lib::repo::Repository::with_object_stream_for_display<R>(&self, &grit_lib::objects::ObjectId, impl core::ops::function::FnOnce(grit_lib::objects::odb::store::ObjectStream<'_>) -> grit_lib::error::Result<R>) -> grit_lib::error::Result<core::option::Option<R>>
-impl grit_lib::repo::Repository
-pub fn grit_lib::repo::Repository::write_commit_graph(&self, &grit_lib::maintenance::CommitGraphOptions) -> grit_lib::error::Result<grit_lib::maintenance::CommitGraphWriteReport>
-pub fn grit_lib::repo::Repository::write_midx(&self, &grit_lib::maintenance::MidxOptions) -> grit_lib::error::Result<grit_lib::maintenance::MidxWriteReport>
 impl core::fmt::Debug for grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl !core::marker::Freeze for grit_lib::repo::Repository
@@ -25197,8 +25244,10 @@ pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::commit_generation_for_
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::count_reachable_commits(&self, &[grit_lib::objects::ObjectId], &[grit_lib::objects::ObjectId], bool, &std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>) -> core::option::Option<usize>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::existing_filter_bytes(&self, &grit_lib::objects::ObjectId, &grit_lib::diff::bloom::BloomFilterSettings) -> core::option::Option<alloc::vec::Vec<u8>>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::find_commit(&self, &grit_lib::objects::ObjectId) -> core::option::Option<(usize, u32)>
+pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::from_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, grit_lib::error::Error>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::global_position(&self, &grit_lib::objects::ObjectId) -> core::option::Option<u32>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::graph_commit(&self, &grit_lib::objects::ObjectId) -> core::option::Option<(alloc::vec::Vec<grit_lib::objects::ObjectId>, i64)>
+pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::hash_algo(&self) -> grit_lib::objects::HashAlgo
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::layer_commit_counts_tip_first(&self) -> alloc::vec::Vec<u32>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::layer_has_generation_data_tip_first(&self) -> alloc::vec::Vec<bool>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::layer_hashes_tip_first(&self) -> alloc::vec::Vec<alloc::string::String>

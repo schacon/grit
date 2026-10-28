@@ -731,10 +731,7 @@ enum NavigationMetadata {
 impl<'repo> NavParentCache<'repo> {
     fn new(repo: &'repo Repository, metadata: NavigationMetadata) -> Self {
         let grafts = load_graft_parents(repo.git_dir());
-        let graph = repo
-            .caches()
-            .commit_graph_chain(repo.odb().objects_dir())
-            .map(|arc| (*arc).clone());
+        let graph = repo.odb().commit_graph_chain().map(|arc| (*arc).clone());
         Self {
             repo,
             grafts,
@@ -1683,8 +1680,8 @@ fn is_unreplaced_commit(repo: &Repository, oid: ObjectId) -> bool {
         return false;
     }
     let in_commit_graph = repo
-        .caches()
-        .commit_graph_chain(repo.odb().objects_dir())
+        .odb()
+        .commit_graph_chain()
         .is_some_and(|graph| graph.find_commit(&oid).is_some());
     in_commit_graph
         || repo

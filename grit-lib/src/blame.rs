@@ -4638,7 +4638,7 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
     let thread_policy = repo.thread_policy();
     let mut session = BlameSession::new(odb, None, false, &thread_policy);
     session.whitespace = options.whitespace;
-    session.commit_graph = repo.caches().commit_graph_chain(repo.odb().objects_dir());
+    session.commit_graph = repo.odb().commit_graph_chain();
     let revision_label = blame_revision_label(options.start, start_oid);
     let overlay = load_blame_overlay(
         repo,

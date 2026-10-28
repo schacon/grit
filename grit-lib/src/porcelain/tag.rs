@@ -623,11 +623,9 @@ impl<'a> TagClassifier<'a> {
     }
 
     fn object_kind(&self, oid: &ObjectId) -> Option<ObjectKind> {
-        let graph = self.graph.get_or_init(|| {
-            self.repo
-                .caches()
-                .commit_graph_chain(self.repo.odb().objects_dir())
-        });
+        let graph = self
+            .graph
+            .get_or_init(|| self.repo.odb().commit_graph_chain());
         if graph.as_ref().is_some_and(|g| g.find_commit(oid).is_some()) {
             return Some(ObjectKind::Commit);
         }

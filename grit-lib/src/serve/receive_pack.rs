@@ -794,7 +794,7 @@ impl ShallowPlan {
             .map(|r| r.peeled.unwrap_or(r.oid))
             .collect();
         receiver_tips.extend(crate::refs::resolve_ref(repo.git_dir(), "HEAD").ok());
-        let graph = repo.caches().commit_graph_chain(repo.odb().objects_dir());
+        let graph = repo.odb().commit_graph_chain();
         let roots = request
             .commands
             .iter()
