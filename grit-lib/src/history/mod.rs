@@ -92,8 +92,8 @@ pub use rebase::{
 #[cfg(any(test, feature = "unstable-bench-helpers"))]
 pub use rebase::{test_patch_id_compute_call_count, test_reset_patch_id_compute_call_count};
 pub use rebase_session::{
-    abort_rebase, continue_rebase, skip_rebase, start_rebase, RebaseOutcome, RebaseSessionError,
-    RebaseStop, StartRebaseOptions,
+    abort_rebase, continue_rebase, skip_rebase, start_rebase, RebaseAbort, RebaseOutcome,
+    RebaseSessionError, RebaseStop, StartRebaseOptions,
 };
 pub use reword::{normalize_rewrite_message, reword, reword_with, RewordOptions};
 pub use split::split;

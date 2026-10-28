@@ -987,6 +987,7 @@ pub(super) fn resume_exec_rebase(
     if rewrites.planned.len() != plan.commits.len() || state.row >= plan.commits.len() {
         return Err(exec_io("invalid exec replay position").into());
     }
+    ensure_exec_plan_current(repo, &prestate, &plan)?;
     let expected = ObjectId::from_hex(&state.head).map_err(HistoryError::from)?;
     let head = resolve_head_for_repository(repo).map_err(exec_io)?;
     if head != (HeadState::Detached { oid: expected }) {
@@ -1110,7 +1111,84 @@ pub(super) fn resume_exec_rebase(
     })
 }
 
-pub(super) fn abort_exec_rebase(repo: &Repository) -> Result<(), super::RebaseSessionError> {
+/// Refuse to resume when the rebased branch or a ref the stored plan moves no longer has the
+/// tip the plan was built from; replaying would only fail at the final compare-and-swap.
+fn ensure_exec_plan_current(
+    repo: &Repository,
+    prestate: &ExecPrestate,
+    plan: &RewritePlan,
+) -> Result<(), super::RebaseSessionError> {
+    let branch = match &prestate.head {
+        SavedHead::Symbolic(name) => Some((name.as_str(), prestate.head_commit)),
+        SavedHead::Detached(_) => None,
+    };
+    let planned = plan
+        .ref_updates
+        .iter()
+        .filter(|update| update.name != "HEAD")
+        .map(|update| (update.name.as_str(), update.old));
+    for (name, expected) in branch.into_iter().chain(planned) {
+        let actual = repo.references().resolve_if_exists(name)?;
+        if actual != Some(expected) {
+            return Err(super::RebaseSessionError::StaleExecPlan {
+                name: name.to_owned(),
+                expected,
+                actual,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Point the rebased branch back at its pre-rebase tip when something moved it during the
+/// stop, swapping only from the value just read. Returns the overwritten movement, if any.
+fn reset_moved_exec_branch(
+    repo: &Repository,
+    prestate: &ExecPrestate,
+    identity: &crate::ident::Signature,
+) -> Result<Option<super::PlannedRefUpdate>, super::RebaseSessionError> {
+    use crate::refs::store::{Expected, RawRef, RefStoreError, RefUpdate, RefUpdateFlags};
+    let SavedHead::Symbolic(name) = &prestate.head else {
+        return Ok(None);
+    };
+    let current = repo.references().resolve_if_exists(name)?;
+    if current == Some(prestate.head_commit) {
+        return Ok(None);
+    }
+    let old = current.unwrap_or_else(crate::diff::zero_oid);
+    let update = RefUpdate {
+        name: name.clone(),
+        new_value: Some(RawRef::Direct(prestate.head_commit)),
+        expected: current.map_or(Expected::Missing, Expected::Oid),
+        reflog: Some(crate::refs::store::ReflogUpdate {
+            identity: identity.reflog_name_email(),
+            message: "rebase (abort)".into(),
+            time: identity.time,
+            old_oid: Some(old),
+            new_oid: Some(prestate.head_commit),
+        }),
+        flags: RefUpdateFlags {
+            no_deref: true,
+            ..RefUpdateFlags::default()
+        },
+    };
+    match crate::refs::commit_ref_update_on_store(repo.refs(), update) {
+        Ok(()) => Ok(Some(super::PlannedRefUpdate {
+            name: name.clone(),
+            old,
+            new: prestate.head_commit,
+        })),
+        Err(Error::RefStore(RefStoreError::ExpectedMismatch { .. })) => {
+            Err(super::RebaseSessionError::AbortRefMoved { name: name.clone() })
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+pub(super) fn abort_exec_rebase(
+    repo: &Repository,
+    identity: &crate::ident::Signature,
+) -> Result<super::RebaseAbort, super::RebaseSessionError> {
     let state = load_exec_stop(repo)?;
     let prestate = stored_prestate(&state)?;
     let head = resolve_head_for_repository(repo).map_err(exec_io)?;
@@ -1118,8 +1196,16 @@ pub(super) fn abort_exec_rebase(repo: &Repository) -> Result<(), super::RebaseSe
         .oid()
         .copied()
         .ok_or_else(|| exec_io("exec replay HEAD is unreadable"))?;
-    restore_exec_prestate(repo, &prestate, commit_tree_for_apply(repo, current)?)?;
-    super::rebase_session::clear_rebase_state(repo.git_dir())
+    let current_tree = commit_tree_for_apply(repo, current)?;
+    let overwritten = reset_moved_exec_branch(repo, &prestate, identity)?;
+    restore_exec_prestate(repo, &prestate, current_tree).map_err(|err| match err {
+        HistoryError::RefCasMismatch { name } => super::RebaseSessionError::AbortRefMoved { name },
+        other => other.into(),
+    })?;
+    super::rebase_session::clear_rebase_state(repo.git_dir())?;
+    Ok(super::RebaseAbort {
+        overwritten: overwritten.into_iter().collect(),
+    })
 }
 
 #[cfg(test)]

@@ -26261,6 +26261,8 @@ impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::RebasePlan
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::RebasePlan
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::RebasePlan
 #[non_exhaustive] pub enum grit_lib::revwalk::history::RebaseSessionError
+pub grit_lib::revwalk::history::RebaseSessionError::AbortRefMoved
+pub grit_lib::revwalk::history::RebaseSessionError::AbortRefMoved::name: alloc::string::String
 pub grit_lib::revwalk::history::RebaseSessionError::ExecHeadChanged
 pub grit_lib::revwalk::history::RebaseSessionError::ExecHeadChanged::expected: grit_lib::objects::ObjectId
 pub grit_lib::revwalk::history::RebaseSessionError::ForeignRebaseInProgress
@@ -26270,6 +26272,10 @@ pub grit_lib::revwalk::history::RebaseSessionError::NoRebaseInProgress
 pub grit_lib::revwalk::history::RebaseSessionError::NotOnBranch
 pub grit_lib::revwalk::history::RebaseSessionError::NothingToCommit
 pub grit_lib::revwalk::history::RebaseSessionError::RebaseAlreadyInProgress
+pub grit_lib::revwalk::history::RebaseSessionError::StaleExecPlan
+pub grit_lib::revwalk::history::RebaseSessionError::StaleExecPlan::actual: core::option::Option<grit_lib::objects::ObjectId>
+pub grit_lib::revwalk::history::RebaseSessionError::StaleExecPlan::expected: grit_lib::objects::ObjectId
+pub grit_lib::revwalk::history::RebaseSessionError::StaleExecPlan::name: alloc::string::String
 pub grit_lib::revwalk::history::RebaseSessionError::UnmergedPaths
 impl grit_lib::revwalk::history::RebaseSessionError
 pub fn grit_lib::revwalk::history::RebaseSessionError::is_cancelled(&self) -> bool
@@ -26669,6 +26675,25 @@ impl core::marker::Unpin for grit_lib::revwalk::history::PlannedRefUpdate
 impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::PlannedRefUpdate
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::PlannedRefUpdate
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::PlannedRefUpdate
+pub struct grit_lib::revwalk::history::RebaseAbort
+pub grit_lib::revwalk::history::RebaseAbort::overwritten: alloc::vec::Vec<grit_lib::revwalk::history::PlannedRefUpdate>
+impl core::clone::Clone for grit_lib::revwalk::history::RebaseAbort
+pub fn grit_lib::revwalk::history::RebaseAbort::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::history::RebaseAbort
+impl core::cmp::PartialEq for grit_lib::revwalk::history::RebaseAbort
+pub fn grit_lib::revwalk::history::RebaseAbort::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::revwalk::history::RebaseAbort
+pub fn grit_lib::revwalk::history::RebaseAbort::default() -> Self
+impl core::fmt::Debug for grit_lib::revwalk::history::RebaseAbort
+pub fn grit_lib::revwalk::history::RebaseAbort::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::history::RebaseAbort
+impl core::marker::Freeze for grit_lib::revwalk::history::RebaseAbort
+impl core::marker::Send for grit_lib::revwalk::history::RebaseAbort
+impl core::marker::Sync for grit_lib::revwalk::history::RebaseAbort
+impl core::marker::Unpin for grit_lib::revwalk::history::RebaseAbort
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::RebaseAbort
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::RebaseAbort
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::RebaseAbort
 pub struct grit_lib::revwalk::history::RebaseOntoOptions
 pub grit_lib::revwalk::history::RebaseOntoOptions::drop: alloc::vec::Vec<grit_lib::objects::ObjectId>
 pub grit_lib::revwalk::history::RebaseOntoOptions::favor: grit_lib::diff::merge_file::MergeFavor
@@ -26927,7 +26952,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::Und
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::UndoOutcome
 pub const grit_lib::revwalk::history::DEFAULT_ABSORB_STACK_LIMIT: usize
 pub fn grit_lib::revwalk::history::abort_interrupted_rewrite_apply(&grit_lib::repo::Repository) -> core::result::Result<grit_lib::revwalk::history::RewriteApplyRecovery, grit_lib::revwalk::history::HistoryError>
-pub fn grit_lib::revwalk::history::abort_rebase(&grit_lib::repo::Repository, &grit_lib::ident::Signature) -> core::result::Result<(), grit_lib::revwalk::history::RebaseSessionError>
+pub fn grit_lib::revwalk::history::abort_rebase(&grit_lib::repo::Repository, &grit_lib::ident::Signature) -> core::result::Result<grit_lib::revwalk::history::RebaseAbort, grit_lib::revwalk::history::RebaseSessionError>
 pub fn grit_lib::revwalk::history::absorb(&grit_lib::repo::Repository, &grit_lib::revwalk::history::AbsorbOptions) -> core::result::Result<grit_lib::revwalk::history::AbsorbPlan, grit_lib::revwalk::history::HistoryError>
 pub fn grit_lib::revwalk::history::apply_absorb_rewrite(&grit_lib::repo::Repository, &grit_lib::revwalk::history::AbsorbPlan, &grit_lib::revwalk::history::ApplyOptions) -> core::result::Result<grit_lib::revwalk::history::AppliedRewrite, grit_lib::revwalk::history::HistoryError>
 pub fn grit_lib::revwalk::history::apply_fixup_hunk_selection(&grit_lib::repo::Repository, &grit_lib::revwalk::history::RewritePlan, &grit_lib::revwalk::history::ApplyOptions, &grit_lib::porcelain::hunk_select::HunkSelection, &[alloc::string::String]) -> core::result::Result<grit_lib::revwalk::history::AppliedRewrite, grit_lib::revwalk::history::HistoryError>

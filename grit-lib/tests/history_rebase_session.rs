@@ -2077,6 +2077,169 @@ fn exec_continue_rejects_moved_head_and_abort_restores_original_branch() {
     assert_git_fsck_strict(wt);
 }
 
+/// Move `refs/heads/topic` the way #2197 did (`git commit-tree` + `git update-ref`) and return
+/// the new tip.
+fn move_topic_behind_the_rebase(wt: &std::path::Path) -> ObjectId {
+    let moved = git(
+        wt,
+        &["commit-tree", "-p", "topic", "-m", "moved", "topic^{tree}"],
+    );
+    git(wt, &["update-ref", "refs/heads/topic", moved.trim()]);
+    git_oid(wt, "topic")
+}
+
+/// `continue_rebase` and `skip_rebase` both refuse with a typed stale-plan error naming the
+/// moved branch, and change nothing.
+fn assert_resume_refuses_stale_plan(
+    wt: &std::path::Path,
+    opts: &StartRebaseOptions,
+    moved: ObjectId,
+) {
+    let head = git_oid(wt, "HEAD");
+    let index = std::fs::read(wt.join(".git/index")).unwrap();
+    let status = git(wt, &["status", "--porcelain"]);
+    for skip in [false, true] {
+        let repo = open_grit(wt);
+        let result = if skip {
+            skip_rebase(
+                &repo,
+                opts,
+                &mut grit_lib::progress::NullProgress,
+                &grit_lib::progress::NeverCancel,
+            )
+        } else {
+            continue_rebase(
+                &repo,
+                opts,
+                &mut grit_lib::progress::NullProgress,
+                &grit_lib::progress::NeverCancel,
+            )
+        };
+        match result {
+            Err(RebaseSessionError::StaleExecPlan {
+                name,
+                expected,
+                actual,
+            }) => {
+                assert_eq!(name, "refs/heads/topic");
+                assert_eq!(expected, opts.request.branch_tip);
+                assert_eq!(actual, Some(moved));
+            }
+            other => panic!("expected a stale exec plan (skip={skip}), got {other:?}"),
+        }
+        assert_eq!(git_oid(wt, "topic"), moved);
+        assert_eq!(git_oid(wt, "HEAD"), head);
+        assert_eq!(std::fs::read(wt.join(".git/index")).unwrap(), index);
+        assert_eq!(git(wt, &["status", "--porcelain"]), status);
+        assert!(wt.join(".git/rebase-merge/grit-exec").is_file());
+    }
+}
+
+/// Abort resets the moved branch to its pre-rebase tip, reports what it overwrote, logs it,
+/// and leaves the exact pre-rebase index and a clean worktree.
+fn assert_abort_restores_moved_branch(
+    wt: &std::path::Path,
+    opts: &StartRebaseOptions,
+    moved: ObjectId,
+    original_index: &[u8],
+) {
+    use grit_lib::revwalk::history::PlannedRefUpdate;
+    let abort = abort_rebase(&open_grit(wt), &test_ident()).expect("abort");
+    assert_eq!(
+        abort.overwritten,
+        [PlannedRefUpdate {
+            name: "refs/heads/topic".into(),
+            old: moved,
+            new: opts.request.branch_tip,
+        }]
+    );
+    assert_eq!(git_oid(wt, "topic"), opts.request.branch_tip);
+    assert_eq!(
+        git(wt, &["symbolic-ref", "HEAD"]).trim(),
+        "refs/heads/topic"
+    );
+    assert_eq!(git_oid(wt, "topic@{1}"), moved, "moved tip stays in reflog");
+    assert_eq!(
+        git(wt, &["reflog", "-1", "--format=%gs", "refs/heads/topic"]).trim(),
+        "rebase (abort)"
+    );
+    assert_eq!(
+        std::fs::read(wt.join(".git/index")).unwrap(),
+        original_index
+    );
+    assert_eq!(git(wt, &["status", "--porcelain"]), "");
+    assert!(!wt.join(".git/rebase-merge").exists());
+    assert_git_fsck_strict(wt);
+}
+
+#[test]
+fn exec_dirty_stop_with_moved_branch_refuses_resume_and_abort_restores_it() {
+    let (fixture, opts, plan) = exec_fixture();
+    let wt = fixture.worktree();
+    let original_index = std::fs::read(wt.join(".git/index")).unwrap();
+    run_dirty_exec(wt, &plan, "echo hook-edit >> f");
+    let moved = move_topic_behind_the_rebase(wt);
+    assert_resume_refuses_stale_plan(wt, &opts, moved);
+    assert_eq!(std::fs::read(wt.join("f")).unwrap(), b"base\nhook-edit\n");
+    // Saving the edits does not make the stale plan resumable either.
+    git(wt, &["stash", "push", "-m", "exec edits"]);
+    assert_resume_refuses_stale_plan(wt, &opts, moved);
+    assert_abort_restores_moved_branch(wt, &opts, moved, &original_index);
+}
+
+#[test]
+fn exec_conflict_stop_with_moved_branch_refuses_resume_and_abort_restores_it() {
+    use grit_lib::revwalk::history::HistoryError;
+    let (fixture, opts, mut plan) = exec_fixture();
+    let wt = fixture.worktree();
+    let original_index = std::fs::read(wt.join(".git/index")).unwrap();
+    let err = run_exec(wt, &mut plan, &[&conflicting_amend()]).unwrap_err();
+    assert!(matches!(err, HistoryError::ExecConflict { .. }), "{err:?}");
+    let moved = move_topic_behind_the_rebase(wt);
+    assert_resume_refuses_stale_plan(wt, &opts, moved);
+    assert_abort_restores_moved_branch(wt, &opts, moved, &original_index);
+}
+
+#[test]
+fn exec_abort_with_unmoved_branch_reports_nothing_overwritten() {
+    let (fixture, opts, plan) = exec_fixture();
+    let wt = fixture.worktree();
+    run_dirty_exec(wt, &plan, "echo hook-edit >> f");
+    let abort = abort_rebase(&open_grit(wt), &test_ident()).expect("abort");
+    assert!(abort.overwritten.is_empty(), "{abort:?}");
+    assert_eq!(git_oid(wt, "topic"), opts.request.branch_tip);
+}
+
+#[test]
+fn conflict_stop_abort_reports_a_branch_moved_during_the_stop() {
+    use grit_lib::revwalk::history::PlannedRefUpdate;
+    let (repo, upstream, onto, tip, orig_tip) = conflict_rebase_fixture();
+    let wt = repo.worktree();
+    git(wt, &["switch", "topic"]);
+    let RebaseOutcome::Stopped(_) = start_rebase(
+        &open_grit(wt),
+        &start_opts(upstream, Some(onto), tip),
+        &mut grit_lib::progress::NullProgress,
+        &grit_lib::progress::NeverCancel,
+    )
+    .expect("stop") else {
+        panic!("expected a conflict stop")
+    };
+    let moved = move_topic_behind_the_rebase(wt);
+    let abort = abort_rebase(&open_grit(wt), &test_ident()).expect("abort");
+    assert_eq!(
+        abort.overwritten,
+        [PlannedRefUpdate {
+            name: "refs/heads/topic".into(),
+            old: moved,
+            new: orig_tip,
+        }]
+    );
+    assert_eq!(git_oid(wt, "topic"), orig_tip);
+    assert!(!wt.join(".git/rebase-merge").exists());
+    assert_git_fsck_strict(wt);
+}
+
 #[test]
 fn exec_abort_removes_staged_addition_and_restores_exact_index() {
     let (fixture, opts, plan) = exec_fixture();

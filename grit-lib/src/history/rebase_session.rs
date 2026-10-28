@@ -91,6 +91,17 @@ pub enum RebaseOutcome {
     Stopped(RebaseStop),
 }
 
+/// Result of [`abort_rebase`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde-models", derive(serde::Serialize))]
+pub struct RebaseAbort {
+    /// Branches that something else moved while the rebase was stopped and that the abort
+    /// reset to their pre-rebase tip: `old` is the tip that was overwritten (still reachable
+    /// from the branch reflog), `new` the restored pre-rebase tip. Empty when the branch was
+    /// where the rebase left it.
+    pub overwritten: Vec<PlannedRefUpdate>,
+}
+
 /// Failures while driving a rebase session.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -131,6 +142,30 @@ pub enum RebaseSessionError {
         expected: ObjectId,
     },
 
+    /// A ref the stopped exec rebase will move (the rebased branch or one of its planned
+    /// updates) was moved by something else, so the saved plan can no longer be applied.
+    /// Nothing was changed; [`abort_rebase`] restores the pre-rebase state.
+    #[error(
+        "ref {name} moved from {expected} to {} while the rebase was stopped; abort the rebase to restore it",
+        .actual.map_or_else(|| "(deleted)".to_owned(), |oid| oid.to_hex())
+    )]
+    StaleExecPlan {
+        /// Full ref name.
+        name: String,
+        /// Tip the saved plan expects.
+        expected: ObjectId,
+        /// Current tip, or `None` when the ref was deleted.
+        actual: Option<ObjectId>,
+    },
+
+    /// The rebased branch moved again while [`abort_rebase`] was resetting it; the rebase is
+    /// still in progress and the abort can be retried.
+    #[error("ref {name} moved while aborting the rebase; retry the abort")]
+    AbortRefMoved {
+        /// Full ref name.
+        name: String,
+    },
+
     /// Underlying history rewrite failure.
     #[error(transparent)]
     History(#[from] HistoryError),
@@ -153,7 +188,9 @@ impl RebaseSessionError {
             | Self::UnmergedPaths
             | Self::NothingToCommit
             | Self::NotOnBranch
-            | Self::ExecHeadChanged { .. } => false,
+            | Self::ExecHeadChanged { .. }
+            | Self::StaleExecPlan { .. }
+            | Self::AbortRefMoved { .. } => false,
         }
     }
 }
@@ -257,8 +294,10 @@ pub fn start_rebase(
 /// # Errors
 ///
 /// Returns [`RebaseSessionError::UnmergedPaths`] when the index still records conflicts,
-/// [`RebaseSessionError::ForeignRebaseInProgress`] when `git` started the rebase, and
-/// [`RebaseSessionError::NoRebaseInProgress`] when no rebase is in progress.
+/// [`RebaseSessionError::ForeignRebaseInProgress`] when `git` started the rebase,
+/// [`RebaseSessionError::NoRebaseInProgress`] when no rebase is in progress, and, for an
+/// exec stop, [`RebaseSessionError::StaleExecPlan`] (changing nothing) when the rebased branch
+/// or a ref the plan updates was moved during the stop.
 /// Cancellation follows [`start_rebase`]: a cancel before the replayed commits are applied
 /// keeps the rebase stopped where it was.
 pub fn continue_rebase(
@@ -334,7 +373,8 @@ pub fn continue_rebase(
 /// # Errors
 ///
 /// Returns [`RebaseSessionError::ForeignRebaseInProgress`] when `git` started the rebase,
-/// [`RebaseSessionError::NoRebaseInProgress`] when no rebase is in progress, and
+/// [`RebaseSessionError::NoRebaseInProgress`] when no rebase is in progress,
+/// [`RebaseSessionError::StaleExecPlan`] as for [`continue_rebase`], and
 /// planning/apply failures otherwise. Cancellation follows [`continue_rebase`].
 pub fn skip_rebase(
     repo: &Repository,
@@ -395,15 +435,22 @@ pub fn skip_rebase(
 /// removed. Either way, unresolved rerere records for the abandoned conflict are cleared
 /// (`MERGE_RR`), as `git rebase --abort` does.
 ///
+/// The branch is restored to `orig-head` even when something else (another worktree, a
+/// `git branch -f`, an amend on the checked-out branch) moved it while the rebase was stopped;
+/// such movements are listed in [`RebaseAbort::overwritten`] and logged as `rebase (abort)`
+/// in the branch reflog with `identity`. `identity` also signs the reflog entries of the reset.
+///
 /// # Errors
 ///
-/// Returns [`RebaseSessionError::NoRebaseInProgress`] when no rebase is in progress, and
+/// Returns [`RebaseSessionError::NoRebaseInProgress`] when no rebase is in progress,
 /// [`RebaseSessionError::ForeignRebaseInProgress`] when a git-started rebase recorded an
-/// autostash or has no readable `orig-head` (finish those with `git rebase --abort`).
+/// autostash or has no readable `orig-head` (finish those with `git rebase --abort`), and
+/// [`RebaseSessionError::AbortRefMoved`] when, for an exec stop, the branch moves again between
+/// reading and resetting it (nothing is restored and the abort can be retried).
 pub fn abort_rebase(
     repo: &Repository,
     identity: &crate::ident::Signature,
-) -> Result<(), RebaseSessionError> {
+) -> Result<RebaseAbort, RebaseSessionError> {
     identity
         .validate()
         .map_err(|err| map_lib(crate::error::Error::InvalidSignature(err)))?;
@@ -414,19 +461,19 @@ pub fn abort_rebase(
     match active_rebase(repo.git_dir()) {
         None => {
             if had_journal {
-                Ok(())
+                Ok(RebaseAbort::default())
             } else {
                 Err(RebaseSessionError::NoRebaseInProgress)
             }
         }
         Some(ActiveRebase::Foreign(dir)) => abort_foreign_rebase(repo, &dir, identity),
-        Some(ActiveRebase::Exec) => super::exec::abort_exec_rebase(repo),
+        Some(ActiveRebase::Exec) => super::exec::abort_exec_rebase(repo, identity),
         Some(ActiveRebase::Grit) => {
             let state = load_persisted_state(repo.git_dir())?;
             crate::rerere::rerere_clear(repo.git_dir()).map_err(map_lib)?;
-            hard_reset_branch(repo, &state.head_ref, state.orig_head, identity)?;
+            let abort = hard_reset_branch(repo, &state.head_ref, state.orig_head, identity)?;
             clear_rebase_state(repo.git_dir())?;
-            Ok(())
+            Ok(abort)
         }
     }
 }
@@ -435,7 +482,7 @@ fn abort_foreign_rebase(
     repo: &Repository,
     state_dir: &Path,
     identity: &crate::ident::Signature,
-) -> Result<(), RebaseSessionError> {
+) -> Result<RebaseAbort, RebaseSessionError> {
     if state_dir.join("autostash").exists() {
         return Err(RebaseSessionError::ForeignRebaseInProgress);
     }
@@ -443,15 +490,19 @@ fn abort_foreign_rebase(
         .and_then(|hex| ObjectId::from_hex(&hex).ok())
         .ok_or(RebaseSessionError::ForeignRebaseInProgress)?;
     crate::rerere::rerere_clear(repo.git_dir()).map_err(map_lib)?;
-    match first_line(&state_dir.join("head-name")).filter(|name| name.starts_with("refs/")) {
-        Some(head_ref) => hard_reset_branch(repo, &head_ref, orig_head, identity)?,
-        None => hard_reset_head(repo, orig_head, identity)?,
-    }
+    let abort =
+        match first_line(&state_dir.join("head-name")).filter(|name| name.starts_with("refs/")) {
+            Some(head_ref) => hard_reset_branch(repo, &head_ref, orig_head, identity)?,
+            None => {
+                hard_reset_head(repo, orig_head, identity)?;
+                RebaseAbort::default()
+            }
+        };
     for name in ["REBASE_HEAD", "AUTO_MERGE", "MERGE_MSG"] {
         remove_if_exists(&repo.git_dir().join(name))?;
     }
     fs::remove_dir_all(state_dir).map_err(map_lib)?;
-    Ok(())
+    Ok(abort)
 }
 
 /// Which tool owns the rebase state under the git directory.
@@ -1090,15 +1141,29 @@ fn reset_index_worktree_to_head(
     Ok(())
 }
 
+/// Re-attach `HEAD` to `refname` and hard-reset it to `target`, reporting the tip it had
+/// when that was not `target`.
 fn hard_reset_branch(
     repo: &Repository,
     refname: &str,
     target: ObjectId,
     identity: &crate::ident::Signature,
-) -> Result<(), RebaseSessionError> {
+) -> Result<RebaseAbort, RebaseSessionError> {
+    let before = repo
+        .references()
+        .resolve_if_exists(refname)
+        .map_err(map_lib)?;
     refs::write_symbolic_ref_on_store(repo.refs(), repo.git_dir(), "HEAD", refname)
         .map_err(map_lib)?;
-    hard_reset_head(repo, target, identity)
+    hard_reset_head(repo, target, identity)?;
+    let overwritten = (before != Some(target)).then(|| PlannedRefUpdate {
+        name: refname.to_owned(),
+        old: before.unwrap_or_else(crate::diff::zero_oid),
+        new: target,
+    });
+    Ok(RebaseAbort {
+        overwritten: overwritten.into_iter().collect(),
+    })
 }
 
 fn hard_reset_head(
