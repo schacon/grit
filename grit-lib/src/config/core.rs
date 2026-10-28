@@ -2742,7 +2742,18 @@ impl ConfigSet {
         ctx: &IncludeContext,
         included_files: &mut Vec<PathBuf>,
     ) -> Result<()> {
+        // Headroom for the entries of typical small include files (identities, aliases), so
+        // merging one does not double a vector sized exactly to the top-level layers.
+        const INCLUDE_HEADROOM: usize = 64;
         let mut remote_urls = RemoteUrls::new(layers);
+        let top_level: usize = layers
+            .iter()
+            .map(|layer| match layer {
+                ConfigLayer::File(file) => file.entries.len(),
+                ConfigLayer::Entries(entries) => entries.len(),
+            })
+            .sum();
+        self.entries.reserve(top_level + INCLUDE_HEADROOM);
         for layer in layers {
             match layer {
                 ConfigLayer::File(file) => Self::merge_with_includes(
@@ -4500,11 +4511,12 @@ fn include_by_onbranch(condition: &str, ctx: &IncludeContext) -> bool {
     wildmatch(pattern.as_bytes(), short.as_bytes(), WM_PATHNAME)
 }
 
+/// Whether `entry` is `remote.<name>.url` (keys are canonical: section and variable lowercase).
 fn is_remote_url_entry(entry: &ConfigEntry) -> bool {
-    let Ok((section, subsection, variable)) = split_key(&entry.key) else {
-        return false;
-    };
-    section == "remote" && subsection.is_some() && variable == "url"
+    entry
+        .key
+        .strip_prefix("remote.")
+        .is_some_and(|rest| rest.ends_with(".url"))
 }
 
 /// The URL glob of a `hasconfig:remote.*.url:<glob>` include condition.
