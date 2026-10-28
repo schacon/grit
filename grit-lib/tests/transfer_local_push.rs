@@ -1088,3 +1088,106 @@ fn push_local_installs_single_pack_without_loose_objects() {
     assert_eq!(packs, 1, "remote must retain one packfile");
     fsck_clean(remote_git);
 }
+
+/// Many clones racing to create the same new branch with diverging commits: at most one
+/// push may report success, and every successful pusher's commit must be the final tip.
+/// Objects copied by the losers may stay dangling, so `git fsck` is not required to be clean.
+#[test]
+fn push_local_concurrent_creates_of_same_branch_never_lose_an_update() {
+    const PUSHERS: usize = 8;
+    const ROUNDS: usize = 6;
+
+    for round in 0..ROUNDS {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let remote = tmp.path().join("remote.git");
+        let seed = tmp.path().join("seed");
+        std::fs::create_dir_all(&remote).unwrap();
+        std::fs::create_dir_all(&seed).unwrap();
+        git(&remote, &["init", "-q", "--bare", "-b", "main", "."]);
+        git(&seed, &["init", "-q", "-b", "main", "."]);
+        std::fs::write(seed.join("s"), "s\n").unwrap();
+        git(&seed, &["add", "s"]);
+        git(&seed, &["commit", "-q", "-m", "seed"]);
+        git(&seed, &["push", "-q", remote.to_str().unwrap(), "main"]);
+
+        let clones: Vec<(std::path::PathBuf, ObjectId)> = (0..PUSHERS)
+            .map(|i| {
+                let dir = tmp.path().join(format!("w{i}"));
+                git(
+                    tmp.path(),
+                    &[
+                        "clone",
+                        "-q",
+                        remote.to_str().unwrap(),
+                        dir.to_str().unwrap(),
+                    ],
+                );
+                std::fs::write(dir.join("f"), format!("{i}\n")).unwrap();
+                git(&dir, &["add", "f"]);
+                git(&dir, &["commit", "-q", "-m", &format!("c{i}")]);
+                let head = rev_parse(&dir, "HEAD");
+                (dir.join(".git"), head)
+            })
+            .collect();
+
+        let barrier = std::sync::Barrier::new(PUSHERS);
+        let outcomes: Vec<(ObjectId, PushRefStatus)> = std::thread::scope(|scope| {
+            let handles: Vec<_> = clones
+                .iter()
+                .map(|(local_git, head)| {
+                    let barrier = &barrier;
+                    let remote = remote.as_path();
+                    scope.spawn(move || {
+                        barrier.wait();
+                        let outcome = push_local(
+                            local_git,
+                            remote,
+                            &[PushRefSpec {
+                                src: Some(*head),
+                                dst: "refs/heads/shared".to_owned(),
+                                ..Default::default()
+                            }],
+                            &PushOptions::default(),
+                            &grit_lib::progress::NeverCancel,
+                        )
+                        .expect("push call");
+                        (*head, outcome.results[0].status.clone())
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("pusher thread"))
+                .collect()
+        });
+
+        let tip = remote_ref(&remote, "refs/heads/shared").expect("shared created");
+        let winners: Vec<ObjectId> = outcomes
+            .iter()
+            .filter(|(_, status)| !status.is_error())
+            .map(|(head, _)| *head)
+            .collect();
+        assert_eq!(
+            winners,
+            vec![tip],
+            "round {round}: exactly one creator may succeed and it must be the tip: {outcomes:?}"
+        );
+        for (head, status) in &outcomes {
+            if *head == tip {
+                continue;
+            }
+            assert!(
+                status.is_error(),
+                "round {round}: loser reported {status:?}"
+            );
+            let (reachable, _) = git_try(
+                &remote,
+                &["merge-base", "--is-ancestor", &head.to_hex(), &tip.to_hex()],
+            );
+            assert!(
+                !reachable,
+                "round {round}: diverging commit must not be in tip"
+            );
+        }
+    }
+}
