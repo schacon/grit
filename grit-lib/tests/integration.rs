@@ -1648,6 +1648,9 @@ mod sparse_checkout_checkout;
 #[path = "sparse_checkout_git_compat.rs"]
 mod sparse_checkout_git_compat;
 #[cfg(feature = "full-tests")]
+#[path = "sparse_index_collapse_git_compat.rs"]
+mod sparse_index_collapse_git_compat;
+#[cfg(feature = "full-tests")]
 #[path = "split_index_git_compat.rs"]
 mod split_index_git_compat;
 #[cfg(feature = "full-tests")]
