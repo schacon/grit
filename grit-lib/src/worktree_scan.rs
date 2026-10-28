@@ -871,6 +871,90 @@ fn open_stat_directory(path: &Path) -> io::Result<fs::File> {
         .open(path)
 }
 
+/// Confirms in one path walk that every component of a work-tree-relative directory is a
+/// real directory, using `openat2` with `RESOLVE_NO_SYMLINKS` from a handle on the work tree.
+///
+/// Probing each ancestor with its own `lstat` walks the path from the root every time, which
+/// is quadratic in depth. This answers the common case (no symlink, nothing missing) with one
+/// walk; any other outcome is left to a per-component probe.
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+pub(crate) struct RealDirChain {
+    work_tree: PathBuf,
+    /// `None` when the work tree cannot be opened or the kernel lacks `openat2`.
+    root: Option<fs::File>,
+    /// Reused NUL-terminated copy of the queried path.
+    c_path: Vec<u8>,
+}
+
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+impl RealDirChain {
+    /// Open a handle on `work_tree` (following symlinks in the work tree's own path).
+    pub(crate) fn open(work_tree: &Path) -> Self {
+        use std::os::unix::fs::OpenOptionsExt;
+        let root = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_PATH | libc::O_DIRECTORY)
+            .open(work_tree)
+            .ok();
+        Self {
+            work_tree: work_tree.to_path_buf(),
+            root,
+            c_path: Vec::new(),
+        }
+    }
+
+    /// The work tree this handle was opened on.
+    pub(crate) fn work_tree(&self) -> &Path {
+        &self.work_tree
+    }
+
+    /// Whether every component of `rel_dir` (raw index bytes) is known to be a real directory.
+    ///
+    /// `false` means "not confirmed": a component is a symlink, missing or not a directory, or
+    /// the check is unavailable. Callers then probe component by component.
+    pub(crate) fn confirms(&mut self, rel_dir: &[u8]) -> bool {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        let Some(root) = &self.root else {
+            return false;
+        };
+        if rel_dir.is_empty() || rel_dir.contains(&0) {
+            return false;
+        }
+        self.c_path.clear();
+        self.c_path.extend_from_slice(rel_dir);
+        self.c_path.push(0);
+        // SAFETY: `open_how` is plain integers, for which all-zero is valid (and means "no
+        // flags, no mode, no resolve restrictions" to the kernel).
+        let mut how: libc::open_how = unsafe { std::mem::zeroed() };
+        how.flags = (libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64;
+        how.resolve = libc::RESOLVE_NO_SYMLINKS;
+        // SAFETY: `root` is an open descriptor, `c_path` is NUL-terminated and outlives the
+        // call, and `how` is a fully initialized `open_how` whose size is passed alongside.
+        let fd = unsafe {
+            libc::syscall(
+                libc::SYS_openat2,
+                root.as_raw_fd(),
+                self.c_path.as_ptr(),
+                &how as *const libc::open_how,
+                std::mem::size_of::<libc::open_how>(),
+            )
+        };
+        if fd >= 0 {
+            let Ok(fd) = i32::try_from(fd) else {
+                return false;
+            };
+            // SAFETY: the kernel returned a new descriptor that nothing else owns.
+            drop(unsafe { OwnedFd::from_raw_fd(fd) });
+            return true;
+        }
+        let errno = io::Error::last_os_error().raw_os_error();
+        if matches!(errno, Some(libc::ENOSYS | libc::EPERM | libc::E2BIG)) {
+            self.root = None;
+        }
+        false
+    }
+}
+
 /// Resolve each file relative to an already opened parent, without following file symlinks.
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 fn for_each_blob_at_directory<F>(

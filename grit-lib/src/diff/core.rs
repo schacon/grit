@@ -5220,6 +5220,9 @@ pub(crate) struct SymlinkDirCache {
     /// First ancestor found not to be a real directory, and whether it is a symlink. Every
     /// path under it shares that answer.
     blocked: Option<(Vec<u8>, bool)>,
+    /// Single-walk check for directories several components below `real_dirs`.
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+    chain: Option<crate::worktree_scan::RealDirChain>,
 }
 
 /// Whether `path` is `dir` itself or lies under it (`dir` has no trailing `/`).
@@ -5305,6 +5308,25 @@ impl SymlinkDirCache {
         }
         let verified = common_dir_prefix_len(dir, &self.real_dirs);
         self.real_dirs.truncate(verified);
+        #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+        if !precompose_unicode
+            && !ignorecase
+            && dir[verified..]
+                .split(|&b| b == b'/')
+                .filter(|component| !component.is_empty())
+                .nth(1)
+                .is_some()
+        {
+            let chain = match &mut self.chain {
+                Some(chain) if chain.work_tree() == work_tree => chain,
+                slot => slot.insert(crate::worktree_scan::RealDirChain::open(work_tree)),
+            };
+            if chain.confirms(dir) {
+                self.real_dirs.clear();
+                self.real_dirs.extend_from_slice(dir);
+                return false;
+            }
+        }
         let mut start = verified;
         while start < dir.len() {
             if dir[start] == b'/' {
@@ -12919,6 +12941,45 @@ mod smudge_racily_clean_tests {
                 });
             }
         });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_dir_cache_accepts_a_work_tree_reached_through_a_symlink() {
+        let td = tempfile::tempdir().expect("tempdir");
+        let real = td.path().join("real");
+        fs::create_dir_all(real.join("a/b/c")).expect("mkdir");
+        fs::create_dir_all(real.join("t/b/c")).expect("mkdir");
+        std::os::unix::fs::symlink(real.join("t"), real.join("l")).expect("symlink");
+        let wt = td.path().join("alias");
+        std::os::unix::fs::symlink(&real, &wt).expect("symlink");
+        let mut cache = super::SymlinkDirCache::default();
+        assert!(!cache.has_symlink_in_path_bytes(&wt, b"a/b/c/f", false, false));
+        assert!(cache.has_symlink_in_path_bytes(&wt, b"l/b/c/f", false, false));
+        assert!(!cache.has_symlink_in_path_bytes(&real, b"a/b/c/f", false, false));
+        assert!(cache.has_symlink_in_path_bytes(&real, b"l/b/c/f", false, false));
+    }
+
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+    #[test]
+    fn real_dir_chain_confirms_only_symlink_free_directories() {
+        let td = tempfile::tempdir().expect("tempdir");
+        let wt = td.path();
+        fs::create_dir_all(wt.join("a/b/c")).expect("mkdir");
+        fs::create_dir_all(wt.join("t/c")).expect("mkdir");
+        fs::write(wt.join("a/file"), b"f").expect("write");
+        std::os::unix::fs::symlink(wt.join("t"), wt.join("a/l")).expect("symlink");
+        let mut chain = crate::worktree_scan::RealDirChain::open(wt);
+        assert_eq!(chain.work_tree(), wt);
+        assert!(chain.confirms(b"a"));
+        assert!(chain.confirms(b"a/b/c"));
+        assert!(!chain.confirms(b"a/l"));
+        assert!(!chain.confirms(b"a/l/c"));
+        assert!(!chain.confirms(b"a/file"));
+        assert!(!chain.confirms(b"a/missing/c"));
+        assert!(!chain.confirms(b""));
+        assert!(!chain.confirms(b"a/\0b"));
+        assert!(chain.confirms(b"a/b"));
     }
 
     #[test]
