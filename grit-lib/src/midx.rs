@@ -999,6 +999,8 @@ pub(crate) mod midx_cache {
         let hash_version = repo_midx_hash_version_for_objects_dir(objects_dir);
         let mut layers = Vec::with_capacity(path_count);
         for path in paths {
+            #[cfg(test)]
+            crate::hot_path_test_metrics::record_midx_stamp_stat_for_active_scope();
             let metadata = match fs::metadata(&path) {
                 Ok(meta) => meta,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -4017,6 +4019,10 @@ mod tests {
         let _scope = HotPathMetricsScope::install(Arc::clone(&metrics));
         metrics.set_stamp_counting(true);
         let _ = odb.read(&oid).expect("prime");
+        assert!(
+            metrics.midx_stamp_stat_calls() > 0,
+            "cold read must stat the MIDX layer"
+        );
         metrics.reset_midx_stamp_stats();
         for _ in 0..200 {
             let _ = odb.read(&oid).expect("repeat");

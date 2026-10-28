@@ -2090,25 +2090,6 @@ fn materialize_flat_entry_in_worktree(
     Ok(())
 }
 
-/// Paths whose worktree content the stash would change vs. its HEAD-at-stash base.
-///
-/// Paths use [`crate::repo_relpath::storage_string`] to preserve raw Git path bytes.
-pub fn stash_worktree_change_paths(
-    repo: &Repository,
-    stash_commit: &CommitData,
-) -> Result<BTreeSet<String>> {
-    let head_at_stash = stash_commit
-        .parents
-        .first()
-        .ok_or(Error::CorruptStash("expected at least 2 parents"))?;
-    let head_tree = repo.odb().commit_tree(head_at_stash)?;
-    Ok(StashTreeDelta::read(repo, &head_tree, &stash_commit.tree)?
-        .changes
-        .into_iter()
-        .map(|(path, _)| crate::repo_relpath::storage_string(&path))
-        .collect())
-}
-
 /// Whether the cached stat data of `ie` proves the worktree file still matches the index.
 ///
 /// `false` means "unknown", not "modified": callers must fall back to a content comparison.

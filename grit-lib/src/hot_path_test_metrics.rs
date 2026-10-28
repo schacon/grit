@@ -256,6 +256,14 @@ pub(crate) fn record_pack_signature_stat_for_active_scope() {
     });
 }
 
+pub(crate) fn record_midx_stamp_stat_for_active_scope() {
+    with_active(|active| {
+        if let Some(m) = active {
+            m.record_midx_stamp_stat();
+        }
+    });
+}
+
 pub(crate) fn record_loose_path_open_for_active_scope() {
     with_active(|active| {
         if let Some(m) = active {

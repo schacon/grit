@@ -2981,7 +2981,6 @@ pub fn grit_lib::config::ConfigSet::try_pack_index_parallelism(&self) -> core::r
 pub fn grit_lib::config::ConfigSet::try_pack_index_parallelism_for_git_dir(&grit_lib::config::environment::Environment, core::option::Option<&std::path::Path>) -> grit_lib::error::Result<grit_lib::parallel::Parallelism>
 impl grit_lib::config::ConfigSet
 pub fn grit_lib::config::ConfigSet::entries_with_prefix(&self, &str) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::config::ConfigEntry>>
-pub fn grit_lib::config::ConfigSet::get_typed(&self, &str, grit_lib::config::ConfigValueType, &grit_lib::config::environment::Environment) -> grit_lib::error::Result<core::option::Option<grit_lib::config::TypedConfigValue>>
 impl core::clone::Clone for grit_lib::config::ConfigSet
 pub fn grit_lib::config::ConfigSet::clone(&self) -> Self
 impl core::default::Default for grit_lib::config::ConfigSet
@@ -9185,7 +9184,6 @@ pub fn grit_lib::objects::delta_encode::encode_prefix_extension_delta(&[u8], &[u
 pub mod grit_lib::objects::delta_islands
 pub struct grit_lib::objects::delta_islands::DeltaIslands
 impl grit_lib::objects::delta_islands::DeltaIslands
-pub fn grit_lib::objects::delta_islands::DeltaIslands::delta_cmp(&self, &grit_lib::objects::ObjectId, &grit_lib::objects::ObjectId) -> i32
 pub fn grit_lib::objects::delta_islands::DeltaIslands::in_same_island(&self, &grit_lib::objects::ObjectId, &grit_lib::objects::ObjectId) -> bool
 pub fn grit_lib::objects::delta_islands::DeltaIslands::is_active(&self) -> bool
 impl core::default::Default for grit_lib::objects::delta_islands::DeltaIslands
@@ -10685,7 +10683,6 @@ pub fn grit_lib::objects::odb::Odb::freshen_object(&self, &grit_lib::objects::Ob
 pub fn grit_lib::objects::odb::Odb::hash(&self, grit_lib::objects::ObjectKind, &[u8]) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::hash_algo(&self) -> grit_lib::objects::HashAlgo
 pub fn grit_lib::objects::odb::Odb::hash_stream(&self, grit_lib::objects::ObjectKind, u64, &mut dyn alloc::io::read::Read) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
-pub fn grit_lib::objects::odb::Odb::invalidate_alternates_cache(&self)
 pub fn grit_lib::objects::odb::Odb::invalidate_packs(&self)
 pub fn grit_lib::objects::odb::Odb::is_empty_tree(&self, &grit_lib::objects::ObjectId) -> bool
 pub fn grit_lib::objects::odb::Odb::largest_pack_index_path(&self) -> grit_lib::error::Result<core::option::Option<std::path::PathBuf>>
@@ -11585,7 +11582,6 @@ pub fn grit_lib::objects::pack_write::enumerate_whole_pack_entries(&[u8], grit_l
 pub fn grit_lib::objects::pack_write::install_pack_stream(&std::path::Path, &[u8], grit_lib::objects::pack_write::InstallPackOptions) -> grit_lib::error::Result<(std::path::PathBuf, std::path::PathBuf)>
 pub fn grit_lib::objects::pack_write::pack_index_v2_offset_tables(&[grit_lib::objects::pack_write::PackIndexWriteEntry]) -> (alloc::vec::Vec<u32>, alloc::vec::Vec<u64>)
 pub fn grit_lib::objects::pack_write::whole_pack_uncompressed_size(&[u8], grit_lib::objects::HashAlgo) -> grit_lib::error::Result<u64>
-pub fn grit_lib::objects::pack_write::write_pack_index_v2(&std::path::Path, &std::path::Path, &[grit_lib::objects::pack_write::PackIndexWriteEntry], usize) -> grit_lib::error::Result<()>
 pub mod grit_lib::objects::promisor
 pub struct grit_lib::objects::promisor::DefaultPromisorFetcher
 impl grit_lib::objects::promisor::DefaultPromisorFetcher
@@ -12101,7 +12097,6 @@ pub grit_lib::objects::Object::kind: grit_lib::objects::ObjectKind
 impl grit_lib::objects::Object
 pub fn grit_lib::objects::Object::as_ref(&self) -> grit_lib::objects::ObjectRef<'_>
 pub fn grit_lib::objects::Object::new(grit_lib::objects::ObjectKind, alloc::vec::Vec<u8>) -> Self
-pub fn grit_lib::objects::Object::to_store_bytes(&self) -> alloc::vec::Vec<u8>
 impl core::clone::Clone for grit_lib::objects::Object
 pub fn grit_lib::objects::Object::clone(&self) -> Self
 impl core::fmt::Debug for grit_lib::objects::Object
@@ -12732,7 +12727,6 @@ pub fn grit_lib::pack_write::enumerate_whole_pack_entries(&[u8], grit_lib::objec
 pub fn grit_lib::pack_write::install_pack_stream(&std::path::Path, &[u8], grit_lib::objects::pack_write::InstallPackOptions) -> grit_lib::error::Result<(std::path::PathBuf, std::path::PathBuf)>
 pub fn grit_lib::pack_write::pack_index_v2_offset_tables(&[grit_lib::objects::pack_write::PackIndexWriteEntry]) -> (alloc::vec::Vec<u32>, alloc::vec::Vec<u64>)
 pub fn grit_lib::pack_write::whole_pack_uncompressed_size(&[u8], grit_lib::objects::HashAlgo) -> grit_lib::error::Result<u64>
-pub fn grit_lib::pack_write::write_pack_index_v2(&std::path::Path, &std::path::Path, &[grit_lib::objects::pack_write::PackIndexWriteEntry], usize) -> grit_lib::error::Result<()>
 pub mod grit_lib::parallel
 pub enum grit_lib::parallel::ParallelHashError<E>
 pub grit_lib::parallel::ParallelHashError::Task(E)
@@ -13312,7 +13306,6 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::add::Stage
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::add::StageOutcome
 pub fn grit_lib::porcelain::add::stage(&grit_lib::repo::Repository, &grit_lib::porcelain::add::StageOptions, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<grit_lib::porcelain::add::StageOutcome>
 pub fn grit_lib::porcelain::add::stage_for_commit(&grit_lib::repo::Repository, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<grit_lib::porcelain::add::StageOutcome>
-pub fn grit_lib::porcelain::add::stage_for_commit_in_memory(&grit_lib::repo::Repository, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel, bool) -> grit_lib::error::Result<grit_lib::porcelain::add::StageOutcome>
 pub fn grit_lib::porcelain::add::stage_on_index(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &grit_lib::porcelain::add::StageOptions, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<grit_lib::porcelain::add::StageOutcome>
 pub mod grit_lib::porcelain::branch
 #[non_exhaustive] pub enum grit_lib::porcelain::branch::BranchError
@@ -15645,7 +15638,6 @@ pub fn grit_lib::porcelain::stash::check_stash_apply_would_overwrite_local_chang
 pub fn grit_lib::porcelain::stash::flat_tree_lookup<'a>(&'a [grit_lib::stash::FlatTreeEntry], &str) -> core::option::Option<&'a grit_lib::stash::FlatTreeEntry>
 pub fn grit_lib::porcelain::stash::flatten_tree_full(&grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &str, grit_lib::path_validate::ProtectOptions) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::stash::FlatTreeEntry>>
 pub fn grit_lib::porcelain::stash::remove_empty_dirs(&std::path::Path, &std::path::Path, &grit_lib::config::environment::Environment)
-pub fn grit_lib::porcelain::stash::stash_worktree_change_paths(&grit_lib::repo::Repository, &grit_lib::objects::CommitData) -> grit_lib::error::Result<alloc::collections::btree::set::BTreeSet<alloc::string::String>>
 pub fn grit_lib::porcelain::stash::worktree_bytes_for_index_mode(&std::path::Path, u32) -> core::io::error::Result<alloc::vec::Vec<u8>>
 pub fn grit_lib::porcelain::stash::write_regular_file_replacing_symlink(&std::path::Path, &[u8]) -> core::io::error::Result<()>
 pub mod grit_lib::porcelain::status
@@ -16940,7 +16932,6 @@ pub fn grit_lib::config::ConfigSet::try_pack_index_parallelism(&self) -> core::r
 pub fn grit_lib::config::ConfigSet::try_pack_index_parallelism_for_git_dir(&grit_lib::config::environment::Environment, core::option::Option<&std::path::Path>) -> grit_lib::error::Result<grit_lib::parallel::Parallelism>
 impl grit_lib::config::ConfigSet
 pub fn grit_lib::config::ConfigSet::entries_with_prefix(&self, &str) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::config::ConfigEntry>>
-pub fn grit_lib::config::ConfigSet::get_typed(&self, &str, grit_lib::config::ConfigValueType, &grit_lib::config::environment::Environment) -> grit_lib::error::Result<core::option::Option<grit_lib::config::TypedConfigValue>>
 impl core::clone::Clone for grit_lib::config::ConfigSet
 pub fn grit_lib::config::ConfigSet::clone(&self) -> Self
 impl core::default::Default for grit_lib::config::ConfigSet
@@ -17205,7 +17196,6 @@ pub grit_lib::prelude::Object::kind: grit_lib::objects::ObjectKind
 impl grit_lib::objects::Object
 pub fn grit_lib::objects::Object::as_ref(&self) -> grit_lib::objects::ObjectRef<'_>
 pub fn grit_lib::objects::Object::new(grit_lib::objects::ObjectKind, alloc::vec::Vec<u8>) -> Self
-pub fn grit_lib::objects::Object::to_store_bytes(&self) -> alloc::vec::Vec<u8>
 impl core::clone::Clone for grit_lib::objects::Object
 pub fn grit_lib::objects::Object::clone(&self) -> Self
 impl core::fmt::Debug for grit_lib::objects::Object
@@ -17305,7 +17295,6 @@ pub fn grit_lib::objects::odb::Odb::freshen_object(&self, &grit_lib::objects::Ob
 pub fn grit_lib::objects::odb::Odb::hash(&self, grit_lib::objects::ObjectKind, &[u8]) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::odb::Odb::hash_algo(&self) -> grit_lib::objects::HashAlgo
 pub fn grit_lib::objects::odb::Odb::hash_stream(&self, grit_lib::objects::ObjectKind, u64, &mut dyn alloc::io::read::Read) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
-pub fn grit_lib::objects::odb::Odb::invalidate_alternates_cache(&self)
 pub fn grit_lib::objects::odb::Odb::invalidate_packs(&self)
 pub fn grit_lib::objects::odb::Odb::is_empty_tree(&self, &grit_lib::objects::ObjectId) -> bool
 pub fn grit_lib::objects::odb::Odb::largest_pack_index_path(&self) -> grit_lib::error::Result<core::option::Option<std::path::PathBuf>>
@@ -28678,7 +28667,6 @@ pub fn grit_lib::stash::check_stash_apply_would_overwrite_local_changes(&grit_li
 pub fn grit_lib::stash::flat_tree_lookup<'a>(&'a [grit_lib::stash::FlatTreeEntry], &str) -> core::option::Option<&'a grit_lib::stash::FlatTreeEntry>
 pub fn grit_lib::stash::flatten_tree_full(&grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &str, grit_lib::path_validate::ProtectOptions) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::stash::FlatTreeEntry>>
 pub fn grit_lib::stash::remove_empty_dirs(&std::path::Path, &std::path::Path, &grit_lib::config::environment::Environment)
-pub fn grit_lib::stash::stash_worktree_change_paths(&grit_lib::repo::Repository, &grit_lib::objects::CommitData) -> grit_lib::error::Result<alloc::collections::btree::set::BTreeSet<alloc::string::String>>
 pub fn grit_lib::stash::worktree_bytes_for_index_mode(&std::path::Path, u32) -> core::io::error::Result<alloc::vec::Vec<u8>>
 pub fn grit_lib::stash::write_regular_file_replacing_symlink(&std::path::Path, &[u8]) -> core::io::error::Result<()>
 pub mod grit_lib::state
@@ -29557,7 +29545,6 @@ pub fn grit_lib::worktree::crlf::load_gitattributes_for_checkout_parsed(&std::pa
 pub fn grit_lib::worktree::crlf::load_gitattributes_from_index(&grit_lib::index::Index, &grit_lib::objects::odb::Odb) -> alloc::vec::Vec<grit_lib::worktree::attributes::AttrRule>
 pub fn grit_lib::worktree::crlf::load_gitattributes_parsed(&std::path::Path) -> grit_lib::worktree::attributes::ParsedGitAttributes
 pub fn grit_lib::worktree::crlf::parse_gitattributes_content(&str) -> alloc::vec::Vec<grit_lib::worktree::attributes::AttrRule>
-pub fn grit_lib::worktree::crlf::path_gitattribute_value(&[grit_lib::worktree::attributes::AttrRule], &str, bool, &str) -> core::option::Option<alloc::string::String>
 pub fn grit_lib::worktree::crlf::run_filter(&dyn grit_lib::command_runner::CommandRunner, &str, &[u8], &str) -> core::result::Result<alloc::vec::Vec<u8>, grit_lib::error::FilterError>
 pub fn grit_lib::worktree::crlf::should_convert_to_crlf(&grit_lib::worktree::crlf::ConversionConfig, &grit_lib::worktree::crlf::FileAttrs, &[u8]) -> bool
 pub fn grit_lib::worktree::crlf::worktree_conversion_is_identity(&grit_lib::worktree::crlf::ConversionConfig, &grit_lib::worktree::crlf::FileAttrs) -> bool

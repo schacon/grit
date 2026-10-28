@@ -507,16 +507,10 @@ pub(crate) fn http_content_type_media_type(raw: &str) -> String {
 /// True when the response body or `Content-Type` is obviously not a Git advertisement.
 #[must_use]
 pub(crate) fn body_looks_like_non_git_server(body: &[u8], content_type: Option<&str>) -> bool {
-    if let Some(ct) = content_type {
-        let mime = ct
-            .split(';')
-            .next()
-            .unwrap_or(ct)
-            .trim()
-            .to_ascii_lowercase();
-        if mime == "text/html" {
-            return true;
-        }
+    if content_type
+        .is_some_and(|ct| http_content_type_media_type(ct).eq_ignore_ascii_case("text/html"))
+    {
+        return true;
     }
     let body = body.strip_prefix(b"\xef\xbb\xbf").unwrap_or(body);
     body.starts_with(b"<!")

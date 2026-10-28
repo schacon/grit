@@ -99,31 +99,6 @@ impl DeltaIslands {
         };
         trg_marks.is_subset(src_marks)
     }
-
-    /// Ordering bias for choosing a delta base (`island_delta_cmp`).
-    ///
-    /// Returns `-1` when `a` should sort before `b` (preferred as a base because its island
-    /// set is a superset), `1` when `b` should, `0` when neither dominates.
-    #[must_use]
-    pub fn delta_cmp(&self, a: &ObjectId, b: &ObjectId) -> i32 {
-        if !self.active {
-            return 0;
-        }
-        let a_marks = self.marks.get(a);
-        let b_marks = self.marks.get(b);
-
-        if let Some(am) = a_marks {
-            if b_marks.is_none_or(|bm| !am.is_subset(bm)) {
-                return -1;
-            }
-        }
-        if let Some(bm) = b_marks {
-            if a_marks.is_none_or(|am| !bm.is_subset(am)) {
-                return 1;
-            }
-        }
-        0
-    }
 }
 
 /// Compile the left-anchored island regexes from `pack.island` config (in load order).

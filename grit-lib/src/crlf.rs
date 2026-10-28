@@ -627,26 +627,6 @@ pub fn get_file_attrs(
     file_attrs_from_gitattributes(rules, &MacroTable::default(), rel_path, is_dir, config)
 }
 
-/// Return the final value assigned to `attr_name` for `path`.
-///
-/// `rules` is the ordered set of parsed attribute rules, `path` is repository-relative, `is_dir`
-/// selects directory-only pattern handling, and `attr_name` is the attribute to query.
-///
-/// Returns `"set"`, `"unset"`, or an explicit string value. `None` means the attribute is
-/// unspecified after all matching rules are applied.
-#[must_use]
-pub fn path_gitattribute_value(
-    rules: &[AttrRule],
-    path: &str,
-    is_dir: bool,
-    attr_name: &str,
-) -> Option<String> {
-    path_gitattribute_values(rules, &MacroTable::default(), false, path, is_dir)
-        .get(attr_name)
-        .map(|v| v.display().to_string())
-        .filter(|s| s != "unspecified")
-}
-
 /// Every attribute assigned to `path` after macro expansion, with `icase` selecting
 /// case-insensitive pattern matching (`core.ignorecase`).
 pub(crate) fn path_gitattribute_values(
