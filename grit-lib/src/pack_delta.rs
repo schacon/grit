@@ -21,6 +21,7 @@ use crate::pack_objects::{
     PackStats, PlannedEntry,
 };
 use crate::parallel::{ParallelOp, ParallelOptions, ThreadPolicy};
+use crate::progress::CancelSignal;
 
 /// Resolve [`ParallelOptions`] for windowed delta search from repo config.
 pub(crate) fn pack_delta_search_parallel_options(
@@ -112,6 +113,7 @@ pub(crate) fn serialize_pack_with_deltas(
         write_threads,
         &mut bytes,
         Some(&mut index_rows),
+        &CancelSignal::never(),
     )?;
     Ok(crate::pack_objects::SerializedDeltaPack {
         bytes,
@@ -131,14 +133,15 @@ const WRITE_BATCH_ENTRIES: usize = 256;
 /// `opts.use_ofs_delta` is set, `REF_DELTA` otherwise). Payloads are read from `odb`
 /// as each batch is prepared; deltas the search already compressed are copied, and
 /// the others (thin-pack deltas) are computed here. When `index_rows` is set it
-/// receives `(oid, pack offset, crc32)` for each entry in pack order.
+/// receives `(oid, pack offset, crc32)` for each entry in pack order. `stop` is
+/// polled before each entry is written.
 ///
 /// # Errors
 ///
 /// Returns object read or encoding errors, [`Error::PackDeltaBaseNotWritten`] when the
 /// pack is not thin (`opts.thin` unset) and a delta comes before its base (a base
-/// missing from `entries`, or a delta cycle), and [`Error::Io`] when writing to `w`
-/// fails.
+/// missing from `entries`, or a delta cycle), [`Error::Io`] when writing to `w`
+/// fails, and [`Error::Cancelled`] once `stop` fires.
 pub(crate) fn write_pack_with_deltas(
     odb: &Odb,
     entries: &[PlannedEntry],
@@ -146,6 +149,7 @@ pub(crate) fn write_pack_with_deltas(
     write_threads: Option<usize>,
     w: &mut dyn Write,
     index_rows: Option<&mut Vec<(ObjectId, u64, u32)>>,
+    stop: &CancelSignal<'_>,
 ) -> Result<PackStats> {
     write_pack_in_batches(
         odb,
@@ -155,9 +159,11 @@ pub(crate) fn write_pack_with_deltas(
         w,
         index_rows,
         WRITE_BATCH_ENTRIES,
+        stop,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_pack_in_batches(
     odb: &Odb,
     entries: &[PlannedEntry],
@@ -166,6 +172,7 @@ fn write_pack_in_batches(
     w: &mut dyn Write,
     mut index_rows: Option<&mut Vec<(ObjectId, u64, u32)>>,
     batch_entries: usize,
+    stop: &CancelSignal<'_>,
 ) -> Result<PackStats> {
     let par_opts = pack_write_parallel_options(odb, write_threads)?;
     let compression = pack_zlib_compression(odb)?;
@@ -186,6 +193,7 @@ fn write_pack_in_batches(
 
     let mut oid_to_offset: OidHashMap<u64> = oid_hash_map();
     let mut emit = |entry: &PlannedEntry, prep: &PreparedEntry| -> Result<()> {
+        stop.poll()?;
         header.clear();
         match (entry.base, &prep.body) {
             (None, PreparedBody::Raw(_)) => {}
@@ -468,7 +476,15 @@ mod tests {
             thin,
             ..PackBuildOptions::default()
         };
-        write_pack_with_deltas(odb, entries, &opts, Some(1), &mut Vec::new(), None)
+        write_pack_with_deltas(
+            odb,
+            entries,
+            &opts,
+            Some(1),
+            &mut Vec::new(),
+            None,
+            &CancelSignal::never(),
+        )
     }
 
     /// Two blobs that differ in one byte.
@@ -513,6 +529,31 @@ mod tests {
     }
 
     #[test]
+    fn a_fired_cancel_stops_the_writer_before_any_entry() {
+        let (_dir, odb) = scratch_odb();
+        let entries: Vec<PlannedEntry> = (0..3000u32)
+            .map(|i| whole_entry(&odb, format!("blob number {i}\n").as_bytes()))
+            .collect();
+        let cancel = crate::progress::FlagCancel::new();
+        cancel.cancel();
+        for threads in [1, 4] {
+            let mut out = Vec::new();
+            let err = write_pack_with_deltas(
+                &odb,
+                &entries,
+                &PackBuildOptions::default(),
+                Some(threads),
+                &mut out,
+                None,
+                &CancelSignal::new(&cancel),
+            )
+            .unwrap_err();
+            assert!(matches!(err, Error::Cancelled), "{err:?}");
+            assert_eq!(out.len(), 12, "only the pack header was written");
+        }
+    }
+
+    #[test]
     fn full_pack_writes_a_delta_after_its_base() {
         let (_dir, odb) = scratch_odb();
         let (base, mut target) = similar_pair(&odb, b't');
@@ -538,6 +579,7 @@ mod tests {
                 Some(threads),
                 &mut out,
                 Some(&mut rows),
+                &CancelSignal::never(),
             )
             .unwrap();
             (out, stats, rows)
@@ -576,6 +618,7 @@ mod tests {
             &opts,
             &selection.name_hashes,
             None,
+            &CancelSignal::never(),
         )
         .unwrap();
         assert!(plan.entries.iter().any(|e| e.base.is_some()));
@@ -591,6 +634,7 @@ mod tests {
                 &mut bytes,
                 Some(&mut rows),
                 batch,
+                &CancelSignal::never(),
             )
             .unwrap();
             (bytes, rows, stats)

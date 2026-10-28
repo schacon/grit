@@ -15,6 +15,7 @@ use crate::objects::{
 use crate::odb::Odb;
 use crate::pack_bitmap::BitmapIndex;
 use crate::pack_name_hash::pack_name_hash;
+use crate::progress::CancelSignal;
 use crate::repo::Repository;
 use crate::rev_list::{MissingAction, ObjectFilter};
 
@@ -100,7 +101,14 @@ pub fn enumerate_pack_objects(
     haves: &[ObjectId],
     opts: &PackEnumerateOptions<'_>,
 ) -> Result<PackObjectSelection> {
-    enumerate_pack_objects_naming(odb, wants, haves, opts, NameTrees::No)
+    enumerate_pack_objects_naming(
+        odb,
+        wants,
+        haves,
+        opts,
+        NameTrees::No,
+        &CancelSignal::never(),
+    )
 }
 
 /// Whether the object walk records name hashes for trees as well as blobs.
@@ -124,20 +132,25 @@ impl NameTrees {
     }
 }
 
-/// Like [`enumerate_pack_objects`], choosing whether the walk names trees.
+/// Like [`enumerate_pack_objects`], choosing whether the walk names trees and
+/// stopping with [`crate::error::Error::Cancelled`] once `stop` fires (polled for
+/// every commit and object the walk reads).
 pub(crate) fn enumerate_pack_objects_naming(
     odb: &Odb,
     wants: &[ObjectId],
     haves: &[ObjectId],
     opts: &PackEnumerateOptions<'_>,
     name_trees: NameTrees,
+    stop: &CancelSignal<'_>,
 ) -> Result<PackObjectSelection> {
+    stop.poll()?;
     if opts.use_bitmaps {
         if let Some(sel) = try_bitmap_enumeration(odb, wants, haves, opts)? {
+            stop.poll()?;
             return Ok(sel);
         }
     }
-    walk_enumeration(odb, wants, haves, opts, name_trees)
+    walk_enumeration(odb, wants, haves, opts, name_trees, stop)
 }
 
 /// Bitmap reachability for upload-pack when shallow grafts and filters allow it.
@@ -245,19 +258,23 @@ fn walk_enumeration(
     haves: &[ObjectId],
     opts: &PackEnumerateOptions<'_>,
     name_trees: NameTrees,
+    stop: &CancelSignal<'_>,
 ) -> Result<PackObjectSelection> {
     let have_shallow = opts.have_shallow_grafts.unwrap_or(opts.shallow_grafts);
     let have_commits = match opts.have_boundary {
         HaveBoundary::CommitClosure => {
-            commits_reachable_from_haves(odb, haves, have_shallow, true)?
+            commits_reachable_from_haves(odb, haves, have_shallow, true, stop)?
         }
-        HaveBoundary::TipsOnly => send_pack_uninteresting_commits(odb, wants, haves, have_shallow)?,
+        HaveBoundary::TipsOnly => {
+            send_pack_uninteresting_commits(odb, wants, haves, have_shallow, stop)?
+        }
     };
     let mut boundary: HashSet<ObjectId> = HashSet::new();
     if let Some(extra) = opts.exclude_objects {
         boundary.extend(extra.iter().copied());
     }
     let peer_held = try_peer_held_bitmap(odb, haves, opts)?;
+    stop.poll()?;
     let (send, name_hashes, edges) = match opts.filter {
         Some(filter) if filter.uses_paths() => {
             let (send, name_hashes) =
@@ -276,6 +293,7 @@ fn walk_enumeration(
                 opts.shallow_grafts,
                 filter,
                 name_trees,
+                stop,
             )?;
             (send, name_hashes, Some(edges))
         }
@@ -336,6 +354,7 @@ fn send_pack_uninteresting_commits(
     wants: &[ObjectId],
     haves: &[ObjectId],
     shallow_grafts: &HashSet<ObjectId>,
+    stop: &CancelSignal<'_>,
 ) -> Result<HashSet<ObjectId>> {
     struct SendPackRevWalk<'a> {
         odb: &'a Odb,
@@ -518,6 +537,7 @@ fn send_pack_uninteresting_commits(
     }
 
     while let Some(commit) = walk.heap.pop() {
+        stop.poll()?;
         walk.on_heap.remove(&commit.oid);
         if send_pack_reach_interesting(*walk.reach.get(&commit.oid).unwrap_or(&0)) {
             walk.interesting_on_heap -= 1;
@@ -552,10 +572,12 @@ fn commits_reachable_from_haves(
     haves: &[ObjectId],
     shallow_grafts: &HashSet<ObjectId>,
     skip_missing: bool,
+    stop: &CancelSignal<'_>,
 ) -> Result<HashSet<ObjectId>> {
     let mut seen = HashSet::new();
     let mut queue: VecDeque<ObjectId> = haves.iter().copied().collect();
     while let Some(oid) = queue.pop_front() {
+        stop.poll()?;
         if !seen.insert(oid) {
             continue;
         }
@@ -733,6 +755,7 @@ fn collect_reachable_excluding_with_name_hashes(
     shallow_grafts: &HashSet<ObjectId>,
     filter: Option<&ObjectFilter>,
     name_trees: NameTrees,
+    stop: &CancelSignal<'_>,
 ) -> Result<(Vec<ObjectId>, HashMap<ObjectId, u32>, HashSet<ObjectId>)> {
     let oid_len = odb.hash_algo().len();
     let mut walk = EnumerationWalk {
@@ -772,6 +795,7 @@ fn collect_reachable_excluding_with_name_hashes(
     let mut path_less_roots = path_less_roots.into_iter();
 
     loop {
+        stop.poll()?;
         if let Some(commit) = walk.commits.pop() {
             if !shallow_grafts.contains(&commit.oid) {
                 for parent in commit.parents {
@@ -1179,6 +1203,7 @@ mod tests {
                 have_boundary: HaveBoundary::CommitClosure,
             },
             name_trees,
+            &CancelSignal::never(),
         )
         .expect("walk")
     }
@@ -1338,6 +1363,7 @@ mod tests {
             &[new_tip],
             &[tip, tagged],
             &HashSet::new(),
+            &CancelSignal::never(),
         )
         .unwrap();
         assert!(hidden.contains(&tip));
@@ -1366,9 +1392,14 @@ mod tests {
             tip = write_commit(&repo, tree, &[tip], time);
         }
         reset_commit_reads();
-        let hidden =
-            send_pack_uninteresting_commits(repo.odb(), &[tip, tip], &[tip, tip], &HashSet::new())
-                .unwrap();
+        let hidden = send_pack_uninteresting_commits(
+            repo.odb(),
+            &[tip, tip],
+            &[tip, tip],
+            &HashSet::new(),
+            &CancelSignal::never(),
+        )
+        .unwrap();
         assert!(hidden.contains(&tip));
         assert!(
             commit_reads() <= 2,
@@ -1482,6 +1513,7 @@ mod tests {
             &[new_tip],
             &[direct_parent, near_root],
             &empty,
+            &CancelSignal::never(),
         )
         .expect("send-pack have walk");
         assert!(have_commits.contains(&direct_parent));
@@ -1714,6 +1746,7 @@ mod tests {
             &[new_tip],
             &[nested, tag, tree_tag, blob_tag, missing],
             &HashSet::new(),
+            &CancelSignal::never(),
         )
         .unwrap();
         assert!(hidden.contains(&tip), "tags peel to the commit they name");

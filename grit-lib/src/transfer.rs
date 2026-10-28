@@ -20,6 +20,7 @@ use crate::partial_clone::ObjectFilterSpec;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, RemoteUnreadableReason, Result};
@@ -914,7 +915,7 @@ pub use crate::pack_objects::{
     PackObjectsOptions, PackStats,
 };
 
-pub(crate) use crate::pack_objects::build_pack_for_local_fetch;
+pub(crate) use crate::pack_objects::write_pack_for_local_fetch;
 
 fn pack_build_options_for_send(
     source_odb: &Odb,
@@ -1045,6 +1046,7 @@ fn copy_objects_for_local_fetch(
         progress.finish();
     }
 
+    let stop = crate::progress::CancelSignal::new(cancel);
     let have_tips: HashSet<ObjectId> = haves.iter().copied().collect();
     let send_set = collect_reachable_excluding_peer(
         remote_odb,
@@ -1053,6 +1055,7 @@ fn copy_objects_for_local_fetch(
         &have_tips,
         false,
         source_shallow,
+        &stop,
     )?;
     let send = &send_set.objects;
 
@@ -1104,7 +1107,8 @@ fn copy_objects_for_local_fetch(
         Some(still_missing.len() as u64),
     );
     crate::progress::poll_cancel(progress, cancel)?;
-    let pack = build_pack_for_local_transfer(
+    let mut pack = Vec::new();
+    write_pack_for_local_transfer(
         remote_odb,
         &send_set,
         &still_missing,
@@ -1113,6 +1117,8 @@ fn copy_objects_for_local_fetch(
         source_shallow,
         have_shallow,
         &pack_opts,
+        &stop,
+        &mut pack,
     )?;
     crate::progress::poll_cancel(progress, cancel)?;
     let ingest_opts = ingest_pack_options_for_fetch(local_git_dir, fetch_opts)?;
@@ -1138,6 +1144,11 @@ fn copy_objects_for_local_fetch(
 /// `peer_odb` is the remote's own object store: the walk stops at objects it already
 /// has, and it answers for `haves`. `dest_odb` receives the copied objects (the
 /// remote's receive quarantine) and must read `peer_odb` as an alternate.
+///
+/// The remainder is streamed into a `tmp_pack_*` spool in `dest_odb`'s `pack/`
+/// directory and indexed from there, so the pack is never held in memory. `cancel`
+/// is polled throughout the walk, the linking, the pack build and the indexing; a
+/// cancelled copy removes its spool and staging files and publishes no pack.
 #[allow(clippy::too_many_arguments)]
 fn copy_objects_for_local_push(
     local_odb: &Odb,
@@ -1148,6 +1159,7 @@ fn copy_objects_for_local_push(
     source_shallow: &HashSet<ObjectId>,
     have_shallow: &HashSet<ObjectId>,
     opts: &PackBuildOptions,
+    cancel: &dyn crate::progress::Cancel,
 ) -> Result<()> {
     use crate::local_object_copy::{
         link_loose_objects_for_oids, link_packs_within, refresh_local_odb_after_link,
@@ -1155,6 +1167,7 @@ fn copy_objects_for_local_push(
 
     let local_objects = local_odb.objects_dir();
     let dest_objects = dest_odb.objects_dir();
+    let stop = crate::progress::CancelSignal::new(cancel);
 
     let have_tips: HashSet<ObjectId> = haves.iter().copied().collect();
     let send_set = collect_reachable_excluding_peer(
@@ -1164,13 +1177,13 @@ fn copy_objects_for_local_push(
         &have_tips,
         false,
         source_shallow,
+        &stop,
     )?;
     let send = &send_set.objects;
 
     let mut progress = crate::progress::NullProgress;
-    let cancel = crate::progress::NeverCancel;
     if !opts.thin
-        && link_packs_within(local_objects, dest_objects, send, &mut progress, &cancel)? > 0
+        && link_packs_within(local_objects, dest_objects, send, &mut progress, cancel)? > 0
     {
         refresh_local_odb_after_link(dest_odb);
     }
@@ -1186,7 +1199,7 @@ fn copy_objects_for_local_push(
             dest_objects,
             &still_missing,
             &mut progress,
-            &cancel,
+            cancel,
         )?;
         if linked_loose > 0 {
             refresh_local_odb_after_link(dest_odb);
@@ -1198,7 +1211,8 @@ fn copy_objects_for_local_push(
     }
 
     let pack_opts = pack_build_options_for_send(local_odb, &still_missing, opts);
-    let pack = build_pack_for_local_transfer(
+    let mut spool = crate::pack_receive::TempPackReceive::create_in_pack_dir(dest_objects)?;
+    write_pack_for_local_transfer(
         local_odb,
         &send_set,
         &still_missing,
@@ -1207,14 +1221,24 @@ fn copy_objects_for_local_push(
         source_shallow,
         have_shallow,
         &pack_opts,
+        &stop,
+        &mut spool,
     )?;
-    crate::index_pack::ingest_received_pack(
-        pack,
+    let Some(pack_path) = spool.finish()? else {
+        return Ok(());
+    };
+    // Indexing hashes every object and checks the trailer, as receive-pack does, so
+    // the second whole-pack verification pass is skipped.
+    crate::index_pack::ingest_received_pack_path_with_progress(
+        pack_path,
         dest_odb,
         &crate::index_pack::IngestPackOptions {
             fix_thin: pack_opts.thin,
+            skip_post_index_verify: true,
             ..Default::default()
         },
+        None,
+        Some(cancel),
     )?;
     refresh_local_odb_after_link(dest_odb);
     Ok(())
@@ -1233,16 +1257,17 @@ fn objects_missing_from_peer(peer_odb: &Odb, send: &[ObjectId]) -> Vec<ObjectId>
         .collect()
 }
 
-/// Build the pack that copies `missing` (a subset of `send_set`) into the peer.
+/// Stream the pack that copies `missing` (a subset of `send_set`) into the peer to `w`.
 ///
 /// With no `haves` and a non-thin pack, `missing` is already the exact set the
 /// peer lacks (the walk stopped at every object the peer stores), so it is
 /// packed as-is. Re-enumerating from `missing` instead would walk its whole
 /// closure and re-send objects just linked into the peer, such as every packed
 /// object reachable from a loose annotated tag. Otherwise defer to
-/// [`build_pack_for_local_fetch`], which negotiates against the peer's `haves`.
+/// [`write_pack_for_local_fetch`], which negotiates against the peer's `haves`.
+/// Stops with [`Error::Cancelled`] once `stop` fires.
 #[allow(clippy::too_many_arguments)]
-fn build_pack_for_local_transfer(
+fn write_pack_for_local_transfer(
     source_odb: &Odb,
     send_set: &PeerSendSet,
     missing: &[ObjectId],
@@ -1251,25 +1276,32 @@ fn build_pack_for_local_transfer(
     source_shallow: &HashSet<ObjectId>,
     have_shallow: &HashSet<ObjectId>,
     opts: &PackBuildOptions,
-) -> Result<Vec<u8>> {
+    stop: &crate::progress::CancelSignal<'_>,
+    w: &mut dyn Write,
+) -> Result<()> {
     if haves.is_empty() && !opts.thin {
-        return crate::pack_objects::build_pack_from_send_list(
+        crate::pack_objects::write_pack_from_send_list(
             source_odb,
             missing,
-            &HashSet::new(),
             opts,
             &send_set.name_hashes,
-        );
+            stop,
+            w,
+        )?;
+    } else {
+        write_pack_for_local_fetch(
+            source_odb,
+            missing,
+            peer_odb,
+            haves,
+            source_shallow,
+            have_shallow,
+            opts,
+            stop,
+            w,
+        )?;
     }
-    build_pack_for_local_fetch(
-        source_odb,
-        missing,
-        peer_odb,
-        haves,
-        source_shallow,
-        have_shallow,
-        opts,
-    )
+    Ok(())
 }
 
 /// Objects a local transfer must send, from [`collect_reachable_excluding_peer`].
@@ -1283,6 +1315,7 @@ struct PeerSendSet {
 /// Like [`collect_reachable_excluding`], but treats every object already stored in
 /// `peer_odb` as a boundary (plus explicit `peer_boundary` tips). Used for local
 /// file fetch/push so incremental transfers do not walk full history from `haves`.
+/// `stop` is polled for every object read.
 fn collect_reachable_excluding_peer(
     source_odb: &Odb,
     roots: &[ObjectId],
@@ -1290,11 +1323,14 @@ fn collect_reachable_excluding_peer(
     peer_boundary: &HashSet<ObjectId>,
     skip_missing: bool,
     shallow_grafts: &HashSet<ObjectId>,
+    stop: &crate::progress::CancelSignal<'_>,
 ) -> Result<PeerSendSet> {
     use crate::pack_name_hash::pack_name_hash_extend;
 
+    stop.poll()?;
     if peer_boundary.is_empty() && shallow_grafts.is_empty() {
         if let Some(send_set) = bitmap_send_set(source_odb, roots, peer_odb)? {
+            stop.poll()?;
             return Ok(send_set);
         }
     }
@@ -1336,6 +1372,7 @@ fn collect_reachable_excluding_peer(
     }
 
     while let Some((oid, prefix_hash)) = queue.pop_front() {
+        stop.poll()?;
         let obj = match source_odb.read(&oid) {
             Ok(o) => o,
             Err(_) if skip_missing => continue,
@@ -2179,6 +2216,7 @@ pub(crate) fn push_local_from(
             &empty_shallow,
             &remote_shallow,
             &pack_opts,
+            cancel,
         )?;
         quarantine = Some((q, q_odb));
     }

@@ -22,6 +22,7 @@ use crate::objects::{
 use crate::odb::Odb;
 use crate::pack_object_select::{HaveBoundary, NameTrees};
 use crate::parallel::{try_par_map_force, ParallelHashError};
+use crate::progress::CancelSignal;
 use crate::repo::Repository;
 use crate::rev_list::ObjectFilter;
 
@@ -306,7 +307,16 @@ impl<'a> PackObjects<'a> {
     /// # Errors
     ///
     /// Missing wants, corrupt objects, or I/O failures while writing.
-    pub fn write_to(mut self, w: &mut dyn Write) -> Result<PackStats> {
+    pub fn write_to(self, w: &mut dyn Write) -> Result<PackStats> {
+        self.write_to_with_cancel(w, &CancelSignal::never())
+    }
+
+    /// [`Self::write_to`], stopping with [`Error::Cancelled`] once `stop` fires.
+    pub(crate) fn write_to_with_cancel(
+        mut self,
+        w: &mut dyn Write,
+        stop: &CancelSignal<'_>,
+    ) -> Result<PackStats> {
         let opts = self.opts.build;
         let have_shallow: HashSet<ObjectId> = self.have_shallow.iter().copied().collect();
         let source_shallow: HashSet<ObjectId> = self.source_shallow.iter().copied().collect();
@@ -325,11 +335,13 @@ impl<'a> PackObjects<'a> {
                 have_boundary: HaveBoundary::CommitClosure,
             },
             NameTrees::for_delta_search(&opts),
+            stop,
         )?;
         let send = selection.send;
         self.fire(PackProgress::Enumerated { total: send.len() });
         if !opts.delta {
             let bytes = serialize_pack(self.source_odb, &send, &opts)?;
+            stop.poll()?;
             w.write_all(&bytes).map_err(Error::Io)?;
             let count = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
             return Ok(PackStats {
@@ -346,6 +358,7 @@ impl<'a> PackObjects<'a> {
             &opts,
             &selection.name_hashes,
             self.opts.search_threads,
+            stop,
         )?;
         self.fire(PackProgress::PlannedDeltas);
         crate::pack_delta::write_pack_with_deltas(
@@ -355,6 +368,7 @@ impl<'a> PackObjects<'a> {
             self.opts.write_threads,
             w,
             None,
+            stop,
         )
     }
 }
@@ -447,6 +461,18 @@ pub fn write_pack_for_push(
     opts: &PackBuildOptions,
     w: &mut dyn Write,
 ) -> Result<PackStats> {
+    write_pack_for_push_with_cancel(odb, wants, haves, opts, w, &CancelSignal::never())
+}
+
+/// [`write_pack_for_push`], stopping with [`Error::Cancelled`] once `stop` fires.
+pub(crate) fn write_pack_for_push_with_cancel(
+    odb: &Odb,
+    wants: &[ObjectId],
+    haves: &[ObjectId],
+    opts: &PackBuildOptions,
+    w: &mut dyn Write,
+    stop: &CancelSignal<'_>,
+) -> Result<PackStats> {
     // One pack read context for the walk, the reuse scan and the write, so the
     // source packs are mapped and indexed once rather than once per phase.
     odb.with_pack_read_context(|| {
@@ -460,6 +486,7 @@ pub fn write_pack_for_push(
             opts,
             HaveBoundary::TipsOnly,
             w,
+            stop,
         )
     })
 }
@@ -511,6 +538,7 @@ fn build_pack_with_shallow_filter_and_boundary(
         opts,
         have_boundary,
         &mut pack,
+        &CancelSignal::never(),
     )?;
     Ok(pack)
 }
@@ -527,6 +555,7 @@ fn write_pack_with_shallow_and_filter(
     opts: &PackBuildOptions,
     have_boundary: HaveBoundary,
     w: &mut dyn Write,
+    stop: &CancelSignal<'_>,
 ) -> Result<PackStats> {
     let selection = crate::pack_object_select::enumerate_pack_objects_naming(
         odb,
@@ -542,9 +571,11 @@ fn write_pack_with_shallow_and_filter(
             have_boundary,
         },
         NameTrees::for_delta_search(opts),
+        stop,
     )?;
     if !opts.delta {
         let bytes = serialize_pack(odb, &selection.send, opts)?;
+        stop.poll()?;
         w.write_all(&bytes).map_err(Error::Io)?;
         return Ok(PackStats {
             object_count: u32::try_from(selection.send.len()).unwrap_or(u32::MAX),
@@ -560,8 +591,9 @@ fn write_pack_with_shallow_and_filter(
         opts,
         &selection.name_hashes,
         None,
+        stop,
     )?;
-    crate::pack_delta::write_pack_with_deltas(odb, &plan.entries, opts, None, w, None)
+    crate::pack_delta::write_pack_with_deltas(odb, &plan.entries, opts, None, w, None, stop)
 }
 
 /// Stream a pack for upload-pack: pack reuse when bitmaps allow, otherwise pack-objects.
@@ -638,6 +670,7 @@ fn write_upload_pack_stream_in_context(
         opts,
         HaveBoundary::TipsOnly,
         w,
+        &CancelSignal::never(),
     )
 }
 
@@ -880,6 +913,7 @@ pub(crate) fn build_pack_with_write_threads_full(
             have_boundary: HaveBoundary::CommitClosure,
         },
         NameTrees::for_delta_search(opts),
+        &CancelSignal::never(),
     )?;
     build_pack_from_send_list_full(
         odb,
@@ -917,6 +951,7 @@ pub fn build_pack_with_parallel_threads(
             have_boundary: HaveBoundary::CommitClosure,
         },
         NameTrees::for_delta_search(opts),
+        &CancelSignal::never(),
     )?;
     build_pack_from_send_list_with_parallel_threads(
         odb,
@@ -996,12 +1031,53 @@ pub(crate) fn build_pack_from_send_list_full(
         opts,
         blob_name_hashes,
         search_threads,
+        &CancelSignal::never(),
     )?;
     crate::pack_delta::serialize_pack_with_deltas(odb, &plan.entries, opts, write_threads)
 }
 
-/// Build a pack for local fetch: enumerate haves on `have_odb`, read payloads from `source_odb`.
-pub(crate) fn build_pack_for_local_fetch(
+/// Stream a pack of exactly `send` (objects the receiver lacks, none of which it
+/// needs as a delta base) to `w`, stopping with [`Error::Cancelled`] once `stop` fires.
+///
+/// Reuses on-disk whole objects and deltas as `opts` allows, like
+/// [`build_pack_from_send_list`], without holding the pack in memory.
+pub(crate) fn write_pack_from_send_list(
+    odb: &Odb,
+    send: &[ObjectId],
+    opts: &PackBuildOptions,
+    name_hashes: &HashMap<ObjectId, u32>,
+    stop: &CancelSignal<'_>,
+    w: &mut dyn Write,
+) -> Result<PackStats> {
+    if !opts.delta {
+        let bytes = serialize_pack(odb, send, opts)?;
+        stop.poll()?;
+        w.write_all(&bytes).map_err(Error::Io)?;
+        return Ok(PackStats {
+            object_count: u32::try_from(send.len()).unwrap_or(u32::MAX),
+            pack_bytes: bytes.len() as u64,
+            ..PackStats::default()
+        });
+    }
+    odb.with_pack_read_context(|| {
+        let plan = plan_deltas(
+            odb,
+            send,
+            &HashSet::new(),
+            None,
+            opts,
+            name_hashes,
+            None,
+            stop,
+        )?;
+        crate::pack_delta::write_pack_with_deltas(odb, &plan.entries, opts, None, w, None, stop)
+    })
+}
+
+/// Stream a pack for a local transfer to `w`: enumerate haves on `have_odb`, read
+/// payloads from `source_odb`, and stop with [`Error::Cancelled`] once `stop` fires.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_pack_for_local_fetch(
     source_odb: &Odb,
     wants: &[ObjectId],
     have_odb: &Odb,
@@ -1009,16 +1085,16 @@ pub(crate) fn build_pack_for_local_fetch(
     source_shallow: &HashSet<ObjectId>,
     have_shallow: &HashSet<ObjectId>,
     opts: &PackBuildOptions,
-) -> Result<Vec<u8>> {
-    let mut buf = Vec::new();
+    stop: &CancelSignal<'_>,
+    w: &mut dyn Write,
+) -> Result<PackStats> {
     PackObjects::new(have_odb, PackObjectsOptions::from(*opts))
         .with_source_odb(source_odb)
         .wants(wants)
         .haves(haves)
         .have_shallow_grafts(have_shallow)
         .source_shallow_grafts(source_shallow)
-        .write_to(&mut buf)?;
-    Ok(buf)
+        .write_to_with_cancel(w, stop)
 }
 
 fn collect_reachable_excluding(
@@ -1357,6 +1433,7 @@ pub(crate) fn objects_dir_has_local_packs(objects_dir: &Path) -> bool {
 /// in `peer_held`. Edge commits are the parents of sent commits that `peer_commits`
 /// (the selection's [`crate::pack_object_select::PackObjectSelection::have_closure`])
 /// or `peer_held` contains.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn plan_deltas(
     odb: &Odb,
     send: &[ObjectId],
@@ -1365,11 +1442,14 @@ pub(crate) fn plan_deltas(
     opts: &PackBuildOptions,
     name_hashes: &HashMap<ObjectId, u32>,
     search_threads: Option<usize>,
+    stop: &CancelSignal<'_>,
 ) -> Result<DeltaPlan> {
     let has_local_packs = objects_dir_has_local_packs(odb.objects_dir());
     let reuse_on_disk = opts.reuse_deltas && odb.hash_algo() == HashAlgo::Sha1 && has_local_packs;
     let search = opts.window > 0 && opts.max_depth > 0;
+    stop.poll()?;
     let infos = read_object_infos(odb, send, search_threads)?;
+    stop.poll()?;
     let in_pack: HashSet<ObjectId> = if reuse_on_disk || opts.thin || opts.respect_islands {
         send.iter().copied().collect()
     } else {
@@ -1414,6 +1494,7 @@ pub(crate) fn plan_deltas(
             &in_pack,
             &reusable_base,
         )?;
+        stop.poll()?;
         reused_zlib.retain(|t, (base, ..)| {
             // A stored delta against some other object the receiver holds is kept only
             // when the search has no base at the object's own path to do better with.
@@ -1471,7 +1552,9 @@ pub(crate) fn plan_deltas(
             opts,
             search_threads,
             has_local_packs,
+            stop.flag(),
         )?;
+        stop.poll()?;
         for (target, base, delta) in found {
             delta_to_base.insert(target, base);
             searched.insert(target, delta);
@@ -1544,6 +1627,7 @@ fn search_new_deltas(
     opts: &PackBuildOptions,
     search_threads: Option<usize>,
     has_local_packs: bool,
+    stop: &std::sync::atomic::AtomicBool,
 ) -> Result<Vec<SearchedDelta>> {
     u32::try_from(send.len() + thin_bases.bases.len())
         .map_err(|_| Error::CorruptObject("too many objects for one pack".to_owned()))?;
@@ -1620,6 +1704,7 @@ fn search_new_deltas(
             threads: threads.threads.get(),
         },
         &allowed,
+        stop,
     )?;
     Ok(found
         .into_iter()
@@ -1782,6 +1867,7 @@ pub(crate) mod tests {
             &opts,
             &selection.name_hashes,
             None,
+            &CancelSignal::never(),
         )
         .unwrap();
 
@@ -1864,6 +1950,7 @@ pub(crate) mod tests {
                 have_boundary: HaveBoundary::CommitClosure,
             },
             NameTrees::for_delta_search(&opts),
+            &CancelSignal::never(),
         )
         .unwrap();
         let plan = plan_deltas(
@@ -1874,6 +1961,7 @@ pub(crate) mod tests {
             &opts,
             &selection.name_hashes,
             Some(1),
+            &CancelSignal::never(),
         )
         .unwrap();
         let deltas_of = |kind| {
@@ -2015,6 +2103,7 @@ pub(crate) mod tests {
                 &PackBuildOptions::for_serve(None, true, true),
                 &self.name_hashes,
                 Some(1),
+                &CancelSignal::never(),
             )
             .unwrap()
         }

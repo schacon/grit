@@ -13,7 +13,7 @@
 //! threads, so the chosen deltas are the same on every machine.
 
 use std::cmp::Ordering as CmpOrdering;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use flate2::Compression;
@@ -168,14 +168,18 @@ pub(crate) fn any_pair(_target: &ObjectId, _base: &ObjectId) -> bool {
 /// islands, for example). Bases may come after their targets in any caller order,
 /// so the caller must order its output so bases are written first.
 ///
+/// `stop` is checked before each chunk, by every worker.
+///
 /// # Errors
 ///
-/// Propagates object read failures and zlib errors.
+/// Propagates object read failures and zlib errors, and returns
+/// [`Error::Cancelled`] once `stop` is set.
 pub(crate) fn search_deltas(
     odb: &Odb,
     mut candidates: Vec<DeltaCandidate>,
     params: DeltaSearchParams,
     allowed: PairFilter<'_>,
+    stop: &AtomicBool,
 ) -> Result<Vec<FoundDelta>> {
     if params.window == 0 || params.max_depth == 0 {
         return Ok(Vec::new());
@@ -187,6 +191,7 @@ pub(crate) fn search_deltas(
     if workers == 1 {
         let mut out = Vec::new();
         for &(start, end) in &chunks {
+            crate::progress::poll_watch(stop)?;
             search_chunk(odb, &candidates[start..end], params, allowed, &mut out)?;
         }
         return Ok(out);
@@ -204,9 +209,11 @@ pub(crate) fn search_deltas(
                         return;
                     };
                     let mut found = Vec::new();
-                    let res =
-                        search_chunk(odb, &candidates[start..end], params, allowed, &mut found)
-                            .map(|()| found);
+                    let res = crate::progress::poll_watch(stop)
+                        .and_then(|()| {
+                            search_chunk(odb, &candidates[start..end], params, allowed, &mut found)
+                        })
+                        .map(|()| found);
                     let failed = res.is_err();
                     results
                         .lock()
@@ -492,7 +499,14 @@ mod tests {
             c.in_pack = Some(0);
         }
         candidates[0].base_only = true;
-        let found = search_deltas(repo.odb(), candidates, params(50, 1), &any_pair).unwrap();
+        let found = search_deltas(
+            repo.odb(),
+            candidates,
+            params(50, 1),
+            &any_pair,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         assert!(found.iter().all(|d| d.target != 0), "{found:?}");
         assert!(
             found.iter().any(|d| d.base == 0),
@@ -617,7 +631,14 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let repo = Repository::init(dir.path(), &InitOptions::default()).unwrap();
         let candidates = drifting_versions(&repo, 40);
-        let found = search_deltas(repo.odb(), candidates.clone(), params(3, 1), &any_pair).unwrap();
+        let found = search_deltas(
+            repo.odb(),
+            candidates.clone(),
+            params(3, 1),
+            &any_pair,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         assert!(found.len() >= 30, "only {} deltas", found.len());
 
         let edges: HashMap<u32, u32> = found.iter().map(|d| (d.target, d.base)).collect();
@@ -654,9 +675,22 @@ mod tests {
             v.sort();
             v
         };
-        let one =
-            key(search_deltas(repo.odb(), candidates.clone(), params(50, 1), &any_pair).unwrap());
-        let four = key(search_deltas(repo.odb(), candidates, params(50, 4), &any_pair).unwrap());
+        let one = key(search_deltas(
+            repo.odb(),
+            candidates.clone(),
+            params(50, 1),
+            &any_pair,
+            &AtomicBool::new(false),
+        )
+        .unwrap());
+        let four = key(search_deltas(
+            repo.odb(),
+            candidates,
+            params(50, 4),
+            &any_pair,
+            &AtomicBool::new(false),
+        )
+        .unwrap());
         assert_eq!(one, four);
     }
 
@@ -672,7 +706,14 @@ mod tests {
         // One object from elsewhere (for example a loose object) may still pair.
         candidates[5].whole_in_pack = None;
         candidates[5].in_pack = None;
-        let found = search_deltas(repo.odb(), candidates, params(50, 1), &any_pair).unwrap();
+        let found = search_deltas(
+            repo.odb(),
+            candidates,
+            params(50, 1),
+            &any_pair,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         assert!(!found.is_empty());
         assert!(
             found.iter().all(|d| d.target == 5 || d.base == 5),
@@ -687,7 +728,14 @@ mod tests {
         let candidates = drifting_versions(&repo, 20);
         let banned = candidates[0].oid;
         let allowed = |target: &ObjectId, base: &ObjectId| *target != banned && *base != banned;
-        let found = search_deltas(repo.odb(), candidates, params(50, 1), &allowed).unwrap();
+        let found = search_deltas(
+            repo.odb(),
+            candidates,
+            params(50, 1),
+            &allowed,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         assert!(!found.is_empty());
         assert!(
             found.iter().all(|d| d.target != 0 && d.base != 0),
@@ -703,7 +751,38 @@ mod tests {
         for c in &mut candidates {
             c.dependent_depth = 50;
         }
-        let found = search_deltas(repo.odb(), candidates, params(50, 1), &any_pair).unwrap();
+        let found = search_deltas(
+            repo.odb(),
+            candidates,
+            params(50, 1),
+            &any_pair,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_set_stop_flag_cancels_the_search_on_every_thread_count() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let repo = Repository::init(dir.path(), &InitOptions::default()).unwrap();
+        // Enough candidates at distinct paths for several chunks, so several threads
+        // really run.
+        let mut candidates = drifting_versions(&repo, 3 * CHUNK_MIN_OBJECTS);
+        for (i, c) in candidates.iter_mut().enumerate() {
+            c.name_hash = i as u32;
+        }
+        assert!(chunk_bounds(&candidates).len() > 1);
+        for threads in [1, 4] {
+            let err = search_deltas(
+                repo.odb(),
+                candidates.clone(),
+                params(50, threads),
+                &any_pair,
+                &AtomicBool::new(true),
+            )
+            .unwrap_err();
+            assert!(matches!(err, Error::Cancelled), "{err:?}");
+        }
     }
 }

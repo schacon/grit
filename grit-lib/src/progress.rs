@@ -270,6 +270,45 @@ pub fn poll_cancel_watch(
     poll_watch(watch)
 }
 
+/// A [`Cancel`] polled on the calling thread, plus the flag its worker threads read.
+///
+/// [`Self::poll`] records a cancel in [`Self::flag`], so workers also stop for
+/// [`Cancel`] implementations that are not backed by a shared flag (once the calling
+/// thread next polls). For a [`FlagCancel`] the flag is the handle's own, so workers
+/// see a cancel from another thread right away.
+pub(crate) struct CancelSignal<'a> {
+    cancel: &'a dyn Cancel,
+    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl<'a> CancelSignal<'a> {
+    pub(crate) fn new(cancel: &'a dyn Cancel) -> Self {
+        Self {
+            cancel,
+            flag: cancel_watch_arc(cancel),
+        }
+    }
+
+    /// A signal that never fires, for callers that cannot be interrupted.
+    pub(crate) fn never() -> CancelSignal<'static> {
+        CancelSignal::new(&NeverCancel)
+    }
+
+    /// Returns [`crate::error::Error::Cancelled`] once the signal fired.
+    #[inline]
+    pub(crate) fn poll(&self) -> crate::error::Result<()> {
+        if self.cancel.is_cancelled() {
+            self.flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        poll_watch(&self.flag)
+    }
+
+    /// The flag worker threads check; set once [`Self::poll`] observed a cancel.
+    pub(crate) fn flag(&self) -> &std::sync::atomic::AtomicBool {
+        &self.flag
+    }
+}
+
 /// [`ProgressSink`] adapter that mirrors [`ProgressSink::should_cancel`] into `watch`.
 pub struct WatchProgress<'a> {
     inner: &'a mut dyn ProgressSink,

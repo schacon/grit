@@ -1999,6 +1999,7 @@ fn repack_object_list(
             have_boundary: crate::pack_object_select::HaveBoundary::CommitClosure,
         },
         NameTrees::Yes,
+        &crate::progress::CancelSignal::never(),
     )?;
     if keep_unreachable {
         append_repack_unreachable_retention(odb, &mut selection.send, promised)?;

@@ -719,13 +719,38 @@ impl TempPackReceive {
     ///
     /// Returns an I/O error when the directory or file cannot be created.
     pub fn create(objects_dir: &Path) -> Result<Self> {
-        static SEQ: AtomicU64 = AtomicU64::new(0);
         let spool_dir = ensure_pack_receive_incoming_dir(objects_dir)?;
+        Self::create_named(|seq| {
+            let path = spool_dir.join(format!("pack-receive-{}_{seq}.tmp", std::process::id()));
+            create_private_spool_file(&path).map(|file| (path, file))
+        })
+    }
+
+    /// Like [`Self::create`], but as a `tmp_pack_*` file in `objects_dir/pack/` with the
+    /// process's default file mode: the published pack keeps the spool's mode, so a pack
+    /// written into another repository (a local push) must stay readable to its other
+    /// users, as one written by `git index-pack` is.
+    pub(crate) fn create_in_pack_dir(objects_dir: &Path) -> Result<Self> {
+        let pack_dir = objects_dir.join("pack");
+        std::fs::create_dir_all(&pack_dir).map_err(Error::Io)?;
+        Self::create_named(|seq| {
+            let path = pack_dir.join(format!("tmp_pack_{}_{seq}", std::process::id()));
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .map(|file| (path, file))
+                .map_err(Error::Io)
+        })
+    }
+
+    /// Create the spool with the first `open(seq)` whose name is not taken yet.
+    fn create_named(open: impl Fn(u64) -> Result<(PathBuf, File)>) -> Result<Self> {
+        static SEQ: AtomicU64 = AtomicU64::new(0);
         for _ in 0..64 {
             let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-            let path = spool_dir.join(format!("pack-receive-{}_{seq}.tmp", std::process::id()));
-            match create_private_spool_file(&path) {
-                Ok(file) => {
+            match open(seq) {
+                Ok((path, file)) => {
                     return Ok(Self {
                         file: BufWriter::with_capacity(4 * 1024 * 1024, file),
                         spool: SpoolFileGuard::new(path),
@@ -739,7 +764,7 @@ impl TempPackReceive {
         }
         Err(Error::Io(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            "could not allocate pack-receive temp file name under objects/incoming",
+            "could not allocate a free pack-receive temp file name",
         )))
     }
 

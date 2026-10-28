@@ -1206,6 +1206,11 @@ mod pull_git_compat;
 #[cfg(feature = "full-tests")]
 #[path = "pull_rebase_git_compat.rs"]
 mod pull_rebase_git_compat;
+#[path = "push_cancel.rs"]
+mod push_cancel;
+#[cfg(feature = "full-tests")]
+#[path = "push_cancel_git_compat.rs"]
+mod push_cancel_git_compat;
 #[cfg(feature = "full-tests")]
 #[path = "push_delete_local_git_compat.rs"]
 mod push_delete_local_git_compat;

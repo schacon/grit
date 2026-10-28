@@ -187,6 +187,7 @@ pub(crate) fn write_repack_pack(
                 threads: settings.search_threads,
             },
             &crate::delta_search::any_pair,
+            &std::sync::atomic::AtomicBool::new(false),
         )?;
         for delta in found {
             plan[delta.target as usize] = Plan::NewDelta {

@@ -168,6 +168,7 @@ pub fn try_write_streaming_pack(
         opts,
         &blob_name_hashes,
         None,
+        &crate::progress::CancelSignal::never(),
     )?;
     progress(PackProgress::PlannedDeltas);
 
