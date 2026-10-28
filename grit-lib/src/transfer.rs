@@ -1061,7 +1061,15 @@ fn copy_objects_for_local_fetch(
 
     if !pack_build.thin && try_pack_link {
         progress.start(ProgressPhase::CopyingObjects, Some(send.len() as u64));
-        let linked = link_packs_within(remote_objects, local_objects, send, progress, cancel)?;
+        let local_has = |oid: &ObjectId| local_odb.exists_materialized_local_without_rescan(oid);
+        let linked = link_packs_within(
+            remote_objects,
+            local_objects,
+            send,
+            &local_has,
+            progress,
+            cancel,
+        )?;
         if linked > 0 {
             refresh_local_odb_after_link(local_odb);
             progress.set(linked as u64);
@@ -1182,8 +1190,16 @@ fn copy_objects_for_local_push(
     let send = &send_set.objects;
 
     let mut progress = crate::progress::NullProgress;
+    let dest_has = |oid: &ObjectId| dest_odb.exists_materialized_local_without_rescan(oid);
     if !opts.thin
-        && link_packs_within(local_objects, dest_objects, send, &mut progress, cancel)? > 0
+        && link_packs_within(
+            local_objects,
+            dest_objects,
+            send,
+            &dest_has,
+            &mut progress,
+            cancel,
+        )? > 0
     {
         refresh_local_odb_after_link(dest_odb);
     }

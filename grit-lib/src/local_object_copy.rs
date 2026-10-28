@@ -187,21 +187,29 @@ pub(crate) fn refresh_local_odb_after_link(local_odb: &Odb) {
     pack::clear_pack_cache();
 }
 
+/// Largest share of a linked pack, in percent, that may be objects the destination already
+/// has. Above it the pack would mostly duplicate what the destination stores, as on an
+/// incremental fetch, and building a pack of only the missing objects is the better trade.
+pub(crate) const LINK_ALREADY_PRESENT_PERCENT: usize = 1;
+
 /// Link or copy every source pack whose objects all belong to `send` into `dest_objects/pack/`.
 ///
 /// `send` is the exact set of objects the destination must receive, so a pack that
-/// qualifies carries nothing the requested refs do not reach and nothing the
-/// destination already has. Packs holding any other object (other branches, hidden
-/// refs, excluded tags, unreachable leftovers) are skipped; the caller packs the
-/// remainder itself. Only the `.pack`, `.idx` and the per-pack `.rev` / `.bitmap`
-/// files are installed; `.keep`, `.promisor` and `.mtimes` markers describe the
-/// source's storage policy and are not carried over.
+/// qualifies carries nothing the requested refs do not reach. It may carry a few objects
+/// the destination already has (one, or up to [`LINK_ALREADY_PRESENT_PERCENT`] of the pack),
+/// such as the empty tree a freshly initialized repository writes before its first fetch;
+/// duplicates across packs are harmless and cheaper than rebuilding the pack. Packs
+/// holding any other object (other branches, hidden refs, excluded tags, unreachable
+/// leftovers) are skipped; the caller packs the remainder itself. Only the `.pack`, `.idx`
+/// and the per-pack `.rev` / `.bitmap` files are installed; `.keep`, `.promisor` and
+/// `.mtimes` markers describe the source's storage policy and are not carried over.
 ///
 /// # Parameters
 ///
 /// - `source_objects`: the sender's `objects/` directory.
 /// - `dest_objects`: the receiver's `objects/` directory.
 /// - `send`: objects the receiver lacks and must end up with.
+/// - `dest_has`: whether the receiver already stores an object outside `send`.
 /// - `progress` / `cancel`: polled between packs.
 ///
 /// # Returns
@@ -216,6 +224,7 @@ pub(crate) fn link_packs_within(
     source_objects: &Path,
     dest_objects: &Path,
     send: &[ObjectId],
+    dest_has: &dyn Fn(&ObjectId) -> bool,
     progress: &mut dyn crate::progress::ProgressSink,
     cancel: &dyn crate::progress::Cancel,
 ) -> Result<usize> {
@@ -241,9 +250,19 @@ pub(crate) fn link_packs_within(
             continue;
         }
         let index = pack::read_pack_index_no_verify(&entry.path())?;
+        let mut already_present_budget = (index.len() * LINK_ALREADY_PRESENT_PERCENT / 100).max(1);
         let within = !index.is_empty()
             && (0..index.len()).all(|i| {
-                ObjectId::from_bytes(index.oid_at(i)).is_ok_and(|oid| send.contains(&oid))
+                ObjectId::from_bytes(index.oid_at(i)).is_ok_and(|oid| {
+                    if send.contains(&oid) {
+                        return true;
+                    }
+                    if already_present_budget == 0 || !dest_has(&oid) {
+                        return false;
+                    }
+                    already_present_budget -= 1;
+                    true
+                })
             });
         if !within {
             continue;
