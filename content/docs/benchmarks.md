@@ -2077,7 +2077,7 @@ Same Linux VM sitting, release builds, system `git 2.43.0`, clean trees with `GI
 
 ## Status right after a checkout (2026-10-25)
 
-A clone, switch or `reset --hard` writes every file and then the index within the same second, so every entry is racily clean. Under Git's default whole-second rule, the next status has to re-hash all of them once, and then rewrite the index. Git does this too. Dogfooding on Windows (issue #1914) measured that first `grit status` at 3–13 s on rust-lang/cargo, against 0.2 s for Git. Grit read the files one at a time, inside the serial pass over the stat scan, with a second `lstat` for each file, and on Windows every file open is expensive. Now `grit-lib` collects the racy entries from the scan, hashes them on the `IndexRefresh` worker pool, and applies the results from the scan's own stat data. The one-second rule is unchanged. A same-second edit with the same size is still caught by its content.
+A clone, switch or `reset --hard` writes every file and then the index within the same second, so every entry is racily clean. Under Git's default whole-second rule, the next status has to re-hash all of them once, and then rewrite the index. Git does this too on Linux and macOS. Windows no longer pays it at all: see [On Windows: nanosecond timestamps](#on-windows-nanosecond-timestamps-2026-10-28) below. Dogfooding on Windows (issue #1914) measured that first `grit status` at 3–13 s on rust-lang/cargo, against 0.2 s for Git. Grit read the files one at a time, inside the serial pass over the stat scan, with a second `lstat` for each file, and on Windows every file open is expensive. Now `grit-lib` collects the racy entries from the scan, hashes them on the `IndexRefresh` worker pool, and applies the results from the scan's own stat data. The one-second rule is unchanged. A same-second edit with the same size is still caught by its content.
 
 Same Linux VM sitting (4 vCPUs, ext4), release builds, system `git 2.43.0`. Each run starts from the index exactly as the clone left it. Times are hyperfine means in ms; "cold" drops the page cache before each run. Peak RSS comes from `/usr/bin/time`:
 
@@ -2093,6 +2093,21 @@ After the first run, status on a clean tree is unchanged: 16.8 ms on cargo and 5
 ```bash
 ./target/release/grit-bench --format json --output grit-utils/baselines/status-after-checkout-after.json status --sizes 1000,10000
 ```
+
+### On Windows: nanosecond timestamps (2026-10-28)
+
+The worker pool made the re-hash cheaper, but on Windows opening a file is the expensive part, so the first `grit status` after a clone still took 1.2–2.5 s on git/git and about 1 s on cargo (issue #2175), against 72 ms and 155 ms for Git for Windows, which stays stat-only. Waiting before that first run changes nothing: the comparison is between each file's mtime and the index file's, not the clock.
+
+`core.usenanosec` now defaults to on for Windows (`StatMatchPolicy::DEFAULT_USE_NANOSEC`) and stays off elsewhere, like Git. NTFS keeps 100 ns timestamps, so an index written after the files is newer than every entry, and none of them is racy. Both racy detection and stat equality use the sub-second fractions, so a same-second, same-size edit still shows up through its mtime. Racy detection only uses them when stat equality does too: under `core.checkstat=minimal` both stay whole-second. Two smaller fixes go with it. Checkout's index-mtime bump now steps 100 ns on Windows, because NTFS truncated the old 1 ns step back onto the entry's own tick. The bump never moves into the next second: if the newest file sits on the last tick of its second, the index is left alone. And the Windows directory-scan shortcut takes one path `lstat` when only the sub-second fractions disagree, instead of re-hashing the file. Setting `core.usenanosec=false` brings back the whole-second rule.
+
+Without a Windows runner, the table below simulates the Windows default on the same Linux VM with `core.usenanosec=true` (4 vCPUs, ext4, release builds, system `git 2.43.0`). Each run starts from the index exactly as `grit clone` (or `git clone`, for Git) left it. Times are hyperfine means in ms, and peak RSS comes from `/usr/bin/time`:
+
+| Repository (tracked files) | Git | Grit, whole-second (Linux default) | Grit, `core.usenanosec=true` (Windows default) | Peak RSS Git, Grit whole-second → nanosecond |
+| --- | ---: | ---: | ---: | ---: |
+| rust-lang/cargo (3,078) | 62.7 | 30.3 | **18.6** | 7.8, 20.2 → 17.9 MiB |
+| git/git (4,857) | 116.0 | 67.1 | **11.3** | 6.6, 25.1 → 18.1 MiB |
+
+Under nanoseconds the first status on git/git opens 225 files (ignore and attribute files) instead of 5,093. On Linux, nothing changes by default: the whole-second column matches main within noise (69.5 → 67.1 ms on git/git, 30.8 → 30.3 ms on cargo), and so does a warm clean status (5.0 → 4.9 ms, Git 6.4).
 
 ## Adding many untracked directories (2026-10-25)
 

@@ -7197,6 +7197,7 @@ pub grit_lib::index::StatMatchPolicy::check_stat: bool
 pub grit_lib::index::StatMatchPolicy::trust_ctime: bool
 pub grit_lib::index::StatMatchPolicy::use_nanosec: bool
 impl grit_lib::index::StatMatchPolicy
+pub const grit_lib::index::StatMatchPolicy::DEFAULT_USE_NANOSEC: bool
 pub fn grit_lib::index::StatMatchPolicy::from_config(core::option::Option<&grit_lib::config::ConfigSet>) -> Self
 impl core::clone::Clone for grit_lib::index::StatMatchPolicy
 pub fn grit_lib::index::StatMatchPolicy::clone(&self) -> Self
