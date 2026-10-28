@@ -29974,6 +29974,7 @@ pub grit_lib::worktree::WorktreeBranch::Create(alloc::string::String)
 pub grit_lib::worktree::WorktreeBranch::CreateOrReset(alloc::string::String)
 pub grit_lib::worktree::WorktreeBranch::Detach
 pub grit_lib::worktree::WorktreeBranch::Existing(alloc::string::String)
+pub grit_lib::worktree::WorktreeBranch::Orphan(alloc::string::String)
 impl core::clone::Clone for grit_lib::worktree::WorktreeBranch
 pub fn grit_lib::worktree::WorktreeBranch::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::worktree::WorktreeBranch

@@ -1880,6 +1880,9 @@ mod wildmatch_vectors;
 #[path = "worktree_add_options_git_compat.rs"]
 mod worktree_add_options_git_compat;
 #[cfg(feature = "full-tests")]
+#[path = "worktree_add_orphan_git_compat.rs"]
+mod worktree_add_orphan_git_compat;
+#[cfg(feature = "full-tests")]
 #[path = "worktree_branch_exclusive_git_compat.rs"]
 mod worktree_branch_exclusive_git_compat;
 #[cfg(feature = "full-tests")]
