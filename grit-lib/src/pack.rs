@@ -2149,13 +2149,65 @@ pub fn max_verify_pack_delta_depth(records: &[VerifyObjectRecord]) -> u64 {
     records.iter().filter_map(|r| r.depth).max().unwrap_or(0)
 }
 
-/// Break only delta chains longer than `max_depth` edges in a target→base map.
+/// Targets whose delta edge must be dropped so a target→base graph has no cycle.
 ///
-/// Each entry maps a delta object to its chosen in-pack base. Chains already within
-/// `max_depth` keep their original bases unchanged. Longer chains are broken on Git's
-/// `(depth + 1)` modulo rule by removing only the delta edges at cut points; links
-/// inside each resulting segment stay as originally chosen (matching `break_delta_chains`).
+/// `base_of` returns the base of each object stored as a delta. Chains are walked from
+/// `starts` only, so a cycle is found when one of its objects is a start; passing every
+/// delta target finds them all. A cycle (`a` against `b`, `b` against `a`, or longer)
+/// can never be resolved by a reader, yet appears when deltas are reused from several
+/// packs that stored the same objects in opposite directions. For every cycle the
+/// smallest object id is returned, so the choice does not depend on `starts` order;
+/// reverting those targets to whole objects leaves every chain ending in a whole object.
+pub(crate) fn delta_cycle_breaks(
+    starts: impl IntoIterator<Item = ObjectId>,
+    base_of: impl Fn(&ObjectId) -> Option<ObjectId>,
+) -> Vec<ObjectId> {
+    // `Some(i)`: at position `i` of the walk in progress; `None`: already settled.
+    let mut seen: crate::objects::OidHashMap<Option<usize>> = crate::objects::oid_hash_map();
+    let mut path: Vec<ObjectId> = Vec::new();
+    let mut breaks = Vec::new();
+    for start in starts {
+        let mut cur = Some(start);
+        while let Some(oid) = cur {
+            match seen.get(&oid) {
+                Some(None) => break,
+                Some(Some(pos)) => {
+                    breaks.extend(path[*pos..].iter().min().copied());
+                    break;
+                }
+                None => {
+                    seen.insert(oid, Some(path.len()));
+                    path.push(oid);
+                    cur = base_of(&oid);
+                }
+            }
+        }
+        for oid in path.drain(..) {
+            seen.insert(oid, None);
+        }
+    }
+    breaks
+}
+
+/// Break delta cycles, then delta chains longer than `max_depth` edges, in a
+/// target→base map.
+///
+/// Each entry maps a delta object to its chosen in-pack base. A cycle cannot be
+/// resolved at any depth, so the smallest object id of each one loses its edge first.
+/// Chains already within `max_depth` keep their original bases unchanged. Longer
+/// chains are broken on Git's `(depth + 1)` modulo rule by removing only the delta
+/// edges at cut points; links inside each resulting segment stay as originally chosen
+/// (matching `break_delta_chains`).
 pub fn apply_delta_depth_limit(map: &mut HashMap<ObjectId, ObjectId>, max_depth: usize) {
+    for target in delta_cycle_breaks(map.keys().copied(), |oid| map.get(oid).copied()) {
+        map.remove(&target);
+    }
+    cap_delta_chain_depth(map, max_depth);
+}
+
+/// The chain-length half of [`apply_delta_depth_limit`], for a map already known to
+/// be acyclic (a cycle is left as it is).
+pub(crate) fn cap_delta_chain_depth(map: &mut HashMap<ObjectId, ObjectId>, max_depth: usize) {
     let keys: Vec<ObjectId> = map.keys().copied().collect();
     let value_set: HashSet<ObjectId> = map.values().copied().collect();
     let mut tips: Vec<ObjectId> = keys
@@ -4896,6 +4948,12 @@ pub(crate) type OnDiskReuseZlibEntry = (ObjectId, u64, Arc<PackData>, usize, usi
 /// a stored chain is itself such a target or was accepted when its target was parsed. Entries
 /// are CRC-checked when the index provides CRC32.
 ///
+/// The returned edges never form a cycle. Each pack's deltas are acyclic, but two packs
+/// may store the same objects as deltas in opposite directions (a repository filled by
+/// separate pushes, whose later thin pack was completed with bases the earlier one
+/// stores as deltas). Such a cycle loses the edge of its smallest object id, which
+/// is then sent whole, as [`delta_cycle_breaks`] describes.
+///
 /// # Errors
 ///
 /// Returns [`Error::CorruptObject`] when a pack stream is malformed.
@@ -4924,6 +4982,17 @@ pub(crate) fn collect_packed_delta_reuse_for_send(
                 (base, size, Arc::clone(&pack_bytes), zlib_start, zlib_end),
             );
         }
+    }
+    // Edges whose target and base were both taken from one pack are that pack's own,
+    // acyclic deltas, so every cycle passes through an edge that crosses packs.
+    let crosses_packs = |(_, (base, _, pack, ..)): &(&ObjectId, &OnDiskReuseZlibEntry)| {
+        found
+            .get(base)
+            .is_some_and(|(_, _, base_pack, ..)| !Arc::ptr_eq(base_pack, pack))
+    };
+    let starts = found.iter().filter(crosses_packs).map(|(t, _)| *t);
+    for target in delta_cycle_breaks(starts, |oid| found.get(oid).map(|e| e.0)) {
+        found.remove(&target);
     }
     Ok(found)
 }
@@ -7354,6 +7423,51 @@ mod cached_lookup_tests {
             preserved > 40,
             "non-cut edges should keep original bases (preserved {preserved})"
         );
+    }
+
+    #[test]
+    fn delta_cycle_breaks_drops_smallest_oid_of_each_cycle_only() {
+        let o = |n: u8| test_oid(n);
+        // 1 <-> 2 is a 2-cycle; 5 -> 4 -> 3 -> 5 a 3-cycle with 6 hanging off it;
+        // 8 -> 7 is a plain chain.
+        let map = HashMap::from([
+            (o(1), o(2)),
+            (o(2), o(1)),
+            (o(3), o(5)),
+            (o(4), o(3)),
+            (o(5), o(4)),
+            (o(6), o(4)),
+            (o(8), o(7)),
+        ]);
+        let mut keys: Vec<ObjectId> = map.keys().copied().collect();
+        for order in [false, true] {
+            keys.sort();
+            if order {
+                keys.reverse();
+            }
+            let mut breaks = delta_cycle_breaks(keys.iter().copied(), |oid| map.get(oid).copied());
+            breaks.sort();
+            assert_eq!(breaks, vec![o(1), o(3)], "independent of walk order");
+        }
+    }
+
+    #[test]
+    fn delta_cycle_breaks_handles_self_delta_and_acyclic_maps() {
+        let a = test_oid(9);
+        assert_eq!(delta_cycle_breaks([a], |_| Some(a)), vec![a]);
+        let chain: HashMap<ObjectId, ObjectId> =
+            (1..60u8).map(|i| (test_oid(i), test_oid(i - 1))).collect();
+        assert!(delta_cycle_breaks(chain.keys().copied(), |o| chain.get(o).copied()).is_empty());
+    }
+
+    #[test]
+    fn apply_delta_depth_limit_breaks_cycles_shorter_than_depth() {
+        let (a, b, c, d) = (test_oid(1), test_oid(2), test_oid(3), test_oid(4));
+        // a <-> b, plus c -> b and d -> c hanging off the cycle.
+        let mut map = HashMap::from([(a, b), (b, a), (c, b), (d, c)]);
+        apply_delta_depth_limit(&mut map, 50);
+        assert_eq!(map, HashMap::from([(b, a), (c, b), (d, c)]));
+        assert_eq!(max_delta_map_chain_edges(&map), 3);
     }
 
     #[test]

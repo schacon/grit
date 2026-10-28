@@ -759,6 +759,175 @@ fn upload_pack_full_clone_of_packed_repo_round_trips_through_git() {
     }
 }
 
+/// Run system `git` in `dir` with `stdin` piped in and require success.
+fn git_with_stdin(dir: &Path, args: &[&str], stdin: &[u8]) -> Vec<u8> {
+    let mut child = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn git");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(stdin)
+        .expect("write stdin");
+    let out = child.wait_with_output().expect("wait git");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out.stdout
+}
+
+/// `(pack type code, base oid)` per object of `idx`, from `git verify-pack -v`.
+fn verify_pack_entries(repo: &RepoFixture, idx: &Path) -> Vec<(String, Option<String>)> {
+    repo.git(&["verify-pack", "-v", idx.to_str().unwrap()])
+        .stdout
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            match fields.len() {
+                5 => Some((fields[0].to_owned(), None)),
+                7 => Some((fields[0].to_owned(), Some(fields[6].to_owned()))),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// Two packs that store the same pair of blobs as deltas in opposite directions, the
+/// shape two `git push`es into one repository leave behind.
+///
+/// Pack 1 (older) holds the whole history, where git stores the smaller blob `x` as a
+/// delta against the larger `y`. Pack 2 is the thin pack of the second commit, which
+/// sends `y` as a delta against `x` (the receiver's copy) and is completed with
+/// `index-pack --fix-thin`, which appends `x` whole. Returns the tip, `x` and `y`.
+fn build_opposed_delta_packs(repo: &RepoFixture) -> (ObjectId, String, String) {
+    git_ok(repo, &["config", "gc.auto", "0"]);
+    git_ok(repo, &["checkout", "-q", "-b", "main"]);
+    let base: String = (0..64)
+        .map(|i| format!("line {i}: {}\n", "z".repeat(60)))
+        .collect();
+    std::fs::write(repo.path().join("f.txt"), &base).unwrap();
+    git_ok(repo, &["add", "f.txt"]);
+    git_ok(repo, &["commit", "-q", "-m", "c1"]);
+    std::fs::write(
+        repo.path().join("f.txt"),
+        format!("{base}appended tail line\n"),
+    )
+    .unwrap();
+    git_ok(repo, &["commit", "-q", "-am", "c2"]);
+    let x = repo
+        .git(&["rev-parse", "HEAD~1:f.txt"])
+        .stdout
+        .trim()
+        .to_owned();
+    let y = repo
+        .git(&["rev-parse", "HEAD:f.txt"])
+        .stdout
+        .trim()
+        .to_owned();
+    git_ok(
+        repo,
+        &["-c", "repack.writeBitmaps=false", "repack", "-adf", "-q"],
+    );
+    let pack_dir = repo.path().join(".git/objects/pack");
+    let first_idx = std::fs::read_dir(&pack_dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .find(|p| p.extension().is_some_and(|x| x == "idx"))
+        .unwrap();
+    let first = verify_pack_entries(repo, &first_idx);
+    assert!(
+        first.contains(&(x.clone(), Some(y.clone()))),
+        "pack 1 stores x as a delta against y: {first:?}"
+    );
+
+    let thin = git_with_stdin(
+        repo.path(),
+        &["pack-objects", "--revs", "--thin", "--stdout", "-q"],
+        b"HEAD\n^HEAD~1\n",
+    );
+    git_with_stdin(repo.path(), &["index-pack", "--stdin", "--fix-thin"], &thin);
+    let second_idx = std::fs::read_dir(&pack_dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .find(|p| p.extension().is_some_and(|x| x == "idx") && *p != first_idx)
+        .unwrap();
+    let second = verify_pack_entries(repo, &second_idx);
+    assert!(
+        second.contains(&(y.clone(), Some(x.clone()))),
+        "pack 2 stores y as a delta against x: {second:?}"
+    );
+
+    // Pack 1 must read as the older pack regardless of filesystem timestamp resolution.
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    for ext in ["pack", "idx"] {
+        std::fs::File::open(first_idx.with_extension(ext))
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+    }
+    git_ok(repo, &["fsck", "--full", "--strict"]);
+    let tip = ObjectId::from_hex(repo.git(&["rev-parse", "HEAD"]).stdout.trim()).unwrap();
+    (tip, x, y)
+}
+
+#[test]
+fn upload_pack_full_clone_of_two_push_repo_breaks_cross_pack_delta_cycle() {
+    let fx = RepoFixture::init(HashAlgo::Sha1).expect("init");
+    let (tip, ..) = build_opposed_delta_packs(&fx);
+    let repo = Repository::open(&fx.path().join(".git"), &RepositoryOptions::empty()).unwrap();
+    let expected_objects = fx
+        .git(&["rev-list", "--objects", "--all"])
+        .stdout
+        .lines()
+        .count();
+    for protocol in [ProtocolVersion::V0, ProtocolVersion::V2] {
+        let pack = upload_pack_full_clone(&repo, &tip, protocol);
+        let types = index_and_fsck_clone(&pack, &tip);
+        assert_eq!(types.len(), expected_objects, "{protocol:?}");
+        assert!(
+            !types.contains(&7),
+            "{protocol:?}: a self-contained clone pack has no REF_DELTA: {types:?}"
+        );
+    }
+
+    // Control: the same objects in one pack after a full repack.
+    git_ok(
+        &fx,
+        &["-c", "repack.writeBitmaps=false", "repack", "-adf", "-q"],
+    );
+    let repo = Repository::open(&fx.path().join(".git"), &RepositoryOptions::empty()).unwrap();
+    let pack = upload_pack_full_clone(&repo, &tip, ProtocolVersion::V2);
+    assert_eq!(index_and_fsck_clone(&pack, &tip).len(), expected_objects);
+}
+
+#[test]
+fn full_clone_of_two_push_repo_round_trips_without_ofs_delta_or_depth_limit() {
+    let fx = RepoFixture::init(HashAlgo::Sha1).expect("init");
+    let (tip, ..) = build_opposed_delta_packs(&fx);
+    let repo = Repository::open(&fx.path().join(".git"), &RepositoryOptions::empty()).unwrap();
+    for (use_ofs_delta, max_depth) in [(false, 50), (true, 0), (false, 0)] {
+        let opts = PackBuildOptions {
+            delta: true,
+            use_ofs_delta,
+            max_depth,
+            thin: false,
+            ..PackBuildOptions::default()
+        };
+        let (pack, _) = stream_clone_pack(&repo, &[tip], &[], &opts);
+        index_and_fsck_clone(&pack, &tip);
+    }
+}
+
 #[test]
 fn upload_pack_honors_pack_window_config() {
     let fx = RepoFixture::init(HashAlgo::Sha1).expect("init");

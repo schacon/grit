@@ -1333,9 +1333,10 @@ pub(crate) fn objects_dir_has_local_packs(objects_dir: &Path) -> bool {
 /// kind, groups objects by kind, path name hash (`name_hashes`, for blobs and trees)
 /// and size as Git does, and reads payloads from `odb` only while they are in the
 /// window, so memory does not grow with the number or size of the objects packed.
-/// Chains are depth-limited via [`crate::pack::apply_delta_depth_limit`].
-/// Correctness (re-indexability) is preserved because every chosen base is acyclic
-/// and either in-pack or, for thin packs, peer-held.
+/// Chains are depth-limited on [`crate::pack::apply_delta_depth_limit`]'s rule.
+/// Correctness (re-indexability) is preserved because the chosen edges form no cycle,
+/// even when on-disk deltas come from several packs, and every base is either in-pack
+/// (emitted ahead of its targets) or, for thin packs, peer-held.
 ///
 /// Two optional refinements:
 ///
@@ -1479,9 +1480,12 @@ pub(crate) fn plan_deltas(
     drop((in_pack, thin_bases));
 
     if opts.max_depth > 0 && !delta_to_base.is_empty() {
-        // Cap chain length. After snipping, any removed target reverts to whole.
+        // Cap chain length. After snipping, any removed target reverts to whole. The
+        // edges are acyclic: reused ones come without cycles, and the search neither
+        // retargets a reused delta nor deltas the root of a reused chain against
+        // anything in the pack.
         let mut delta_std: HashMap<ObjectId, ObjectId> = delta_to_base.drain().collect();
-        crate::pack::apply_delta_depth_limit(&mut delta_std, opts.max_depth);
+        crate::pack::cap_delta_chain_depth(&mut delta_std, opts.max_depth);
         delta_to_base.extend(delta_std);
     }
 
