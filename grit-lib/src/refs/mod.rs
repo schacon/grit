@@ -2349,6 +2349,8 @@ pub(crate) fn prune_empty_loose_ref_parents(storage_dir: &Path, ref_path: &Path)
 }
 
 /// Remove `dir` and then its parents while they hold no files, stopping at `refs/`.
+///
+/// `refs/` itself is never removed: Git does not recognize a repository without it.
 pub(crate) fn prune_empty_ref_dirs(storage_dir: &Path, dir: &Path) {
     let refs_root = storage_dir.join("refs");
     let mut current = Some(dir);
@@ -2359,7 +2361,7 @@ pub(crate) fn prune_empty_ref_dirs(storage_dir: &Path, dir: &Path) {
         if dir_tree_has_files(dir) {
             break;
         }
-        if fs::remove_dir(dir).is_err() {
+        if remove_dir_tree(dir).is_err() {
             break;
         }
         current = dir.parent();
@@ -3265,8 +3267,8 @@ fn pack_refs_files_matching(
 
     // Each CAS lock has dropped. Scan each parent only once, rather than rereading a
     // wide tag directory after every ref (when the current lock still made it nonempty).
-    for parent in parents {
-        remove_empty_ref_directory(&parent);
+    for parent in &parents {
+        prune_empty_ref_dirs(&storage_git_dir, parent);
     }
 
     Ok((packed_path, packed_loose, pruned))
@@ -4043,7 +4045,7 @@ pub fn write_packed_refs_file(git_dir: &Path, records: &[PackedRefRecord]) -> Re
             fs::remove_file(&loose).map_err(Error::Io)?;
         }
         if let Some(parent) = loose.parent() {
-            remove_empty_ref_directory(parent);
+            prune_empty_ref_dirs(&storage_dir, parent);
         }
     }
     Ok(())
@@ -6180,6 +6182,66 @@ mod pack_refs_tests {
             fs::read_to_string(store::paths::packed_refs_path(git_dir)).expect("packed-refs");
         assert!(body.contains("refs/heads/a-first"));
         assert!(body.find("a-first").expect("a-first") < body.find("z-last").expect("z-last"));
+    }
+
+    #[test]
+    fn write_packed_refs_file_keeps_refs_dir_for_top_level_ref() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let git_dir = dir.path();
+        fs::create_dir_all(git_dir.join("refs/tags")).expect("refs/tags");
+        let oid = ObjectId::from_hex("0000000000000000000000000000000000000001").expect("oid");
+        fs::write(git_dir.join("refs/stash"), format!("{oid}\n")).expect("loose stash");
+        write_packed_refs_file(
+            git_dir,
+            &[PackedRefRecord {
+                refname: "refs/stash".into(),
+                oid,
+                peeled: None,
+            }],
+        )
+        .expect("write packed-refs");
+        assert!(!git_dir.join("refs/stash").exists());
+        assert!(git_dir.join("refs").is_dir(), "refs/ must remain");
+        assert!(git_dir.join("refs/tags").is_dir());
+    }
+
+    #[test]
+    fn write_packed_refs_file_prunes_emptied_ref_dirs_below_refs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let git_dir = dir.path();
+        fs::create_dir_all(git_dir.join("refs/heads/topic/empty")).expect("refs/heads");
+        let oid = ObjectId::from_hex("0000000000000000000000000000000000000001").expect("oid");
+        fs::write(git_dir.join("refs/heads/topic/a"), format!("{oid}\n")).expect("loose ref");
+        write_packed_refs_file(
+            git_dir,
+            &[PackedRefRecord {
+                refname: "refs/heads/topic/a".into(),
+                oid,
+                peeled: None,
+            }],
+        )
+        .expect("write packed-refs");
+        assert!(!git_dir.join("refs/heads").exists());
+        assert!(git_dir.join("refs").is_dir(), "refs/ must remain");
+    }
+
+    #[test]
+    fn pack_refs_files_keeps_refs_dir_after_packing_stash() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = init_repository(
+            dir.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let blob = repo.odb().write(ObjectKind::Blob, b"x").expect("blob");
+        write_ref(repo.git_dir(), "refs/stash", &blob).expect("stash");
+        let refs = repo.git_dir().join("refs");
+        pack_refs_files(repo.git_dir(), repo.odb(), true, false).expect("pack");
+        assert!(!refs.join("stash").exists());
+        assert!(refs.is_dir(), "refs/ must remain");
     }
 }
 

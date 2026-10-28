@@ -10,8 +10,8 @@ use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::maintenance::repository_fsck::{self, issue_msg_id, FsckOptions, FsckReport};
 use grit_lib::maintenance::{
-    auto_gc_needed, gc, gc_auto, prune_loose_objects, repack_all, AutoGcOutcome, AutoGcReason,
-    GcOptions, PruneOptions, RepackOptions,
+    auto_gc_needed, gc, gc_auto, pack_refs, prune_loose_objects, repack_all, AutoGcOutcome,
+    AutoGcReason, GcOptions, PackRefsOptions, PruneOptions, RepackOptions,
 };
 use grit_lib::objects::pack::{clear_pack_cache, test_pack_cache_guard};
 use grit_lib::objects::{ObjectId, ObjectKind};
@@ -234,6 +234,69 @@ fn gc_pack_refs_packs_branch_refs() {
     );
 
     git(dir.path(), &["fsck", "--strict"]);
+}
+
+/// One commit on `main`, a loose `refs/stash`, and the empty `refs/tags` that init creates:
+/// packing every ref empties the whole `refs/` tree.
+fn repo_with_loose_stash_ref() -> (TempDir, Repository) {
+    let dir = TempDir::new().expect("tempdir");
+    let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+    one_commit(&repo);
+    let head = grit_lib::refs::resolve_ref(repo.git_dir(), "refs/heads/main").expect("main");
+    grit_lib::refs::write_ref(repo.git_dir(), "refs/stash", &head).expect("refs/stash");
+    let refs = repo.git_dir().join("refs");
+    assert!(refs.join("stash").is_file());
+    assert!(refs.join("tags").is_dir());
+    (dir, repo)
+}
+
+fn git_stdout(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// `git` only recognizes a `.git` directory that has a `refs/` directory.
+fn assert_packed_stash_repo_readable_by_git(dir: &Path, repo: &Repository) {
+    let git_dir = repo.git_dir();
+    assert!(
+        git_dir.join("refs").is_dir(),
+        "packing refs must keep .git/refs (issue #2191)"
+    );
+    assert!(!git_dir.join("refs/stash").exists());
+    let packed = std::fs::read_to_string(git_dir.join("packed-refs")).expect("packed-refs");
+    assert!(packed.contains(" refs/heads/main\n"), "{packed}");
+    assert!(packed.contains(" refs/stash\n"), "{packed}");
+
+    assert_eq!(git_stdout(dir, &["rev-parse", "--git-dir"]), ".git");
+    let head = grit_lib::refs::resolve_ref(git_dir, "refs/heads/main").expect("main");
+    assert_eq!(git_stdout(dir, &["rev-parse", "refs/stash"]), head.to_hex());
+    git(dir, &["fsck", "--strict"]);
+}
+
+#[test]
+fn pack_refs_keeps_refs_dir_after_packing_stash_issue_2191() {
+    let (dir, repo) = repo_with_loose_stash_ref();
+    let report = pack_refs(&repo, &PackRefsOptions::with_all(true)).expect("pack-refs");
+    assert_eq!(report.refs_pruned, 2, "{report:?}");
+    assert_packed_stash_repo_readable_by_git(dir.path(), &repo);
+}
+
+#[test]
+fn gc_keeps_refs_dir_after_packing_stash_issue_2191() {
+    let (dir, repo) = repo_with_loose_stash_ref();
+    gc(&repo, &GcOptions::with_reflog_policy(1_700_000_000, false)).expect("gc");
+    assert_packed_stash_repo_readable_by_git(dir.path(), &repo);
 }
 
 fn one_commit(repo: &Repository) {
