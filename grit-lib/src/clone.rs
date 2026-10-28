@@ -411,7 +411,11 @@ fn dir_is_empty(path: &Path) -> bool {
 /// Remove a partially created clone destination.
 ///
 /// When `keep_toplevel` is true, only contents of `path` are removed (empty dir existed before clone).
+/// Call it on the thread that ran [`clone`]: it first drops that thread's cached pack maps.
 pub fn cleanup_failed_clone(path: &Path, keep_toplevel: bool) {
+    // Windows refuses to delete a memory-mapped file, and the clone's pack reads leave the
+    // new packs mapped in this thread's caches.
+    crate::pack::clear_pack_cache();
     if keep_toplevel {
         let Ok(entries) = fs::read_dir(path) else {
             return;

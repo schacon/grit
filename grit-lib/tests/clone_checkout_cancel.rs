@@ -82,6 +82,20 @@ fn seed_many_file_repo(root: &Path, files: usize) {
     }
 }
 
+/// Files under `dir` this process has memory-mapped, from `/proc/self/maps`.
+///
+/// Windows cannot delete a mapped file, so cleanup must not leave the clone's packs mapped.
+#[cfg(target_os = "linux")]
+fn mapped_files_under(dir: &Path) -> Vec<String> {
+    let dir = dir.to_string_lossy().into_owned();
+    std::fs::read_to_string("/proc/self/maps")
+        .expect("read /proc/self/maps")
+        .lines()
+        .filter(|line| line.contains(&dir))
+        .map(str::to_owned)
+        .collect()
+}
+
 fn count_checkout_files(dest: &Path, total: usize) -> usize {
     (0..total)
         .filter(|i| dest.join(format!("f{i}.txt")).exists())
@@ -95,6 +109,7 @@ fn clone_returns_cancelled_when_checkout_progress_requests_abort() {
     let upstream = tmp.path().join("upstream");
     std::fs::create_dir_all(&upstream).expect("mkdir");
     seed_many_file_repo(&upstream, FILES);
+    git(&upstream, &["repack", "-adq"]);
 
     let dest = tmp.path().join("dest");
     let url = upstream.to_string_lossy().into_owned();
@@ -121,6 +136,17 @@ fn clone_returns_cancelled_when_checkout_progress_requests_abort() {
         present < FILES,
         "checkout should stop before all {FILES} files exist, found {present}"
     );
+    #[cfg(target_os = "linux")]
+    assert!(
+        !mapped_files_under(&dest).is_empty(),
+        "the checkout read objects from the new pack"
+    );
     cleanup_failed_clone(&dest, false);
     assert!(!dest.exists(), "caller cleanup removes partial clone");
+    #[cfg(target_os = "linux")]
+    assert_eq!(
+        mapped_files_under(&dest),
+        Vec::<String>::new(),
+        "cleanup releases the clone's pack maps"
+    );
 }
