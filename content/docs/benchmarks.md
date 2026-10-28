@@ -602,6 +602,45 @@ Raw GNU time records, binary/source hashes, scripts and the exact overwrite
 reproduction in human/JSON/Markdown are in
 [`stash-pop-2082-path-revision.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/stash-pop-2082-path-revision.json).
 
+## Sparse index collapse on write (2026-10-28)
+
+`switch/sparse@sparse-unique-120k` changes 5,000 excluded paths, so switching
+expands all 400 excluded directories (about 120,000 index rows) and folds them
+back into sparse-directory entries when it writes the index. That fold removed
+each directory's rows with a pass over the whole index and inserted its entry
+into the sorted list, so its cost grew with directories × rows. It also re-read
+the root tree for every directory. Writing a sparse index now decides every
+directory first, against the index as it looks with the directories collapsed so
+far, and rebuilds the entry list once. Which directories collapse is unchanged.
+
+Daily-matrix medians of ten runs (each run goes out and back), measured in one
+sitting on a four-vCPU Intel Xeon Linux VM with stock Git 2.43.0 and Rust 1.99.0
+release builds. Values are **milliseconds / peak MB**:
+
+| Scenario | Git | Before | After |
+| --- | ---: | ---: | ---: |
+| `switch/sparse@sparse-unique-120k` | 76.0 / 17.6 | 754.6 / 56.0 | 295.3 / 56.2 |
+| `reset/sparse@sparse-unique-120k` | 54.5 / 21.8 | 911.6 / 90.9 | 453.2 / 91.6 |
+| `switch/sparse@sparse-120k` | 42.3 / 8.0 | 25.5 / 20.7 | 25.8 / 20.8 |
+| `switch/sparse@sparse-240k` | 62.6 / 8.1 | 26.0 / 20.6 | 26.2 / 21.2 |
+| `reset/sparse@sparse-120k` | 29.3 / 12.1 | 26.0 / 20.7 | 27.1 / 21.3 |
+| `reset/sparse@sparse-240k` | 38.6 / 16.9 | 26.5 / 20.8 | 26.4 / 21.2 |
+| `stash/pop-sparse@wide-120k` | 361.3 / 53.6 | 126.5 / 49.1 | 123.8 / 49.5 |
+| `switch/branch@synth-100k` | 161.2 / 35.9 | 84.3 / 43.3 | 89.4 / 43.3 |
+| `switch/branch@synth-10k` | 22.5 / 10.2 | 18.0 / 21.7 | 18.4 / 22.1 |
+| `switch/delete-heavy@wide-48k` | 124.6 / 21.8 | 132.4 / 33.8 | 130.6 / 34.1 |
+| `switch/large-blob@big-asset` | 849.6 / 306.7 | 782.5 / 19.3 | 784.6 / 20.2 |
+
+The changed-tree switch is **2.6×** faster and hard reset on the same fixture
+**2×**. The remaining gap to Git is the expansion and the tree diff before the
+collapse, and those rows dominate peak memory too. The other rows never collapse
+a changed directory and stay within noise: two interleaved reruns of
+`switch/branch@synth-100k` measured 88.7 and 88.5 ms before against 91.9 and
+88.4 ms after. Full reports:
+[`daily-switch-sparse-unique-5096-before.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/daily-switch-sparse-unique-5096-before.json)
+and
+[`daily-switch-sparse-unique-5096-after.json`](https://github.com/gitbutlerapp/grit/blob/main/grit-utils/baselines/daily-switch-sparse-unique-5096-after.json).
+
 ## Symmetric revision counts (2026-10-27)
 
 Resolving `HEAD~500` parsed its parent chain, then the symmetric-range walk read
