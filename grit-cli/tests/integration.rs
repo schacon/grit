@@ -36,6 +36,7 @@ mod ambiguous_ref_warning;
 #[cfg(feature = "full-tests")]
 #[path = "auth_logout_cli.rs"]
 mod auth_logout_cli;
+#[cfg(feature = "full-tests")]
 #[path = "auth_server_cli.rs"]
 mod auth_server_cli;
 #[cfg(feature = "full-tests")]
@@ -555,6 +556,9 @@ mod status_untracked_mode;
 mod status_upstream;
 #[path = "status_utf8_paths.rs"]
 mod status_utf8_paths;
+#[cfg(feature = "full-tests")]
+#[path = "switch_interrupt.rs"]
+mod switch_interrupt;
 #[cfg(feature = "full-tests")]
 #[path = "switch_stranded_commits.rs"]
 mod switch_stranded_commits;
