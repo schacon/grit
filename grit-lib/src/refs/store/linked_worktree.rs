@@ -230,24 +230,24 @@ impl RefStore for LinkedWorktreeRefStore {
         for rename in case_only_renames {
             shared_txn = shared_txn.with_case_only_rename(rename);
         }
+        // The admin directory's `HEAD` lock is this worktree's alone, while the shared store
+        // may have one writer slot for every worktree: take the shared lock last so it is not
+        // held through the `HEAD` side's file locking.
+        let head = head_update
+            .map(|update| {
+                RefTransaction::from_updates(vec![update]).and_then(|txn| self.head.prepare(txn))
+            })
+            .transpose()?;
         let shared = if shared_txn == RefTransaction::new() {
             None
         } else {
-            Some(self.shared.prepare(shared_txn)?)
-        };
-        let head = match head_update {
-            None => None,
-            Some(update) => {
-                let prepared = RefTransaction::from_updates(vec![update])
-                    .and_then(|txn| self.head.prepare(txn));
-                match prepared {
-                    Ok(prepared) => Some(prepared),
-                    Err(err) => {
-                        if let Some(shared) = shared {
-                            let _ = shared.abort();
-                        }
-                        return Err(err);
+            match self.shared.prepare(shared_txn) {
+                Ok(prepared) => Some(prepared),
+                Err(err) => {
+                    if let Some(head) = head {
+                        let _ = head.abort();
                     }
+                    return Err(err);
                 }
             }
         };
@@ -627,6 +627,39 @@ mod tests {
         aborted.abort().expect("abort");
         assert!(!dir.path().join("HEAD.lock").exists());
         assert_eq!(view.resolve("HEAD").expect("HEAD"), oid(2));
+    }
+
+    #[test]
+    fn a_busy_shared_store_releases_the_admin_head_lock() {
+        let (dir, shared, view) = setup(Some("ref: refs/heads/linked\n"));
+        let holder = shared
+            .prepare(
+                RefTransaction::from_updates(vec![update(
+                    "refs/heads/main",
+                    RawRef::Direct(oid(3)),
+                    Expected::Any,
+                    RefUpdateFlags::default(),
+                )])
+                .expect("txn"),
+            )
+            .expect("hold shared store");
+        let head = update(
+            "HEAD",
+            RawRef::Direct(oid(4)),
+            Expected::Oid(oid(2)),
+            RefUpdateFlags::default(),
+        );
+        let err = commit(&view, vec![head.clone()]).expect_err("shared store busy");
+        assert_eq!(
+            err,
+            RefStoreError::LockHeld {
+                name: "refs/heads/linked".into()
+            }
+        );
+        assert!(!dir.path().join("HEAD.lock").exists());
+        holder.commit().expect("release");
+        commit(&view, vec![head]).expect("commit once free");
+        assert_eq!(view.resolve("HEAD").expect("HEAD"), oid(4));
     }
 
     #[test]
