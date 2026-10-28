@@ -210,6 +210,9 @@ mod checkout_large_blob_rss;
 #[path = "checkout_large_blob_streaming.rs"]
 mod checkout_large_blob_streaming;
 #[cfg(feature = "full-tests")]
+#[path = "checkout_long_path_delete_2173.rs"]
+mod checkout_long_path_delete_2173;
+#[cfg(feature = "full-tests")]
 #[path = "checkout_nested_gitattributes_autocrlf_git_compat.rs"]
 mod checkout_nested_gitattributes_autocrlf_git_compat;
 #[cfg(feature = "full-tests")]

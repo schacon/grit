@@ -487,13 +487,21 @@ fn remove_created_path(abs: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Longest file-name tail kept in a spool entry name, so a kept spool stays recognizable while
+/// the whole name fits one path component (255 bytes on common filesystems).
+const SPOOL_NAME_TAIL_BYTES: usize = 64;
+
+/// A spool file name unique within the spool. The repository path lives on the entry itself;
+/// the name keeps at most a short tail of the file name, never the directories, so deep paths
+/// cannot exceed the component length limit.
 fn spool_entry_name(rel: &str) -> String {
     let seq = SPOOL_NAME_SEQ.fetch_add(1, Ordering::Relaxed);
-    let safe: String = rel
-        .chars()
-        .map(|c| if c == '/' || c == '\\' { '_' } else { c })
-        .collect();
-    format!("{}_{}_{safe}", std::process::id(), seq)
+    let file_name = rel.rsplit(['/', '\\']).next().unwrap_or_default();
+    let mut start = file_name.len().saturating_sub(SPOOL_NAME_TAIL_BYTES);
+    while !file_name.is_char_boundary(start) {
+        start += 1;
+    }
+    format!("{}_{seq}_{}", std::process::id(), &file_name[start..])
 }
 
 fn move_worktree_entry_to_spool(
@@ -605,6 +613,33 @@ mod path_list_tests {
             ["c", "dir/sub/ünï.txt", "dir/b.txt", "a"]
         );
         assert_eq!(PathList::default().iter_rev().count(), 0);
+    }
+}
+
+#[cfg(test)]
+mod spool_name_tests {
+    use super::spool_entry_name;
+
+    #[test]
+    fn deep_paths_get_short_unique_names() {
+        let deep = format!("{}/deep.txt", vec!["d".repeat(40); 8].join("/"));
+        assert!(deep.len() > 255);
+        let first = spool_entry_name(&deep);
+        let second = spool_entry_name(&deep);
+        assert_ne!(first, second);
+        for name in [&first, &second] {
+            assert!(name.len() < 100, "{name}");
+            assert!(name.ends_with("_deep.txt"), "{name}");
+            assert!(!name.contains(['/', '\\']), "{name}");
+        }
+    }
+
+    #[test]
+    fn long_file_names_are_cut_on_a_char_boundary() {
+        let long = "ü".repeat(120);
+        let name = spool_entry_name(&format!("dir/{long}"));
+        assert!(name.len() <= 100, "{name}");
+        assert!(long.ends_with(name.rsplit('_').next().unwrap_or_default()));
     }
 }
 
